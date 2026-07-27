@@ -1298,7 +1298,7 @@ class TestImageProjectFlag:
             )
 
         assert result.exit_code == 0, result.output
-        client.create_project.assert_awaited_once_with(title="gflow-cli i2i")
+        client.create_project.assert_awaited_once_with(title="stylize")
 
 
 class TestReferenceEntityFlag:

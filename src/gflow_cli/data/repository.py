@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -30,6 +30,11 @@ if TYPE_CHECKING:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _coerce_utc(dt: datetime) -> datetime:
+    """UTC-aware view of a catalog timestamp; assume UTC if a legacy value is naive."""
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
 _ASSET_LOOKUP_COLUMNS = (
@@ -97,6 +102,53 @@ class DataRepository:
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_project") from exc
         return cast("ProjectRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
+
+    def update_project_title(self, profile_name: str, flow_project_id: str, title: str) -> None:
+        with self._store.transaction(immediate=True):
+            self._store.conn.execute(
+                """
+                UPDATE projects
+                SET title = ?
+                WHERE profile_name = ? AND flow_project_id = ?
+                """,
+                (title, profile_name, flow_project_id),
+            )
+
+    def get_project(
+        self,
+        profile_name: str | None,
+        flow_project_id: str,
+    ) -> ProjectRecord | None:
+        if profile_name is not None:
+            row = self._store.conn.execute(
+                """
+                SELECT id, profile_name, flow_project_id, title, source, created_at
+                FROM projects
+                WHERE profile_name = ? AND flow_project_id = ?
+                """,
+                (profile_name, flow_project_id),
+            ).fetchone()
+        else:
+            row = self._store.conn.execute(
+                """
+                SELECT id, profile_name, flow_project_id, title, source, created_at
+                FROM projects
+                WHERE flow_project_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (flow_project_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ProjectRecord(
+            id=str(row["id"]),
+            profile_name=str(row["profile_name"]),
+            flow_project_id=str(row["flow_project_id"]),
+            title=str(row["title"]) if row["title"] is not None else None,
+            source=str(row["source"]),
+            created_at=str(row["created_at"]) if row["created_at"] is not None else None,
+        )
 
     # ------------------------------------------------------------------
     # Assets
@@ -315,6 +367,52 @@ class DataRepository:
                 """,
                 (status.value, completed_at, error_type, error_detail, operation_id),
             )
+
+    def prune_failed_operations(
+        self,
+        *,
+        older_than: timedelta,
+        profile: str | None = None,
+        dry_run: bool = False,
+    ) -> int:
+        """Delete failed operations older than *older_than*; return how many were
+        deleted (or, when *dry_run*, WOULD be deleted).
+
+        Explicit retention for #345 — never invoked automatically. Rows are
+        matched in Python against ``now - older_than`` (robust to timestamp
+        format), then deleted by id in chunks. Child ``operation_assets`` rows
+        (rare for failures, but not assumed absent) are removed first to satisfy
+        the ``operations(id)`` foreign key with ``PRAGMA foreign_keys = ON``.
+        """
+        cutoff = datetime.now(UTC) - older_than
+        rows = self._store.conn.execute(
+            "SELECT id, started_at FROM operations"
+            " WHERE status = 'failed'"
+            " AND (:profile IS NULL OR profile_name = :profile)",
+            {"profile": profile},
+        ).fetchall()
+        stale_ids = [
+            str(r["id"])
+            for r in rows
+            if _coerce_utc(datetime.fromisoformat(str(r["started_at"]))) < cutoff
+        ]
+        if dry_run or not stale_ids:
+            return len(stale_ids)
+        # SQLite variable limit is usually 999; 500 is safe.
+        chunk_size = 500
+        with self._store.transaction(immediate=True):
+            for i in range(0, len(stale_ids), chunk_size):
+                chunk = stale_ids[i : i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                self._store.conn.execute(
+                    f"DELETE FROM operation_assets WHERE operation_id IN ({placeholders})",
+                    chunk,
+                )
+                self._store.conn.execute(
+                    f"DELETE FROM operations WHERE id IN ({placeholders})",
+                    chunk,
+                )
+        return len(stale_ids)
 
     def set_operation_metadata(
         self,

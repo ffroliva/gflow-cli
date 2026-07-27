@@ -82,6 +82,7 @@ __all__ = [
     "apply_tool_option",
     "run_with_handlers",
     "safe_path_text",
+    "slugify_project_name",
     "tool_option",
 ]
 
@@ -102,6 +103,29 @@ def _validate_project_id(
         msg = "project id must be 1-128 chars of letters, digits, or hyphens."
         raise click.BadParameter(msg, param=param)
     return value
+
+
+def slugify_project_name(prompt: str | None, prefix: str = "gflow") -> str:
+    """Derive a smart, URL-safe project title slug from prompt text.
+
+    Strips special characters, lowercases, replaces spaces/hyphens with single dashes,
+    caps length at 40 characters (removing trailing dashes), and defaults to
+    ``f"{prefix}-project"`` if prompt is empty, whitespace, or contains no
+    alphanumeric characters.
+    """
+    if not prompt or not prompt.strip():
+        return f"{prefix}-project"
+
+    text = prompt.lower()
+    # Strip special characters, keeping letters, digits, spaces, and hyphens.
+    text = re.sub(r"[^a-z0-9\s-]", "", text)
+    # Replace whitespace and repeated hyphens with a single dash.
+    slug = re.sub(r"[\s-]+", "-", text).strip("-")
+    if not slug:
+        return f"{prefix}-project"
+
+    slug = slug[:40].rstrip("-")
+    return slug or f"{prefix}-project"
 
 
 _TOOL_OPTION_HELP = (

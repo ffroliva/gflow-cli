@@ -35,6 +35,7 @@ from gflow_cli._cli_helpers import (
     apply_tool_option,
     run_with_handlers,
     safe_path_text,
+    slugify_project_name,
     tool_option,
 )
 from gflow_cli.api.client import FlowApiClient
@@ -165,6 +166,13 @@ def _project_and_entity_options(*, single_prompt: bool) -> Callable[[_CmdFn], _C
                 "Flow CHARACTER entity id to reference for consistency (repeatable). "
                 "The entity must live in the --project you target." + note
             ),
+        )(func)
+        func = click.option(
+            "--project-name",
+            "--project-title",
+            "project_name",
+            default=None,
+            help="Human-readable project title to use when creating a fresh Flow project.",
         )(func)
         return click.option(
             "--project",
@@ -722,6 +730,7 @@ def t2i(  # NOSONAR
     tool_specs: tuple[str, ...],
     transport: str | None,
     project_id: str | None,
+    project_name: str | None,
     reference_entities: tuple[str, ...],
     reference_entity_names: tuple[str, ...],
     as_json: bool,
@@ -795,6 +804,7 @@ def t2i(  # NOSONAR
                 output_root=settings.output_dir,
                 transport=transport,
                 project_id=project_id,
+                project_name=project_name,
                 as_json=as_json,
                 tool_specs=tool_specs,
             ),
@@ -1053,6 +1063,7 @@ async def _run_t2i(
     output_root: Path,
     transport: str | None = None,
     project_id: str | None = None,
+    project_name: str | None = None,
     as_json: bool = False,
     tool_specs: tuple[str, ...] = (),
 ) -> None:
@@ -1065,10 +1076,9 @@ async def _run_t2i(
             transport=transport,
             out_dir=out if out is not None else output_root,
         ) as client:
-            # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
-            # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
+            effective_title = project_name or slugify_project_name(req.prompt, prefix="gflow-t2i")
             project, project_created = await _resolve_project(
-                client, project_id=project_id, title=_T2I_PROJECT_TITLE, as_json=as_json
+                client, project_id=project_id, title=effective_title, as_json=as_json
             )
 
             # Resolve @-mentions and expand --tool specs (shared helper).
@@ -1438,6 +1448,7 @@ def i2i(  # NOSONAR
     tool_specs: tuple[str, ...],
     transport: str | None,
     project_id: str | None,
+    project_name: str | None,
     reference_entities: tuple[str, ...],
     reference_entity_names: tuple[str, ...],
     as_json: bool,
@@ -1463,10 +1474,8 @@ def i2i(  # NOSONAR
     # Image refs AND character entities share one per-model reference budget.
     n_refs = len(classified_refs) + len(reference_entities)
     if n_refs > cap:
-        msg = f"{model} allows at most {cap} reference(s); got {n_refs}."
-        raise click.UsageError(
-            msg,
-        )
+        msg = f"{model_enum.value} accepts at most {cap} reference item(s); got {n_refs}"
+        raise click.UsageError(msg)
 
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
@@ -1496,6 +1505,7 @@ def i2i(  # NOSONAR
             output_root=settings.output_dir,
             transport=transport,
             project_id=project_id,
+            project_name=project_name,
             as_json=as_json,
             tool_specs=tool_specs,
         ),
@@ -1515,6 +1525,7 @@ async def _run_i2i(
     output_root: Path,
     transport: str | None = None,
     project_id: str | None = None,
+    project_name: str | None = None,
     as_json: bool = False,
     tool_specs: tuple[str, ...] = (),
 ) -> None:
@@ -1528,10 +1539,11 @@ async def _run_i2i(
             transport=transport,
             out_dir=out if out is not None else output_root,
         ) as client:
-            # Title is a `gflow-cli ...` prefix per project convention (post-rename a02684f).
-            # cli_video.py's _run_t2v / _run_i2v don't currently set a title — tracked separately.
+            effective_title = project_name or slugify_project_name(
+                params.prompt, prefix="gflow-i2i"
+            )
             project, project_created = await _resolve_project(
-                client, project_id=project_id, title=_I2I_PROJECT_TITLE, as_json=as_json
+                client, project_id=project_id, title=effective_title, as_json=as_json
             )
 
             # Local-file refs are attached through the editor's media dialog by the

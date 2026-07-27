@@ -85,13 +85,14 @@ python -m pip install --pre gflow-cli
    see the root-doc allowlist.)
 6. Update the version in:
    - `pyproject.toml`
+   - `.codex-plugin/plugin.json`
    - `src/gflow_cli/__init__.py`
    - any tests that assert the package version
 7. Move user-visible changes from `CHANGELOG.md` `[Unreleased]` into a dated
    release section.
 8. Commit the release prep:
    ```bash
-   git add pyproject.toml src/gflow_cli/__init__.py CHANGELOG.md tests docs
+   git add pyproject.toml .codex-plugin/plugin.json src/gflow_cli/__init__.py CHANGELOG.md tests docs
    git commit -m "chore(release): vX.Y.Z"
    ```
 9. Tag and push. **Must be a signed annotated tag** (`-s`) — `.github/workflows/release.yml` rejects unsigned or lightweight tags. Requires a GPG or SSH signing key registered with your GitHub account.

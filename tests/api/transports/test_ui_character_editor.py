@@ -231,7 +231,10 @@ class TestGenerateCharacterImages:
         t._select_character_model = _rec("select_model")  # type: ignore[attr-defined]
         t._send_prompt = _rec("send_prompt")  # type: ignore[attr-defined]
         t._submit_body_prompt = _rec("submit_body_prompt")  # type: ignore[attr-defined]
-        t._click_character_slot_add = _rec("slot_add")  # type: ignore[attr-defined]
+        t._click_character_slot_add = _rec(  # type: ignore[attr-defined]
+            "slot_add", return_value=True
+        )
+        t._count_character_prompt_boxes = _rec("count_boxes", return_value=1)  # type: ignore[attr-defined]
 
         # _attach_batch_response_listener is sync — seed it with the fixture response.
         captured_store: list[dict[str, Any]] = []
@@ -282,6 +285,9 @@ class TestGenerateCharacterImages:
         )
 
         assert "slot_add" not in order, f"slot_add must not fire for index 0; order={order}"
+        assert "count_boxes" not in order, (
+            f"the body-box mount gate must not run for the face slot; order={order}"
+        )
         assert "send_prompt" in order, f"face slot must use _send_prompt; order={order}"
         assert "submit_body_prompt" not in order, (
             f"face slot must NOT use the body template path; order={order}"
@@ -320,6 +326,16 @@ class TestGenerateCharacterImages:
         slot_idx = order.index("slot_add")
         body_idx = order.index("submit_body_prompt")
         assert slot_idx < body_idx, f"slot_add must precede body submit; order={order}"
+        assert "count_boxes" in order and order.index("count_boxes") < slot_idx, (
+            f"the prompt-box count snapshot (the body-box mount gate's baseline) "
+            f"must be taken BEFORE slot-add; order={order}"
+        )
+        body_kwargs = t._submit_body_prompt.call_args.kwargs  # type: ignore[attr-defined]
+        assert body_kwargs.get("boxes_before") == 1, (
+            f"the pre-slot-add box count must reach _submit_body_prompt as "
+            f"boxes_before; got kwargs={body_kwargs}"
+        )
+        assert body_kwargs.get("shared_body_box") is True
         assert len(images) >= 1
 
     @pytest.mark.asyncio
@@ -687,7 +703,7 @@ def _make_slot_add_page(candidates: list[_FakeCandidate]) -> MagicMock:
             return slot_loc
         other = MagicMock()
         other.first = other
-        other.wait_for = AsyncMock()
+        other.wait_for = AsyncMock(side_effect=Exception("not visible"))
         other.click = AsyncMock()
         return other
 
@@ -697,6 +713,119 @@ def _make_slot_add_page(candidates: list[_FakeCandidate]) -> MagicMock:
 
 class TestClickCharacterSlotAddSelector:
     """Proves the icon-only ``[role=button]`` is chosen, not ``.nth(1)``."""
+
+    @pytest.mark.asyncio
+    async def test_activates_current_body_mode_and_waits_for_face_reference(self) -> None:
+        """Live 2026-07-26: Create Body reuses one Slate box and mounts the
+        generated face reference; both signals are language-independent icons."""
+        body_mode = _FakeCandidate(inner_text="accessibility_new Create Body")
+        face_reference = _FakeCandidate(inner_text="cancel")
+        legacy = _FakeCandidate(inner_text="add_2")
+        page = MagicMock()
+        page.url = "https://labs.google/fx/en/tools/flow/project/p1/character/e1"
+        page.wait_for_timeout = AsyncMock()
+        page.screenshot = AsyncMock(return_value=b"")
+
+        references: list[_FakeCandidate] = []
+
+        async def _activate_body_mode() -> None:
+            body_mode.clicked = True
+            references.append(face_reference)
+
+        body_mode.click = AsyncMock(side_effect=_activate_body_mode)
+        body_loc = _FakeSlotLocator([body_mode])
+        reference_loc = _FakeSlotLocator(references)
+        legacy_loc = _FakeSlotLocator([legacy])
+
+        def _locator(sel: str) -> Any:
+            if sel == UiAutomationTransport._CHARACTER_BODY_MODE_SELECTOR:
+                return body_loc
+            if sel == UiAutomationTransport._CHARACTER_BODY_REFERENCE_SELECTOR:
+                return reference_loc
+            if sel == UiAutomationTransport._CHARACTER_SLOT_ADD_SELECTOR:
+                return legacy_loc
+            raise AssertionError(f"unexpected selector: {sel}")
+
+        page.locator = MagicMock(side_effect=_locator)
+        t = _make_transport(page=page)
+
+        shared_body_box = await t._click_character_slot_add(page)  # type: ignore[attr-defined]
+
+        assert shared_body_box is True
+        assert body_mode.clicked
+        assert references == [face_reference]
+        assert not legacy.clicked
+
+    @pytest.mark.asyncio
+    async def test_ignores_unscoped_accessibility_button(self) -> None:
+        """The project-level Characters control shares ``accessibility_new``;
+        body activation must use the button beside the portrait image."""
+        scoped_selector = (
+            "button:has(img) + button:has(i.google-symbols:text-is('accessibility_new'))"
+        )
+        unscoped_selector = "button:has(i.google-symbols:text-is('accessibility_new'))"
+        body_mode = _FakeCandidate(inner_text="accessibility_new Create Body")
+        navigation = _FakeCandidate(inner_text="accessibility_new Characters")
+        face_reference = _FakeCandidate(inner_text="cancel")
+        references: list[_FakeCandidate] = []
+
+        async def _activate_body_mode() -> None:
+            body_mode.clicked = True
+            references.append(face_reference)
+
+        body_mode.click = AsyncMock(side_effect=_activate_body_mode)
+        page = MagicMock()
+        page.url = "https://labs.google/fx/en/tools/flow/project/p1/character/e1"
+        page.wait_for_timeout = AsyncMock()
+        page.screenshot = AsyncMock(return_value=b"")
+
+        def _locator(sel: str) -> Any:
+            if sel == scoped_selector:
+                return _FakeSlotLocator([body_mode])
+            if sel == unscoped_selector:
+                return _FakeSlotLocator([navigation])
+            if sel == UiAutomationTransport._CHARACTER_BODY_REFERENCE_SELECTOR:
+                return _FakeSlotLocator(references)
+            if sel == UiAutomationTransport._CHARACTER_SLOT_ADD_SELECTOR:
+                return _FakeSlotLocator([])
+            raise AssertionError(f"unexpected selector: {sel}")
+
+        page.locator = MagicMock(side_effect=_locator)
+        t = _make_transport(page=page)
+
+        assert await t._click_character_slot_add(page) is True  # type: ignore[attr-defined]
+        assert body_mode.clicked
+        assert not navigation.clicked
+
+    @pytest.mark.asyncio
+    async def test_current_mode_settle_failure_does_not_fall_back_to_legacy(self) -> None:
+        """Once Create Body is clicked, a stale reference chip must fail
+        closed instead of mixing cohorts through the legacy add_2 path."""
+        body_mode = _FakeCandidate(inner_text="accessibility_new Create Body")
+        stale_reference = _FakeCandidate(inner_text="cancel")
+        legacy = _FakeCandidate(inner_text="add_2")
+        page = MagicMock()
+        page.url = "https://labs.google/fx/en/tools/flow/project/p1/character/e1"
+        page.wait_for_timeout = AsyncMock()
+        page.screenshot = AsyncMock(return_value=b"")
+
+        def _locator(sel: str) -> Any:
+            if sel == UiAutomationTransport._CHARACTER_BODY_MODE_SELECTOR:
+                return _FakeSlotLocator([body_mode])
+            if sel == UiAutomationTransport._CHARACTER_BODY_REFERENCE_SELECTOR:
+                return _FakeSlotLocator([stale_reference])
+            if sel == UiAutomationTransport._CHARACTER_SLOT_ADD_SELECTOR:
+                return _FakeSlotLocator([legacy])
+            raise AssertionError(f"unexpected selector: {sel}")
+
+        page.locator = MagicMock(side_effect=_locator)
+        t = _make_transport(page=page)
+
+        with pytest.raises(RuntimeError, match="reference did not mount"):
+            await t._click_character_slot_add(page)  # type: ignore[attr-defined]
+
+        assert body_mode.clicked
+        assert not legacy.clicked
 
     @pytest.mark.asyncio
     async def test_clicks_icon_only_candidate_not_decoy(self) -> None:
@@ -747,92 +876,165 @@ class TestClickCharacterSlotAddSelector:
 # ---------------------------------------------------------------------------
 
 
-class _FakePromptBox:
-    """A fake Slate prompt box pre-filled with some (Flow-template) text.
+class _FakeSlateBox:
+    """One Slate prompt box: focusable via click, holding mutable text.
 
-    The pre-filled ``inner_text`` exists ONLY to prove the new behavior
-    REPLACES the box wholesale rather than reading/parsing it — the production
-    code no longer calls ``inner_text``. Records nothing itself; the page-level
-    ``inserted`` list captures the SUBMITTED text.
+    ``click`` records focus on the page. Locator-level ``press`` and
+    ``press_sequentially`` re-focus this exact box before editing, while the
+    page-level keyboard fakes follow the ambient focus. This distinction models
+    the live focus-bounce race. ``inner_text`` reads are recorded in
+    ``page.events`` so tests can assert the pre-fill is never read before the
+    replacement.
     """
 
-    def __init__(self, *, inner_text: str) -> None:
-        self._inner_text = inner_text
-        self.first = self
+    def __init__(self, page: MagicMock, *, text: str, name: str) -> None:
+        self._page = page
+        self.text = text
+        self.name = name
         self.wait_for = AsyncMock()
-        self.click = AsyncMock()
+        self.click = AsyncMock(side_effect=lambda: setattr(page, "focused_box", self))
 
     async def inner_text(self) -> str:
-        return self._inner_text
+        self._page.events.append(("read", self.name))
+        return self.text
+
+    async def evaluate(self, _expression: str) -> bool:
+        self._page.events.append(("focus-check", self.name))
+        return self._page.focused_box is self
+
+    async def press(self, key: str) -> None:
+        self._page.focused_box = self
+        self._page.events.append(("press", self.name, key))
+        if key == "Delete":
+            self.text = ""
+
+    async def press_sequentially(self, text: str) -> None:
+        self._page.focused_box = self
+        self._page.inserted.append(text)
+        self._page.events.append(("insert", text))
+        self.text += text
 
 
-def _make_body_prompt_page(*, prefilled: str) -> tuple[MagicMock, _FakePromptBox, list[str]]:
-    """Fake page whose prompt-box selector resolves to a pre-filled box.
+class _FakeSlateBoxList:
+    """The locator for ``PROMPT_INPUT_SELECTORS[0]``: N mounted Slate boxes."""
 
-    Returns ``(page, box, inserted)`` where ``inserted`` collects every
-    ``keyboard.insert_text`` argument (the SUBMITTED text), and the submit
-    button selectors all match so ``_click_submit`` clicks (no Enter fallback).
+    def __init__(self, boxes: list[_FakeSlateBox]) -> None:
+        self.boxes = boxes
+
+    async def count(self) -> int:
+        return len(self.boxes)
+
+    def nth(self, index: int) -> _FakeSlateBox:
+        return self.boxes[index]
+
+    @property
+    def first(self) -> _FakeSlateBox:
+        return self.boxes[0]
+
+
+_PORTRAIT_PREFILL = "portrait of a heroine"
+
+
+def _make_body_prompt_page(
+    *,
+    body_prefill: str = "localized Flow triptych template",
+    box_count: int = 2,
+) -> tuple[MagicMock, list[_FakeSlateBox], list[str], list[str]]:
+    """Fake two-composer character-editor page (Portrait / Create Body).
+
+    Returns ``(page, boxes, inserted, submit_clicks)``: ``boxes[0]`` is the
+    PORTRAIT prompt box (pre-filled with the portrait prompt), ``boxes[1]``
+    (when ``box_count >= 2``) the body composer's own box pre-filled with
+    Flow's localized template.  ``inserted`` collects every
+    ``keyboard.insert_text`` argument; typing/clearing are routed to the
+    currently-FOCUSED box; ``submit_clicks`` records submit-button clicks.
     """
     from gflow_cli.api.transports.ui_automation import (
         PROMPT_INPUT_SELECTORS,
         SUBMIT_BUTTON_SELECTORS,
     )
 
-    box = _FakePromptBox(inner_text=prefilled)
-    inserted: list[str] = []
-
     page = MagicMock()
     page.url = "https://labs.google/fx/pt/tools/flow/project/p1/character/e1"
+    page.events = []
+    page.focused_box = None
     page.wait_for_timeout = AsyncMock()
     page.screenshot = AsyncMock(return_value=b"")
     page.keyboard = MagicMock()
-    page.keyboard.press = AsyncMock()
-    page.keyboard.insert_text = AsyncMock(side_effect=lambda txt: inserted.append(txt))
+
+    inserted: list[str] = []
+    page.inserted = inserted
+
+    def _press(key: str) -> None:
+        # Ctrl+A selects all inside the focused Slate box; Delete clears it.
+        if key == "Delete" and page.focused_box is not None:
+            page.focused_box.text = ""
+
+    def _insert(txt: str) -> None:
+        inserted.append(txt)
+        page.events.append(("insert", txt))
+        if page.focused_box is not None:
+            page.focused_box.text += txt
+
+    page.keyboard.press = AsyncMock(side_effect=_press)
+    page.keyboard.insert_text = AsyncMock(side_effect=_insert)
+
+    portrait = _FakeSlateBox(page, text=_PORTRAIT_PREFILL, name="portrait")
+    body = _FakeSlateBox(page, text=body_prefill, name="body")
+    boxes = [portrait, body][:box_count]
+    box_list = _FakeSlateBoxList(boxes)
 
     prompt_sel = PROMPT_INPUT_SELECTORS[0]
     submit_sels = set(SUBMIT_BUTTON_SELECTORS)
+    submit_clicks: list[str] = []
 
     def _locator(sel: str) -> Any:
         if sel == prompt_sel:
-            return box
+            return box_list
         loc = MagicMock()
         loc.first = loc
         if sel in submit_sels:
             loc.wait_for = AsyncMock()
+            loc.click = AsyncMock(side_effect=lambda: submit_clicks.append(sel))
         else:
             loc.wait_for = AsyncMock(side_effect=Exception("not visible"))
-        loc.click = AsyncMock()
+            loc.click = AsyncMock()
         return loc
 
     page.locator = MagicMock(side_effect=_locator)
-    return page, box, inserted
+    return page, boxes, inserted, submit_clicks
 
 
 class TestSubmitBodyPrompt:
-    """Self-contained triptych behavior — gflow's OWN prompt REPLACES Flow's box.
+    """Self-contained triptych behavior — typed into the body slot's OWN box.
 
     The body slot must submit ``_BODY_TRIPTYCH_PREAMBLE + body_description``
     regardless of whatever Flow pre-filled the box with — it must NOT depend on
-    reading/parsing the pre-filled text (locale-safe, timing-safe).
+    reading/parsing the pre-filled text (locale-safe, timing-safe) — and it must
+    NEVER touch the PORTRAIT prompt box (live corruption 2026-07-25, 0.43.0:
+    the triptych prompt replaced the portrait prompt in the two-button
+    Portrait / Create Body editor).
     """
 
     @pytest.mark.asyncio
     async def test_submits_self_contained_prompt_replacing_prefill(self) -> None:
         """The submitted text equals PREAMBLE + description, REPLACING whatever
-        Flow pre-filled the box with (here a localized Flow template string)."""
+        Flow pre-filled the body box with (here a localized template string)."""
         from gflow_cli.api.transports.ui_automation import _BODY_TRIPTYCH_PREAMBLE
 
-        # The box is pre-filled with a (Portuguese) Flow template carrying a
-        # bracketed placeholder — none of which must leak into the submission.
+        # The body box is pre-filled with a (Portuguese) Flow template carrying
+        # a bracketed placeholder — none of which must leak into the submission.
         flow_prefill = (
             "Tríptico de corpo inteiro em três ângulos diferentes: de frente, "
             "visualização lateral (3/4) e de costas. fundo branco sólido. "
             "[DESCREVA O CORPO E A ROUPA]"
         )
-        page, _box, inserted = _make_body_prompt_page(prefilled=flow_prefill)
+        page, _boxes, inserted, _clicks = _make_body_prompt_page(body_prefill=flow_prefill)
         t = _make_transport(page=page)
 
-        await t._submit_body_prompt(page, "red raincoat, rubber boots")  # type: ignore[attr-defined]
+        await t._submit_body_prompt(  # type: ignore[attr-defined]
+            page, "red raincoat, rubber boots", boxes_before=1
+        )
 
         expected = _BODY_TRIPTYCH_PREAMBLE + "red raincoat, rubber boots"
         assert inserted == [expected], (
@@ -852,10 +1054,12 @@ class TestSubmitBodyPrompt:
         # template across two runs — the triptych instruction must appear both
         # times because it comes from gflow, not from the box.
         for prefill in ("", "Some unrelated localized template text."):
-            page, _box, inserted = _make_body_prompt_page(prefilled=prefill)
+            page, _boxes, inserted, _clicks = _make_body_prompt_page(body_prefill=prefill)
             t = _make_transport(page=page)
 
-            await t._submit_body_prompt(page, "warrior outfit")  # type: ignore[attr-defined]
+            await t._submit_body_prompt(  # type: ignore[attr-defined]
+                page, "warrior outfit", boxes_before=1
+            )
 
             submitted = inserted[0]
             assert "front, side (3/4), and back" in submitted, (
@@ -864,25 +1068,180 @@ class TestSubmitBodyPrompt:
             assert submitted.endswith("warrior outfit")
 
     @pytest.mark.asyncio
-    async def test_does_not_read_prefilled_text(self) -> None:
-        """The body path must NOT depend on reading/parsing the pre-filled box —
-        ``inner_text`` is never awaited by the production code."""
-        page, box, _inserted = _make_body_prompt_page(prefilled="anything")
-        # Replace inner_text with a spy that records if it was called.
-        called: list[bool] = []
+    async def test_types_into_body_box_not_portrait(self) -> None:
+        """Regression (live 2026-07-25, 0.43.0): the triptych prompt must land
+        in the body slot's OWN box; the portrait prompt box stays untouched."""
+        from gflow_cli.api.transports.ui_automation import _BODY_TRIPTYCH_PREAMBLE
 
-        async def _spy() -> str:
-            called.append(True)
-            return "anything"
-
-        box.inner_text = _spy  # type: ignore[method-assign]
+        page, boxes, _inserted, submit_clicks = _make_body_prompt_page()
+        portrait, body = boxes
         t = _make_transport(page=page)
 
-        await t._submit_body_prompt(page, "body desc")  # type: ignore[attr-defined]
+        await t._submit_body_prompt(page, "red raincoat", boxes_before=1)  # type: ignore[attr-defined]
 
-        assert called == [], (
-            "production code must NOT read the pre-filled box text "
-            "(self-contained prompt is independent of the pre-fill)"
+        assert portrait.text == _PORTRAIT_PREFILL, (
+            f"portrait prompt box must NOT be overwritten; got {portrait.text!r}"
+        )
+        assert body.text == _BODY_TRIPTYCH_PREAMBLE + "red raincoat"
+        assert len(submit_clicks) == 1, "the body prompt must be submitted exactly once"
+
+    @pytest.mark.asyncio
+    async def test_types_into_shared_box_after_body_mode_settles(self) -> None:
+        """Live 2026-07-26: Create Body reuses the one mounted Slate editor;
+        the attached-face settle signal makes that shared box safe to use."""
+        from gflow_cli.api.transports.ui_automation import _BODY_TRIPTYCH_PREAMBLE
+
+        page, boxes, inserted, submit_clicks = _make_body_prompt_page(box_count=1)
+        shared_box = boxes[0]
+        shared_box.text = "Describe body and outfit...."
+        shared_box.name = "shared-body"
+        t = _make_transport(page=page)
+
+        await t._submit_body_prompt(  # type: ignore[attr-defined]
+            page,
+            "red raincoat",
+            boxes_before=1,
+            shared_body_box=True,
+        )
+
+        assert inserted == [_BODY_TRIPTYCH_PREAMBLE + "red raincoat"]
+        assert shared_box.text == _BODY_TRIPTYCH_PREAMBLE + "red raincoat"
+        assert len(submit_clicks) == 1
+
+    @pytest.mark.asyncio
+    async def test_raises_when_body_box_never_mounts(self, monkeypatch: Any) -> None:
+        """If no NEW box mounts after slot-add, the body step must ABORT before
+        typing — typing would land in the portrait box (the live corruption)."""
+        from gflow_cli.api.transports import ui_automation as _uia
+
+        monkeypatch.setattr(_uia, "_BODY_SLOT_MOUNT_TIMEOUT_S", 0.05)
+        page, _boxes, inserted, submit_clicks = _make_body_prompt_page(box_count=1)
+        t = _make_transport(page=page)
+
+        with pytest.raises(RuntimeError, match="portrait"):
+            await t._submit_body_prompt(  # type: ignore[attr-defined]
+                page, "warrior outfit", boxes_before=1
+            )
+
+        assert inserted == [], "nothing may be typed when the body box is missing"
+        assert submit_clicks == [], "nothing may be submitted when the body box is missing"
+
+    @pytest.mark.asyncio
+    async def test_waits_for_body_box_to_mount(self) -> None:
+        """The mount gate POLLS: a body box appearing a beat after slot-add
+        (mode switch settling) is bound once mounted — no fixed-sleep race."""
+        page, boxes, _inserted, submit_clicks = _make_body_prompt_page(box_count=1)
+        body = _FakeSlateBox(page, text="localized template", name="body")
+
+        ticks: list[int] = []
+
+        def _tick(_ms: int) -> None:
+            ticks.append(_ms)
+            if len(ticks) == 2 and len(boxes) == 1:
+                boxes.append(body)  # the body composer mounts on the 2nd poll
+
+        page.wait_for_timeout = AsyncMock(side_effect=_tick)
+        t = _make_transport(page=page)
+
+        await t._submit_body_prompt(page, "warrior outfit", boxes_before=1)  # type: ignore[attr-defined]
+
+        assert "warrior outfit" in body.text
+        assert len(submit_clicks) == 1
+
+    @pytest.mark.asyncio
+    async def test_aborts_before_edit_when_body_box_does_not_retain_focus(self) -> None:
+        """If Flow bounces focus back to the portrait composer, abort before
+        any destructive input because Flow autosaves prompt edits via PATCH."""
+        page, boxes, inserted, submit_clicks = _make_body_prompt_page()
+        portrait, body = boxes
+        # Simulate the live race: clicking the body box leaves focus on PORTRAIT.
+        body.click = AsyncMock(side_effect=lambda: setattr(page, "focused_box", portrait))
+        t = _make_transport(page=page)
+
+        with pytest.raises(RuntimeError, match="wrong prompt box"):
+            await t._submit_body_prompt(  # type: ignore[attr-defined]
+                page, "red raincoat", boxes_before=1
+            )
+
+        assert portrait.text == _PORTRAIT_PREFILL, "wrong focus must not mutate the portrait"
+        assert body.text == "localized Flow triptych template"
+        assert inserted == [], "must abort before typing into any prompt box"
+        assert submit_clicks == [], "must abort BEFORE submit on a wrong-box landing"
+
+    @pytest.mark.asyncio
+    async def test_aborts_before_edit_when_focus_cannot_be_verified(self) -> None:
+        """A detached/unstable body box must fail closed before autosaved edits."""
+        page, boxes, inserted, submit_clicks = _make_body_prompt_page()
+        portrait, body = boxes
+        body.evaluate = AsyncMock(side_effect=RuntimeError("detached during focus check"))
+        t = _make_transport(page=page)
+
+        with pytest.raises(RuntimeError, match="Could not verify body prompt focus"):
+            await t._submit_body_prompt(  # type: ignore[attr-defined]
+                page, "red raincoat", boxes_before=1
+            )
+
+        assert portrait.text == _PORTRAIT_PREFILL
+        assert inserted == []
+        assert submit_clicks == []
+
+    @pytest.mark.asyncio
+    async def test_locator_scoped_input_survives_focus_bounce_after_precheck(self) -> None:
+        """A focus bounce cannot redirect locator-scoped edits to the portrait."""
+        from gflow_cli.api.transports.ui_automation import _BODY_TRIPTYCH_PREAMBLE
+
+        page, boxes, inserted, submit_clicks = _make_body_prompt_page()
+        portrait, body = boxes
+
+        def _verify_then_bounce(_expression: str) -> bool:
+            page.focused_box = portrait
+            return True
+
+        body.evaluate = AsyncMock(side_effect=_verify_then_bounce)
+        t = _make_transport(page=page)
+
+        await t._submit_body_prompt(  # type: ignore[attr-defined]
+            page, "red raincoat", boxes_before=1
+        )
+
+        expected = _BODY_TRIPTYCH_PREAMBLE + "red raincoat"
+        assert portrait.text == _PORTRAIT_PREFILL
+        assert body.text == expected
+        assert inserted == [expected]
+        assert len(submit_clicks) == 1
+        page.keyboard.press.assert_not_awaited()
+        page.keyboard.insert_text.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_readback_failure_aborts_before_submit(self) -> None:
+        """An unstable/detached Slate box must fail closed after typing."""
+        page, boxes, _inserted, submit_clicks = _make_body_prompt_page()
+        _portrait, body = boxes
+        body.inner_text = AsyncMock(side_effect=RuntimeError("detached during readback"))
+        t = _make_transport(page=page)
+
+        with pytest.raises(RuntimeError, match="Could not verify body prompt isolation"):
+            await t._submit_body_prompt(  # type: ignore[attr-defined]
+                page, "red raincoat", boxes_before=1
+            )
+
+        assert submit_clicks == []
+
+    @pytest.mark.asyncio
+    async def test_prefill_read_only_after_replacement(self) -> None:
+        """The body path must not DEPEND on the pre-filled template: no box is
+        read before the replacement text is inserted (the post-type readback
+        guard is the only reader)."""
+        page, _boxes, _inserted, _clicks = _make_body_prompt_page()
+        t = _make_transport(page=page)
+
+        await t._submit_body_prompt(page, "body desc", boxes_before=1)  # type: ignore[attr-defined]
+
+        events = page.events
+        insert_at = next(i for i, ev in enumerate(events) if ev[0] == "insert")
+        early_reads = [ev for ev in events[:insert_at] if ev[0] == "read"]
+        assert early_reads == [], (
+            f"pre-fill must never be read before the replacement; events={events}"
         )
 
     @pytest.mark.asyncio
@@ -898,10 +1257,10 @@ class TestSubmitBodyPrompt:
             lambda event, **kw: events.append((event, kw)),
         )
 
-        page, _box, _inserted = _make_body_prompt_page(prefilled="template")
+        page, _boxes, _inserted, _clicks = _make_body_prompt_page(body_prefill="template")
         t = _make_transport(page=page)
 
-        await t._submit_body_prompt(page, "red raincoat")  # type: ignore[attr-defined]
+        await t._submit_body_prompt(page, "red raincoat", boxes_before=1)  # type: ignore[attr-defined]
 
         templated = [kw for ev, kw in events if ev == "ui_automation.body_prompt_templated"]
         assert len(templated) == 1, f"templated event must be logged once; got {events}"
