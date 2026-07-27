@@ -41,6 +41,7 @@ ARCHIVE_WORKFLOW_BASE = f"{FLOW_API_BASE}/flowWorkflows"  # + /{workflow_id}
 
 # Project lifecycle (tRPC, different host)
 CREATE_PROJECT = f"{LABS_TRPC_BASE}/project.createProject"
+RENAME_PROJECT = f"{LABS_TRPC_BASE}/project.renameProject"
 
 
 # Media download — public-style URL that 302s to a signed Cloud Storage URL.

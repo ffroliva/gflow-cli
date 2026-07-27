@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0] — 2026-07-26
+
+### Added
+
+- **Dual-Side Project Naming & Management (`gflow project`)** (#381). Added
+  `gflow project` subcommand group (`list`, `show`, `rename`, `create`),
+  `--project-name` / `--project-title` options across `gflow image` and `gflow video`
+  generation commands, prompt slugging for scratch projects, and dual-side title sync
+  updating Google Flow's tRPC server/UI and local SQLite catalog in lockstep.
+- **Namespaced Codex project skills.** The canonical workflows under `skills/`
+  now ship as a repo-local, skills-only Codex plugin. Register and install it
+  with `codex plugin marketplace add .` followed by
+  `codex plugin add gflow@gflow-cli`, then invoke workflows such as
+  `$gflow:status`, `$gflow:check`, and `$gflow:pr-council-review` in a new
+  Codex CLI or desktop-app session. Claude Code's `/gflow:*` commands and the
+  agent-agnostic skill files remain unchanged.
+- **`gflow data errors` — bounded retention + export for failed-operation
+  history** (#345). `gflow data errors export [--older-than AGE] [-o FILE]`
+  dumps failed operations as JSONL (unbounded, newest-first) for offline
+  archival — also closing the export path deferred from #341. `gflow data
+  errors prune --older-than AGE [--dry-run]` deletes failures older than AGE
+  (`90d` / `24h` / `30m`); `--older-than` is **required** and there is no
+  automatic/background pruning — deletion is always an explicit operator
+  action. Both honor `--profile` and the exit-16 `DataStoreError` convention.
+
+### Fixed
+
+- **`gflow character create` safely activates the current Create-Body
+  composer.** Flow can autosave the body triptych over the stored portrait
+  prompt when the mode switch has not settled (observed live 2026-07-25 on
+  0.43.0). Current Flow reuses one Slate editor and exposes Create Body through
+  the locale-independent `accessibility_new` icon beside the portrait image;
+  gflow now clicks that scoped mode control, requires a new generated-face
+  reference chip to mount, and verifies the shared editor owns focus **before
+  any clearing or typing**. Readback failures abort before submit. The older
+  `add_2`/second-box cohort remains supported through its count-rise gate.
+  Post-type isolation still aborts before the credited submit. Live DOM
+  evidence and the one-box failure were captured on 2026-07-26. Face-only
+  creates are unchanged.
+
+- **Profile-lock remediation message** now names the real cause and recovery.
+  `ProfileLockedError` (exit 11) previously told operators to "wait for it to
+  finish" — implying an unbounded wait — and to hunt for a `gflow`/Chrome
+  process. In practice a blocking lock is a kernel *advisory* lock held by a
+  **live** process (often a `python.exe` a `chrome.exe` scan misses); the OS
+  releases it the instant the holder dies, so a leftover lock *file* never
+  blocks acquisition. The message now points to the recorded owner PID
+  (surfaced locally since v0.43.0) and says to just retry when nothing is
+  running. The lock itself is unchanged — auto-reclaim was considered and
+  rejected as unsafe (an unlink→new-inode race could put two browsers on one
+  profile, the exact corruption the lease prevents). Refs #370.
+
 ## [0.43.0] — 2026-07-23
 
 ### Added
@@ -2332,7 +2384,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/ffroliva/gflow-cli/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/ffroliva/gflow-cli/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/ffroliva/gflow-cli/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/ffroliva/gflow-cli/compare/v0.40.0...v0.41.0

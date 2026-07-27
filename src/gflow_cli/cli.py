@@ -21,6 +21,7 @@ from gflow_cli.cli_image import image as _image_group
 from gflow_cli.cli_instructions import instructions as _instructions_group
 from gflow_cli.cli_models import models as _models_command
 from gflow_cli.cli_movie import movie as _movie_group
+from gflow_cli.cli_project import project as _project_group
 from gflow_cli.cli_run import run as _run_command
 from gflow_cli.cli_scene import scene as _scene_group
 from gflow_cli.cli_tools import tools as _tools_group
@@ -363,6 +364,7 @@ def _resolve_or_prompt(default_for_first_run: str) -> str:
 main.add_command(_character_group)
 main.add_command(_data_group)
 main.add_command(_movie_group)
+main.add_command(_project_group)
 main.add_command(_video_group)
 main.add_command(_image_group)
 main.add_command(_instructions_group)

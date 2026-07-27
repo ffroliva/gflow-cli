@@ -109,7 +109,21 @@ and must be resolvable by ANY agent via this file. Vendor directories hold thin 
 only (`.claude/commands/gflow/*.md` are pointers into `skills/`); never put protocol
 content in a vendor directory.
 
-**Cursor / Aider / Codex / Antigravity (`agy`):** paste or include the relevant `SKILL.md` in your system context. Note: in the `agy` TUI prompt, custom slash commands (e.g. `/gflow:pr-council-review`) are blocked by the TUI's command parser. Type them as plain text without the leading slash (e.g. `gflow:pr-council-review`, `gflow:branch-review`, or `gflow:check`) to trigger the corresponding agent skill workflow.
+**Codex CLI / desktop app:** install the repo's skills-only plugin from the repository root,
+then start a new session:
+
+```powershell
+codex plugin marketplace add .
+codex plugin add gflow@gflow-cli
+```
+
+Invoke skills with Codex's `$` syntax, for example `$gflow:status`, `$gflow:check`, or
+`$gflow:pr-council-review`. Codex reserves slash commands for its own command surface; the
+Claude Code spelling `/gflow:*` is therefore intentionally not reproduced. The Codex IDE
+extension does not currently load plugins, so IDE-only users should include the relevant
+`skills/<name>/SKILL.md` directly.
+
+**Cursor / Aider / Antigravity (`agy`):** paste or include the relevant `SKILL.md` in your system context. Note: in the `agy` TUI prompt, custom slash commands (e.g. `/gflow:pr-council-review`) are blocked by the TUI's command parser. Type them as plain text without the leading slash (e.g. `gflow:pr-council-review`, `gflow:branch-review`, or `gflow:check`) to trigger the corresponding agent skill workflow.
 **Claude Code:** the `/gflow:` slash commands in `.claude/commands/gflow/` are auto-discovered when the project is open — no extra setup needed. To register a skill globally, copy the command file to `~/.claude/commands/`.
 **Custom agents:** fetch `skills/gflow-cli/SKILL.md` into your knowledge base before answering gflow questions.
 

@@ -21,6 +21,7 @@ from gflow_cli._cli_helpers import (
     _validate_project_id,
     apply_tool_option,
     run_with_handlers,
+    slugify_project_name,
     tool_option,
 )
 from gflow_cli.api.client import FlowApiClient
@@ -48,6 +49,16 @@ _project_option = click.option(
     help=("Generate in this existing Flow project id instead of creating a scratch project."),
 )
 
+_project_name_option = click.option(
+    "--project-name",
+    "--project-title",
+    "project_name",
+    default=None,
+    envvar="GFLOW_CLI_PROJECT_NAME",
+    type=str,
+    help="Human-readable project title to use when creating a fresh Flow project.",
+)
+
 
 def _warn_persistence_failed_after_success(
     *,
@@ -72,6 +83,7 @@ async def _generate_and_report(
     command: str = "video",
     as_json: bool = False,
     project_id: str | None = None,
+    project_name: str | None = None,
     tool_specs: tuple[str, ...] = (),
 ) -> None:
     """Drive FlowApiClient for a single GenerateVideoRequest and print the
@@ -93,6 +105,10 @@ async def _generate_and_report(
     started_media_ids: list[str] = []
     try:
         async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
+            if project_id is None and project_name is not None:
+                p_info = await client.create_project(title=project_name)
+                project_id = p_info.project_id
+
             # Resolve @-mentions and expand --tool specs (shared helper).
             from gflow_cli.services.mentions import resolve_and_apply
 
@@ -197,10 +213,12 @@ async def _run_t2v(
     original_prompt: str | None = None,
     tool: AppliedTool | None = None,
     project_id: str | None = None,
+    project_name: str | None = None,
     tool_specs: tuple[str, ...] = (),
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
+    effective_title = project_name or slugify_project_name(prompt, prefix="gflow-t2v")
     request = GenerateVideoRequest(
         prompt=prompt,
         mode=Mode.T2V,
@@ -219,6 +237,7 @@ async def _run_t2v(
         command="video t2v",
         as_json=as_json,
         project_id=project_id,
+        project_name=effective_title,
         tool_specs=tool_specs,
     )
 
@@ -323,6 +342,7 @@ async def _run_i2v(
         )
         raise ModelModeIncompatibilityError(detail=msg)
 
+    effective_title = params.project_name or slugify_project_name(params.prompt, prefix="gflow-i2v")
     request = GenerateVideoRequest(
         prompt=params.prompt,
         mode=Mode.I2V,
@@ -347,6 +367,7 @@ async def _run_i2v(
         command="video i2v",
         as_json=as_json,
         project_id=project_id,
+        project_name=effective_title,
     )
 
 
@@ -365,10 +386,12 @@ async def _run_r2v(
     original_prompt: str | None = None,
     tool: AppliedTool | None = None,
     project_id: str | None = None,
+    project_name: str | None = None,
     tool_specs: tuple[str, ...] = (),
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
+    effective_title = project_name or slugify_project_name(prompt, prefix="gflow-r2v")
     request = GenerateVideoRequest(
         prompt=prompt,
         mode=Mode.R2V,
@@ -388,6 +411,7 @@ async def _run_r2v(
         command="video r2v",
         as_json=as_json,
         project_id=project_id,
+        project_name=effective_title,
         tool_specs=tool_specs,
     )
 
@@ -897,6 +921,7 @@ def video() -> None:
     ),
 )
 @_project_option
+@_project_name_option
 @click.option(
     "--out-dir",
     "out_dir",
@@ -919,6 +944,7 @@ def t2v(
     profile: str | None,
     tool_specs: tuple[str, ...],
     project_id: str | None,
+    project_name: str | None,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -939,6 +965,7 @@ def t2v(
             original_prompt=None,
             tool=None,
             project_id=project_id,
+            project_name=project_name,
             tool_specs=tool_specs,
         ),
         cli_command="video t2v",
@@ -1078,20 +1105,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
 @_project_option
-@click.option(
-    "--project-name",
-    "project_display_name",
-    default=None,
-    envvar="GFLOW_CLI_PROJECT_NAME",
-    type=str,
-    help=(
-        "Display name of the --project project, used to select it in the media "
-        "picker's project menu when attaching a media-UUID frame (#287 — the "
-        "menu lists projects by NAME; unnamed projects show only creation "
-        "timestamps). Escape hatch when automatic name derivation fails. "
-        "Env: GFLOW_CLI_PROJECT_NAME."
-    ),
-)
+@_project_name_option
 @click.option(
     "--out-dir",
     "out_dir",
@@ -1118,7 +1132,7 @@ def i2v(  # NOSONAR
     profile: str | None,
     tool_specs: tuple[str, ...],
     project_id: str | None,
-    project_display_name: str | None,
+    project_name: str | None,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -1163,7 +1177,7 @@ def i2v(  # NOSONAR
         duration=int(duration) if duration is not None else None,
         original_prompt=original_prompt,
         tool=applied_tool,
-        project_name=project_display_name,
+        project_name=project_name,
         search_hints=search_hints,
     )
     run_with_handlers(
@@ -1238,6 +1252,7 @@ def i2v(  # NOSONAR
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
 @_project_option
+@_project_name_option
 @click.option(
     "--out-dir",
     "out_dir",
@@ -1261,6 +1276,7 @@ def r2v(
     profile: str | None,
     tool_specs: tuple[str, ...],
     project_id: str | None,
+    project_name: str | None,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -1300,6 +1316,7 @@ def r2v(
             original_prompt=None,
             tool=None,
             project_id=project_id,
+            project_name=project_name,
             tool_specs=tool_specs,
         ),
         cli_command="video r2v",

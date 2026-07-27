@@ -161,10 +161,12 @@ async worker (which mirrors its `generation_queue.error_json` failure into
   data-layer fault can never mask the generation error or change the exit code.
 - The character-create saga deliberately keeps its STARTED rows for resume —
   it is excluded from the failure funnel by design.
-- `failed` rows accumulate without an automatic cap in this release: `gflow
-  data prune` targets stale in-flight/completed entries, not failed-operation
-  history. Bounded retention and a dedicated export are tracked in
-  [#345](https://github.com/ffroliva/gflow-cli/issues/345).
+- `failed` rows have **no automatic cap** by design — there is no background
+  pruning. Use `gflow data errors prune --older-than <age>` for explicit
+  retention and `gflow data errors export` to archive history first (see
+  [`data errors`](#gflow-data-errors--bounded-retention--export-345) below,
+  [#345](https://github.com/ffroliva/gflow-cli/issues/345)). Note `gflow data
+  prune` is unrelated: it targets stale `local_files`, not failure history.
 
 ---
 
@@ -299,6 +301,39 @@ gflow data prune
 
 Only **local files** (where `storage_provider` is NULL) are scanned; cloud-stored
 assets are ignored to prevent accidental pruning of remote objects.
+
+### `gflow data errors` — bounded retention + export (#345)
+
+Maintain the failed-operation history (the `data list errors` funnel). Two
+subcommands, both explicit operator actions — there is **no automatic/background
+pruning**.
+
+```bash
+# Archive every failure as JSONL (unbounded; newest-first) before deleting
+gflow data errors export -o failures.jsonl
+
+# Archive only the slice you are about to prune
+gflow data errors export --older-than 90d -o old-failures.jsonl
+
+# Preview what a retention prune would delete (no changes)
+gflow data errors prune --older-than 90d --dry-run
+
+# Delete failures older than 90 days
+gflow data errors prune --older-than 90d
+```
+
+- `--older-than` takes an age like `90d` / `24h` / `30m` (`d` days, `h` hours,
+  `m` minutes; positive integers only). It is **required** on `prune` so
+  deletion is always a deliberate age choice; on `export` it is optional
+  (default: all failures).
+- `--profile NAME` scopes either command to one profile.
+- `export` writes JSONL to `-o/--output FILE`, or to stdout when omitted —
+  reusing the same serialization as `data list errors --json`.
+- Deletion errors map to **exit 16** (`DataStoreError`), consistent with the
+  rest of `gflow data`.
+
+Archive first if you need the failure history for offline WAF-cadence /
+reliability analysis — pruning is irreversible.
 
 ### `gflow data media <media_id>` — read a single asset
 
@@ -507,7 +542,7 @@ Live tests (`@pytest.mark.live`) and E2E tests (`@pytest.mark.e2e`) are opt-in a
 - **`gflow data ls` / `gflow data show <operation_id>`** — richer browsing without leaving the terminal.
 - **Cost tracking** — once enough operation metadata is reliable, surface "credits spent this month" per profile / model / aspect.
 - **Postgres / Supabase adapter** — for users running gflow on shared workers or wanting cross-machine sync. The repository surface is already designed for this swap.
-- **`gflow data export`** — dump the catalog as JSON / Parquet for downstream analytics.
+- **`gflow data export`** (full catalog → JSON / Parquet) — the failed-operation slice shipped as `gflow data errors export` (JSONL, #345); a full-catalog / Parquet dump for downstream analytics is still open.
 
 These are tracked in [`PLAN.md`](../PLAN.md) under the data-layer phase backlog.
 

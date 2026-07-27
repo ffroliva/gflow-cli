@@ -181,9 +181,20 @@ def _mock_forced_agent_ui(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _aexit(self: Any, *exc: object) -> bool:
         return False
 
+    async def _dummy_project(*args: Any, **kwargs: Any) -> Any:
+        from gflow_cli.api.dto import ProjectInfo
+
+        return ProjectInfo(project_id="test_project", title="gflow-t2v-scratch")
+
+    async def _empty_list(*args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    monkeypatch.setattr("gflow_cli.cli_video._resolve_profile", lambda p: "default")
     monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.__aenter__", _aenter)
     monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.__aexit__", _aexit)
+    monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.create_project", _dummy_project)
     monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.generate_video", _raise)
+    monkeypatch.setattr("gflow_cli.api.client.FlowApiClient.list_characters", _empty_list)
 
 
 @when('I run "gflow video t2v a futuristic city"')
@@ -197,6 +208,11 @@ def _assert_exit_code(cli_result_holder: dict[str, Any], code: int) -> None:
     """Assert that the CLI exit code matches the expected code."""
     res = cli_result_holder["result"]
     assert res is not None
+    if res.exit_code != code and res.exception:
+        import traceback
+
+        print("EXC TRACEBACK:")
+        traceback.print_exception(res.exception)
     assert res.exit_code == code
 
 

@@ -112,6 +112,16 @@ def test_parse_retry_after_missing_returns_none():
     assert parse_retry_after(_resp(429)) is None
 
 
+def test_parse_retry_after_dict_with_headers_key():
+    assert parse_retry_after({"headers": {"retry-after": "45"}}) == 45.0
+    assert parse_retry_after({"headers": {"Retry-After": "25"}}) == 25.0
+
+
+def test_parse_retry_after_direct_headers_dict():
+    assert parse_retry_after({"retry-after": "15"}) == 15.0
+    assert parse_retry_after({"Retry-After": "10"}) == 10.0
+
+
 @pytest.mark.asyncio
 async def test_event_gated_retry_does_not_block_real_time():
     """Async test that uses asyncio.Event-gated wait so it runs in <0.1s.
