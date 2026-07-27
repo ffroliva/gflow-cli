@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow image i2i --ref <UUID>` no longer fails when the asset is out of the
+  picker's reach (#393).** Flow's media picker is scoped to the active project
+  and its search does **not** index media UUIDs (confirmed live 2026-07-27:
+  both UUID search tiers returned zero tiles), so a `--ref` pointing at an asset
+  in another project — or buried deep in a virtualised grid — could not be
+  selected, and a bare `--ref <uuid>` carried no local file to fall back on. The
+  CLI now resolves each UUID ref against the local catalog and attaches its
+  recorded file, so the transport uploads those exact bytes instead of failing
+  the run. Verified live as a controlled A/B on identical input: exit 9 before,
+  exit 0 with the upload fallback after. Enrichment is best-effort (unknown
+  asset, unavailable catalog, or deleted file leaves the ref untouched) and the
+  **fail-loud contract is unchanged** — a reference that cannot be bound still
+  aborts the generation rather than silently producing an unreferenced image.
+- **A Flow web-app crash on the character-editor route is now reported as
+  such.** `gflow character create` surfaced Flow's client-side crash as
+  `RuntimeError: Character editor not ready: prompt textbox not visible`, which
+  blames a selector that was never on the page. The existing crash classifier is
+  now consulted at that gate too, yielding the typed, retryable `FlowAppError`
+  (exit 31). Observed live 2026-07-27 via the incident bundle's `ui.json`
+  (`title.category: flow_app_crash`).
+- **Character binding failures say what actually happened.** When Flow returns a
+  workflow that is not bound to the character entity, the error read "Unexpected
+  response shape from Flow", sending readers after a wire-format bug. It now
+  states that Flow filed the image as a plain project image and the character
+  has no portrait. The guard remains strict — verified live that unbound runs
+  leave the entity as "Untitled Character" with a null thumbnail.
 - **Tier-aware credit confirmations:** `gflow video chain` and `gflow movie run`
   no longer present pending work as an exact one-credit-per-link/scene charge.
   Plans, confirmation prompts, `--dry-run` output, Click help, and current docs

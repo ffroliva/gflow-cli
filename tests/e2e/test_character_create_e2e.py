@@ -112,6 +112,13 @@ def _character_env(e2e_env: dict[str, str]) -> dict[str, str]:
     """
     env = dict(e2e_env)
     env["PYTHONUTF8"] = "1"  # explicit: accented names must round-trip byte-for-byte
+    # The autouse `_isolate_settings` fixture points GFLOW_CLI_HOME at a temp
+    # dir that holds no profiles, and `e2e_env` inherits it — a child process
+    # would resolve "no session for profile <name>" and exit 2 before touching
+    # Flow. Drop it so the subprocess finds the REAL platformdirs home where
+    # `gflow auth login` planted the session. The isolated GFLOW_CLI_DB_PATH is
+    # deliberately kept: only the catalog is isolated, not the session.
+    env.pop("GFLOW_CLI_HOME", None)
     return env
 
 
@@ -440,3 +447,80 @@ def test_character_personality_utf8(e2e_env: dict[str, str]) -> None:
         assert shown_personality == personality, (
             f"accented personality corrupted on read-back: {shown_personality!r} != {personality!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Scenario #6 — `--format-prompt` clicks Flow's in-editor Format button (#383)
+# ---------------------------------------------------------------------------
+
+
+def test_character_create_format_prompt_clicks_format_button(e2e_env: dict[str, str]) -> None:
+    """Live ``character create --format-prompt`` (≈1 Imagen credit): Flow's
+    in-editor **Format** button must actually be found, enabled, and clicked.
+
+    `format_character_prompt` is best-effort by design — a missing button logs
+    a warning and submits the prompt as typed. That safety net also means a
+    selector that silently stops matching would degrade to a no-op flag with a
+    green exit code, so the exit code alone proves nothing. The observable
+    proof is the ``ui_automation.prompt_formatted`` event, which is emitted
+    only after a visible AND enabled button was clicked; the two failure
+    telemetry events are asserted absent so a disabled-button skip
+    (Flow ships it disabled on an empty box) can't pass as success.
+
+    What this does NOT assert: the *content* of Flow's rewrite. The reshaped
+    text lives in Flow's editor, is authored server-side, and is not returned
+    to the CLI — the recorded prompt is the one gflow typed. Verifying the
+    rewrite itself stays a human read of the generated character.
+    """
+    _require_character_optin()
+    project_id = _require_project()
+    env = _character_env(e2e_env)
+    env["GFLOW_CLI_LOG_FORMAT"] = "json"  # make the transport events assertable
+    profile = env["GFLOW_CLI_PROFILE"]
+    locale = os.environ.get(_LOCALE_ENV, _DEFAULT_LOCALE)
+    face = os.environ.get(_FACE_ENV, _DEFAULT_FACE_PROMPT)
+    name = f"e2e-fmt-{uuid.uuid4().hex[:8]}"
+
+    result = _run_gflow(
+        [
+            "character",
+            "create",
+            "--project",
+            project_id,
+            "--name",
+            name,
+            "--face-prompt",
+            face,
+            "--locale",
+            locale,
+            "--profile",
+            profile,
+            "--format-prompt",
+            "--json",
+        ],
+        env=env,
+        timeout=_CREATE_TIMEOUT_S,
+    )
+    assert result.returncode == 0, (
+        f"character create --format-prompt exited {result.returncode}\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+
+    payload = _parse_json_stdout(result, "character create --format-prompt")
+    assert payload.get("status") == "ok", f"unexpected create payload: {payload}"
+    created = payload["character"]
+    assert isinstance(created, dict)
+    assert created["entity_id"], f"create returned empty entity_id: {created}"
+
+    events = [
+        str(json.loads(line).get("event", ""))
+        for line in result.stderr.splitlines()
+        if line.strip().startswith("{")
+    ]
+    assert "ui_automation.prompt_formatted" in events, (
+        "--format-prompt did not click Flow's Format button — the selector "
+        "cascade (anchored on the `personal_recommendations` ligature) has "
+        f"likely drifted. Observed events: {sorted(set(events))}"
+    )
+    for miss in ("ui_automation.format_button_not_found", "ui_automation.format_button_disabled"):
+        assert miss not in events, f"format button was skipped ({miss}), not clicked"

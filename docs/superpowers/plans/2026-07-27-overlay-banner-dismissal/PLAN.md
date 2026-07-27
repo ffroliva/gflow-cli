@@ -1,5 +1,7 @@
 # Feature Implementation Plan: Top Banner & Modal Overlay Dismissal (#369)
 
+> **Status:** shipped 2026-07-27 (e847b0c) — merged to develop; boxes reconciled during the v0.45.0 release prep.
+
 > **For agentic workers:** Run `/gflow:status --feature overlay-banner-dismissal` to find the next
 > unchecked task. Implement one task at a time. Run `/gflow:check` before every commit.
 
@@ -18,10 +20,10 @@
 - `tests/api/transports/test_ui_automation_overlay.py` (or `test_ui_automation.py`) — Add unit tests for banner detection and dismissal
 
 **Steps:**
-- [ ] Define `TOP_BANNER_SELECTORS = ("[role='banner']", "[role='alert']", "[role='dialog']", "div:has-text('What\\'s new')")`.
-- [ ] Update `_detect_overlay` to check `CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS + TOP_BANNER_SELECTORS`.
-- [ ] Add `button:has(i:text('clear'))`, `button:has(i.google-symbols:text('clear'))`, `[aria-label*='Got it' i]`, `button:has-text('Got it')` to `OVERLAY_CLOSE_BUTTON_SELECTORS`.
-- [ ] Unit test top banner detection and dismissal in `tests/test_overlay_banner_dismissal.py`.
+- [x] Define `TOP_BANNER_SELECTORS = ("[role='banner']", "[role='alert']", "[role='dialog']", "div:has-text('What\\'s new')")`.
+- [x] Update `_detect_overlay` to check `CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS + TOP_BANNER_SELECTORS`.
+- [x] Add `button:has(i:text('clear'))`, `button:has(i.google-symbols:text('clear'))`, `[aria-label*='Got it' i]`, `button:has-text('Got it')` to `OVERLAY_CLOSE_BUTTON_SELECTORS`.
+- [x] Unit test top banner detection and dismissal in `tests/test_overlay_banner_dismissal.py`.
 
 ---
 
@@ -34,14 +36,14 @@
 - `CHANGELOG.md` — Document top banner dismissal under `[Unreleased]`
 
 **Steps:**
-- [ ] Run `uv run python -m pytest tests/test_overlay_banner_dismissal.py`.
-- [ ] Run full Impeccable Routine (`/gflow:check`).
+- [x] Run `uv run python -m pytest tests/test_overlay_banner_dismissal.py`.
+- [x] Run full Impeccable Routine (`/gflow:check`).
 
 ---
 
 ## Definition of Done
 
-- [ ] All task steps checked off
-- [ ] Top banners, alerts, and modals detected and dismissed automatically
-- [ ] `/gflow:check` green (`ruff`, `pyright`, `pytest`)
-- [ ] `CHANGELOG.md` updated
+- [x] All task steps checked off
+- [x] Top banners, alerts, and modals detected and dismissed automatically
+- [x] `/gflow:check` green (`ruff`, `pyright`, `pytest`)
+- [x] `CHANGELOG.md` updated

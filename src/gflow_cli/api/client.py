@@ -2501,8 +2501,24 @@ class FlowApiClient:
         wf: JsonObject = workflows[0]
         parent: str | None = wf.get("parentEntityId")
         if parent != entity_id:
+            # This guard is CORRECT and must stay strict: a missing/mismatched
+            # parentEntityId means Flow accepted the generation but filed it as
+            # an ordinary project image instead of binding it to the character
+            # entity. Verified live 2026-07-27 — runs that tripped this left the
+            # entity "Untitled Character" with a null thumbnail, while a bound
+            # run the day before carried its thumbnail_media_id. Relaxing this
+            # would report a hollow character as success.
+            missing = "omitted it entirely" if parent is None else f"set it to {parent!r}"
             raise WireFormatError(
-                detail=f"workflow parentEntityId {parent!r} != entity {entity_id!r}",
+                detail=(
+                    f"Flow did not bind this generation to character entity "
+                    f"{entity_id!r} — the returned workflow {missing}. The image "
+                    "was generated but filed as a plain project image, so the "
+                    "character has no portrait. This is a Flow-side binding "
+                    "failure, not a malformed response: retry, and if it "
+                    "persists check whether Flow's character editor still opens "
+                    "for this account."
+                ),
                 route="generateCharacterImage",
             )
 

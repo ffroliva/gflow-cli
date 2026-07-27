@@ -43,6 +43,7 @@ from gflow_cli.errors import (
     AuthExpiredError,
     BatchPartialError,
     ContentPolicyError,
+    FlowAppError,
     GFlowError,
     RateLimitError,
     UiSelectorDriftError,
@@ -3112,6 +3113,22 @@ class UiAutomationTransport(VideoGenerationMixin):
                 self._out_dir,
                 "debug_character_editor_not_ready.png",
             )
+            # Flow's web app crashes on this route often enough to be the
+            # DOMINANT cause of a missing textbox (live 2026-07-27: the
+            # incident bundle's ui.json reported title category
+            # `flow_app_crash` with zero ligatures — Flow's React error
+            # boundary, not the editor). Reuse the mode-switch path's
+            # classifier so the user gets the typed, retryable FlowAppError
+            # (exit 31) that says "Flow broke, retry" instead of a bare
+            # RuntimeError blaming a selector that was never on the page.
+            if await self._is_flow_app_crash(page):
+                raise FlowAppError(
+                    detail=(
+                        "Flow's web app crashed (client-side exception) instead of "
+                        f"rendering the character editor at {page.url}, so there is "
+                        f"no prompt box to drive.{screenshot_clause(shot)}"
+                    )
+                ) from exc
             msg = (
                 f"Character editor not ready: prompt textbox not visible "
                 f"within 20 s. URL: {page.url}.{screenshot_clause(shot)}"
