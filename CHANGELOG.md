@@ -2403,7 +2403,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/ffroliva/gflow-cli/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/ffroliva/gflow-cli/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/ffroliva/gflow-cli/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/ffroliva/gflow-cli/compare/v0.40.0...v0.41.0
