@@ -611,3 +611,54 @@ def test_create_model_nanopro_reaches_saga(tmp_path: Path) -> None:
     code, face = _invoke_with_model(tmp_path, "nanopro")
     assert code == 0
     assert face.model == "nanopro"
+
+
+# ---------------------------------------------------------------------------
+# --format-prompt reaches the saga
+# ---------------------------------------------------------------------------
+
+
+def _invoke_with_format_flag(tmp_path: Path, *, flag: bool) -> tuple[int, object]:
+    """Run create with/without --format-prompt; return (exit_code, format_prompt kwarg)."""
+    result = _make_result()
+    mock_settings = MagicMock()
+    mock_settings.headless = True
+    mock_settings.resolved_db_path.return_value = tmp_path / "gflow.db"
+    mock_settings.history_prompts = "hash"
+
+    mock_recorder = MagicMock()
+    mock_client_cm = MagicMock()
+    mock_client_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+    mock_client_cm.__aexit__ = AsyncMock(return_value=False)
+
+    args = ["create", "--project", "proj-1", "--name", "Knight", "--face-prompt", "knight"]
+    if flag:
+        args.append("--format-prompt")
+
+    with (
+        patch(_GET_SETTINGS, return_value=mock_settings),
+        patch(_RESOLVE_PROFILE, return_value="default"),
+        patch(_MAKE_PROVIDER_DIR, return_value=tmp_path / "profiles" / "default"),
+        patch(_CLIENT, return_value=mock_client_cm),
+        patch(_RECORDER_OPEN, return_value=mock_recorder),
+        patch(_SAGA, new=AsyncMock(return_value=result)) as mock_saga,
+    ):
+        runner = CliRunner()
+        cli_result = runner.invoke(character, args)
+
+    kwarg = mock_saga.call_args.kwargs["format_prompt"] if mock_saga.call_args else None
+    return cli_result.exit_code, kwarg
+
+
+def test_create_format_prompt_defaults_off(tmp_path: Path) -> None:
+    """Without the flag the prompt is submitted as typed."""
+    code, format_prompt = _invoke_with_format_flag(tmp_path, flag=False)
+    assert code == 0
+    assert format_prompt is False
+
+
+def test_create_format_prompt_flag_forwarded(tmp_path: Path) -> None:
+    """--format-prompt is forwarded to the saga."""
+    code, format_prompt = _invoke_with_format_flag(tmp_path, flag=True)
+    assert code == 0
+    assert format_prompt is True

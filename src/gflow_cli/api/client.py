@@ -2405,6 +2405,7 @@ class FlowApiClient:
         req: CharacterImageRequest,
         image_reference_index: int = 0,
         locale: str = "en-US",
+        format_prompt: bool = False,
     ) -> tuple[str, str, AnyPath | None]:
         """Incident/typed-error boundary for the character generation path —
         the same wrap+capture the generate_* methods get (a UI-driven path can
@@ -2416,6 +2417,7 @@ class FlowApiClient:
                 req=req,
                 image_reference_index=image_reference_index,
                 locale=locale,
+                format_prompt=format_prompt,
             )
         except Exception as e:
             await self._raise_with_incident(e, phase="character_generation")
@@ -2428,6 +2430,7 @@ class FlowApiClient:
         req: CharacterImageRequest,
         image_reference_index: int = 0,
         locale: str = "en-US",
+        format_prompt: bool = False,
     ) -> tuple[str, str, AnyPath | None]:
         """Generate a character reference image via the UI transport and return
         ``(workflow_id, primary_media_id, local_path)``.
@@ -2454,6 +2457,8 @@ class FlowApiClient:
                 reference (0 = face/first slot).
             locale: BCP-47 locale forwarded to the UI transport so Flow renders
                 in the correct language.  Defaults to ``"en-US"``.
+            format_prompt: Whether to click Flow's prompt-format button before
+                submitting (rewrites the prompt into Flow's character shape).
 
         Returns:
             ``(workflow_id, primary_media_id, local_path)`` — the two stable ids
@@ -2480,6 +2485,7 @@ class FlowApiClient:
             request=req,
             image_reference_index=image_reference_index,
             locale=locale,
+            format_prompt=format_prompt,
         )
         _images, workflows = cast(
             "tuple[list[GeneratedImage], list[JsonObject]]",
