@@ -422,7 +422,7 @@ def _resolve_chain_model(model: str | None) -> VideoModel:
     A chain renders link 0 as T2V and every later link as I2V seeded by the
     previous clip's last frame, so the model MUST support i2v interpolation.
     ``omni-flash`` silently drops the start frame at submit and routes to T2V
-    (issue #125), which would break continuity AND burn a credit per link — so
+    (issue #125), which would break continuity and could consume credits — so
     reject it at the CLI boundary with ``ModelModeIncompatibilityError`` (exit
     17). The Click ``Choice`` already excludes ``omni-flash``; this guard also
     covers a direct programmatic call or a future alias.
@@ -456,12 +456,17 @@ def _print_chain_plan(
 
     typed_links: list[ChainLinkSpec] = list(links)
     remaining = len(typed_links) - skipped
+    operation_noun = "operation" if remaining == 1 else "operations"
     console.print(f"[bold]Chain plan[/bold] ([dim]{chain_id}[/dim])")
     console.print(
         f"  {len(typed_links)} link(s), aspect {aspect}, model {model.value}"
         + (f" — {skipped} already completed, {remaining} to generate" if skipped else "")
     )
-    console.print(f"  [yellow]Estimated cost: {remaining} credit(s)[/yellow] (one per link)")
+    console.print(f"  [yellow]{remaining} pending video {operation_noun}[/yellow]")
+    console.print(
+        "  Video operations may consume credits. Current cost varies by model, duration, "
+        "account tier, and Flow policy; check Google Flow before submitting."
+    )
     for idx, spec in enumerate(typed_links):
         mode = "t2v" if idx == 0 else "i2v"
         link_model = spec.model.value if spec.model is not None else model.value
@@ -702,9 +707,9 @@ async def _run_chain(
 ) -> None:
     """Drive a sequential last-frame I2V chain from a JSONL manifest.
 
-    The cost gate (``--yes`` / confirm), ``--max-links`` cap, ``--dry-run``
-    short-circuit, and ``--resume-from`` skip-paid-links logic all run BEFORE a
-    client is created so a rejected/dry run spends nothing and opens no browser.
+    The submission gate (``--yes`` / confirm), ``--max-links`` cap, ``--dry-run``
+    short-circuit, and ``--resume-from`` completed-link filtering all run BEFORE
+    a client is created so a rejected/dry run submits nothing and opens no browser.
     """
     from pathlib import Path as _Path
 
@@ -728,8 +733,8 @@ async def _run_chain(
 
     settings = get_settings()
 
-    # Resume: bind the prior chain_id, query already-paid links, skip them so
-    # they are NOT regenerated (no re-billing). A fresh run mints a new id.
+    # Resume: bind the prior chain_id and skip completed links so they are not
+    # regenerated. A fresh run mints a new id.
     chain_id, skipped = _resolve_chain_resume(
         resume_from,
         links,
@@ -745,7 +750,7 @@ async def _run_chain(
         return
 
     remaining_links = links[skipped:]
-    cost = len(remaining_links)
+    pending_operations = len(remaining_links)
 
     if dry_run:
         _print_chain_plan(
@@ -755,7 +760,7 @@ async def _run_chain(
             skipped=skipped,
             chain_id=chain_id,
         )
-        console.print("[dim]--dry-run: no credits spent, no clips generated.[/dim]")
+        console.print("[dim]--dry-run: no video operations submitted, no clips generated.[/dim]")
         return
 
     if not as_json:
@@ -768,8 +773,9 @@ async def _run_chain(
         )
 
     if not yes:
+        operation_noun = "operation" if pending_operations == 1 else "operations"
         click.confirm(
-            f"Generate {cost} chain link(s) for ~{cost} credit(s)?",
+            f"Submit {pending_operations} pending video {operation_noun}?",
             abort=True,
         )
 
@@ -1331,9 +1337,10 @@ def r2v(
         "Sequential last-frame chain: link 0 is text-to-video, every later link "
         "is image-to-video seeded by the previous clip's last frame, giving "
         "visual continuity with no server-side stitching.\n\n"
-        "COSTS N CREDITS — one per link in the manifest (minus links already "
-        "completed when you --resume-from). Use --dry-run first to print the "
-        "plan and the credit estimate without spending anything.\n\n"
+        "Each unfinished link is a pending video operation. Current credit use "
+        "varies by model, duration, account tier, and Flow policy; check Google "
+        "Flow before submitting. Use --dry-run first to print the plan without "
+        "submitting anything.\n\n"
         "Only Veo 3.1 models are accepted (omni-flash silently drops the seed "
         "frame and routes to text-to-video, issue #125). The MANIFEST is a JSONL "
         'file: one JSON object per line, each with a required "prompt" and '
@@ -1370,19 +1377,19 @@ def r2v(
     "-y",
     "yes",
     is_flag=True,
-    help="Skip the cost confirmation prompt (each link costs one credit).",
+    help="Skip the pending video operation confirmation prompt.",
 )
 @click.option(
     "--dry-run",
     "dry_run",
     is_flag=True,
-    help="Resolve the manifest and print the plan + credit cost; spend nothing.",
+    help="Resolve the manifest and print the pending operation plan; submit nothing.",
 )
 @click.option(
     "--resume-from",
     "resume_from",
     default=None,
-    help="Resume a prior chain by its chain id; already-paid links are skipped.",
+    help="Resume a prior chain by its chain id; already-completed links are skipped.",
 )
 @click.option(
     "--jitter",

@@ -17,6 +17,7 @@ never internals.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
@@ -97,6 +98,16 @@ def _fake_link_result(index: int, tmp_path: Path) -> Any:
         local_path=clip,
         media_id=f"media-{index}",
     )
+
+
+def _assert_no_numeric_credit_claim(output: str) -> None:
+    numeric_credit_lines = [
+        line
+        for line in output.splitlines()
+        if any(char.isdigit() for char in line)
+        and re.search(r"\bcredit(?:s|\(s\))?", line, re.IGNORECASE)
+    ]
+    assert not numeric_credit_lines, f"numeric credit claim(s): {numeric_credit_lines}"
 
 
 # ---------------------------------------------------------------------------
@@ -208,12 +219,34 @@ def _run_chain_dry_run(
 ) -> None:
     """--dry-run must short-circuit before any generation. We install a
     tripwire ``run_chain`` that fails the test if awaited, then assert it was
-    never called (proving zero credits)."""
+    never called (proving zero generation work)."""
     mock_run = AsyncMock(side_effect=AssertionError("run_chain must not run on --dry-run"))
     monkeypatch.setattr("gflow_cli.chain.run_chain", mock_run)
     chain_state["run_chain"] = mock_run
     cli_result_holder["result"] = runner.invoke(
         video, ["chain", str(chain_state["manifest"]), "--dry-run"]
+    )
+
+
+@when("I resume the chain with --dry-run")
+def _resume_chain_dry_run(
+    runner: CliRunner,
+    cli_result_holder: dict[str, Any],
+    chain_state: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_run = AsyncMock(side_effect=AssertionError("run_chain must not run on --dry-run"))
+    monkeypatch.setattr("gflow_cli.chain.run_chain", mock_run)
+    chain_state["run_chain"] = mock_run
+    cli_result_holder["result"] = runner.invoke(
+        video,
+        [
+            "chain",
+            str(chain_state["manifest"]),
+            "--resume-from",
+            "chain-abc",
+            "--dry-run",
+        ],
     )
 
 
@@ -279,13 +312,28 @@ def _check_not_regenerated(chain_state: dict[str, Any]) -> None:
     chain_state["recorder"].completed_links.assert_called()
 
 
-@then(parsers.parse("the output reports the credit cost for {n:d} links"))
-def _check_credit_cost(cli_result_holder: dict[str, Any], n: int) -> None:
+@then(parsers.parse("the output reports {n:d} pending video operation"))
+@then(parsers.parse("the output reports {n:d} pending video operations"))
+def _check_pending_operations(cli_result_holder: dict[str, Any], n: int) -> None:
     result = cli_result_holder["result"]
-    assert f"{n} credit(s)" in result.output, result.output
+    noun = "operation" if n == 1 else "operations"
+    assert f"{n} pending video {noun}" in result.output, result.output
+
+
+@then("the output directs me to check the current cost in Flow")
+def _check_flow_cost_guidance(cli_result_holder: dict[str, Any]) -> None:
+    output = cli_result_holder["result"].output
+    assert "current cost" in output.lower(), output
+    assert "Flow" in output, output
+
+
+@then("the output contains no numeric credit estimate")
+def _check_no_numeric_credit_estimate(cli_result_holder: dict[str, Any]) -> None:
+    output = cli_result_holder["result"].output
+    assert "Estimated credits" not in output, output
+    _assert_no_numeric_credit_claim(output)
 
 
 @then("no generation was submitted")
-def _check_no_generation(chain_state: dict[str, Any], cli_result_holder: dict[str, Any]) -> None:
+def _check_no_generation(chain_state: dict[str, Any]) -> None:
     chain_state["run_chain"].assert_not_awaited()
-    assert "no credits spent" in cli_result_holder["result"].output
