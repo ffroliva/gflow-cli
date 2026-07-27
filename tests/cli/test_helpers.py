@@ -366,4 +366,3 @@ def test_handle_gflow_error_without_remediation_hint(capsys: pytest.CaptureFixtu
     assert "Error" in captured.out
     assert "No remediation" in captured.out
     assert "->" not in captured.out
-

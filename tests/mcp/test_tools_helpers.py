@@ -345,4 +345,3 @@ def test_format_mcp_error_without_remediation_hint() -> None:
     formatted = _format_mcp_error(exc)
     assert formatted == "[GFlowError] Something failed"
     assert "(Remediation:" not in formatted
-
