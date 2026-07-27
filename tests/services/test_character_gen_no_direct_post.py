@@ -90,6 +90,7 @@ class _SpyTransport:
         request: Any,  # noqa: ARG002
         image_reference_index: int,  # noqa: ARG002
         locale: str,  # noqa: ARG002
+        format_prompt: bool = False,  # noqa: ARG002
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
         self.generate_character_calls += 1
         return ([], list(_FIXTURE_WORKFLOWS))

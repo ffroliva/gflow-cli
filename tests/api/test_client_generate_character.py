@@ -92,6 +92,7 @@ class _FakeCharTransport:
         request: Any,
         image_reference_index: int,
         locale: str,
+        format_prompt: bool = False,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
         self.calls.append(
             {
@@ -100,6 +101,7 @@ class _FakeCharTransport:
                 "request": request,
                 "image_reference_index": image_reference_index,
                 "locale": locale,
+                "format_prompt": format_prompt,
             }
         )
         return (list(self._images), list(self._workflows))
