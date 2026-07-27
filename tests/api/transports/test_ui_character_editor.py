@@ -23,6 +23,7 @@ from gflow_cli.api.transports.ui_automation import (
     PROMPT_FORMAT_SELECTORS,
     UiAutomationTransport,
 )
+from gflow_cli.errors import FlowAppError
 
 # ---------------------------------------------------------------------------
 # Helpers / shared fakes
@@ -176,6 +177,37 @@ class TestEnterCharacterEditor:
     async def test_raises_when_editor_not_ready(self) -> None:
         """RuntimeError when the prompt textbox never becomes visible."""
         page = _make_page(visible_selectors=set())  # nothing visible
+        t = _make_transport(page=page)
+        t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+
+        with pytest.raises(RuntimeError, match="Character editor not ready"):
+            await t._enter_character_editor(page, project_id="p", entity_id="e", locale="en")
+
+    @pytest.mark.asyncio
+    async def test_flow_app_crash_raises_typed_retryable_error(self) -> None:
+        """A Flow client-side crash must surface as the retryable FlowAppError.
+
+        Live 2026-07-27: `character create` failed repeatedly with "prompt
+        textbox not visible", but the incident bundle's ui.json showed Flow's
+        React error boundary (title category `flow_app_crash`, zero ligatures)
+        — the editor never existed. A bare RuntimeError blames a selector and
+        reads as a gflow bug; FlowAppError (exit 31) says "Flow broke, retry".
+        """
+        page = _make_page(visible_selectors=set())
+        page.title = AsyncMock(
+            return_value="Application error: a client-side exception has occurred"
+        )
+        t = _make_transport(page=page)
+        t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+
+        with pytest.raises(FlowAppError, match="crashed"):
+            await t._enter_character_editor(page, project_id="p", entity_id="e", locale="en")
+
+    @pytest.mark.asyncio
+    async def test_non_crash_still_raises_selector_runtime_error(self) -> None:
+        """A normally-titled page that simply lacks the box keeps the old error."""
+        page = _make_page(visible_selectors=set())
+        page.title = AsyncMock(return_value="Google Flow")
         t = _make_transport(page=page)
         t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
 

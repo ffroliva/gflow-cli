@@ -1,5 +1,7 @@
 # Feature Implementation Plan: Self-Documenting Errors & Remediation Guidance (#380)
 
+> **Status:** shipped 2026-07-26 (#380) — merged to develop; boxes reconciled during the v0.45.0 release prep.
+
 > **For agentic workers:** Run `/gflow:status --feature self-documenting-errors` to find the next
 > unchecked task. Implement one task at a time. Run `/gflow:check` before every commit.
 
@@ -52,8 +54,8 @@ tests/mcp/test_tools.py
 - `tests/test_errors.py` — Assert `remediation_hint` across all error classes
 
 **Steps:**
-- [ ] Add default remediation hints to `WireFormatError` ("Check request parameters or try a simpler prompt"), `ContentPolicyError` ("Reduce prompt text or describe <= 1 person per scene"), `RateLimitError` ("Daily model quota reached; retry with a different model or wait for reset"), `DataStoreError` ("Check database file permissions or run gflow data errors prune").
-- [ ] Update `tests/test_errors.py` to assert that every `GFlowError` class provides a non-empty `remediation_hint` in `to_problem_details()`.
+- [x] Add default remediation hints to `WireFormatError` ("Check request parameters or try a simpler prompt"), `ContentPolicyError` ("Reduce prompt text or describe <= 1 person per scene"), `RateLimitError` ("Daily model quota reached; retry with a different model or wait for reset"), `DataStoreError` ("Check database file permissions or run gflow data errors prune").
+- [x] Update `tests/test_errors.py` to assert that every `GFlowError` class provides a non-empty `remediation_hint` in `to_problem_details()`.
 
 ---
 
@@ -66,9 +68,9 @@ tests/mcp/test_tools.py
 - `tests/api/test_client_errors.py` — Unit test provider message extraction
 
 **Steps:**
-- [ ] Parse `body_text` in `_raise_for_non_retryable` to extract `message` or `data.code` if JSON-formatted.
-- [ ] Pass the extracted provider message (sanitized via `redact_sensitive_text`) into `AuthExpiredError`, `ContentPolicyError`, `WireFormatError`, and `RateLimitError`.
-- [ ] Add unit tests asserting provider message pass-through in `tests/api/test_client_errors.py`.
+- [x] Parse `body_text` in `_raise_for_non_retryable` to extract `message` or `data.code` if JSON-formatted.
+- [x] Pass the extracted provider message (sanitized via `redact_sensitive_text`) into `AuthExpiredError`, `ContentPolicyError`, `WireFormatError`, and `RateLimitError`.
+- [x] Add unit tests asserting provider message pass-through in `tests/api/test_client_errors.py`.
 
 ---
 
@@ -81,8 +83,8 @@ tests/mcp/test_tools.py
 - `tests/mcp/test_tools.py` — Assert remediation hints in MCP error output
 
 **Steps:**
-- [ ] Update helper `_format_mcp_error(exc: GFlowError)` in `mcp/tools.py` to include `remediation_hint` if present.
-- [ ] Add unit tests in `tests/mcp/test_tools.py` verifying MCP error payload formatting.
+- [x] Update helper `_format_mcp_error(exc: GFlowError)` in `mcp/tools.py` to include `remediation_hint` if present.
+- [x] Add unit tests in `tests/mcp/test_tools.py` verifying MCP error payload formatting.
 
 ---
 
@@ -96,8 +98,8 @@ tests/mcp/test_tools.py
 - `tests/test_json_output.py` — Assert `remediation_hint` in JSON output
 
 **Steps:**
-- [ ] Update `_handle_gflow_error` in `_cli_helpers.py` to print `Remediation: <hint>` when present.
-- [ ] Add unit tests asserting `remediation_hint` in `tests/test_json_output.py` and `tests/cli/test_helpers.py`.
+- [x] Update `_handle_gflow_error` in `_cli_helpers.py` to print `Remediation: <hint>` when present.
+- [x] Add unit tests asserting `remediation_hint` in `tests/test_json_output.py` and `tests/cli/test_helpers.py`.
 
 ---
 
@@ -109,16 +111,16 @@ tests/mcp/test_tools.py
 - `tests/test_self_documenting_errors.py` — End-to-end unit test suite for self-documenting errors
 
 **Steps:**
-- [ ] Create `tests/test_self_documenting_errors.py` asserting remediation hints across domain errors, client raises, CLI output, and MCP tools.
-- [ ] Run full Impeccable Routine (`/gflow:check`).
+- [x] Create `tests/test_self_documenting_errors.py` asserting remediation hints across domain errors, client raises, CLI output, and MCP tools.
+- [x] Run full Impeccable Routine (`/gflow:check`).
 
 ---
 
 ## Definition of Done
 
-- [ ] All task steps checked off
-- [ ] All `GFlowError` classes provide non-empty `remediation_hint`
-- [ ] Provider JSON error messages pass through to `exc.detail` (sanitized)
-- [ ] MCP tool error messages include remediation guidance for AI agents
-- [ ] `/gflow:check` green (`ruff`, `pyright`, `pytest` coverage >= 80%)
-- [ ] `CHANGELOG.md` `[Unreleased]` section updated
+- [x] All task steps checked off
+- [x] All `GFlowError` classes provide non-empty `remediation_hint`
+- [x] Provider JSON error messages pass through to `exc.detail` (sanitized)
+- [x] MCP tool error messages include remediation guidance for AI agents
+- [x] `/gflow:check` green (`ruff`, `pyright`, `pytest` coverage >= 80%)
+- [x] `CHANGELOG.md` `[Unreleased]` section updated
