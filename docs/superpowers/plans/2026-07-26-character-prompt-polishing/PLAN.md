@@ -106,7 +106,7 @@ Removed a dead `log.info("character_prompt_polished")` that fired before any gen
 - [x] `CHANGELOG.md` under `[Unreleased]`.
 - [x] `ruff` + `pyright` clean on touched files; unit suite green.
 - [x] Live DOM verification via the spike (see Task 1).
-- [ ] One real `gflow character create --format-prompt` end-to-end — **costs credits**, so it is the
+- [~] One real `gflow character create --format-prompt` end-to-end — **costs credits**, so it is the
   operator's call ([[done-means-e2e-verified]]). Everything up to the click is verified; what is
   still unproven is that the click actually rewrites the prompt rather than merely landing.
 
@@ -122,4 +122,9 @@ were updated to mirror the new kwarg ([[bdd-stubs-mirror-runtime-signatures]]).
 - [x] `ruff` / `pyright` / `pytest` green
 - [x] `CHANGELOG.md` updated
 - [x] Ligature confirmed against live DOM
-- [ ] One paid E2E run confirming the click actually reshapes the prompt
+- [~] One paid E2E run confirming the click actually reshapes the prompt
+      (BLOCKED 2026-07-27 — the e2e test exists at
+      `tests/e2e/test_character_create_e2e.py::test_character_create_format_prompt_clicks_format_button`
+      but `character create` itself fails against live Flow, reproduced on
+      released v0.44.0. Tracked as #395; evidence in
+      docs/LIVE_VERIFICATION_v0.45.0.md §2.)
