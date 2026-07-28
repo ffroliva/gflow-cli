@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — the prompt tools now drive any OpenAI-compatible endpoint (#387).**
+  `--tool creative-director` / `reverse-engineer` / `storyboard` were hardwired to
+  Google's native Gemini API, so an OpenAI-compatible gateway key could not be
+  used at all. The transport now speaks **OpenAI Chat Completions**, which
+  OpenAI, gateways/proxies (OpenRouter, LiteLLM, freellmapi), local runtimes
+  (Ollama, LM Studio) and Google's own compatibility endpoint all accept.
+  - New config: `GFLOW_CLI_LLM_BASE_URL` (the on/off switch; defaults to
+    Google's compat endpoint), `GFLOW_CLI_LLM_API_KEY` (**optional** — omitted
+    from the request entirely when unset, so keyless local gateways work), and
+    `GFLOW_CLI_LLM_MODEL` (also the provider selector, since gateways route on
+    the model string).
+  - Provider keys stay with your gateway. gflow only ever holds the single
+    credential it presents to the endpoint you point it at.
+  - The three builtin tools no longer pin `model = "gemini-2.5-flash"`. That pin
+    was sent unconditionally, so any gateway not serving that exact name
+    answered 400 — silently, because the prompt tools never fail a run.
+
+### Removed
+
+- **BREAKING — `GFLOW_CLI_GEMINI_API_KEY` and `GFLOW_CLI_GEMINI_MODEL` (#387).**
+  Set `GFLOW_CLI_LLM_API_KEY` instead; an existing Google `AIza…` key keeps
+  working unchanged, because the default endpoint is Google's OpenAI-compatible
+  surface. gflow prints a one-time warning if it sees the old variable — the old
+  value is never forwarded. The warning exists because the prompt tools never
+  fail a run: without it, prompts would quietly stop being rewritten while
+  generations still billed in full.
+  `GFLOW_CLI_GEMINI_MODEL` had in fact never had a live code path — its only
+  reader was an uncalled helper — despite being documented as a global override.
+
+### Fixed
+
+- **`reverse-engineer` no longer expands a file path as if it were a prompt (#387).**
+  When multimodal analysis of a URL, video, or image failed, the runtime fell
+  through to text expansion of the *path string*, returning a confident but
+  useless prompt that still billed a full generation. It now degrades to the
+  original input.
+
+### Security
+
+- **The prompt-tools endpoint is treated as a trust boundary (#387).** `base_url`
+  is user-supplied now, so: redirects are declined (`urllib` re-sends the
+  `Authorization` header to whatever host a 302 names, which would have leaked
+  the key to a hostile gateway); `base_url` is validated to `https`, or `http`
+  for loopback only, with credentials-in-URL rejected; error-response bodies are
+  redacted before logging, since a gateway can echo the bearer token back; and
+  the resolved destination host is logged once, giving an audit trail for where
+  prompts and base64 image bytes were sent.
+
 ## [0.45.0] — 2026-07-28
 
 ### Fixed

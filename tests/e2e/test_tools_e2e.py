@@ -10,16 +10,17 @@ snapshot.
 Gating (all opt-in):
 - `GFLOW_CLI_E2E_PROFILE` — a logged-in Chrome-strategy profile (handled by the
   `e2e_env` fixture; the test is skipped without it).
-- `GFLOW_CLI_GEMINI_API_KEY` — REQUIRED here: the tool is never-fatal and falls
-  back to the original prompt without a key, in which case NO expansion happens
-  and `metadata_json.tool` is (correctly) not written. So these tests skip
-  without the key — otherwise they would assert on provenance that, by design,
-  is only recorded when the prompt was actually rewritten.
+- `GFLOW_CLI_LLM_API_KEY` and/or `GFLOW_CLI_LLM_BASE_URL` — REQUIRED here: the
+  tool is never-fatal and falls back to the original prompt when no endpoint is
+  configured, in which case NO expansion happens and `metadata_json.tool` is
+  (correctly) not written. So these tests skip without one — otherwise they
+  would assert on provenance that, by design, is only recorded when the prompt
+  was actually rewritten.
 - `GFLOW_CLI_E2E_RUN_VIDEO=1` — the video case additionally gates on this (Veo
   credits), mirroring `test_data_layer_e2e.py`.
 
 Run:
-    GFLOW_CLI_E2E_PROFILE=<profile> GFLOW_CLI_GEMINI_API_KEY=<key> \
+    GFLOW_CLI_E2E_PROFILE=<profile> GFLOW_CLI_LLM_API_KEY=<key> \
         pytest -m e2e_image tests/e2e/test_tools_e2e.py
     # + GFLOW_CLI_E2E_RUN_VIDEO=1 and -m e2e_video for the video case.
 """
@@ -36,7 +37,7 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
-_GEMINI_KEY_ENV = "GFLOW_CLI_GEMINI_API_KEY"
+_LLM_ENV_VARS = ("GFLOW_CLI_LLM_API_KEY", "GFLOW_CLI_LLM_BASE_URL")
 _E2E_RUN_VIDEO_ENV = "GFLOW_CLI_E2E_RUN_VIDEO"
 
 # Terse prompts so the Creative Director has something to expand.
@@ -79,22 +80,44 @@ def _open_db(env: dict[str, str]):  # noqa: ANN202 — sqlite3.Connection, impor
     return conn
 
 
-def _require_gemini_key() -> None:
-    if not os.environ.get(_GEMINI_KEY_ENV, "").strip():
+def _require_llm_endpoint() -> None:
+    """Skip unless a prompt-tools endpoint is configured.
+
+    Either variable is sufficient: a key alone uses the default endpoint, and an
+    explicit base_url alone covers a keyless local gateway.
+    """
+    if not any(os.environ.get(name, "").strip() for name in _LLM_ENV_VARS):
         pytest.skip(
-            f"{_GEMINI_KEY_ENV} unset — the tool falls back to the original prompt "
-            "and records no metadata_json.tool, so there is nothing to verify."
+            f"none of {_LLM_ENV_VARS} set — the tool falls back to the original "
+            "prompt and records no metadata_json.tool, so there is nothing to verify."
         )
 
 
-def _assert_tool_metadata(meta_json: str | None, *, model: str = "gemini-2.5-flash") -> None:
+def _expected_model() -> str | None:
+    """The model provenance should record, for however this run is configured.
+
+    Mirrors ``expander.resolve_model``: the env model if set, otherwise the
+    default endpoint's default, otherwise ``None`` because a chosen gateway was
+    left to pick. Hardcoding a vendor name here would fail every run against a
+    non-Google gateway.
+    """
+    from gflow_cli.tools.expander import resolve_model
+
+    return resolve_model(
+        None,
+        os.environ.get("GFLOW_CLI_LLM_MODEL") or None,
+        os.environ.get("GFLOW_CLI_LLM_BASE_URL") or "",
+    )
+
+
+def _assert_tool_metadata(meta_json: str | None, *, model: str | None = None) -> None:
     """Assert the operations.metadata_json.tool provenance shape."""
     assert meta_json, "metadata_json is empty — the tool snapshot was not recorded"
     meta = json.loads(meta_json)
     tool = meta.get("tool")
     assert isinstance(tool, dict), f"metadata_json.tool not a dict: {meta!r}"
     assert tool["name"] == _TOOL
-    assert tool["model"] == model
+    assert tool["model"] == (model if model is not None else _expected_model())
     # config_hash is a sha256 hexdigest; version is the hand-bumped tool version.
     assert len(tool["config_hash"]) == 64
     assert tool["version"]
@@ -105,7 +128,7 @@ def _assert_tool_metadata(meta_json: str | None, *, model: str = "gemini-2.5-fla
 def test_t2i_with_tool_records_provenance(e2e_env: dict[str, str]) -> None:
     """`image t2i --tool creative-director` generates a real image AND records the
     original prompt, the expansion, and the tool snapshot."""
-    _require_gemini_key()
+    _require_llm_endpoint()
     profile = e2e_env["GFLOW_CLI_PROFILE"]
     out_dir = Path(e2e_env["GFLOW_CLI_OUTPUT_DIR"])
 
@@ -150,7 +173,7 @@ def test_t2v_with_tool_records_provenance(e2e_env: dict[str, str]) -> None:
     tool snapshot on the (started→succeeded) operation."""
     if os.environ.get(_E2E_RUN_VIDEO_ENV, "0").strip() != "1":
         pytest.skip(f"{_E2E_RUN_VIDEO_ENV}=0 — skipping live Veo run")
-    _require_gemini_key()
+    _require_llm_endpoint()
     profile = e2e_env["GFLOW_CLI_PROFILE"]
     out_dir = Path(e2e_env["GFLOW_CLI_OUTPUT_DIR"])
 

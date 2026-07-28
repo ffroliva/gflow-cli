@@ -8,7 +8,7 @@ Google's five-component formula.
 
 This document covers the framework: the `gflow tools` command group, the `--tool` option on
 generation commands, the TOML schema, how a tool is defined, and the MCP exposure. For the
-Creative Director tool itself (formula, domain styles, banned keywords, Gemini wiring), see
+Creative Director tool itself (formula, domain styles, banned keywords, LLM wiring), see
 [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md).
 
 ---
@@ -61,7 +61,7 @@ in parentheses so you can tell same-named image/video styles apart:
 $ gflow tools show creative-director
 Creative Director (creative-director) — both
 Rewrite a terse prompt into a vivid one using Google's 5-component formula.
-Requires env: GFLOW_CLI_GEMINI_API_KEY
+Requires env: GFLOW_CLI_LLM_API_KEY
 Styles: cinema (image), product (image), portrait (image), editorial (image), ui (image),
         logo (image), landscape (image), infographic (image), abstract (image),
         cinematic (video), documentary (video), animation (video), social (video),
@@ -88,7 +88,7 @@ any style. (Gating happens only on the real generation commands, where the comma
 it is producing an image or a video — see §4.)
 
 The JSON shape is `{name, original, expanded, was_expanded}`. `was_expanded` is `false` when the
-tool left the prompt unchanged (e.g. missing API key, network fault — tools are **never fatal**,
+tool left the prompt unchanged (e.g. no endpoint configured, network fault — tools are **never fatal**,
 see §6).
 
 ---
@@ -124,10 +124,10 @@ Where it is wired:
 | `video t2v` | video | |
 | `video i2v` | video | Applied to the resolved prompt. |
 | `video r2v` | video | |
-| `video chain` | video | Applied **per link**, *after* the dry-run / cost-confirmation gate — a rejected or `--dry-run` chain spends nothing and makes no Gemini calls. |
+| `video chain` | video | Applied **per link**, *after* the dry-run / cost-confirmation gate — a rejected or `--dry-run` chain spends nothing and makes no LLM calls. |
 
 On multi-item paths (batch, chain), the tool runs **once per prompt/link, sequentially** — so a
-50-prompt batch with `--tool creative-director` is up to 50 sequential Gemini calls. Each call is
+50-prompt batch with `--tool creative-director` is up to 50 sequential LLM calls. Each call is
 bounded by an overall ~60s wall-clock budget (see
 [PROMPT_EXPANSION.md §6](PROMPT_EXPANSION.md#6-never-fatal-contract)), and the whole thing is
 non-fatal; concurrency is a later optimization. Plan for the added latency on large batches.
@@ -135,7 +135,7 @@ non-fatal; concurrency is a later optimization. Plan for the added latency on la
 ### Cost note
 
 Generation credits are spent by Flow, not by tools. Tool *application* is free of Flow credits but
-does call the configured Gemini API (which has its own quota/billing). For `video chain`, tool
+does call the configured LLM endpoint (which has its own quota/billing). For `video chain`, tool
 application is deliberately deferred until **after** the cost gate so an aborted run is truly free.
 
 ---
@@ -173,7 +173,7 @@ A tool is a single TOML file validated into a Pydantic `ToolSpec`
 | `category` | `"image" \| "video" \| "both"` | ✅ | Which generation commands the tool applies to. |
 | `author` | `str` | — | Defaults to `"gflow"`. |
 | `version` | `str` | ✅ | Hand-bumped on any behavior change (paired with `config_hash`, see [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md)). |
-| `requires_env` | `tuple[str, ...]` | — | Env vars the tool needs (e.g. `GFLOW_CLI_GEMINI_API_KEY`). |
+| `requires_env` | `tuple[str, ...]` | — | Env vars the tool needs (e.g. `GFLOW_CLI_LLM_API_KEY`). Informational only — not enforced. |
 | `options_schema` | `dict[str, str]` | — | Declared option keys → help text; validated, then frozen to a read-only mapping. |
 | `config` | `ToolConfig` | ✅ | The behavior block. |
 
@@ -294,7 +294,7 @@ for the full comparison and migration guidance.
 ## 9. See also
 
 - [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md) — the Creative Director tool in depth.
-- [CONFIGURATION.md](CONFIGURATION.md) — `GFLOW_CLI_GEMINI_API_KEY`, `GFLOW_CLI_GEMINI_MODEL`.
+- [CONFIGURATION.md](CONFIGURATION.md) — `GFLOW_CLI_LLM_BASE_URL` / `_API_KEY` / `_MODEL`.
 - [DATA_LAYER.md](DATA_LAYER.md) — how `expanded_prompt` and `metadata_json.tool` are recorded.
 - [MCP.md](MCP.md) — the MCP server.
 - [tool-abstraction evaluation](superpowers/research/2026-06-27-tool-abstraction-evaluation.md) —
