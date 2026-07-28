@@ -30,7 +30,8 @@ class AppliedTool:
 
     name: str
     version: str
-    model: str
+    #: Effective model, or ``None`` when the gateway was left to choose it.
+    model: str | None
     config_hash: str
     params: tuple[tuple[str, str], ...] = ()
 
@@ -44,12 +45,22 @@ def config_hash(config: ToolConfig) -> str:
 
 
 def applied_tool_from_spec(spec: ToolSpec, options: dict[str, str]) -> AppliedTool:
-    """Build an :class:`AppliedTool` snapshot from a resolved spec + run options."""
+    """Build an :class:`AppliedTool` snapshot from a resolved spec + run options.
+
+    ``model`` records the *effective* model, resolved through the same
+    precedence the expander uses, so provenance reflects what was actually
+    requested rather than a TOML pin that may not exist. It is ``None`` when the
+    gateway was left to choose, which is the honest record in that case.
+    """
+    from gflow_cli.config import get_settings
+    from gflow_cli.tools.expander import resolve_model
+
+    settings = get_settings()
     params = tuple(sorted((str(k), str(v)) for k, v in options.items()))
     return AppliedTool(
         name=spec.name,
         version=spec.version,
-        model=spec.config.model,
+        model=resolve_model(spec.config.model, settings.llm_model, settings.llm_base_url),
         config_hash=config_hash(spec.config),
         params=params,
     )

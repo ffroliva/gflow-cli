@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -446,16 +446,37 @@ class TestExpanderModelSelection:
 
         assert transport.calls[-1]["payload"]["model"] == "gpt-4o-mini"  # type: ignore[index]
 
-    def test_model_omitted_when_unset(self) -> None:
-        """No model anywhere ⇒ omit the key entirely so the gateway picks.
+    def test_model_omitted_for_custom_gateway_when_unset(self) -> None:
+        """No model + a chosen gateway ⇒ omit the key so the gateway picks.
 
         A hardcoded vendor model name is exactly what stops a non-Google gateway
-        from working, so ``None`` must mean 'omit', not 'send a default'.
+        from working, so ``None`` must mean 'omit' here, not 'send a default'.
+        """
+        transport = _RecordingTransport(returns=_choices("ok"))
+        PromptExpander(
+            "key", base_url="https://gw.example/v1", model=None, transport=transport
+        ).expand("test")
+
+        assert "model" not in transport.calls[-1]["payload"]  # type: ignore[operator]
+
+    def test_default_endpoint_gets_a_default_model(self) -> None:
+        """Regression: Google's compat endpoint has no server-side default.
+
+        Live-verified — omitting ``model`` against the default endpoint returns
+        ``400 "model is not specified"``, which the never-raise contract turns
+        into a silent no-op. The default endpoint therefore ships a matching
+        default model, while a user-chosen gateway still gets none.
         """
         transport = _RecordingTransport(returns=_choices("ok"))
         PromptExpander("key", model=None, transport=transport).expand("test")
 
-        assert "model" not in transport.calls[-1]["payload"]  # type: ignore[operator]
+        assert transport.calls[-1]["payload"]["model"] == "gemini-2.5-flash"  # type: ignore[index]
+
+    def test_explicit_model_wins_on_default_endpoint(self) -> None:
+        transport = _RecordingTransport(returns=_choices("ok"))
+        PromptExpander("key", model="gemini-2.5-flash-lite", transport=transport).expand("t")
+
+        assert transport.calls[-1]["payload"]["model"] == "gemini-2.5-flash-lite"  # type: ignore[index]
 
 
 class TestExpanderMultimodal:
@@ -574,7 +595,6 @@ class TestDefaultTransportRequest:
 
     @staticmethod
     def _capture_request(monkeypatch: Any, response_body: bytes = b'{"choices":[]}') -> list[Any]:
-        import urllib.request
 
         from gflow_cli.tools import expander as expander_mod
 
@@ -592,14 +612,14 @@ class TestDefaultTransportRequest:
             def __exit__(self, *_exc: object) -> None:
                 return None
 
-        def _fake_urlopen(request: Any, timeout: float = 0.0) -> _FakeResponse:
-            captured.append(request)
-            return _FakeResponse()
+        class _FakeOpener:
+            def open(self, request: Any, timeout: float = 0.0) -> _FakeResponse:
+                captured.append(request)
+                return _FakeResponse()
 
-        # The opener is built inside the module; patch both entry points so the
-        # test is agnostic to which one the implementation ends up calling.
-        monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen, raising=False)
-        monkeypatch.setattr(expander_mod, "_urlopen", _fake_urlopen, raising=False)
+        # _default_transport builds its opener via _build_opener() precisely so
+        # redirects can be disabled; patch that seam rather than urlopen.
+        monkeypatch.setattr(expander_mod, "_build_opener", _FakeOpener)
         return captured
 
     def test_bearer_header_sent_when_key_present(self, monkeypatch: Any) -> None:
@@ -631,17 +651,35 @@ class TestDefaultTransportRequest:
         headers = {k.lower(): v for k, v in captured[0].headers.items()}
         assert headers["content-type"] == "application/json"
 
-    def test_redirects_are_not_followed(self) -> None:
+    def test_redirects_are_declined(self) -> None:
         """urllib re-sends ``Authorization`` across hosts on a 302.
 
         A hostile gateway could 302 the first request and harvest the key, so
-        the opener must be built without a redirect handler.
+        every redirect must be declined.
+
+        Asserted behaviourally: ``build_opener`` installs its default handler
+        set no matter what you pass it, so merely checking that no
+        ``HTTPRedirectHandler`` is present would pass while redirects stayed
+        enabled. What matters is that ``redirect_request`` returns ``None``.
         """
         import urllib.request
 
         from gflow_cli.tools.expander import _build_opener
 
-        opener = _build_opener()
-        assert not any(
-            isinstance(h, urllib.request.HTTPRedirectHandler) for h in opener.handlers
-        ), "opener must not follow redirects — Authorization would leak cross-host"
+        handlers: list[Any] = getattr(_build_opener(), "handlers", [])
+        redirect_handlers = [
+            h for h in handlers if isinstance(h, urllib.request.HTTPRedirectHandler)
+        ]
+        assert redirect_handlers, "expected a redirect handler to be installed"
+        for handler in redirect_handlers:
+            decision = handler.redirect_request(
+                urllib.request.Request("https://gw.example/v1/chat/completions"),
+                cast("Any", None),
+                302,
+                "Found",
+                cast("Any", {}),
+                "https://attacker.example/",
+            )
+            assert decision is None, (
+                "redirect must be declined — urllib would re-send Authorization cross-host"
+            )

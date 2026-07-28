@@ -221,9 +221,41 @@ def apply_tool_option(
             applied = applied_tool_from_spec(spec, options)
             if not quiet:
                 _console.print(f"[cyan]{spec.title} applied:[/cyan] [dim]{current}[/dim]")
-        elif not quiet:
-            _console.print(f"[yellow]{spec.title} skipped[/yellow] (unavailable).")
+        else:
+            _warn_tool_skipped(spec.title, quiet=quiet)
     return current, (original if changed else None), applied
+
+
+#: Latch so a 50-prompt batch emits one notice, not fifty.
+_tool_skip_notified = False
+
+
+def _warn_tool_skipped(title: str, *, quiet: bool) -> None:
+    """Tell the user a tool fell back, on stderr, at least once.
+
+    The expander never raises, so a misconfigured endpoint is otherwise
+    indistinguishable from success: the run exits 0, bills full credits, and
+    silently uses the un-rewritten prompt. The batch and chain paths pass
+    ``quiet=True``, which used to suppress this entirely -- so under quiet we
+    still emit exactly one notice per process rather than none.
+    """
+    global _tool_skip_notified
+    if quiet and _tool_skip_notified:
+        return
+    _tool_skip_notified = True
+    click.secho(
+        f"{title} skipped — the prompt was sent unchanged. Check "
+        "GFLOW_CLI_LLM_BASE_URL / GFLOW_CLI_LLM_API_KEY, or run "
+        '`gflow tools run <tool> "test" --json` to see why.',
+        err=True,
+        fg="yellow",
+    )
+
+
+def reset_tool_skip_notice() -> None:
+    """Test seam — clears the warn-once latch."""
+    global _tool_skip_notified
+    _tool_skip_notified = False
 
 
 def safe_path_text(path: Path) -> str:
