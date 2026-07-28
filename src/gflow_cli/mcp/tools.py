@@ -653,7 +653,8 @@ async def gflow_generate_image(
             Each item is ``{"name": str, "options": dict}``.  Valid names
             include ``"creative-director"`` (which supports an ``options``
             key of ``"style"`` for domain-vocabulary injection).
-            Requires GFLOW_CLI_GEMINI_API_KEY; degrades gracefully to the
+            Requires an OpenAI-compatible endpoint (GFLOW_CLI_LLM_API_KEY
+            and/or GFLOW_CLI_LLM_BASE_URL); degrades gracefully to the
             original prompt when unavailable (mirrors the CLI ``--tool/-t``
             flag).
         profile: gflow-cli profile name to use.  Leave as ``"default"`` (or
@@ -822,7 +823,8 @@ async def gflow_generate_video(
             Each item is ``{"name": str, "options": dict}``.  Valid names
             include ``"creative-director"`` (which supports an ``options``
             key of ``"style"`` for domain-vocabulary injection).
-            Requires GFLOW_CLI_GEMINI_API_KEY; degrades gracefully to the
+            Requires an OpenAI-compatible endpoint (GFLOW_CLI_LLM_API_KEY
+            and/or GFLOW_CLI_LLM_BASE_URL); degrades gracefully to the
             original prompt when unavailable (mirrors the CLI ``--tool/-t``
             flag on ``video t2v``).
         profile: gflow-cli profile name to use.  Leave as ``"default"`` (or

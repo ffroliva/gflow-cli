@@ -25,7 +25,12 @@ class DomainMode(BaseModel):
 
 class ToolConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
-    model: str = "gemini-2.5-flash"
+    #: Optional per-tool model pin. ``None`` (the default) means "let
+    #: GFLOW_CLI_LLM_MODEL decide, or the gateway's own default if that is unset
+    #: too". Pin only when a tool genuinely requires a specific model — a
+    #: vendor-specific name here is a silent 400 against any gateway that does
+    #: not serve it, because the expander never raises.
+    model: str | None = None
     system_template: str
     banned_keywords: tuple[str, ...] = ()
     domains: tuple[DomainMode, ...] = ()

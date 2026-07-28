@@ -13,7 +13,7 @@ def _spec() -> ToolSpec:
         description="Expand a prompt via the 5-component formula.",
         category="both",
         version="1",
-        requires_env=("GFLOW_CLI_GEMINI_API_KEY",),
+        requires_env=("GFLOW_CLI_LLM_API_KEY",),
         options_schema={"style": "domain mode name"},
         config=ToolConfig(
             system_template="Rewrite: ",

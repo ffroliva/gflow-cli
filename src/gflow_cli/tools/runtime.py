@@ -13,7 +13,7 @@ import structlog
 
 from gflow_cli.config import get_settings
 from gflow_cli.tools.banned import strip_banned_keywords
-from gflow_cli.tools.expander import ExpansionResult, PromptExpander
+from gflow_cli.tools.expander import ExpansionResult, PromptExpander, resolve_model
 
 if TYPE_CHECKING:
     from gflow_cli.tools.spec import DomainCategory, ToolConfig, ToolSpec
@@ -157,8 +157,15 @@ def apply_tool(
     if expander is None:
         settings = get_settings()
         expander = PromptExpander(
-            settings.gemini_api_key,
-            model=spec.config.model,
+            settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            # Precedence lives in resolve_model so this and the provenance
+            # record in invocation.py cannot drift: TOML pin (the tool author
+            # knew what that tool needs) > GFLOW_CLI_LLM_MODEL > the default
+            # endpoint's own default > None (a chosen gateway picks). The
+            # builtins deliberately pin nothing -- a hardcoded vendor model name
+            # is what stopped a non-Google gateway from working at all.
+            model=resolve_model(spec.config.model, settings.llm_model, settings.llm_base_url),
             system_instruction=instruction,
             max_input_chars=spec.config.max_input_chars,
             max_output_chars=spec.config.max_output_chars,
@@ -171,6 +178,12 @@ def apply_tool(
         result = _apply_multimodal_reverse_engineering(spec, prompt, expander)
         if result is not None:
             return result
+        # Do NOT fall through to text expansion here: `prompt` is a URL or a
+        # file path, so expanding it would ask the model to embellish a path
+        # string and return a confident, useless prompt that still bills a
+        # full generation. Degrade to the original instead.
+        log.warning("multimodal_reverse_engineering_unavailable", prompt=prompt)
+        return ExpansionResult(original=prompt, expanded=prompt, was_expanded=False)
 
     # 2. Fall back to standard text-only expansion
     result = expander.expand(prompt)
