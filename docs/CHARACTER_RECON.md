@@ -114,22 +114,43 @@ Response — bound on the first try:
 
 ### Which surface produces it
 
-| Surface | URL | Composer | Sends `entityContext`? |
-|---|---|---|---|
-| **New Character** (plain flow) | `/project/{id}/characters` → "New Character" | "Describe your character…" | **Yes** — Flow creates the entity and binds |
-| Character editor (existing character) | `/project/{id}/character/{entityId}` | "What do you want to change?" | Edit surface — the creation binding is not established here |
+The composer Flow renders depends on whether the character already HAS a
+portrait, not on which URL you arrived by:
 
-The plain flow calls `flow.createEntity` **itself** (returning
-`displayName: "Untitled Character"`), then generates with `entityContext`, then
-`PATCH /v1/flowWorkflows/{id}` twice (`metadata.displayName`, then
-`metadata.primaryMediaId`). Flow never asks for a name up front — the user renames
+| Character state | Composer placeholder | Sends `entityContext`? |
+|---|---|---|
+| Empty (no portrait yet) | *"Describe your character…"* | **Yes** — this is the creation composer, on `/characters` **and** on `/character/{entityId}` |
+| Populated (portrait exists) | *"What do you want to change?"* | Edit surface — refines the existing portrait |
+
+Both entry points reach the creation composer for an empty character, and both
+bind. Verified live 2026-07-28: driving `/project/{id}/character/{entityId}` for
+a pre-created empty entity produced `entityContext` in the request and
+`parentEntityId` in the response — including for an entity gflow itself had
+created minutes earlier. Entity age is not a factor.
+
+`flow.createEntity` may be called by Flow (the **New Character** flow does it
+itself, returning `displayName: "Untitled Character"`) or by the client
+beforehand; gflow pre-creates and deep-links, which is fine. After the
+generation Flow issues `PATCH /v1/flowWorkflows/{id}` twice
+(`metadata.displayName`, then `metadata.primaryMediaId`) — the same commit gflow
+already performs. Flow never asks for a name up front: the user renames
 afterwards via the ✏️ next to the title, and "Character Info (optional)"
 (*"Describe how your character acts…"*) is a separate free-text field.
 
-**Consequence for gflow (#395):** pre-creating the entity and deep-linking to
-`/character/{entityId}` submits through the *edit* composer, which carries no
-`entityContext` — so the workflow comes back with no `parentEntityId` and the
-`generate_character_image` guard correctly refuses it.
+**What actually broke gflow (#395)** was therefore NOT the choice of entry
+point. Two client-side defects suppressed `entityContext` on a surface that
+would otherwise have sent it:
+
+1. **Overlay dismissal pressed Escape on the composer.** `[role='dialog']` and
+   `[role='alert']` in the overlay detector matched Flow's own character
+   composer (and the media picker), so gflow dismissed the app itself.
+2. **The character route could bounce back to the project page** while the
+   entity was not yet queryable. The project page also mounts a prompt box, so
+   the readiness gate passed on the wrong surface and the prompt was typed into
+   the **project** composer.
+
+With both fixed, the deep-linked editor binds reliably. See
+[LIVE_VERIFICATION_v0.45.0 §2](LIVE_VERIFICATION_v0.45.0.md).
 
 ## Gaps
 
