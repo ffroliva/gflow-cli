@@ -4,8 +4,8 @@
 > Google Flow, not just mocked tests. Profile `ffroliva`, 2026-07-27.
 > See [E2E_TESTING.md](E2E_TESTING.md) for the marker/cost model.
 
-Offline gates for the release: `ruff` clean, `pyright src` 0 errors,
-**2804 passed / 91.45% coverage**.
+Offline gates for the release: `ruff` clean, `pyright src` 0 errors, full
+suite green (see §5).
 
 ---
 
@@ -60,45 +60,57 @@ project.
 
 ---
 
-## 2. `character create --format-prompt` (#383) — ⚠️ NOT VERIFIABLE THIS CYCLE
+## 2. `character create` binding + `--format-prompt` (#395, #383) — ✅ VERIFIED
 
-> Tracked as [#395](https://github.com/ffroliva/gflow-cli/issues/395).
+Originally recorded here as *not verifiable this cycle*. That was wrong in an
+important way: the cause was **ours**, not Flow's, and the spike below found it.
 
-Recorded rather than omitted, per AGENTS.md.
+### 2.1 What the spike established
 
-`gflow character create` is **currently broken against live Flow** on this
-account, independently of this release. The `--format-prompt` flag drives the
-character editor, so the flag cannot be exercised until that surface works.
+Drove Flow's own character flow in a CDP-attached real Chrome
+(`gflow-agent-browser-spike`, `navigator.webdriver: false`) with full
+request/response capture, then diffed it against gflow's traffic. The two
+requests were byte-comparable except for one block:
 
-### 2.1 Evidence that it is Flow-side, not ours
+```jsonc
+"mediaGenerationContext": {
+  "entityContext": { "entityId": "…", "characterSlot": { "imageReferenceIndex": 0 } }
+}
+```
 
-| Probe | Observation |
-|---|---|
-| Incident bundle `ui.json` | `title.category: flow_app_crash`, `ligature_count: 0` — Flow's React error boundary rendered instead of the editor |
-| HAR of the character generation | `workflows[0]` has `name`, `metadata`, `projectId` — **no `parentEntityId` field at all** |
-| `gflow character list` read-back | Runs from 2026-07-27 left entities as `"Untitled Character"` with `thumbnail_media_id: null`; an entity created 2026-07-26 carries its thumbnail |
-| **Released v0.44.0 from PyPI** (`uvx --from "gflow-cli==0.44.0"`) | **Fails identically** — predates this cycle's work |
-| Hypothesis test: unreleased overlay change (#369) Escaping the editor | **Disconfirmed** — narrowing `TOP_BANNER_SELECTORS` did not change the outcome |
+With it, the response carries `parentEntityId` and the portrait binds; without
+it, Flow files a plain project image. Contract documented in
+[CHARACTER_RECON](CHARACTER_RECON.md#entity-binding-entitycontext-captured-live-2026-07-28).
 
-Both observed failure modes ("editor not ready", "workflow parentEntityId None")
-trace to the same cause: Flow's character-editor route is degraded, so the
-generation lands as an ordinary project image instead of binding to the entity.
-gflow's invariant correctly refuses to report that as success.
+### 2.2 Two defects, both ours
 
-### 2.2 What ships anyway
+| # | Defect | Evidence |
+|---|---|---|
+| 1 | Overlay dismissal pressed **Escape** on Flow's own composer — `[role='dialog']`/`[role='alert']` matched the app itself — so the submit lost `entityContext` | Removing those two selectors made the identical command bind on the first try (`entity_patched`, real `thumbnail_media_id`); with them present it failed every run |
+| 2 | The character route can **bounce** back to the project page (entity not yet queryable after `createEntity`); the project page also mounts a prompt box, so the readiness gate passed on the wrong surface and the prompt went into the **project** composer | `character_editor_ready` logged with the *project* URL; the new guard logs `character_route_bounced` → `character_route_settled` and the URL is now the character route |
 
+A third symptom seen on 2026-07-27 — Flow's app crashing on that route — was
+real but intermittent and is now reported as the typed retryable `FlowAppError`
+(§3).
+
+### 2.3 Proof
+
+- `gflow character create --name "Overlay Hypothesis"` → `"status": "ok"`,
+  `character_create.entity_patched`; read-back shows the character with its name
+  **and** `thumbnail_media_id: fdaea0d2-…` — the first fully successful create
+  since the breakage.
+- `tests/e2e/test_character_create_e2e.py::test_character_create_binds_parent_entity`
+  — **passes live** (this is the #395 contract: entity bound, same project,
+  thumbnail attached).
 - `tests/e2e/test_character_create_e2e.py::test_character_create_format_prompt_clicks_format_button`
-  — written and ready; asserts the `ui_automation.prompt_formatted` event (a
-  visible **and** enabled button was clicked) and asserts the two skip-telemetry
-  events are absent so a no-op flag cannot pass as success. It will pass as soon
-  as Flow's character editor binds again.
-- Two error-classification fixes discovered **because** of this attempt (§3).
+  — **passes live**, asserting the `ui_automation.prompt_formatted` event fired
+  (visible **and** enabled button clicked) and that neither skip-telemetry event
+  appeared, so a no-op flag cannot pass as success. This closes the
+  `--format-prompt` (#383) verification that was owed since 2026-07-26.
 
-A harness bug was also fixed: `_character_env` inherited the isolated
+A harness bug was fixed on the way: `_character_env` inherited the isolated
 `GFLOW_CLI_HOME`, so every subprocess test in that file exited 2 with
 "No session" before reaching Flow.
-
----
 
 ## 3. Error-classification fixes — ✅ VERIFIED (observed live, unit-pinned)
 

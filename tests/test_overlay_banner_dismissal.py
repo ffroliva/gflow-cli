@@ -103,7 +103,7 @@ class TestTopBannerAndAlertDismissal:
         """_dismiss_blocking_overlays force-clicks clear/close/Got-it/Dismiss buttons."""
         t = UiAutomationTransport()
         # Banner visible AND the target close button visible
-        page = _make_mock_page(visible_selectors={"[role='alert']", close_sel})
+        page = _make_mock_page(visible_selectors={"[role='banner']", close_sel})
         result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
         assert result is True
         assert close_sel in page._clicked  # type: ignore[attr-defined]
@@ -126,7 +126,7 @@ class TestTopBannerAndAlertDismissal:
         """When close buttons missing and Escape raises, returns False and takes screenshot."""
         t = UiAutomationTransport()
         page = _make_mock_page(
-            visible_selectors={"[role='dialog']"},
+            visible_selectors={"[role='banner']"},
             keyboard_press_raises=True,
         )
         result = await t._dismiss_blocking_overlays(page, out_dir=tmp_path)  # type: ignore[attr-defined]
@@ -142,3 +142,33 @@ class TestTopBannerAndAlertDismissal:
         assert result is False
         assert page._clicked == []  # type: ignore[attr-defined]
         page.keyboard.press.assert_not_called()
+
+
+class TestOverlaySelectorBlastRadius:
+    """#395 guard: overlay detection must not match Flow's own working UI.
+
+    `[role='dialog']` and `[role='alert']` shipped briefly in
+    :data:`TOP_BANNER_SELECTORS` and broke `gflow character create`: Flow's
+    character composer and media picker carry those roles, so the dismissal
+    path pressed Escape on the app itself. The generation then went out with no
+    `entityContext` and Flow filed the portrait as a plain project image —
+    silent, credit-spending data loss. Proven live 2026-07-28 in both
+    directions (present → failed every run; removed → bound first try).
+    """
+
+    def test_does_not_match_bare_dialog_or_alert_roles(self) -> None:
+        from gflow_cli.api.transports.ui_automation import TOP_BANNER_SELECTORS
+
+        for forbidden in ("[role='dialog']", "[role='alert']"):
+            assert forbidden not in TOP_BANNER_SELECTORS, (
+                f"{forbidden} matches Flow's own composer/picker surfaces. It made "
+                "`character create` submit without entityContext (#395). Match a "
+                "captured announcement overlay instead of a bare ARIA role."
+            )
+
+    def test_still_covers_the_captured_banner_surfaces(self) -> None:
+        """The #369 intent must survive the narrowing."""
+        from gflow_cli.api.transports.ui_automation import TOP_BANNER_SELECTORS
+
+        assert "[role='banner']" in TOP_BANNER_SELECTORS
+        assert any("What" in s for s in TOP_BANNER_SELECTORS)

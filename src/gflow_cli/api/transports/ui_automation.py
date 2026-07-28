@@ -420,11 +420,24 @@ CHANGELOG_IFRAME_SELECTORS = (
     "iframe[src*='/changelogs/']",
 )
 
-# Top banner / alert / announcement dialog selectors (#369).
+# Top banner / announcement selectors (#369).
+#
+# DO NOT add bare `[role='dialog']` or `[role='alert']` here. Both shipped
+# briefly and broke `gflow character create` (#395): Flow's own working
+# surfaces carry those roles, so `_detect_overlay` matched the app itself and
+# `_dismiss_blocking_overlays` pressed Escape on the character composer. The
+# generation then went out WITHOUT `entityContext`, and Flow filed the portrait
+# as a plain project image with no `parentEntityId` — a silent, credit-spending
+# failure. Proven live 2026-07-28: with those two selectors removed, the very
+# same command bound the character on the first try (`entity_patched`, real
+# `thumbnail_media_id`); with them present it failed every run.
+#
+# The media picker is a `[role='dialog']` too, so the blast radius was never
+# limited to characters. Keep this tuple to overlays we have actually captured;
+# per KNOWN_ISSUES, gflow does not guess dismiss selectors for unknown overlays
+# — clicking (or Escaping) unknown UI is riskier than failing.
 TOP_BANNER_SELECTORS: tuple[str, ...] = (
     "[role='banner']",
-    "[role='alert']",
-    "[role='dialog']",
     "div:has-text('What\\'s new')",
 )
 
@@ -3070,6 +3083,66 @@ class UiAutomationTransport(VideoGenerationMixin):
             except Exception:
                 pass
 
+    _CHARACTER_ROUTE_ATTEMPTS = 4
+    _CHARACTER_ROUTE_BACKOFF_MS = 2_500
+
+    async def _settle_on_character_route(
+        self,
+        page: Any,
+        *,
+        entity_id: str,
+        url: str,
+    ) -> None:
+        """Ensure the browser actually CAME TO REST on ``/character/{entity_id}``.
+
+        Flow bounces this route back to the project page when the entity is not
+        yet queryable — a race gflow loses because it navigates immediately
+        after ``flow.createEntity`` (live 2026-07-28).
+
+        This must be checked explicitly because the project page **also** mounts
+        a Slate prompt box, so the editor-ready wait below is satisfied on the
+        WRONG surface. The generation then goes to the project composer, which
+        sends no ``entityContext``, and Flow files the image as a plain project
+        image with no ``parentEntityId`` — the #395 symptom. A redirect is
+        therefore silent data loss, not a cosmetic detail.
+
+        Re-navigates a few times to let the entity settle. If the route still
+        will not stick, raise rather than type into the project composer.
+        """
+        for attempt in range(1, self._CHARACTER_ROUTE_ATTEMPTS + 1):
+            if entity_id in str(page.url):
+                if attempt > 1:
+                    log.info(
+                        "ui_automation.character_route_settled",
+                        entity_id=entity_id,
+                        attempt=attempt,
+                    )
+                return
+            log.warning(
+                "ui_automation.character_route_bounced",
+                entity_id=entity_id,
+                landed_on=str(page.url),
+                attempt=attempt,
+                note="Flow redirected away from the character editor; retrying",
+            )
+            if attempt == self._CHARACTER_ROUTE_ATTEMPTS:
+                break
+            await page.wait_for_timeout(self._CHARACTER_ROUTE_BACKOFF_MS)
+            await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            await self._dismiss_blocking_overlays(page, self._out_dir)
+
+        shot = await _capture_debug_screenshot(
+            page, self._out_dir, "debug_character_route_bounced.png"
+        )
+        msg = (
+            f"Flow kept redirecting the character editor for entity {entity_id!r} "
+            f"back to {page.url!r} after {self._CHARACTER_ROUTE_ATTEMPTS} attempts. "
+            "Generating here would submit through the PROJECT composer and Flow "
+            "would file the image as a plain project image instead of binding it "
+            f"to the character.{screenshot_clause(shot)}"
+        )
+        raise FlowAppError(detail=msg)
+
     async def _enter_character_editor(
         self,
         page: Any,
@@ -3099,6 +3172,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
         await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
         await self._dismiss_blocking_overlays(page, self._out_dir)
+        await self._settle_on_character_route(page, entity_id=entity_id, url=url)
 
         # Wait for the Slate editor to mount — the prompt textbox is the
         # reliable "editor ready" anchor for the character editor surface.

@@ -824,6 +824,34 @@ gflow image batch ./batch-b.tsv --profile personal
 
 ## Resolved
 
+### `character create` generated portraits that never bound to the character — RESOLVED in v0.45.0
+
+- **Status:** Resolved ([#395](https://github.com/ffroliva/gflow-cli/issues/395)) · **Severity:** Was-High · **Was-affecting:** v0.44.0 and unreleased `develop` · **Fixed in:** v0.45.0
+
+Every `gflow character create` spent an Imagen credit, produced an image, and
+left the character empty ("Untitled Character", null thumbnail). Flow filed the
+generation as an ordinary project image because the request carried no
+`entityContext`. Two independent gflow defects caused it:
+
+1. **Overlay dismissal Escaped Flow's own UI.** `[role='dialog']` and
+   `[role='alert']` had been added to the overlay detector, but Flow's character
+   composer — and the media picker — carry those roles. gflow pressed Escape on
+   the app itself and the submit lost its entity context.
+2. **The character route could bounce to the project page.** Flow redirects
+   `/project/{id}/character/{entityId}` while the entity is not yet queryable
+   (gflow navigates immediately after `flow.createEntity`). The project page
+   also mounts a prompt box, so the readiness gate passed on the wrong surface
+   and the prompt was typed into the **project** composer.
+
+Both are fixed: the two over-broad selectors are gone (banner detection intact),
+and the transport now verifies it came to rest on the character route,
+re-navigating and then failing loudly instead of generating on the wrong
+surface. The `parentEntityId` guard that surfaced this was correct throughout —
+it refused to report a portrait-less character as success.
+
+Wire contract: [CHARACTER_RECON § entity binding](docs/CHARACTER_RECON.md#entity-binding-entitycontext-captured-live-2026-07-28).
+Evidence: [LIVE_VERIFICATION_v0.45.0 §2](docs/LIVE_VERIFICATION_v0.45.0.md).
+
 ### `gflow video`'s manifest-driven batch subcommand didn't skip already-completed entries — RESOLVED as obsolete
 
 - **Status:** Resolved (obsolete) · **Severity:** Was-Medium · **Was-affecting:** v0.2.0a1 through the command's removal · **Fixed in:** n/a — removed in production-readiness hardening (see `fix: remove nonfunctional video batch command`)
