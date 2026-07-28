@@ -184,6 +184,49 @@ class TestEnterCharacterEditor:
             await t._enter_character_editor(page, project_id="p", entity_id="e", locale="en")
 
     @pytest.mark.asyncio
+    async def test_retries_when_flow_bounces_off_the_character_route(self) -> None:
+        """Flow redirects the character route back to the project page when the
+        entity is not yet queryable (live 2026-07-28). Re-navigate until it sticks.
+
+        The project page mounts a Slate box too, so the editor-ready wait alone
+        is satisfied on the WRONG surface — and generating there submits through
+        the project composer, which sends no `entityContext`. Flow then files the
+        portrait as a plain project image (#395).
+        """
+        ready_sel = UiAutomationTransport._CHARACTER_EDITOR_READY_SELECTOR
+        page = _make_page(visible_selectors={ready_sel})
+        project_url = "https://labs.google/fx/en/tools/flow/project/p1"
+        entity_url = f"{project_url}/character/e1"
+        # First load bounces to the project page; the retry lands on the entity.
+        urls = iter([project_url, entity_url, entity_url, entity_url])
+
+        async def _goto(*_a: object, **_kw: object) -> None:
+            page.url = next(urls)
+
+        page.goto = AsyncMock(side_effect=_goto)
+        page.url = project_url
+        t = _make_transport(page=page)
+        t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+
+        await t._enter_character_editor(page, project_id="p1", entity_id="e1", locale="en")
+
+        assert page.goto.await_count >= 2, "should have re-navigated after the bounce"
+        assert "e1" in page.url
+
+    @pytest.mark.asyncio
+    async def test_raises_when_the_character_route_never_sticks(self) -> None:
+        """Give up loudly rather than typing into the project composer (#395)."""
+        ready_sel = UiAutomationTransport._CHARACTER_EDITOR_READY_SELECTOR
+        page = _make_page(visible_selectors={ready_sel})
+        page.url = "https://labs.google/fx/en/tools/flow/project/p1"
+        page.goto = AsyncMock()  # every navigation keeps us on the project page
+        t = _make_transport(page=page)
+        t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+
+        with pytest.raises(FlowAppError, match="PROJECT composer"):
+            await t._enter_character_editor(page, project_id="p1", entity_id="e1", locale="en")
+
+    @pytest.mark.asyncio
     async def test_flow_app_crash_raises_typed_retryable_error(self) -> None:
         """A Flow client-side crash must surface as the retryable FlowAppError.
 
