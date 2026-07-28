@@ -82,6 +82,55 @@ calls on the same `workflowId`, chaining `imageInputs` (BASE_IMAGE = prior outpu
 This is the SAME endpoint family gflow's existing image transport already drives — the new bits are
 `tool:"PINHOLE"`, `imageInputs` types, and the `parentEntityId`/workflow binding.
 
+## Entity binding: `entityContext` (captured live 2026-07-28)
+
+**The generation request must carry `entityContext`, or Flow files the image as a
+plain project image and the character stays empty.** Captured from Flow's own UI
+via a CDP-attached real Chrome (`gflow-agent-browser-spike`, `navigator.webdriver:
+false`) while driving the plain **New Character** flow.
+
+`POST /v1/projects/{projectId}/flowMedia:batchGenerateImages`
+
+```jsonc
+{
+  "clientContext": { "projectId": "…", "tool": "PINHOLE", "sessionId": "…" },
+  "mediaGenerationContext": {
+    "batchId": "…",
+    "entityContext": {
+      "entityId": "1e6c558e-87be-4aa7-8a21-ffb7efa43bbd",
+      "characterSlot": { "imageReferenceIndex": 0 }   // 0 = portrait/face, 1 = body
+    }
+  },
+  "useNewMedia": true,
+  "requests": [ { "imageModelName": "NARWHAL", "structuredPrompt": {…}, "seed": …, "imageInputs": [] } ]
+}
+```
+
+Response — bound on the first try:
+
+```jsonc
+"workflows": [ { "name": "30551aa7-…", "projectId": "…", "parentEntityId": "1e6c558e-…" } ]
+```
+
+### Which surface produces it
+
+| Surface | URL | Composer | Sends `entityContext`? |
+|---|---|---|---|
+| **New Character** (plain flow) | `/project/{id}/characters` → "New Character" | "Describe your character…" | **Yes** — Flow creates the entity and binds |
+| Character editor (existing character) | `/project/{id}/character/{entityId}` | "What do you want to change?" | Edit surface — the creation binding is not established here |
+
+The plain flow calls `flow.createEntity` **itself** (returning
+`displayName: "Untitled Character"`), then generates with `entityContext`, then
+`PATCH /v1/flowWorkflows/{id}` twice (`metadata.displayName`, then
+`metadata.primaryMediaId`). Flow never asks for a name up front — the user renames
+afterwards via the ✏️ next to the title, and "Character Info (optional)"
+(*"Describe how your character acts…"*) is a separate free-text field.
+
+**Consequence for gflow (#395):** pre-creating the entity and deep-linking to
+`/character/{entityId}` submits through the *edit* composer, which carries no
+`entityContext` — so the workflow comes back with no `parentEntityId` and the
+`generate_character_image` guard correctly refuses it.
+
 ## Gaps
 
 1. ✅ **RESOLVED — Entity create.** `POST /fx/api/trpc/flow.createEntity` `{json:{projectId}}` →

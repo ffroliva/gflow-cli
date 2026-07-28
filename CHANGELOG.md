@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow character create` binds portraits to the character again (#395).**
+  Two independent defects made every character generation land as a plain
+  project image, leaving the character empty:
+  1. **Overlay dismissal Escaped Flow's own UI.** `[role='dialog']` and
+     `[role='alert']` had been added to the overlay detector, but Flow's
+     character composer (and the media picker) carry those roles — so gflow
+     pressed Escape on the app itself, the generation went out without
+     `entityContext`, and Flow filed the image against the project with no
+     `parentEntityId`. Those two selectors are removed; `[role='banner']` and
+     the announcement matcher remain, so the original banner-dismissal intent
+     is intact.
+  2. **The character route could bounce back to the project page.** Flow
+     redirects `/project/{id}/character/{entityId}` when the entity is not yet
+     queryable — a race gflow loses by navigating immediately after
+     `flow.createEntity`. Because the project page also mounts a prompt box,
+     the old readiness check was satisfied on the wrong surface and the prompt
+     was typed into the **project** composer. gflow now verifies it actually
+     came to rest on the character route, re-navigating a few times and failing
+     loudly rather than generating on the wrong surface.
+
+  Verified live 2026-07-28 in both directions on the same account, plus a
+  read-back showing the character carrying its name and `thumbnail_media_id`.
+  The wire contract is documented in
+  [CHARACTER_RECON](docs/CHARACTER_RECON.md#entity-binding-entitycontext-captured-live-2026-07-28).
+
 - **`gflow image i2i --ref <UUID>` no longer fails when the asset is out of the
   picker's reach (#393).** Flow's media picker is scoped to the active project
   and its search does **not** index media UUIDs (confirmed live 2026-07-27:
