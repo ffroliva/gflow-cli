@@ -28,6 +28,7 @@ from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
 from pydantic import AliasChoices, Field, field_validator
@@ -37,6 +38,59 @@ from gflow_cli import paths
 
 _LEGACY_ENV_PREFIX = "FLOW_CLI_"
 _NEW_ENV_PREFIX = "GFLOW_CLI_"
+
+#: Default prompt-tools endpoint — Google's OpenAI-compatible Gemini surface.
+#: Chosen so a user who only sets ``GFLOW_CLI_LLM_API_KEY`` keeps working with a
+#: plain Google key, while anyone pointing at another gateway overrides it.
+DEFAULT_LLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+#: Hosts for which plain ``http://`` is accepted on ``llm_base_url``. Traffic to
+#: these never leaves the machine, so there is no credential-in-cleartext risk.
+#: Compared against ``urlsplit().hostname``, which unwraps IPv6 brackets — so
+#: this is ``"::1"``, never ``"[::1]"``.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+#: Removed in v0.46.0 (issue #387). Read only to tell the user it is dead —
+#: never forwarded. Without this the removal would be *silent*: the prompt tools
+#: never raise, so an unmigrated user would simply stop getting rewritten
+#: prompts while still spending full generation credits.
+_REMOVED_GEMINI_KEY_ENV = "GFLOW_CLI_GEMINI_API_KEY"
+_LLM_ENV_VARS = ("GFLOW_CLI_LLM_BASE_URL", "GFLOW_CLI_LLM_API_KEY", "GFLOW_CLI_LLM_MODEL")
+_removed_gemini_key_notified = False
+
+
+def warn_if_removed_gemini_key_set(env: Mapping[str, str] | None = None) -> bool:
+    """Warn once if the removed Gemini key is set and nothing replaced it.
+
+    Returns ``True`` when a notice was emitted, so callers (and tests) can tell
+    the difference between "warned" and "already warned / nothing to warn about".
+    """
+    global _removed_gemini_key_notified
+    source = os.environ if env is None else env
+    if _removed_gemini_key_notified:
+        return False
+    if not source.get(_REMOVED_GEMINI_KEY_ENV):
+        return False
+    if any(source.get(name) for name in _LLM_ENV_VARS):
+        return False
+    _removed_gemini_key_notified = True
+    warnings.warn(
+        f"{_REMOVED_GEMINI_KEY_ENV} is no longer read and is NOT forwarded. "
+        "The prompt tools now use any OpenAI-compatible endpoint: set "
+        "GFLOW_CLI_LLM_API_KEY (your existing Google key still works against the "
+        "default endpoint), and optionally GFLOW_CLI_LLM_BASE_URL / "
+        "GFLOW_CLI_LLM_MODEL. Until you do, --tool silently leaves prompts "
+        "unchanged. See docs/CONFIGURATION.md.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return True
+
+
+def reset_removed_gemini_key_notice() -> None:
+    """Test seam — clears the warn-once latch (mirrors :func:`reset_settings`)."""
+    global _removed_gemini_key_notified
+    _removed_gemini_key_notified = False
 
 
 def _migrate_legacy_env() -> None:
@@ -345,19 +399,73 @@ class Settings(BaseSettings):
 
     # --- provider ---------------------------------------------------------
     provider: Provider = Provider.FLOW
-    gemini_api_key: str | None = Field(
+
+    # --- prompt-tools LLM (provider-agnostic, OpenAI Chat Completions) -----
+    llm_base_url: str = Field(
+        default=DEFAULT_LLM_BASE_URL,
+        description=(
+            "Base URL of an OpenAI-compatible Chat Completions endpoint used by the "
+            "prompt tools (--tool/-t). Works with any compliant provider or gateway "
+            "(OpenRouter, a self-hosted proxy, Ollama, ...). Defaults to Google's "
+            "OpenAI-compatible Gemini endpoint. Override via GFLOW_CLI_LLM_BASE_URL."
+        ),
+    )
+    llm_api_key: str | None = Field(
         default=None,
         description=(
-            "Public Gemini API key. Enables prompt tools (--tool/-t) and, "
-            "in future, provider=official. Override via GFLOW_CLI_GEMINI_API_KEY."
+            "Credential presented to GFLOW_CLI_LLM_BASE_URL as an Authorization: Bearer "
+            "header. Optional — a keyless local gateway needs none, and the header is "
+            "then omitted entirely. Provider keys stay with the gateway, never here. "
+            "Override via GFLOW_CLI_LLM_API_KEY."
         ),
     )
-    gemini_model: str = Field(
-        default="gemini-2.5-flash",
+    llm_model: str | None = Field(
+        default=None,
         description=(
-            "Gemini model used for prompt tools (--tool/-t). Override via GFLOW_CLI_GEMINI_MODEL."
+            "Model used by the prompt tools. Also the provider selector, since "
+            "gateways route on the model string. Unset = let the gateway choose. "
+            "A tool's TOML config.model pin takes precedence. "
+            "Override via GFLOW_CLI_LLM_MODEL."
         ),
     )
+
+    @field_validator("llm_base_url", mode="before")
+    @classmethod
+    def _validate_llm_base_url(cls, v: object) -> object:
+        """Reject URLs this client must not be pointed at.
+
+        ``base_url`` is user-supplied and feeds ``urllib.request.urlopen``, so it
+        is a trust boundary: without this, ``file://`` and friends become
+        reachable and a plaintext ``http://`` host would receive the API key in
+        the clear. Plain http is allowed *only* for loopback, because a local
+        gateway is a first-class use case for this feature.
+        """
+        if v is None or v == "":
+            return DEFAULT_LLM_BASE_URL
+        if not isinstance(v, str):
+            msg = "llm_base_url must be a string"
+            raise ValueError(msg)
+
+        parsed = urlsplit(v)
+        if parsed.scheme not in ("http", "https"):
+            msg = (
+                f"GFLOW_CLI_LLM_BASE_URL scheme not supported: {v!r}. "
+                "Use https:// (or http:// for a loopback address)."
+            )
+            raise ValueError(msg)
+        if "@" in parsed.netloc:
+            msg = (
+                "GFLOW_CLI_LLM_BASE_URL must not embed credentials in the URL. "
+                "Pass the credential via GFLOW_CLI_LLM_API_KEY instead."
+            )
+            raise ValueError(msg)
+        if parsed.scheme == "http" and (parsed.hostname or "") not in _LOOPBACK_HOSTS:
+            msg = (
+                f"GFLOW_CLI_LLM_BASE_URL must use https for a non-loopback host: {v!r}. "
+                "Plain http would send GFLOW_CLI_LLM_API_KEY in cleartext."
+            )
+            raise ValueError(msg)
+        return v
 
     # --- transport --------------------------------------------------------
     transport: str | None = Field(

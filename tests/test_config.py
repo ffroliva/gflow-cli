@@ -7,12 +7,15 @@ from pathlib import Path
 import pytest
 
 from gflow_cli.config import (
+    DEFAULT_LLM_BASE_URL,
     BrowserEngine,
     LogFormat,
     LogLevel,
     Provider,
     Settings,
+    reset_removed_gemini_key_notice,
     reset_settings,
+    warn_if_removed_gemini_key_set,
 )
 
 
@@ -474,3 +477,116 @@ class TestIncidentCapture:
         monkeypatch.setenv("GFLOW_CLI_INCIDENT_CAPTURE", "notabool")
         with pytest.raises(ValidationError):
             Settings()
+
+
+class TestLlmSettings:
+    """The prompt-tools LLM endpoint (issue #387).
+
+    ``llm_base_url`` is user-supplied and feeds ``urllib.request``, so it is a
+    trust boundary rather than an ordinary string setting.
+    """
+
+    def test_defaults(self, clean_env: None) -> None:
+        s = Settings()
+        assert s.llm_base_url == DEFAULT_LLM_BASE_URL
+        # Both optional: a key-only user keeps the default endpoint, and a
+        # keyless local gateway needs no credential at all.
+        assert s.llm_api_key is None
+        assert s.llm_model is None
+
+    def test_env_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "https://gw.example/v1")
+        monkeypatch.setenv("GFLOW_CLI_LLM_API_KEY", "sk-abc")
+        monkeypatch.setenv("GFLOW_CLI_LLM_MODEL", "openai/gpt-4o-mini")
+        s = Settings()
+        assert s.llm_base_url == "https://gw.example/v1"
+        assert s.llm_api_key == "sk-abc"
+        assert s.llm_model == "openai/gpt-4o-mini"
+
+    def test_empty_base_url_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "")
+        assert Settings().llm_base_url == DEFAULT_LLM_BASE_URL
+
+    @pytest.mark.parametrize("bad", ["file:///etc/passwd", "ftp://host/x", "gopher://h"])
+    def test_rejects_non_http_schemes(self, monkeypatch: pytest.MonkeyPatch, bad: str) -> None:
+        """urllib dispatches on scheme; file:// et al must never be reachable."""
+        from pydantic import ValidationError
+
+        monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", bad)
+        with pytest.raises(ValidationError):
+            Settings()
+
+    def test_rejects_plain_http_for_remote_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Plain http would put GFLOW_CLI_LLM_API_KEY on the wire in cleartext."""
+        from pydantic import ValidationError
+
+        monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://gw.example/v1")
+        with pytest.raises(ValidationError):
+            Settings()
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://localhost:3001/v1",
+            "http://127.0.0.1:3001/v1",
+            "http://[::1]:3001/v1",
+        ],
+    )
+    def test_allows_plain_http_for_loopback(
+        self, monkeypatch: pytest.MonkeyPatch, url: str
+    ) -> None:
+        """A local gateway is a first-class use case and never leaves the host."""
+        monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", url)
+        assert Settings().llm_base_url == url
+
+    def test_rejects_credentials_in_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pydantic import ValidationError
+
+        monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "https://user:pass@gw.example/v1")
+        with pytest.raises(ValidationError):
+            Settings()
+
+    def test_https_remote_is_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "https://openrouter.ai/api/v1")
+        assert Settings().llm_base_url == "https://openrouter.ai/api/v1"
+
+
+class TestRemovedGeminiKeyNotice:
+    """GFLOW_CLI_GEMINI_API_KEY was removed in v0.46.0 (issue #387).
+
+    The prompt tools never raise, so without an explicit notice an unmigrated
+    user would see no error at all — just silently un-rewritten prompts on
+    full-price generations.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_latch(self) -> None:
+        reset_removed_gemini_key_notice()
+        yield
+        reset_removed_gemini_key_notice()
+
+    def test_warns_when_only_removed_key_is_set(self) -> None:
+        assert warn_if_removed_gemini_key_set({"GFLOW_CLI_GEMINI_API_KEY": "AIza-old"}) is True
+
+    def test_warns_only_once(self) -> None:
+        env = {"GFLOW_CLI_GEMINI_API_KEY": "AIza-old"}
+        assert warn_if_removed_gemini_key_set(env) is True
+        assert warn_if_removed_gemini_key_set(env) is False
+
+    def test_silent_when_nothing_set(self) -> None:
+        assert warn_if_removed_gemini_key_set({}) is False
+
+    @pytest.mark.parametrize(
+        "replacement",
+        ["GFLOW_CLI_LLM_API_KEY", "GFLOW_CLI_LLM_BASE_URL", "GFLOW_CLI_LLM_MODEL"],
+    )
+    def test_silent_once_migrated(self, replacement: str) -> None:
+        """Already migrated — nagging someone who has done the work is noise."""
+        env = {"GFLOW_CLI_GEMINI_API_KEY": "AIza-old", replacement: "set"}
+        assert warn_if_removed_gemini_key_set(env) is False
+
+    def test_key_is_never_forwarded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The notice reports; it must not resurrect the value as a fallback."""
+        monkeypatch.setenv("GFLOW_CLI_GEMINI_API_KEY", "AIza-old")
+        monkeypatch.delenv("GFLOW_CLI_LLM_API_KEY", raising=False)
+        assert Settings().llm_api_key is None

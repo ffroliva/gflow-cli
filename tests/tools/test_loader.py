@@ -13,7 +13,7 @@ def test_loads_creative_director_builtin() -> None:
     cd = tools["creative-director"]
     assert cd.title == "Creative Director"
     assert cd.category == "both"
-    assert "GFLOW_CLI_GEMINI_API_KEY" in cd.requires_env
+    assert "GFLOW_CLI_LLM_API_KEY" in cd.requires_env
     assert "8k" in cd.config.banned_keywords
     # at least the banana image domains + the video set are present
     names = {d.name for d in cd.config.domains}

@@ -8,8 +8,9 @@
 | `GFLOW_CLI_OUTPUT_DIR` | `~/Downloads/gflow-cli` | Where generated images and videos are saved. |
 | `CHROME_BINARY` | (autodetect) | Override Chrome binary path. Falls back to platform-standard locations. |
 | `GFLOW_CLI_CONCURRENCY` | `4` | Maximum parallel API requests per batch. |
-| `GFLOW_CLI_GEMINI_API_KEY` | _(unset)_ | Public Gemini key enabling prompt expansion (`-e`/`--expand`). Unset = expansion is a graceful no-op. [Get one](https://aistudio.google.com/apikey). |
-| `GFLOW_CLI_GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model used for prompt expansion. |
+| `GFLOW_CLI_LLM_BASE_URL` | Google compat endpoint | OpenAI-compatible endpoint for the prompt tools (`--tool`). The on/off switch. |
+| `GFLOW_CLI_LLM_API_KEY` | _(unset)_ | Credential for that endpoint. Optional — omit for a keyless local gateway. [Google key](https://aistudio.google.com/apikey). |
+| `GFLOW_CLI_LLM_MODEL` | _(unset)_ | Model, and therefore the provider selector. Unset = the gateway chooses. |
 | `GFLOW_LIVE` | _(unset)_ | Set to `1` to enable live-API test markers (`@pytest.mark.live`). |
 
 ---

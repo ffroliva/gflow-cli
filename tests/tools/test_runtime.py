@@ -28,7 +28,7 @@ def test_apply_tool_strips_banned_from_output() -> None:
     spec = get_tool("creative-director")
 
     def transport(url, payload, timeout):  # noqa: ANN001
-        return {"candidates": [{"content": {"parts": [{"text": "a hyperrealistic 8k cat scene"}]}}]}
+        return {"choices": [{"message": {"content": "a hyperrealistic 8k cat scene"}}]}
 
     instruction = build_instruction(spec.config, None)
     expander = PromptExpander("key", transport=transport, system_instruction=instruction)
@@ -60,7 +60,7 @@ def test_apply_tool_uses_per_tool_banned_keywords() -> None:
     )
 
     def transport(url, payload, timeout):  # noqa: ANN001
-        return {"candidates": [{"content": {"parts": [{"text": "a photorealism 8k landscape"}]}}]}
+        return {"choices": [{"message": {"content": "a photorealism 8k landscape"}}]}
 
     expander = PromptExpander("key", transport=transport, system_instruction="expand: ")
     result = apply_tool(spec, "landscape", {}, expander=expander)
@@ -146,7 +146,7 @@ def test_apply_multimodal_image_path_success(tmp_path: object) -> None:
     img.write_bytes(b"JPEG")
 
     def transport(url, payload, timeout):  # noqa: ANN001
-        return {"candidates": [{"content": {"parts": [{"text": "cinematic wide shot"}]}}]}
+        return {"choices": [{"message": {"content": "cinematic wide shot"}}]}
 
     spec = _make_spec()
     expander = PromptExpander("key", transport=transport)
@@ -196,7 +196,7 @@ def test_apply_multimodal_strips_banned_keywords(tmp_path: object) -> None:
     img.write_bytes(b"JPEG")
 
     def transport(url, payload, timeout):  # noqa: ANN001
-        return {"candidates": [{"content": {"parts": [{"text": "hyperrealistic cinematic shot"}]}}]}
+        return {"choices": [{"message": {"content": "hyperrealistic cinematic shot"}}]}
 
     spec = _make_spec(banned=("hyperrealistic",))
     expander = PromptExpander("key", transport=transport)

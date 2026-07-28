@@ -22,16 +22,17 @@ def test_tools_show_lists_styles() -> None:
     assert "cinema" in result.output.lower()
 
 
-def test_tools_run_json_without_key_falls_back(
+def test_tools_run_json_when_unconfigured_falls_back(
     monkeypatch: pytest.MonkeyPatch,
     install_log_capture: object,  # noqa: ARG001 — configures structlog LogCapture before invoke
 ) -> None:
-    monkeypatch.delenv("GFLOW_CLI_GEMINI_API_KEY", raising=False)
+    for _var in ("GFLOW_CLI_LLM_API_KEY", "GFLOW_CLI_LLM_BASE_URL", "GFLOW_CLI_LLM_MODEL"):
+        monkeypatch.delenv(_var, raising=False)
     # Isolate from any developer `.env` (issue #264): `delenv` only clears the
-    # process env, but Settings re-reads the key from a CWD/home `.env` on the
-    # next build — so on a machine that has GFLOW_CLI_GEMINI_API_KEY in `.env`
-    # the tool WOULD expand and this "no key" assertion fails. Neutralize the
-    # dotenv sources so the deleted env var actually means "no key".
+    # process env, but Settings re-reads the values from a CWD/home `.env` on the
+    # next build — so on a machine that configures the prompt tools in `.env`
+    # the tool WOULD expand and this "unconfigured" assertion fails. Neutralize
+    # the dotenv sources so the deleted env vars actually mean "unconfigured".
     monkeypatch.setattr("gflow_cli.config._env_files", tuple)
     # Prevent main() from overriding the LogCapture structlog config with a
     # PrintLogger that would route the "no key" warning into result.output.

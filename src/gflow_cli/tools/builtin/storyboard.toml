@@ -4,13 +4,12 @@ description = "Scaffold a cohesive multi-panel storyboard from a narrative conce
 category = "both"
 author = "gflow"
 version = "1"
-requires_env = ["GFLOW_CLI_GEMINI_API_KEY"]
+requires_env = ["GFLOW_CLI_LLM_API_KEY"]
 
 [options_schema]
 panels = "Number of panels/scenes to generate (default is 4)."
 
 [config]
-model = "gemini-2.5-flash"
 banned_keywords = [
     "8k",
     "4k",
