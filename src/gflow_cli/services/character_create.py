@@ -52,6 +52,7 @@ async def character_create(
     voice: str | None = None,
     personality: str | None = None,
     locale: str = "en-US",
+    format_prompt: bool = False,
 ) -> CharacterCreateResult:
     """Orchestrate the persist-before-spend character creation saga.
 
@@ -80,6 +81,9 @@ async def character_create(
         Optional personality notes (may be redacted by the recorder).
     locale:
         BCP-47 locale forwarded to ``generate_character_image``.
+    format_prompt:
+        Whether to click Flow's prompt-format button before submitting, which
+        rewrites the prompt into Flow's character prompt-engineering shape.
 
     Returns
     -------
@@ -160,6 +164,7 @@ async def character_create(
                     req=face,
                     image_reference_index=0,
                     locale=locale,
+                    format_prompt=format_prompt,
                 ),
             )
             wf0: str = _face_result[0]
@@ -207,6 +212,7 @@ async def character_create(
                         req=body_req,
                         image_reference_index=1,
                         locale=locale,
+                        format_prompt=format_prompt,
                     ),
                 )
                 wf1: str = _body_result[0]

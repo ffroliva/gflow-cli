@@ -8,6 +8,8 @@ are exercised at the Click layer in isolation.
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -53,6 +55,16 @@ def _fake_link_result(index: int, tmp_path: Path) -> Any:
     )
 
 
+def _assert_no_numeric_credit_claim(output: str) -> None:
+    numeric_credit_lines = [
+        line
+        for line in output.splitlines()
+        if any(char.isdigit() for char in line)
+        and re.search(r"\bcredit(?:s|\(s\))?", line, re.IGNORECASE)
+    ]
+    assert not numeric_credit_lines, f"numeric credit claim(s): {numeric_credit_lines}"
+
+
 def _patches(tmp_path: Path):
     """Common patches: profile resolution + a fake recorder (no DB)."""
     fake_recorder = MagicMock()
@@ -83,7 +95,7 @@ def test_chain_missing_manifest_file_errors(tmp_path: Path) -> None:
     assert result.exit_code != 0
 
 
-def test_chain_dry_run_spends_nothing_and_prints_cost(tmp_path: Path) -> None:
+def test_chain_dry_run_reports_pending_operations_and_variable_cost(tmp_path: Path) -> None:
     runner = CliRunner()
     manifest = _manifest(tmp_path, 3)
     p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
@@ -91,17 +103,121 @@ def test_chain_dry_run_spends_nothing_and_prints_cost(tmp_path: Path) -> None:
         p_resolve,
         p_provider,
         p_rec,
+        patch("gflow_cli.cli_video._apply_tools_to_chain_links") as mock_apply_tools,
         patch("gflow_cli.chain.run_chain", new_callable=AsyncMock) as mock_run,
         patch("gflow_cli.api.client.FlowApiClient.__init__") as mock_client_init,
     ):
-        result = runner.invoke(video, ["chain", str(manifest), "--dry-run"])
+        result = runner.invoke(
+            video,
+            ["chain", str(manifest), "--tool", "rewrite", "--dry-run"],
+        )
 
     assert result.exit_code == 0, result.output
-    # Plan + credit estimate printed, but nothing generated and no client built.
-    assert "3 credit(s)" in result.output
-    assert "no credits spent" in result.output
+    mock_apply_tools.assert_not_called()
     mock_run.assert_not_awaited()
     mock_client_init.assert_not_called()
+    assert "3 pending video operations" in result.output
+    assert "current cost" in result.output.lower()
+    assert "Flow" in result.output
+    assert all(
+        term in result.output.lower()
+        for term in ("varies", "model", "duration", "account tier", "flow policy")
+    )
+    assert "Estimated credits" not in result.output
+    _assert_no_numeric_credit_claim(result.output)
+    assert "one per link" not in result.output.lower()
+
+
+def test_chain_resumed_dry_run_counts_only_remaining_operations(tmp_path: Path) -> None:
+    runner = CliRunner()
+    manifest = _manifest(tmp_path, 3)
+    fake_recorder = MagicMock()
+    fake_recorder.completed_links.return_value = [MagicMock(), MagicMock()]
+
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch(
+            "gflow_cli.data.chain_repo.ChainLinkRecorder.open",
+            return_value=fake_recorder,
+        ),
+        patch("gflow_cli.chain.run_chain", new_callable=AsyncMock) as mock_run,
+        patch("gflow_cli.api.client.FlowApiClient.__init__") as mock_client_init,
+    ):
+        result = runner.invoke(
+            video,
+            ["chain", str(manifest), "--resume-from", "chain-abc", "--dry-run"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "2 already completed" in result.output
+    assert "1 pending video operation" in result.output
+    _assert_no_numeric_credit_claim(result.output)
+    assert "one per link" not in result.output.lower()
+    mock_run.assert_not_awaited()
+    mock_client_init.assert_not_called()
+
+
+def test_chain_resume_with_all_links_completed_returns_before_external_work(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    manifest = _manifest(tmp_path, 3)
+    fake_recorder = MagicMock()
+    fake_recorder.completed_links.return_value = [MagicMock(), MagicMock(), MagicMock()]
+
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch(
+            "gflow_cli.data.chain_repo.ChainLinkRecorder.open",
+            return_value=fake_recorder,
+        ),
+        patch("gflow_cli.cli_video.click.confirm") as mock_confirm,
+        patch("gflow_cli.cli_video._apply_tools_to_chain_links") as mock_apply_tools,
+        patch("gflow_cli.cli_video.FlowApiClient") as mock_client,
+        patch("gflow_cli.chain.run_chain", new_callable=AsyncMock) as mock_run,
+    ):
+        result = runner.invoke(
+            video,
+            ["chain", str(manifest), "--resume-from", "chain-abc", "--tool", "rewrite"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "already complete" in result.output.lower()
+    mock_confirm.assert_not_called()
+    mock_apply_tools.assert_not_called()
+    mock_client.assert_not_called()
+    mock_run.assert_not_awaited()
+
+
+def test_chain_declined_confirmation_performs_no_external_work(tmp_path: Path) -> None:
+    runner = CliRunner()
+    manifest = _manifest(tmp_path, 2)
+    p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
+
+    with (
+        p_resolve,
+        p_provider,
+        p_rec,
+        patch("gflow_cli.cli_video._apply_tools_to_chain_links") as mock_apply_tools,
+        patch("gflow_cli.cli_video.FlowApiClient") as mock_client,
+        patch("gflow_cli.chain.run_chain", new_callable=AsyncMock) as mock_run,
+    ):
+        result = runner.invoke(
+            video,
+            ["chain", str(manifest), "--tool", "rewrite"],
+            input="n\n",
+        )
+
+    assert result.exit_code == 130, result.output
+    mock_apply_tools.assert_not_called()
+    mock_client.assert_not_called()
+    mock_run.assert_not_awaited()
+    prompt_line = next(line for line in result.output.splitlines() if "[y/N]" in line)
+    assert "2 pending video operations" in prompt_line
+    _assert_no_numeric_credit_claim(result.output)
+    assert "one per link" not in result.output.lower()
 
 
 def test_chain_max_links_rejects_overlong_manifest(tmp_path: Path) -> None:
@@ -164,6 +280,51 @@ def test_chain_happy_path_calls_run_chain_with_links_and_recorder(tmp_path: Path
     from gflow_cli.api.video import VideoModel
 
     assert kwargs["model"] is VideoModel.VEO_3_1_LITE
+
+
+def test_chain_yes_json_preserves_success_schema_and_bypasses_prompt(tmp_path: Path) -> None:
+    runner = CliRunner()
+    manifest = _manifest(tmp_path, 2)
+    p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
+    results = [_fake_link_result(0, tmp_path), _fake_link_result(1, tmp_path)]
+
+    fake_client = MagicMock()
+    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+    fake_client.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        p_resolve,
+        p_provider,
+        p_rec,
+        patch("gflow_cli.cli_video.FlowApiClient", return_value=fake_client),
+        patch("gflow_cli.cli_video.click.confirm") as mock_confirm,
+        patch("gflow_cli.chain.run_chain", new_callable=AsyncMock, return_value=results),
+    ):
+        result = runner.invoke(video, ["chain", str(manifest), "--yes", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert set(payload) == {
+        "status",
+        "command",
+        "chain_id",
+        "partial",
+        "links",
+        "completed_paths",
+    }
+    assert payload["status"] == "ok"
+    assert payload["command"] == "video chain"
+    assert payload["partial"] is False
+    assert payload["links"] == [
+        {
+            "index": result_item.index,
+            "media_id": result_item.media_id,
+            "local_path": str(result_item.local_path),
+        }
+        for result_item in results
+    ]
+    assert payload["completed_paths"] == [str(result_item.local_path) for result_item in results]
+    mock_confirm.assert_not_called()
 
 
 def test_chain_wires_operation_recorder_and_records_each_link(tmp_path: Path) -> None:
@@ -330,8 +491,6 @@ def test_chain_partial_json_emits_single_parseable_document(tmp_path: Path) -> N
     Re-raising through the shared handler would emit a second (error-shaped)
     document, leaving stdout unparseable.
     """
-    import json
-
     runner = CliRunner()
     manifest = _manifest(tmp_path, 3)
     p_resolve, p_provider, p_rec, _ = _patches(tmp_path)

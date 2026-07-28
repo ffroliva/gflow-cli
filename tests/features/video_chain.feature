@@ -22,10 +22,20 @@ Feature: Video chain orchestration
     And link 3 was never generated
     And the partial result carries the earlier clip paths
 
-  Scenario: Dry-run reports cost without spending credits
+  Scenario: Dry-run reports pending chain work without guessing credits
     When I run the chain with --dry-run
     Then the chain exit code is 0
-    And the output reports the credit cost for 3 links
+    And the output reports 3 pending video operations
+    And the output directs me to check the current cost in Flow
+    And the output contains no numeric credit estimate
+    And no generation was submitted
+
+  Scenario: Resume dry-run counts only unfinished chain links
+    Given the recorder reports 2 completed links
+    When I resume the chain with --dry-run
+    Then the chain exit code is 0
+    And the output reports 1 pending video operation
+    And the output contains no numeric credit estimate
     And no generation was submitted
 
   Scenario: A crash between download and extraction resumes at extraction

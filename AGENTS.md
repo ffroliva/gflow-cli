@@ -81,6 +81,23 @@ These rules exist because docs alone don't bind under momentum: a "check open PR
 - **If a claim can't be verified in the current environment, it's LIKELY — not CONFIRMED.** Keep the issue open, reference it with `Refs #N` (not `Closes #N`), and ship diagnostics rather than a blind fix. When you can't reproduce it, hand the fix to whoever can.
 - **This project reverse-engineers a blackbox.** gflow-cli doesn't own Google Flow — it drives real Flow through inspected HAR/DOM/browser-log behavior. Offline checks (types, lint, unit/BDD tests) verify *our* code does what we think it does; they cannot verify Flow still behaves the way we captured it. Every feature that touches a generation path is **live-verified**, not just offline-tested, before it's called done — see `/gflow:live-verify`.
 
+## Standard Workflow Sequence
+
+All AI agents and harnesses working on `gflow-cli` follow this standard 10-phase pipeline from issue discovery to public release:
+
+| Phase | Skill / Command | Purpose | Output Artifact |
+|---|---|---|---|
+| 1. Triage | `/gflow:issue-assessment <N>` | Read-only issue analysis & root cause hypothesis | `issue_assessment_<N>.md` |
+| 2. Pre-Implementation | `/gflow:predict <proposal>` | Adversarial audit (D14 YAGNI, security, risks) | GO / CAUTION / STOP verdict |
+| 3. BDD Scaffolding | `/gflow:scenario <feature>` | Edge-case explorer & BDD Gherkin spec | `Scenario:` blocks & test scaffold |
+| 4. Implementation Plan | `/gflow:plan <feature>` | Task-by-task atomic implementation plan | `docs/superpowers/plans/<date>-<slug>/PLAN.md` |
+| 5. Council Review | `/gflow:pr-council-review` / `llm-council` | Multi-dimensional audit across 6 core dimensions | Consensus verdict report |
+| 6. Task Execution | `/gflow:status` | Track unchecked tasks during TDD execution | Next unchecked task |
+| 7. Pre-Commit Quality | `/gflow:check` | The Impeccable Routine (hygiene, ruff, pyright, pytest) | All green local checks |
+| 8. Live Verification | `/gflow:live-verify` | 5-layer proof against real Flow transport | `docs/LIVE_VERIFICATION_vX.Y.Z.md` |
+| 9. PR & Issue Close | `/gflow:issue-resolve <N>` | PR, SonarCloud 0-issue gate, merge to develop | Closed GitHub issue |
+| 10. Release Pipeline | `/gflow:release` | Version bump, signed tag (`git tag -s`), PyPI publish | Shipped release & back-merge |
+
 ## Skills reference (cross-tool)
 
 The `skills/` directory ships installable agent skill docs in plain Markdown with YAML frontmatter. Any agent can consume them directly:

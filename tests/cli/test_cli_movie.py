@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -37,6 +38,16 @@ def _make_video_result(*, succeeded: bool = True, flow_op_id: str | None = "op-1
     r.flow_operation_id = flow_op_id
     r.local_path = Path("/out/video.mp4")
     return r
+
+
+def _assert_no_numeric_credit_claim(output: str) -> None:
+    numeric_credit_lines = [
+        line
+        for line in output.splitlines()
+        if any(char.isdigit() for char in line)
+        and re.search(r"\bcredit(?:s|\(s\))?", line, re.IGNORECASE)
+    ]
+    assert not numeric_credit_lines, f"numeric credit claim(s): {numeric_credit_lines}"
 
 
 def _manifest(
@@ -170,19 +181,51 @@ class TestMovieDryRun:
         result = runner.invoke(cli_main, ["movie", "run", str(manifest), "--dry-run"])
         assert result.exit_code == 0
         assert "Alice" in result.output
-        assert "credit" in result.output.lower()
 
-    def test_dry_run_estimates_credits(self, tmp_path: Path) -> None:
+    def test_dry_run_counts_new_and_stale_scenes_as_pending_operations(
+        self, tmp_path: Path
+    ) -> None:
         runner = CliRunner()
         toml = (
             'title = "F"\nproject = "p"\n'
-            '[[scenes]]\nid = "s1"\naction = "y"\n'
-            '[[scenes]]\nid = "s2"\naction = "z"\n'
+            '[[scenes]]\nid = "completed"\naction = "Already rendered"\n'
+            '[[scenes]]\nid = "stale"\naction = "Changed prompt"\n'
+            '[[scenes]]\nid = "new"\naction = "Never rendered"\n'
         )
         manifest = _write_toml(tmp_path / "movie.toml", toml)
-        result = runner.invoke(cli_main, ["movie", "run", str(manifest), "--dry-run"])
+        state = MovieState(title="F", project="p")
+        state.scenes["completed"] = SceneState(
+            media_id="media-completed",
+            flow_operation_id="op-completed",
+            local_path="/out/completed.mp4",
+            status="completed",
+        )
+        state.scenes["stale"] = SceneState(
+            media_id="media-stale",
+            flow_operation_id="op-stale",
+            local_path="/out/stale.mp4",
+            status="completed",
+            prompt="Previous composed prompt.",
+        )
+        state.save(MovieState.state_path_for(manifest))
+
+        with patch("gflow_cli.cli_movie.FlowApiClient") as mock_client:
+            result = runner.invoke(cli_main, ["movie", "run", str(manifest), "--dry-run"])
+
         assert result.exit_code == 0
-        assert "Estimated credits: ~2" in result.output
+        completed_line = next(line for line in result.output.splitlines() if "'completed'" in line)
+        stale_line = next(line for line in result.output.splitlines() if "'stale'" in line)
+        new_line = next(line for line in result.output.splitlines() if "'new'" in line)
+        assert "skip" in completed_line.lower()
+        assert "re-run" in stale_line.lower()
+        assert "pending" in new_line.lower()
+        assert "2 pending video operations" in result.output
+        assert "current cost" in result.output.lower()
+        assert "Flow" in result.output
+        assert "Estimated credits" not in result.output
+        _assert_no_numeric_credit_claim(result.output)
+        assert "one per scene" not in result.output.lower()
+        mock_client.assert_not_called()
 
     def test_dry_run_no_api_calls(self, tmp_path: Path) -> None:
         """Dry-run must not invoke FlowApiClient."""
@@ -913,13 +956,13 @@ class TestFormatSceneLine:
 
         # T2V scene (no characters)
         s1 = Scene(id="s1", action="A", framing="medium", duration=4)
-        line = _format_scene_line(s1, StyleSpec(), done=False, stale=False, cost=2)
+        line = _format_scene_line(s1, StyleSpec(), done=False, stale=False)
         assert "\\[t2v]" in line
         assert "refs=" not in line
 
         # R2V scene (with characters)
         s2 = Scene(id="s2", action="B", framing="wide", duration=8, characters=("Hero",))
-        line2 = _format_scene_line(s2, StyleSpec(), done=False, stale=False, cost=2)
+        line2 = _format_scene_line(s2, StyleSpec(), done=False, stale=False)
         assert "\\[r2v]" in line2
         assert "refs=\\[Hero]" in line2
 

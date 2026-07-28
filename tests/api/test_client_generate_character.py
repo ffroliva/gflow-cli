@@ -92,6 +92,7 @@ class _FakeCharTransport:
         request: Any,
         image_reference_index: int,
         locale: str,
+        format_prompt: bool = False,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
         self.calls.append(
             {
@@ -100,6 +101,7 @@ class _FakeCharTransport:
                 "request": request,
                 "image_reference_index": image_reference_index,
                 "locale": locale,
+                "format_prompt": format_prompt,
             }
         )
         return (list(self._images), list(self._workflows))
@@ -334,7 +336,12 @@ class TestGenerateCharacterImageEntityGuard:
                 image_reference_index=0,
             )
 
-        assert "parentEntityId" in str(exc_info.value) or exc_info.value.detail
+        # Pin the MEANING, not just "an error happened": the message must name
+        # the entity that was not bound and say the image is unattached, so a
+        # reader isn't sent hunting a wire-format parser bug (live 2026-07-27).
+        detail = exc_info.value.detail or ""
+        assert _ENTITY_ID in detail, detail
+        assert "did not bind" in detail, detail
 
     async def test_missing_parent_entity_id_raises(self, tmp_path: Path) -> None:
         """A workflow missing parentEntityId entirely also raises WireFormatError.
@@ -348,13 +355,18 @@ class TestGenerateCharacterImageEntityGuard:
         client = _client_with_transport(tmp_path, transport)
 
         req = CharacterImageRequest(prompt="test")
-        with pytest.raises(WireFormatError):
+        with pytest.raises(WireFormatError) as exc_info:
             await client.generate_character_image(
                 project_id=_PROJECT_ID,
                 entity_id=_ENTITY_ID,
                 req=req,
                 image_reference_index=0,
             )
+
+        # This is the shape Flow actually returned live on 2026-07-27 — the key
+        # is absent entirely — so the message must distinguish "omitted" from a
+        # mismatched value.
+        assert "omitted it entirely" in (exc_info.value.detail or ""), exc_info.value.detail
 
     async def test_empty_workflows_raises(self, tmp_path: Path) -> None:
         """If transport returns no workflows, raise WireFormatError (no binding possible)."""
