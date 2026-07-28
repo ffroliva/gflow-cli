@@ -113,20 +113,97 @@ Deep setup, verification, and security notes live in
 **Default:** `flow`
 **CLI override:** none yet — set the env var to switch backends once `official` is wired.
 
-### `GFLOW_CLI_GEMINI_API_KEY`
+### Prompt-tools LLM: `GFLOW_CLI_LLM_*`
 
-**What:** Public Gemini API key. Used by the **`creative-director`** prompt tool
-(`--tool creative-director` / `gflow tools run creative-director`, see
-[TOOLS.md](TOOLS.md) and [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md)) and, in future, by the
-official Veo 3.1 SDK.
-**Required when:** you apply the `creative-director` tool (via `--tool` on any generation
-command, or `gflow tools run`), or `GFLOW_CLI_PROVIDER=official`.
-**Default:** unset
-**Behavior when unset:** the tool is a no-op — gflow logs an `INFO` notice and generates
-from your original prompt (it never fails the run). API errors (rate limit, network) fall
-back the same way after a short exponential-backoff retry, bounded by an overall ~60s
-wall-clock budget per call.
-**Get one:** <https://aistudio.google.com/apikey>
+The prompt tools (`--tool creative-director` / `reverse-engineer` / `storyboard`, see
+[TOOLS.md](TOOLS.md) and [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md)) talk to any endpoint
+speaking the **OpenAI Chat Completions API** — OpenAI, OpenRouter, a corporate gateway, a
+self-hosted proxy, a local Ollama/LM Studio, or Google's own compatibility endpoint.
+
+> **Removed in v0.46.0:** `GFLOW_CLI_GEMINI_API_KEY` and `GFLOW_CLI_GEMINI_MODEL` are no
+> longer read and are **not** forwarded. Set `GFLOW_CLI_LLM_API_KEY` instead — an existing
+> Google `AIza…` key keeps working unchanged, because the default endpoint is Google's
+> OpenAI-compatible surface. gflow prints a one-time warning if it sees the old variable,
+> because the prompt tools never fail a run: without the warning your prompts would quietly
+> stop being rewritten while generations still billed in full.
+
+#### `GFLOW_CLI_LLM_BASE_URL`
+
+**What:** Base URL of an OpenAI-compatible endpoint. This is the on/off switch for the
+prompt tools.
+**Default:** `https://generativelanguage.googleapis.com/v1beta/openai` (Google)
+**Validated:** `https` only — plus plain `http` for loopback (`127.0.0.1`, `localhost`,
+`::1`), since a local gateway never puts your key on the wire. Credentials embedded in the
+URL (`https://user:pass@host`) are rejected; pass the credential via
+`GFLOW_CLI_LLM_API_KEY`. Redirects are never followed, because `urllib` would re-send your
+`Authorization` header to whatever host a redirect names.
+
+#### `GFLOW_CLI_LLM_API_KEY`
+
+**What:** The credential gflow presents to that endpoint, as `Authorization: Bearer`.
+**Default:** unset — and **optional**. When unset the header is omitted entirely, which is
+what a keyless local gateway expects.
+**Note:** this is the *only* key gflow holds. Provider keys (OpenAI, Anthropic, Google…)
+stay with your gateway; gflow never sees them.
+
+#### `GFLOW_CLI_LLM_MODEL`
+
+**What:** Model to request. Because gateways route on the model string, this doubles as the
+provider selector (e.g. `openai/gpt-4o-mini`, `google/gemini-2.5-flash`).
+**Default:** unset.
+**Precedence:** a tool's TOML `config.model` pin > `GFLOW_CLI_LLM_MODEL` > the default
+endpoint's own default > omitted, letting the gateway choose. The builtin tools pin
+nothing on purpose: a hardcoded vendor model name is rejected by any gateway that does not
+serve it. Note Google's compat endpoint has **no** server-side default and answers
+`400 "model is not specified"`, so the default endpoint ships a matching default model.
+
+#### When is the tool active?
+
+Set **either** a key or a base URL and the tools run. Set neither and they are a silent
+no-op: gflow logs an `INFO` notice, makes no network call, and generates from your original
+prompt. It never fails the run — API errors (rate limit, network, a model the gateway does
+not serve) fall back the same way after a short exponential-backoff retry bounded by an
+overall ~60 s wall-clock budget per call. A fallback prints one line to stderr so a
+misconfiguration is not invisible.
+
+#### Examples
+
+```bash
+# Google (default endpoint) — an existing AIza… key, nothing else to set
+export GFLOW_CLI_LLM_API_KEY="AIza..."
+
+# OpenRouter, or any hosted OpenAI-compatible gateway
+export GFLOW_CLI_LLM_BASE_URL="https://openrouter.ai/api/v1"
+export GFLOW_CLI_LLM_API_KEY="sk-or-..."
+export GFLOW_CLI_LLM_MODEL="google/gemini-2.5-flash"
+
+# A local proxy in Docker — one entrypoint across many providers, keys held by
+# the gateway. freellmapi (https://github.com/tashfeenahmed/freellmapi) is one
+# such proxy; anything OpenAI-compatible works.
+export GFLOW_CLI_LLM_BASE_URL="http://127.0.0.1:3001/v1"
+export GFLOW_CLI_LLM_API_KEY="<the gateway's own unified key>"
+
+# A keyless local runtime (Ollama) — no credential at all
+export GFLOW_CLI_LLM_BASE_URL="http://127.0.0.1:11434/v1"
+export GFLOW_CLI_LLM_MODEL="llama3"
+```
+
+Verify without spending generation credits:
+
+```bash
+gflow tools run creative-director "cat in space" --json   # check "was_expanded": true
+```
+
+#### Gotchas
+
+- **Use `127.0.0.1`, not `localhost`.** Gateways commonly bind IPv4 only, and Windows'
+  dual-stack resolver tries `::1` first, which stalls until it times out.
+- **Include the version path.** Most gateways serve `/v1`; gflow appends
+  `/chat/completions` to whatever you give it.
+- **`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` apply implicitly.** Python's `urllib` honours
+  them, and on Windows it also picks up the system proxy configured in Settings even with
+  no env var set. If a corporate proxy is configured, add your local gateway to `NO_PROXY`
+  or its traffic will be routed through the proxy and fail non-obviously.
 
 ### `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`
 
@@ -405,12 +482,12 @@ gflow image batch ./manifest.tsv
 ### "I want to test against the official Veo SDK"
 
 ```bash
-GFLOW_CLI_PROVIDER=official \
-GFLOW_CLI_GEMINI_API_KEY=AIza... \
-gflow video t2v "test"
+GFLOW_CLI_PROVIDER=official gflow video t2v "test"
 ```
 
-(planned v0.5+ — current scaffold accepts but ignores `GFLOW_CLI_PROVIDER=official`.)
+(planned v0.5+ — the current scaffold accepts but ignores `GFLOW_CLI_PROVIDER=official`. It will
+need its own Google credential when implemented; `GFLOW_CLI_LLM_API_KEY` is for the prompt tools
+only and is not used for generation.)
 
 ### "I want a sandbox profile that doesn't pollute my main one"
 

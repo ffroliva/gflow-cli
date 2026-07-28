@@ -915,17 +915,7 @@ def video() -> None:
     help="How many videos to generate (1-4). >1 multiplies credit cost.",
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
-@click.option(
-    "-t",
-    "--tool",
-    "tool_specs",
-    multiple=True,
-    help=(
-        "Apply a prompt tool before generating (e.g. creative-director or "
-        "creative-director:style=cinematic). Requires GFLOW_CLI_GEMINI_API_KEY; "
-        "falls back to the original prompt if unset or on error."
-    ),
-)
+@tool_option
 @_project_option
 @_project_name_option
 @click.option(

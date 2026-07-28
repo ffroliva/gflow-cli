@@ -222,7 +222,7 @@ Composition/Camera + Style) via the public Gemini API. `-t/--tool` is **repeatab
 works on every generation command (`image t2i`/`i2i`/`batch`, `video t2v`/`i2v`/`r2v`/`chain`);
 on multi-prompt/batch it is applied per prompt.
 
-- Requires `GFLOW_CLI_GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey)).
+- Requires an OpenAI-compatible endpoint: `GFLOW_CLI_LLM_API_KEY` ([Google key](https://aistudio.google.com/apikey)) and/or `GFLOW_CLI_LLM_BASE_URL`.
   The model is set per tool via the TOML `config.model` key (default `gemini-2.5-flash`).
 - Graceful: if the key is unset or the API errors, gflow prints a notice and
   generates from your **original** prompt — the run never fails because of a tool
@@ -516,7 +516,7 @@ gflow video t2v "a dog surfing" --tool creative-director:style=cinematic
 
 `-t` / `--tool` applies a prompt tool before generating — see
 [prompt tools](#gflow-image-t2i) under `image t2i` for the full contract
-(requires `GFLOW_CLI_GEMINI_API_KEY`; degrades gracefully to the original prompt).
+(requires `GFLOW_CLI_LLM_API_KEY` and/or `GFLOW_CLI_LLM_BASE_URL`; degrades gracefully to the original prompt).
 
 ## `gflow video i2v`
 
@@ -777,7 +777,7 @@ gflow tools run NAME "INPUT" [--style MODE] [--json]
 ```bash
 gflow tools list
 gflow tools show creative-director
-# Preview an expansion (needs GFLOW_CLI_GEMINI_API_KEY); never fatal
+# Preview an expansion (needs GFLOW_CLI_LLM_API_KEY or _BASE_URL); never fatal
 gflow tools run creative-director "a cat on a couch" --style cinema --json
 ```
 

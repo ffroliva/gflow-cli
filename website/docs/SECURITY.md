@@ -11,7 +11,7 @@
 | Console/JSON output under `GFLOW_CLI_DEBUG_TRACEBACK` (opt-in, off by default) | Raw exception text may echo tokens/cookies present in error state, especially if piped to a shared/persistent system (CI logs, aggregators) | Medium–High (depends on destination) |
 | Generated outputs (`$GFLOW_CLI_OUTPUT_DIR/...`) | Unwanted disclosure | Medium (depends on content) |
 | Local database (`$GFLOW_CLI_HOME/gflow.db`) | Disclosure of prompt history and asset provenance | Low–Medium (depends on prompt content; use `GFLOW_CLI_HISTORY_PROMPTS=redacted` to reduce) |
-| `.env` file with `GFLOW_CLI_GEMINI_API_KEY` | Theft → API quota theft, billing | Medium |
+| `.env` file with `GFLOW_CLI_LLM_API_KEY` | Theft → API quota theft, billing | Medium |
 | Project-internal logs | Leaking prompts / asset IDs | Low |
 
 ## What we don't do
@@ -41,7 +41,7 @@
 
 Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in advance of `GFLOW_CLI_PROVIDER=official`.
 
-- **Location:** `$GFLOW_CLI_GEMINI_API_KEY` env var, optionally loaded from a `.env` file in the directory where you invoke `gflow` or from `$GFLOW_CLI_HOME/.env` (CWD wins on conflicts; see [CONFIGURATION.md](CONFIGURATION.md#env-loading)). Treat BOTH locations as secret-bearing files: keep `$GFLOW_CLI_HOME/.env` user-readable only and out of shared images/backups.
+- **Location:** `$GFLOW_CLI_LLM_API_KEY` env var, optionally loaded from a `.env` file in the directory where you invoke `gflow` or from `$GFLOW_CLI_HOME/.env` (CWD wins on conflicts; see [CONFIGURATION.md](CONFIGURATION.md#env-loading)). Treat BOTH locations as secret-bearing files: keep `$GFLOW_CLI_HOME/.env` user-readable only and out of shared images/backups.
 - **In memory:** Held only in the `Settings` dataclass, never logged.
 - **In transit:** Sent only to `generativelanguage.googleapis.com` over HTTPS.
 - **Rotate:** Set a new value in `.env`, restart the CLI. No persistence beyond the env var.

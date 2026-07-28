@@ -130,8 +130,9 @@ def slugify_project_name(prompt: str | None, prefix: str = "gflow") -> str:
 
 _TOOL_OPTION_HELP = (
     "Apply a prompt tool before generating, e.g. --tool creative-director or "
-    "--tool creative-director:style=cinema. Repeatable. Requires "
-    "GFLOW_CLI_GEMINI_API_KEY; falls back to the original prompt if unset or on error."
+    "--tool creative-director:style=cinema. Repeatable. Needs an OpenAI-compatible "
+    "endpoint via GFLOW_CLI_LLM_API_KEY and/or GFLOW_CLI_LLM_BASE_URL; falls back "
+    "to the original prompt if unconfigured or on error."
 )
 
 
