@@ -117,6 +117,27 @@ def _mirrored_targets() -> list[Path]:
     return targets
 
 
+def _nav_orphans() -> list[str]:
+    """Published `.md` pages that `mkdocs.yml` never lists in `nav:`.
+
+    An orphan still builds and deploys, but nothing links to it — it exists on
+    the site only for whoever guesses the URL. Mirroring a doc and wiring it
+    into the nav are two separate acts, and the mirror check only ever caught
+    the first, so a new page could ship invisible.
+
+    Substring match against the whole `nav:` block: entries are `File: NAME.md`
+    and nesting depth does not matter, so this stays true no matter how the nav
+    is reorganized. Requires no YAML parser (mkdocs' own `!!python/name:` tags
+    make it non-trivial to parse anyway).
+    """
+    mkdocs = _REPO / "website" / "mkdocs.yml"
+    if not mkdocs.exists():
+        return []
+    text = mkdocs.read_text(encoding="utf-8")
+    nav = text[text.index("nav:") :] if "nav:" in text else ""
+    return sorted(p.name for p in _WEB.glob("*.md") if p.name not in nav and p.name != "index.md")
+
+
 def main(argv: list[str]) -> int:
     check = "--check" in argv
     drift: list[str] = []
@@ -135,13 +156,17 @@ def main(argv: list[str]) -> int:
             written += 1
 
     if check:
-        if drift:
-            print("website/docs mirror is stale — regenerate with:")
-            print("  python scripts/ci/generate_website_docs.py")
-            for d in drift:
-                print(f"  DRIFT: {d}")
+        orphans = _nav_orphans()
+        if drift or orphans:
+            if drift:
+                print("website/docs mirror is stale — regenerate with:")
+                print("  python scripts/ci/generate_website_docs.py")
+                for d in drift:
+                    print(f"  DRIFT: {d}")
+            for o in orphans:
+                print(f"  NAV-ORPHAN: {o} is published but absent from website/mkdocs.yml nav")
             return 1
-        print(f"website/docs mirror in sync ({len(_mirrored_targets())} files).")
+        print(f"website/docs mirror in sync ({len(_mirrored_targets())} files), nav complete.")
         return 0
     print(f"Regenerated {written} website/docs file(s) from canonical.")
     return 0
