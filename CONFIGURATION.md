@@ -9,7 +9,6 @@
 | `CHROME_BINARY` | (autodetect) | Override Chrome binary path. Falls back to platform-standard locations. |
 | `GFLOW_CLI_CONCURRENCY` | `4` | Maximum parallel API requests per batch. |
 | `GFLOW_CLI_GEMINI_API_KEY` | _(unset)_ | Public Gemini key enabling prompt expansion (`-e`/`--expand`). Unset = expansion is a graceful no-op. [Get one](https://aistudio.google.com/apikey). |
-| `GFLOW_CLI_GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model used for prompt expansion. |
 | `GFLOW_LIVE` | _(unset)_ | Set to `1` to enable live-API test markers (`@pytest.mark.live`). |
 
 ---

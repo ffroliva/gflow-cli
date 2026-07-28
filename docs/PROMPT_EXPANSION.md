@@ -160,7 +160,7 @@ abort a generation** — the worst case is "your prompt went through unchanged."
 |---|---|
 | Endpoint | `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` |
 | Auth | API key in the `x-goog-api-key` header (never on the query string). |
-| Default model | `gemini-2.5-flash` (TOML `config.model`; `GFLOW_CLI_GEMINI_MODEL` overrides globally). |
+| Default model | `gemini-2.5-flash` (set per tool via the TOML `config.model` key). |
 | Request | `system_instruction` = built instruction; user `contents` = the (truncated) prompt; `temperature=0.7`, `maxOutputTokens=1024`. |
 | Response | First candidate's text, cleaned (quote-stripped, truncated). |
 
@@ -223,7 +223,6 @@ UX from agent-invoked tools), but no new work should depend on it. See
 | Env var | Default | Purpose |
 |---|---|---|
 | `GFLOW_CLI_GEMINI_API_KEY` | — | Required to actually rewrite prompts. [Get a key](https://aistudio.google.com/apikey). |
-| `GFLOW_CLI_GEMINI_MODEL` | `gemini-2.5-flash` | Global override of the tool's default model. |
 | `GFLOW_CLI_HISTORY_PROMPTS` | `store` | `redacted` withholds the expanded prompt and minimizes the recorded tool descriptor (§8). |
 
 See [CONFIGURATION.md](CONFIGURATION.md) for the full precedence chain.

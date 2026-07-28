@@ -294,7 +294,7 @@ for the full comparison and migration guidance.
 ## 9. See also
 
 - [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md) — the Creative Director tool in depth.
-- [CONFIGURATION.md](CONFIGURATION.md) — `GFLOW_CLI_GEMINI_API_KEY`, `GFLOW_CLI_GEMINI_MODEL`.
+- [CONFIGURATION.md](CONFIGURATION.md) — `GFLOW_CLI_GEMINI_API_KEY`.
 - [DATA_LAYER.md](DATA_LAYER.md) — how `expanded_prompt` and `metadata_json.tool` are recorded.
 - [MCP.md](MCP.md) — the MCP server.
 - [tool-abstraction evaluation](superpowers/research/2026-06-27-tool-abstraction-evaluation.md) —

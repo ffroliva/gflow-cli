@@ -222,8 +222,8 @@ Composition/Camera + Style) via the public Gemini API. `-t/--tool` is **repeatab
 works on every generation command (`image t2i`/`i2i`/`batch`, `video t2v`/`i2v`/`r2v`/`chain`);
 on multi-prompt/batch it is applied per prompt.
 
-- Requires `GFLOW_CLI_GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey));
-  optionally `GFLOW_CLI_GEMINI_MODEL` (default `gemini-2.5-flash`).
+- Requires `GFLOW_CLI_GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey)).
+  The model is set per tool via the TOML `config.model` key (default `gemini-2.5-flash`).
 - Graceful: if the key is unset or the API errors, gflow prints a notice and
   generates from your **original** prompt — the run never fails because of a tool
   (each call is bounded by an overall ~60s wall-clock budget).

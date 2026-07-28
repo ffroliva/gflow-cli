@@ -128,13 +128,6 @@ back the same way after a short exponential-backoff retry, bounded by an overall
 wall-clock budget per call.
 **Get one:** <https://aistudio.google.com/apikey>
 
-### `GFLOW_CLI_GEMINI_MODEL`
-
-**What:** Gemini model used by the `creative-director` prompt tool.
-**Default:** `gemini-2.5-flash`
-**Note:** Override to select a newer Flash revision without upgrading gflow-cli, e.g.
-`GFLOW_CLI_GEMINI_MODEL=gemini-2.5-flash-lite`.
-
 ### `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`
 
 **What:** Maximum time (seconds) that `gflow auth login` waits for the user to complete the Google sign-in flow in the browser.
