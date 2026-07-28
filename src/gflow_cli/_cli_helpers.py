@@ -253,12 +253,6 @@ def _warn_tool_skipped(title: str, *, quiet: bool) -> None:
     )
 
 
-def reset_tool_skip_notice() -> None:
-    """Test seam — clears the warn-once latch."""
-    global _tool_skip_notified
-    _tool_skip_notified = False
-
-
 def safe_path_text(path: Path) -> str:
     """Format a path for terminal display, avoiding absolute path leaks.
 

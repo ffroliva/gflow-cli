@@ -93,7 +93,7 @@ def resolve_model(pin: str | None, env_model: str | None, base_url: str) -> str 
         return pin
     if env_model:
         return env_model
-    if (base_url or DEFAULT_BASE_URL).rstrip("/") == DEFAULT_BASE_URL.rstrip("/"):
+    if (base_url or DEFAULT_BASE_URL).rstrip("/") == DEFAULT_BASE_URL:
         return DEFAULT_MODEL_FOR_DEFAULT_ENDPOINT
     return None
 
@@ -281,7 +281,7 @@ class PromptExpander:
         gateways need no credential. Neither ⇒ the user has not set this up, so
         skip the call rather than spend a doomed round trip per prompt.
         """
-        return bool(self._api_key) or self._base_url != DEFAULT_BASE_URL.rstrip("/")
+        return bool(self._api_key) or self._base_url != DEFAULT_BASE_URL
 
     @property
     def _url(self) -> str:

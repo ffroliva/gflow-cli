@@ -46,7 +46,9 @@ DEFAULT_LLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 #: Hosts for which plain ``http://`` is accepted on ``llm_base_url``. Traffic to
 #: these never leaves the machine, so there is no credential-in-cleartext risk.
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+#: Compared against ``urlsplit().hostname``, which unwraps IPv6 brackets — so
+#: this is ``"::1"``, never ``"[::1]"``.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 #: Removed in v0.46.0 (issue #387). Read only to tell the user it is dead —
 #: never forwarded. Without this the removal would be *silent*: the prompt tools
