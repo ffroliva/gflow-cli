@@ -143,6 +143,9 @@ class FlowApiError(GFlowError):
 
     problem_type = "https://gflow-cli.dev/errors/api-error"
     title = "Flow API error"
+    _default_remediation = (
+        "Check request parameters and network connection, then retry the API call."
+    )
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         # `bool` is a subclass of `int`, so `isinstance(True, int)` is True.
@@ -192,7 +195,10 @@ class AisandboxAuthError(AuthExpiredError):
 class RateLimitError(FlowApiError):
     problem_type = "https://gflow-cli.dev/errors/rate-limit"
     title = "Rate limit or quota hit"
-    _default_remediation = "Wait a few minutes; reduce GFLOW_CLI_CONCURRENCY if persistent."
+    _default_remediation = (
+        "Daily or per-minute model quota reached; retry with a different model or "
+        "wait for quota reset"
+    )
 
     def __init__(
         self,
@@ -240,10 +246,7 @@ class ContentPolicyError(FlowApiError):
 
     problem_type = "https://gflow-cli.dev/errors/content-policy"
     title = "Content policy rejection"
-    _default_remediation = (
-        "Flow rejected the prompt under its content policy. "
-        "Soften wording or remove disallowed elements."
-    )
+    _default_remediation = "Reduce prompt text or describe <= 1 person per scene"
 
     def to_problem_details(self) -> ProblemDetails:
         pd = super().to_problem_details()
@@ -266,8 +269,9 @@ class WireFormatError(FlowApiError):
     problem_type = "https://gflow-cli.dev/errors/wire-format"
     title = "Unexpected response shape from Flow"
     _default_remediation = (
-        "File a bug at https://github.com/ffroliva/gflow-cli/issues "
-        "(do NOT include captured tokens or signed URLs)."
+        "Check request payload parameters or retry with a simpler prompt text. "
+        "File a bug at https://github.com/ffroliva/gflow-cli/issues with the "
+        "discovery payload above."
     )
 
     def __init__(
@@ -302,10 +306,7 @@ class SceneConcatError(FlowApiError):
 
     problem_type = "https://gflow-cli.dev/errors/scene-concat"
     title = "Scene concatenation failed"
-    _default_remediation = (
-        "Flow's server-side concatenation job did not succeed. Retry the "
-        "compose; if it persists, check the clips are valid video workflows."
-    )
+    _default_remediation = "Ensure video clip dimensions and codecs match before concatenation"
 
 
 class TransportTimeoutError(GFlowError):
@@ -762,6 +763,10 @@ class BatchPartialError(GFlowError):
 
     problem_type = "https://gflow-cli.dev/errors/batch-partial"
     title = "Batch partially failed"
+    _default_remediation = (
+        "One or more prompts in the batch failed; check individual prompt errors "
+        "or retry the failed items."
+    )
 
     def __init__(
         self,
@@ -793,6 +798,9 @@ class BatchIntegrityError(GFlowError):
 
     problem_type = "https://gflow-cli.dev/errors/batch-integrity"
     title = "Batch integrity check failed"
+    _default_remediation = (
+        "The generated image count did not match expectations; retry the batch operation."
+    )
 
     def __init__(
         self,
@@ -819,11 +827,7 @@ class DataStoreError(GFlowError):
 
     problem_type = "https://gflow-cli.dev/errors/data-store"
     title = "Data store error"
-    _default_remediation = (
-        "Check GFLOW_CLI_DB_PATH and filesystem permissions. "
-        "If the DB was created by a newer gflow-cli, upgrade gflow-cli or "
-        "point GFLOW_CLI_DB_PATH at a compatible database."
-    )
+    _default_remediation = "Check database file permissions or run 'gflow data errors prune'"
 
 
 class DataMigrationError(DataStoreError):
@@ -852,9 +856,8 @@ class FrameExtractionError(GFlowError):
     problem_type = "https://gflow-cli.dev/errors/frame-extraction"
     title = "Last-frame extraction failed"
     _default_remediation = (
-        "Could not extract the last frame of the clip. Install the chain extra: "
-        "pip install 'gflow-cli[chain]' (provides PyAV). If already installed, the "
-        "input video may be truncated or undecodable."
+        "Verify input video file is readable and non-corrupt. Ensure "
+        "gflow-cli[chain] dependencies (PyAV) are installed."
     )
 
 

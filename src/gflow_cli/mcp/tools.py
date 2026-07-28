@@ -1104,11 +1104,29 @@ def _error_payload(error: dict[str, Any]) -> dict[str, Any]:
     return {"status": "error", "error": error}
 
 
+def _format_mcp_error(exc: GFlowError) -> str:
+    """Format a GFlowError for MCP tool error responses.
+
+    Includes the error class name, detail (or title if detail is empty),
+    and remediation hint if present:
+    `[error_class] detail (Remediation: remediation_hint)`
+    """
+    error_class = type(exc).__name__
+    main_msg = exc.detail if exc.detail else exc.title
+    if exc.remediation_hint:
+        return f"[{error_class}] {main_msg} (Remediation: {exc.remediation_hint})"
+    return f"[{error_class}] {main_msg}"
+
+
 def _gflow_error_dict(exc: GFlowError) -> dict[str, Any]:
     """Problem-details dict + the shared retryable flag (``errors.is_retryable``)
     so the MCP envelope's retry signal stays identical to CLI ``--json`` and the
     worker queue — never fork a private retryable list here (§6.5)."""
-    return {**exc.to_problem_details(), "retryable": is_retryable(exc)}
+    return {
+        **exc.to_problem_details(),
+        "message": _format_mcp_error(exc),
+        "retryable": is_retryable(exc),
+    }
 
 
 def _selector_error(title: str | None, card_id: str | None) -> dict[str, Any] | None:
@@ -1445,5 +1463,7 @@ __all__ = [
     "gflow_instructions_apply",
     "_TokenBucket",
     "_adapt_tools",
+    "_format_mcp_error",
+    "_gflow_error_dict",
     "_run_generation_task",
 ]

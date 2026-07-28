@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -242,6 +242,50 @@ def _classify_ref(ref: str) -> ImageRef | Path:
         raise click.UsageError(
             msg,
         ) from exc
+
+
+def _enrich_uuid_refs(refs: list[ImageRef], profile_name: str) -> list[ImageRef]:
+    """Give bare ``--ref <UUID>`` values their catalog-recorded local files (#393).
+
+    ``_classify_ref`` sees a string, not the catalog, so it can only produce
+    ``ImageRef(name=<uuid>)`` — no ``local_path``. That leaves the transport one
+    way to bind the reference: find its tile in Flow's media picker. When that
+    misses there is nothing to fall back on and the whole generation hard-fails,
+    which is what #393 hit in production. ``local_path`` feeds the transport's
+    existing upload fallback (``_attach_image_uuid_refs``), previously reachable
+    only from the ``@mention`` path, turning an unreachable tile into an upload
+    of the exact recorded bytes. No search hint is derived: picker tiles carry a
+    short Flow-authored caption, not the prompt (see the #393 test module).
+
+    One catalog session for the whole list — ``DataStore.open`` runs the
+    migration check and nano2 allows 10 refs per call. Best-effort throughout:
+    an unknown asset, an unavailable catalog, or a file since deleted leaves the
+    ref untouched, and the transport still fails loud rather than generating
+    without the reference.
+    """
+    if not refs:
+        return refs
+
+    def _with_local_file(ref: ImageRef, repo: DataRepository) -> ImageRef:
+        try:
+            seed = repo.resolve_seed_image(profile_name, ref.name)
+        except (DataStoreError, OSError) as exc:
+            logger.debug("image.ref_enrich_skipped", media_id=ref.name, error=str(exc)[:120])
+            return ref
+        # Only offer a file that still exists — a stale catalog path would send
+        # the transport into uploading something that isn't there.
+        if seed is None or seed.local_path is None or not seed.local_path.is_file():
+            return ref
+        return replace(ref, local_path=str(seed.local_path))
+
+    try:
+        settings = get_settings()
+        with DataStore.open(settings.resolved_db_path()) as store:
+            repo = DataRepository(store)
+            return [_with_local_file(ref, repo) for ref in refs]
+    except (DataStoreError, OSError) as exc:
+        logger.debug("image.ref_enrich_skipped", error=str(exc)[:120])
+        return refs
 
 
 async def _resolve_project(
@@ -1553,7 +1597,13 @@ async def _run_i2i(
             # upload — v0.26.0, `_attach_image_uuid_refs`), falling back to uploading
             # the asset's local file, and failing loud if neither is possible. A UUID
             # ref is never silently dropped.
-            uuid_refs_initial = [r for r in params.classified_refs if isinstance(r, ImageRef)]
+            #
+            # That upload fallback only exists if the ref CARRIES a local file, and
+            # a bare `--ref <uuid>` has none until the catalog supplies it (#393).
+            uuid_refs_initial = _enrich_uuid_refs(
+                [r for r in params.classified_refs if isinstance(r, ImageRef)],
+                profile_name,
+            )
             local_ref_paths = tuple(r for r in params.classified_refs if isinstance(r, Path))
             req = GenerateImageRequest(
                 prompt=params.prompt,

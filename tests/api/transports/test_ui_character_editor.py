@@ -19,7 +19,11 @@ import pytest
 
 from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
-from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.api.transports.ui_automation import (
+    PROMPT_FORMAT_SELECTORS,
+    UiAutomationTransport,
+)
+from gflow_cli.errors import FlowAppError
 
 # ---------------------------------------------------------------------------
 # Helpers / shared fakes
@@ -173,6 +177,80 @@ class TestEnterCharacterEditor:
     async def test_raises_when_editor_not_ready(self) -> None:
         """RuntimeError when the prompt textbox never becomes visible."""
         page = _make_page(visible_selectors=set())  # nothing visible
+        t = _make_transport(page=page)
+        t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+
+        with pytest.raises(RuntimeError, match="Character editor not ready"):
+            await t._enter_character_editor(page, project_id="p", entity_id="e", locale="en")
+
+    @pytest.mark.asyncio
+    async def test_retries_when_flow_bounces_off_the_character_route(self) -> None:
+        """Flow redirects the character route back to the project page when the
+        entity is not yet queryable (live 2026-07-28). Re-navigate until it sticks.
+
+        The project page mounts a Slate box too, so the editor-ready wait alone
+        is satisfied on the WRONG surface — and generating there submits through
+        the project composer, which sends no `entityContext`. Flow then files the
+        portrait as a plain project image (#395).
+        """
+        ready_sel = UiAutomationTransport._CHARACTER_EDITOR_READY_SELECTOR
+        page = _make_page(visible_selectors={ready_sel})
+        project_url = "https://labs.google/fx/en/tools/flow/project/p1"
+        entity_url = f"{project_url}/character/e1"
+        # First load bounces to the project page; the retry lands on the entity.
+        urls = iter([project_url, entity_url, entity_url, entity_url])
+
+        async def _goto(*_a: object, **_kw: object) -> None:
+            page.url = next(urls)
+
+        page.goto = AsyncMock(side_effect=_goto)
+        page.url = project_url
+        t = _make_transport(page=page)
+        t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+
+        await t._enter_character_editor(page, project_id="p1", entity_id="e1", locale="en")
+
+        assert page.goto.await_count >= 2, "should have re-navigated after the bounce"
+        assert "e1" in page.url
+
+    @pytest.mark.asyncio
+    async def test_raises_when_the_character_route_never_sticks(self) -> None:
+        """Give up loudly rather than typing into the project composer (#395)."""
+        ready_sel = UiAutomationTransport._CHARACTER_EDITOR_READY_SELECTOR
+        page = _make_page(visible_selectors={ready_sel})
+        page.url = "https://labs.google/fx/en/tools/flow/project/p1"
+        page.goto = AsyncMock()  # every navigation keeps us on the project page
+        t = _make_transport(page=page)
+        t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+
+        with pytest.raises(FlowAppError, match="PROJECT composer"):
+            await t._enter_character_editor(page, project_id="p1", entity_id="e1", locale="en")
+
+    @pytest.mark.asyncio
+    async def test_flow_app_crash_raises_typed_retryable_error(self) -> None:
+        """A Flow client-side crash must surface as the retryable FlowAppError.
+
+        Live 2026-07-27: `character create` failed repeatedly with "prompt
+        textbox not visible", but the incident bundle's ui.json showed Flow's
+        React error boundary (title category `flow_app_crash`, zero ligatures)
+        — the editor never existed. A bare RuntimeError blames a selector and
+        reads as a gflow bug; FlowAppError (exit 31) says "Flow broke, retry".
+        """
+        page = _make_page(visible_selectors=set())
+        page.title = AsyncMock(
+            return_value="Application error: a client-side exception has occurred"
+        )
+        t = _make_transport(page=page)
+        t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+
+        with pytest.raises(FlowAppError, match="crashed"):
+            await t._enter_character_editor(page, project_id="p", entity_id="e", locale="en")
+
+    @pytest.mark.asyncio
+    async def test_non_crash_still_raises_selector_runtime_error(self) -> None:
+        """A normally-titled page that simply lacks the box keeps the old error."""
+        page = _make_page(visible_selectors=set())
+        page.title = AsyncMock(return_value="Google Flow")
         t = _make_transport(page=page)
         t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
 
@@ -1269,3 +1347,123 @@ class TestSubmitBodyPrompt:
         assert isinstance(kw.get("prompt_len"), int) and kw["prompt_len"] > 0
         # No raw body text in the log payload.
         assert "red raincoat" not in str(kw)
+
+
+# ---------------------------------------------------------------------------
+# Tests: format_character_prompt — editor "Format" button (best-effort, non-fatal)
+#
+# The button is labelled "Format" in EN, but the label is NOT the anchor: Flow
+# renders UI text in the Chrome profile language, so the cascade leads with the
+# locale-stable Material Symbols ligature and keeps EN text as a last resort
+# ([[flow-locale-leak-icon-ligatures]], incident #56).
+# ---------------------------------------------------------------------------
+
+
+class _FakeFormatButton:
+    """The prompt-format button, matched by one selector in the cascade."""
+
+    def __init__(self, *, visible: bool = True, enabled: bool = True) -> None:
+        self.clicked = False
+        self.first = self
+        self.is_visible = AsyncMock(return_value=visible)
+        self.is_enabled = AsyncMock(return_value=enabled)
+        self.click = AsyncMock(side_effect=self._record)
+
+    async def _record(self, *_a: Any, **_kw: Any) -> None:
+        self.clicked = True
+
+
+def _make_format_page(
+    *,
+    matching_selector: str | None = PROMPT_FORMAT_SELECTORS[0],
+    enabled: bool = True,
+) -> tuple[MagicMock, _FakeFormatButton]:
+    """Fake page where only ``matching_selector`` resolves to a visible button."""
+    button = _FakeFormatButton(enabled=enabled)
+
+    page = MagicMock()
+    page.url = "https://labs.google/fx/pt/tools/flow/project/p1/character/e1"
+    page.wait_for_timeout = AsyncMock()
+
+    def _locator(sel: str) -> Any:
+        if sel == matching_selector:
+            return button
+        miss = MagicMock()
+        miss.first = miss
+        miss.is_visible = AsyncMock(return_value=False)
+        miss.is_enabled = AsyncMock(return_value=False)
+        miss.click = AsyncMock()
+        return miss
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page, button
+
+
+class TestFormatCharacterPrompt:
+    @pytest.mark.asyncio
+    async def test_clicks_ligature_selector_first(self) -> None:
+        """The Material Symbols ligature is the primary anchor, not the EN label."""
+        page, button = _make_format_page()
+        t = _make_transport(page=page)
+
+        assert await t.format_character_prompt(page) is True
+        assert button.clicked
+        # The ligature selector is tried before any aria-label/text selector.
+        assert page.locator.call_args_list[0].args[0] == PROMPT_FORMAT_SELECTORS[0]
+        assert "personal_recommendations" in PROMPT_FORMAT_SELECTORS[0]
+
+    @pytest.mark.asyncio
+    async def test_falls_through_cascade_to_later_selector(self) -> None:
+        """A miss on the primary anchor keeps walking the cascade."""
+        page, button = _make_format_page(matching_selector=PROMPT_FORMAT_SELECTORS[-1])
+        t = _make_transport(page=page)
+
+        assert await t.format_character_prompt(page) is True
+        assert button.clicked
+
+    @pytest.mark.asyncio
+    async def test_button_not_found_is_non_fatal(self) -> None:
+        """No button anywhere → False, no raise: the prompt still submits as typed."""
+        page, button = _make_format_page(matching_selector=None)
+        t = _make_transport(page=page)
+
+        assert await t.format_character_prompt(page) is False
+        assert not button.clicked
+
+    @pytest.mark.asyncio
+    async def test_disabled_button_is_never_clicked(self) -> None:
+        """Flow ships this button ``disabled`` on an empty prompt, and a disabled
+        button is still visible — clicking it would stall on Playwright's
+        actionability wait instead of failing fast."""
+        page, button = _make_format_page(enabled=False)
+        t = _make_transport(page=page)
+
+        assert await t.format_character_prompt(page) is False
+        assert not button.clicked, "a disabled button must never be handed to click()"
+
+    @pytest.mark.asyncio
+    async def test_click_carries_explicit_timeout(self) -> None:
+        """Never inherit Playwright's 30s default on a nicety in front of submit."""
+        page, button = _make_format_page()
+        t = _make_transport(page=page)
+
+        await t.format_character_prompt(page)
+
+        assert button.click.await_args is not None
+        assert button.click.await_args.kwargs.get("timeout") is not None
+
+    @pytest.mark.asyncio
+    async def test_locator_exception_does_not_escape(self) -> None:
+        """A selector Playwright rejects is skipped, not propagated."""
+        page, _button = _make_format_page(matching_selector=None)
+        page.locator = MagicMock(side_effect=Exception("invalid selector"))
+        t = _make_transport(page=page)
+
+        assert await t.format_character_prompt(page) is False
+
+    @pytest.mark.asyncio
+    async def test_no_ligature_selector_uses_has_text(self) -> None:
+        """``:has-text()`` is invalid inside ``:has()`` — the cascade must use ``:text``."""
+        inside_has = [s for s in PROMPT_FORMAT_SELECTORS if ":has(" in s]
+        assert inside_has, "cascade must carry at least one :has() ligature selector"
+        assert all(":has-text(" not in s for s in inside_has)

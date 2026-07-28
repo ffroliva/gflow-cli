@@ -231,12 +231,15 @@ For each scene, `gflow movie` merges global manifest cards with scene overrides 
 |------|---------|--------|
 | `--profile <name>` | default profile | Chrome profile to drive (must be a `chrome`-strategy profile). |
 | `--out-dir <dir>` | manifest `output_dir` | Override the output directory. |
-| `--dry-run` | off | Print the plan + credit estimate; make **no** API calls. |
+| `--dry-run` | off | Print the pending video operation plan; make **no** API calls. |
 | `--fail-fast` / `--continue-on-error` | continue | Stop on the first scene failure, or attempt the rest (default). |
 | `--stitch` | off | After generating, hard-concat all clips into one preview mp4 (ffmpeg, no transitions). |
 
 ## Credits
 
 - Character creation (image generation) is **free** — no credits, no reCAPTCHA.
-- Each **scene** is one video generation = **1 credit**, spent at submit (step 2
-  above). A `--dry-run` shows the estimate without spending anything.
+- Each **scene** is one pending video generation operation, submitted at step 2
+  above. Current credit use varies by model, duration, account tier, and Flow
+  policy — check Google Flow before submitting. An accepted operation may
+  consume credits even if later polling or download fails. A `--dry-run` prints
+  the plan without submitting anything.

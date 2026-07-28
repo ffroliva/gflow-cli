@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] — 2026-07-28
+
+### Fixed
+
+- **`gflow character create` binds portraits to the character again (#395).**
+  Two independent defects made every character generation land as a plain
+  project image, leaving the character empty:
+  1. **Overlay dismissal Escaped Flow's own UI.** `[role='dialog']` and
+     `[role='alert']` had been added to the overlay detector, but Flow's
+     character composer (and the media picker) carry those roles — so gflow
+     pressed Escape on the app itself, the generation went out without
+     `entityContext`, and Flow filed the image against the project with no
+     `parentEntityId`. Those two selectors are removed; `[role='banner']` and
+     the announcement matcher remain, so the original banner-dismissal intent
+     is intact.
+  2. **The character route could bounce back to the project page.** Flow
+     redirects `/project/{id}/character/{entityId}` when the entity is not yet
+     queryable — a race gflow loses by navigating immediately after
+     `flow.createEntity`. Because the project page also mounts a prompt box,
+     the old readiness check was satisfied on the wrong surface and the prompt
+     was typed into the **project** composer. gflow now verifies it actually
+     came to rest on the character route, re-navigating a few times and failing
+     loudly rather than generating on the wrong surface.
+
+  Verified live 2026-07-28 in both directions on the same account, plus a
+  read-back showing the character carrying its name and `thumbnail_media_id`.
+  The wire contract is documented in
+  [CHARACTER_RECON](docs/CHARACTER_RECON.md#entity-binding-entitycontext-captured-live-2026-07-28).
+
+- **`gflow image i2i --ref <UUID>` no longer fails when the asset is out of the
+  picker's reach (#393).** Flow's media picker is scoped to the active project
+  and its search does **not** index media UUIDs (confirmed live 2026-07-27:
+  both UUID search tiers returned zero tiles), so a `--ref` pointing at an asset
+  in another project — or buried deep in a virtualised grid — could not be
+  selected, and a bare `--ref <uuid>` carried no local file to fall back on. The
+  CLI now resolves each UUID ref against the local catalog and attaches its
+  recorded file, so the transport uploads those exact bytes instead of failing
+  the run. Verified live as a controlled A/B on identical input: exit 9 before,
+  exit 0 with the upload fallback after. Enrichment is best-effort (unknown
+  asset, unavailable catalog, or deleted file leaves the ref untouched) and the
+  **fail-loud contract is unchanged** — a reference that cannot be bound still
+  aborts the generation rather than silently producing an unreferenced image.
+- **A Flow web-app crash on the character-editor route is now reported as
+  such.** `gflow character create` surfaced Flow's client-side crash as
+  `RuntimeError: Character editor not ready: prompt textbox not visible`, which
+  blames a selector that was never on the page. The existing crash classifier is
+  now consulted at that gate too, yielding the typed, retryable `FlowAppError`
+  (exit 31). Observed live 2026-07-27 via the incident bundle's `ui.json`
+  (`title.category: flow_app_crash`).
+- **Character binding failures say what actually happened.** When Flow returns a
+  workflow that is not bound to the character entity, the error read "Unexpected
+  response shape from Flow", sending readers after a wire-format bug. It now
+  states that Flow filed the image as a plain project image and the character
+  has no portrait. The guard remains strict — verified live that unbound runs
+  leave the entity as "Untitled Character" with a null thumbnail.
+- **Tier-aware credit confirmations:** `gflow video chain` and `gflow movie run`
+  no longer present pending work as an exact one-credit-per-link/scene charge.
+  Plans, confirmation prompts, `--dry-run` output, Click help, and current docs
+  now report the count of *pending video operations* and direct operators to
+  Google Flow for current model/duration/tier pricing, which varies by account
+  tier and Flow policy. Execution, resume/stale accounting, `--yes`, JSON
+  output, flags, and exit codes are unchanged.
+
+### Added
+
+- **Top Banner & Modal Dismissal (#369):** Expanded `_detect_overlay` and
+  `_dismiss_blocking_overlays` in `ui_automation.py` to detect top banners,
+  alert bars, and announcement dialogs (`[role='banner']`, `[role='alert']`,
+  `[role='dialog']`, `div:has-text('What\'s new')`), force-clicking locale-stable
+  close/clear/Got-it buttons and falling back to Escape before automation tasks.
+- **`gflow character create --format-prompt` (#383):** Opt-in flag that clicks
+  Flow's in-editor **Format** button before submitting, letting Flow rewrite the
+  prompt into its character prompt-engineering shape. Applies to both the face and
+  body slots. Best-effort by design — if the button is not found the prompt is
+  submitted as typed rather than failing the generation. The selector cascade is
+  anchored on the locale-stable `personal_recommendations` Material Symbols
+  ligature (confirmed against live DOM 2026-07-27), not the "Format" label, which
+  Flow localises to the Chrome profile language. Flow ships the button `disabled`
+  on an empty prompt, so the driver checks enabled-ness — a disabled button is
+  still *visible*, and clicking one would stall on Playwright's actionability wait.
+- **Self-documenting error remediation & provider message pass-through (#380):** Added default `remediation_hint` strings across domain exception classes (`WireFormatError`, `ContentPolicyError`, `RateLimitError`, `DataStoreError`, `SceneConcatError`, `FrameExtractionError`), extracted and sanitized provider error messages from Google Flow tRPC/REST responses, and enriched MCP tool error envelopes and Rich CLI error displays with actionable recovery guidance at failure time.
+
 ## [0.44.0] — 2026-07-26
 
 ### Added
@@ -2384,7 +2466,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/ffroliva/gflow-cli/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/ffroliva/gflow-cli/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/ffroliva/gflow-cli/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/ffroliva/gflow-cli/compare/v0.41.0...v0.42.0

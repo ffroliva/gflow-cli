@@ -43,6 +43,7 @@ from gflow_cli.errors import (
     AuthExpiredError,
     BatchPartialError,
     ContentPolicyError,
+    FlowAppError,
     GFlowError,
     RateLimitError,
     UiSelectorDriftError,
@@ -210,6 +211,34 @@ SUBMIT_BUTTON_SELECTORS = (
     "button:has(i.google-symbols:text('arrow_forward'))",
     "button:has(i:text('arrow_forward'))",
     "button:has-text('arrow_forward')",
+)
+
+# Prompt-format button in the character editor ("Format" in EN) — rewrites the
+# typed prompt into Flow's character prompt-engineering shape.
+#
+# Live DOM, verified 2026-07-27 via ``scripts/dev/spike_character_prompt_format.py``
+# against a fresh entity's editor:
+#
+#   <button type="button" disabled="">
+#     <i class="… google-symbols …">personal_recommendations</i><span>Format</span>
+#   </button>
+#
+# Three things that dump settled:
+#  1. The ligature IS ``personal_recommendations`` (1 match, unique in the editor).
+#  2. There is NO aria-label — the label is a ``<span>`` child, so an
+#     ``[aria-label*=Format]`` selector matches nothing at all.  The EN fallback has
+#     to be structural (``span:text-is('Format')``), and it is a fallback only:
+#     Flow localises that span to the Chrome *profile* language, which is the
+#     incident-#56 failure mode ([[flow-locale-leak-icon-ligatures]]).
+#  3. The button ships ``disabled`` while the prompt box is empty — see
+#     :meth:`UiAutomationTransport.format_character_prompt` for why that matters.
+#
+# ``:text()`` not ``:has-text()`` (invalid inside ``:has()``); ``text-is`` exact
+# match so a longer ligature cannot partial-match.
+PROMPT_FORMAT_SELECTORS: tuple[str, ...] = (
+    "button:has(i.google-symbols:text-is('personal_recommendations'))",
+    "button:has(i:text-is('personal_recommendations'))",
+    "button:has(span:text-is('Format'))",
 )
 
 # Agent-mode activation. Clicking the in-composer "Agent" toggle
@@ -391,7 +420,28 @@ CHANGELOG_IFRAME_SELECTORS = (
     "iframe[src*='/changelogs/']",
 )
 
-# Close-button selectors tried after a changelog iframe is detected.
+# Top banner / announcement selectors (#369).
+#
+# DO NOT add bare `[role='dialog']` or `[role='alert']` here. Both shipped
+# briefly and broke `gflow character create` (#395): Flow's own working
+# surfaces carry those roles, so `_detect_overlay` matched the app itself and
+# `_dismiss_blocking_overlays` pressed Escape on the character composer. The
+# generation then went out WITHOUT `entityContext`, and Flow filed the portrait
+# as a plain project image with no `parentEntityId` — a silent, credit-spending
+# failure. Proven live 2026-07-28: with those two selectors removed, the very
+# same command bound the character on the first try (`entity_patched`, real
+# `thumbnail_media_id`); with them present it failed every run.
+#
+# The media picker is a `[role='dialog']` too, so the blast radius was never
+# limited to characters. Keep this tuple to overlays we have actually captured;
+# per KNOWN_ISSUES, gflow does not guess dismiss selectors for unknown overlays
+# — clicking (or Escaping) unknown UI is riskier than failing.
+TOP_BANNER_SELECTORS: tuple[str, ...] = (
+    "[role='banner']",
+    "div:has-text('What\\'s new')",
+)
+
+# Close-button selectors tried after a changelog iframe or banner overlay is detected.
 # Ordered from most-specific to most-generic so a precise match wins first.
 # All are tried before the Escape fallback.
 OVERLAY_CLOSE_BUTTON_SELECTORS = (
@@ -399,9 +449,14 @@ OVERLAY_CLOSE_BUTTON_SELECTORS = (
     "[aria-label='close']",
     "[aria-label='Dismiss']",
     "[aria-label='dismiss']",
+    "[aria-label*='Dismiss' i]",
     "[aria-label='Cancel']",
+    "button:has(i.google-symbols:text('clear'))",
+    "button:has(i:text('clear'))",
     "button:has(i.google-symbols:text('close'))",
     "button:has(i:text('close'))",
+    "[aria-label*='Got it' i]",
+    "button:has-text('Got it')",
     "[role='dialog'] button:has(i:text('close'))",
     "[role='dialog'] button[aria-label*='close' i]",
     "button[data-dismiss]",
@@ -957,8 +1012,8 @@ class UiAutomationTransport(VideoGenerationMixin):
 
     @staticmethod
     async def _detect_overlay(page: Page) -> bool:
-        """Return True if any changelog iframe or welcome screen is currently visible."""
-        for sel in CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS:
+        """Return True if any changelog iframe, welcome screen, or top banner is visible."""
+        for sel in CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS + TOP_BANNER_SELECTORS:
             try:
                 if await page.locator(sel).first.is_visible(timeout=1500):
                     log.info("ui_automation.overlay_detected", selector=sel)
@@ -1294,11 +1349,47 @@ class UiAutomationTransport(VideoGenerationMixin):
         log.info("ui_automation.prompt_submitted", via="enter_key_fallback")
         await page.keyboard.press("Enter")
 
+    async def format_character_prompt(self, page: Page) -> bool:
+        """Click Flow's prompt-format button, trying selectors in priority order.
+
+        Best-effort, like :meth:`_select_character_model`: formatting is a nicety
+        on top of a prompt that already submits fine, so a missing button logs a
+        warning and returns ``False`` rather than failing the generation.
+
+        The enabled check is NOT redundant with the visible check.  Flow ships this
+        button ``disabled`` while the prompt box is empty (verified 2026-07-27), and
+        a disabled button is still *visible* — so visibility alone would hand a
+        disabled element to ``click()``, which auto-waits for actionability and
+        stalls for the full timeout before failing.  Callers invoke this only after
+        inserting prompt text, so a disabled button here means the editor has not
+        settled: skip it rather than block the submit behind a doomed wait.
+        """
+        for selector in PROMPT_FORMAT_SELECTORS:
+            try:
+                locator = page.locator(selector).first
+                if not await locator.is_visible(timeout=1000):
+                    continue
+                if not await locator.is_enabled():
+                    log.warning("ui_automation.format_button_disabled", selector=selector)
+                    return False
+                # Explicit short timeout: never inherit Playwright's 30s default on
+                # a best-effort nicety sitting in front of the submit.
+                await locator.click(timeout=5000)
+                await page.wait_for_timeout(500)
+                log.info("ui_automation.prompt_formatted", selector=selector)
+                return True
+            except Exception as e:
+                log.debug("ui_automation.format_selector_failed", selector=selector, error=str(e))
+
+        log.warning("ui_automation.format_button_not_found", selectors=PROMPT_FORMAT_SELECTORS)
+        return False
+
     async def _send_prompt(
         self,
         page: Page,
         prompt_text: str,
         out_dir: Path | None = None,
+        format_prompt: bool = False,
     ) -> None:
         """Type ``prompt_text`` into Flow's editor and submit.
 
@@ -1330,6 +1421,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         await page.keyboard.insert_text(prompt_text)
         await page.wait_for_timeout(500)
 
+        if format_prompt:
+            await self.format_character_prompt(page)
+
         await self._click_submit(page)
 
     async def _submit_body_prompt(
@@ -1340,6 +1434,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         boxes_before: int,
         shared_body_box: bool = False,
         out_dir: Path | None = None,
+        format_prompt: bool = False,
     ) -> None:
         """Submit a self-contained triptych body prompt into the body slot's OWN box.
 
@@ -1394,6 +1489,9 @@ class UiAutomationTransport(VideoGenerationMixin):
             template="self_contained",
             prompt_len=len(full_prompt),
         )
+        if format_prompt:
+            await self.format_character_prompt(page)
+
         await self._click_submit(page)
 
     async def _count_character_prompt_boxes(self, page: Page) -> int:
@@ -2985,6 +3083,66 @@ class UiAutomationTransport(VideoGenerationMixin):
             except Exception:
                 pass
 
+    _CHARACTER_ROUTE_ATTEMPTS = 4
+    _CHARACTER_ROUTE_BACKOFF_MS = 2_500
+
+    async def _settle_on_character_route(
+        self,
+        page: Any,
+        *,
+        entity_id: str,
+        url: str,
+    ) -> None:
+        """Ensure the browser actually CAME TO REST on ``/character/{entity_id}``.
+
+        Flow bounces this route back to the project page when the entity is not
+        yet queryable — a race gflow loses because it navigates immediately
+        after ``flow.createEntity`` (live 2026-07-28).
+
+        This must be checked explicitly because the project page **also** mounts
+        a Slate prompt box, so the editor-ready wait below is satisfied on the
+        WRONG surface. The generation then goes to the project composer, which
+        sends no ``entityContext``, and Flow files the image as a plain project
+        image with no ``parentEntityId`` — the #395 symptom. A redirect is
+        therefore silent data loss, not a cosmetic detail.
+
+        Re-navigates a few times to let the entity settle. If the route still
+        will not stick, raise rather than type into the project composer.
+        """
+        for attempt in range(1, self._CHARACTER_ROUTE_ATTEMPTS + 1):
+            if entity_id in str(page.url):
+                if attempt > 1:
+                    log.info(
+                        "ui_automation.character_route_settled",
+                        entity_id=entity_id,
+                        attempt=attempt,
+                    )
+                return
+            log.warning(
+                "ui_automation.character_route_bounced",
+                entity_id=entity_id,
+                landed_on=str(page.url),
+                attempt=attempt,
+                note="Flow redirected away from the character editor; retrying",
+            )
+            if attempt == self._CHARACTER_ROUTE_ATTEMPTS:
+                break
+            await page.wait_for_timeout(self._CHARACTER_ROUTE_BACKOFF_MS)
+            await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            await self._dismiss_blocking_overlays(page, self._out_dir)
+
+        shot = await _capture_debug_screenshot(
+            page, self._out_dir, "debug_character_route_bounced.png"
+        )
+        msg = (
+            f"Flow kept redirecting the character editor for entity {entity_id!r} "
+            f"back to {page.url!r} after {self._CHARACTER_ROUTE_ATTEMPTS} attempts. "
+            "Generating here would submit through the PROJECT composer and Flow "
+            "would file the image as a plain project image instead of binding it "
+            f"to the character.{screenshot_clause(shot)}"
+        )
+        raise FlowAppError(detail=msg)
+
     async def _enter_character_editor(
         self,
         page: Any,
@@ -3014,6 +3172,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
         await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
         await self._dismiss_blocking_overlays(page, self._out_dir)
+        await self._settle_on_character_route(page, entity_id=entity_id, url=url)
 
         # Wait for the Slate editor to mount — the prompt textbox is the
         # reliable "editor ready" anchor for the character editor surface.
@@ -3028,6 +3187,22 @@ class UiAutomationTransport(VideoGenerationMixin):
                 self._out_dir,
                 "debug_character_editor_not_ready.png",
             )
+            # Flow's web app crashes on this route often enough to be the
+            # DOMINANT cause of a missing textbox (live 2026-07-27: the
+            # incident bundle's ui.json reported title category
+            # `flow_app_crash` with zero ligatures — Flow's React error
+            # boundary, not the editor). Reuse the mode-switch path's
+            # classifier so the user gets the typed, retryable FlowAppError
+            # (exit 31) that says "Flow broke, retry" instead of a bare
+            # RuntimeError blaming a selector that was never on the page.
+            if await self._is_flow_app_crash(page):
+                raise FlowAppError(
+                    detail=(
+                        "Flow's web app crashed (client-side exception) instead of "
+                        f"rendering the character editor at {page.url}, so there is "
+                        f"no prompt box to drive.{screenshot_clause(shot)}"
+                    )
+                ) from exc
             msg = (
                 f"Character editor not ready: prompt textbox not visible "
                 f"within 20 s. URL: {page.url}.{screenshot_clause(shot)}"
@@ -3080,6 +3255,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         request: CharacterImageRequest,
         image_reference_index: int,
         locale: str,
+        format_prompt: bool = False,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
         """Navigate to the character editor and generate images via passive capture.
 
@@ -3110,6 +3286,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 request=request,
                 image_reference_index=image_reference_index,
                 locale=locale,
+                format_prompt=format_prompt,
             )
 
     async def _generate_character_images_locked(
@@ -3120,6 +3297,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         request: CharacterImageRequest,
         image_reference_index: int,
         locale: str,
+        format_prompt: bool = False,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
         """Serialized body of generate_character_images — called under _generate_lock."""
         page: Any = self._page  # type: ignore[assignment]  # guard in caller
@@ -3169,9 +3347,10 @@ class UiAutomationTransport(VideoGenerationMixin):
                     boxes_before=boxes_before,
                     shared_body_box=shared_body_box,
                     out_dir=out_dir,
+                    format_prompt=format_prompt,
                 )
             else:
-                await self._send_prompt(page, request.prompt, out_dir)
+                await self._send_prompt(page, request.prompt, out_dir, format_prompt=format_prompt)
             responses = await self._await_captured(
                 captured,
                 expected_count=1,

@@ -622,3 +622,72 @@ def test_problem_details_without_ref_has_no_incident_key() -> None:
     from gflow_cli.errors import FlowAppError
 
     assert "incident" not in FlowAppError("crash").to_problem_details()
+
+
+def test_all_domain_errors_provide_remediation_hint() -> None:
+    """Assert to_problem_details() returns remediation_hint for all domain error classes."""
+    from gflow_cli.errors import GFlowError
+
+    def get_subclasses(c: type[GFlowError]) -> set[type[GFlowError]]:
+        subs = set(c.__subclasses__())
+        for sub in list(subs):
+            subs.update(get_subclasses(sub))
+        return subs
+
+    domain_classes = get_subclasses(GFlowError)
+    assert len(domain_classes) >= 30
+
+    for exc_cls in domain_classes:
+        try:
+            exc = exc_cls()
+        except TypeError:
+            try:
+                exc = exc_cls("test detail")
+            except TypeError:
+                exc = exc_cls(requested="classic")
+
+        pd = exc.to_problem_details()
+        hint = pd.get("remediation_hint", "")
+        assert isinstance(hint, str) and len(hint) > 0, (
+            f"{exc_cls.__name__} missing or empty remediation_hint in to_problem_details()"
+        )
+
+
+def test_specific_remediation_hints() -> None:
+    """Assert exact expected default remediation hints on Task 1 error classes."""
+    from gflow_cli.errors import (
+        ContentPolicyError,
+        DataStoreError,
+        FrameExtractionError,
+        RateLimitError,
+        SceneConcatError,
+        WireFormatError,
+    )
+
+    assert (
+        WireFormatError().remediation_hint
+        == "Check request payload parameters or retry with a simpler prompt text. "
+        "File a bug at https://github.com/ffroliva/gflow-cli/issues with the "
+        "discovery payload above."
+    )
+    assert (
+        ContentPolicyError().remediation_hint
+        == "Reduce prompt text or describe <= 1 person per scene"
+    )
+    assert RateLimitError().remediation_hint == (
+        "Daily or per-minute model quota reached; retry with a different model or "
+        "wait for quota reset"
+    )
+    assert (
+        DataStoreError().remediation_hint
+        == "Check database file permissions or run 'gflow data errors prune'"
+    )
+    assert (
+        SceneConcatError().remediation_hint
+        == "Ensure video clip dimensions and codecs match before concatenation"
+    )
+    assert (
+        FrameExtractionError().remediation_hint
+        == "Verify input video file is readable and non-corrupt. Ensure gflow-cli[chain] "
+        "dependencies (PyAV) are installed."
+    )

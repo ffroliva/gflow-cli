@@ -82,6 +82,76 @@ calls on the same `workflowId`, chaining `imageInputs` (BASE_IMAGE = prior outpu
 This is the SAME endpoint family gflow's existing image transport already drives — the new bits are
 `tool:"PINHOLE"`, `imageInputs` types, and the `parentEntityId`/workflow binding.
 
+## Entity binding: `entityContext` (captured live 2026-07-28)
+
+**The generation request must carry `entityContext`, or Flow files the image as a
+plain project image and the character stays empty.** Captured from Flow's own UI
+via a CDP-attached real Chrome (`gflow-agent-browser-spike`, `navigator.webdriver:
+false`) while driving the plain **New Character** flow.
+
+`POST /v1/projects/{projectId}/flowMedia:batchGenerateImages`
+
+```jsonc
+{
+  "clientContext": { "projectId": "…", "tool": "PINHOLE", "sessionId": "…" },
+  "mediaGenerationContext": {
+    "batchId": "…",
+    "entityContext": {
+      "entityId": "1e6c558e-87be-4aa7-8a21-ffb7efa43bbd",
+      "characterSlot": { "imageReferenceIndex": 0 }   // 0 = portrait/face, 1 = body
+    }
+  },
+  "useNewMedia": true,
+  "requests": [ { "imageModelName": "NARWHAL", "structuredPrompt": {…}, "seed": …, "imageInputs": [] } ]
+}
+```
+
+Response — bound on the first try:
+
+```jsonc
+"workflows": [ { "name": "30551aa7-…", "projectId": "…", "parentEntityId": "1e6c558e-…" } ]
+```
+
+### Which surface produces it
+
+The composer Flow renders depends on whether the character already HAS a
+portrait, not on which URL you arrived by:
+
+| Character state | Composer placeholder | Sends `entityContext`? |
+|---|---|---|
+| Empty (no portrait yet) | *"Describe your character…"* | **Yes** — this is the creation composer, on `/characters` **and** on `/character/{entityId}` |
+| Populated (portrait exists) | *"What do you want to change?"* | Edit surface — refines the existing portrait |
+
+Both entry points reach the creation composer for an empty character, and both
+bind. Verified live 2026-07-28: driving `/project/{id}/character/{entityId}` for
+a pre-created empty entity produced `entityContext` in the request and
+`parentEntityId` in the response — including for an entity gflow itself had
+created minutes earlier. Entity age is not a factor.
+
+`flow.createEntity` may be called by Flow (the **New Character** flow does it
+itself, returning `displayName: "Untitled Character"`) or by the client
+beforehand; gflow pre-creates and deep-links, which is fine. After the
+generation Flow issues `PATCH /v1/flowWorkflows/{id}` twice
+(`metadata.displayName`, then `metadata.primaryMediaId`) — the same commit gflow
+already performs. Flow never asks for a name up front: the user renames
+afterwards via the ✏️ next to the title, and "Character Info (optional)"
+(*"Describe how your character acts…"*) is a separate free-text field.
+
+**What actually broke gflow (#395)** was therefore NOT the choice of entry
+point. Two client-side defects suppressed `entityContext` on a surface that
+would otherwise have sent it:
+
+1. **Overlay dismissal pressed Escape on the composer.** `[role='dialog']` and
+   `[role='alert']` in the overlay detector matched Flow's own character
+   composer (and the media picker), so gflow dismissed the app itself.
+2. **The character route could bounce back to the project page** while the
+   entity was not yet queryable. The project page also mounts a prompt box, so
+   the readiness gate passed on the wrong surface and the prompt was typed into
+   the **project** composer.
+
+With both fixed, the deep-linked editor binds reliably. See
+[LIVE_VERIFICATION_v0.45.0 §2](LIVE_VERIFICATION_v0.45.0.md).
+
 ## Gaps
 
 1. ✅ **RESOLVED — Entity create.** `POST /fx/api/trpc/flow.createEntity` `{json:{projectId}}` →

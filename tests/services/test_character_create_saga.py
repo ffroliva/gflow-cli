@@ -133,6 +133,7 @@ async def test_happy_face_only_call_order() -> None:
         req=FACE_REQ,
         image_reference_index=0,
         locale="en-US",
+        format_prompt=False,
     )
 
     # commit_workflow called once with face
@@ -195,6 +196,7 @@ async def test_face_and_body_sequential() -> None:
         req=FACE_REQ,
         image_reference_index=0,
         locale="en-US",
+        format_prompt=False,
     )
 
     # Second call: body (idx 1) with face_media_id set
@@ -235,6 +237,7 @@ async def test_body_generate_starts_after_face_commit() -> None:
         req: CharacterImageRequest,
         image_reference_index: int,
         locale: str,
+        format_prompt: bool = False,
     ) -> tuple[str, str, str | None]:
         if image_reference_index == 0:
             call_order.append("generate_face")
@@ -439,4 +442,35 @@ async def test_voice_and_personality_forwarded() -> None:
         voice="kore",
         personality="brave and kind",
         image_paths=["/tmp/face_slot0.png"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scenario: format_prompt forwarded to every generation slot
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_format_prompt_defaults_off_and_forwards_when_set() -> None:
+    """``format_prompt`` reaches face AND body generation, and is off by default."""
+    client = _make_client()
+    recorder = _make_recorder()
+
+    await character_create(client, recorder, **_saga_kwargs(body=BODY_REQ))
+    assert all(
+        c.kwargs["format_prompt"] is False for c in client.generate_character_image.call_args_list
+    ), "format_prompt must default to False on every slot"
+
+    client = _make_client()
+    recorder = _make_recorder()
+
+    await character_create(
+        client,
+        recorder,
+        **_saga_kwargs(body=BODY_REQ, format_prompt=True),
+    )
+    calls = client.generate_character_image.call_args_list
+    assert len(calls) == 2, "face + body slots both generate"
+    assert all(c.kwargs["format_prompt"] is True for c in calls), (
+        "format_prompt must be forwarded to both the face and body slot"
     )
