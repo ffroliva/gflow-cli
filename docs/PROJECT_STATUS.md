@@ -4,9 +4,16 @@
 
 ## Current release
 
+**v0.45.0 — alpha.** **Reference + character binding fixes (#393/#395).** `gflow image i2i --ref <UUID>` now attaches the catalog's recorded file when Flow's per-project media picker cannot reach the tile, instead of failing the run — the fail-loud contract (never generate without a requested reference) is unchanged and pinned by a live e2e. `gflow character create` binds portraits to the character again: overlay dismissal was pressing Escape on Flow's own composer (`[role='dialog']`/`[role='alert']` matched the app itself), and the character route could bounce to the project page, sending the prompt to the **project** composer — both produced generations with no `entityContext`, which Flow filed as plain project images. Also: a Flow web-app crash on the character route is now the typed retryable `FlowAppError` (exit 31), character binding failures say what actually happened, and `--format-prompt` (#383) is live-verified. 2810 tests pass. See [LIVE_VERIFICATION_v0.45.0.md](LIVE_VERIFICATION_v0.45.0.md).
+
+**Develop (unreleased, post-v0.45.0):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.44.0 — dual-side project naming &amp; management (#381)</summary>
+
 **v0.44.0 — alpha.** **Dual-side project naming & management (#381).** Feature set includes `gflow project` subcommand family (`list`, `show`, `rename`, `create`), `--project-name` / `--project-title` options across `gflow image` (`t2i`, `i2i`) and `gflow video` (`t2v`, `i2v`, `r2v`) generation commands, prompt slugging for scratch projects, dual-side title sync updating Google Flow's tRPC server/UI and local SQLite catalog in lockstep, HTTP 429 adaptive backoff / `RateLimitError` recovery (#384), character body prompt composer fixes (#378), and a repo-local Codex plugin (`$gflow:*` skills). Verified via full test suite and live Playwright Chromium E2E transport test. See [LIVE_VERIFICATION_v0.44.0.md](LIVE_VERIFICATION_v0.44.0.md).
 
-**Develop (unreleased, post-v0.44.0):** UUID `--ref` binding fix (#393) — `gflow image i2i --ref <UUID>` now attaches the catalog's recorded file when Flow's per-project media picker cannot reach the tile, instead of failing the run; the fail-loud contract (never generate without a requested reference) is unchanged and is now pinned by a live e2e. Plus two error-classification fixes found while live-verifying: a Flow web-app crash on the character-editor route is reported as the typed retryable `FlowAppError` (exit 31) rather than a selector `RuntimeError`, and a character binding failure now states that Flow filed the image as a plain project image. Also queued: top banner/modal dismissal (#369), `character create --format-prompt` (#383 — **not live-verifiable this cycle**: Flow's character editor is currently broken upstream, reproduced on released v0.44.0), self-documenting error remediation (#380), and tier-aware credit confirmations. See [LIVE_VERIFICATION_v0.45.0.md](LIVE_VERIFICATION_v0.45.0.md).
+</details>
+
 
 <details><summary>v0.42.0 — content-safety classification + Antigravity coding agent (#359/#360/#361)</summary>
 
