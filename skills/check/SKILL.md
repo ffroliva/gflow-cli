@@ -22,9 +22,14 @@ PYTHONUTF8=1 uv run python scripts/ci/check_website_docs_pii.py
 PYTHONUTF8=1 uv run python scripts/ci/generate_website_docs.py --check
 ```
 
-The last check fails if canonical `docs/` changed but the published
-`website/docs/` mirror was not regenerated. Fix with
-`uv run python scripts/ci/generate_website_docs.py` and stage `website/docs/`.
+The last check fails on either half of the published-site contract:
+
+- `DRIFT:` — canonical `docs/` changed but the `website/docs/` mirror was not
+  regenerated. Fix with `uv run python scripts/ci/generate_website_docs.py` and
+  stage `website/docs/`.
+- `NAV-ORPHAN:` — a page is published but no `nav:` entry in
+  `website/mkdocs.yml` points at it, so it is live but unreachable. Add the
+  entry under the right nav section.
 
 **2. Auto-fix lint and formatting** (rewrites files in place)
 
