@@ -12,6 +12,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 _REPO = Path(__file__).resolve().parents[2]
 
 
@@ -68,3 +70,28 @@ def test_bespoke_pages_are_never_generated() -> None:
     """The site's distinct landing/onboarding pages have no canonical source."""
     for name in ("index.md", "agents.md", "installation.md", "onboarding.md"):
         assert _gen._source_for(name) is None  # noqa: SLF001
+
+
+def test_nav_orphan_detection_flags_unlinked_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A published page with no `nav:` entry is a FAIL.
+
+    Mirroring a doc and wiring it into `mkdocs.yml` are separate acts, and the
+    drift check only ever caught the first — so a new page could ship live but
+    unreachable. Pins both directions on a synthetic site tree.
+    """
+    web = tmp_path / "website" / "docs"
+    web.mkdir(parents=True)
+    (web / "LINKED.md").write_text("x", encoding="utf-8")
+    (web / "index.md").write_text("x", encoding="utf-8")
+    (tmp_path / "website" / "mkdocs.yml").write_text(
+        "site_name: t\nnav:\n  - Linked: LINKED.md\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(_gen, "_REPO", tmp_path)
+    monkeypatch.setattr(_gen, "_WEB", web)
+
+    assert _gen._nav_orphans() == []
+
+    (web / "ORPHAN.md").write_text("x", encoding="utf-8")
+    assert _gen._nav_orphans() == ["ORPHAN.md"]

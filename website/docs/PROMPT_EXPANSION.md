@@ -3,8 +3,8 @@
 `creative-director` is the first built-in [tool](TOOLS.md). It rewrites a terse prompt into a
 single, vivid, self-contained prompt using Google's officially validated **five-component
 formula**, optionally injecting domain-specific (cinema / portrait / product / …) vocabulary, and
-deterministically strips low-signal "quality-booster" keywords. It calls the public **Gemini API**
-server-side and is **never fatal** — any failure degrades to your original prompt.
+deterministically strips low-signal "quality-booster" keywords. It calls any **OpenAI-compatible**
+endpoint server-side and is **never fatal** — any failure degrades to your original prompt.
 
 > This is the tool. For the framework that hosts it (`gflow tools`, `--tool`, the TOML schema, MCP
 > exposure), see [TOOLS.md](TOOLS.md).
@@ -14,8 +14,9 @@ server-side and is **never fatal** — any failure degrades to your original pro
 ## 1. Quick start
 
 ```console
-# 1. Get a Gemini API key: https://aistudio.google.com/apikey
-export GFLOW_CLI_GEMINI_API_KEY="..."
+# 1. Point at any OpenAI-compatible endpoint. A Google key works out of the
+#    box against the default endpoint: https://aistudio.google.com/apikey
+export GFLOW_CLI_LLM_API_KEY="..."   # any OpenAI-compatible endpoint; see CONFIGURATION.md
 
 # 2. Preview an expansion (free of Flow credits)
 gflow tools run creative-director "a cat on a couch" --style cinema
@@ -25,7 +26,7 @@ gflow image t2i "a fox in the snow" --tool creative-director:style=cinema
 gflow video t2v "a city at night"  -t creative-director:style=cinematic
 ```
 
-Without `GFLOW_CLI_GEMINI_API_KEY` the tool silently leaves your prompt unchanged (see §6).
+Without `GFLOW_CLI_LLM_API_KEY` (or `GFLOW_CLI_LLM_BASE_URL`) the tool leaves your prompt unchanged (see §6).
 
 ---
 
@@ -40,7 +41,7 @@ Without `GFLOW_CLI_GEMINI_API_KEY` the tool silently leaves your prompt unchange
 | **Provenance** | `AppliedTool(name, version, model, config_hash, params)` | Recorded in history when a tool rewrote a prompt. |
 
 The tool itself lives in [`src/gflow_cli/tools/`](../src/gflow_cli/tools/): `spec.py` (schema),
-`runtime.py` (`apply_tool`), `expander.py` (the Gemini-backed `PromptExpander`), `banned.py`
+`runtime.py` (`apply_tool`), `expander.py` (the provider-agnostic `PromptExpander`), `banned.py`
 (keyword stripping), `invocation.py` (provenance + MCP adapter).
 
 ---
@@ -134,17 +135,22 @@ prompt the tool left unchanged is never altered.
 
 ## 6. Never-fatal contract
 
-The Gemini-backed `PromptExpander` ([`expander.py`](../src/gflow_cli/tools/expander.py)) is
+The `PromptExpander` ([`expander.py`](../src/gflow_cli/tools/expander.py)) is
 stdlib-only (`urllib`) and bounded. `expand()` returns the original prompt with
 `was_expanded=False` — never raising — in every degraded case:
 
-- `GFLOW_CLI_GEMINI_API_KEY` is missing.
+- Neither `GFLOW_CLI_LLM_API_KEY` nor `GFLOW_CLI_LLM_BASE_URL` is set.
+- `GFLOW_CLI_LLM_BASE_URL` is wrong (bad host, missing `/v1`).
+- `GFLOW_CLI_LLM_MODEL` names a model the endpoint does not serve.
 - Any HTTP error, network failure, timeout, or malformed JSON.
 - An empty, whitespace-only, or quote-only model response.
 
 Retryable statuses (`429, 500, 502, 503, 504`) are retried with exponential backoff (default 3
-attempts, base delay 1s, doubling); **`401` / `403` fail fast** (and still degrade to the
-original). Each attempt has a 20s socket timeout, and the whole call is bounded by an **overall
+attempts, base delay 1s, doubling); every other 4xx **fails fast** (and still degrades to the
+original). Providers disagree on the code for a bad key — most gateways answer `401`, Google's
+compat endpoint answers `400` — but neither is retryable, so both fall back immediately rather
+than burning the retry budget. Each attempt has a 20s socket timeout, and the whole call is
+bounded by an **overall
 ~60s wall-clock budget** (`max_total_seconds`): retries stop once the budget is spent and each
 attempt's timeout is clamped to the remaining budget, so sustained rate limiting can never stall a
 batch for the full timeout×retries schedule. (Both bounds are fixed defaults, not env-tunable.)
@@ -154,15 +160,25 @@ abort a generation** — the worst case is "your prompt went through unchanged."
 
 ---
 
-## 7. Gemini wiring (I/O)
+## 7. LLM wiring (I/O)
+
+The transport speaks the **OpenAI Chat Completions API** — the format OpenAI, gateways/proxies,
+local runtimes and Google's compatibility endpoint all accept. See
+[CONFIGURATION.md](CONFIGURATION.md#prompt-tools-llm-gflow_cli_llm_) for the full env-var
+reference and worked examples (Google, OpenRouter, a local Docker proxy, keyless Ollama).
 
 | Aspect | Value |
 |---|---|
-| Endpoint | `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` |
-| Auth | API key in the `x-goog-api-key` header (never on the query string). |
-| Default model | `gemini-2.5-flash` (TOML `config.model`; `GFLOW_CLI_GEMINI_MODEL` overrides globally). |
-| Request | `system_instruction` = built instruction; user `contents` = the (truncated) prompt; `temperature=0.7`, `maxOutputTokens=1024`. |
-| Response | First candidate's text, cleaned (quote-stripped, truncated). |
+| Endpoint | `{GFLOW_CLI_LLM_BASE_URL}/chat/completions` — default base `https://generativelanguage.googleapis.com/v1beta/openai` |
+| Auth | `Authorization: Bearer <GFLOW_CLI_LLM_API_KEY>`, in the header, never the query string. **Omitted entirely** when no key is set, for keyless local gateways. |
+| Redirects | Never followed — `urllib` would re-send the `Authorization` header to whatever host a redirect names. |
+| Model | TOML `config.model` pin > `GFLOW_CLI_LLM_MODEL` > default-endpoint default > omitted so the gateway chooses. The builtins pin nothing. |
+| Request | `messages` = `[{role: system, content: instruction}, {role: user, content: prompt}]`; `temperature=0.7` (0.4 multimodal); `max_tokens` derived from `max_output_chars`. |
+| Multimodal | Images ride the user message as `{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,…"}}` parts. |
+| Response | `choices[0].message.content`, cleaned (markdown fence and wrapping quotes stripped, truncated). `null` content — a refusal — degrades to the original. |
+
+> The system instruction is a **separate `system` message**, not concatenated onto the user's
+> prompt as it was under the Gemini-native shape.
 
 ---
 
@@ -222,8 +238,9 @@ UX from agent-invoked tools), but no new work should depend on it. See
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `GFLOW_CLI_GEMINI_API_KEY` | — | Required to actually rewrite prompts. [Get a key](https://aistudio.google.com/apikey). |
-| `GFLOW_CLI_GEMINI_MODEL` | `gemini-2.5-flash` | Global override of the tool's default model. |
+| `GFLOW_CLI_LLM_BASE_URL` | Google compat endpoint | OpenAI-compatible endpoint. The on/off switch. |
+| `GFLOW_CLI_LLM_API_KEY` | — | Credential for that endpoint; optional for a keyless local gateway. [Google key](https://aistudio.google.com/apikey). |
+| `GFLOW_CLI_LLM_MODEL` | — | Model, and therefore the provider selector. |
 | `GFLOW_CLI_HISTORY_PROMPTS` | `store` | `redacted` withholds the expanded prompt and minimizes the recorded tool descriptor (§8). |
 
 See [CONFIGURATION.md](CONFIGURATION.md) for the full precedence chain.

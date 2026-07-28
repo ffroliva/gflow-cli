@@ -26,7 +26,7 @@ from gflow_cli.cli_run import run as _run_command
 from gflow_cli.cli_scene import scene as _scene_group
 from gflow_cli.cli_tools import tools as _tools_group
 from gflow_cli.cli_video import video as _video_group
-from gflow_cli.config import get_settings
+from gflow_cli.config import get_settings, warn_if_removed_gemini_key_set
 from gflow_cli.observability import DEBUG_LEVEL, configure_logging
 
 console = Console()
@@ -131,6 +131,21 @@ def main(ctx: click.Context, verbose: bool) -> None:
         # module doesn't need to `import logging` solely for one constant.
         structlog.configure(
             wrapper_class=structlog.make_filtering_bound_logger(DEBUG_LEVEL),
+        )
+    # GFLOW_CLI_GEMINI_API_KEY was removed in v0.46.0 and is not forwarded. The
+    # prompt tools never raise, so an unmigrated user would otherwise see no
+    # error at all — just silently un-rewritten prompts on full-price
+    # generations. config.py also emits a DeprecationWarning for library/MCP
+    # consumers; this stderr line is what a CLI user actually sees, since
+    # DeprecationWarning is hidden by default and structlog may be JSON-piped.
+    if warn_if_removed_gemini_key_set():
+        click.secho(
+            "warning: GFLOW_CLI_GEMINI_API_KEY is no longer read. Set "
+            "GFLOW_CLI_LLM_API_KEY instead (your existing key still works "
+            "against the default endpoint) — until then --tool leaves prompts "
+            "unchanged. See docs/CONFIGURATION.md.",
+            err=True,
+            fg="yellow",
         )
     ctx.ensure_object(dict)
 

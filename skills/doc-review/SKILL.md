@@ -99,12 +99,14 @@ If `scripts/ci/check_doc_links.py` is absent, create it from the v0.8.1 plan (it
 
 ---
 
-## 4b · Published website mirror (`website/docs/`)
+## 4b · Published website (`website/`) — part of the documentation work, not a follow-up
 
-`website/docs/` is the mkdocs-material site published to GitHub Pages — an
-**anonymized copy** of canonical `docs/`. It has drifted silently for months
-before (PR #362 shipped a PII leak; content lagged canonical for whole
-releases) because nothing gates staleness. This section closes that.
+`website/` is the mkdocs-material site published to GitHub Pages, and
+`website/docs/` is an **anonymized copy** of canonical `docs/`. Treat updating
+it as part of the same change that touched the docs: a documentation uplift is
+not done until the published surface reflects it. The mirror has drifted
+silently for months before (PR #362 shipped a PII leak; content lagged
+canonical for whole releases), which is why all three gates below exist.
 
 **1. PII gate (the CI check — a leak fails the build):**
 
@@ -115,7 +117,7 @@ uv run python scripts/ci/check_website_docs_pii.py
 
 Expected: `No private identifiers found across N published website/docs files.`
 
-**2. Content-drift check — the mirror is generated from canonical by
+**2. Content-drift + nav check — the mirror is generated from canonical by
 `scripts/ci/generate_website_docs.py` (the anonymization map is data in that
 script). Verify it is in sync (this is the same check CI runs):**
 
@@ -124,18 +126,30 @@ $env:PYTHONUTF8=1
 uv run python scripts/ci/generate_website_docs.py --check
 ```
 
-Expected: `website/docs mirror in sync (N files).` Any `DRIFT:` line is a
-**FAIL** — a canonical doc changed and the mirror was not regenerated. Fix it:
+Expected: `website/docs mirror in sync (N files), nav complete.`
 
-```bash
-uv run python scripts/ci/generate_website_docs.py   # regenerate, then stage website/docs/
-```
+- Any `DRIFT:` line is a **FAIL** — a canonical doc changed and the mirror was
+  not regenerated. Fix it:
+
+  ```bash
+  uv run python scripts/ci/generate_website_docs.py   # regenerate, then stage website/docs/
+  ```
+
+- Any `NAV-ORPHAN:` line is a **FAIL** — the page is published but no `nav:`
+  entry in `website/mkdocs.yml` points at it, so it exists on the site only for
+  whoever guesses the URL. Mirroring a doc and wiring it into the nav are two
+  separate acts; add the entry under the right nav section and re-run.
+
+**3. New canonical doc → decide explicitly whether it is published.** Not every
+doc belongs on the site (release evidence, recon specs, and plans generally do
+not). If it should be published: create the file under `website/docs/`, add its
+`nav:` entry in `website/mkdocs.yml`, and the generator maintains the content
+thereafter. If it should not, say so in the review so the omission is a
+decision rather than an oversight.
 
 `CHANGELOG.md` and the bespoke site pages (`index.md`, `agents.md`,
 `installation.md`, `onboarding*.md`) are intentionally NOT generated — the
-generator's `WEBSITE_ONLY` set excludes them. If a NEW canonical doc should be
-published, add its file under `website/docs/` and the generator maintains it
-thereafter.
+generator's `WEBSITE_ONLY` set excludes them.
 
 ---
 
