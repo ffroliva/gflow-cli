@@ -30,8 +30,8 @@ stop/wait/retry primitives would be more code, not less, for a ~20-line loop wit
 fully-injectable ``transport`` / ``sleep`` / ``clock`` seams.
 
 The API key is read from ``GFLOW_CLI_GEMINI_API_KEY`` (see
-:class:`gflow_cli.config.Settings.gemini_api_key`); construct via
-:meth:`PromptExpander.from_settings`.
+:class:`gflow_cli.config.Settings.gemini_api_key`) by the caller and passed to
+the constructor; see :func:`gflow_cli.tools.runtime.apply_tool`.
 """
 
 from __future__ import annotations
@@ -42,12 +42,9 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
-
-if TYPE_CHECKING:
-    from gflow_cli.config import Settings
 
 log = structlog.get_logger(__name__)
 
@@ -180,16 +177,6 @@ class PromptExpander:
                 return _default_transport(url, payload, timeout, key)
 
             self._transport = _bound
-
-    @classmethod
-    def from_settings(cls, settings: Settings, **overrides: object) -> PromptExpander:
-        """Build an expander from :class:`gflow_cli.config.Settings`.
-
-        Reads the API key (``GFLOW_CLI_GEMINI_API_KEY``) and model
-        (``GFLOW_CLI_GEMINI_MODEL``, default :data:`DEFAULT_MODEL`) from the
-        centralized pydantic settings layer.
-        """
-        return cls(settings.gemini_api_key, model=settings.gemini_model, **overrides)  # type: ignore[arg-type]
 
     def _execute_expansion_payload(self, url: str, payload: dict[str, object]) -> str | None:
         """Run the Gemini request with retry/backoff; return the raw expanded text or None.

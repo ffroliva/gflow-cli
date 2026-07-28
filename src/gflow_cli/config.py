@@ -352,12 +352,6 @@ class Settings(BaseSettings):
             "in future, provider=official. Override via GFLOW_CLI_GEMINI_API_KEY."
         ),
     )
-    gemini_model: str = Field(
-        default="gemini-2.5-flash",
-        description=(
-            "Gemini model used for prompt tools (--tool/-t). Override via GFLOW_CLI_GEMINI_MODEL."
-        ),
-    )
 
     # --- transport --------------------------------------------------------
     transport: str | None = Field(
