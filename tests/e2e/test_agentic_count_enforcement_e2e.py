@@ -24,6 +24,10 @@ import structlog
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.transports.ui_automation_video import (
+    COMPOSER_AGENT_TOGGLE_SELECTOR,
+    VideoGenerationMixin,
+)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_image]
 
@@ -60,6 +64,18 @@ async def _set_mismatched_sticky_count(
         )
         await page.wait_for_timeout(4_000)
         await page.keyboard.press("Escape")
+
+        # Flow's current cohort loads the editor in CLASSIC mode (media panel
+        # present) — the tune icon only exists on the Agent composer, so
+        # toggle into Agent mode first (same pill the #313 spike used).
+        if await VideoGenerationMixin._media_panel_present(page):  # noqa: SLF001
+            pill = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
+            assert await pill.count() > 0, (
+                "editor loaded in classic mode but the Agent toggle pill was "
+                "not found — Agent composer unreachable"
+            )
+            await pill.click(force=True, timeout=5_000)
+            await page.wait_for_timeout(1_500)
 
         tune_btn = page.locator(_TUNE_BUTTON_SELECTOR).first
         await tune_btn.wait_for(state="visible", timeout=10_000)
