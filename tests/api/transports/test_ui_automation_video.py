@@ -313,6 +313,15 @@ class TestSetOutputCountOne:
         page.locator.assert_any_call(sel)
 
     @pytest.mark.asyncio
+    async def test_clicks_the_renamed_x1_tab(self) -> None:
+        """#404: Flow renamed the count-1 label from '1x' to 'x1' — the setter
+        must probe BOTH label cohorts before declaring a miss."""
+        sel = "[role='tab']:text-is('x1')"
+        page = _cascade_page({sel})
+        await VideoGenerationMixin._set_output_count_one(page)
+        page.locator.assert_any_call(sel)
+
+    @pytest.mark.asyncio
     async def test_missing_count_tab_is_non_fatal(self) -> None:
         page = _cascade_page(set())
         await VideoGenerationMixin._set_output_count_one(page)  # must not raise

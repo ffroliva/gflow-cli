@@ -509,11 +509,14 @@ _EVT_COUNT_SETTER_COMPLETED = "ui_automation.count_setter_completed"
 # Extracted to a module-level constant to satisfy SonarCloud S1192.
 _EVT_OVERLAY_DISMISSED = "ui_automation.overlay_dismissed"
 
-# Regex that matches count-tab text exactly: "1x", "x2", "x3", "x4".
+# Regex that matches count-tab text exactly, across BOTH label cohorts:
+# legacy "1x"/"x2"/"x3"/"x4" and the renamed "x1"/"x2"/"x3"/"x4" observed
+# live 2026-07-31 (issue #404 — Flow unified the labels to xN, which made the
+# old `^(1x|x[2-4])$` filter silently drop the count-1 tab).
 # These are the ONLY role="tab" elements whose text fits this pattern —
 # Mode tabs ("image\nImagem") and Aspect tabs ("16:9", "crop_square") do not.
 # The pattern is locale-invariant: Flow never translates the digit+x label.
-_COUNT_TAB_TEXT_RE = re.compile(r"^(1x|x[2-4])$")
+_COUNT_TAB_TEXT_RE = re.compile(r"^(1x|x[1-4])$")
 
 # Subdirectory inside out_dir where diagnostic artefacts are written.
 # Keeps count_before/after screenshots and DOM dumps out of the user-facing
@@ -525,15 +528,26 @@ def _count_tabs_locator(page: Page) -> Locator:
     """Return a Playwright Locator that matches ONLY the 4 count tabs.
 
     Filters ``role="tab"`` elements by text matching :data:`_COUNT_TAB_TEXT_RE`
-    (``1x``, ``x2``, ``x3``, ``x4``). This pattern is unique to count tabs —
-    Mode tabs and Aspect tabs never match it — so the filter survives all three
-    Radix tablists being present in the DOM simultaneously.
+    (legacy ``1x``/``x2``/``x3``/``x4`` and renamed ``x1``/``x2``/``x3``/``x4``,
+    issue #404). The pattern is unique to count tabs — Mode tabs and Aspect
+    tabs never match it — so the filter survives all three Radix tablists
+    being present in the DOM simultaneously.
 
-    DOM evidence: ``tmp/dom_dump.json`` captured on profile denon82 (Portuguese
-    locale, 2026-05-22) shows all three tablists rendered; count tabs are the
-    only ones whose ``text`` is ``"1x"`` / ``"x2"`` / ``"x3"`` / ``"x4"``.
+    DOM evidence: ``tmp/dom_dump.json`` (profile denon82, pt-BR, 2026-05-22)
+    for the legacy cohort; ``scripts/dev/spike_issue404_count_tabs_recon.py``
+    output (profile ffroliva, 2026-07-31) for the renamed cohort.
     """
     return page.locator('[role="tab"]').filter(has_text=_COUNT_TAB_TEXT_RE)
+
+
+def _count_tab_locator_for(page: Page, count: int) -> Locator:
+    """Locator for THE count tab carrying digit ``count``.
+
+    Keyed on the digit in the label rather than position, so it survives the
+    label-cohort rename (legacy ``1x`` → current ``x1``, issue #404) and any
+    reordering/shrinking of the filtered tab set.
+    """
+    return page.locator('[role="tab"]').filter(has_text=re.compile(rf"^({count}x|x{count})$"))
 
 
 # Reverse map: domain Aspect enum → CLI string accepted by the settings panel.
@@ -1664,8 +1678,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         """Read the currently-displayed image count from the settings panel.
 
         Locale-invariant: filters ``[aria-selected="true"]`` tabs by
-        :data:`_COUNT_TAB_TEXT_RE` so only count tabs ("1x", "x2", "x3",
-        "x4") are considered.  Mode tabs ("image\\nImagem") and Aspect tabs
+        :data:`_COUNT_TAB_TEXT_RE` so only count tabs (both label cohorts,
+        e.g. "1x"/"x1", "x2") are considered.  Mode tabs ("image\\nImagem") and Aspect tabs
         ("16:9", etc.) are selected simultaneously in the Radix tablist DOM
         and would poison the old unfiltered ``[aria-selected="true"]`` query.
 
@@ -1689,7 +1703,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         """True if the generation-settings panel count tabs are currently visible.
 
         Uses :func:`_count_tabs_locator` — the panel is open when at least one
-        count tab (text matching ``1x`` / ``x2`` / ``x3`` / ``x4``) is visible.
+        count tab (text matching either label cohort, e.g. ``1x``/``x1``,
+        ``x2``) is visible.
         This is locale-invariant and immune to Mode/Aspect tab false-positives.
         """
         try:
@@ -1956,21 +1971,25 @@ class UiAutomationTransport(VideoGenerationMixin):
         out_dir: Path | None = None,
         prompt_idx: int | None = None,
     ) -> None:
-        """Click the count tab by position — locale-invariant, read-back verify with retry.
+        """Click the count tab by its DIGIT — locale-invariant, read-back verify with retry.
 
-        Algorithm (#24 DOM-evidence-driven rewrite):
+        Algorithm (#404 rewrite of the #24 positional pick):
         1. Ensure the settings panel is open without toggling it closed
            (stay-mounted batch: panel may already be open from the prior prompt).
-        2. Read the currently-displayed count via :func:`_count_tabs_locator`
-           filtered by :data:`_COUNT_TAB_TEXT_RE` — immune to Mode/Aspect tabs.
+        2. Read the currently-displayed count via :data:`_COUNT_TAB_TEXT_RE` —
+           immune to Mode/Aspect tabs, matches both label cohorts.
         3. If it already matches ``count``, return early (no click needed).
-        4. Call ``_count_tabs_locator(page).nth(count - 1)`` and click —
-           positional within the filtered set, no text matching.
+        4. Click the tab selected by :func:`_count_tab_locator_for` — keyed on
+           the digit in the label (``1x``/``x1`` for count=1), NOT position:
+           Flow's label rename shrank the old filtered set and shifted every
+           positional pick by one (issue #404).
         5. Read back the digit and confirm the change.
-        6. Retry up to 3 attempts total; raise ``RuntimeError`` on non-convergence.
+        6. Retry up to 3 attempts total; raise :class:`UiSelectorDriftError`
+           (exit 23) on non-convergence — a bare ``RuntimeError`` would be
+           message-hashed by observability into an opaque ``UnexpectedError``.
 
-        When read-back returns ``None`` (unrecognised locale text), the
-        position-based click is trusted — it is deterministic regardless.
+        When read-back returns ``None`` (no selected count tab recognised),
+        the digit-keyed click is trusted — it is deterministic regardless.
 
         Four structlog events are emitted for diagnosability:
         - ``ui_automation.count_setter_entered``
@@ -2028,17 +2047,15 @@ class UiAutomationTransport(VideoGenerationMixin):
                 )
                 return
 
-            # Locate count tabs via text-pattern filter (locale-invariant).
-            # _count_tabs_locator returns role="tab" elements whose text matches
-            # ^(1x|x[2-4])$ — unique to count tabs across all three Radix tablists.
             panel_visible_before = await UiAutomationTransport._is_settings_panel_open(page)
             clicked = False
             click_error: str | None = None
 
-            tabs_locator = _count_tabs_locator(page)
-            # 0-indexed: count=1 → nth(0), count=2 → nth(1), etc.
-            target_tab = tabs_locator.nth(count - 1)
-            selector_desc = f"nth({count - 1}) of _count_tabs_locator"
+            # Digit-keyed pick: the tab whose label carries the desired digit
+            # ("1x"/"x1" for count=1). Position-independent — survives the
+            # label-cohort rename and filtered-set drift (issue #404).
+            target_tab = _count_tab_locator_for(page, count).first
+            selector_desc = f"count-tab label ~ /^({count}x|x{count})$/"
             log.info(
                 "ui_automation.count_click_attempted",
                 target=f"count={count}",
@@ -2060,13 +2077,14 @@ class UiAutomationTransport(VideoGenerationMixin):
                 "ui_automation.count_click_result",
                 target=f"count={count}",
                 success=clicked,
+                effect_observed=displayed == count,
                 current_displayed_count_after=displayed,
                 error=click_error,
             )
 
             # Success when the click landed AND read-back digit matches, OR
-            # when read-back returned None (unrecognised locale text — position
-            # click was deterministic so trust it).
+            # when read-back returned None (no selected count tab recognised —
+            # the digit-keyed click targeted the right tab, so trust it).
             if clicked and (displayed is None or displayed == count):
                 log.info(
                     _EVT_COUNT_SETTER_COMPLETED,
@@ -2090,12 +2108,16 @@ class UiAutomationTransport(VideoGenerationMixin):
             success=False,
             attempts=_max_attempts,
         )
-        msg = (
-            f"_set_count({count}) failed to update Flow UI; "
-            f"still showing {displayed!r} after {_max_attempts} attempts"
-        )
-        raise RuntimeError(
-            msg,
+        shot = await _capture_debug_screenshot(page, out_dir, "debug_count_setter_drift.png")
+        raise UiSelectorDriftError(
+            selector_drift_detail(
+                "count_tab",
+                f"count setter failed to converge: desired={count}, "
+                f"displayed={displayed} after {_max_attempts} attempts. "
+                f"Flow's count control may have changed again "
+                f"(labels are matched as {count}x/x{count}).",
+                shot,
+            )
         )
 
     # ------------------------------------------------------------------

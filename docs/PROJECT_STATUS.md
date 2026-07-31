@@ -4,9 +4,21 @@
 
 ## Current release
 
+**v0.46.1 — alpha.** **Classic count-setter fix (#404).** `gflow image t2i` failed whenever `-n` differed from the count displayed in the composer — including the default `-n 1` — because Flow renamed the count-tab labels from `1x`/`x2`/… to uniform `x1`/`x2`/…: the label filter silently dropped the count-1 tab and the positional pick clicked the wrong tab while reporting per-click success. Count tabs are now selected by the digit in their label across both cohorts, the read-back recognises a selected `x1`, and non-convergence raises the typed `UiSelectorDriftError` (exit 23) naming desired vs displayed instead of an opaque `RuntimeError`. Root-caused and verified live on the reporter's exact invocation, zero credits. See [LIVE_VERIFICATION_v0.46.1.md](LIVE_VERIFICATION_v0.46.1.md).
+
+**Develop (unreleased, post-v0.46.1):** *(empty — develop is the staging branch for the next release).*
+
+<details><summary>v0.46.0 — prompt tools on any OpenAI-compatible endpoint (#387)</summary>
+
+**v0.46.0 — alpha.** **BREAKING — the prompt tools drive any OpenAI-compatible endpoint (#387).** `--tool creative-director` / `reverse-engineer` / `storyboard` now speak OpenAI Chat Completions instead of being hardwired to Google's native Gemini API, so OpenAI, gateways/proxies (OpenRouter, LiteLLM), local runtimes (Ollama, LM Studio), and Google's own compatibility endpoint all work. New config: `GFLOW_CLI_LLM_BASE_URL`, `GFLOW_CLI_LLM_API_KEY` (optional — omitted when unset so keyless local gateways work), `GFLOW_CLI_LLM_MODEL`. The removed `GFLOW_CLI_GEMINI_API_KEY` / `GFLOW_CLI_GEMINI_MODEL` trigger a loud one-time notice, never a silent no-op. The user-supplied endpoint is treated as a trust boundary: redirects declined, `https` (or loopback `http`) enforced, error bodies redacted. `reverse-engineer` degrades to the original input instead of expanding a file path as a prompt. See [LIVE_VERIFICATION_v0.46.0.md](LIVE_VERIFICATION_v0.46.0.md).
+
+</details>
+
+<details><summary>v0.45.0 — reference + character binding fixes (#393/#395)</summary>
+
 **v0.45.0 — alpha.** **Reference + character binding fixes (#393/#395).** `gflow image i2i --ref <UUID>` now attaches the catalog's recorded file when Flow's per-project media picker cannot reach the tile, instead of failing the run — the fail-loud contract (never generate without a requested reference) is unchanged and pinned by a live e2e. `gflow character create` binds portraits to the character again: overlay dismissal was pressing Escape on Flow's own composer (`[role='dialog']`/`[role='alert']` matched the app itself), and the character route could bounce to the project page, sending the prompt to the **project** composer — both produced generations with no `entityContext`, which Flow filed as plain project images. Also: a Flow web-app crash on the character route is now the typed retryable `FlowAppError` (exit 31), character binding failures say what actually happened, and `--format-prompt` (#383) is live-verified. 2810 tests pass. See [LIVE_VERIFICATION_v0.45.0.md](LIVE_VERIFICATION_v0.45.0.md).
 
-**Develop (unreleased, post-v0.45.0):** *(empty — develop is the staging branch for the next release).*
+</details>
 
 <details><summary>v0.44.0 — dual-side project naming &amp; management (#381)</summary>
 
@@ -269,6 +281,13 @@ reporter-verified e2e on macOS).
 | Agentic-pin recovery: opt-in reload after a real Agent-toggle click (#338) | ✅ done (v0.38.1) |
 | Failed generations persisted to the local catalog + `gflow data list errors` (#341) | ✅ done (v0.39.0) |
 | Prompt `@`-mention resolution for asset tagging (#344) | ✅ done (v0.40.0) |
+| Production-readiness hardening: queue safety, profile lease, cancellation-safe teardown (#357) | ✅ done (v0.41.0) |
+| Content-safety `ContentPolicyError` classification + Antigravity coding agent (#359/#360/#361) | ✅ done (v0.42.0) |
+| Private incident diagnostics (`GFLOW_CLI_INCIDENT_CAPTURE`) | ✅ done (v0.43.0) |
+| Dual-side project naming & management (`gflow project` family, `--project-name`/`--project-title`) (#381) | ✅ done (v0.44.0) |
+| `--ref` catalog-backed upload fallback + character-entity binding fixes (#393/#395) | ✅ done (v0.45.0) |
+| Prompt tools on any OpenAI-compatible endpoint (`GFLOW_CLI_LLM_*`) (#387) | ✅ done (v0.46.0) |
+| Classic count-setter: digit-keyed tab selection + typed drift error (#404) | ✅ done (v0.46.1) |
 | Manifest-driven video batch runner on `ui_automation` | ❌ removed — never worked end-to-end, shipped as a nonfunctional stub; see v0.41.0 changelog. For multi-clip video, loop `gflow video t2v`/`i2v` from the shell; `gflow image batch` remains supported for images. |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |
