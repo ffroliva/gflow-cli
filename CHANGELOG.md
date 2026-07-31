@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.1] — 2026-07-31
+
 ### Fixed
 
 - **`image t2i` failed whenever `-n` differed from the displayed count — including
@@ -14,13 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `1x`/`x2`/… to `x1`/`x2`/…, so the count setter's label filter silently dropped
   the count-1 tab and its positional pick clicked the wrong tab (reporting
   per-click success while the value never changed). The count tab is now selected
-  by the digit in its label across both cohorts, the read-back recognises a
+  by the digit in its label across both label cohorts (`1x`/`x1`), the read-back recognises a
   selected `x1`, and non-convergence raises `UiSelectorDriftError` (exit 23)
   naming desired vs displayed — instead of a bare `RuntimeError` that
   observability hashed into an opaque `UnexpectedError`. The per-click
   `count_click_result` log now carries `effect_observed`, and the video output
   count setter probes both label cohorts too. Verified live on the classic
-  composer (new e2e: `tests/e2e/test_classic_count_setter_e2e.py`).
+  composer (new e2e: `tests/e2e/test_classic_count_setter_e2e.py`; evidence:
+  [LIVE_VERIFICATION_v0.46.1](docs/LIVE_VERIFICATION_v0.46.1.md)).
 
 ## [0.46.0] — 2026-07-28
 
@@ -2533,7 +2536,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.46.1...HEAD
+[0.46.1]: https://github.com/ffroliva/gflow-cli/compare/v0.46.0...v0.46.1
 [0.46.0]: https://github.com/ffroliva/gflow-cli/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/ffroliva/gflow-cli/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/ffroliva/gflow-cli/compare/v0.43.0...v0.44.0
