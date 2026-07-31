@@ -118,7 +118,8 @@ denon82 profile (aborted pre-submit, saving the 10-credit generation).
 **Root cause (confirmed live 2026-07-11, screenshot evidence on #288): the
 duration control is ABSENT from this cohort's settings popover** — the panel
 renders mode tabs (Imagem/Video), sub-mode (Frames/Elementos), aspect
-(9:16/16:9), count (1x–x4), and the model dropdown (Veo 3.1 - Lite), and
+(9:16/16:9), count (1x–x4; labels renamed to xN since — see #404), and the
+model dropdown (Veo 3.1 - Lite), and
 nothing else. The earlier locale hypothesis is refuted: the UI renders in
 Portuguese and the sibling count tabs (`1x`/`x2`) match fine; there is simply
 no duration row to click. Whether Flow removed clip-length selection for this
