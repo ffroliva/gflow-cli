@@ -109,7 +109,8 @@ _FIND_PANEL_ROOT_JS_PRELUDE = """
     let node = backBtn.parentElement;
     for (let depth = 0; depth < 8 && node; depth++) {
       const hasCountTablist = [...node.querySelectorAll("[role='tab']")].some((t) =>
-        /^(1x|x[2-4])$/.test((t.textContent || '').trim())
+        // Both label cohorts: legacy "1x" and the renamed "x1" (issue #404).
+        /^(1x|x[1-4])$/.test((t.textContent || '').trim())
       );
       if (hasCountTablist) {
         if (depth < bestDepth) { panelRoot = node; backBtnEl = backBtn; bestDepth = depth; }

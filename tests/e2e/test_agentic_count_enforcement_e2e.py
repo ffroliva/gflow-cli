@@ -24,6 +24,10 @@ import structlog
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.transports.ui_automation_video import (
+    COMPOSER_AGENT_TOGGLE_SELECTOR,
+    VideoGenerationMixin,
+)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_image]
 
@@ -61,17 +65,38 @@ async def _set_mismatched_sticky_count(
         await page.wait_for_timeout(4_000)
         await page.keyboard.press("Escape")
 
+        # Flow's current cohort loads the editor in CLASSIC mode (media panel
+        # present) — the tune icon only exists on the Agent composer, so
+        # toggle into Agent mode first (same pill the #313 spike used).
+        if await VideoGenerationMixin._media_panel_present(page):  # noqa: SLF001
+            pill = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
+            assert await pill.count() > 0, (
+                "editor loaded in classic mode but the Agent toggle pill was "
+                "not found — Agent composer unreachable"
+            )
+            await pill.click(force=True, timeout=5_000)
+            await page.wait_for_timeout(1_500)
+
         tune_btn = page.locator(_TUNE_BUTTON_SELECTOR).first
         await tune_btn.wait_for(state="visible", timeout=10_000)
         await tune_btn.click(timeout=5_000)
         await page.wait_for_timeout(1_000)
 
-        label = {1: "1x", 2: "x2", 3: "x3", 4: "x4"}[wrong_count]
+        # Anchor on x2+x3 (present in BOTH label cohorts — Flow renamed the
+        # count-1 label from '1x' to 'x1', issue #404); for count=1 try the
+        # renamed label first, then the legacy one.
+        labels = ("x1", "1x") if wrong_count == 1 else (f"x{wrong_count}",)
         count_tablist = page.locator(
-            "[role='tablist']:has(button:text-is('1x')):has(button:text-is('x2'))"
+            "[role='tablist']:has(button:text-is('x2')):has(button:text-is('x3'))"
         ).first
-        target_btn = count_tablist.locator(f"button:text-is('{label}')").first
-        await target_btn.click(timeout=5_000)
+        clicked = False
+        for label in labels:
+            target_btn = count_tablist.locator(f"button:text-is('{label}')").first
+            if await target_btn.count() > 0:
+                await target_btn.click(timeout=5_000)
+                clicked = True
+                break
+        assert clicked, f"no count tab found for {wrong_count} (tried {labels})"
         await page.wait_for_timeout(300)
 
         # Structurally locate + click Save (locale-invariant — see
@@ -91,7 +116,7 @@ async def _set_mismatched_sticky_count(
                   const texts = [...t.querySelectorAll('button')].map(
                     (b) => (b.textContent || '').trim()
                   );
-                  return texts.includes('1x') && texts.includes('x2');
+                  return texts.includes('x2') && texts.includes('x3');
                 });
                 if (hasCountTablist) {
                   const visible = [...node.querySelectorAll('button')].filter((b) => {

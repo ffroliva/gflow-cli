@@ -118,7 +118,8 @@ my-profile profile (aborted pre-submit, saving the 10-credit generation).
 **Root cause (confirmed live 2026-07-11, screenshot evidence on #288): the
 duration control is ABSENT from this cohort's settings popover** — the panel
 renders mode tabs (Imagem/Video), sub-mode (Frames/Elementos), aspect
-(9:16/16:9), count (1x–x4), and the model dropdown (Veo 3.1 - Lite), and
+(9:16/16:9), count (1x–x4; labels renamed to xN since — see #404), and the
+model dropdown (Veo 3.1 - Lite), and
 nothing else. The earlier locale hypothesis is refuted: the UI renders in
 Portuguese and the sibling count tabs (`1x`/`x2`) match fine; there is simply
 no duration row to click. Whether Flow removed clip-length selection for this
@@ -629,10 +630,14 @@ issue and not blocked by any code change in this repo.
   locale-leak fix.
 
 **Earlier — Phase 7 multi-image-prompt work** addressed the count-tab selectors:
-- `_COUNT_TAB_TEXT_RE = ^(1x|x[2-4])$` only matches the digit+x format Flow
+- `_COUNT_TAB_TEXT_RE = ^(1x|x[1-4])$` only matches the digit+x format Flow
   renders identically in every locale (numbers/symbols are not translated).
-- `_set_count` falls back to positional `.nth(count - 1)` when the read-back
-  text is unrecognised — locale-invariant.
+  Widened for #404: Flow renamed the count-1 label from `1x` to `x1`
+  (uniform `xN`, live-verified 2026-07-31); both cohorts are accepted.
+- `_set_count` clicks the tab carrying the desired DIGIT (`1x`/`x1` for
+  count=1), not a position — the #404 rename shrank the old filtered set and
+  shifted every `.nth(count - 1)` pick by one. Non-convergence raises
+  `UiSelectorDriftError` (exit 23) with desired vs displayed counts.
 
 **Earlier — PR #48:**
 - Added `--lang=en-US` Chromium launch arg; parts of `NEW_PROJECT_SELECTORS` /
