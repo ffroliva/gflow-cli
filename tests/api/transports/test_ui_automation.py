@@ -2176,8 +2176,9 @@ class TestReadDisplayedCount:
     """_read_displayed_count returns digit from the selected COUNT tab only.
 
     The new implementation filters [aria-selected="true"] by _COUNT_TAB_TEXT_RE
-    (``^(1x|x[2-4])$``) so Mode tabs ("image\\nImagem") and Aspect tabs ("16:9")
-    that are also aria-selected never pollute the result.
+    (``^(1x|x[1-4])$`` — both label cohorts, #404) so Mode tabs
+    ("image\\nImagem") and Aspect tabs ("16:9") that are also aria-selected
+    never pollute the result.
     """
 
     @pytest.mark.asyncio

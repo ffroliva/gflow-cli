@@ -528,13 +528,14 @@ def _count_tabs_locator(page: Page) -> Locator:
     """Return a Playwright Locator that matches ONLY the 4 count tabs.
 
     Filters ``role="tab"`` elements by text matching :data:`_COUNT_TAB_TEXT_RE`
-    (``1x``, ``x2``, ``x3``, ``x4``). This pattern is unique to count tabs —
-    Mode tabs and Aspect tabs never match it — so the filter survives all three
-    Radix tablists being present in the DOM simultaneously.
+    (legacy ``1x``/``x2``/``x3``/``x4`` and renamed ``x1``/``x2``/``x3``/``x4``,
+    issue #404). The pattern is unique to count tabs — Mode tabs and Aspect
+    tabs never match it — so the filter survives all three Radix tablists
+    being present in the DOM simultaneously.
 
-    DOM evidence: ``tmp/dom_dump.json`` captured on profile denon82 (Portuguese
-    locale, 2026-05-22) shows all three tablists rendered; count tabs are the
-    only ones whose ``text`` is ``"1x"`` / ``"x2"`` / ``"x3"`` / ``"x4"``.
+    DOM evidence: ``tmp/dom_dump.json`` (profile denon82, pt-BR, 2026-05-22)
+    for the legacy cohort; ``scripts/dev/spike_issue404_count_tabs_recon.py``
+    output (profile ffroliva, 2026-07-31) for the renamed cohort.
     """
     return page.locator('[role="tab"]').filter(has_text=_COUNT_TAB_TEXT_RE)
 
@@ -1677,8 +1678,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         """Read the currently-displayed image count from the settings panel.
 
         Locale-invariant: filters ``[aria-selected="true"]`` tabs by
-        :data:`_COUNT_TAB_TEXT_RE` so only count tabs ("1x", "x2", "x3",
-        "x4") are considered.  Mode tabs ("image\\nImagem") and Aspect tabs
+        :data:`_COUNT_TAB_TEXT_RE` so only count tabs (both label cohorts,
+        e.g. "1x"/"x1", "x2") are considered.  Mode tabs ("image\\nImagem") and Aspect tabs
         ("16:9", etc.) are selected simultaneously in the Radix tablist DOM
         and would poison the old unfiltered ``[aria-selected="true"]`` query.
 
@@ -1702,7 +1703,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         """True if the generation-settings panel count tabs are currently visible.
 
         Uses :func:`_count_tabs_locator` — the panel is open when at least one
-        count tab (text matching ``1x`` / ``x2`` / ``x3`` / ``x4``) is visible.
+        count tab (text matching either label cohort, e.g. ``1x``/``x1``,
+        ``x2``) is visible.
         This is locale-invariant and immune to Mode/Aspect tab false-positives.
         """
         try:
@@ -2081,8 +2083,8 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
 
             # Success when the click landed AND read-back digit matches, OR
-            # when read-back returned None (unrecognised locale text — position
-            # click was deterministic so trust it).
+            # when read-back returned None (no selected count tab recognised —
+            # the digit-keyed click targeted the right tab, so trust it).
             if clicked and (displayed is None or displayed == count):
                 log.info(
                     _EVT_COUNT_SETTER_COMPLETED,
