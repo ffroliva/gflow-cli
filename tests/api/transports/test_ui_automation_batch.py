@@ -14,6 +14,7 @@ invariants tested:
 
 from __future__ import annotations
 
+import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -958,8 +959,18 @@ class _LocatorRecorder:
     so ``_read_displayed_count`` returns the new digit on the next read-back.
     """
 
-    def __init__(self, tab_count: int = 4, initial_selected: int = 0) -> None:
+    def __init__(
+        self,
+        tab_count: int = 4,
+        initial_selected: int = 0,
+        labels: tuple[str, ...] | None = None,
+    ) -> None:
         self._tab_count = tab_count
+        # Default to the legacy label cohort; pass ("x1", "x2", "x3", "x4")
+        # to model the renamed cohort observed live 2026-07-31 (issue #404).
+        self._labels: tuple[str, ...] = labels or tuple(
+            "1x" if i == 0 else f"x{i + 1}" for i in range(tab_count)
+        )
         self._selected_idx: int = initial_selected
         # clicked_indices: records the nth-index of every click, in call order.
         self.clicked_indices: list[int] = []
@@ -988,28 +999,34 @@ class _LocatorRecorder:
     class _TabListLoc:
         """Represents ``page.locator('[role="tab"]')`` — supports ``.filter()`` for count tabs.
 
-        The new _count_tabs_locator calls:
-          page.locator('[role="tab"]').filter(has_text=_COUNT_TAB_TEXT_RE)
-
-        filter() returns self (the recorder already models only count tabs).
+        ``filter(has_text=RE)`` really applies the regex to the tab labels
+        (issue #404: a filter-blind fake hid the renamed-label failure mode),
+        returning a set over the matching ORIGINAL indices.
         """
 
-        def __init__(self, recorder: _LocatorRecorder) -> None:
+        def __init__(
+            self, recorder: _LocatorRecorder, indices: tuple[int, ...] | None = None
+        ) -> None:
             self._recorder = recorder
+            self._indices: tuple[int, ...] = (
+                indices if indices is not None else tuple(range(recorder._tab_count))
+            )
 
-        def filter(self, **kwargs: object) -> _LocatorRecorder._TabListLoc:
-            """Return self — recorder already models only count tabs."""
-            return self
+        def filter(self, *, has_text: re.Pattern[str]) -> _LocatorRecorder._TabListLoc:
+            keep = tuple(i for i in self._indices if has_text.search(self._recorder._labels[i]))
+            return _LocatorRecorder._TabListLoc(self._recorder, keep)
 
         async def count(self) -> int:
-            return self._recorder._tab_count
+            return len(self._indices)
 
         @property
-        def first(self) -> _LocatorRecorder._TabLoc:
-            return _LocatorRecorder._TabLoc(0, self._recorder)
+        def first(self) -> _LocatorRecorder._TabLoc | _LocatorRecorder._NullLoc:
+            return self.nth(0)
 
-        def nth(self, i: int) -> _LocatorRecorder._TabLoc:
-            return _LocatorRecorder._TabLoc(i, self._recorder)
+        def nth(self, i: int) -> _LocatorRecorder._TabLoc | _LocatorRecorder._NullLoc:
+            if 0 <= i < len(self._indices):
+                return _LocatorRecorder._TabLoc(self._indices[i], self._recorder)
+            return _LocatorRecorder._NullLoc()
 
     class _TabLoc:
         """Represents a single count tab at position ``idx``."""
@@ -1038,28 +1055,30 @@ class _LocatorRecorder:
         first.text_content() returns the count-tab label for the selected tab.
         """
 
-        def __init__(self, recorder: _LocatorRecorder) -> None:
+        def __init__(self, recorder: _LocatorRecorder, matched: bool = True) -> None:
             self._recorder = recorder
+            self._matched = matched
 
-        def filter(self, **kwargs: object) -> _LocatorRecorder._SelectedLoc:
-            """Return self — recorder already models the selected count tab."""
-            return self
+        def filter(self, *, has_text: re.Pattern[str]) -> _LocatorRecorder._SelectedLoc:
+            """Honor the regex against the selected tab's label (issue #404)."""
+            label = self._recorder._labels[self._recorder._selected_idx]
+            return _LocatorRecorder._SelectedLoc(
+                self._recorder, matched=has_text.search(label) is not None
+            )
 
         async def count(self) -> int:
-            return 1  # always exactly one count tab selected
+            return 1 if self._matched else 0
 
         @property
         def first(self) -> _LocatorRecorder._SelectedLoc:
             return self
 
         async def is_visible(self, timeout: int = 500) -> bool:
-            return True
+            return self._matched
 
         async def text_content(self, timeout: int = 500) -> str:
-            # Return the count-tab label for the currently-selected tab (1-indexed).
-            # Flow uses "1x" for count=1, "x2" for count=2, etc.
-            idx = self._recorder._selected_idx
-            return "1x" if idx == 0 else f"x{idx + 1}"
+            # The label of the currently-selected count tab.
+            return self._recorder._labels[self._recorder._selected_idx]
 
     class _NullLoc:
         """Matches nothing — used for selectors the recorder doesn't handle."""
@@ -1111,13 +1130,10 @@ async def test_set_count_clicks_x1_for_count_1() -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_count_position_based_no_text_matching() -> None:
-    """Position-based click: count=3 maps to nth(2) regardless of label text.
-
-    This replaces the old test_set_count_fallback_label_nx_used_when_xn_absent.
-    The new implementation never matches on label text — it uses nth() position
-    exclusively, so locale or label-format differences are irrelevant.
-    """
+async def test_set_count_digit_keyed_click_count_3() -> None:
+    """Digit-keyed click: count=3 clicks the tab labelled "x3" (original
+    index 2) — selection is keyed on the digit in the label, so it survives
+    the #404 label rename and any positional drift of the filtered set."""
     page = _LocatorRecorder(tab_count=4, initial_selected=0)  # current=1, want=3
     with patch.object(
         UiAutomationTransport, "_open_gen_settings_panel", new=AsyncMock(return_value=True)
