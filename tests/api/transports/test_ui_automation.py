@@ -40,7 +40,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
     zip_entity_refs,
 )
-from gflow_cli.errors import ContentPolicyError, WafRejectionError
+from gflow_cli.errors import ContentPolicyError, UiSelectorDriftError, WafRejectionError
 
 # ---------------------------------------------------------------------------
 # Async helpers shared across units
@@ -1874,117 +1874,156 @@ def _make_selected_tab_page(
     return page
 
 
+class _FakeNullLoc:
+    """Matches nothing — selectors the fake doesn't model."""
+
+    @property
+    def first(self) -> _FakeNullLoc:
+        return self
+
+    async def count(self) -> int:
+        return 0
+
+    async def is_visible(self, timeout: int = 500) -> bool:
+        return False
+
+    async def text_content(self, timeout: int = 500) -> None:
+        return None
+
+    async def wait_for(self, *, state: str, timeout: int) -> None:
+        raise TimeoutError("no such element")
+
+    async def click(self, **kw: object) -> None:
+        raise TimeoutError("no such element")
+
+
+class _FakeCountTab:
+    """A single count tab; ``click()`` records its index and — once the
+    configured ``effective_after`` click number is reached — selects it."""
+
+    def __init__(self, page: _FakeCountPanelPage, idx: int) -> None:
+        self._page = page
+        self._idx = idx
+
+    async def is_visible(self, timeout: int = 400) -> bool:
+        return True
+
+    async def wait_for(self, *, state: str, timeout: int) -> None:
+        pass
+
+    async def click(self, **kw: object) -> None:
+        p = self._page
+        p.clicked_indices.append(self._idx)
+        p._clicks_so_far += 1
+        if p._clicks_so_far >= p._effective_after:
+            p._selected_idx = self._idx
+
+
+class _FakeTabSet:
+    """A (possibly filtered) set of count tabs — ``.filter(has_text=…)``
+    really applies the regex to the labels, so a regex that misses a label
+    shrinks the set exactly as on the real page (the #404 failure mode the
+    old MagicMock fixture couldn't represent)."""
+
+    def __init__(self, page: _FakeCountPanelPage, indices: tuple[int, ...]) -> None:
+        self._page = page
+        self._indices = indices
+
+    def filter(self, *, has_text: Any) -> _FakeTabSet:
+        keep = tuple(i for i in self._indices if has_text.search(self._page._labels[i]) is not None)
+        return _FakeTabSet(self._page, keep)
+
+    async def count(self) -> int:
+        return len(self._indices)
+
+    @property
+    def first(self) -> _FakeCountTab | _FakeNullLoc:
+        return self.nth(0)
+
+    def nth(self, i: int) -> _FakeCountTab | _FakeNullLoc:
+        if 0 <= i < len(self._indices):
+            return _FakeCountTab(self._page, self._indices[i])
+        return _FakeNullLoc()
+
+
+class _FakeSelectedSet:
+    """``[role="tab"][aria-selected="true"]`` — the selected count tab,
+    filterable by label like the real locator."""
+
+    def __init__(self, page: _FakeCountPanelPage, matched: bool = False) -> None:
+        self._page = page
+        self._matched = matched
+
+    def filter(self, *, has_text: Any) -> _FakeSelectedSet:
+        idx = self._page._selected_idx
+        matched = idx is not None and has_text.search(self._page._labels[idx]) is not None
+        return _FakeSelectedSet(self._page, matched)
+
+    async def count(self) -> int:
+        return 1 if self._matched else 0
+
+    @property
+    def first(self) -> _FakeSelectedSet:
+        return self
+
+    async def text_content(self, timeout: int = 500) -> str | None:
+        idx = self._page._selected_idx
+        return self._page._labels[idx] if idx is not None else None
+
+
+class _FakeCountPanelPage:
+    """Label-driven fake of the settings panel's count-tab DOM.
+
+    Models BOTH label cohorts faithfully: legacy ``("1x", "x2", "x3", "x4")``
+    and the renamed ``("x1", "x2", "x3", "x4")`` observed live 2026-07-31
+    (issue #404). ``effective_after`` sets the click number from which clicks
+    actually change the selection (a huge value models the drifted UI where
+    clicks land but never take effect).
+    """
+
+    def __init__(
+        self,
+        *,
+        labels: tuple[str, ...] = ("1x", "x2", "x3", "x4"),
+        selected_idx: int | None = 0,
+        effective_after: int = 1,
+    ) -> None:
+        self._labels = labels
+        self._selected_idx = selected_idx
+        self._effective_after = effective_after
+        self._clicks_so_far = 0
+        self.clicked_indices: list[int] = []
+        self.keyboard = MagicMock()
+        self.keyboard.press = AsyncMock()
+
+    def locator(self, selector: str) -> Any:
+        if 'aria-selected="true"' in selector:
+            return _FakeSelectedSet(self)
+        if '[role="tab"]' in selector:
+            return _FakeTabSet(self, tuple(range(len(self._labels))))
+        return _FakeNullLoc()
+
+    async def wait_for_timeout(self, _ms: int) -> None:
+        pass
+
+    async def screenshot(self, *, path: str, full_page: bool = False) -> None:
+        Path(path).write_bytes(b"\x89PNG fake")
+
+    async def evaluate(self, *_a: object, **_k: object) -> dict[str, Any]:
+        return {}
+
+
 def _make_tablist_page(
     *,
-    tab_count: int = 4,
-    selected_idx: int = 0,
-    selected_text: str = "1x",
-    readback_after_click: str | None = None,
-) -> tuple[MagicMock, list[int]]:
-    """Build a fake page modelling the new ``_count_tabs_locator`` / ``_read_displayed_count``.
-
-    The new implementation calls:
-    - ``page.locator('[role="tab"]').filter(has_text=RE).nth(i)`` for click
-    - ``page.locator('[role="tab"][aria-selected="true"]').filter(has_text=RE)``
-      for read-back
-
-    Returns ``(page, clicked_indices)`` where ``clicked_indices`` accumulates
-    the nth-index of every ``click()`` call.
-
-    ``selected_text`` defaults to ``"1x"`` (the count-1 tab label). After any
-    click, ``readback_after_click`` is returned by the read-back filter.
-    """
-    page = MagicMock()
-    page.wait_for_timeout = AsyncMock()
-    page.keyboard = MagicMock()
-    page.keyboard.press = AsyncMock()
-
-    clicked_indices: list[int] = []
-    click_count_store: list[int] = [0]
-
-    # Build per-tab mocks (0-indexed).
-    tab_mocks: list[MagicMock] = []
-    for i in range(tab_count):
-        t = MagicMock()
-        t.is_visible = AsyncMock(return_value=True)
-        t.wait_for = AsyncMock()
-        tab_idx = i  # capture
-
-        async def _click_tab(idx: int = tab_idx, **kw: object) -> None:
-            clicked_indices.append(idx)
-            click_count_store[0] += 1
-
-        t.click = AsyncMock(side_effect=_click_tab)
-        tab_mocks.append(t)
-
-    def _make_count_tabs_filtered_loc() -> MagicMock:
-        """Filtered locator for _count_tabs_locator: all 4 count tabs."""
-        filtered = MagicMock()
-        filtered.first = tab_mocks[0]
-
-        def _nth(i: int) -> MagicMock:
-            return tab_mocks[i] if 0 <= i < tab_count else MagicMock()
-
-        filtered.nth = MagicMock(side_effect=_nth)
-        return filtered
-
-    def _make_selected_filtered_loc() -> MagicMock:
-        """Filtered locator for _read_displayed_count: aria-selected + RE filter."""
-        filtered = MagicMock()
-
-        async def _count_selected() -> int:
-            # selected_text matches RE → count=1; else count=0.
-            has_clicked = readback_after_click is not None and click_count_store[0] > 0
-            text = readback_after_click if has_clicked else selected_text
-            return 1 if (text and _COUNT_TAB_TEXT_RE.match(text.strip())) else 0
-
-        filtered.count = AsyncMock(side_effect=_count_selected)
-
-        first_loc = MagicMock()
-
-        async def _text(timeout: int = 500) -> str | None:
-            if readback_after_click is not None and click_count_store[0] > 0:
-                return readback_after_click
-            return selected_text
-
-        first_loc.text_content = AsyncMock(side_effect=_text)
-        filtered.first = first_loc
-        return filtered
-
-    def _locator(sel: str) -> MagicMock:
-        wrapper = MagicMock()
-
-        if '[role="tab"]' in sel and "aria-selected" not in sel:
-            # _count_tabs_locator: page.locator('[role="tab"]').filter(has_text=RE)
-            outer = MagicMock()
-            outer.filter = MagicMock(return_value=_make_count_tabs_filtered_loc())
-            # Also wire first/is_visible for _is_settings_panel_open
-            outer.first = tab_mocks[0]
-            return outer
-
-        if 'aria-selected="true"' in sel:
-            # _read_displayed_count: page.locator('[role="tab"][aria-selected="true"]').filter(...)
-            outer = MagicMock()
-            outer.filter = MagicMock(return_value=_make_selected_filtered_loc())
-            outer.first = tab_mocks[selected_idx]
-            return outer
-
-        if "button[aria-selected]" in sel:
-            loc = MagicMock()
-            wrapper.first = loc
-            loc.is_visible = AsyncMock(return_value=True)
-            return wrapper
-
-        # Default — invisible/unmatched.
-        loc = MagicMock()
-        wrapper.first = loc
-        loc.is_visible = AsyncMock(return_value=False)
-        loc.count = AsyncMock(return_value=0)
-        return wrapper
-
-    page.locator = MagicMock(side_effect=_locator)
-    page._clicked_indices = clicked_indices  # type: ignore[attr-defined]
-    return page, clicked_indices
+    labels: tuple[str, ...] = ("1x", "x2", "x3", "x4"),
+    selected_idx: int | None = 0,
+    effective_after: int = 1,
+) -> tuple[_FakeCountPanelPage, list[int]]:
+    """Build the label-driven fake page; returns ``(page, clicked_indices)``."""
+    page = _FakeCountPanelPage(
+        labels=labels, selected_idx=selected_idx, effective_after=effective_after
+    )
+    return page, page.clicked_indices
 
 
 # ---------------------------------------------------------------------------
@@ -2038,13 +2077,18 @@ class TestExtractCountDigit:
 
 
 class TestCountTabTextRe:
-    """_COUNT_TAB_TEXT_RE must match exactly 1x/x2/x3/x4 and nothing else."""
+    """_COUNT_TAB_TEXT_RE must match both count-label cohorts and nothing else.
+
+    Legacy cohort: 1x/x2/x3/x4. Renamed cohort (live 2026-07-31, issue #404):
+    x1/x2/x3/x4 — Flow unified the labels to xN.
+    """
 
     @pytest.mark.parametrize(
         ("text", "should_match"),
         [
-            # Count tab labels (must match)
+            # Count tab labels (must match) — both cohorts
             ("1x", True),
+            ("x1", True),  # renamed count-1 label (issue #404)
             ("x2", True),
             ("x3", True),
             ("x4", True),
@@ -2058,11 +2102,12 @@ class TestCountTabTextRe:
             ("3:4", False),
             ("crop_16_9", False),
             ("", False),
-            # Locale-variant forms that used to work in the old impl (now filtered out)
-            ("x1", False),  # x1 is NOT a Flow count tab — Flow uses 1x for count=1
+            # Locale-variant forms that used to work in the old impl (still filtered out)
             ("1 image", False),
             ("1 imagem", False),
             ("2 imagens", False),
+            ("x5", False),
+            ("5x", False),
         ],
     )
     def test_pattern(self, text: str, should_match: bool) -> None:
@@ -2192,128 +2237,126 @@ class TestReadDisplayedCount:
         assert result is None
 
 
-class TestSetCountRetry:
-    """_set_count uses position-based click with digit read-back; raises after 3 failed attempts.
+_LEGACY_COHORT = ("1x", "x2", "x3", "x4")
+# Renamed labels observed live 2026-07-31 on the classic composer (issue #404).
+_NEW_COHORT = ("x1", "x2", "x3", "x4")
 
-    The new implementation uses _count_tabs_locator (text-pattern filtered) for
-    nth() click, so selected_text / readback_after_click use RE-matching labels
-    ("1x", "x2", "x3", "x4") to model the real DOM.
+_NEVER_EFFECTIVE = 10**9  # clicks land but never change the selection
+
+
+def _panel_open() -> Any:
+    return patch.object(
+        UiAutomationTransport,
+        "_is_settings_panel_open",
+        new=AsyncMock(return_value=True),
+    )
+
+
+class TestSetCountRetry:
+    """_set_count picks the count tab by its DIGIT (label text), verifies via
+    read-back, and raises UiSelectorDriftError after 3 failed attempts.
+
+    Flow renamed the count-1 label from "1x" to "x1" (issue #404); the fake
+    models both cohorts and really applies locator filters to the labels.
     """
+
+    @pytest.mark.parametrize("label", ["1x", "x1", "x2", "x3", "x4"])
+    def test_count_tab_regex_accepts_both_cohorts(self, label: str) -> None:
+        assert _COUNT_TAB_TEXT_RE.match(label) is not None
+
+    @pytest.mark.parametrize("label", ["x5", "5x", "1", "x", "1x1", ""])
+    def test_count_tab_regex_rejects_non_count_labels(self, label: str) -> None:
+        assert _COUNT_TAB_TEXT_RE.match(label) is None
 
     @pytest.mark.asyncio
     async def test_returns_early_when_count_already_matches(self) -> None:
         """If the displayed count already matches desired, no tab click is made."""
-        # Panel open, selected count tab shows "x2" → count=2 already, no click.
-        page, clicked = _make_tablist_page(selected_text="x2")
-        with patch.object(
-            UiAutomationTransport,
-            "_is_settings_panel_open",
-            new=AsyncMock(return_value=True),
-        ):
-            await UiAutomationTransport._set_count(page, 2)  # type: ignore[attr-defined]
+        page, clicked = _make_tablist_page(labels=_LEGACY_COHORT, selected_idx=1)
+        with _panel_open():
+            await UiAutomationTransport._set_count(page, 2)  # type: ignore[arg-type]
         assert clicked == []
 
     @pytest.mark.asyncio
-    async def test_position_click_nth_index(self) -> None:
-        """_set_count(3) must call nth(2).click() — 0-indexed position."""
-        # Readback returns "x3" after click so the method completes normally.
-        page, clicked = _make_tablist_page(selected_text="1x", readback_after_click="x3")
-        with (
-            patch.object(
-                UiAutomationTransport,
-                "_is_settings_panel_open",
-                new=AsyncMock(return_value=True),
-            ),
-            patch.object(
-                UiAutomationTransport,
-                "_read_displayed_count",
-                new=AsyncMock(side_effect=[1, 3]),  # before=1, after=3
-            ),
-        ):
-            await UiAutomationTransport._set_count(page, 3)  # type: ignore[attr-defined]
-        # nth(2) was clicked (count=3 → index 2).
-        assert 2 in clicked
+    @pytest.mark.parametrize("labels", [_LEGACY_COHORT, _NEW_COHORT])
+    async def test_count_one_clicks_the_digit_one_tab(self, labels: tuple[str, ...]) -> None:
+        """#404 regression: -n 1 must click the count-1 tab in BOTH label
+        cohorts. On the renamed cohort the old positional pick clicked the
+        already-selected x2 tab and looped to failure."""
+        page, clicked = _make_tablist_page(labels=labels, selected_idx=1)  # showing 2
+        with _panel_open():
+            await UiAutomationTransport._set_count(page, 1)  # type: ignore[arg-type]
+        assert clicked == [0]
 
     @pytest.mark.asyncio
-    async def test_succeeds_when_readback_returns_none(self) -> None:
-        """When read-back is None (unrecognised locale text), position click is trusted."""
-        page, clicked = _make_tablist_page(selected_text="imageImagem", readback_after_click=None)
-        with (
-            patch.object(
-                UiAutomationTransport,
-                "_is_settings_panel_open",
-                new=AsyncMock(return_value=True),
-            ),
-            patch.object(
-                UiAutomationTransport,
-                "_read_displayed_count",
-                # before: None (filtered out by RE); after click: None (still filtered)
-                new=AsyncMock(return_value=None),
-            ),
-        ):
-            # Should NOT raise — deterministic position click is trusted when readback=None.
-            await UiAutomationTransport._set_count(page, 1)  # type: ignore[attr-defined]
-        assert 0 in clicked  # nth(0) was clicked for count=1
+    async def test_count_three_clicks_the_digit_three_tab(self) -> None:
+        page, clicked = _make_tablist_page(labels=_NEW_COHORT, selected_idx=1)
+        with _panel_open():
+            await UiAutomationTransport._set_count(page, 3)  # type: ignore[arg-type]
+        assert clicked == [2]
 
     @pytest.mark.asyncio
-    async def test_clicks_tab_and_succeeds_on_first_attempt(self) -> None:
-        """Happy path: displayed=None (unrecognised), click succeeds, read-back matches."""
-        page, clicked = _make_tablist_page(selected_text="1x", readback_after_click="1x")
-        with (
-            patch.object(
-                UiAutomationTransport,
-                "_is_settings_panel_open",
-                new=AsyncMock(return_value=True),
-            ),
-            patch.object(
-                UiAutomationTransport,
-                "_read_displayed_count",
-                new=AsyncMock(side_effect=[None, 1]),  # before=None, after=1
-            ),
-        ):
-            await UiAutomationTransport._set_count(page, 1)  # type: ignore[attr-defined]
-        assert 0 in clicked  # nth(0) for count=1
+    async def test_read_displayed_count_sees_selected_x1(self) -> None:
+        """#404: a selected renamed "x1" tab must read back as count 1."""
+        page, _ = _make_tablist_page(labels=_NEW_COHORT, selected_idx=0)
+        assert await UiAutomationTransport._read_displayed_count(page) == 1  # type: ignore[arg-type]
 
     @pytest.mark.asyncio
-    async def test_raises_after_three_failed_attempts(self) -> None:
-        """If read-back never converges after 3 attempts, RuntimeError is raised."""
-        page, clicked = _make_tablist_page(selected_text="x2", readback_after_click="x2")
-        with (
-            patch.object(
-                UiAutomationTransport,
-                "_is_settings_panel_open",
-                new=AsyncMock(return_value=True),
-            ),
-            patch.object(
-                UiAutomationTransport,
-                "_read_displayed_count",
-                # Always returns 2 — mismatch when we want 1.
-                new=AsyncMock(return_value=2),
-            ),
-            pytest.raises(RuntimeError, match="_set_count\\(1\\) failed to update Flow UI"),
-        ):
-            await UiAutomationTransport._set_count(page, 1)  # type: ignore[attr-defined]
+    async def test_trusts_click_when_no_count_tab_selected(self) -> None:
+        """Read-back None (no aria-selected count tab) → the digit-keyed click
+        is trusted rather than retried to exhaustion."""
+        page, clicked = _make_tablist_page(
+            labels=_NEW_COHORT, selected_idx=None, effective_after=_NEVER_EFFECTIVE
+        )
+        with _panel_open():
+            await UiAutomationTransport._set_count(page, 1)  # type: ignore[arg-type]
+        assert clicked == [0]
 
     @pytest.mark.asyncio
-    async def test_retry_succeeds_on_second_attempt(self) -> None:
-        """If read-back returns wrong value on attempt 1, then correct on attempt 2,
-        _set_count succeeds without raising."""
-        page, clicked = _make_tablist_page(selected_text="x2", readback_after_click="1x")
-        with (
-            patch.object(
-                UiAutomationTransport,
-                "_is_settings_panel_open",
-                new=AsyncMock(return_value=True),
-            ),
-            patch.object(
-                UiAutomationTransport,
-                "_read_displayed_count",
-                # Sequence: initial=2, after-click-1=2 (mismatch), after-click-2=1 (match).
-                new=AsyncMock(side_effect=[2, 2, 1]),
-            ),
-        ):
-            await UiAutomationTransport._set_count(page, 1)  # type: ignore[attr-defined]
-        assert len(clicked) >= 1
+    async def test_retry_succeeds_when_click_takes_effect_on_second_attempt(self) -> None:
+        page, clicked = _make_tablist_page(labels=_NEW_COHORT, selected_idx=1, effective_after=2)
+        with _panel_open():
+            await UiAutomationTransport._set_count(page, 1)  # type: ignore[arg-type]
+        assert clicked == [0, 0]
+
+    @pytest.mark.asyncio
+    async def test_raises_selector_drift_after_three_failed_attempts(self) -> None:
+        """Non-convergence must raise the typed UiSelectorDriftError (exit 23)
+        naming desired vs displayed — not a bare RuntimeError whose message is
+        hashed by observability into an opaque UnexpectedError (#404)."""
+        page, clicked = _make_tablist_page(
+            labels=_NEW_COHORT, selected_idx=1, effective_after=_NEVER_EFFECTIVE
+        )
+        with _panel_open(), pytest.raises(UiSelectorDriftError) as exc_info:
+            await UiAutomationTransport._set_count(page, 1)  # type: ignore[arg-type]
+        msg = str(exc_info.value)
+        assert "desired=1" in msg
+        assert "displayed=2" in msg
+        assert "Screenshot:" not in msg  # no out_dir -> no screenshot clause
+        assert clicked == [0, 0, 0]
+
+    @pytest.mark.asyncio
+    async def test_drift_error_includes_screenshot_when_out_dir(self, tmp_path: Path) -> None:
+        page, _ = _make_tablist_page(
+            labels=_NEW_COHORT, selected_idx=1, effective_after=_NEVER_EFFECTIVE
+        )
+        with _panel_open(), pytest.raises(UiSelectorDriftError) as exc_info:
+            await UiAutomationTransport._set_count(page, 1, out_dir=tmp_path)  # type: ignore[arg-type]
+        assert "Screenshot:" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_count_click_result_logs_effect_observed(self) -> None:
+        """The per-click log must expose whether the click changed the value —
+        'success: true' with no visible effect was the misleading shape in #404."""
+        from structlog.testing import capture_logs
+
+        page, _ = _make_tablist_page(
+            labels=_NEW_COHORT, selected_idx=1, effective_after=_NEVER_EFFECTIVE
+        )
+        with _panel_open(), capture_logs() as logs, pytest.raises(UiSelectorDriftError):
+            await UiAutomationTransport._set_count(page, 1)  # type: ignore[arg-type]
+        click_results = [e for e in logs if e["event"] == "ui_automation.count_click_result"]
+        assert click_results, "expected count_click_result events"
+        assert all(e["effect_observed"] is False for e in click_results)
 
 
 # ---------------------------------------------------------------------------

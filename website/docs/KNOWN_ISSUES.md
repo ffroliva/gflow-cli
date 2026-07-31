@@ -629,10 +629,14 @@ issue and not blocked by any code change in this repo.
   locale-leak fix.
 
 **Earlier — Phase 7 multi-image-prompt work** addressed the count-tab selectors:
-- `_COUNT_TAB_TEXT_RE = ^(1x|x[2-4])$` only matches the digit+x format Flow
+- `_COUNT_TAB_TEXT_RE = ^(1x|x[1-4])$` only matches the digit+x format Flow
   renders identically in every locale (numbers/symbols are not translated).
-- `_set_count` falls back to positional `.nth(count - 1)` when the read-back
-  text is unrecognised — locale-invariant.
+  Widened for #404: Flow renamed the count-1 label from `1x` to `x1`
+  (uniform `xN`, live-verified 2026-07-31); both cohorts are accepted.
+- `_set_count` clicks the tab carrying the desired DIGIT (`1x`/`x1` for
+  count=1), not a position — the #404 rename shrank the old filtered set and
+  shifted every `.nth(count - 1)` pick by one. Non-convergence raises
+  `UiSelectorDriftError` (exit 23) with desired vs displayed counts.
 
 **Earlier — PR #48:**
 - Added `--lang=en-US` Chromium launch arg; parts of `NEW_PROJECT_SELECTORS` /

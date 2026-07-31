@@ -1426,14 +1426,18 @@ class VideoGenerationMixin:
     @staticmethod
     async def _set_output_count(page: Page, n: int) -> None:
         """Set the output count to `n` (1-4). Flow defaults to x2 (two videos =
-        double credits — spec §10.5). Disambiguated by aria-label text
-        ('1x'/'x2'/'x3'/'x4'), NOT id-suffix — '-trigger-4' collides with the
-        DURATION 4s tab. Non-fatal on miss."""
-        label = "1x" if n == 1 else f"x{n}"
+        double credits — spec §10.5). Disambiguated by label text, NOT
+        id-suffix — '-trigger-4' collides with the DURATION 4s tab. The
+        count-1 label exists in two cohorts ('x1' current, '1x' legacy —
+        issue #404 rename); both are probed. Non-fatal on miss."""
+        labels = ("x1", "1x") if n == 1 else (f"x{n}",)
+        selectors = tuple(f"[role='tab']:text-is('{label}')" for label in labels) + tuple(
+            f"[role='tab']:has-text('{label}')" for label in labels
+        )
         tab = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "count_tab",
-            (f"[role='tab']:text-is('{label}')", f"[role='tab']:has-text('{label}')"),
+            selectors,
         )
         if tab is None:
             log.warning(
