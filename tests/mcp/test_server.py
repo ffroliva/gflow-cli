@@ -551,7 +551,8 @@ class TestMcpServerEntryPoints:
         """run_stdio must configure pipes and drive the low-level MCP server.
 
         It captures the real stdout for the protocol channel (so responses are
-        not misrouted to stderr) and runs ``server._mcp_server`` over it.
+        not misrouted to stderr) and runs ``server._lowlevel_server`` over it
+        (renamed from ``_mcp_server`` in the mcp>=2 SDK).
         """
         from contextlib import asynccontextmanager
         from unittest.mock import AsyncMock, MagicMock, patch
@@ -574,16 +575,47 @@ class TestMcpServerEntryPoints:
             patch("anyio.wrap_file", return_value="PROTOCOL_STDOUT"),
             patch("mcp.server.stdio.stdio_server", fake_stdio_server),
         ):
-            mock_server._mcp_server.run = AsyncMock()
+            mock_server._lowlevel_server.run = AsyncMock()
             await run_stdio()
-            mock_server._mcp_server.run.assert_called_once()
+            mock_server._lowlevel_server.run.assert_called_once()
             # The protocol stream must be the captured real stdout, not stderr.
             assert captured["stdout"] == "PROTOCOL_STDOUT"
 
     @pytest.mark.asyncio
+    async def test_run_http_starts_streamable_http_on_mcp_path(self) -> None:
+        """run_http must serve Streamable HTTP on /mcp with the given bind.
+
+        ``stateless_http`` must NOT be forced on: gflow's value is a warm daemon
+        holding one Chromium profile behind a ProfileLease, so the SDK default
+        (False) is the deliberate choice.
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from gflow_cli.mcp.server import HTTP_PATH, run_http
+
+        with (
+            patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._configure_utf8_pipes"),
+        ):
+            mock_server.run_streamable_http_async = AsyncMock()
+            await run_http(host="127.0.0.1", port=9999)
+
+            mock_server.run_streamable_http_async.assert_called_once_with(
+                host="127.0.0.1",
+                port=9999,
+                streamable_http_path=HTTP_PATH,
+            )
+            kwargs = mock_server.run_streamable_http_async.call_args.kwargs
+            assert "stateless_http" not in kwargs
+
+    @pytest.mark.asyncio
     async def test_run_sse_configures_and_starts(self) -> None:
-        """run_sse must configure host/port and call server.run_sse_async."""
-        from unittest.mock import AsyncMock, MagicMock, patch
+        """run_sse must pass host/port through to the deprecated SSE runner.
+
+        mcp>=2 takes host/port as explicit kwargs; the old ``server.settings``
+        mutation is gone.
+        """
+        from unittest.mock import AsyncMock, patch
 
         from gflow_cli.mcp.server import run_sse
 
@@ -592,11 +624,8 @@ class TestMcpServerEntryPoints:
             patch("gflow_cli.mcp.server._configure_utf8_pipes"),
         ):
             mock_server.run_sse_async = AsyncMock()
-            mock_server.settings = MagicMock()
             await run_sse(host="127.0.0.1", port=9999)
-            mock_server.run_sse_async.assert_called_once()
-            assert mock_server.settings.host == "127.0.0.1"
-            assert mock_server.settings.port == 9999
+            mock_server.run_sse_async.assert_called_once_with(host="127.0.0.1", port=9999)
 
 
 def test_mcp_retryable_matches_cli() -> None:
@@ -646,3 +675,102 @@ def test_mcp_error_envelope_omits_local_path() -> None:
     blob = json.dumps(error)
     assert "CANARYUSER" not in blob
     assert "screenshot" not in blob
+
+
+# ---------------------------------------------------------------------------
+# Protocol era negotiation + 2026-07-28 cacheable list results
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolEras:
+    """Drive a real client against the real server over both protocol eras.
+
+    These are the only tests that exercise the wire rather than the registry.
+    The MCP 2026-07-28 spec removed the handshake, so the SDK serves two eras
+    from one binary (`serve_dual_era_loop`) and the client's first request
+    decides which. Everything below would still pass on a server that silently
+    spoke only one of them if it were asserted against the registry instead.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("mode", "expected_version"),
+        [("2026-07-28", "2026-07-28"), ("legacy", "2025-11-25")],
+    )
+    async def test_server_serves_both_protocol_eras(
+        self, mcp_server: Any, mode: str, expected_version: str
+    ) -> None:
+        """One server binary must answer both the modern and handshake eras."""
+        from mcp import Client
+
+        import gflow_cli.mcp.prompts  # noqa: F401
+
+        async with Client(mcp_server, mode=mode) as client:
+            assert client.protocol_version == expected_version
+
+            # `server_info` arrives in the handshake's InitializeResult, so it is
+            # populated on the legacy era and absent on the modern one until the
+            # client asks for it via `server/discover` — itself a consequence of
+            # the handshake removal, so assert the era-appropriate shape rather
+            # than papering over the difference.
+            if mode == "legacy":
+                assert client.server_info is not None
+                assert client.server_info.name == "gflow-cli"
+            else:
+                assert client.server_info is None
+
+            listed = await client.list_tools()
+            assert len(listed.tools) > 0
+
+    @pytest.mark.asyncio
+    async def test_cache_hints_are_advertised_on_the_modern_wire(self, mcp_server: Any) -> None:
+        """2026-07-28 list results must carry our ttlMs/cacheScope hints.
+
+        Configuring `cache_hints` on the server is not sufficient evidence that
+        clients receive them — the hint is applied during response
+        serialization, so only a real round-trip proves it.
+        """
+        from mcp import Client
+
+        import gflow_cli.mcp.prompts  # noqa: F401
+        from gflow_cli.mcp.server import _FIVE_MIN_MS, _HOUR_MS
+
+        async with Client(mcp_server, mode="2026-07-28") as client:
+            tools = await client.list_tools()
+            resources = await client.list_resources()
+            prompts = await client.list_prompts()
+            read = await client.read_resource("gflow://db/schema")
+
+        # Listing surfaces are fixed at import time by decorators.
+        assert tools.ttl_ms == _HOUR_MS
+        assert resources.ttl_ms == _HOUR_MS
+        assert prompts.ttl_ms == _HOUR_MS
+
+        # resources/read is NOT static: the known-issues resource reads
+        # KNOWN_ISSUES.md off disk, so it gets a much shorter TTL.
+        assert read.ttl_ms == _FIVE_MIN_MS
+
+        # gflow is a local single-user daemon driving one authenticated browser
+        # profile — responses are user-scoped, so shared caching is never
+        # authorized.
+        assert tools.cache_scope == "private"
+        assert resources.cache_scope == "private"
+
+    @pytest.mark.asyncio
+    async def test_legacy_wire_does_not_carry_2026_cache_fields(self, mcp_server: Any) -> None:
+        """ttlMs/cacheScope are 2026-era vocabulary and must be sieved off legacy.
+
+        Pinned because the failure would be invisible from the server side: the
+        hints are configured identically for both eras, and it is the SDK's
+        per-version surface that strips them on the way out.
+        """
+        from mcp import Client
+
+        import gflow_cli.mcp.prompts  # noqa: F401
+
+        async with Client(mcp_server, mode="legacy") as client:
+            tools = await client.list_tools()
+            resources = await client.list_resources()
+
+        assert tools.ttl_ms == 0
+        assert resources.ttl_ms == 0

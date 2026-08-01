@@ -1,13 +1,13 @@
 """Subprocess-level smoke of the ``gflow mcp run`` stdio transport.
 
-The in-process FastMCP client used elsewhere cannot catch stream-routing or
+The in-process client used elsewhere cannot catch stream-routing or
 registration bugs: a real MCP client (Claude Desktop, Cursor) reads JSON-RPC
 from the child's **stdout**. This test launches the actual CLI entry point and
 asserts the protocol responses are delivered on stdout, and that tools and
 prompts are both registered.
 
 Regressions guarded:
-- stdout-redirect bug — ``_redirect_stdout_to_stderr`` ran before FastMCP
+- stdout-redirect bug — ``_redirect_stdout_to_stderr`` ran before the server
   captured the protocol stream, sending all responses to stderr.
 - prompts not registered — the startup path imported only tools and resources.
 """

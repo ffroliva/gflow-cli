@@ -28,8 +28,14 @@ dependencies = [
     "structlog>=24.0.0",
     "tenacity>=8.2",
     "browser-cookie3>=0.20.1",
-    # MCP server + daemon layer (gflow serve / gflow mcp)
-    "mcp>=1.0.0",
+    # MCP server + daemon layer (gflow serve / gflow mcp).
+    # Upper bound is mandatory, not cosmetic: the MCP SDK ships breaking
+    # protocol-era changes on major bumps. 2.0.0 deleted `mcp.server.fastmcp`
+    # outright, so an unbounded `mcp>=1.0.0` silently broke every fresh install
+    # of the MCP surface while CI stayed green on the lockfile. The
+    # `resolve-drift` CI job installs from these ranges (no lockfile) so the
+    # next such break is caught by CI instead of by users.
+    "mcp>=2.0.0,<3",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "sse-starlette>=2.0.0",

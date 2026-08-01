@@ -471,18 +471,27 @@ def mcp_setup(target: str) -> None:
     help="Host to bind. Use 0.0.0.0 with caution (requires GFLOW_DAEMON_TOKEN).",
 )
 @click.option("--profile", default=None, help="Profile for the background worker.")
-def serve(port: int, host: str, profile: str | None) -> None:
-    """Start the gflow MCP server over HTTP/SSE.
+@click.option(
+    "--transport",
+    type=click.Choice(["http", "sse"]),
+    default="http",
+    show_default=True,
+    help="MCP HTTP transport. 'sse' is deprecated by the MCP 2026-07-28 spec.",
+)
+def serve(port: int, host: str, profile: str | None, transport: str) -> None:
+    """Start the gflow MCP server over HTTP.
 
     \b
     Foundation for Gflow Studio and external API consumers:
-      • MCP-SSE at /sse — JSON-RPC event stream (POST messages to /messages/)
+      • MCP Streamable HTTP at /mcp — the current spec transport (default)
+      • MCP-SSE at /sse — DEPRECATED (--transport sse), one cycle only
       • REST /api/v1/* — CRUD + generation queue (planned)
       • Background FlowWorker — sequential generation (planned)
 
     \b
     Example:
       gflow serve --port 8000
+      gflow serve --transport sse --port 8000   # deprecated transport
       gflow serve --host 0.0.0.0 --port 8000  # requires GFLOW_DAEMON_TOKEN
     """
     if host != "127.0.0.1":
@@ -495,14 +504,27 @@ def serve(port: int, host: str, profile: str | None) -> None:
             )
             sys.exit(11)
 
+    if transport == "sse":
+        console.print(
+            f"\n[bold]🎬 gflow daemon[/bold] starting on [cyan]{host}:{port}[/cyan]\n"
+            f"  MCP-SSE: [cyan]http://{host}:{port}/sse[/cyan]\n"
+            "[yellow]Warning:[/yellow] HTTP+SSE is deprecated by the MCP 2026-07-28 spec.\n"
+            "[dim]Drop --transport sse to serve Streamable HTTP at /mcp instead.[/dim]\n"
+        )
+
+        from gflow_cli.mcp.server import main_sse
+
+        main_sse(host=host, port=port)
+        return
+
+    from gflow_cli.mcp.server import HTTP_PATH, main_http
+
     console.print(
         f"\n[bold]🎬 gflow daemon[/bold] starting on [cyan]{host}:{port}[/cyan]\n"
-        f"  MCP-SSE: [cyan]http://{host}:{port}/sse[/cyan]\n"
+        f"  MCP (Streamable HTTP): [cyan]http://{host}:{port}{HTTP_PATH}[/cyan]\n"
     )
 
-    from gflow_cli.mcp.server import main_sse
-
-    main_sse(host=host, port=port)
+    main_http(host=host, port=port)
 
 
 if __name__ == "__main__":

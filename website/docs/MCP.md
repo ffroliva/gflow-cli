@@ -8,7 +8,44 @@ This document describes the design, configuration, security model, and developer
 
 The `gflow-cli` MCP server acts as a type-safe JSON-RPC interface, supporting two transport mechanisms:
 1. **stdio Subprocess Transport (`gflow mcp run`):** Runs over standard input/output (`stdio`), ideal for direct integration with local desktop agents like Claude Desktop, Cursor, or VS Code.
-2. **SSE HTTP Transport (`gflow serve`):** Runs as a background web daemon over HTTP and Server-Sent Events (SSE), ideal for decoupled web UI dashboards, concurrent scripts, or external clients.
+2. **Streamable HTTP Transport (`gflow serve`):** Runs as a background web daemon over HTTP at `/mcp`, ideal for decoupled web UI dashboards, concurrent scripts, or external clients. The legacy HTTP+SSE transport remains available for one deprecation cycle via `gflow serve --transport sse`.
+
+### Protocol versions
+
+The server is built on the `mcp>=2` Python SDK and negotiates the protocol
+**per connection**, serving both eras from one binary:
+
+| Era | Versions | Notes |
+| :--- | :--- | :--- |
+| Handshake (legacy) | `2024-11-05`, `2025-03-26`, `2025-06-18`, `2025-11-25` | `initialize`/`initialized` exchange, `Mcp-Session-Id` |
+| Modern (stateless) | `2026-07-28` | No handshake, no session id; protocol version and client capabilities ride in `_meta` on every request |
+
+We write no protocol code for this — the SDK's low-level `Server.run` drives
+`serve_dual_era_loop`, and the client's first request decides the era.
+
+The 2026-07-28 stateless core costs us nothing structurally: the server holds no
+per-connection state. Cross-call continuity lives in SQLite (`gflow.db`) and the
+Chromium profile directory, keyed by the `profile` argument that every tool
+already takes — which is exactly the "server-minted handle passed as an ordinary
+tool argument" pattern the spec now prescribes. `ProfileLease` is a cross-process
+file lock, not a session, so it is unaffected. We use none of the features the
+spec deprecated (Roots, Sampling, Logging).
+
+**Dependency bound.** `pyproject.toml` pins `mcp>=2.0.0,<3`. The upper bound is
+mandatory, not cosmetic: MCP SDK majors carry breaking protocol-era changes
+(2.0.0 deleted `mcp.server.fastmcp` outright, which an unbounded `mcp>=1.0.0`
+happily resolved into — breaking every fresh install of this surface while CI
+stayed green on the lockfile). The `resolve-drift` CI job installs from the
+declared ranges *without* the lockfile and smoke-imports this surface, so the
+next such break fails CI instead of reaching users.
+
+**Response caching.** 2026-07-28 added `ttlMs`/`cacheScope` to list results. Our
+listing surfaces are decided at import time by decorators, so `tools/list`,
+`prompts/list`, and `resources/list` advertise a one-hour TTL. `resources/read`
+gets five minutes because it is not static — the known-issues resource reads
+`KNOWN_ISSUES.md` off disk. `cacheScope` is `private` throughout: gflow is a
+local, single-user daemon driving one user's authenticated browser profile, so
+`public` would authorize shared caching of user-scoped responses.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -17,7 +54,7 @@ The `gflow-cli` MCP server acts as a type-safe JSON-RPC interface, supporting tw
               │ JSON-RPC          │ JSON-RPC
               │ (stdio / HTTP)    │ (stdout / SSE)
 ┌─────────────▼───────────────────┴──────────────────────────┐
-│          MCP Server Adapter (FastMCP / FastAPI app)         │
+│        MCP Server Adapter (MCPServer / FastAPI app)         │
 │  Exposes: Tools, Prompts, Resources                        │
 └─────────────┬──────────────────────────────────────────────┘
               │ internal calls
@@ -164,14 +201,30 @@ Use this if you cloned the repository locally and run it via `uv`:
      * **Type:** `command`
      * **Command:** `uv --directory C:/development/github/gflow-cli run gflow mcp run`
 
-### SSE Daemon Setup (`gflow serve`)
-For decoupled clients, local web interfaces, or multi-process frontends, you can run the daemon as an HTTP/SSE service:
+### HTTP Daemon Setup (`gflow serve`)
+For decoupled clients, local web interfaces, or multi-process frontends, run the daemon as an HTTP service:
 ```bash
 gflow serve --port 8000 --host 127.0.0.1 --profile default
 ```
-This serves the MCP server over Server-Sent Events under FastMCP's standard paths:
+This serves the MCP server over **Streamable HTTP**, the current spec transport:
+* **Endpoint:** `http://127.0.0.1:8000/mcp`
+
+The legacy HTTP+SSE transport is still available for one deprecation cycle:
+```bash
+gflow serve --transport sse --port 8000   # deprecated; logs a warning
+```
 * **Connection endpoint (SSE stream):** `http://127.0.0.1:8000/sse`
 * **Command posting endpoint:** `http://127.0.0.1:8000/messages/`
+
+> **Deprecated:** the MCP 2026-07-28 spec reclassified HTTP+SSE as deprecated.
+> Prefer the default `--transport http`. The spec's lifecycle policy guarantees a
+> minimum twelve months between deprecation and removal.
+
+`stateless_http` is deliberately **not** enabled. The stateless core exists so
+servers can scale out across interchangeable instances; gflow's value is the
+opposite — a warm daemon holding one live Chromium profile, serialized by
+`ProfileLease`. The *protocol* is stateless either way; that flag only governs
+transport bookkeeping we want to keep.
 
 Non-loopback binds (e.g. `--host 0.0.0.0`) require `GFLOW_DAEMON_TOKEN` to be set.
 
