@@ -121,12 +121,19 @@ def _fresh_project_and_entity() -> tuple[str, str]:
     profile isn't usable, matching the other e2e modules' posture.
     """
     from gflow_cli.api.client import FlowApiClient
-    from gflow_cli.auth import profile_dir as resolve_profile_dir
+    from gflow_cli.config import Settings
 
     name = os.environ.get(_E2E_PROFILE_ENV, "").strip()
     if not name:
         pytest.skip(f"set {_E2E_PROFILE_ENV} to a logged-in profile name")
-    profile_dir = resolve_profile_dir(name)
+
+    old_home = os.environ.pop("GFLOW_CLI_HOME", None)
+    try:
+        profile_dir = Settings(_env_file=None).profile_subdir(name)  # pyright: ignore[reportCallIssue]
+    finally:
+        if old_home is not None:
+            os.environ["GFLOW_CLI_HOME"] = old_home
+
     if not profile_dir.exists():
         pytest.skip(f"profile dir not found: {profile_dir}")
 
