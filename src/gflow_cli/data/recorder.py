@@ -344,6 +344,34 @@ class OperationRecorder:
             "config_hash": tool.config_hash,
         }
 
+    def _generation_metadata(
+        self,
+        request: _ToolableRequest,
+    ) -> dict[str, object]:
+        """Compose the full ``metadata_json`` payload for a generation operation.
+
+        Built as ONE dict on purpose: :meth:`DataRepository.set_operation_metadata`
+        replaces the whole column, so writing tool and entity provenance in two
+        sequential calls would silently drop whichever went first.
+
+        ``entity_ids`` / ``entity_names`` answer "which character produced this?"
+        (issue #402) — without them a `--reference-entity` generation left no
+        trace of the entity anywhere in the catalog, while `--ref` media were
+        recorded in full. Order is preserved: it mirrors the attach order the
+        transport sent. Both keys are stored verbatim even in ``redacted`` mode —
+        they are Flow-side handles the user picked, not prompt text, and
+        ``record_character_started`` already stores the same pair unredacted.
+        """
+        metadata: dict[str, object] = {}
+        tool_meta = self._tool_metadata(request.tool)
+        if tool_meta is not None:
+            metadata["tool"] = tool_meta
+        if request.reference_entities:
+            metadata["entity_ids"] = list(request.reference_entities)
+        if request.reference_entity_names:
+            metadata["entity_names"] = list(request.reference_entity_names)
+        return metadata
+
     # ------------------------------------------------------------------
     # Image upload
     # ------------------------------------------------------------------
@@ -552,9 +580,9 @@ class OperationRecorder:
         # downstream queries like "SELECT * FROM operations WHERE completed_at
         # IS NULL" don't surface successful runs.
         repo.update_operation_status(op_id, OperationStatus.SUCCEEDED, _now_utc_iso(), None, None)
-        tool_meta = self._tool_metadata(request.tool)
-        if tool_meta is not None:
-            repo.set_operation_metadata(op_id, {"tool": tool_meta})
+        metadata = self._generation_metadata(request)
+        if metadata:
+            repo.set_operation_metadata(op_id, metadata)
 
         # Link input assets (I2I seed images)
         for i, media_id in enumerate(input_media_ids):
@@ -740,9 +768,9 @@ class OperationRecorder:
             ),
         )
         repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, 0)
-        tool_meta = self._tool_metadata(request.tool)
-        if tool_meta is not None:
-            repo.set_operation_metadata(op_id, {"tool": tool_meta})
+        metadata = self._generation_metadata(request)
+        if metadata:
+            repo.set_operation_metadata(op_id, metadata)
 
     def _insert_fallback_video_operation(
         self,
@@ -790,9 +818,9 @@ class OperationRecorder:
         asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
         if asset_lookup is not None:
             repo.link_operation_asset(op_id, asset_lookup.id, OperationAssetRole.OUTPUT, 0)
-        tool_meta = self._tool_metadata(request.tool)
-        if tool_meta is not None:
-            repo.set_operation_metadata(op_id, {"tool": tool_meta})
+        metadata = self._generation_metadata(request)
+        if metadata:
+            repo.set_operation_metadata(op_id, metadata)
 
     def _persist_completed_video_file(
         self,
@@ -1003,9 +1031,12 @@ class OperationRecorder:
                 expanded_prompt=expanded_prompt,
             ),
         )
-        tool_meta = self._tool_metadata(request.tool) if request is not None else None
-        if tool_meta is not None:
-            repo.set_operation_metadata(op_id, {"tool": tool_meta})
+        # A FAILED row carrying entity_ids is the negative case the catalog was
+        # missing (#402): an entity-attach that tripped the wire backstop is now
+        # distinguishable from a run that never requested an entity at all.
+        metadata = self._generation_metadata(request) if request is not None else {}
+        if metadata:
+            repo.set_operation_metadata(op_id, metadata)
 
     # ------------------------------------------------------------------
     # Character — started / completed (persist-before-spend saga)

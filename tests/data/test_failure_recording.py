@@ -1,6 +1,7 @@
 """Failure recording (#341): FAILED operation rows, taxonomy, and redaction."""
 
 import hashlib
+import json
 from pathlib import Path
 
 import structlog
@@ -119,6 +120,33 @@ def test_record_failed_operation_inserts_failed_row_with_request_metadata(
         assert op["prompt"] == "a red fox"
         assert op["model"] == Model.NARWHAL.value
         assert op["completed_at"] is not None
+
+
+def test_record_failed_operation_records_entity_provenance(tmp_path: Path) -> None:
+    """A failed entity-attach must stay attributable (#402): the FAILED row keeps
+    the requested entity ids, so a wire-backstop rejection is distinguishable
+    from a run that never asked for an entity."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        req = GenerateImageRequest(
+            prompt="the same character",
+            aspect=Aspect.PORTRAIT,
+            model=Model.NARWHAL,
+            reference_entities=("entity-abc",),
+            reference_entity_names=("Ana",),
+        )
+        recorder.record_failed_operation(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            command="image i2i",
+            mode=OperationKind.I2I,
+            exc=WafRejectionError("blocked by WAF", status=403),
+            request=req,
+        )
+        row = store.conn.execute("SELECT metadata_json FROM operations WHERE mode='i2i'").fetchone()
+        meta = json.loads(row["metadata_json"])
+        assert meta["entity_ids"] == ["entity-abc"]
+        assert meta["entity_names"] == ["Ana"]
 
 
 def test_record_failed_operation_honors_redacted_prompt_mode(tmp_path: Path) -> None:

@@ -34,11 +34,40 @@ The schema is adapter-shaped so a future Postgres backend can slot in without ch
 | `profiles` | Logical profile name (e.g. `default`), profile dir, first/last-seen timestamps | First operation per profile |
 | `projects` | Flow project ID + display title per profile | First operation that touches the project |
 | `assets` | One row per Flow media ID (image OR video) — model, aspect, dimensions, seed, generation ID, status | Upload response, image generation response, video start, video completion |
-| `operations` | One row per CLI command invocation — mode (`upload_image`/`t2i`/`i2i`/`t2v`/`i2v`/`r2v`), prompt, model, aspect, started/completed timestamps, error type/detail, Flow operation/batch IDs | Each command run |
+| `operations` | One row per CLI command invocation — mode (`upload_image`/`t2i`/`i2i`/`t2v`/`i2v`/`r2v`), prompt, model, aspect, started/completed timestamps, error type/detail, Flow operation/batch IDs, plus [`metadata_json` provenance](#operation-metadata_json-provenance) | Each command run |
 | `operation_assets` | Many-to-many between operations and assets, with role (`input`/`output`/`seed_start`/`seed_end`/`reference`) and ordered position | When the operation links its inputs/outputs |
 | `local_files` | One row per downloaded asset location — local path or cloud URI, sha256/byte count when local, media type | After each download/upload completes |
 
 Schema lives in [`src/gflow_cli/data/migrations/0001_initial.sql`](../src/gflow_cli/data/migrations/0001_initial.sql).
+
+### Operation `metadata_json` provenance
+
+`operations.metadata_json` answers "what composed this generation?" — the parts
+that aren't columns. Keys are written only when they apply, so an operation with
+neither a tool nor an entity leaves the column `NULL`:
+
+| Key | Shape | Written when |
+|---|---|---|
+| `tool` | `{name, version, model, params, config_hash}` (redacted mode: `{name, version, params_hash, config_hash}`) | `--tool` rewrote the prompt |
+| `entity_ids` | `["entity-abc", …]` — Flow CHARACTER entity ids, in attach order | `--reference-entity` was used |
+| `entity_names` | `["Ana", …]` — display names paired with `--reference-entity-name` | `--reference-entity-name` was used |
+| `entity_id` / `name` | scalar id + display name of the entity being created | `character create` only |
+
+Entity keys cover `image t2i`, `image i2i`, and movie R2V — the surfaces that
+accept `--reference-entity` — on succeeded **and** failed rows. A FAILED row
+carrying `entity_ids` is how a rejected attach (the transport's wire backstop
+refusing to report a text-only generation as an entity-referenced success) stays
+distinguishable from a run that never requested an entity. Before v0.47.0 the
+entity keys were absent on every generation operation, so character provenance
+could not be reconstructed for those runs — the gap is forward-only, not
+backfillable (issue [#402](https://github.com/ffroliva/gflow-cli/issues/402)).
+
+Unlike `assets.metadata_json`, this column is **not** passed through
+`redact_metadata`. Entity ids and names are Flow-side handles the user picked
+rather than prompt text, so they stay readable in `redacted` prompt mode — the
+same treatment `character create` already gave them. Keep that in mind before
+adding a key here: anything prompt-derived must be hashed by its own builder
+(as `tool` does) rather than relying on column-level redaction.
 
 ### What is NOT recorded
 

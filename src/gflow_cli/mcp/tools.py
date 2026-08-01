@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """MCP tool definitions — maps MCP tools to gflow-cli core functions.
 
-Each tool is registered on the shared FastMCP server instance and delegates
+Each tool is registered on the shared MCPServer instance and delegates
 to FlowWorker / DataStore / data.queries for actual execution.
 
 Rate limiting: a token-bucket (capacity=8, refill=1/20s) prevents runaway

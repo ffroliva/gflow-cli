@@ -2,7 +2,7 @@
 """MCP↔CLI parity contract (AGENTS.md "MCP & CLI Schema Symmetry").
 
 Every CLI leaf command must carry an explicit MCP decision: either it maps to
-a registered FastMCP tool (``CLI_TO_MCP``) or it is deliberately exempt with a
+a registered MCP tool (``CLI_TO_MCP``) or it is deliberately exempt with a
 stated reason (``_MCP_EXEMPT``). A new CLI command with neither entry fails
 ``test_every_cli_leaf_has_an_mcp_decision`` — forcing the parity decision at
 review time instead of letting the surfaces drift apart silently

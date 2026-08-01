@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.0] — 2026-08-01
+
+### Fixed
+
+- **Entity attachments left no trace in the catalog, making character provenance
+  unrecoverable (#402).** `--reference-entity` / `--reference-entity-name` reached
+  the transport but were never recorded, so no `image t2i`, `image i2i` or movie
+  R2V operation carried the entity it was generated from — while `--ref` media
+  refs were recorded in full, with ordering. When character identity drift showed
+  up, the catalog could not answer "which entity produced this image?".
+  Generation operations now persist `entity_ids` and `entity_names` in
+  `operations.metadata_json`, in attach order, on succeeded and failed rows alike
+  — a FAILED row carrying `entity_ids` distinguishes a rejected attach from a run
+  that never requested an entity. Tool and entity provenance are composed into a
+  single `set_operation_metadata` write, since that call replaces the whole
+  column. Forward-only: operations recorded before this release cannot be
+  Live gate: `tests/e2e/test_entity_provenance_e2e.py` (opt-in via
+  `GFLOW_CLI_E2E_RUN_ENTITY_PROV=1`) verifies the recorded entity matches a
+  generation Flow actually accepted, including the rejected-attach case.
+- **The MCP server was broken on every fresh install.** `pyproject.toml`
+  declared an unbounded `mcp>=1.0.0`. `uv.lock` pinned `1.28.1`, so CI and
+  contributors stayed green — but `pip install gflow-cli` / `uv tool install
+  gflow-cli` resolved the newly published `mcp` 2.0.0, which **deleted the
+  `mcp.server.fastmcp` module** that `gflow_cli.mcp.server` imports at module
+  load. `gflow mcp run`, `gflow serve`, and `gflow mcp setup` all failed with
+  `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. The dependency is
+  now bounded (`mcp>=2.0.0,<3`) and the server is migrated to the 2.x API.
+  Pure-CLI paths were never affected.
+- **New `resolve-drift` CI job — the actual defect.** Every other job installs
+  via `uv sync`, which honours `uv.lock`, so CI never exercised the version
+  *ranges* in `pyproject.toml` and could not have caught the above. This job
+  installs the way a user does — from the declared ranges, newest compatible
+  versions, no lockfile — then smoke-imports the MCP surface and the CLI entry
+  points. It generalizes to every unbounded dependency, not just `mcp`.
+- **`ui/app.py` advertised an unroutable MCP message endpoint.** mcp 2.0 dropped
+  FastMCP's `sse_app(mount_path=...)` shim, which used to let the advertised
+  endpoint (`/mcp/messages/`) differ from the sub-app's internal route
+  (`/messages/`). Both now derive from one `message_path`, so the advertised
+  path was left unrouted at the app root — a silent failure where the SSE stream
+  opens and only the follow-up POSTs 404. Fixed with an explicit alias and
+  pinned by a regression test.
+
 ## [0.46.1] — 2026-07-31
 
 ### Fixed
@@ -2536,7 +2578,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.46.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/ffroliva/gflow-cli/compare/v0.46.1...v0.47.0
 [0.46.1]: https://github.com/ffroliva/gflow-cli/compare/v0.46.0...v0.46.1
 [0.46.0]: https://github.com/ffroliva/gflow-cli/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/ffroliva/gflow-cli/compare/v0.44.0...v0.45.0

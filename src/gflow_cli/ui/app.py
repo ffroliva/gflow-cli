@@ -77,7 +77,28 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="gflow-daemon", lifespan=lifespan)
 
-mcp_sse_app = server.sse_app(mount_path="/mcp")
+# mcp>=2 dropped FastMCP's `mount_path=` shim. In 1.x that shim split two
+# values apart: the SSE handshake ADVERTISED "/mcp/messages/" while the POST
+# route stayed mounted at "/messages/" inside the sub-app. mcp>=2's `sse_app`
+# derives both from a single `message_path`, so we can no longer have them
+# differ — and we need them to, because this app is mounted under "/mcp"
+# (Starlette strips that prefix before dispatching inward).
+#
+# So we keep the SDK default ("/messages/"), which keeps the inner route — and
+# the SDK's auto-enabled DNS-rebinding protection — correct, and add an explicit
+# "/messages/" alias below for the endpoint the handshake advertises. Without
+# that alias the failure is silent: the stream opens, then every client POST
+# 404s.
+#
+# NOTE: this surface is still HTTP+SSE, which the MCP 2026-07-28 spec
+# deprecates. `gflow serve` already defaults to Streamable HTTP; migrating this
+# FastAPI daemon too is deliberately left as follow-up because
+# `streamable_http_app()` requires `server.session_manager.run()` to be driven
+# from the app lifespan, and the /mcp request-logging middleware and the
+# singular /mcp/message alias below are both SSE-shaped. That is a behavioural
+# change to a separate, currently unwired surface (`ui.server.run_server` has no
+# caller), not a mechanical port.
+mcp_sse_app = server.sse_app()
 
 
 class LogMcpRequestsMiddleware:
@@ -149,16 +170,36 @@ class AlreadySentResponse(Response):
         return
 
 
-@app.post("/mcp/message")
-async def post_mcp_message_singular(request: Request) -> Response:
-    """Route singular message requests to the mounted Starlette app messages path."""
+async def _dispatch_to_sse_app(request: Request, inner_path: str) -> Response:
+    """Forward a request into the mounted SSE sub-app at ``inner_path``.
+
+    The sub-app is mounted at "/mcp", so paths must be rewritten to be
+    mount-relative before dispatch.
+    """
     scope = dict(request.scope)
-    scope["path"] = "/messages"
-    scope["raw_path"] = b"/messages"
+    scope["path"] = inner_path
+    scope["raw_path"] = inner_path.encode()
     receive = request._receive  # type: ignore[reportPrivateUsage]
     send = request._send  # type: ignore[reportPrivateUsage]
     await mcp_sse_app(scope, receive, send)
     return AlreadySentResponse()
+
+
+@app.post("/mcp/message")
+async def post_mcp_message_singular(request: Request) -> Response:
+    """Route singular message requests to the mounted Starlette app messages path."""
+    return await _dispatch_to_sse_app(request, "/messages")
+
+
+@app.post("/messages/")
+async def post_mcp_message_advertised(request: Request) -> Response:
+    """Serve the endpoint the SSE handshake actually advertises.
+
+    mcp>=2 advertises the sub-app-relative "/messages/" (see the `sse_app()`
+    note above), but the sub-app is mounted under "/mcp" — so without this alias
+    every client POST after a successful handshake would 404 at the app root.
+    """
+    return await _dispatch_to_sse_app(request, "/messages/")
 
 
 # Mount Starlette SSE application after defining more specific routes

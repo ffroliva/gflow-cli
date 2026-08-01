@@ -12,7 +12,7 @@ gflow mcp run
 #   ready — your assistant can drive Flow.
 ```
 
-`gflow mcp run` speaks MCP over stdio; `gflow serve` exposes an HTTP/SSE endpoint if you'd rather connect over the network. `gflow mcp setup` helps wire it into a client.
+`gflow mcp run` speaks MCP over stdio; `gflow serve` exposes a Streamable HTTP endpoint at `/mcp` if you'd rather connect over the network. `gflow mcp setup` helps wire it into a client.
 
 ## Point your agent at it
 
