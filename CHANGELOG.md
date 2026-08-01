@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The MCP server was broken on every fresh install.** `pyproject.toml`
+  declared an unbounded `mcp>=1.0.0`. `uv.lock` pinned `1.28.1`, so CI and
+  contributors stayed green — but `pip install gflow-cli` / `uv tool install
+  gflow-cli` resolved the newly published `mcp` 2.0.0, which **deleted the
+  `mcp.server.fastmcp` module** that `gflow_cli.mcp.server` imports at module
+  load. `gflow mcp run`, `gflow serve`, and `gflow mcp setup` all failed with
+  `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. The dependency is
+  now bounded (`mcp>=2.0.0,<3`) and the server is migrated to the 2.x API.
+  Pure-CLI paths were never affected.
+- **New `resolve-drift` CI job — the actual defect.** Every other job installs
+  via `uv sync`, which honours `uv.lock`, so CI never exercised the version
+  *ranges* in `pyproject.toml` and could not have caught the above. This job
+  installs the way a user does — from the declared ranges, newest compatible
+  versions, no lockfile — then smoke-imports the MCP surface and the CLI entry
+  points. It generalizes to every unbounded dependency, not just `mcp`.
+- **`ui/app.py` advertised an unroutable MCP message endpoint.** mcp 2.0 dropped
+  FastMCP's `sse_app(mount_path=...)` shim, which used to let the advertised
+  endpoint (`/mcp/messages/`) differ from the sub-app's internal route
+  (`/messages/`). Both now derive from one `message_path`, so the advertised
+  path was left unrouted at the app root — a silent failure where the SSE stream
+  opens and only the follow-up POSTs 404. Fixed with an explicit alias and
+  pinned by a regression test.
+
+### Changed
+
+- **MCP 2026-07-28 spec support.** The server now speaks the stateless
+  `2026-07-28` protocol *and* the legacy handshake era (`2024-11-05` …
+  `2025-11-25`) from one binary — the SDK's `serve_dual_era_loop` negotiates per
+  connection from the client's first request. No protocol code on our side.
+  Analysis: [docs/superpowers/spikes/2026-08-01-mcp-2026-07-28-spec-impact.md](docs/superpowers/spikes/2026-08-01-mcp-2026-07-28-spec-impact.md).
+- **`gflow serve` now defaults to Streamable HTTP at `/mcp`.** The 2026-07-28
+  spec reclassified HTTP+SSE as deprecated. The old transport stays available
+  for one deprecation cycle via `gflow serve --transport sse`, which logs a
+  warning. `stateless_http` is deliberately **not** enabled: gflow's value is a
+  warm daemon holding one live Chromium profile behind a `ProfileLease`, which
+  is the opposite of the scale-out model that flag serves.
+- **List results now advertise cache hints.** `tools/list`, `prompts/list`, and
+  `resources/list` carry a one-hour `ttlMs` (they are fixed at import time by
+  decorators); `resources/read` gets five minutes because it reads
+  `KNOWN_ISSUES.md` off disk. `cacheScope` is `private` throughout — responses
+  are user-scoped by construction.
+
 ## [0.46.1] — 2026-07-31
 
 ### Fixed
