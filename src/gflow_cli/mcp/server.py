@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""MCP server core — FastMCP instance, stdout redirection, and transport boot.
+"""MCP server core — MCPServer instance, stdout redirection, and transport boot.
 
 Stdout isolation is critical: the stdio transport uses stdout for JSON-RPC
 messages. Any stray print() or log write to stdout corrupts the channel.
@@ -14,7 +14,8 @@ import io
 import sys
 
 import structlog
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp.server.caching import CacheableMethod, CacheHint
 
 from gflow_cli import __version__
 
@@ -27,12 +28,41 @@ log = structlog.get_logger()
 _SERVER_NAME = "gflow-cli"
 _SERVER_VERSION = __version__
 
-server = FastMCP(
+#: Streamable-HTTP mount path. ``/mcp`` is the SDK and ecosystem default.
+HTTP_PATH = "/mcp"
+
+_HOUR_MS = 60 * 60 * 1000
+_FIVE_MIN_MS = 5 * 60 * 1000
+
+# 2026-07-28 cacheable list results (``ttlMs`` / ``cacheScope``). Our listing
+# surfaces are decided at import time by decorators, so they are constant for a
+# process lifetime — an hour is comfortably conservative against that.
+#
+# ``resources/read`` gets a much shorter TTL because it is NOT static: the
+# known-issues resource reads KNOWN_ISSUES.md off disk, so its content can
+# change under a running daemon (e.g. an editable install being edited).
+#
+# Scope stays ``private`` throughout. gflow is a local, single-user daemon
+# driving one user's authenticated browser profile; ``public`` would authorize
+# shared/proxy caching we have no use for and would be the wrong default to set
+# for a server whose responses are user-scoped by construction.
+_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
+    "tools/list": CacheHint(ttl_ms=_HOUR_MS, scope="private"),
+    "prompts/list": CacheHint(ttl_ms=_HOUR_MS, scope="private"),
+    "resources/list": CacheHint(ttl_ms=_HOUR_MS, scope="private"),
+    "resources/templates/list": CacheHint(ttl_ms=_HOUR_MS, scope="private"),
+    "resources/read": CacheHint(ttl_ms=_FIVE_MIN_MS, scope="private"),
+}
+
+# ``MCPServer`` is the mcp>=2 successor to ``FastMCP`` (which 2.0.0 deleted).
+# The decorator API is unchanged; ``version`` is now a first-class constructor
+# argument, so the old ``server._mcp_server.version = ...`` private-API poke is
+# gone.
+server = MCPServer(
     name=_SERVER_NAME,
+    version=_SERVER_VERSION,
+    cache_hints=_CACHE_HINTS,
 )
-# FastMCP does not expose a public API to configure the server version.
-# As a workaround, we assign it directly to the underlying Server instance.
-server._mcp_server.version = _SERVER_VERSION  # pyright: ignore[reportPrivateUsage]
 
 # ---------------------------------------------------------------------------
 # Stdout isolation
@@ -78,10 +108,30 @@ def _configure_utf8_pipes() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _register_surfaces() -> None:
+    """Import tools/prompts/resources so their decorators register them.
+
+    Registration is an import side effect, so these imports are deliberate and
+    must not be pruned as "unused".
+    """
+    from gflow_cli.mcp import prompts as _prompts
+    from gflow_cli.mcp import resources as _resources
+    from gflow_cli.mcp import tools as _tools
+
+    # Access them to satisfy pyright unused import check
+    _ = (_prompts, _resources, _tools)
+
+
 async def run_stdio() -> None:
     """Run the MCP server over stdio transport (Claude Desktop, Cursor, etc.).
 
     This is the entry point for ``gflow mcp run``.
+
+    Protocol era is negotiated by the SDK, not by us: the low-level
+    ``Server.run`` drives ``serve_dual_era_loop``, which serves BOTH the legacy
+    handshake era (2024-11-05 … 2025-11-25) and the stateless 2026-07-28 era.
+    The client's first request decides which — so one binary speaks to both old
+    and new clients with no protocol code on our side.
     """
     import anyio
     from mcp.server.stdio import stdio_server
@@ -89,7 +139,7 @@ async def run_stdio() -> None:
     _configure_utf8_pipes()
 
     # Capture the REAL stdout for the JSON-RPC channel BEFORE redirecting
-    # sys.stdout to stderr. FastMCP.run_stdio_async() binds sys.stdout at call
+    # sys.stdout to stderr. MCPServer.run_stdio_async() binds sys.stdout at call
     # time, so redirecting first routes every protocol message to stderr and a
     # real MCP client (which reads stdout) sees nothing. We wrap the original
     # stdout here, then redirect sys.stdout so stray print() calls still can't
@@ -99,17 +149,12 @@ async def run_stdio() -> None:
 
     log.info("mcp.server.starting", transport="stdio", name=_SERVER_NAME)
 
-    # Import tools, prompts, resources to register them with the server
-    from gflow_cli.mcp import prompts as _prompts
-    from gflow_cli.mcp import resources as _resources
-    from gflow_cli.mcp import tools as _tools
-
-    # Access them to satisfy pyright unused import check
-    _ = (_prompts, _resources, _tools)
+    _register_surfaces()
 
     # Drive the low-level server directly so the protocol writes to the real
-    # stdout we captured above (FastMCP.run_stdio_async exposes no stdout param).
-    mcp_server = server._mcp_server  # type: ignore[attr-defined]
+    # stdout we captured above (MCPServer.run_stdio_async exposes no stdout
+    # param). ``Server.run`` is the dual-era driver — see the docstring.
+    mcp_server = server._lowlevel_server  # type: ignore[attr-defined]
     async with stdio_server(stdout=protocol_stdout) as (read_stream, write_stream):
         await mcp_server.run(
             read_stream,
@@ -118,10 +163,20 @@ async def run_stdio() -> None:
         )
 
 
-async def run_sse(host: str = "127.0.0.1", port: int = 8000) -> None:
-    """Run the MCP server over SSE transport (Gflow Studio, web clients).
+async def run_http(host: str = "127.0.0.1", port: int = 8000) -> None:
+    """Run the MCP server over Streamable HTTP (the current spec transport).
 
-    This is the entry point for ``gflow serve`` (SSE mode).
+    This is the default entry point for ``gflow serve``. Streamable HTTP
+    replaces HTTP+SSE, which the 2026-07-28 spec formally deprecated.
+
+    ``stateless_http`` is deliberately left at its ``False`` default. The
+    2026-07-28 stateless core exists so servers can scale out across
+    interchangeable instances — the opposite of what gflow is. Our value is a
+    warm daemon holding one live Chromium profile, serialized by a cross-process
+    ``ProfileLease``; spreading requests over stateless workers would buy
+    nothing and fight that lease. The *protocol* is stateless either way (the
+    2026-07-28 handshake removal is handled by the SDK); this flag only governs
+    whether the transport keeps per-connection bookkeeping, and we want it.
 
     Args:
         host: Bind address. Defaults to localhost-only for security.
@@ -131,29 +186,61 @@ async def run_sse(host: str = "127.0.0.1", port: int = 8000) -> None:
 
     log.info(
         "mcp.server.starting",
+        transport="streamable-http",
+        host=host,
+        port=port,
+        path=HTTP_PATH,
+        name=_SERVER_NAME,
+    )
+
+    _register_surfaces()
+
+    await server.run_streamable_http_async(
+        host=host,
+        port=port,
+        streamable_http_path=HTTP_PATH,
+    )
+
+
+async def run_sse(host: str = "127.0.0.1", port: int = 8000) -> None:
+    """Run the MCP server over the DEPRECATED HTTP+SSE transport.
+
+    Kept for one deprecation cycle so existing ``gflow serve`` clients pinned to
+    ``/sse`` keep working. The 2026-07-28 spec reclassified HTTP+SSE as
+    deprecated; prefer :func:`run_http`. Callers reach this via
+    ``gflow serve --transport sse``.
+
+    Args:
+        host: Bind address. Defaults to localhost-only for security.
+        port: Port number. Defaults to 8000.
+    """
+    _configure_utf8_pipes()
+
+    log.warning(
+        "mcp.server.starting",
         transport="sse",
         host=host,
         port=port,
         name=_SERVER_NAME,
+        deprecated=(
+            "HTTP+SSE is deprecated by the MCP 2026-07-28 spec; "
+            "migrate to --transport http (Streamable HTTP at /mcp)."
+        ),
     )
 
-    # Import tools, prompts, resources to register them with the server
-    from gflow_cli.mcp import prompts as _prompts
-    from gflow_cli.mcp import resources as _resources
-    from gflow_cli.mcp import tools as _tools
+    _register_surfaces()
 
-    # Access them to satisfy pyright unused import check
-    _ = (_prompts, _resources, _tools)
-
-    # Configure the server settings dynamically before running
-    server.settings.host = host  # type: ignore[attr-defined]
-    server.settings.port = port  # type: ignore[attr-defined]
-    await server.run_sse_async()  # type: ignore[attr-defined]
+    await server.run_sse_async(host=host, port=port)
 
 
 def main_stdio() -> None:
     """Synchronous wrapper for ``run_stdio`` — called by Click."""
     asyncio.run(run_stdio())
+
+
+def main_http(host: str = "127.0.0.1", port: int = 8000) -> None:
+    """Synchronous wrapper for ``run_http`` — called by Click."""
+    asyncio.run(run_http(host=host, port=port))
 
 
 def main_sse(host: str = "127.0.0.1", port: int = 8000) -> None:

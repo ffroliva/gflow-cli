@@ -39,6 +39,68 @@ jobs:
           uv export --frozen --format requirements-txt --no-emit-project > requirements-audit.txt
           uvx pip-audit -r requirements-audit.txt
 
+  # ── Supply-chain gate: resolve WITHOUT the lockfile ───────────────────────
+  # Every other job installs via `uv sync`, which honours uv.lock. That means CI
+  # never exercises the version RANGES in pyproject.toml — the exact blind spot
+  # that let `mcp>=1.0.0` (unbounded) ship a broken MCP surface to every fresh
+  # `pip install gflow-cli` while CI stayed green: mcp 2.0.0 deleted
+  # `mcp.server.fastmcp`, which the server imports at module load.
+  #
+  # This job installs the way a USER does — from the declared ranges, newest
+  # compatible versions, no lockfile — and smoke-imports the surfaces that break
+  # first. It is what turns "a dependency published a major bump" from a user
+  # bug report into a CI failure.
+  resolve-drift:
+    name: Dependency resolution drift (no lockfile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install from pyproject ranges (ignore uv.lock)
+        # --upgrade resolves to the newest versions the ranges allow, so a newly
+        # published major that our bounds do not exclude is caught here.
+        run: |
+          uv venv
+          uv pip install --upgrade .
+
+      - name: Smoke-import the MCP surface
+        # Import-time failures (deleted modules, moved symbols) surface here.
+        # Registration is a decorator side effect, so a successful import with a
+        # non-empty tool registry proves the whole surface still wires up.
+        run: |
+          uv run --no-sync python - <<'PY'
+          from gflow_cli.mcp.server import server, run_stdio, run_http, run_sse
+          from gflow_cli.mcp import prompts, resources, tools  # noqa: F401
+
+          n_tools = len(server._tool_manager._tools)
+          n_resources = len(server._resource_manager._resources)
+          n_prompts = len(server._prompt_manager._prompts)
+          print(f"tools={n_tools} resources={n_resources} prompts={n_prompts}")
+          assert n_tools, "no MCP tools registered"
+          assert n_resources, "no MCP resources registered"
+          assert n_prompts, "no MCP prompts registered"
+
+          import mcp.types as t
+          print("negotiable protocol ceiling:", t.LATEST_PROTOCOL_VERSION)
+          PY
+
+      - name: Smoke-run the CLI entry points
+        run: |
+          uv run --no-sync gflow --version
+          uv run --no-sync gflow --help
+          uv run --no-sync gflow serve --help
+
+      - name: Report the resolved versions
+        # Printed unconditionally so a green run still records what was resolved.
+        if: always()
+        run: uv pip list
+
   # ── Main test matrix ──────────────────────────────────────────────────────
   test:
     runs-on: ubuntu-latest

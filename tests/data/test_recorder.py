@@ -470,6 +470,179 @@ def test_record_generated_images_without_tool_writes_no_tool_metadata(tmp_path: 
         assert "tool" not in meta
 
 
+# ---------------------------------------------------------------------------
+# metadata_json entity provenance — which character entity produced this? (#402)
+# ---------------------------------------------------------------------------
+
+
+def _op_meta(store: DataStore, mode: str) -> dict[str, object]:
+    row = store.conn.execute(
+        "SELECT metadata_json FROM operations WHERE mode = ?", (mode,)
+    ).fetchone()
+    return json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+
+
+def test_record_generated_images_persists_entity_provenance(tmp_path: Path) -> None:
+    saved = tmp_path / "image.png"
+    saved.write_bytes(b"image-bytes")
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        req = GenerateImageRequest(
+            prompt="the same character, on a beach",
+            aspect=Aspect.PORTRAIT,
+            model=Model.NARWHAL,
+            reference_entities=("entity-abc", "entity-def"),
+            reference_entity_names=("Ana", "Bruno"),
+        )
+        recorder.record_generated_images(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project=ProjectInfo(project_id="p1", title="t"),
+            request=req,
+            images=[_generated_image()],
+            saved_paths=[saved],
+            input_media_ids=[],
+            operation_kind="i2i",
+        )
+        meta = _op_meta(store, "i2i")
+        # Send order is provenance: entity_ids[0] is the first attached entity.
+        assert meta["entity_ids"] == ["entity-abc", "entity-def"]
+        assert meta["entity_names"] == ["Ana", "Bruno"]
+
+
+def test_record_generated_images_entity_provenance_does_not_clobber_tool(tmp_path: Path) -> None:
+    """``set_operation_metadata`` overwrites the whole column, so entity and tool
+    provenance must be composed into a single write — not two sequential ones."""
+    saved = tmp_path / "image.png"
+    saved.write_bytes(b"image-bytes")
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        req = GenerateImageRequest(
+            prompt="expanded",
+            aspect=Aspect.PORTRAIT,
+            model=Model.NARWHAL,
+            original_prompt="cat",
+            tool=_applied_tool(),  # type: ignore[arg-type]
+            reference_entities=("entity-abc",),
+        )
+        recorder.record_generated_images(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project=ProjectInfo(project_id="p1", title="t"),
+            request=req,
+            images=[_generated_image()],
+            saved_paths=[saved],
+            input_media_ids=[],
+            operation_kind="i2i",
+        )
+        meta = _op_meta(store, "i2i")
+        assert meta["entity_ids"] == ["entity-abc"]
+        assert isinstance(meta["tool"], dict)
+        assert meta["tool"]["name"] == "creative-director"
+
+
+def test_record_generated_images_without_entities_writes_no_entity_metadata(
+    tmp_path: Path,
+) -> None:
+    saved = tmp_path / "image.png"
+    saved.write_bytes(b"image-bytes")
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        req = GenerateImageRequest(prompt="cat", aspect=Aspect.PORTRAIT, model=Model.NARWHAL)
+        recorder.record_generated_images(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project=ProjectInfo(project_id="p1", title="t"),
+            request=req,
+            images=[_generated_image()],
+            saved_paths=[saved],
+            input_media_ids=[],
+            operation_kind="t2i",
+        )
+        meta = _op_meta(store, "t2i")
+        assert "entity_ids" not in meta
+        assert "entity_names" not in meta
+
+
+def test_record_generated_images_persists_entity_provenance_in_redacted_mode(
+    tmp_path: Path,
+) -> None:
+    """Entity ids/names are Flow-side handles the user chose, not prompt text —
+    they stay readable in redacted mode, matching ``record_character_started``."""
+    saved = tmp_path / "image.png"
+    saved.write_bytes(b"image-bytes")
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="redacted")
+        req = GenerateImageRequest(
+            prompt="a beach",
+            aspect=Aspect.PORTRAIT,
+            model=Model.NARWHAL,
+            reference_entities=("entity-abc",),
+            reference_entity_names=("Ana",),
+        )
+        recorder.record_generated_images(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project=ProjectInfo(project_id="p1", title="t"),
+            request=req,
+            images=[_generated_image()],
+            saved_paths=[saved],
+            input_media_ids=[],
+            operation_kind="i2i",
+        )
+        meta = _op_meta(store, "i2i")
+        assert meta["entity_ids"] == ["entity-abc"]
+        assert meta["entity_names"] == ["Ana"]
+
+
+def test_record_started_video_persists_entity_provenance(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        request = GenerateVideoRequest(
+            prompt="the same character, walking",
+            mode=Mode.R2V,
+            aspect=VideoAspect.PORTRAIT,
+            reference_entities=("entity-abc",),
+            reference_entity_names=("Ana",),
+        )
+        recorder.record_started_video(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            request=request,
+            started=VideoStarted(
+                media_id="media-video-1",
+                project_id="flow-project-video-1",
+                flow_operation_id="operation-video-1",
+            ),
+        )
+        meta = _op_meta(store, "r2v")
+        assert meta["entity_ids"] == ["entity-abc"]
+        assert meta["entity_names"] == ["Ana"]
+
+
+def test_record_started_video_without_entities_writes_no_entity_metadata(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        request = GenerateVideoRequest(
+            prompt="a dog surfing",
+            mode=Mode.T2V,
+            aspect=VideoAspect.PORTRAIT,
+        )
+        recorder.record_started_video(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            request=request,
+            started=VideoStarted(
+                media_id="media-video-1",
+                project_id="flow-project-video-1",
+                flow_operation_id="operation-video-1",
+            ),
+        )
+        meta = _op_meta(store, "t2v")
+        assert "entity_ids" not in meta
+        assert "entity_names" not in meta
+
+
 class TestIsMediaRecorded:
     """Recorder-level half of the #281 pre-download attribution guard.
 

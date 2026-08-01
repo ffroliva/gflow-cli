@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """gflow-cli MCP server — exposes core gflow tools via Model Context Protocol.
 
-This package contains the FastMCP server implementation, tool schemas,
+This package contains the MCPServer implementation, tool schemas,
 prompt templates, and resource endpoints for IDE/agent integration.
 
 Entry points:

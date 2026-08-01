@@ -4,9 +4,9 @@
 
 ## Current release
 
-**v0.46.1 — alpha.** **Classic count-setter fix (#404).** `gflow image t2i` failed whenever `-n` differed from the count displayed in the composer — including the default `-n 1` — because Flow renamed the count-tab labels from `1x`/`x2`/… to uniform `x1`/`x2`/…: the label filter silently dropped the count-1 tab and the positional pick clicked the wrong tab while reporting per-click success. Count tabs are now selected by the digit in their label across both cohorts, the read-back recognises a selected `x1`, and non-convergence raises the typed `UiSelectorDriftError` (exit 23) naming desired vs displayed instead of an opaque `RuntimeError`. Root-caused and verified live on the reporter's exact invocation, zero credits. See [LIVE_VERIFICATION_v0.46.1.md](LIVE_VERIFICATION_v0.46.1.md).
+**v0.47.0 — alpha.** **MCP SDK 2.0.0 migration + dual-era protocol + entity provenance (#402, #407, #408).** Bounds `mcp` dependency to `>=2.0.0,<3`, migrates server to `MCPServer`, supports both 2026-07-28 and legacy protocol eras via SDK, defaults `gflow serve` to Streamable HTTP at `/mcp`, adds `resolve-drift` CI job, and records `entity_ids` / `entity_names` in `operations.metadata_json` on generation operations. See [LIVE_VERIFICATION_v0.47.0.md](LIVE_VERIFICATION_v0.47.0.md).
 
-**Develop (unreleased, post-v0.46.1):** *(empty — develop is the staging branch for the next release).*
+**Develop (unreleased, post-v0.47.0):** *(empty — develop is the staging branch for the next release).*
 
 <details><summary>v0.46.0 — prompt tools on any OpenAI-compatible endpoint (#387)</summary>
 
