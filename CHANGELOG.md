@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that never requested an entity. Tool and entity provenance are composed into a
   single `set_operation_metadata` write, since that call replaces the whole
   column. Forward-only: operations recorded before this release cannot be
-  backfilled. See [DATA_LAYER](docs/DATA_LAYER.md#operation-metadata_json-provenance).
+  Live gate: `tests/e2e/test_entity_provenance_e2e.py` (opt-in via
+  `GFLOW_CLI_E2E_RUN_ENTITY_PROV=1`) verifies the recorded entity matches a
+  generation Flow actually accepted, including the rejected-attach case.
 - **The MCP server was broken on every fresh install.** `pyproject.toml`
   declared an unbounded `mcp>=1.0.0`. `uv.lock` pinned `1.28.1`, so CI and
   contributors stayed green — but `pip install gflow-cli` / `uv tool install
