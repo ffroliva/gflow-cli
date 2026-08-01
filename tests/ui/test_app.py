@@ -24,10 +24,42 @@ def mock_worker():
 
 
 def test_app_routes() -> None:
-    # Verify the FastMCP and proxy routes are registered in the FastAPI app
+    # Verify the MCP sub-app and proxy routes are registered in the FastAPI app
     route_paths = [route.path for route in app.routes]
     assert "/mcp" in route_paths
     assert "/mcp/message" in route_paths
+
+
+def test_sse_message_endpoint_is_reachable_where_it_is_advertised() -> None:
+    """The path the SSE handshake advertises must actually be routed.
+
+    mcp>=2 removed FastMCP's `mount_path=` shim, which used to let the
+    advertised endpoint ("/mcp/messages/") differ from the sub-app's internal
+    route ("/messages/"). Now both come from one `message_path`, so mounting the
+    sub-app under "/mcp" leaves the advertised path unrouted at the app root.
+    That failure is silent — the stream opens and only the follow-up POSTs 404 —
+    so pin it: whatever the transport advertises must resolve on the outer app.
+    """
+    from starlette.routing import Mount
+
+    from gflow_cli.ui.app import mcp_sse_app
+
+    # The Mount route's app is SseServerTransport.handle_post_message (a bound
+    # method), so the transport that owns the advertised endpoint is reachable.
+    transports = [
+        r.app.__self__  # type: ignore[attr-defined]
+        for r in mcp_sse_app.routes
+        if isinstance(r, Mount) and hasattr(r.app, "__self__")
+    ]
+    assert transports, "SSE sub-app exposes no message Mount to introspect"
+
+    advertised = str(transports[0]._endpoint)  # type: ignore[attr-defined]
+    outer_paths = {route.path for route in app.routes}  # type: ignore[attr-defined]
+
+    assert advertised in outer_paths, (
+        f"SSE advertises {advertised!r} but the app routes only {sorted(outer_paths)} — "
+        "clients would 404 on every message POST after a successful handshake"
+    )
 
 
 def test_message_proxying(mock_worker) -> None:
