@@ -79,6 +79,7 @@ e2e ─┬─ e2e_auth     (auth/session, health check — zero credits)
 | `GFLOW_CLI_E2E_VIDEO_ASPECT` | `"landscape"` | Aspect ratio for video e2e: `landscape` or `portrait`. |
 | `GFLOW_CLI_E2E_VIDEO_MODEL` | `"omni-flash"` | Veo model for i2v tests: `omni-flash` or `veo-fast`. |
 | `GFLOW_CLI_E2E_VIDEO_DURATION` | `"4"` | Seconds of video to generate in i2v tests (minimum credit unit). |
+| `GFLOW_CLI_E2E_RUN_ENTITY_PROV` | `"0"` | Set to `"1"` to run the entity-provenance e2e (#402) — asserts a generation Flow actually accepted records its `entity_ids` / `entity_names` in `operations.metadata_json`. Opt-in because it spends Imagen credits. |
 | `GFLOW_CLI_E2E_BATCH_MANIFEST` | `test_assets/sample_batch.tsv` | TSV manifest for the batch image e2e. |
 | `GFLOW_CLI_E2E_BATCH_JITTER` | `"1"` | Set to `"0"` to disable inter-request jitter in batch tests. |
 | `GFLOW_CLI_E2E_PROMPT` | *(safe default)* | Prompt override for the smoke test. |
