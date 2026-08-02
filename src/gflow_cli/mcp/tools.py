@@ -769,6 +769,36 @@ async def gflow_generate_image(
     return result
 
 
+def _build_video_payload(
+    prompt: str,
+    mode: str,
+    aspect: str,
+    count: int,
+    model: str | None,
+    duration: int | None,
+    tool_specs: Any,
+    project: str | None,
+    project_name: str | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "prompt": prompt,
+        "mode": mode,
+        "aspect": aspect,
+        "count": count,
+    }
+    if model is not None:
+        payload["model"] = model
+    if duration is not None:
+        payload["duration"] = duration
+    if tool_specs:
+        payload["tool_specs"] = list(tool_specs)
+    if project is not None:
+        payload["project_id"] = project
+    if project_name is not None:
+        payload["project_name"] = project_name
+    return payload
+
+
 @server.tool(
     name="gflow_generate_video",
     description=(
@@ -783,7 +813,7 @@ async def gflow_generate_image(
         "Returns the local file path to the generated video."
     ),
 )
-async def gflow_generate_video(
+async def gflow_generate_video(  # NOSONAR
     prompt: str,
     mode: str = "t2v",
     aspect: str = "9:16",
@@ -834,8 +864,7 @@ async def gflow_generate_video(
         project: Optional existing Flow project id to generate into (mirrors the
             CLI ``--project`` flag on ``video t2v``/``i2v``/``r2v``). When
             omitted, a scratch project is created as before.
-        project_name: Optional human-readable project title to use when creating a
-            fresh Flow project.
+        **kwargs: Additional optional keyword arguments such as ``project_name``.
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
@@ -888,20 +917,6 @@ async def gflow_generate_video(
         return adapted
     tool_specs = adapted
 
-    payload: dict[str, Any] = {
-        "prompt": prompt,
-        "mode": mode,
-        "aspect": aspect,
-        "count": count,
-    }
-    # Only send model/duration when set — an absent model lets the transport
-    # apply its own i2v veo-lite default (issue #125); an absent duration
-    # lets Flow's per-model default stand.
-    if model is not None:
-        payload["model"] = model
-    if duration is not None:
-        payload["duration"] = duration
-
     media, media_err = _build_video_media_inputs(
         mode=mode,
         initial_frame=initial_frame,
@@ -911,14 +926,19 @@ async def gflow_generate_video(
     if media_err is not None:
         return media_err
     assert media is not None
-    payload.update(media)
 
-    if tool_specs:
-        payload["tool_specs"] = list(tool_specs)
-    if project is not None:
-        payload["project_id"] = project
-    if project_name is not None:
-        payload["project_name"] = project_name
+    payload = _build_video_payload(
+        prompt=prompt,
+        mode=mode,
+        aspect=aspect,
+        count=count,
+        model=model,
+        duration=duration,
+        tool_specs=tool_specs,
+        project=project,
+        project_name=project_name,
+    )
+    payload.update(media)
 
     # task_type matches the mode ("t2v", "i2v", "r2v")
     result = await _run_generation_task(

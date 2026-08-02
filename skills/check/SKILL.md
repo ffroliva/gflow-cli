@@ -51,6 +51,22 @@ uv run ruff format --check src tests
 
 These are byte-for-byte what CI runs (`ci.yml` "Lint" + "Format check"). If `--check` exits non-zero here, step 2's rewrites are **uncommitted** — stage them and re-run. **Never push while this is red:** the test job dies at the format step *before* pytest, which also makes SonarCloud report `new_coverage=0%` (no coverage XML is produced). A green `/gflow:check` that skips this verify is how PR #269 shipped a format failure past an 8-agent council.
 
+**4c. Duplication proxy for the SonarCloud gate** (report only — offline approximation)
+
+SonarCloud's quality gate fails on `new_duplicated_lines_density > 3%`, and it only
+runs in CI — a copy-pasted option stack or body block sails through ruff/pyright/pytest
+and then reddens the branch analysis after merge (this killed the develop build in the
+v0.48.0 cycle). Approximate the CPD locally, zero new dependencies:
+
+```bash
+uvx pylint --disable=all --enable=duplicate-code --min-similarity-lines=10 src/gflow_cli
+```
+
+Any `duplicate-code` finding **inside code you are adding or touching** is a fix-now
+signal (extract a shared helper/decorator before pushing). Findings in untouched files
+are pre-existing — Sonar's gate measures *new* code only, so report them but do not
+block on them. This is a proxy, not the gate: SonarCloud in CI remains authoritative.
+
 **5. Type check** (report only — cannot auto-fix)
 
 ```bash

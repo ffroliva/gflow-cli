@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.0] — 2026-08-02
+
+### Added
+
+- **Explicit `-o` / `--output` flag on the core generation commands (#411).**
+  `gflow image t2i`, `gflow image i2i`, `gflow video t2v` and `gflow video i2v`
+  now accept an explicit **local** destination file path, so scripts control
+  exactly where the generated asset lands instead of parsing the
+  date-partitioned default layout. Parent directories are auto-created, and
+  `-o` takes precedence over `--out`/`--out-dir`. Multi-count **image** runs
+  (`--count > 1`) append a deterministic `_1`, `_2`, … suffix before the
+  extension; video runs write a single file. On `t2i` the flag is
+  single-prompt only — multi-prompt runs abort with a usage error pointing at
+  `--out`. Known limits, tracked as follow-ups: no `s3://`/`gs://` targets and
+  no `GFLOW_CLI_STORAGE_URI` interplay yet, no `-o` on `video r2v`/`chain`, no
+  video multi-count suffixes (#415); the MCP generate tools do **not** carry a
+  matching `output` parameter — one was cut before release when the pre-release
+  audit showed the worker queue never reads it, making it a silent no-op
+  (#414). Raised by a Reddit user testing scriptability (thanks u/_suren).
+
 ## [0.47.0] — 2026-08-01
 
 ### Fixed
@@ -2578,7 +2598,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/ffroliva/gflow-cli/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/ffroliva/gflow-cli/compare/v0.46.1...v0.47.0
 [0.46.1]: https://github.com/ffroliva/gflow-cli/compare/v0.46.0...v0.46.1
 [0.46.0]: https://github.com/ffroliva/gflow-cli/compare/v0.45.0...v0.46.0
