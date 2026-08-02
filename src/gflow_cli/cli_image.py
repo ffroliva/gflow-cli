@@ -1065,6 +1065,32 @@ async def _download_images(
     return saved_paths
 
 
+async def _generate_verify_download(
+    client: FlowApiClient,
+    *,
+    recorder: OperationRecorder,
+    profile_name: str,
+    project_id: str,
+    req: GenerateImageRequest,
+    count: int,
+    out: Path | None,
+    output_root: Path,
+    output_file: Path | None,
+) -> tuple[list[GeneratedImage], list[Path]]:
+    """Generate ``count`` images, verify attribution, and download them (t2i/i2i shared tail)."""
+    if count == 1:
+        images = [await client.generate_image(project_id=project_id, req=req)]
+    else:
+        images = await client.generate_images_batch(
+            project_id=project_id,
+            req=req,
+            count=count,
+        )
+    recorder.verify_media_attribution(profile_name=profile_name, images=images)
+    saved_paths = await _download_images(client, images, out, output_root, output_file=output_file)
+    return images, saved_paths
+
+
 def _record_generated_images_safe(
     recorder: OperationRecorder,
     *,
@@ -1165,19 +1191,16 @@ async def _run_t2i(
                     f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...",
                 )
 
-            if count == 1:
-                img = await client.generate_image(project_id=project.project_id, req=req)
-                images: list[GeneratedImage] = [img]
-            else:
-                images = await client.generate_images_batch(
-                    project_id=project.project_id,
-                    req=req,
-                    count=count,
-                )
-
-            recorder.verify_media_attribution(profile_name=profile_name, images=images)
-            saved_paths = await _download_images(
-                client, images, out, output_root, output_file=output_file
+            images, saved_paths = await _generate_verify_download(
+                client,
+                recorder=recorder,
+                profile_name=profile_name,
+                project_id=project.project_id,
+                req=req,
+                count=count,
+                out=out,
+                output_root=output_root,
+                output_file=output_file,
             )
 
             if as_json:
@@ -1674,19 +1697,16 @@ async def _run_i2i(
                     f"  Generating {count} image(s) with {n_refs} ref(s) "
                     f"({req.model.value}, {req.aspect.value})...",
                 )
-            if count == 1:
-                img = await client.generate_image(project_id=project.project_id, req=req)
-                images: list[GeneratedImage] = [img]
-            else:
-                images = await client.generate_images_batch(
-                    project_id=project.project_id,
-                    req=req,
-                    count=count,
-                )
-
-            recorder.verify_media_attribution(profile_name=profile_name, images=images)
-            saved_paths = await _download_images(
-                client, images, out, output_root, output_file=output_file
+            images, saved_paths = await _generate_verify_download(
+                client,
+                recorder=recorder,
+                profile_name=profile_name,
+                project_id=project.project_id,
+                req=req,
+                count=count,
+                out=out,
+                output_root=output_root,
+                output_file=output_file,
             )
 
             if as_json:

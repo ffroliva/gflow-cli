@@ -6,7 +6,7 @@ description: Use when the user wants to drive Google Flow (Veo image-to-video, V
 optimization_notes: |
   Known weak spots for the SkillOpt training loop (targets for epoch 1+):
   - Wrong subcommand: agents emit 'gflow video generate' / 'gflow video create' instead of 'gflow video t2v' or 'gflow video i2v'
-  - Wrong output flag: '--output PATH' instead of '-o PATH'
+  - Output flag confusion: '--output'/'-o' takes a FILE path (single asset, v0.48.0+); '--out' (image) / '--out-dir' (video) take a DIRECTORY
   - Prerequisite gap: Playwright Chromium install step skipped on fresh machines
   - Profile parallelism anti-pattern: two generations launched on the same profile in parallel (crashes Chromium)
   - reCAPTCHA direction inverted: agents suggest GFLOW_CLI_HEADLESS=true to fix detection; correct fix is =false
@@ -258,7 +258,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | Mistake | Correct behaviour |
 |---|---|
 | `gflow video generate` or `gflow video create` | `gflow video t2v` (text→video) or `gflow video i2v` (image→video) |
-| `--output PATH` on any video/image command | `-o PATH` (short flag) or `--out DIR` (image output dir) |
+| `--output DIR` (a directory) as the output location | `-o`/`--output PATH` is an explicit FILE path on `image t2i`/`i2i` and `video t2v`/`i2v` (v0.48.0+, single-prompt only); use `--out DIR` (image) / `--out-dir DIR` (video) for directory output. `r2v`/`chain` have no `-o` |
 | `gflow auth` bare or `gflow login` to sign in | `gflow auth login` — bare `gflow auth` only lists profiles |
 | `gflow auth refresh` / `gflow auth renew` (don't exist) | `gflow auth login` to refresh a stale or expired session |
 | `playwright install` or `playwright install --all` | `uvx --from gflow-cli playwright install chromium` (Chromium only, ~150 MB) |

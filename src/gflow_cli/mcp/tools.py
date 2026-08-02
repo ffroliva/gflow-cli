@@ -634,7 +634,6 @@ async def gflow_generate_image(
     project_name: str | None = None,
     instructions: list[str] | None = None,
     ui_mode: str | None = None,
-    output: str | None = None,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
 
@@ -674,8 +673,6 @@ async def gflow_generate_image(
             given), or 'auto' (bind whatever renders, the default). If the arm
             can't be reached, generation aborts before submitting (no credits).
             Overrides GFLOW_CLI_UI_MODE.
-        output: Optional explicit output file path for the generated asset (mirrors
-            the CLI ``--output/-o`` flag).
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
@@ -725,8 +722,6 @@ async def gflow_generate_image(
         "aspect": aspect,
         "count": count,
     }
-    if output is not None:
-        payload["output_file"] = output
     if instructions:
         payload["instructions"] = list(instructions)
     if ui_mode is not None:
@@ -779,7 +774,6 @@ def _build_video_payload(
     mode: str,
     aspect: str,
     count: int,
-    output: str | None,
     model: str | None,
     duration: int | None,
     tool_specs: Any,
@@ -792,8 +786,6 @@ def _build_video_payload(
         "aspect": aspect,
         "count": count,
     }
-    if output is not None:
-        payload["output_file"] = output
     if model is not None:
         payload["model"] = model
     if duration is not None:
@@ -835,7 +827,6 @@ async def gflow_generate_video(  # NOSONAR
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
     project_name: str | None = None,
-    output: str | None = None,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
 
@@ -873,8 +864,6 @@ async def gflow_generate_video(  # NOSONAR
         project: Optional existing Flow project id to generate into (mirrors the
             CLI ``--project`` flag on ``video t2v``/``i2v``/``r2v``). When
             omitted, a scratch project is created as before.
-        output: Optional explicit output file path for the generated asset (mirrors
-            the CLI ``--output/-o`` flag).
         **kwargs: Additional optional keyword arguments such as ``project_name``.
 
     Returns:
@@ -943,7 +932,6 @@ async def gflow_generate_video(  # NOSONAR
         mode=mode,
         aspect=aspect,
         count=count,
-        output=output,
         model=model,
         duration=duration,
         tool_specs=tool_specs,
