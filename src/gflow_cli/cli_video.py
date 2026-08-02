@@ -74,6 +74,18 @@ def _warn_persistence_failed_after_success(
     )
 
 
+def _relocate_video_output(result: Any, output_file: Path | None) -> Any:
+    if output_file is None or result.local_path is None or not result.local_path.exists():
+        return result
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    if result.local_path != output_file:
+        result.local_path.replace(output_file)
+        from dataclasses import replace
+
+        return replace(result, local_path=output_file)
+    return result
+
+
 async def _generate_and_report(
     request: Any,
     *,
@@ -146,13 +158,7 @@ async def _generate_and_report(
                 on_started=on_started,
             )
 
-        if output_file is not None and result.local_path is not None and result.local_path.exists():
-            output_file.parent.mkdir(parents=True, exist_ok=True)
-            if result.local_path != output_file:
-                result.local_path.replace(output_file)
-                from dataclasses import replace
-
-                result = replace(result, local_path=output_file)
+        result = _relocate_video_output(result, output_file)
 
         try:
             recorder.record_completed_video(
