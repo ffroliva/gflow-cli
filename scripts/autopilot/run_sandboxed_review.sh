@@ -6,7 +6,8 @@ set -eo pipefail
 
 # Print usage
 usage() {
-  echo "Usage: $0 --pr <num> --repo <path> --memory <path> --token <gh_token> --key <anthropic_key>"
+  echo "Usage: $0 --pr <num> --repo <path> --memory <path> --token <gh_token>"
+  echo "  Claude auth comes from CLAUDE_CODE_OAUTH_TOKEN in the environment."
   exit 1
 }
 
@@ -14,7 +15,6 @@ PR_NUM=""
 HOST_REPO=""
 HOST_MEMORY=""
 GH_TOKEN=""
-ANTHROPIC_KEY=""
 
 # Parse arguments
 while [[ "$#" -gt 0 ]]; do
@@ -23,14 +23,29 @@ while [[ "$#" -gt 0 ]]; do
     --repo) HOST_REPO="$2"; shift 2 ;;
     --memory) HOST_MEMORY="$2"; shift 2 ;;
     --token) GH_TOKEN="$2"; shift 2 ;;
-    --key) ANTHROPIC_KEY="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; usage ;;
   esac
 done
 
-if [ -z "$PR_NUM" ] || [ -z "$HOST_REPO" ] || [ -z "$HOST_MEMORY" ] || [ -z "$GH_TOKEN" ] || [ -z "$ANTHROPIC_KEY" ]; then
+if [ -z "$PR_NUM" ] || [ -z "$HOST_REPO" ] || [ -z "$HOST_MEMORY" ] || [ -z "$GH_TOKEN" ]; then
   echo "Error: Missing required arguments."
   usage
+fi
+
+# Claude auth: the subscription token minted by `claude setup-token`, read from
+# the environment (sourced from /opt/hermes/.env by the cron line). Deliberately
+# NOT a CLI flag -- an argv secret is visible to every local user via `ps`,
+# which is what the original --key <anthropic_key> design did.
+#
+# Note this is NOT ~/.claude/.credentials.json: `setup-token` does not write
+# that file (verified on the ops VPS 2026-08-02 -- it still held the expired
+# 2026-07-16 interactive-login token afterwards). The two are separate
+# mechanisms and only the env var carries the 1-year credential.
+if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+  echo "Error: CLAUDE_CODE_OAUTH_TOKEN is not set."
+  echo "  Mint one with: sudo -u hermes -H claude setup-token   (valid 1 year)"
+  echo "  Then store it in hermes-ops secrets/vps-prod.env.sops.yaml."
+  exit 1
 fi
 
 # Ensure absolute paths
@@ -93,8 +108,8 @@ docker run --rm \
   --net "$NET_NAME" \
   -v "$HOST_REPO:/workspace:ro" \
   -v "$HOST_MEMORY:/memory:ro" \
-  -e ANTHROPIC_API_KEY="$ANTHROPIC_KEY" \
+  -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
   -e GH_TOKEN="$GH_TOKEN" \
   -e GITHUB_TOKEN="$GH_TOKEN" \
   gflow-triage:latest \
-  -p "Conduct a multi-dimensional council review of PR $PR_NUM in autonomous mode following /workspace/skills/pr-council-review/SKILL.md."
+  claude -p "Conduct a multi-dimensional council review of PR $PR_NUM in autonomous mode following /workspace/skills/pr-council-review/SKILL.md."
