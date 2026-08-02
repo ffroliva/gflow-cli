@@ -634,6 +634,7 @@ async def gflow_generate_image(
     project_name: str | None = None,
     instructions: list[str] | None = None,
     ui_mode: str | None = None,
+    output: str | None = None,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
 
@@ -673,6 +674,8 @@ async def gflow_generate_image(
             given), or 'auto' (bind whatever renders, the default). If the arm
             can't be reached, generation aborts before submitting (no credits).
             Overrides GFLOW_CLI_UI_MODE.
+        output: Optional explicit output file path for the generated asset (mirrors
+            the CLI ``--output/-o`` flag).
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
@@ -722,6 +725,8 @@ async def gflow_generate_image(
         "aspect": aspect,
         "count": count,
     }
+    if output is not None:
+        payload["output_file"] = output
     if instructions:
         payload["instructions"] = list(instructions)
     if ui_mode is not None:
@@ -797,6 +802,7 @@ async def gflow_generate_video(
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
     project_name: str | None = None,
+    output: str | None = None,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
 
@@ -836,6 +842,8 @@ async def gflow_generate_video(
             omitted, a scratch project is created as before.
         project_name: Optional human-readable project title to use when creating a
             fresh Flow project.
+        output: Optional explicit output file path for the generated asset (mirrors
+            the CLI ``--output/-o`` flag).
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
@@ -894,6 +902,8 @@ async def gflow_generate_video(
         "aspect": aspect,
         "count": count,
     }
+    if output is not None:
+        payload["output_file"] = output
     # Only send model/duration when set — an absent model lets the transport
     # apply its own i2v veo-lite default (issue #125); an absent duration
     # lets Flow's per-model default stand.

@@ -732,6 +732,14 @@ _ui_mode_option = click.option(
         "files are written flat as <dir>/<media_name>_<n>.png."
     ),
 )
+@click.option(
+    "-o",
+    "--output",
+    "output_file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Explicit output file path for the generated asset.",
+)
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
 @click.option(
@@ -770,6 +778,7 @@ def t2i(  # NOSONAR
     aspect: str,
     count: int,
     out: Path | None,
+    output_file: Path | None,
     profile: str | None,
     tool_specs: tuple[str, ...],
     transport: str | None,
@@ -783,6 +792,13 @@ def t2i(  # NOSONAR
     """Generate image(s) from one or more text prompts."""
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
     _validate_t2i_input(prompts, prompts_file, read_stdin)
+
+    if is_multi_prompt and output_file is not None:
+        msg = (
+            "--output is single-prompt only; remove the extra prompts or use --out for"
+            " directory output."
+        )
+        raise click.UsageError(msg)
 
     if is_multi_prompt and instructions:
         msg = "--instruction is single-prompt only; remove the extra prompts."
@@ -845,6 +861,7 @@ def t2i(  # NOSONAR
                 ),
                 count=count,
                 out=out,
+                output_file=output_file,
                 output_root=settings.output_dir,
                 transport=transport,
                 project_id=project_id,
@@ -1029,15 +1046,20 @@ async def _download_images(
     images: list[GeneratedImage],
     out: Path | None,
     output_root: Path,
+    output_file: Path | None = None,
 ) -> list[Path]:
     """Download each generated image to its resolved target path."""
     saved_paths: list[Path] = []
     for i, img in enumerate(images, start=1):
-        target = (
-            out / f"{img.media_name}_{i}.png"
-            if out is not None
-            else image_output_path(output_root, job_id=img.media_name, index=i)
-        )
+        if output_file is not None:
+            if len(images) == 1:
+                target = output_file
+            else:
+                target = output_file.parent / f"{output_file.stem}_{i}{output_file.suffix}"
+        elif out is not None:
+            target = out / f"{img.media_name}_{i}.png"
+        else:
+            target = image_output_path(output_root, job_id=img.media_name, index=i)
         saved = await client.download_image(img, target)
         saved_paths.append(saved)
     return saved_paths
@@ -1105,6 +1127,7 @@ async def _run_t2i(
     count: int,
     out: Path | None,
     output_root: Path,
+    output_file: Path | None = None,
     transport: str | None = None,
     project_id: str | None = None,
     project_name: str | None = None,
@@ -1153,7 +1176,9 @@ async def _run_t2i(
                 )
 
             recorder.verify_media_attribution(profile_name=profile_name, images=images)
-            saved_paths = await _download_images(client, images, out, output_root)
+            saved_paths = await _download_images(
+                client, images, out, output_root, output_file=output_file
+            )
 
             if as_json:
                 json_output.emit(
@@ -1474,6 +1499,14 @@ class _I2IParams:
     help="Emit a machine-readable JSON result instead of a Rich table.",
 )
 @click.option(
+    "-o",
+    "--output",
+    "output_file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Explicit output file path for the generated asset.",
+)
+@click.option(
     "--instruction",
     "-i",
     "instructions",
@@ -1488,6 +1521,7 @@ def i2i(  # NOSONAR
     aspect: str,
     count: int,
     out: Path | None,
+    output_file: Path | None,
     profile: str | None,
     tool_specs: tuple[str, ...],
     transport: str | None,
@@ -1546,6 +1580,7 @@ def i2i(  # NOSONAR
             params=i2i_params,
             count=count,
             out=out,
+            output_file=output_file,
             output_root=settings.output_dir,
             transport=transport,
             project_id=project_id,
@@ -1567,6 +1602,7 @@ async def _run_i2i(
     count: int,
     out: Path | None,
     output_root: Path,
+    output_file: Path | None = None,
     transport: str | None = None,
     project_id: str | None = None,
     project_name: str | None = None,
@@ -1649,7 +1685,9 @@ async def _run_i2i(
                 )
 
             recorder.verify_media_attribution(profile_name=profile_name, images=images)
-            saved_paths = await _download_images(client, images, out, output_root)
+            saved_paths = await _download_images(
+                client, images, out, output_root, output_file=output_file
+            )
 
             if as_json:
                 json_output.emit(

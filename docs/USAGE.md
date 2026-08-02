@@ -177,6 +177,8 @@ Options:
   --project ID              Generate in this EXISTING Flow project instead of a
                             scratch project. Required to reference locked
                             entities/assets in that project. Single-prompt only.
+  -o, --output PATH         Explicit destination file path for the generated asset
+                            (e.g., `./out/bird.png`). Overrides automatic filename.
   --reference-entity ID     Flow CHARACTER entity id to reference for character
                             consistency (repeatable; must live in --project).
                             Single-prompt only.
@@ -241,8 +243,9 @@ gflow image t2i "cat in space" --tool creative-director:style=cinema
 
 **Output paths.**
 
+- **Explicit File (`-o` / `--output PATH`).** Saves the primary generated asset directly to `PATH` (e.g. `-o ./assets/hero.png`). Parent directories are created automatically if they do not exist.
 - **Default (`--out` omitted).** Files land under `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_<n>.png`. The date partition keeps long-running batches navigable.
-- **`--out DIR` provided.** Files are written **flat** as `<DIR>/<media_name>_<n>.png` — no date subdirectory. `--out` must be a directory; flat-file output paths are not supported (you can rename after the fact).
+- **Directory (`--out DIR`).** Files are written flat as `<DIR>/<media_name>_<n>.png` — no date subdirectory.
 - **Multi-prompt mode.** Files are written as `prompt_<prompt-index>_<variation-index>.png`; the prompt index and variation index are zero-based.
 
 **Examples:**
@@ -484,8 +487,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > `--model [omni-flash|veo-lite|veo-fast|veo-quality|veo-lite-lp]` (omit → Flow's
 > current UI default), `--duration [4|6|8|10]` (10 requires `--model omni-flash`),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
-> `--profile NAME`, `--out-dir DIR` (default `tmp/`). The mp4 lands at
-> `<out-dir>/<media_id>.mp4`.
+> `--profile NAME`, `--out-dir DIR` (default `tmp/`), `-o, --output PATH` (explicit file destination).
+> The mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
 >
 > **`i2v` is narrower (issue #125):** `omni-flash` does NOT support image-to-video
 > interpolation — Flow silently drops the start/end frames and produces a
@@ -499,9 +502,11 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 Generate a video from a text prompt only.
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [-t/--tool] [--project] [--out-dir]
+gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [-t/--tool] [--project] [--out-dir] [-o/--output]
 
 Options:
+  -o, --output PATH     Explicit destination file path for the generated asset
+                        (e.g., `./out/clip.mp4`). Overrides automatic filename.
   --project ID          Generate in this EXISTING Flow project instead of a
                         scratch project (see "Sharing one project across calls").
 ```
