@@ -112,4 +112,4 @@ docker run --rm \
   -e GH_TOKEN="$GH_TOKEN" \
   -e GITHUB_TOKEN="$GH_TOKEN" \
   gflow-triage:latest \
-  -p "Conduct a multi-dimensional council review of PR $PR_NUM in autonomous mode following /workspace/skills/pr-council-review/SKILL.md."
+  claude -p "Conduct a multi-dimensional council review of PR $PR_NUM in autonomous mode following /workspace/skills/pr-council-review/SKILL.md."
