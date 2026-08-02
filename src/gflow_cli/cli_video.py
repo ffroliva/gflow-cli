@@ -74,6 +74,41 @@ def _warn_persistence_failed_after_success(
     )
 
 
+def _shared_gen_tail_options(f: Any) -> Any:
+    """Option tail shared verbatim by ``t2v`` and ``i2v`` (profile → json)."""
+    for opt in reversed(
+        (
+            click.option("--profile", default=None, help="Profile name (overrides default)."),
+            tool_option,
+            _project_option,
+            _project_name_option,
+            click.option(
+                "--out-dir",
+                "out_dir",
+                default=None,
+                type=click.Path(file_okay=False, path_type=Path),
+                help="Directory to save the generated mp4. Defaults to tmp/.",
+            ),
+            click.option(
+                "-o",
+                "--output",
+                "output_file",
+                default=None,
+                type=click.Path(path_type=Path),
+                help="Explicit output file path for the generated asset.",
+            ),
+            click.option(
+                "--json",
+                "as_json",
+                is_flag=True,
+                help="Emit a machine-readable JSON result instead of Rich output.",
+            ),
+        )
+    ):
+        f = opt(f)
+    return f
+
+
 def _relocate_video_output(result: Any, output_file: Path | None) -> Any:
     if output_file is None or result.local_path is None or not result.local_path.exists():
         return result
@@ -933,31 +968,7 @@ def video() -> None:
     type=click.IntRange(1, 4),
     help="How many videos to generate (1-4). >1 multiplies credit cost.",
 )
-@click.option("--profile", default=None, help="Profile name (overrides default).")
-@tool_option
-@_project_option
-@_project_name_option
-@click.option(
-    "--out-dir",
-    "out_dir",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help="Directory to save the generated mp4. Defaults to tmp/.",
-)
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    default=None,
-    type=click.Path(path_type=Path),
-    help="Explicit output file path for the generated asset.",
-)
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit a machine-readable JSON result instead of Rich output.",
-)
+@_shared_gen_tail_options
 def t2v(
     prompt: str,
     aspect: str,
@@ -1117,31 +1128,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     type=click.IntRange(1, 4),
     help="How many videos to generate (1-4).",
 )
-@click.option("--profile", default=None, help="Profile name (overrides default).")
-@tool_option
-@_project_option
-@_project_name_option
-@click.option(
-    "--out-dir",
-    "out_dir",
-    default=None,
-    type=click.Path(file_okay=False, path_type=Path),
-    help="Directory to save the generated mp4. Defaults to tmp/.",
-)
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    default=None,
-    type=click.Path(path_type=Path),
-    help="Explicit output file path for the generated asset.",
-)
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit a machine-readable JSON result instead of Rich output.",
-)
+@_shared_gen_tail_options
 def i2v(  # NOSONAR
     image: str | None,
     prompt: str | None,
