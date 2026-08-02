@@ -774,20 +774,6 @@ async def gflow_generate_image(
     return result
 
 
-@server.tool(
-    name="gflow_generate_video",
-    description=(
-        "Generate a video using Google Flow's Veo model. "
-        "Modes: t2v (text-to-video), i2v (image-to-video), r2v (reference-to-video). "
-        "Aspects: 9:16, 16:9. "
-        "Optional model (veo_lite/veo_fast/veo_quality/omni_flash), duration (seconds), "
-        "and count select the Veo model, clip length, and batch size (CLI parity). "
-        "The prompt supports @CharacterName mentions to tag saved project characters by name "
-        "(resolves to referenceEntities). Reference a SAVED character via @Name; pass one-off "
-        "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
-        "Returns the local file path to the generated video."
-    ),
-)
 def _build_video_payload(
     prompt: str,
     mode: str,
@@ -821,6 +807,20 @@ def _build_video_payload(
     return payload
 
 
+@server.tool(
+    name="gflow_generate_video",
+    description=(
+        "Generate a video using Google Flow's Veo model. "
+        "Modes: t2v (text-to-video), i2v (image-to-video), r2v (reference-to-video). "
+        "Aspects: 9:16, 16:9. "
+        "Optional model (veo_lite/veo_fast/veo_quality/omni_flash), duration (seconds), "
+        "and count select the Veo model, clip length, and batch size (CLI parity). "
+        "The prompt supports @CharacterName mentions to tag saved project characters by name "
+        "(resolves to referenceEntities). Reference a SAVED character via @Name; pass one-off "
+        "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
+        "Returns the local file path to the generated video."
+    ),
+)
 async def gflow_generate_video(  # NOSONAR
     prompt: str,
     mode: str = "t2v",
@@ -834,8 +834,8 @@ async def gflow_generate_video(  # NOSONAR
     tools: list[dict[str, Any]] | None = None,
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
+    project_name: str | None = None,
     output: str | None = None,
-    **kwargs: Any,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
 
@@ -881,7 +881,6 @@ async def gflow_generate_video(  # NOSONAR
         Dict with 'status', 'files' (list of local file paths), and metadata.
         On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
     """
-    project_name: str | None = kwargs.pop("project_name", None)
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
 
