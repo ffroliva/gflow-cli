@@ -74,12 +74,25 @@ def _warn_persistence_failed_after_success(
     )
 
 
+def _relocate_video_output(result: Any, output_file: Path | None) -> Any:
+    if output_file is None or result.local_path is None or not result.local_path.exists():
+        return result
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    if result.local_path != output_file:
+        result.local_path.replace(output_file)
+        from dataclasses import replace
+
+        return replace(result, local_path=output_file)
+    return result
+
+
 async def _generate_and_report(
     request: Any,
     *,
     profile_name: str,
     profile_dir: Path,
     out_dir: Path | None,
+    output_file: Path | None = None,
     command: str = "video",
     as_json: bool = False,
     project_id: str | None = None,
@@ -145,6 +158,8 @@ async def _generate_and_report(
                 on_started=on_started,
             )
 
+        result = _relocate_video_output(result, output_file)
+
         try:
             recorder.record_completed_video(
                 profile_name=profile_name,
@@ -206,6 +221,7 @@ async def _run_t2v(
     prompt: str,
     aspect: str,
     out_dir: Path | None,
+    output_file: Path | None = None,
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
@@ -234,6 +250,7 @@ async def _run_t2v(
         profile_name=profile_name,
         profile_dir=profile_dir,
         out_dir=out_dir,
+        output_file=output_file,
         command="video t2v",
         as_json=as_json,
         project_id=project_id,
@@ -313,6 +330,7 @@ async def _run_i2v(
     profile_dir: Path,
     params: _I2VParams,
     out_dir: Path | None,
+    output_file: Path | None = None,
     count: int = 1,
     as_json: bool = False,
     project_id: str | None = None,
@@ -364,6 +382,7 @@ async def _run_i2v(
         profile_name=profile_name,
         profile_dir=profile_dir,
         out_dir=out_dir,
+        output_file=output_file,
         command="video i2v",
         as_json=as_json,
         project_id=project_id,
@@ -926,6 +945,14 @@ def video() -> None:
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
 @click.option(
+    "-o",
+    "--output",
+    "output_file",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Explicit output file path for the generated asset.",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -942,6 +969,7 @@ def t2v(
     project_id: str | None,
     project_name: str | None,
     out_dir: Path | None,
+    output_file: Path | None,
     as_json: bool,
 ) -> None:
     """Generate a video from PROMPT."""
@@ -954,6 +982,7 @@ def t2v(
             prompt=prompt,
             aspect=aspect,
             out_dir=out_dir,
+            output_file=output_file,
             model=model,
             duration=int(duration) if duration is not None else None,
             count=count,
@@ -1011,51 +1040,45 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
         return None, None
     if is_media_uuid(value):
         return None, value
-    path = Path(value)
-    if not path.is_file():
-        raise click.BadParameter(
-            f"'{value}' is neither an existing image file nor a media UUID "
-            "(32-char hex with hyphens, from the Flow project library).",
-            param_hint=param_hint,
-        )
-    return str(path.resolve()), None
+    try:
+        resolved = Path(value).resolve(strict=True)
+    except FileNotFoundError as exc:
+        msg = f"{param_hint} path {value!r} does not exist."
+        raise click.UsageError(msg) from exc
+    return str(resolved), None
 
 
 @video.command(
     "i2v",
-    short_help="Generate a video from an initial frame + motion prompt.",
+    short_help="Generate a video from an initial image + motion prompt.",
     help=(
-        "Image-to-video: animate an initial frame with a motion prompt (Veo).\n\n"
-        "Only the Veo 3.1 models support i2v interpolation; omni-flash is NOT "
-        "accepted here because Flow silently drops the initial and end frames and "
-        "falls back to text-to-video (issue #125). Omit --model to use "
-        "veo-lite (the default i2v model).\n\n"
+        "Generate a video from an initial image frame and a motion PROMPT using Veo.\n\n"
         "\b\n"
         "Examples:\n"
-        '  gflow video i2v --initial-frame hero.png "slow cinematic push-in"\n'
-        '  gflow video i2v --initial-frame hero.png --end-frame last.png "pan left" --aspect 16:9\n'
-        '  gflow video i2v hero.png "it leaps" --model veo-quality --duration 8\n'
-        '  gflow video i2v --initial-frame d6f1927a-3eae-4626-bc90-9a6ea7637bab "pan" '
-        "--project f6caf027-...\n"
+        '  gflow video i2v ./hero.png "camera zooms in on the character"\n'
+        '  gflow video i2v --initial-frame ./hero.png "slow pan left"\n'
+        '  gflow video i2v --initial-frame ./start.png --end-frame ./end.png "morph"\n'
+        '  gflow video i2v <MEDIA_UUID> "camera zooms in"  # pre-uploaded asset\n\n'
+        "Positional ordering: when --initial-frame is passed, only PROMPT is required."
     ),
 )
 @click.argument("image", required=False, default=None)
 @click.argument("prompt", required=False, default=None)
 @click.option(
     "--initial-frame",
+    "-i",
     "initial_frame",
     default=None,
-    type=str,
     help=(
-        "Initial frame to animate: a local image path, or the media UUID of an "
-        "existing in-project asset (#287 — no duplicate upload; pair with --project)."
+        "Initial frame to animate: a local file path, or the media UUID of an "
+        "existing in-project asset."
     ),
 )
 @click.option(
     "--end-frame",
+    "-e",
     "end_frame",
     default=None,
-    type=str,
     help=(
         "Optional end frame (local path or in-project media UUID) — Flow "
         "interpolates initial frame -> end frame."
@@ -1066,30 +1089,26 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     "end_image_deprecated",
     default=None,
     hidden=True,
-    type=str,
-    help="Deprecated: use --end-frame.",
+    help="Deprecated alias for --end-frame.",
 )
 @click.option(
     "--aspect",
     default="9:16",
     show_default=True,
     type=click.Choice(["9:16", "16:9"]),
-    help="Video aspect ratio.",
+    help="Video aspect ratio (portrait 9:16 or landscape 16:9).",
 )
 @click.option(
     "--model",
     default=None,
-    # omni-flash is intentionally absent: it does not support i2v
-    # interpolation and silently routes to T2V (issue #125). Use a Veo 3.1
-    # model. Omitting --model resolves to veo-lite (I2V_DEFAULT_MODEL).
     type=click.Choice(["veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
-    help="Veo 3.1 model. Omit to use veo-lite (the default i2v model).",
+    help="Veo model. Defaults to veo-lite (cheapest model; omni-flash excluded).",
 )
 @click.option(
     "--duration",
     default=None,
     type=click.Choice(["4", "6", "8"]),
-    help="Clip length in seconds (i2v supports 4/6/8; 10 is omni-flash-only).",
+    help="Clip length in seconds (4, 6, or 8; omni-flash-only 10s is unavailable for i2v).",
 )
 @click.option(
     "--count",
@@ -1108,6 +1127,14 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     default=None,
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory to save the generated mp4. Defaults to tmp/.",
+)
+@click.option(
+    "-o",
+    "--output",
+    "output_file",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Explicit output file path for the generated asset.",
 )
 @click.option(
     "--json",
@@ -1130,6 +1157,7 @@ def i2v(  # NOSONAR
     project_id: str | None,
     project_name: str | None,
     out_dir: Path | None,
+    output_file: Path | None,
     as_json: bool,
 ) -> None:
     """Generate a video from an initial frame + motion PROMPT."""
@@ -1183,6 +1211,7 @@ def i2v(  # NOSONAR
             params=i2v_params,
             count=count,
             out_dir=out_dir,
+            output_file=output_file,
             as_json=as_json,
             project_id=project_id,
         ),
