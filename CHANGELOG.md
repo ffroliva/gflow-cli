@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.0] — 2026-08-01
+
 ### Fixed
 
 - **Entity attachments left no trace in the catalog, making character provenance
@@ -2576,7 +2578,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.46.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/ffroliva/gflow-cli/compare/v0.46.1...v0.47.0
 [0.46.1]: https://github.com/ffroliva/gflow-cli/compare/v0.46.0...v0.46.1
 [0.46.0]: https://github.com/ffroliva/gflow-cli/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/ffroliva/gflow-cli/compare/v0.44.0...v0.45.0
