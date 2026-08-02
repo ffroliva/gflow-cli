@@ -4,9 +4,15 @@
 
 ## Current release
 
+**v0.48.0 — alpha.** **Predictable output paths (#411).** Adds an explicit `-o` / `--output` flag to `image t2i`/`i2i` and `video t2v`/`i2v`: the asset lands at the exact **local** path you name (parents auto-created, `-o` beats `--out`/`--out-dir`), with deterministic `_1`, `_2`, … suffixes for multi-count image runs. Cloud (`s3://`/`gs://`) targets, `r2v`/`chain`, video multi-count suffixes, and an MCP-tool `output` param are tracked follow-ups (#414, #415 — the MCP param was cut pre-release when the audit showed the worker queue never reads it). See [LIVE_VERIFICATION_v0.48.0.md](LIVE_VERIFICATION_v0.48.0.md).
+
+<details><summary>v0.47.0 — MCP SDK 2.0.0 migration + entity provenance (#402, #407, #408)</summary>
+
 **v0.47.0 — alpha.** **MCP SDK 2.0.0 migration + dual-era protocol + entity provenance (#402, #407, #408).** Bounds `mcp` dependency to `>=2.0.0,<3`, migrates server to `MCPServer`, supports both 2026-07-28 and legacy protocol eras via SDK, defaults `gflow serve` to Streamable HTTP at `/mcp`, adds `resolve-drift` CI job, and records `entity_ids` / `entity_names` in `operations.metadata_json` on generation operations. See [LIVE_VERIFICATION_v0.47.0.md](LIVE_VERIFICATION_v0.47.0.md).
 
-**Develop (unreleased, post-v0.47.0):** *(empty — develop is the staging branch for the next release).*
+</details>
+
+**Develop (unreleased, post-v0.48.0):** *(empty — develop is the staging branch for the next release).*
 
 <details><summary>v0.46.0 — prompt tools on any OpenAI-compatible endpoint (#387)</summary>
 
@@ -118,6 +124,10 @@
 </details>
 
 <details><summary>v0.29.0 — persistent gflow instructions CRUD</summary>
+
+**v0.29.0 — alpha.** Persistent `gflow instructions` CRUD — see [LIVE_VERIFICATION_v0.29.0.md](LIVE_VERIFICATION_v0.29.0.md) and the [CHANGELOG](../CHANGELOG.md) entry.
+
+</details>
 
 <details><summary>v0.28.0 — agent instructions (-i) steer agentic generation</summary>
 
@@ -288,6 +298,7 @@ reporter-verified e2e on macOS).
 | `--ref` catalog-backed upload fallback + character-entity binding fixes (#393/#395) | ✅ done (v0.45.0) |
 | Prompt tools on any OpenAI-compatible endpoint (`GFLOW_CLI_LLM_*`) (#387) | ✅ done (v0.46.0) |
 | Classic count-setter: digit-keyed tab selection + typed drift error (#404) | ✅ done (v0.46.1) |
+| Predictable output paths: `-o`/`--output` on `t2i`/`i2i`/`t2v`/`i2v` (#411; MCP + cloud follow-ups #414/#415) | ✅ done (v0.48.0) |
 | Manifest-driven video batch runner on `ui_automation` | ❌ removed — never worked end-to-end, shipped as a nonfunctional stub; see v0.41.0 changelog. For multi-clip video, loop `gflow video t2v`/`i2v` from the shell; `gflow image batch` remains supported for images. |
 | Persistence layer (stay-mounted batch sessions across project boundaries) | ⏳ Phase B |
 | Provider abstraction for official Veo 3.1 API | ⏳ planned |

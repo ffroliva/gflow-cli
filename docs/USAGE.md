@@ -243,7 +243,7 @@ gflow image t2i "cat in space" --tool creative-director:style=cinema
 
 **Output paths.**
 
-- **Explicit File (`-o` / `--output PATH`).** Saves the primary generated asset directly to `PATH` (e.g. `-o ./assets/hero.png`). Parent directories are created automatically if they do not exist.
+- **Explicit File (`-o` / `--output PATH`).** Saves the generated asset directly to `PATH` (e.g. `-o ./assets/hero.png`). Parent directories are created automatically if they do not exist. With `--count > 1`, images are written as `PATH`'s stem plus `_1`, `_2`, … before the extension (`-o hero.png --count 2` → `hero_1.png`, `hero_2.png`); video commands write a single file only. `-o` is **single-prompt only** (multi-prompt runs abort with a usage error — use `--out` there) and takes precedence over `--out` when both are passed. The path is a **local filesystem path**; it does not accept `s3://`/`gs://` URLs (cloud output still goes through `GFLOW_CLI_STORAGE_URI`).
 - **Default (`--out` omitted).** Files land under `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_<n>.png`. The date partition keeps long-running batches navigable.
 - **Directory (`--out DIR`).** Files are written flat as `<DIR>/<media_name>_<n>.png` — no date subdirectory.
 - **Multi-prompt mode.** Files are written as `prompt_<prompt-index>_<variation-index>.png`; the prompt index and variation index are zero-based.
@@ -299,6 +299,7 @@ Options:
                             Aspect ratio.                     [default: 9:16]
   -n, --count INTEGER       How many images to generate (1-4).  [default: 1]
   --out PATH                Output directory (same semantics as t2i).
+  -o, --output PATH         Explicit destination file path (same semantics as t2i).
   --project ID              Generate in this EXISTING Flow project (skip scratch).
   --reference-entity ID     Flow CHARACTER entity id to reference (repeatable;
                             must live in --project). Counts toward the ref cap.
@@ -350,7 +351,7 @@ project that owns them** via `--project <id>` (this also means no throwaway
 scratch project is created). The CLI attaches each entity through the Flow editor's
 resource picker; the submit then carries `referenceEntities`, exactly like the
 video R2V path. Entities count toward the same per-model reference cap as `--ref`
-images. `--reference-entity` / `--project` are **single-prompt only**.
+images. `--reference-entity` / `--project` / `--output` are **single-prompt only**.
 
 For a *pure* character reference (no starting image) use `t2i` — `i2i` still
 requires at least one `--ref`.
@@ -487,7 +488,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > `--model [omni-flash|veo-lite|veo-fast|veo-quality|veo-lite-lp]` (omit → Flow's
 > current UI default), `--duration [4|6|8|10]` (10 requires `--model omni-flash`),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
-> `--profile NAME`, `--out-dir DIR` (default `tmp/`), `-o, --output PATH` (explicit file destination).
+> `--profile NAME`, `--out-dir DIR` (default `tmp/`).
+> `t2v` and `i2v` (not `r2v`) additionally take `-o, --output PATH` (explicit file destination).
 > The mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
 >
 > **`i2v` is narrower (issue #125):** `omni-flash` does NOT support image-to-video
@@ -548,6 +550,8 @@ Options:
   --end-frame PATH|UUID      Optional end frame — Flow interpolates initial frame -> end frame.
   --project ID               Generate in this EXISTING Flow project instead of a
                              scratch project (see "Sharing one project across calls").
+  -o, --output PATH          Explicit destination file path for the mp4 (parents
+                             auto-created; overrides --out-dir).
 ```
 
 ```bash
