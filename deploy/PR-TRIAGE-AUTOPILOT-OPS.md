@@ -10,7 +10,7 @@ The autopilot orchestrator (`scripts/autopilot/pr_triage_autopilot.py`) runs as 
 
 | Variable | Scope | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Autopilot orchestrator & sandbox | Mints the Claude agent tokens to execute the council review. |
+| `CLAUDE_CREDENTIALS_FILE` | Autopilot orchestrator (host), optional | Path to the Claude **subscription OAuth** credentials. Defaults to `~/.claude/.credentials.json`. This deployment is subscription-based and uses **no `ANTHROPIC_API_KEY`** — the orchestrator copies this file per-run into the sandbox at `CLAUDE_CONFIG_DIR=/tmp/claude`. |
 | `GH_COMMENT_TOKEN` | Autopilot orchestrator (host) | The comment-only GitHub PAT used to post verdicts and reviews to `ffroliva/gflow-cli` PRs. |
 | `TELEGRAM_BOT_TOKEN` | Autopilot orchestrator (host) | Bot token to dispatch alert messages. |
 | `TELEGRAM_USER_ID` | Autopilot orchestrator (host) | The chat ID to receive triage alert messages. |
@@ -51,10 +51,25 @@ Ensure `iptables` is installed on the host VPS. If `iptables` permissions are wi
 Configure a cron job checking every hour on the hour under the `hermes` system user:
 
 ```cron
-0 * * * * set -a; . /opt/hermes/.env 2>/dev/null; set +a; export ANTHROPIC_API_KEY="xxx" && export GH_COMMENT_TOKEN="xxx" && export TELEGRAM_BOT_TOKEN="xxx" && export TELEGRAM_USER_ID="xxx" && cd /opt/gflow-cli && uv run python scripts/autopilot/pr_triage_autopilot.py --repo-dir /opt/gflow-cli --memory-dir /opt/experience-vault/projects/C--development-github-gflow-cli/memory >> /var/log/hermes/pr_triage.log 2>&1
+0 * * * * set -a; . /opt/hermes/.env 2>/dev/null; set +a; cd /opt/gflow-cli && uv run python scripts/autopilot/pr_triage_autopilot.py --repo-dir /opt/gflow-cli --memory-dir /opt/experience-vault/projects/C--development-github-gflow-cli/memory >> /var/log/hermes/pr_triage.log 2>&1
 ```
 
-Sourcing `/opt/hermes/.env` first (`set -a` exports everything it defines) is what delivers the `RESEND_API_KEY` / `HERMES_NOTIFY_EMAIL_*` vars to the process so the email channel works; without it the run still succeeds but emails are silently disabled.
+Sourcing `/opt/hermes/.env` first (`set -a` exports everything it defines) is what delivers `GH_COMMENT_TOKEN`, `TELEGRAM_*`, and the `RESEND_API_KEY` / `HERMES_NOTIFY_EMAIL_*` vars to the process. Without it the email channel silently disables itself, and without `GH_COMMENT_TOKEN` the run exits 1.
+
+> **`.env` must stay bash-sourceable.** This line sources the file, so any value containing spaces or shell metacharacters has to be quoted in the SOPS store. systemd's `EnvironmentFile` parser is more permissive than bash and will not warn you: an unquoted `HERMES_NOTIFY_EMAIL_FROM=Hermes Ops <noreply@...>` broke exactly this line on 2026-08-02 (`<` is a redirect), silently dropping every variable defined after it. Fixed in hermes-ops by quoting the value.
+
+### Claude authentication (subscription OAuth, no API key)
+
+The council review runs `claude -p` inside the sandbox, authenticated by the **subscription OAuth token**, not an API key. The orchestrator validates `~/.claude/.credentials.json` on the host *before* building the image, then `run_sandboxed_review.sh` copies it into a per-run temp dir mounted **writable** at `/tmp/claude` (`CLAUDE_CONFIG_DIR`). Writable because the CLI persists a refreshed token; per-run because a container reviewing an untrusted external PR must never write back to the operator's own credentials. The copy is removed by an `EXIT` trap.
+
+**Rotation is manual and it is a real operational dependency.** A token with no `refreshToken` cannot self-renew — the 2026-07-16 token sat expired for 16 days and every run would have failed with a 401. The orchestrator now refuses to start and logs `Claude OAuth credentials unusable` instead. To renew:
+
+```bash
+sudo -u hermes -H claude          # complete the login flow, then /exit
+sudo -u hermes -H claude -p "say OK"   # verify
+```
+
+**Accepted risk (operator, 2026-08-02):** the OAuth token carries the whole subscription (`user:inference`, `user:profile`, `user:sessions:claude_code`) — broader than a scoped API key would be — and it is mounted into a container that reviews untrusted external PRs. The egress firewall in §3 is the compensating control. Accepted because no API key exists for this account.
 
 ### Deploy mechanism (warning)
 

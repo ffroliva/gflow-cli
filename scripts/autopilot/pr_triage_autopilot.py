@@ -34,6 +34,53 @@ LOCK_FILE_PATH = "/tmp/pr_triage_autopilot.lock"
 SUPPORTED_ENGINES = ("council-claude",)
 DEFAULT_ENGINE = SUPPORTED_ENGINES[0]
 
+# Claude auth is the SUBSCRIPTION OAuth token written by `claude` login, not an
+# API key -- this deployment is subscription-based and has no ANTHROPIC_API_KEY
+# (operator decision, 2026-08-02). The CLI reads it from CLAUDE_CONFIG_DIR.
+DEFAULT_CREDENTIALS_FILE = Path.home() / ".claude" / ".credentials.json"
+
+
+def resolve_credentials_file() -> Path:
+    """Path to the Claude OAuth credentials, overridable for tests/non-default homes."""
+    override = os.environ.get("CLAUDE_CREDENTIALS_FILE")
+    return Path(override) if override else DEFAULT_CREDENTIALS_FILE
+
+
+def check_oauth_credentials(path: Path) -> str | None:
+    """Return an error string when *path* cannot authenticate a review, else None.
+
+    Checked on the HOST before building the image and starting a container: an
+    expired token fails every review with a 401 several minutes in, and the
+    2026-07-16 token sat expired for 16 days precisely because nothing surfaced
+    it. Failing here turns a silent hourly no-op into one actionable message.
+
+    Expiry is advisory, not authoritative -- the CLI may still refresh a token
+    that looks stale. It is only treated as fatal when no refreshToken exists,
+    which is the unrecoverable case (interactive re-auth required).
+    """
+    if not path.is_file():
+        return f"No Claude OAuth credentials at {path}. Run `claude` once to authenticate."
+    try:
+        blob = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"Unreadable Claude credentials at {path}: {exc}"
+
+    oauth = blob.get("claudeAiOauth") or {}
+    if not oauth.get("accessToken"):
+        return f"No accessToken in {path}. Run `claude` once to authenticate."
+
+    expires_at = oauth.get("expiresAt")
+    if isinstance(expires_at, (int, float)):
+        expiry = datetime.datetime.fromtimestamp(expires_at / 1000, tz=datetime.UTC)
+        if expiry <= datetime.datetime.now(datetime.UTC) and not oauth.get("refreshToken"):
+            return (
+                f"Claude OAuth token expired {expiry.isoformat()} and carries no "
+                "refreshToken -- it cannot self-renew. Re-authenticate on the host: "
+                "`sudo -u hermes -H claude`."
+            )
+    return None
+
+
 # Verdict allowlist: container stdout is untrusted, so anything outside this
 # set is treated as unparseable (None) rather than interpolated downstream.
 VALID_VERDICTS = ("GREEN", "YELLOW", "RED")
@@ -220,7 +267,7 @@ def restore_repo_branch(repo_dir: Path) -> None:
 
 
 def run_docker_sandbox(
-    pr_num: int, repo_dir: Path, memory_dir: Path, anthropic_key: str, gh_token: str
+    pr_num: int, repo_dir: Path, memory_dir: Path, credentials_file: Path, gh_token: str
 ) -> str:
     """Invoke the run_sandboxed_review.sh wrapper script and capture its stdout."""
     script_path = repo_dir / "scripts" / "autopilot" / "run_sandboxed_review.sh"
@@ -236,8 +283,8 @@ def run_docker_sandbox(
         str(memory_dir),
         "--token",
         gh_token,
-        "--key",
-        anthropic_key,
+        "--creds",
+        str(credentials_file),
     ]
 
     logger.info("Running sandboxed Docker review", pr=pr_num)
@@ -282,12 +329,12 @@ def run_review(
     pr_num: int,
     repo_dir: Path,
     memory_dir: Path,
-    anthropic_key: str,
+    credentials_file: Path,
     gh_token: str,
 ) -> str:
     """Run the configured review engine and return its stdout."""
     if engine == "council-claude":
-        return run_docker_sandbox(pr_num, repo_dir, memory_dir, anthropic_key, gh_token)
+        return run_docker_sandbox(pr_num, repo_dir, memory_dir, credentials_file, gh_token)
     raise NotImplementedError(f"engine {engine!r} is reserved but not implemented")
 
 
@@ -296,7 +343,7 @@ def run_triage_cycle(
     repo_dir: Path,
     memory_dir: Path,
     ledger_path: Path,
-    anthropic_key: str,
+    credentials_file: Path,
     gh_token: str,
     engine: str = DEFAULT_ENGINE,
 ) -> None:
@@ -439,7 +486,7 @@ def run_triage_cycle(
                 continue
 
             # Run Stage 1 Pre-eval & Full sandboxed review
-            output = run_review(engine, pr_num, repo_dir, memory_dir, anthropic_key, gh_token)
+            output = run_review(engine, pr_num, repo_dir, memory_dir, credentials_file, gh_token)
 
             # Parse verdict & MUST-FIX count
             parsed_verdict, must_fixes = parse_summary_verdict(output)
@@ -539,11 +586,15 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     # Validate required credentials
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
     gh_token = os.environ.get("GH_COMMENT_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not gh_token:
+        logger.error("Missing credentials. Requires GH_COMMENT_TOKEN.")
+        return 1
 
-    if not anthropic_key or not gh_token:
-        logger.error("Missing credentials. Requires ANTHROPIC_API_KEY and GH_COMMENT_TOKEN.")
+    credentials_file = resolve_credentials_file()
+    creds_error = check_oauth_credentials(credentials_file)
+    if creds_error:
+        logger.error("Claude OAuth credentials unusable", reason=creds_error)
         return 1
 
     engine = resolve_engine()
@@ -562,7 +613,7 @@ def main(argv: list[str] | None = None) -> int:
 
     logger.info("PR-Triage Autopilot iteration started", repo=args.repo, engine=engine)
     run_triage_cycle(
-        args.repo, repo_dir, memory_dir, ledger_path, anthropic_key, gh_token, engine=engine
+        args.repo, repo_dir, memory_dir, ledger_path, credentials_file, gh_token, engine=engine
     )
     logger.info("PR-Triage Autopilot iteration completed")
     return 0

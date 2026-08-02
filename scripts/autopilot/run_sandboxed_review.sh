@@ -6,7 +6,7 @@ set -eo pipefail
 
 # Print usage
 usage() {
-  echo "Usage: $0 --pr <num> --repo <path> --memory <path> --token <gh_token> --key <anthropic_key>"
+  echo "Usage: $0 --pr <num> --repo <path> --memory <path> --token <gh_token> --creds <credentials.json>"
   exit 1
 }
 
@@ -14,7 +14,7 @@ PR_NUM=""
 HOST_REPO=""
 HOST_MEMORY=""
 GH_TOKEN=""
-ANTHROPIC_KEY=""
+CREDS_FILE=""
 
 # Parse arguments
 while [[ "$#" -gt 0 ]]; do
@@ -23,19 +23,44 @@ while [[ "$#" -gt 0 ]]; do
     --repo) HOST_REPO="$2"; shift 2 ;;
     --memory) HOST_MEMORY="$2"; shift 2 ;;
     --token) GH_TOKEN="$2"; shift 2 ;;
-    --key) ANTHROPIC_KEY="$2"; shift 2 ;;
+    --creds) CREDS_FILE="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; usage ;;
   esac
 done
 
-if [ -z "$PR_NUM" ] || [ -z "$HOST_REPO" ] || [ -z "$HOST_MEMORY" ] || [ -z "$GH_TOKEN" ] || [ -z "$ANTHROPIC_KEY" ]; then
+if [ -z "$PR_NUM" ] || [ -z "$HOST_REPO" ] || [ -z "$HOST_MEMORY" ] || [ -z "$GH_TOKEN" ] || [ -z "$CREDS_FILE" ]; then
   echo "Error: Missing required arguments."
   usage
+fi
+
+if [ ! -r "$CREDS_FILE" ]; then
+  echo "Error: credentials file not readable: $CREDS_FILE"
+  exit 1
 fi
 
 # Ensure absolute paths
 HOST_REPO=$(cd "$HOST_REPO" && pwd)
 HOST_MEMORY=$(cd "$HOST_MEMORY" && pwd)
+
+# Per-run copy of the OAuth credentials, mounted WRITABLE at CLAUDE_CONFIG_DIR.
+#
+# Auth is the subscription OAuth token (~/.claude/.credentials.json), not an API
+# key -- this deployment has no ANTHROPIC_API_KEY. Two reasons the container
+# gets a copy rather than the host file itself:
+#   1. writable: the claude CLI persists a refreshed token on renewal, which a
+#      :ro mount turns into a hard failure mid-review;
+#   2. per-run: a refresh (or corruption) inside a container reviewing an
+#      untrusted external PR must never write back to the operator's own
+#      credentials.
+# The copy dies with the trap below, so a token never outlives its run.
+CREDS_DIR=$(mktemp -d)
+chmod 700 "$CREDS_DIR"
+cp "$CREDS_FILE" "$CREDS_DIR/.credentials.json"
+chmod 600 "$CREDS_DIR/.credentials.json"
+# 65532 = the image's `nonroot` uid; the container must own its config dir to
+# write a refreshed token back into it.
+chown -R 65532:65532 "$CREDS_DIR" 2>/dev/null || true
+trap 'rm -rf "$CREDS_DIR"' EXIT INT TERM
 
 echo "Building Docker sandbox image..."
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
@@ -93,7 +118,8 @@ docker run --rm \
   --net "$NET_NAME" \
   -v "$HOST_REPO:/workspace:ro" \
   -v "$HOST_MEMORY:/memory:ro" \
-  -e ANTHROPIC_API_KEY="$ANTHROPIC_KEY" \
+  -v "$CREDS_DIR:/tmp/claude" \
+  -e CLAUDE_CONFIG_DIR=/tmp/claude \
   -e GH_TOKEN="$GH_TOKEN" \
   -e GITHUB_TOKEN="$GH_TOKEN" \
   gflow-triage:latest \

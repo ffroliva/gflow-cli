@@ -13,6 +13,11 @@ sys.path.insert(0, str(ROOT / "scripts" / "autopilot"))
 
 import pr_triage_autopilot  # noqa: E402
 
+# Subscription OAuth credentials path threaded to the sandbox in place of an
+# API key (2026-08-02). The orchestrator only passes it through; validity is
+# checked on the host in check_oauth_credentials.
+CREDS_PATH = Path("/home/hermes/.claude/.credentials.json")
+
 
 def test_parse_summary_verdict():
     output = (
@@ -120,13 +125,13 @@ def test_run_triage_cycle_success(
         repo_dir=repo_dir,
         memory_dir=memory_dir,
         ledger_path=ledger_path,
-        anthropic_key="key-test",
+        credentials_file=CREDS_PATH,
         gh_token="token-test",
     )
 
     # Assertions
     mock_fetch.assert_called_once_with(101, repo_dir)
-    mock_sandbox.assert_called_once_with(101, repo_dir, memory_dir, "key-test", "token-test")
+    mock_sandbox.assert_called_once_with(101, repo_dir, memory_dir, CREDS_PATH, "token-test")
     mock_post_comment.assert_called_once()
     mock_restore.assert_called_once_with(repo_dir)
     mock_append_ledger.assert_called_once()
@@ -175,7 +180,7 @@ def test_run_triage_cycle_stage0_skipped(
         repo_dir=repo_dir,
         memory_dir=memory_dir,
         ledger_path=ledger_path,
-        anthropic_key="key-test",
+        credentials_file=CREDS_PATH,
         gh_token="token-test",
     )
 
@@ -397,3 +402,72 @@ def test_deferred_size_dedupes_by_gate_sha(tmp_path):
             )
         assert m_email.call_count == 1
         assert m_comment.call_count == 0
+
+
+# --- OAuth subscription auth (2026-08-02) -----------------------------------
+# This deployment has no ANTHROPIC_API_KEY; `claude -p` authenticates with the
+# subscription OAuth token. The 2026-07-16 token sat EXPIRED for 16 days with
+# nothing surfacing it, so the host-side precheck is the regression guard.
+
+
+def _creds(tmp_path, *, access="tok", expires_ms=None, refresh=None):
+    import json as _json
+
+    blob = {"claudeAiOauth": {"accessToken": access, "scopes": ["user:inference"]}}
+    if expires_ms is not None:
+        blob["claudeAiOauth"]["expiresAt"] = expires_ms
+    if refresh is not None:
+        blob["claudeAiOauth"]["refreshToken"] = refresh
+    p = tmp_path / ".credentials.json"
+    p.write_text(_json.dumps(blob), encoding="utf-8")
+    return p
+
+
+def _ms(dt):
+    return int(dt.timestamp() * 1000)
+
+
+def test_oauth_missing_file_is_reported(tmp_path):
+    err = pr_triage_autopilot.check_oauth_credentials(tmp_path / "nope.json")
+    assert err and "authenticate" in err
+
+
+def test_oauth_unparseable_file_is_reported(tmp_path):
+    p = tmp_path / ".credentials.json"
+    p.write_text("{not json", encoding="utf-8")
+    assert pr_triage_autopilot.check_oauth_credentials(p)
+
+
+def test_oauth_valid_unexpired_token_passes(tmp_path):
+    future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=8)
+    assert (
+        pr_triage_autopilot.check_oauth_credentials(_creds(tmp_path, expires_ms=_ms(future)))
+        is None
+    )
+
+
+def test_oauth_expired_without_refresh_token_is_fatal(tmp_path):
+    """The exact 2026-07-16 state: expired, refreshToken absent."""
+    past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=16)
+    err = pr_triage_autopilot.check_oauth_credentials(_creds(tmp_path, expires_ms=_ms(past)))
+    assert err and "re-authenticate" in err.lower()
+
+
+def test_oauth_expired_with_refresh_token_is_allowed(tmp_path):
+    """Expiry alone must not block: the CLI can renew when a refreshToken exists.
+
+    Treating stale-but-refreshable as fatal would fail every run an hour after
+    login, which is worse than the bug being fixed.
+    """
+    past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=2)
+    assert (
+        pr_triage_autopilot.check_oauth_credentials(
+            _creds(tmp_path, expires_ms=_ms(past), refresh="r")
+        )
+        is None
+    )
+
+
+def test_resolve_credentials_file_honours_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CREDENTIALS_FILE", str(tmp_path / "x.json"))
+    assert pr_triage_autopilot.resolve_credentials_file() == tmp_path / "x.json"
