@@ -21,8 +21,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 # Install Claude Code CLI globally
 RUN npm install -g @anthropic-ai/claude-code
 
-# Create non-root user and set permissions
-RUN useradd -m -u 1000 nonroot
+# Create non-root user and set permissions.
+#
+# uid 1001, not 1000: node:20-slim already ships a `node` user at uid 1000, so
+# `useradd -m -u 1000 nonroot` fails with exit 4 (UID already in use) and the
+# image never builds. Found 2026-08-02 on the first real build attempt — which
+# is itself the evidence that this sandbox had never been run.
+RUN useradd -m -u 1001 nonroot
 
 # Copy and setup the entrypoint script
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
