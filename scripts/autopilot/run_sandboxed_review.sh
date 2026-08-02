@@ -6,7 +6,8 @@ set -eo pipefail
 
 # Print usage
 usage() {
-  echo "Usage: $0 --pr <num> --repo <path> --memory <path> --token <gh_token> --creds <credentials.json>"
+  echo "Usage: $0 --pr <num> --repo <path> --memory <path> --token <gh_token>"
+  echo "  Claude auth comes from CLAUDE_CODE_OAUTH_TOKEN in the environment."
   exit 1
 }
 
@@ -14,7 +15,6 @@ PR_NUM=""
 HOST_REPO=""
 HOST_MEMORY=""
 GH_TOKEN=""
-CREDS_FILE=""
 
 # Parse arguments
 while [[ "$#" -gt 0 ]]; do
@@ -23,69 +23,34 @@ while [[ "$#" -gt 0 ]]; do
     --repo) HOST_REPO="$2"; shift 2 ;;
     --memory) HOST_MEMORY="$2"; shift 2 ;;
     --token) GH_TOKEN="$2"; shift 2 ;;
-    --creds) CREDS_FILE="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; usage ;;
   esac
 done
 
-if [ -z "$PR_NUM" ] || [ -z "$HOST_REPO" ] || [ -z "$HOST_MEMORY" ] || [ -z "$GH_TOKEN" ] || [ -z "$CREDS_FILE" ]; then
+if [ -z "$PR_NUM" ] || [ -z "$HOST_REPO" ] || [ -z "$HOST_MEMORY" ] || [ -z "$GH_TOKEN" ]; then
   echo "Error: Missing required arguments."
   usage
 fi
 
-if [ ! -r "$CREDS_FILE" ]; then
-  echo "Error: credentials file not readable: $CREDS_FILE"
+# Claude auth: the subscription token minted by `claude setup-token`, read from
+# the environment (sourced from /opt/hermes/.env by the cron line). Deliberately
+# NOT a CLI flag -- an argv secret is visible to every local user via `ps`,
+# which is what the original --key <anthropic_key> design did.
+#
+# Note this is NOT ~/.claude/.credentials.json: `setup-token` does not write
+# that file (verified on cgserver01 2026-08-02 -- it still held the expired
+# 2026-07-16 interactive-login token afterwards). The two are separate
+# mechanisms and only the env var carries the 1-year credential.
+if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+  echo "Error: CLAUDE_CODE_OAUTH_TOKEN is not set."
+  echo "  Mint one with: sudo -u hermes -H claude setup-token   (valid 1 year)"
+  echo "  Then store it in hermes-ops secrets/vps-prod.env.sops.yaml."
   exit 1
 fi
 
 # Ensure absolute paths
 HOST_REPO=$(cd "$HOST_REPO" && pwd)
 HOST_MEMORY=$(cd "$HOST_MEMORY" && pwd)
-
-# Per-run copy of the OAuth credentials, mounted WRITABLE at CLAUDE_CONFIG_DIR.
-#
-# Auth is the subscription OAuth token (~/.claude/.credentials.json), not an API
-# key -- this deployment has no ANTHROPIC_API_KEY. Two reasons the container
-# gets a copy rather than the host file itself:
-#   1. writable: the claude CLI persists a refreshed token on renewal, which a
-#      :ro mount turns into a hard failure mid-review;
-#   2. per-run: a refresh (or corruption) inside a container reviewing an
-#      untrusted external PR must never write back to the operator's own
-#      credentials.
-# The copy dies with the trap below, so a token never outlives its run.
-#
-# A refresh inside the container therefore does NOT propagate back to the host
-# credentials -- that is deliberate. The host token is the source of truth and
-# is renewed by `claude` on the host.
-CREDS_DIR=$(mktemp -d)
-chmod 700 "$CREDS_DIR"
-cp "$CREDS_FILE" "$CREDS_DIR/.credentials.json"
-chmod 600 "$CREDS_DIR/.credentials.json"
-trap 'rm -rf "$CREDS_DIR"' EXIT INT TERM
-
-# The container must be able to read AND write the 0700 credentials dir above.
-# How we get there depends on who invoked this script, and both paths keep the
-# dir 0700 -- loosening it to 0755 would expose the operator's subscription
-# token to every local account on a host that also runs `deploy` and others.
-#
-# As root (the sudo path that installs the iptables rules): chown the copy to
-# the image's `nonroot` uid and keep running the container unprivileged. Never
-# `--user 0:0` -- that would hand root to a container reviewing an untrusted
-# external PR, weaker than the image's own default.
-#
-# As a normal user (the documented `hermes` cron): chown is impossible -- a
-# non-root user cannot give a file to another uid. Verified on cgserver01
-# 2026-08-02: the chown fails silently, the mount stays hermes-owned 0700, and
-# the container gets "Permission denied" on the token. So instead run the
-# container AS that user; uids match, 0700 still works. Verified same host,
-# same day: read, write, and refresh-persistence all succeed.
-NONROOT_UID=65532
-if [ "$(id -u)" -eq 0 ]; then
-  chown -R "$NONROOT_UID:$NONROOT_UID" "$CREDS_DIR"
-  CONTAINER_USER="$NONROOT_UID:$NONROOT_UID"
-else
-  CONTAINER_USER="$(id -u):$(id -g)"
-fi
 
 echo "Building Docker sandbox image..."
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
@@ -141,12 +106,9 @@ fi
 echo "Launching sandboxed review for PR $PR_NUM..."
 docker run --rm \
   --net "$NET_NAME" \
-  --user "$CONTAINER_USER" \
   -v "$HOST_REPO:/workspace:ro" \
   -v "$HOST_MEMORY:/memory:ro" \
-  -v "$CREDS_DIR:/tmp/claude" \
-  -e CLAUDE_CONFIG_DIR=/tmp/claude \
-  -e HOME=/tmp/claude \
+  -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
   -e GH_TOKEN="$GH_TOKEN" \
   -e GITHUB_TOKEN="$GH_TOKEN" \
   gflow-triage:latest \

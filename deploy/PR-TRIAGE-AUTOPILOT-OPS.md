@@ -10,7 +10,7 @@ The autopilot orchestrator (`scripts/autopilot/pr_triage_autopilot.py`) runs as 
 
 | Variable | Scope | Purpose |
 |---|---|---|
-| `CLAUDE_CREDENTIALS_FILE` | Autopilot orchestrator (host), optional | Path to the Claude **subscription OAuth** credentials. Defaults to `~/.claude/.credentials.json`. This deployment is subscription-based and uses **no `ANTHROPIC_API_KEY`** — the orchestrator copies this file per-run into the sandbox at `CLAUDE_CONFIG_DIR=/tmp/claude`. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Autopilot orchestrator & sandbox | Claude **subscription** token from `claude setup-token`, valid **1 year**. This deployment has no `ANTHROPIC_API_KEY`. Passed into the container as an env var. **Not** `~/.claude/.credentials.json` — `setup-token` does not write that file. |
 | `GH_COMMENT_TOKEN` | Autopilot orchestrator (host) | The comment-only GitHub PAT used to post verdicts and reviews to `ffroliva/gflow-cli` PRs. |
 | `TELEGRAM_BOT_TOKEN` | Autopilot orchestrator (host) | Bot token to dispatch alert messages. |
 | `TELEGRAM_USER_ID` | Autopilot orchestrator (host) | The chat ID to receive triage alert messages. |
@@ -58,18 +58,23 @@ Sourcing `/opt/hermes/.env` first (`set -a` exports everything it defines) is wh
 
 > **`.env` must stay bash-sourceable.** This line sources the file, so any value containing spaces or shell metacharacters has to be quoted in the SOPS store. systemd's `EnvironmentFile` parser is more permissive than bash and will not warn you: an unquoted `HERMES_NOTIFY_EMAIL_FROM=Hermes Ops <noreply@...>` broke exactly this line on 2026-08-02 (`<` is a redirect), silently dropping every variable defined after it. Fixed in hermes-ops by quoting the value.
 
-### Claude authentication (subscription OAuth, no API key)
+### Claude authentication (subscription token, no API key)
 
-The council review runs `claude -p` inside the sandbox, authenticated by the **subscription OAuth token**, not an API key. The orchestrator validates `~/.claude/.credentials.json` on the host *before* building the image, then `run_sandboxed_review.sh` copies it into a per-run temp dir mounted **writable** at `/tmp/claude` (`CLAUDE_CONFIG_DIR`). Writable because the CLI persists a refreshed token; per-run because a container reviewing an untrusted external PR must never write back to the operator's own credentials. The copy is removed by an `EXIT` trap.
+The council review runs `claude -p` inside the sandbox, authenticated by `CLAUDE_CODE_OAUTH_TOKEN` — the subscription token minted by `claude setup-token`, **valid 1 year**. It is stored in hermes-ops `secrets/vps-prod.env.sops.yaml`, rendered into `/opt/hermes/.env`, and reaches the process because the cron line sources that file. The orchestrator checks it is set before building the image, so a missing token fails in a second rather than as an opaque 401 minutes into a container run.
 
-**Rotation is manual and it is a real operational dependency.** A token with no `refreshToken` cannot self-renew — the 2026-07-16 token sat expired for 16 days and every run would have failed with a 401. The orchestrator now refuses to start and logs `Claude OAuth credentials unusable` instead. To renew:
+> **It is not `~/.claude/.credentials.json`.** `setup-token` does not write that file — verified on cgserver01 2026-08-02, where it still held the expired 2026-07-16 interactive-login token after a successful mint. Reading the file would authenticate with a dead credential. The two are separate mechanisms.
+
+**Rotation — the one real operational dependency.** The token is a static bearer value with **no refresh pair**: it cannot self-renew, and nothing in the API surface reports its age. The previous interactive token 401'd silently for 16 days. Rotate before the 1-year mark:
 
 ```bash
-sudo -u hermes -H claude          # complete the login flow, then /exit
-sudo -u hermes -H claude -p "say OK"   # verify
+sudo -u hermes -H claude setup-token          # prints the token ONCE
+# store it in hermes-ops secrets/vps-prod.env.sops.yaml as CLAUDE_CODE_OAUTH_TOKEN
+sudo -u hermes -H bash -c 'set -a; . /opt/hermes/.env; set +a; claude -p "say OK"'   # verify
 ```
 
-**Accepted risk (operator, 2026-08-02):** the OAuth token carries the whole subscription (`user:inference`, `user:profile`, `user:sessions:claude_code`) — broader than a scoped API key would be — and it is mounted into a container that reviews untrusted external PRs. The egress firewall in §3 is the compensating control. Accepted because no API key exists for this account.
+The daily `ev-ops-health` Telegram digest carries the expiry countdown; treat that warning as the rotation trigger.
+
+**Accepted risk (operator, 2026-08-02):** the token grants inference on the whole subscription and is injected into a container that reviews untrusted external PRs. Its scope is `user:inference` only — narrower than the five scopes an interactive login carries — and the §3 egress firewall is the compensating control. Accepted because no API key exists for this account.
 
 ### Deploy mechanism (warning)
 

@@ -34,50 +34,37 @@ LOCK_FILE_PATH = "/tmp/pr_triage_autopilot.lock"
 SUPPORTED_ENGINES = ("council-claude",)
 DEFAULT_ENGINE = SUPPORTED_ENGINES[0]
 
-# Claude auth is the SUBSCRIPTION OAuth token written by `claude` login, not an
-# API key -- this deployment is subscription-based and has no ANTHROPIC_API_KEY
-# (operator decision, 2026-08-02). The CLI reads it from CLAUDE_CONFIG_DIR.
-DEFAULT_CREDENTIALS_FILE = Path.home() / ".claude" / ".credentials.json"
+# Claude auth is the SUBSCRIPTION token minted by `claude setup-token`, read
+# from CLAUDE_CODE_OAUTH_TOKEN. This deployment has no ANTHROPIC_API_KEY
+# (operator decision, 2026-08-02).
+#
+# NOT ~/.claude/.credentials.json: `setup-token` does not write that file.
+# Verified on cgserver01 2026-08-02 -- after a successful mint it still held the
+# expired 2026-07-16 interactive-login token. Reading the file would silently
+# authenticate with a dead credential.
+#
+# The token is a static 1-year bearer value with no refresh pair, so there is
+# nothing to validate locally beyond presence: no expiry is encoded in it. That
+# makes the rotation reminder (hermes-ops ev-ops-health digest) the only thing
+# standing between a lapse and a silent outage -- the 2026-07-16 token 401'd for
+# 16 days with nothing reporting it.
+CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
 
-def resolve_credentials_file() -> Path:
-    """Path to the Claude OAuth credentials, overridable for tests/non-default homes."""
-    override = os.environ.get("CLAUDE_CREDENTIALS_FILE")
-    return Path(override) if override else DEFAULT_CREDENTIALS_FILE
+def check_claude_auth() -> str | None:
+    """Return an error string when Claude auth is unusable, else None.
 
-
-def check_oauth_credentials(path: Path) -> str | None:
-    """Return an error string when *path* cannot authenticate a review, else None.
-
-    Checked on the HOST before building the image and starting a container: an
-    expired token fails every review with a 401 several minutes in, and the
-    2026-07-16 token sat expired for 16 days precisely because nothing surfaced
-    it. Failing here turns a silent hourly no-op into one actionable message.
-
-    Expiry is advisory, not authoritative -- the CLI may still refresh a token
-    that looks stale. It is only treated as fatal when no refreshToken exists,
-    which is the unrecoverable case (interactive re-auth required).
+    Checked on the HOST before building the image and starting a container: a
+    missing token otherwise surfaces as an opaque 401 several minutes into a
+    sandboxed run.
     """
-    if not path.is_file():
-        return f"No Claude OAuth credentials at {path}. Run `claude` once to authenticate."
-    try:
-        blob = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return f"Unreadable Claude credentials at {path}: {exc}"
-
-    oauth = blob.get("claudeAiOauth") or {}
-    if not oauth.get("accessToken"):
-        return f"No accessToken in {path}. Run `claude` once to authenticate."
-
-    expires_at = oauth.get("expiresAt")
-    if isinstance(expires_at, (int, float)):
-        expiry = datetime.datetime.fromtimestamp(expires_at / 1000, tz=datetime.UTC)
-        if expiry <= datetime.datetime.now(datetime.UTC) and not oauth.get("refreshToken"):
-            return (
-                f"Claude OAuth token expired {expiry.isoformat()} and carries no "
-                "refreshToken -- it cannot self-renew. Re-authenticate on the host: "
-                "`sudo -u hermes -H claude`."
-            )
+    if not os.environ.get(CLAUDE_TOKEN_ENV):
+        return (
+            f"{CLAUDE_TOKEN_ENV} is not set. Mint one with "
+            "`sudo -u hermes -H claude setup-token` (valid 1 year) and store it in "
+            "hermes-ops secrets/vps-prod.env.sops.yaml. The cron line sources "
+            "/opt/hermes/.env, which is where it must appear."
+        )
     return None
 
 
@@ -267,7 +254,7 @@ def restore_repo_branch(repo_dir: Path) -> None:
 
 
 def run_docker_sandbox(
-    pr_num: int, repo_dir: Path, memory_dir: Path, credentials_file: Path, gh_token: str
+    pr_num: int, repo_dir: Path, memory_dir: Path, gh_token: str
 ) -> str:
     """Invoke the run_sandboxed_review.sh wrapper script and capture its stdout."""
     script_path = repo_dir / "scripts" / "autopilot" / "run_sandboxed_review.sh"
@@ -283,8 +270,6 @@ def run_docker_sandbox(
         str(memory_dir),
         "--token",
         gh_token,
-        "--creds",
-        str(credentials_file),
     ]
 
     logger.info("Running sandboxed Docker review", pr=pr_num)
@@ -329,12 +314,11 @@ def run_review(
     pr_num: int,
     repo_dir: Path,
     memory_dir: Path,
-    credentials_file: Path,
     gh_token: str,
 ) -> str:
     """Run the configured review engine and return its stdout."""
     if engine == "council-claude":
-        return run_docker_sandbox(pr_num, repo_dir, memory_dir, credentials_file, gh_token)
+        return run_docker_sandbox(pr_num, repo_dir, memory_dir, gh_token)
     raise NotImplementedError(f"engine {engine!r} is reserved but not implemented")
 
 
@@ -343,7 +327,6 @@ def run_triage_cycle(
     repo_dir: Path,
     memory_dir: Path,
     ledger_path: Path,
-    credentials_file: Path,
     gh_token: str,
     engine: str = DEFAULT_ENGINE,
 ) -> None:
@@ -486,7 +469,7 @@ def run_triage_cycle(
                 continue
 
             # Run Stage 1 Pre-eval & Full sandboxed review
-            output = run_review(engine, pr_num, repo_dir, memory_dir, credentials_file, gh_token)
+            output = run_review(engine, pr_num, repo_dir, memory_dir, gh_token)
 
             # Parse verdict & MUST-FIX count
             parsed_verdict, must_fixes = parse_summary_verdict(output)
@@ -591,10 +574,9 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Missing credentials. Requires GH_COMMENT_TOKEN.")
         return 1
 
-    credentials_file = resolve_credentials_file()
-    creds_error = check_oauth_credentials(credentials_file)
-    if creds_error:
-        logger.error("Claude OAuth credentials unusable", reason=creds_error)
+    auth_error = check_claude_auth()
+    if auth_error:
+        logger.error("Claude authentication unusable", reason=auth_error)
         return 1
 
     engine = resolve_engine()
@@ -613,7 +595,7 @@ def main(argv: list[str] | None = None) -> int:
 
     logger.info("PR-Triage Autopilot iteration started", repo=args.repo, engine=engine)
     run_triage_cycle(
-        args.repo, repo_dir, memory_dir, ledger_path, credentials_file, gh_token, engine=engine
+        args.repo, repo_dir, memory_dir, ledger_path, gh_token, engine=engine
     )
     logger.info("PR-Triage Autopilot iteration completed")
     return 0
