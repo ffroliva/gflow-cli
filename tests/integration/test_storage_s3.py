@@ -85,3 +85,53 @@ def test_storage_path_local_fallback_unchanged(tmp_path: Path) -> None:
     assert not is_cloud_path(target)
     assert isinstance(target, Path)
     assert target == tmp_path / "images" / "2026-05-27" / "abc.png"
+
+
+@pytest.mark.asyncio
+async def test_predictable_output_s3_single_file(minio_storage_uri: str, tmp_path: Path) -> None:
+    """Explicit predictable output path written to MinIO S3 bucket with isolated DB."""
+    pytest.importorskip("upath")
+    from gflow_cli.storage import (
+        cloud_info_from_path,
+        is_cloud_path,
+        storage_path,
+        write_asset_async,
+    )
+
+    # Isolated environment: use tmp_path as GFLOW_CLI_HOME so live DB is untouched
+    isolated_home = tmp_path / "isolated_home"
+    isolated_home.mkdir(parents=True, exist_ok=True)
+
+    data = b"\x89PNG\r\n\x1a\n" + b"custom_predictable_s3_data"
+    key = "renders/custom_shot.png"
+    target_upath = storage_path(minio_storage_uri, tmp_path, key)
+
+    assert is_cloud_path(target_upath)
+    await write_asset_async(target_upath, data)
+
+    # Verify bytes written to MinIO S3 bucket match
+    assert target_upath.read_bytes() == data
+
+    # Verify cloud info metadata
+    info = cloud_info_from_path(target_upath)
+    assert info is not None
+    assert info.provider == "s3"
+    assert info.uri.endswith("renders/custom_shot.png")
+
+
+@pytest.mark.asyncio
+async def test_predictable_output_s3_multi_file(minio_storage_uri: str, tmp_path: Path) -> None:
+    """Multi-asset output stem formatting written to MinIO S3 bucket."""
+    pytest.importorskip("upath")
+    from gflow_cli.storage import storage_path, write_asset_async
+
+    base_upath = storage_path(minio_storage_uri, tmp_path, "batch/output.png")
+    # Simulate multi-count index suffixes on UPath stem
+    upath_1 = base_upath.parent / f"{base_upath.stem}_1{base_upath.suffix}"
+    upath_2 = base_upath.parent / f"{base_upath.stem}_2{base_upath.suffix}"
+
+    await write_asset_async(upath_1, b"s3_batch_1")
+    await write_asset_async(upath_2, b"s3_batch_2")
+
+    assert upath_1.read_bytes() == b"s3_batch_1"
+    assert upath_2.read_bytes() == b"s3_batch_2"
