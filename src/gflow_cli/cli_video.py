@@ -1063,14 +1063,20 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     "-i",
     "initial_frame",
     default=None,
-    help="Initial image frame (local file path or a 32-char hex UUID from a prior upload).",
+    help=(
+        "Initial frame to animate: a local file path, or the media UUID of an "
+        "existing in-project asset."
+    ),
 )
 @click.option(
     "--end-frame",
     "-e",
     "end_frame",
     default=None,
-    help="Optional target end frame for start+end interpolation.",
+    help=(
+        "Optional end frame (local path or in-project media UUID) — Flow "
+        "interpolates initial frame -> end frame."
+    ),
 )
 @click.option(
     "--end-image",
