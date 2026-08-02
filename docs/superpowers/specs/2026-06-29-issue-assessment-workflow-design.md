@@ -126,7 +126,7 @@ macOS, v0.22.0: `image t2i` launches a logged-out browser → 401 on `createProj
 
 Confirmed facts about the target runtime (`C:\development\github\hermes-ops`, deployed):
 
-- **VPS:** `REDACTED-HOST` (`the ops VPS`), headless Hetzner Linux. SSH `deploy@REDACTED-HOST` (key-based). hermes-agent v0.16.0 as a systemd unit (`HERMES_HOME=/opt/hermes`); repo at `/opt/hermes-ops` (git-pull deploy: `git fetch && git reset --hard origin/main`).
+- **VPS:** the Compiled Growth ops host, headless Hetzner Linux (address and SSH user are in the private hermes-ops repo, not here — this repo is public). hermes-agent v0.16.0 as a systemd unit (`HERMES_HOME=/opt/hermes`); repo at `/opt/hermes-ops` (git-pull deploy: `git fetch && git reset --hard origin/main`).
 - **GitHub creds:** `GH_TOKEN` already provisioned in SOPS (`secrets/vps-prod.env.sops.yaml`), fine-grained PAT scoped to **gflow-cli `pull_requests:write + contents:write`**. Decrypted by `hermes.service` `ExecStartPre` to `/opt/hermes/.env` (600, owner `hermes`); `gh` reads it automatically.
 - **Knowledge (T1):** git-versioned markdown in `hermes-ops/knowledge/`; update = branch → human review → merge → VPS pulls.
 - **Triggers:** `hermes cron create "<expr>" "<prompt>" --skills … --deliver telegram` (v1); `hermes webhook subscribe --events … --skills … --deliver …` (v2, deferred).

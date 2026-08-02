@@ -253,9 +253,7 @@ def restore_repo_branch(repo_dir: Path) -> None:
     subprocess.run(["git", "checkout", "develop"], cwd=repo_dir, capture_output=True, check=True)
 
 
-def run_docker_sandbox(
-    pr_num: int, repo_dir: Path, memory_dir: Path, gh_token: str
-) -> str:
+def run_docker_sandbox(pr_num: int, repo_dir: Path, memory_dir: Path, gh_token: str) -> str:
     """Invoke the run_sandboxed_review.sh wrapper script and capture its stdout."""
     script_path = repo_dir / "scripts" / "autopilot" / "run_sandboxed_review.sh"
 
@@ -594,9 +592,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     logger.info("PR-Triage Autopilot iteration started", repo=args.repo, engine=engine)
-    run_triage_cycle(
-        args.repo, repo_dir, memory_dir, ledger_path, gh_token, engine=engine
-    )
+    run_triage_cycle(args.repo, repo_dir, memory_dir, ledger_path, gh_token, engine=engine)
     logger.info("PR-Triage Autopilot iteration completed")
     return 0
 
