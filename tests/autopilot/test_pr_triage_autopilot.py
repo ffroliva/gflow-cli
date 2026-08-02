@@ -195,9 +195,7 @@ def test_resolve_engine_rejects_unknown(monkeypatch):
 
 def test_run_review_dispatches_council_claude():
     with patch("pr_triage_autopilot.run_docker_sandbox", return_value="out") as m:
-        out = pr_triage_autopilot.run_review(
-            "council-claude", 1, Path("/r"), Path("/m"), "tok"
-        )
+        out = pr_triage_autopilot.run_review("council-claude", 1, Path("/r"), Path("/m"), "tok")
     assert out == "out"
     m.assert_called_once_with(1, Path("/r"), Path("/m"), "tok")
 
