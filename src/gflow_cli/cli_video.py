@@ -389,9 +389,13 @@ async def _run_i2v(
         resolved_model = I2V_DEFAULT_MODEL
     elif not resolved_model.supports_i2v_interpolation():
         msg = (
-            f"{resolved_model.value!r} does not support image-to-video "
-            f"interpolation; Flow silently drops the start/end frames and "
-            f"produces a text-only video (issue #125)."
+            f"{resolved_model.value!r} is not accepted for i2v: a wire-level "
+            f"capture (issue #125) showed Flow silently dropping the start/end "
+            f"frames and billing the run as text-to-video. Use a Veo 3.1 model "
+            f"(e.g. --model veo-lite), or reference-guided omni-flash via "
+            f"`gflow video r2v`. Flow's official docs now list start-frame i2v "
+            f"for Omni Flash, so this gate is pending a wire-level "
+            f"re-verification of the submit routing."
         )
         raise ModelModeIncompatibilityError(detail=msg)
 
@@ -489,10 +493,13 @@ def _resolve_chain_model(model: str | None) -> VideoModel:
         return I2V_DEFAULT_MODEL
     if not resolved.supports_i2v_interpolation():
         msg = (
-            f"{resolved.value!r} does not support image-to-video interpolation; "
-            f"a chain seeds every link after the first with the previous clip's "
-            f"last frame, and Flow silently drops that frame for this model "
-            f"(issue #125). Use a Veo 3.1 model."
+            f"{resolved.value!r} is not accepted for chains: every link after "
+            f"the first is i2v seeded by the previous clip's last frame, and a "
+            f"wire-level capture (issue #125) showed Flow silently dropping "
+            f"that frame for this model — every seeded link would bill as "
+            f"text-to-video. Use a Veo 3.1 model (e.g. --model veo-lite). "
+            f"Flow's official docs now list start-frame i2v for Omni Flash, so "
+            f"this gate is pending a wire-level re-verification."
         )
         raise ModelModeIncompatibilityError(detail=msg)
     return resolved

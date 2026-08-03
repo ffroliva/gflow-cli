@@ -305,9 +305,9 @@ class TestWaitVideoEditorReady:
 
 class TestSetOutputCountOne:
     @pytest.mark.asyncio
-    async def test_clicks_the_count_one_tab(self) -> None:
-
-        sel = "[role='tab']:text-is('1x')"  # _set_output_count(1) probes the '1x' label
+    async def test_clicks_the_legacy_count_one_tab(self) -> None:
+        # Legacy cohort: the pre-#404 '1x' label is still probed as a fallback.
+        sel = "[role='tab']:text-is('1x')"
         page = _cascade_page({sel})
         await VideoGenerationMixin._set_output_count_one(page)
         page.locator.assert_any_call(sel)
@@ -322,9 +322,26 @@ class TestSetOutputCountOne:
         page.locator.assert_any_call(sel)
 
     @pytest.mark.asyncio
-    async def test_missing_count_tab_is_non_fatal(self) -> None:
+    async def test_missing_count_tab_raises_drift_error(self) -> None:
+        # Count is a credit multiplier: every request carries a definite 1-4
+        # value, and Flow's sticky default (x2) silently doubles spend for
+        # count=1 — so a probe miss must refuse pre-submit, exactly like the
+        # duration probe (#288), not proceed on the default.
         page = _cascade_page(set())
-        await VideoGenerationMixin._set_output_count_one(page)  # must not raise
+        with pytest.raises(UiSelectorDriftError) as exc_info:
+            await VideoGenerationMixin._set_output_count_one(page)
+        msg = str(exc_info.value)
+        assert "count=1" in msg
+        assert "bills" in msg  # the refusal explains the billing consequence
+        assert "Screenshot:" not in msg  # no out_dir -> no screenshot clause
+
+    @pytest.mark.asyncio
+    async def test_missing_count_tab_captures_screenshot(self, tmp_path: Path) -> None:
+        page = _cascade_page(set())
+        with pytest.raises(UiSelectorDriftError) as exc_info:
+            await VideoGenerationMixin._set_output_count(page, 1, out_dir=tmp_path)
+        assert "Screenshot:" in str(exc_info.value)
+        page.screenshot.assert_awaited()
 
 
 class TestSelectVideoModel:
@@ -397,6 +414,16 @@ class TestSetOutputCount:
     @pytest.mark.asyncio
     async def test_clicks_the_count_n_tab(self) -> None:
         sel = "[role='tab']:text-is('x3')"
+        page = _cascade_page({sel})
+        await VideoGenerationMixin._set_output_count(page, 3)
+        page.locator.assert_any_call(sel)
+
+    @pytest.mark.asyncio
+    async def test_legacy_affix_fallback_for_count_n(self) -> None:
+        # Affix-agnostic matching: if Flow flips the label back to '3x' (the
+        # #404 rename class), the digit-keyed fallback finds it with no code
+        # change instead of refusing.
+        sel = "[role='tab']:text-is('3x')"
         page = _cascade_page({sel})
         await VideoGenerationMixin._set_output_count(page, 3)
         page.locator.assert_any_call(sel)
