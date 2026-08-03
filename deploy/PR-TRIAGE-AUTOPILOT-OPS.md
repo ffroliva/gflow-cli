@@ -10,7 +10,7 @@ The autopilot orchestrator (`scripts/autopilot/pr_triage_autopilot.py`) runs as 
 
 | Variable | Scope | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Autopilot orchestrator & sandbox | Mints the Claude agent tokens to execute the council review. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Autopilot orchestrator & sandbox | Claude **subscription** token from `claude setup-token`, valid **1 year**. This deployment has no `ANTHROPIC_API_KEY`. Passed into the container as an env var. **Not** `~/.claude/.credentials.json` — `setup-token` does not write that file. |
 | `GH_COMMENT_TOKEN` | Autopilot orchestrator (host) | The comment-only GitHub PAT used to post verdicts and reviews to `ffroliva/gflow-cli` PRs. |
 | `TELEGRAM_BOT_TOKEN` | Autopilot orchestrator (host) | Bot token to dispatch alert messages. |
 | `TELEGRAM_USER_ID` | Autopilot orchestrator (host) | The chat ID to receive triage alert messages. |
@@ -51,10 +51,30 @@ Ensure `iptables` is installed on the host VPS. If `iptables` permissions are wi
 Configure a cron job checking every hour on the hour under the `hermes` system user:
 
 ```cron
-0 * * * * set -a; . /opt/hermes/.env 2>/dev/null; set +a; export ANTHROPIC_API_KEY="xxx" && export GH_COMMENT_TOKEN="xxx" && export TELEGRAM_BOT_TOKEN="xxx" && export TELEGRAM_USER_ID="xxx" && cd /opt/gflow-cli && uv run python scripts/autopilot/pr_triage_autopilot.py --repo-dir /opt/gflow-cli --memory-dir /opt/experience-vault/projects/C--development-github-gflow-cli/memory >> /var/log/hermes/pr_triage.log 2>&1
+0 * * * * set -a; . /opt/hermes/.env 2>/dev/null; set +a; cd /opt/gflow-cli && uv run python scripts/autopilot/pr_triage_autopilot.py --repo-dir /opt/gflow-cli --memory-dir /opt/experience-vault/projects/C--development-github-gflow-cli/memory >> /var/log/hermes/pr_triage.log 2>&1
 ```
 
-Sourcing `/opt/hermes/.env` first (`set -a` exports everything it defines) is what delivers the `RESEND_API_KEY` / `HERMES_NOTIFY_EMAIL_*` vars to the process so the email channel works; without it the run still succeeds but emails are silently disabled.
+Sourcing `/opt/hermes/.env` first (`set -a` exports everything it defines) is what delivers `GH_COMMENT_TOKEN`, `TELEGRAM_*`, and the `RESEND_API_KEY` / `HERMES_NOTIFY_EMAIL_*` vars to the process. Without it the email channel silently disables itself, and without `GH_COMMENT_TOKEN` the run exits 1.
+
+> **`.env` must stay bash-sourceable.** This line sources the file, so any value containing spaces or shell metacharacters has to be quoted in the SOPS store. systemd's `EnvironmentFile` parser is more permissive than bash and will not warn you: an unquoted `HERMES_NOTIFY_EMAIL_FROM=Hermes Ops <noreply@...>` broke exactly this line on 2026-08-02 (`<` is a redirect), silently dropping every variable defined after it. Fixed in hermes-ops by quoting the value.
+
+### Claude authentication (subscription token, no API key)
+
+The council review runs `claude -p` inside the sandbox, authenticated by `CLAUDE_CODE_OAUTH_TOKEN` — the subscription token minted by `claude setup-token`, **valid 1 year**. It is stored in hermes-ops `secrets/vps-prod.env.sops.yaml`, rendered into `/opt/hermes/.env`, and reaches the process because the cron line sources that file. The orchestrator checks it is set before building the image, so a missing token fails in a second rather than as an opaque 401 minutes into a container run.
+
+> **It is not `~/.claude/.credentials.json`.** `setup-token` does not write that file — verified on the ops VPS 2026-08-02, where it still held the expired 2026-07-16 interactive-login token after a successful mint. Reading the file would authenticate with a dead credential. The two are separate mechanisms.
+
+**Rotation — the one real operational dependency.** The token is a static bearer value with **no refresh pair**: it cannot self-renew, and nothing in the API surface reports its age. The previous interactive token 401'd silently for 16 days. Rotate before the 1-year mark:
+
+```bash
+sudo -u hermes -H claude setup-token          # prints the token ONCE
+# store it in hermes-ops secrets/vps-prod.env.sops.yaml as CLAUDE_CODE_OAUTH_TOKEN
+sudo -u hermes -H bash -c 'set -a; . /opt/hermes/.env; set +a; claude -p "say OK"'   # verify
+```
+
+The daily `ev-ops-health` Telegram digest carries the expiry countdown; treat that warning as the rotation trigger.
+
+**Accepted risk (operator, 2026-08-02):** the token grants inference on the whole subscription and is injected into a container that reviews untrusted external PRs. Its scope is `user:inference` only — narrower than the five scopes an interactive login carries — and the §3 egress firewall is the compensating control. Accepted because no API key exists for this account.
 
 ### Deploy mechanism (warning)
 

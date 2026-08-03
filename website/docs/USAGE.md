@@ -489,15 +489,27 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > current UI default), `--duration [4|6|8|10]` (10 requires `--model omni-flash`),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
+> `--count` is enforced **fail-closed**: if Flow's count control cannot be
+> located (selector drift), the run refuses with exit 23 *before* submitting
+> instead of proceeding on Flow's sticky default (typically x2) and silently
+> changing what the run bills.
 > `t2v` and `i2v` (not `r2v`) additionally take `-o, --output PATH` (explicit file destination).
 > The mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
 >
-> **`i2v` is narrower (issue #125):** `omni-flash` does NOT support image-to-video
-> interpolation — Flow silently drops the start/end frames and produces a
-> text-only video — so it is **not** an accepted `--model` for `i2v`. The `i2v`
-> choices are `[veo-lite|veo-fast|veo-quality|veo-lite-lp]` and the **default is
-> `veo-lite`** (not Flow's UI default). `--duration` for `i2v` is `[4|6|8]` (10s
-> is omni-flash-only). `t2v` and `r2v` keep the full shared set above.
+> **`i2v` model rules (issue #125, re-verified 2026-08-03):** every model —
+> `omni-flash` included — supports **start-frame** i2v; the **default is
+> `veo-lite`** (not Flow's UI default). `--model omni-flash` unlocks
+> `--duration 10` for i2v. The **end frame is narrower**: `--end-frame`
+> (first+last interpolation) requires a Veo 3.1 model — Flow's official
+> support matrix lists first+last as "coming soon" for Omni Flash, and gflow
+> rejects that combination up front (exit 17).
+> History: omni-flash was excluded from i2v entirely after a 2026-05-30 wire
+> capture showed Flow silently dropping the frames and billing the run as
+> text-to-video. A 2026-08-03 route-aborted re-capture
+> (`scripts/dev/capture_i2v_intercept_submit.py --model omni-flash
+> --start-only`) proved Flow now routes omni + start frame to
+> `batchAsyncGenerateVideoStartImage` with the frame bound, and a live x1
+> 10s generation confirmed the output interpolates from the start frame.
 
 ## `gflow video t2v`
 
@@ -685,12 +697,13 @@ Options:
   --json                    Emit a machine-readable JSON result.
 ```
 
-> **`omni-flash` is rejected.** Only the Veo 3.1 family supports i2v
-> interpolation. `omni-flash` silently drops the seed frame and routes to
-> text-to-video (issue #125), which would break every seeded link, so it is not
-> an accepted `--model` for `chain`. The chain also aborts a link loudly (rather
-> than reporting a fake success) if a generation is observed routing to the
-> text-only endpoint — see [KNOWN_ISSUES](../KNOWN_ISSUES.md).
+> **`omni-flash` is rejected for chains.** Its single-clip start-frame i2v is
+> wire-verified (2026-08-03, issue #125), but a chain renders N seeded links
+> back-to-back and that has not been verified at chain scale — so `chain` stays
+> on the Veo 3.1 family pending a chain-scale verification. The chain also
+> aborts a link loudly (rather than reporting a fake success) if a generation
+> is observed routing to the text-only endpoint — see
+> [KNOWN_ISSUES](../KNOWN_ISSUES.md).
 
 ### JSONL manifest format
 
@@ -1305,7 +1318,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `6`  | `NetworkError`        | Network failure persisted across 3 attempts      | Check connectivity                                         |
 | `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed     | File a bug (do NOT include captured tokens or signed URLs) |
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
-| `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287) | Retry; raise the relevant timeout — or, for a frame-UUID miss, verify the UUID belongs to the `--project` passed |
+| `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287; or a wedged submission stage — the error names the stage and your Playwright version) | Retry; raise the relevant timeout — for a frame-UUID miss verify the UUID belongs to the `--project` passed; for a `stage_stalled` abort check your Playwright is in range (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
 | `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |
 | `11` | `ConfigurationError`  | Local configuration or browser mode is invalid — includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile) | Fix the option/env var shown in the error, or wait / use a different `--profile` for lease contention |
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
@@ -1313,7 +1326,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
 | `15` | `BrowserSessionClosedError` | The automation browser window was closed mid-operation | Re-run; keep the browser window open until the command finishes |
 | `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
-| `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode (e.g. `--model omni-flash` with an `i2v` start/end frame — issue #125) | Use `--model veo-lite` (or veo-fast / veo-quality / veo-lite-lp) for `i2v` |
+| `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode (e.g. `--model omni-flash` with `--end-frame`, or `omni-flash` for `chain` — issue #125) | omni-flash does start-frame `i2v` only: drop `--end-frame`, or use a Veo 3.1 model (`veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`) for first+last and for `chain` |
 | `18` | `VideoModelSelectionError` | gflow could not select the requested video model in Flow's editor for an `i2v` run (model-picker option not found) | Usually transient — retry; if it persists, Flow's model-picker UI changed (report referencing #125) |
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --output`) | Retry; the recorded compose survives, so re-render is safe |
 | `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |

@@ -34,6 +34,40 @@ LOCK_FILE_PATH = "/tmp/pr_triage_autopilot.lock"
 SUPPORTED_ENGINES = ("council-claude",)
 DEFAULT_ENGINE = SUPPORTED_ENGINES[0]
 
+# Claude auth is the SUBSCRIPTION token minted by `claude setup-token`, read
+# from CLAUDE_CODE_OAUTH_TOKEN. This deployment has no ANTHROPIC_API_KEY
+# (operator decision, 2026-08-02).
+#
+# NOT ~/.claude/.credentials.json: `setup-token` does not write that file.
+# Verified on the ops VPS 2026-08-02 -- after a successful mint it still held the
+# expired 2026-07-16 interactive-login token. Reading the file would silently
+# authenticate with a dead credential.
+#
+# The token is a static 1-year bearer value with no refresh pair, so there is
+# nothing to validate locally beyond presence: no expiry is encoded in it. That
+# makes the rotation reminder (hermes-ops ev-ops-health digest) the only thing
+# standing between a lapse and a silent outage -- the 2026-07-16 token 401'd for
+# 16 days with nothing reporting it.
+CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
+
+
+def check_claude_auth() -> str | None:
+    """Return an error string when Claude auth is unusable, else None.
+
+    Checked on the HOST before building the image and starting a container: a
+    missing token otherwise surfaces as an opaque 401 several minutes into a
+    sandboxed run.
+    """
+    if not os.environ.get(CLAUDE_TOKEN_ENV):
+        return (
+            f"{CLAUDE_TOKEN_ENV} is not set. Mint one with "
+            "`sudo -u hermes -H claude setup-token` (valid 1 year) and store it in "
+            "hermes-ops secrets/vps-prod.env.sops.yaml. The cron line sources "
+            "/opt/hermes/.env, which is where it must appear."
+        )
+    return None
+
+
 # Verdict allowlist: container stdout is untrusted, so anything outside this
 # set is treated as unparseable (None) rather than interpolated downstream.
 VALID_VERDICTS = ("GREEN", "YELLOW", "RED")
@@ -219,9 +253,7 @@ def restore_repo_branch(repo_dir: Path) -> None:
     subprocess.run(["git", "checkout", "develop"], cwd=repo_dir, capture_output=True, check=True)
 
 
-def run_docker_sandbox(
-    pr_num: int, repo_dir: Path, memory_dir: Path, anthropic_key: str, gh_token: str
-) -> str:
+def run_docker_sandbox(pr_num: int, repo_dir: Path, memory_dir: Path, gh_token: str) -> str:
     """Invoke the run_sandboxed_review.sh wrapper script and capture its stdout."""
     script_path = repo_dir / "scripts" / "autopilot" / "run_sandboxed_review.sh"
 
@@ -236,8 +268,6 @@ def run_docker_sandbox(
         str(memory_dir),
         "--token",
         gh_token,
-        "--key",
-        anthropic_key,
     ]
 
     logger.info("Running sandboxed Docker review", pr=pr_num)
@@ -282,12 +312,11 @@ def run_review(
     pr_num: int,
     repo_dir: Path,
     memory_dir: Path,
-    anthropic_key: str,
     gh_token: str,
 ) -> str:
     """Run the configured review engine and return its stdout."""
     if engine == "council-claude":
-        return run_docker_sandbox(pr_num, repo_dir, memory_dir, anthropic_key, gh_token)
+        return run_docker_sandbox(pr_num, repo_dir, memory_dir, gh_token)
     raise NotImplementedError(f"engine {engine!r} is reserved but not implemented")
 
 
@@ -296,7 +325,6 @@ def run_triage_cycle(
     repo_dir: Path,
     memory_dir: Path,
     ledger_path: Path,
-    anthropic_key: str,
     gh_token: str,
     engine: str = DEFAULT_ENGINE,
 ) -> None:
@@ -439,7 +467,7 @@ def run_triage_cycle(
                 continue
 
             # Run Stage 1 Pre-eval & Full sandboxed review
-            output = run_review(engine, pr_num, repo_dir, memory_dir, anthropic_key, gh_token)
+            output = run_review(engine, pr_num, repo_dir, memory_dir, gh_token)
 
             # Parse verdict & MUST-FIX count
             parsed_verdict, must_fixes = parse_summary_verdict(output)
@@ -539,11 +567,14 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     # Validate required credentials
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
     gh_token = os.environ.get("GH_COMMENT_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not gh_token:
+        logger.error("Missing credentials. Requires GH_COMMENT_TOKEN.")
+        return 1
 
-    if not anthropic_key or not gh_token:
-        logger.error("Missing credentials. Requires ANTHROPIC_API_KEY and GH_COMMENT_TOKEN.")
+    auth_error = check_claude_auth()
+    if auth_error:
+        logger.error("Claude authentication unusable", reason=auth_error)
         return 1
 
     engine = resolve_engine()
@@ -561,9 +592,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     logger.info("PR-Triage Autopilot iteration started", repo=args.repo, engine=engine)
-    run_triage_cycle(
-        args.repo, repo_dir, memory_dir, ledger_path, anthropic_key, gh_token, engine=engine
-    )
+    run_triage_cycle(args.repo, repo_dir, memory_dir, ledger_path, gh_token, engine=engine)
     logger.info("PR-Triage Autopilot iteration completed")
     return 0
 

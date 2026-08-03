@@ -379,19 +379,24 @@ async def _run_i2v(
     )
     from gflow_cli.errors import ModelModeIncompatibilityError
 
-    # Resolve the model with i2v-specific defaulting + validation. The Click
-    # Choice already excludes omni-flash, but a stale `--config` JSON or a
-    # direct programmatic call can still smuggle it in. omni-flash silently
-    # drops the start/end frames at submit and routes to T2V (issue #125), so
-    # reject it here before any paid call.
+    # Resolve the model with i2v-specific defaulting + validation, BEFORE any
+    # paid call. Start-frame i2v is supported by every current model (omni
+    # included — re-verified on the wire 2026-08-03, refs #125). The END frame
+    # is narrower: Flow lists first+last as "coming soon" for omni-flash and
+    # there is no wire proof for it, so reject that combination up front — a
+    # stale `--config` JSON or direct programmatic call can smuggle it past
+    # the Click Choice.
     resolved_model = VideoModel.from_cli(params.model)
     if resolved_model is None:
         resolved_model = I2V_DEFAULT_MODEL
-    elif not resolved_model.supports_i2v_interpolation():
+    has_end_frame = params.end_frame is not None or params.end_frame_ref_id is not None
+    if has_end_frame and not resolved_model.supports_i2v_end_frame():
         msg = (
-            f"{resolved_model.value!r} does not support image-to-video "
-            f"interpolation; Flow silently drops the start/end frames and "
-            f"produces a text-only video (issue #125)."
+            f"{resolved_model.value!r} does not support an END frame "
+            f"(first+last interpolation): Flow's official support matrix lists "
+            f"it as 'coming soon' for this model and gflow has no wire-level "
+            f"proof of the StartAndEndImage route for it (refs #125). Drop "
+            f"--end-frame, or use a Veo 3.1 model (e.g. --model veo-lite)."
         )
         raise ModelModeIncompatibilityError(detail=msg)
 
@@ -474,12 +479,12 @@ def _resolve_chain_model(model: str | None) -> VideoModel:
     """Resolve + validate the chain-level ``--model`` BEFORE any spend.
 
     A chain renders link 0 as T2V and every later link as I2V seeded by the
-    previous clip's last frame, so the model MUST support i2v interpolation.
-    ``omni-flash`` silently drops the start frame at submit and routes to T2V
-    (issue #125), which would break continuity and could consume credits — so
-    reject it at the CLI boundary with ``ModelModeIncompatibilityError`` (exit
-    17). The Click ``Choice`` already excludes ``omni-flash``; this guard also
-    covers a direct programmatic call or a future alias.
+    previous clip's last frame. Chains stay on the Veo 3.1 models:
+    ``omni-flash`` start-frame i2v is wire-verified for a single generation
+    (2026-08-03, refs #125) but not at chain scale, so it is still rejected
+    at the CLI boundary with ``ModelModeIncompatibilityError`` (exit 17). The
+    Click ``Choice`` already excludes ``omni-flash``; this guard also covers a
+    direct programmatic call or a future alias.
     """
     from gflow_cli.api.video import I2V_DEFAULT_MODEL
     from gflow_cli.errors import ModelModeIncompatibilityError
@@ -487,12 +492,14 @@ def _resolve_chain_model(model: str | None) -> VideoModel:
     resolved = VideoModel.from_cli(model)
     if resolved is None:
         return I2V_DEFAULT_MODEL
-    if not resolved.supports_i2v_interpolation():
+    if resolved is VideoModel.OMNI_FLASH:
         msg = (
-            f"{resolved.value!r} does not support image-to-video interpolation; "
-            f"a chain seeds every link after the first with the previous clip's "
-            f"last frame, and Flow silently drops that frame for this model "
-            f"(issue #125). Use a Veo 3.1 model."
+            f"{resolved.value!r} is not accepted for chains. Chains render N "
+            f"seeded i2v links back-to-back; omni-flash start-frame i2v was "
+            f"wire-verified for a single generation on 2026-08-03 (refs #125) "
+            f"but has not been proven at chain scale, so chains stay on the "
+            f"long-verified Veo 3.1 models (e.g. --model veo-lite). Single "
+            f"clips: `gflow video i2v --model omni-flash` is available."
         )
         raise ModelModeIncompatibilityError(detail=msg)
     return resolved
@@ -1112,21 +1119,25 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
 @click.option(
     "--model",
     default=None,
-    type=click.Choice(["veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
-    help="Veo model. Defaults to veo-lite (cheapest model; omni-flash excluded).",
+    type=click.Choice(["omni-flash", "veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
+    help=(
+        "Video model. Defaults to veo-lite (cheapest). omni-flash supports the "
+        "start frame only (--end-frame requires a Veo 3.1 model) and unlocks "
+        "--duration 10."
+    ),
 )
 @click.option(
     "--duration",
     default=None,
-    type=click.Choice(["4", "6", "8"]),
-    help="Clip length in seconds (4, 6, or 8; omni-flash-only 10s is unavailable for i2v).",
+    type=click.Choice(["4", "6", "8", "10"]),
+    help="Clip length in seconds. 10 requires --model omni-flash.",
 )
 @click.option(
     "--count",
     default=1,
     show_default=True,
     type=click.IntRange(1, 4),
-    help="How many videos to generate (1-4).",
+    help="How many videos to generate (1-4; >1 multiplies credit cost).",
 )
 @_shared_gen_tail_options
 def i2v(  # NOSONAR
@@ -1347,8 +1358,8 @@ def r2v(
         "varies by model, duration, account tier, and Flow policy; check Google "
         "Flow before submitting. Use --dry-run first to print the plan without "
         "submitting anything.\n\n"
-        "Only Veo 3.1 models are accepted (omni-flash silently drops the seed "
-        "frame and routes to text-to-video, issue #125). The MANIFEST is a JSONL "
+        "Only Veo 3.1 models are accepted (omni-flash is single-clip only for "
+        "now — not proven at chain scale, refs #125). The MANIFEST is a JSONL "
         'file: one JSON object per line, each with a required "prompt" and '
         'optional "model"/"duration"/"aspect" overrides.\n\n'
         "Each link is saved as its own mp4. Stitching the clips into a single "
@@ -1365,11 +1376,11 @@ def r2v(
     "--model",
     default="veo-lite",
     show_default=True,
-    # omni-flash is intentionally absent: it does not support i2v interpolation
-    # and silently routes to T2V (issue #125), which would break every seeded
-    # link in the chain. Use a Veo 3.1 model.
+    # omni-flash is intentionally absent: single-clip start-frame i2v was
+    # wire-verified 2026-08-03 (refs #125), but chains render N seeded links
+    # back-to-back and stay on the long-verified Veo 3.1 models for now.
     type=click.Choice(["veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
-    help="Veo 3.1 model for every link. omni-flash is rejected (no i2v seeding).",
+    help="Veo 3.1 model for every link. omni-flash is rejected (single-clip i2v only).",
 )
 @click.option(
     "--max-links",

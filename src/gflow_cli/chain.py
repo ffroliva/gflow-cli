@@ -16,8 +16,9 @@ Key invariants:
 
 * **Concurrency = 1.** Links run strictly sequentially; each I2V link depends on
   the previous link's output, so there is nothing to parallelise.
-* **Reject-up-front.** A model that cannot do i2v interpolation (``omni_flash``)
-  is rejected with :class:`ModelModeIncompatibilityError` BEFORE any spend.
+* **Reject-up-front.** A model chains cannot use (``omni_flash`` — single-clip
+  start-frame i2v only, not proven at chain scale; refs #125) is rejected with
+  :class:`ModelModeIncompatibilityError` BEFORE any spend.
 * **Record-before-extract.** Once a link's clip is downloaded, the recorder is
   invoked BEFORE the frame extractor runs. A crash in the download->extract gap
   resumes at extraction, never re-generates the (already paid-for) clip.
@@ -314,15 +315,18 @@ async def run_chain(
         One :class:`ChainLinkResult` per link, in order.
 
     Raises:
-        ModelModeIncompatibilityError: ``model`` cannot do i2v interpolation.
+        ModelModeIncompatibilityError: ``model`` is not accepted for chains
+            (``omni_flash`` — single-clip start-frame i2v only, refs #125).
         ChainPartialError: A link failed with a ``WireFormatError`` (i2v routed
             to the t2v backstop) or ``WafRejectionError`` (403). Carries the
             ``Path`` of every link completed before the failure.
     """
-    if not model.supports_i2v_interpolation():
+    if model is VideoModel.OMNI_FLASH:
         msg = (
-            f"model {model.value!r} does not support i2v interpolation; a chain "
-            f"needs start-frame seeding for every link after the first"
+            f"model {model.value!r} is not supported for chains: a chain "
+            f"renders N seeded i2v links back-to-back, and omni_flash "
+            f"start-frame i2v is wire-verified for single generations only "
+            f"(2026-08-03, refs #125). Use a Veo 3.1 model."
         )
         raise ModelModeIncompatibilityError(msg)
 

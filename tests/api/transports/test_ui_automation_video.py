@@ -7,7 +7,7 @@ import itertools
 import json
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
@@ -304,12 +304,14 @@ class TestWaitVideoEditorReady:
 
 
 class TestSetOutputCountOne:
-    @pytest.mark.asyncio
-    async def test_clicks_the_count_one_tab(self) -> None:
+    """Count=1 path of `_set_output_count` (the count most sensitive to #404)."""
 
-        sel = "[role='tab']:text-is('1x')"  # _set_output_count(1) probes the '1x' label
+    @pytest.mark.asyncio
+    async def test_clicks_the_legacy_count_one_tab(self) -> None:
+        # Legacy cohort: the pre-#404 '1x' label is still probed as a fallback.
+        sel = "[role='tab']:text-is('1x')"
         page = _cascade_page({sel})
-        await VideoGenerationMixin._set_output_count_one(page)
+        await VideoGenerationMixin._set_output_count(page, 1)
         page.locator.assert_any_call(sel)
 
     @pytest.mark.asyncio
@@ -318,13 +320,30 @@ class TestSetOutputCountOne:
         must probe BOTH label cohorts before declaring a miss."""
         sel = "[role='tab']:text-is('x1')"
         page = _cascade_page({sel})
-        await VideoGenerationMixin._set_output_count_one(page)
+        await VideoGenerationMixin._set_output_count(page, 1)
         page.locator.assert_any_call(sel)
 
     @pytest.mark.asyncio
-    async def test_missing_count_tab_is_non_fatal(self) -> None:
+    async def test_missing_count_tab_raises_drift_error(self) -> None:
+        # Count is a credit multiplier: every request carries a definite 1-4
+        # value, and Flow's sticky default (x2) silently doubles spend for
+        # count=1 — so a probe miss must refuse pre-submit, exactly like the
+        # duration probe (#288), not proceed on the default.
         page = _cascade_page(set())
-        await VideoGenerationMixin._set_output_count_one(page)  # must not raise
+        with pytest.raises(UiSelectorDriftError) as exc_info:
+            await VideoGenerationMixin._set_output_count(page, 1)
+        msg = str(exc_info.value)
+        assert "count=1" in msg
+        assert "bills" in msg  # the refusal explains the billing consequence
+        assert "Screenshot:" not in msg  # no out_dir -> no screenshot clause
+
+    @pytest.mark.asyncio
+    async def test_missing_count_tab_captures_screenshot(self, tmp_path: Path) -> None:
+        page = _cascade_page(set())
+        with pytest.raises(UiSelectorDriftError) as exc_info:
+            await VideoGenerationMixin._set_output_count(page, 1, out_dir=tmp_path)
+        assert "Screenshot:" in str(exc_info.value)
+        page.screenshot.assert_awaited()
 
 
 class TestSelectVideoModel:
@@ -393,10 +412,99 @@ class TestSelectVideoDuration:
         page.screenshot.assert_awaited()
 
 
+class TestRunStage:
+    """`_run_stage` converts a wedged UI stage into a fast, named error.
+
+    The bug: `gflow video i2v` hung SILENTLY after `frame_attached` — browser
+    alive, no error, no further log line — because a Playwright call stopped
+    honouring its own per-probe deadline, so no inner timeout ever fired.
+    """
+
+    @pytest.mark.asyncio
+    async def test_passes_through_result_when_fast(self) -> None:
+        page = _cascade_page(set())
+
+        async def _work() -> str:
+            return "ok"
+
+        got = await VideoGenerationMixin._run_stage(
+            _work(), stage="send_prompt", page=page, out_dir=None, timeout_s=5.0
+        )
+        assert got == "ok"
+
+    @pytest.mark.asyncio
+    async def test_stalled_stage_raises_named_transport_timeout(self) -> None:
+        page = _cascade_page(set())
+
+        async def _hang() -> None:
+            await asyncio.sleep(10)
+
+        with pytest.raises(TransportTimeoutError) as exc_info:
+            await VideoGenerationMixin._run_stage(
+                _hang(), stage="send_prompt", page=page, out_dir=None, timeout_s=0.05
+            )
+        msg = str(exc_info.value)
+        assert "send_prompt" in msg  # names the stage that owns the wait
+        assert "no credit was spent" in msg  # nothing was submitted
+
+    @pytest.mark.asyncio
+    async def test_stall_screenshot_hang_does_not_re_hang(self, tmp_path: Path) -> None:
+        """The page is wedged by definition, so an unbounded capture would
+        re-hang the very path meant to end the hang — it must stay bounded."""
+        page = _cascade_page(set())
+
+        async def _never_returns(**_k: object) -> None:
+            await asyncio.sleep(30)
+
+        page.screenshot = AsyncMock(side_effect=_never_returns)
+
+        async def _hang() -> None:
+            await asyncio.sleep(10)
+
+        from gflow_cli.api.transports import ui_automation_video as mod
+
+        with patch.object(mod, "STAGE_TIMEOUT_SHOT_S", 0.05):
+            with pytest.raises(TransportTimeoutError):
+                await VideoGenerationMixin._run_stage(
+                    _hang(), stage="send_prompt", page=page, out_dir=tmp_path, timeout_s=0.05
+                )
+
+    @pytest.mark.asyncio
+    async def test_stall_emits_diagnosable_event(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        page = _cascade_page(set())
+
+        async def _hang() -> None:
+            await asyncio.sleep(10)
+
+        with pytest.raises(TransportTimeoutError):
+            await VideoGenerationMixin._run_stage(
+                _hang(), stage="send_prompt", page=page, out_dir=None, timeout_s=0.05
+            )
+        events = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.stage_stalled"
+        ]
+        assert len(events) == 1
+        assert events[0]["stage"] == "send_prompt"
+
+
 class TestSetOutputCount:
     @pytest.mark.asyncio
     async def test_clicks_the_count_n_tab(self) -> None:
         sel = "[role='tab']:text-is('x3')"
+        page = _cascade_page({sel})
+        await VideoGenerationMixin._set_output_count(page, 3)
+        page.locator.assert_any_call(sel)
+
+    @pytest.mark.asyncio
+    async def test_legacy_affix_fallback_for_count_n(self) -> None:
+        # Affix-agnostic matching: if Flow flips the label back to '3x' (the
+        # #404 rename class), the digit-keyed fallback finds it with no code
+        # change instead of refusing.
+        sel = "[role='tab']:text-is('3x')"
         page = _cascade_page({sel})
         await VideoGenerationMixin._set_output_count(page, 3)
         page.locator.assert_any_call(sel)
@@ -439,7 +547,6 @@ def _stub_video_helpers(monkeypatch: pytest.MonkeyPatch, *, generate_resp: dict)
     monkeypatch.setattr(VideoGenerationMixin, "_wait_video_editor_ready", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_switch_to_video_mode", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_set_output_count", AsyncMock())
-    monkeypatch.setattr(VideoGenerationMixin, "_set_output_count_one", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_select_video_model", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_select_video_duration", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_select_video_aspect", AsyncMock())
@@ -471,8 +578,10 @@ class TestGenerateVideoGuards:
         monkeypatch: pytest.MonkeyPatch,
         install_log_capture: structlog.testing.LogCapture,
     ) -> None:
-        """Issue #125: omni-flash + i2v must raise ModelModeIncompatibilityError
-        BEFORE any DOM interaction, and emit `model_mode_rejected`."""
+        """Issue #125: omni-flash + i2v with an END frame must raise
+        ModelModeIncompatibilityError BEFORE any DOM interaction, and emit
+        `model_mode_rejected` — first+last is "coming soon" for omni-flash
+        per Flow's support matrix, with no wire proof of the route."""
         from gflow_cli.api.video import VideoModel
         from gflow_cli.errors import ModelModeIncompatibilityError
 
@@ -510,29 +619,45 @@ class TestGenerateVideoGuards:
         assert evt["issue_ref"] == "#125"
 
     @pytest.mark.asyncio
-    async def test_i2v_start_only_with_omni_flash_also_raises(
+    async def test_i2v_start_only_with_omni_flash_proceeds(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """omni-flash is rejected for start-only i2v too (probe v5 evidence)."""
+        """Start-only i2v with omni-flash is ACCEPTED: the 2026-08-03
+        route-aborted re-capture (refs #125) proved Flow now routes it to the
+        StartImage endpoint with the frame bound."""
         from gflow_cli.api.video import VideoModel
-        from gflow_cli.errors import ModelModeIncompatibilityError
 
         transport = UiAutomationTransport()
         transport._page = _mock_async_page()
         transport._setup_done = True
-        monkeypatch.setattr(
-            transport,
-            "_enter_editor",
-            AsyncMock(side_effect=AssertionError("guard must fire first")),
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
+        _stub_video_helpers(
+            monkeypatch,
+            generate_resp={
+                "status": 200,
+                "url": _I2V_START_URL,
+                "body": {"media": [{"name": "v"}]},
+            },
         )
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_poll_video_status",
+            AsyncMock(
+                return_value=VideoStatus(media_id="v", status="MEDIA_GENERATION_STATUS_SUCCESSFUL")
+            ),
+        )
+        monkeypatch.setattr(transport, "_download_video", AsyncMock(return_value=Path("v.mp4")))
         req = GenerateVideoRequest(
             prompt="rise up",
             mode=Mode.I2V,
             model=VideoModel.OMNI_FLASH,
             start_image=Path("a.png"),
         )
-        with pytest.raises(ModelModeIncompatibilityError):
-            await transport.generate_video(request=req, download=False)
+        # Must NOT raise — and the frame attach must be reached.
+        await transport.generate_video(request=req, download=False)
+        VideoGenerationMixin._attach_frame.assert_awaited()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_t2v_with_omni_flash_does_not_raise(

@@ -93,10 +93,10 @@ def _model() -> VideoModel:
     model = VideoModel.from_cli(raw)
     if model is None:
         pytest.skip(f"{_E2E_MODEL_ENV}={raw!r} is not a known video model alias")
-    if not model.supports_i2v_interpolation():
+    if model is VideoModel.OMNI_FLASH:
         pytest.skip(
-            f"{_E2E_MODEL_ENV}={raw!r} cannot seed i2v chain links; "
-            "use veo-lite / veo-fast / veo-quality / veo-lite-lp"
+            f"{_E2E_MODEL_ENV}={raw!r} is single-clip start-frame i2v only — "
+            "chains use veo-lite / veo-fast / veo-quality / veo-lite-lp"
         )
     return model
 

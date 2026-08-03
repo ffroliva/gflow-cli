@@ -14,6 +14,38 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### An out-of-range Playwright silently wedges video generation
+
+- **Status:** Mitigated (v0.49.0 — upper-bounded dependency + fail-fast watchdog)
+- **Severity:** High (silent, multi-minute, indistinguishable from slowness) · **Affected:** any install that resolved a Playwright outside the tested range — most often `uv tool install <path>` from a local checkout
+
+`uv tool install <path>` **ignores `uv.lock`** and resolves from the
+`pyproject.toml` ranges, so a local/tool install could pick up a Playwright
+newer than anything this project has tested. Playwright ships the browser
+driver, so an untested minor is an untested product. Observed 2026-08-03: an
+install that resolved **1.62.0** against a project locked to **1.59.0** made
+every `gflow video i2v` run hang **silently** immediately after the frame
+upload — last log line `ui_automation_video.frame_attached`, browser alive, no
+error, no timeout, indefinitely. Reinstalling with the locked version fixed it
+on the first try.
+
+**Mitigation (two layers):**
+1. **Upper-bounded dependency.** `playwright>=1.59.0,<1.60.0` — an unpinned
+   install can no longer reach an untested minor. Raising it is a deliberate
+   act requiring a live-verified generation; offline tests and CI's
+   `resolve-drift` job (import-only) cannot see a driver-behaviour regression.
+2. **Fail-fast stage watchdog.** The prompt-submission stage runs under a named
+   wall-clock deadline. On expiry the run aborts **pre-submit** with
+   `TransportTimeoutError` (exit 8), a `stage_stalled` event, and a debug
+   screenshot — the error names the stage, prints your installed Playwright
+   version against the supported range, and gives the pinned reinstall command.
+   Nothing is submitted, so no credit is spent.
+
+**Workaround:** install from a local checkout with the lock carried explicitly —
+`uv tool install --force --with playwright==1.59.0 .` — and check what you have
+with `uv tool run --from gflow-cli python -c "import importlib.metadata as m; print(m.version('playwright'))"`.
+Installs from PyPI are unaffected.
+
 ### One-time Flow banner/modal can cover the composer on first load
 
 - **Status:** Open ([#369](https://github.com/ffroliva/gflow-cli/issues/369))
@@ -697,18 +729,21 @@ follow-up issue once samples are captured.
 - **Status:** Mitigated · **Severity:** Medium · **Affects:** `gflow video chain` (v0.12.0)
 
 Every chain link after the first is an image-to-video (I2V) generation seeded by
-the previous clip's last frame. The same silent-route defect that affects
+the previous clip's last frame. The silent-route defect historically observed on
 `gflow video i2v` ([issue #125](https://github.com/ffroliva/gflow-cli/issues/125))
-applies here: if the chosen model can't do i2v interpolation, Flow drops the
-seed frame and routes the request to the plain text-to-video endpoint
+applies here: a model/mode mismatch can make Flow drop the seed frame and route
+the request to the plain text-to-video endpoint
 (`batchAsyncGenerateVideoText`) — burning a credit for a text-only clip that
-breaks continuity, with no error from Flow.
+breaks continuity, with no error from Flow. (Observed live for omni-flash i2v
+on 2026-05-30; omni-flash *single-clip start-frame* i2v was re-verified working
+on the wire 2026-08-03 and re-enabled for `gflow video i2v`.)
 
 **Mitigation (two layers):**
-1. **Model pin.** `omni-flash` (the only model known to silently drop frames) is
-   removed from the chain `--model` choices, and the orchestrator rejects any
-   model whose `supports_i2v_interpolation()` is false **before any spend**
-   (`ModelModeIncompatibilityError`, exit 17).
+1. **Model pin.** `omni-flash` is removed from the chain `--model` choices and
+   rejected by the orchestrator **before any spend**
+   (`ModelModeIncompatibilityError`, exit 17): its single-clip start-frame i2v
+   is wire-verified, but N seeded links back-to-back has not been verified at
+   chain scale, so chains stay on the Veo 3.1 family.
 2. **Per-link wire-route abort.** For each seeded link the transport inspects the
    captured generate-response URL; if it observes `batchAsyncGenerateVideoText`
    for an i2v link it raises `WireFormatError` (logged

@@ -194,8 +194,8 @@ NON_CLASSIC_COHORT_INDICATORS = (*AGENTIC_UI_INDICATORS, *LIBRARY_UI_INDICATORS)
 # `_set_output_count` / `_select_video_duration` — NOT by id-suffix: the count
 # tab '-trigger-4' and the duration tab '-trigger-4' (4s) share a suffix, so an
 # id match is ambiguous (this was the prior '[id*=-trigger-1]' bug that also
-# caught '-trigger-10'). Labels '1x'/'x2'.. and '4s'/'6s'.. are unambiguous and
-# locale-independent.
+# caught '-trigger-10'). Labels 'x1'/'x2'.. (legacy '1x' — issue #404 rename)
+# and '4s'/'6s'.. are unambiguous and locale-independent.
 
 # Aspect tabs inside the open menu. SOT (flow-editor-map.json): video aspect
 # tab ids end with '-trigger-PORTRAIT' (9:16, icon crop_9_16) and
@@ -318,6 +318,41 @@ DIALOG_ANY = "[role='dialog']"
 # the I2V remote-frame budget (was an unexplained 8s for R2V, which spuriously
 # aborted slow-but-successful attaches on large/virtualised grids — #245 review).
 REMOTE_PICKER_CLOSE_TIMEOUT_S = 120.0
+# Wall-clock ceiling for the prompt-submission stage: overlay dismissal +
+# prompt-box lookup + typing + submit click. Every probe inside is already
+# individually bounded (overlay detect <=6x1.5s, prompt box 4x10s, submit
+# 3x2s), so a healthy stage finishes in seconds and even a fully-drifted one
+# raises inside ~50s. A longer wait means a Playwright call stopped honouring
+# its own per-probe deadline — observed as a SILENT hang right after
+# `frame_attached`, browser alive, no error, no further log line. Failing
+# fast and naming the stage is what turns that into a diagnosable bug.
+SUBMIT_STAGE_TIMEOUT_S = 90.0
+# Screenshot capture after a wedged stage gets its own short deadline: the
+# page is by definition not answering, so an unbounded best-effort capture
+# would re-hang the very code path meant to end the hang.
+STAGE_TIMEOUT_SHOT_S = 15.0
+# Playwright version gflow is tested against — kept in step with the
+# `playwright` constraint in pyproject.toml (asserted by
+# tests/test_playwright_pin.py). Surfaced in the stall error because an
+# out-of-range playwright is the known cause of that stall.
+PINNED_PLAYWRIGHT = "1.59.0"
+SUPPORTED_PLAYWRIGHT_RANGE = ">=1.59.0,<1.60.0"
+
+
+def _playwright_version() -> str:
+    """Installed playwright version, or ``'unknown'`` — never raises.
+
+    Read at failure time (not import time) so a broken/absent distribution
+    cannot turn a diagnostic into a second exception.
+    """
+    try:
+        from importlib.metadata import version  # noqa: PLC0415
+
+        return version("playwright")
+    except Exception:
+        return "unknown"
+
+
 # R2V references mode has NO Start/End slots — references are added via the
 # only button[aria-haspopup='dialog'] in the editor: a 'Create' button carrying
 # the 'add_2' icon (its visible text 'Create' / 'Add Media' is unreliable — a
@@ -1424,13 +1459,23 @@ class VideoGenerationMixin:
             log.warning("ui_automation_video.editor_ready_timeout", error=str(e))
 
     @staticmethod
-    async def _set_output_count(page: Page, n: int) -> None:
+    async def _set_output_count(page: Page, n: int, *, out_dir: Path | None = None) -> None:
         """Set the output count to `n` (1-4). Flow defaults to x2 (two videos =
         double credits — spec §10.5). Disambiguated by label text, NOT
-        id-suffix — '-trigger-4' collides with the DURATION 4s tab. The
-        count-1 label exists in two cohorts ('x1' current, '1x' legacy —
-        issue #404 rename); both are probed. Non-fatal on miss."""
-        labels = ("x1", "1x") if n == 1 else (f"x{n}",)
+        id-suffix — '-trigger-4' collides with the DURATION 4s tab (exact
+        text match keeps '4s' from ever colliding with 'x4'). BOTH affix
+        orders are probed for every digit ('x1' current / '1x' legacy — the
+        issue #404 rename class), so the next affix flip degrades to the
+        fallback selector instead of a miss.
+
+        Fatal on miss: count is a credit MULTIPLIER (every
+        ``GenerateVideoRequest`` carries a definite 1-4 value), and a miss
+        hands the run to Flow's sticky default — typically x2, silently
+        DOUBLING spend for count=1 and under-delivering for count=3/4. This
+        runs before frame attach and submit, so refusing spends nothing —
+        the same pre-spend contract as the duration probe (#288) and the
+        required i2v model select (#125)."""
+        labels = (f"x{n}", f"{n}x")
         selectors = tuple(f"[role='tab']:text-is('{label}')" for label in labels) + tuple(
             f"[role='tab']:has-text('{label}')" for label in labels
         )
@@ -1440,20 +1485,20 @@ class VideoGenerationMixin:
             selectors,
         )
         if tab is None:
-            log.warning(
-                "ui_automation_video.count_not_set",
-                count=n,
-                note="Flow default (x2) applies",
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_count_tab.png")
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "count_tab",
+                    f"the output-count tab for count={n} (label 'x{n}' or '{n}x') was "
+                    f"not found on the Flow editor; refusing to proceed — Flow's "
+                    f"sticky default (typically x2) would silently change how many "
+                    f"clips this run generates and bills for. No credits were spent.",
+                    shot,
+                )
             )
-            return
         await tab.click()
         await page.wait_for_timeout(400)
         log.info("ui_automation_video.output_count_set", count=n)
-
-    @staticmethod
-    async def _set_output_count_one(page: Page) -> None:
-        """Back-compat shim: force the output count to 1."""
-        await VideoGenerationMixin._set_output_count(page, 1)
 
     @staticmethod
     async def _select_video_model(
@@ -1468,10 +1513,10 @@ class VideoGenerationMixin:
         On miss the default behaviour is non-fatal (Flow's default model
         applies) but logged at WARNING — picking the wrong model changes credit
         cost. When ``required=True`` (i2v: see issue #125), a miss is FATAL and
-        raises ``VideoModelSelectionError`` BEFORE any frame attach or submit,
-        because Flow's default model is ``omni-flash`` which silently drops i2v
-        frame refs and routes to T2V — a wasted credit. Failing here spends
-        nothing.
+        raises ``VideoModelSelectionError`` BEFORE any frame attach or submit:
+        an i2v run on an unverified model breaks the request contract (cost
+        tier, duration cap, end-frame capability — first+last is Veo-3.1-only).
+        Failing here spends nothing.
 
         Reliability (issue #125): the trigger click occasionally does not open
         the menu (the option probe then times out and Flow keeps its default).
@@ -1503,8 +1548,9 @@ class VideoGenerationMixin:
                 shot = await _capture_debug_screenshot(page, out_dir, "debug_no_model_picker.png")
                 msg = (
                     f"model picker trigger not found; cannot select {model.value!r} "
-                    f"for i2v. Refusing to proceed (Flow's default would drop the "
-                    f"frames to T2V — issue #125).{screenshot_clause(shot)}"
+                    f"for i2v. Refusing to proceed — an i2v run on an unverified "
+                    f"model breaks the request contract (refs #125)."
+                    f"{screenshot_clause(shot)}"
                 )
                 raise VideoModelSelectionError(detail=msg, route="model_picker_trigger")
             return
@@ -1544,9 +1590,10 @@ class VideoGenerationMixin:
             )
             msg = (
                 f"could not select video model {model.value!r} for i2v after 2 "
-                f"attempts. Refusing to proceed — Flow's default model "
-                f"({VideoModel.OMNI_FLASH.value}) silently drops the start/end "
-                f"frames and routes to T2V (issue #125).{screenshot_clause(shot)}"
+                f"attempts. Refusing to proceed — an i2v run on whatever model "
+                f"Flow last had selected breaks the request contract (cost "
+                f"tier, duration cap, end-frame capability — refs #125)."
+                f"{screenshot_clause(shot)}"
             )
             raise VideoModelSelectionError(detail=msg, route="model_option")
 
@@ -3207,6 +3254,81 @@ class VideoGenerationMixin:
         return media_name, flow_operation_id
 
     @staticmethod
+    async def _run_stage(
+        coro: Any,
+        *,
+        stage: str,
+        page: Page,
+        out_dir: Path | None,
+        timeout_s: float,
+    ) -> Any:
+        """Await *coro* under a named wall-clock deadline.
+
+        Every UI probe in this transport carries its own per-selector timeout,
+        so a stage that blows a whole-stage budget is not "slow Flow" — it is a
+        Playwright call that stopped honouring its deadline, so the per-probe
+        timer never fires. Left alone that presents as an unbounded SILENT
+        hang: browser alive, no error, no further log line, no indication of
+        which stage owns the wait.
+
+        Known cause (2026-08-03): an **unpinned playwright** — an install that
+        resolved 1.62.0 against a project locked to 1.59.0 wedged every
+        ``video i2v`` run immediately after the frame upload. ``uv tool
+        install <path>`` ignores ``uv.lock``, so a local/tool install silently
+        picks the newest version the pyproject range allows; the range is now
+        upper-bounded. The version check lives in the error message rather
+        than in a preflight assert because a future driver regression may
+        present the same way on an in-range version — the watchdog is the
+        general net, the pin is the specific fix.
+
+        On expiry this raises :class:`TransportTimeoutError` naming the stage,
+        after a best-effort screenshot taken under its own short deadline (the
+        page is by definition not answering, so an unbounded capture here would
+        re-hang the code path meant to end the hang).
+        """
+        log.info("ui_automation_video.stage_started", stage=stage, timeout_s=timeout_s)
+        started = time.monotonic()
+        try:
+            result = await asyncio.wait_for(coro, timeout=timeout_s)
+        except TimeoutError as e:
+            shot: Path | None = None
+            with contextlib.suppress(Exception):
+                shot = await asyncio.wait_for(
+                    _capture_debug_screenshot(page, out_dir, f"debug_stage_stalled_{stage}.png"),
+                    timeout=STAGE_TIMEOUT_SHOT_S,
+                )
+            pw_version = _playwright_version()
+            log.error(
+                "ui_automation_video.stage_stalled",
+                stage=stage,
+                timeout_s=timeout_s,
+                playwright_version=pw_version,
+                screenshot=str(shot) if shot else None,
+            )
+            msg = (
+                f"the {stage!r} stage did not complete within {timeout_s:.0f}s. "
+                f"Every probe inside it is individually bounded, so this means "
+                f"the browser stopped responding to automation — the run was "
+                f"aborted instead of hanging silently. Nothing was submitted, "
+                f"so no credit was spent. FIRST THING TO CHECK: your installed "
+                f"playwright is {pw_version}; gflow is tested against "
+                f"{SUPPORTED_PLAYWRIGHT_RANGE}. An out-of-range playwright is "
+                f"the known cause of this exact stall (a 1.62.0 install against "
+                f"a 1.59.0-locked project wedged every i2v run right after the "
+                f"frame upload). `uv tool install <path>` IGNORES uv.lock, so "
+                f"reinstall pinned: "
+                f"`uv tool install --force --with playwright=={PINNED_PLAYWRIGHT} .`"
+                f"{screenshot_clause(shot)}"
+            )
+            raise TransportTimeoutError(detail=msg) from e
+        log.info(
+            "ui_automation_video.stage_completed",
+            stage=stage,
+            elapsed_s=round(time.monotonic() - started, 2),
+        )
+        return result
+
+    @staticmethod
     async def _fire_on_started(
         on_started: VideoStartedCallback,
         started: VideoStarted,
@@ -3225,28 +3347,41 @@ class VideoGenerationMixin:
     ) -> VideoModel | None:
         """Validate and resolve the effective model for an I2V request.
 
-        Raises ``ModelModeIncompatibilityError`` if the requested model does not
-        support I2V interpolation. Returns the effective model to use — defaults
-        to ``I2V_DEFAULT_MODEL`` when ``is_i2v_with_frames`` and no model is set.
+        Raises ``ModelModeIncompatibilityError`` when the model/frame
+        combination is unsupported: no current model rejects a START frame
+        (omni-flash re-verified on the wire 2026-08-03, refs #125), but an END
+        frame requires :meth:`VideoModel.supports_i2v_end_frame` (omni-flash:
+        Flow lists first+last as "coming soon" — no wire proof). Returns the
+        effective model to use — defaults to ``I2V_DEFAULT_MODEL`` when
+        ``is_i2v_with_frames`` and no model is set.
         """
+        has_end_ref = (
+            request.end_image is not None
+            or request.end_image_ref_id is not None
+            or request.end_image_ref_name is not None
+        )
         if (
             is_i2v_with_frames
             and request.model is not None
-            and not request.model.supports_i2v_interpolation()
+            and has_end_ref
+            and not request.model.supports_i2v_end_frame()
         ):
             log.error(
                 "ui_automation_video.model_mode_rejected",
                 model=request.model.value,
                 mode=request.mode.name,
                 has_start_image=request.start_image is not None,
-                has_end_image=request.end_image is not None,
+                has_end_image=has_end_ref,
                 issue_ref="#125",
             )
             raise ModelModeIncompatibilityError(
                 detail=(
-                    f"{request.model.value!r} does not support image-to-video "
-                    f"interpolation; Flow silently drops the start/end frames "
-                    f"and produces a text-only video (issue #125)."
+                    f"{request.model.value!r} does not support this i2v frame "
+                    f"combination: an END frame (first+last interpolation) "
+                    f"requires a Veo 3.1 model — Flow lists it as 'coming "
+                    f"soon' for omni-flash and gflow has no wire-level proof "
+                    f"of that route (refs #125). Drop the end frame, or use a "
+                    f"Veo 3.1 model (e.g. veo-lite)."
                 ),
             )
         effective_model = request.model
@@ -3363,7 +3498,16 @@ class VideoGenerationMixin:
         expected_ents = set(request.reference_entities)
         try:
             async with self._intercept_reference_entities(page, expected_ents):
-                await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
+                # Watchdog: this is the window that hung silently after
+                # `frame_attached` — overlay dismissal + prompt-box lookup +
+                # typing + submit, all of which are individually bounded.
+                await VideoGenerationMixin._run_stage(
+                    ui_driver.send_prompt(page, request.prompt, out_dir=out_dir),
+                    stage="send_prompt",
+                    page=page,
+                    out_dir=out_dir,
+                    timeout_s=SUBMIT_STAGE_TIMEOUT_S,
+                )
                 generate_resp = await VideoGenerationMixin._await_generate_response(
                     generate_captured
                 )
@@ -3476,9 +3620,10 @@ class VideoGenerationMixin:
         # All settings-panel selections happen while the panel is open: model
         # (gates the 10s duration), sub-mode tab, aspect, count, duration.
         # For i2v, model selection is REQUIRED (required=True): a silent miss
-        # would let Flow fall back to omni-flash and route to T2V (issue #125),
-        # so _select_video_model raises here — before any frame attach or submit,
-        # spending no credit.
+        # would run i2v on whatever model Flow last had selected, breaking the
+        # request contract (cost tier, duration cap, end-frame capability —
+        # refs #125), so _select_video_model raises here — before any frame
+        # attach or submit, spending no credit.
         await ui_driver.configure_video_settings(page, request, out_dir=out_dir)
 
         # Attach images AFTER the panel is closed — the slots / 'Add Media' button

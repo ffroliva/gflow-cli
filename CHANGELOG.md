@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.49.0] — 2026-08-03
+
+### Changed
+
+- **`gflow video i2v` accepts `--model omni-flash` again — start frame only,
+  and it unlocks `--duration 10` (#125).** The 2026-05-30 wire capture that
+  justified the blanket exclusion (Flow silently dropping frame refs and
+  billing the run as text-to-video) no longer reproduces: a 2026-08-03
+  route-aborted re-capture shows Flow routing omni + start frame to
+  `batchAsyncGenerateVideoStartImage` with the frame bound, and a live x1 10s
+  generation confirmed the output starts on the supplied frame. The END frame
+  stays gated for omni-flash (`--end-frame` exits 17 pre-spend — Flow lists
+  first+last as "coming soon"), and `chain` still rejects omni-flash
+  (single-clip proof does not cover N seeded links). New credit-free recon
+  spike: `scripts/dev/spike_omni_flash_i2v_ui_recon.py`.
+
+### Fixed
+
+- **An out-of-range Playwright silently wedged every video generation; the
+  dependency is now upper-bounded and the stall fails fast.** `uv tool install
+  <path>` ignores `uv.lock` and resolves from the `pyproject.toml` ranges, and
+  the `playwright>=1.45.0` range had no upper bound — so a local/tool install
+  could pick up a Playwright this project has never tested. Observed: an
+  install that resolved **1.62.0** against a project locked to **1.59.0** made
+  every `gflow video i2v` run hang **silently** right after the frame upload
+  (last log line `ui_automation_video.frame_attached`, browser alive, no error,
+  no timeout, indefinitely); reinstalling with the locked version fixed it on
+  the first try. Playwright ships the browser driver, so an untested minor is
+  an untested product — the constraint is now `>=1.59.0,<1.60.0` (patch
+  headroom, no untested minors), pinned by `tests/test_playwright_pin.py`.
+  Independently, the prompt-submission stage now runs under a named wall-clock
+  watchdog: on expiry the run aborts **pre-submit** with
+  `TransportTimeoutError`, a `stage_stalled` event and a debug screenshot taken
+  under its own short deadline, and the error names the stage, prints the
+  installed Playwright version against the supported range, and gives the
+  pinned reinstall command. Nothing is submitted, so no credit is spent — a
+  silent multi-minute hang is indistinguishable from slowness in an overnight
+  batch, which is what made this expensive to diagnose.
+- **A missing video output-count control now refuses before submit instead of
+  silently proceeding on Flow's default of x2 — which double-billed
+  `--count 1` runs (#404).** `_set_output_count` raises `UiSelectorDriftError`
+  (exit 23, debug screenshot) on a probe miss, matching the duration probe's
+  fail-fast contract (#288), and matches count-tab labels affix-agnostically
+  per digit (`xN` current / `Nx` legacy) so the next label rename degrades to
+  a fallback selector rather than an outage.
+
 ## [0.48.0] — 2026-08-02
 
 ### Added
@@ -2598,7 +2644,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.48.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.49.0...HEAD
+[0.49.0]: https://github.com/ffroliva/gflow-cli/compare/v0.48.0...v0.49.0
 [0.48.0]: https://github.com/ffroliva/gflow-cli/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/ffroliva/gflow-cli/compare/v0.46.1...v0.47.0
 [0.46.1]: https://github.com/ffroliva/gflow-cli/compare/v0.46.0...v0.46.1

@@ -120,13 +120,12 @@ def test_run_triage_cycle_success(
         repo_dir=repo_dir,
         memory_dir=memory_dir,
         ledger_path=ledger_path,
-        anthropic_key="key-test",
         gh_token="token-test",
     )
 
     # Assertions
     mock_fetch.assert_called_once_with(101, repo_dir)
-    mock_sandbox.assert_called_once_with(101, repo_dir, memory_dir, "key-test", "token-test")
+    mock_sandbox.assert_called_once_with(101, repo_dir, memory_dir, "token-test")
     mock_post_comment.assert_called_once()
     mock_restore.assert_called_once_with(repo_dir)
     mock_append_ledger.assert_called_once()
@@ -175,7 +174,6 @@ def test_run_triage_cycle_stage0_skipped(
         repo_dir=repo_dir,
         memory_dir=memory_dir,
         ledger_path=ledger_path,
-        anthropic_key="key-test",
         gh_token="token-test",
     )
 
@@ -197,16 +195,14 @@ def test_resolve_engine_rejects_unknown(monkeypatch):
 
 def test_run_review_dispatches_council_claude():
     with patch("pr_triage_autopilot.run_docker_sandbox", return_value="out") as m:
-        out = pr_triage_autopilot.run_review(
-            "council-claude", 1, Path("/r"), Path("/m"), "key", "tok"
-        )
+        out = pr_triage_autopilot.run_review("council-claude", 1, Path("/r"), Path("/m"), "tok")
     assert out == "out"
-    m.assert_called_once_with(1, Path("/r"), Path("/m"), "key", "tok")
+    m.assert_called_once_with(1, Path("/r"), Path("/m"), "tok")
 
 
 def test_run_review_unknown_engine_raises():
     with pytest.raises(NotImplementedError):
-        pr_triage_autopilot.run_review("council-multi-cli", 1, Path("/r"), Path("/m"), "key", "tok")
+        pr_triage_autopilot.run_review("council-multi-cli", 1, Path("/r"), Path("/m"), "tok")
 
 
 def _cycle_mocks():
@@ -240,7 +236,7 @@ def test_email_sent_on_completed_review(tmp_path):
             "SUMMARY_VERDICT: GREEN | MUST_FIX_COUNT: 0 | PR_URL: https://x/pull/7"
         )
         pr_triage_autopilot.run_triage_cycle(
-            "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+            "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
         )
     assert m_email.call_count == 1
     subject = m_email.call_args[0][0]
@@ -261,7 +257,7 @@ def test_email_sent_on_needs_human(tmp_path):
     ):
         m_gate.return_value = {"verdict": "NEEDS-HUMAN", "reasons": ["injection pattern"]}
         pr_triage_autopilot.run_triage_cycle(
-            "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+            "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
         )
     assert m_email.call_count == 1
     assert "human" in m_email.call_args[0][0].lower()
@@ -281,7 +277,7 @@ def test_email_sent_on_deferred_size(tmp_path):
     ):
         m_gate.return_value = {"verdict": "DEFERRED_SIZE", "reasons": ["too big"]}
         pr_triage_autopilot.run_triage_cycle(
-            "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+            "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
         )
     assert m_email.call_count == 1
 
@@ -308,7 +304,7 @@ def test_email_sent_on_failed_permanent(tmp_path):
             ],
         ):
             pr_triage_autopilot.run_triage_cycle(
-                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
             )
     # third failure -> FAILED_PERMANENT -> email
     assert m_email.call_count == 1
@@ -348,7 +344,7 @@ def test_needs_human_dedupes_by_gate_sha(tmp_path):
         # First tick: nothing ledgered -> alert + comment once
         with patch("pr_triage_autopilot.get_ledger_entries", return_value=[]):
             pr_triage_autopilot.run_triage_cycle(
-                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
             )
         assert m_email.call_count == 1
         assert m_comment.call_count == 1
@@ -359,7 +355,7 @@ def test_needs_human_dedupes_by_gate_sha(tmp_path):
             return_value=[{"pr": 7, "head_sha": "sha-x", "status": "NEEDS-HUMAN"}],
         ):
             pr_triage_autopilot.run_triage_cycle(
-                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
             )
         assert m_email.call_count == 1
         assert m_comment.call_count == 1
@@ -383,7 +379,7 @@ def test_deferred_size_dedupes_by_gate_sha(tmp_path):
         # First tick: nothing ledgered -> alert once
         with patch("pr_triage_autopilot.get_ledger_entries", return_value=[]):
             pr_triage_autopilot.run_triage_cycle(
-                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
             )
         assert m_email.call_count == 1
 
@@ -393,7 +389,31 @@ def test_deferred_size_dedupes_by_gate_sha(tmp_path):
             return_value=[{"pr": 7, "head_sha": "sha-x", "status": "DEFERRED_SIZE"}],
         ):
             pr_triage_autopilot.run_triage_cycle(
-                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "key", "tok"
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
             )
         assert m_email.call_count == 1
         assert m_comment.call_count == 0
+
+
+# --- Claude subscription auth via CLAUDE_CODE_OAUTH_TOKEN (2026-08-02) -------
+# `claude setup-token` mints a 1-year bearer token read from the environment.
+# It does NOT write ~/.claude/.credentials.json -- verified on the ops VPS, where
+# that file still held the expired 2026-07-16 token after a successful mint. An
+# earlier revision of this branch validated the FILE and would therefore have
+# authenticated with a dead credential.
+
+
+def test_missing_token_is_reported(monkeypatch):
+    monkeypatch.delenv(pr_triage_autopilot.CLAUDE_TOKEN_ENV, raising=False)
+    err = pr_triage_autopilot.check_claude_auth()
+    assert err and "setup-token" in err
+
+
+def test_empty_token_is_reported(monkeypatch):
+    monkeypatch.setenv(pr_triage_autopilot.CLAUDE_TOKEN_ENV, "")
+    assert pr_triage_autopilot.check_claude_auth()
+
+
+def test_present_token_passes(monkeypatch):
+    monkeypatch.setenv(pr_triage_autopilot.CLAUDE_TOKEN_ENV, "sk-ant-oat01-xxx")
+    assert pr_triage_autopilot.check_claude_auth() is None

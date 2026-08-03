@@ -159,7 +159,7 @@ class ClassicFlowUiDriver:
             page, request.aspect
         )
         await VideoGenerationMixin._set_output_count(  # type: ignore[reportPrivateUsage]
-            page, request.count
+            page, request.count, out_dir=out_dir
         )
         if request.duration is not None:
             await VideoGenerationMixin._select_video_duration(  # type: ignore[reportPrivateUsage]
