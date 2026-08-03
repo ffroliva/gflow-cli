@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A video run that wedges between attaching the frame and submitting the
+  prompt now fails fast and names the stage, instead of hanging silently.**
+  Reproduced twice on `gflow video i2v`: the last log line was
+  `ui_automation_video.frame_attached`, then nothing — browser alive, no error,
+  no timeout — until the operator killed it. Every probe in that window is
+  individually bounded, so the stall means a Playwright call stopped honouring
+  its own deadline (typically a media dialog / file chooser left open by the
+  preceding step) and no inner timer ever fired. The submission stage now runs
+  under a named wall-clock watchdog: on expiry it aborts pre-submit with
+  `TransportTimeoutError`, a `stage_stalled` event and a debug screenshot taken
+  under its own short deadline — no credit is spent. Root cause of the wedge
+  itself is still open; this converts an unbounded silent hang into a
+  diagnosable failure.
 - **A missing video output-count control now refuses before submit instead of
   silently proceeding on Flow's default of x2 — which double-billed
   `--count 1` runs (#404).** `_set_output_count` raises `UiSelectorDriftError`
