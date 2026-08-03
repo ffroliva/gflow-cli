@@ -47,10 +47,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-sys.path.append(str(Path(__file__).parent.parent.parent / "src"))
+_ROOT = Path(__file__).resolve().parents[2]
+_SRC = _ROOT / "src"
+if _SRC.exists() and str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.transports.ui_automation_video import (
+from _spike_common import build_client, resolve_profile_dir  # noqa: E402
+
+from gflow_cli.api.transports.ui_automation_video import (  # noqa: E402
     FRAME_SLOTS_STRUCT,
     MODE_SWITCH_TRIGGER_SELECTORS,
     MODEL_PICKER_TRIGGER,
@@ -58,8 +63,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     VIDEO_SUBMODE_SELECTORS,
     VideoGenerationMixin,
 )
-from gflow_cli.api.video import VideoModel
-from gflow_cli.paths import default_home, profile_subdir
+from gflow_cli.api.video import VideoModel  # noqa: E402
 
 _TAB_DUMP_JS = """
 () => Array.from(document.querySelectorAll("[role='tab']")).map(t => ({
@@ -166,13 +170,11 @@ async def recon(
     with_frame_bind: bool,
     probe_image: Path | None,
 ) -> int:
-    profile_dir = profile_subdir(default_home(), profile_name)
-    if not profile_dir.exists():
-        sys.exit(f"Profile dir does not exist: {profile_dir}")
+    profile_dir = resolve_profile_dir(profile_name)
     out_dir.mkdir(parents=True, exist_ok=True)
     evidence: dict[str, Any] = {"profile": profile_name, "with_frame_bind": with_frame_bind}
 
-    async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
+    async with build_client(profile_dir) as client:
         transport = client.transport
         if transport is None:
             sys.exit("FlowApiClient.transport is None")

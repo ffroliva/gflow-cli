@@ -1466,11 +1466,6 @@ class VideoGenerationMixin:
         log.info("ui_automation_video.output_count_set", count=n)
 
     @staticmethod
-    async def _set_output_count_one(page: Page) -> None:
-        """Back-compat shim: force the output count to 1."""
-        await VideoGenerationMixin._set_output_count(page, 1)
-
-    @staticmethod
     async def _select_video_model(
         page: Page,
         model: VideoModel,
@@ -3258,10 +3253,8 @@ class VideoGenerationMixin:
         if (
             is_i2v_with_frames
             and request.model is not None
-            and (
-                not request.model.supports_i2v_interpolation()
-                or (has_end_ref and not request.model.supports_i2v_end_frame())
-            )
+            and has_end_ref
+            and not request.model.supports_i2v_end_frame()
         ):
             log.error(
                 "ui_automation_video.model_mode_rejected",

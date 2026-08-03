@@ -315,12 +315,13 @@ async def run_chain(
         One :class:`ChainLinkResult` per link, in order.
 
     Raises:
-        ModelModeIncompatibilityError: ``model`` cannot do i2v interpolation.
+        ModelModeIncompatibilityError: ``model`` is not accepted for chains
+            (``omni_flash`` — single-clip start-frame i2v only, refs #125).
         ChainPartialError: A link failed with a ``WireFormatError`` (i2v routed
             to the t2v backstop) or ``WafRejectionError`` (403). Carries the
             ``Path`` of every link completed before the failure.
     """
-    if model is VideoModel.OMNI_FLASH or not model.supports_i2v_interpolation():
+    if model is VideoModel.OMNI_FLASH:
         msg = (
             f"model {model.value!r} is not supported for chains: a chain "
             f"renders N seeded i2v links back-to-back, and omni_flash "

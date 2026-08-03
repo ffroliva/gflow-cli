@@ -68,29 +68,6 @@ class VideoModel(StrEnum):
             )
         return _VIDEO_MODEL_FROM_CLI[key]
 
-    def supports_i2v_interpolation(self) -> bool:
-        """Whether this model supports image-to-video with a START frame.
-
-        History: a 2026-05-30 route-abort capture (issue #125, via
-        ``scripts/dev/capture_i2v_intercept_submit.py``) showed ``OMNI_FLASH``
-        silently dropping frame refs at submit and routing to
-        ``batchAsyncGenerateVideoText`` with ``image_inputs: null`` — the
-        original reason it was excluded here.
-
-        Re-verified 2026-08-03 with the SAME probe (``--model omni-flash
-        --start-only``, request aborted in-browser, zero credits): Flow now
-        routes Omni Flash + bound Start frame to
-        ``batchAsyncGenerateVideoStartImage`` with a non-null ``startImage``,
-        matching Google's official support matrix ("Frames to Video: First" =
-        supported for Omni Flash, 4s–10s). Confirmed the same day by one live
-        x1 10s generation whose captured request carried the ``startImage``
-        and whose output's first frame IS the uploaded start frame. All
-        current models therefore support start-frame i2v; the method remains
-        as the seam for future models. END-frame support is narrower — see
-        :meth:`supports_i2v_end_frame`.
-        """
-        return True
-
     def supports_i2v_end_frame(self) -> bool:
         """Whether this model supports i2v with an END frame (first+last
         interpolation).
@@ -101,6 +78,17 @@ class VideoModel(StrEnum):
         ``batchAsyncGenerateVideoStartAndEndImage`` route for Omni Flash. The
         ``VEO_3_1_*`` variants have carried end frames on that route since the
         original #125 captures.
+
+        START-frame i2v needs no capability gate: every current model
+        supports it. History (issue #125): a 2026-05-30 route-abort capture
+        showed ``OMNI_FLASH`` silently dropping frame refs at submit and
+        routing to ``batchAsyncGenerateVideoText``, so it was excluded from
+        i2v entirely. Re-verified 2026-08-03 with the same probe
+        (``capture_i2v_intercept_submit.py --model omni-flash --start-only``,
+        request aborted in-browser, zero credits): Flow now routes Omni Flash
+        + bound Start frame to ``batchAsyncGenerateVideoStartImage`` with a
+        non-null ``startImage`` — confirmed the same day by one live x1 10s
+        generation whose output's first frame IS the uploaded start frame.
         """
         return self is not VideoModel.OMNI_FLASH
 

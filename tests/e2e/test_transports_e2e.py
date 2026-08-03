@@ -181,8 +181,8 @@ async def test_e2e_i2i_local_ref_attach(
 
 # Defaults are tuned for minimum credit spend: veo-lite, 4 s duration, count=1,
 # landscape. Override via env for variation (per [[e2e-tests-parameterize]]).
-# NOTE: the i2v default is veo-lite (NOT omni-flash) — omni-flash silently
-# drops the start/end frames and routes to T2V (issue #125). Using omni-flash
+# NOTE: the i2v default is veo-lite (NOT omni-flash) — the default must
+# support the full i2v surface incl. --end-frame (issue #125). Using omni-flash
 # here previously made this test a false positive: frame_attached + terminal
 # success both held while the actual output was a text-only video.
 _E2E_VIDEO_ASPECT_ENV = "GFLOW_CLI_E2E_VIDEO_ASPECT"
@@ -205,7 +205,7 @@ def _i2v_aspect() -> Aspect:
 
 
 def _i2v_model() -> VideoModel | None:
-    # veo-lite default (issue #125): omni-flash does not support i2v.
+    # veo-lite default (issue #125): omni-flash is start-frame-only for i2v.
     raw = os.environ.get(_E2E_VIDEO_MODEL_ENV, "veo-lite").strip().lower()
     return VideoModel.from_cli(raw)
 
