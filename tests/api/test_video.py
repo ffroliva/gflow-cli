@@ -38,13 +38,6 @@ class TestVideoModelEnum:
         with pytest.raises(ValueError, match="Unknown video model"):
             VideoModel.from_cli("sora")
 
-    @pytest.mark.parametrize("model", list(VideoModel))
-    def test_all_models_support_start_frame_i2v(self, model: VideoModel) -> None:
-        # Issue #125 history: omni-flash used to drop i2v frame refs at submit
-        # (2026-05-30 capture); the 2026-08-03 route-aborted re-capture proved
-        # Flow now routes omni + start frame to the StartImage endpoint.
-        assert model.supports_i2v_interpolation() is True
-
     def test_omni_flash_does_not_support_i2v_end_frame(self) -> None:
         # Flow's support matrix: "Frames to Video: First + last" is "coming
         # soon" for Omni Flash, and there is no wire proof of that route.
@@ -66,9 +59,10 @@ class TestVideoModelEnum:
         from gflow_cli.api.video import I2V_DEFAULT_MODEL
 
         assert I2V_DEFAULT_MODEL is VideoModel.VEO_3_1_LITE
-        # The default MUST itself support i2v — guards against a future edit
-        # that points the default at an incompatible model.
-        assert I2V_DEFAULT_MODEL.supports_i2v_interpolation() is True
+        # The default MUST support the FULL i2v surface (incl. --end-frame) —
+        # guards against a future edit pointing the default at a model with a
+        # narrower capability (e.g. omni_flash, start-frame only).
+        assert I2V_DEFAULT_MODEL.supports_i2v_end_frame() is True
 
 
 class TestVideoRequestNewFields:

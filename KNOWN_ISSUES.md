@@ -697,18 +697,21 @@ follow-up issue once samples are captured.
 - **Status:** Mitigated · **Severity:** Medium · **Affects:** `gflow video chain` (v0.12.0)
 
 Every chain link after the first is an image-to-video (I2V) generation seeded by
-the previous clip's last frame. The same silent-route defect that affects
+the previous clip's last frame. The silent-route defect historically observed on
 `gflow video i2v` ([issue #125](https://github.com/ffroliva/gflow-cli/issues/125))
-applies here: if the chosen model can't do i2v interpolation, Flow drops the
-seed frame and routes the request to the plain text-to-video endpoint
+applies here: a model/mode mismatch can make Flow drop the seed frame and route
+the request to the plain text-to-video endpoint
 (`batchAsyncGenerateVideoText`) — burning a credit for a text-only clip that
-breaks continuity, with no error from Flow.
+breaks continuity, with no error from Flow. (Observed live for omni-flash i2v
+on 2026-05-30; omni-flash *single-clip start-frame* i2v was re-verified working
+on the wire 2026-08-03 and re-enabled for `gflow video i2v`.)
 
 **Mitigation (two layers):**
-1. **Model pin.** `omni-flash` (the only model known to silently drop frames) is
-   removed from the chain `--model` choices, and the orchestrator rejects any
-   model whose `supports_i2v_interpolation()` is false **before any spend**
-   (`ModelModeIncompatibilityError`, exit 17).
+1. **Model pin.** `omni-flash` is removed from the chain `--model` choices and
+   rejected by the orchestrator **before any spend**
+   (`ModelModeIncompatibilityError`, exit 17): its single-clip start-frame i2v
+   is wire-verified, but N seeded links back-to-back has not been verified at
+   chain scale, so chains stay on the Veo 3.1 family.
 2. **Per-link wire-route abort.** For each seeded link the transport inspects the
    captured generate-response URL; if it observes `batchAsyncGenerateVideoText`
    for an i2v link it raises `WireFormatError` (logged

@@ -405,14 +405,18 @@ class ModelModeIncompatibilityError(ConfigurationError):
     """Raised when the chosen video model is incompatible with the requested
     generation mode (issue #125).
 
-    The canonical case: ``omni-flash`` does NOT support i2v interpolation
-    (start or start+end frames). Flow's frontend silently drops the frame
-    refs at submit time and routes the request to the T2V endpoint,
-    charging a credit for a generation that ignores the supplied images
-    entirely. This error is raised pre-submit by both the CLI (Click
-    callback) and the transport (defense-in-depth for direct
-    ``FlowApiClient`` callers that bypass the CLI), preventing the
-    silent credit-burn.
+    Canonical cases today: ``omni-flash`` with an i2v END frame (first+last
+    interpolation is "coming soon" for it per Flow's support matrix, with no
+    wire-level proof of the StartAndEndImage route), and ``omni-flash`` for
+    chains (single-clip start-frame i2v was wire-verified 2026-08-03; N
+    seeded links back-to-back has not been, so chains stay on the Veo 3.1
+    family). History: omni-flash was excluded from i2v entirely after a
+    2026-05-30 capture showed Flow silently dropping the frame refs at
+    submit and billing the run as text-to-video; the start-frame path has
+    since been re-verified on the wire and re-enabled. This error is raised
+    pre-submit by both the CLI and the transport (defense-in-depth for
+    direct ``FlowApiClient`` callers that bypass the CLI), so it never
+    spends a credit.
 
     Distinct exit code 17 (not Click's exit 2, not generic exit 1) so
     scripted callers can branch on "I picked an incompatible
@@ -423,8 +427,9 @@ class ModelModeIncompatibilityError(ConfigurationError):
     title = "Model is incompatible with the requested generation mode"
     _default_remediation = (
         "The selected video model does not support this generation mode. "
-        "For i2v with a start or end frame, use --model veo-lite (or "
-        "veo-fast / veo-quality / veo-lite-lp). See issue #125."
+        "omni-flash supports start-frame i2v only: drop --end-frame, or use "
+        "a Veo 3.1 model (veo-lite / veo-fast / veo-quality / veo-lite-lp) "
+        "for first+last interpolation and for chains. See issue #125."
     )
 
 

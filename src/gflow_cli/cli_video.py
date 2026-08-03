@@ -389,9 +389,6 @@ async def _run_i2v(
     resolved_model = VideoModel.from_cli(params.model)
     if resolved_model is None:
         resolved_model = I2V_DEFAULT_MODEL
-    elif not resolved_model.supports_i2v_interpolation():
-        msg = f"{resolved_model.value!r} does not support image-to-video interpolation (refs #125)."
-        raise ModelModeIncompatibilityError(detail=msg)
     has_end_frame = params.end_frame is not None or params.end_frame_ref_id is not None
     if has_end_frame and not resolved_model.supports_i2v_end_frame():
         msg = (
@@ -495,7 +492,7 @@ def _resolve_chain_model(model: str | None) -> VideoModel:
     resolved = VideoModel.from_cli(model)
     if resolved is None:
         return I2V_DEFAULT_MODEL
-    if resolved is VideoModel.OMNI_FLASH or not resolved.supports_i2v_interpolation():
+    if resolved is VideoModel.OMNI_FLASH:
         msg = (
             f"{resolved.value!r} is not accepted for chains. Chains render N "
             f"seeded i2v links back-to-back; omni-flash start-frame i2v was "
@@ -1140,7 +1137,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     default=1,
     show_default=True,
     type=click.IntRange(1, 4),
-    help="How many videos to generate (1-4).",
+    help="How many videos to generate (1-4; >1 multiplies credit cost).",
 )
 @_shared_gen_tail_options
 def i2v(  # NOSONAR

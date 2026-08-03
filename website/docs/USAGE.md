@@ -697,12 +697,13 @@ Options:
   --json                    Emit a machine-readable JSON result.
 ```
 
-> **`omni-flash` is rejected.** Only the Veo 3.1 family supports i2v
-> interpolation. `omni-flash` silently drops the seed frame and routes to
-> text-to-video (issue #125), which would break every seeded link, so it is not
-> an accepted `--model` for `chain`. The chain also aborts a link loudly (rather
-> than reporting a fake success) if a generation is observed routing to the
-> text-only endpoint — see [KNOWN_ISSUES](../KNOWN_ISSUES.md).
+> **`omni-flash` is rejected for chains.** Its single-clip start-frame i2v is
+> wire-verified (2026-08-03, issue #125), but a chain renders N seeded links
+> back-to-back and that has not been verified at chain scale — so `chain` stays
+> on the Veo 3.1 family pending a chain-scale verification. The chain also
+> aborts a link loudly (rather than reporting a fake success) if a generation
+> is observed routing to the text-only endpoint — see
+> [KNOWN_ISSUES](../KNOWN_ISSUES.md).
 
 ### JSONL manifest format
 
@@ -1325,7 +1326,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
 | `15` | `BrowserSessionClosedError` | The automation browser window was closed mid-operation | Re-run; keep the browser window open until the command finishes |
 | `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
-| `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode (e.g. `--model omni-flash` with an `i2v` start/end frame — issue #125) | Use `--model veo-lite` (or veo-fast / veo-quality / veo-lite-lp) for `i2v` |
+| `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode (e.g. `--model omni-flash` with `--end-frame`, or `omni-flash` for `chain` — issue #125) | omni-flash does start-frame `i2v` only: drop `--end-frame`, or use a Veo 3.1 model (`veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`) for first+last and for `chain` |
 | `18` | `VideoModelSelectionError` | gflow could not select the requested video model in Flow's editor for an `i2v` run (model-picker option not found) | Usually transient — retry; if it persists, Flow's model-picker UI changed (report referencing #125) |
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --output`) | Retry; the recorded compose survives, so re-render is safe |
 | `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |

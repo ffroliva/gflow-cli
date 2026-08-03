@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`gflow video i2v` accepts `--model omni-flash` again — start frame only,
+  and it unlocks `--duration 10` (#125).** The 2026-05-30 wire capture that
+  justified the blanket exclusion (Flow silently dropping frame refs and
+  billing the run as text-to-video) no longer reproduces: a 2026-08-03
+  route-aborted re-capture shows Flow routing omni + start frame to
+  `batchAsyncGenerateVideoStartImage` with the frame bound, and a live x1 10s
+  generation confirmed the output starts on the supplied frame. The END frame
+  stays gated for omni-flash (`--end-frame` exits 17 pre-spend — Flow lists
+  first+last as "coming soon"), and `chain` still rejects omni-flash
+  (single-clip proof does not cover N seeded links). New credit-free recon
+  spike: `scripts/dev/spike_omni_flash_i2v_ui_recon.py`.
+
+### Fixed
+
+- **A missing video output-count control now refuses before submit instead of
+  silently proceeding on Flow's default of x2 — which double-billed
+  `--count 1` runs (#404).** `_set_output_count` raises `UiSelectorDriftError`
+  (exit 23, debug screenshot) on a probe miss, matching the duration probe's
+  fail-fast contract (#288), and matches count-tab labels affix-agnostically
+  per digit (`xN` current / `Nx` legacy) so the next label rename degrades to
+  a fallback selector rather than an outage.
+
 ## [0.48.0] — 2026-08-02
 
 ### Added

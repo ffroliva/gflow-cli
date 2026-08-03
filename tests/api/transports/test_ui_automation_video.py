@@ -304,12 +304,14 @@ class TestWaitVideoEditorReady:
 
 
 class TestSetOutputCountOne:
+    """Count=1 path of `_set_output_count` (the count most sensitive to #404)."""
+
     @pytest.mark.asyncio
     async def test_clicks_the_legacy_count_one_tab(self) -> None:
         # Legacy cohort: the pre-#404 '1x' label is still probed as a fallback.
         sel = "[role='tab']:text-is('1x')"
         page = _cascade_page({sel})
-        await VideoGenerationMixin._set_output_count_one(page)
+        await VideoGenerationMixin._set_output_count(page, 1)
         page.locator.assert_any_call(sel)
 
     @pytest.mark.asyncio
@@ -318,7 +320,7 @@ class TestSetOutputCountOne:
         must probe BOTH label cohorts before declaring a miss."""
         sel = "[role='tab']:text-is('x1')"
         page = _cascade_page({sel})
-        await VideoGenerationMixin._set_output_count_one(page)
+        await VideoGenerationMixin._set_output_count(page, 1)
         page.locator.assert_any_call(sel)
 
     @pytest.mark.asyncio
@@ -329,7 +331,7 @@ class TestSetOutputCountOne:
         # duration probe (#288), not proceed on the default.
         page = _cascade_page(set())
         with pytest.raises(UiSelectorDriftError) as exc_info:
-            await VideoGenerationMixin._set_output_count_one(page)
+            await VideoGenerationMixin._set_output_count(page, 1)
         msg = str(exc_info.value)
         assert "count=1" in msg
         assert "bills" in msg  # the refusal explains the billing consequence
@@ -466,7 +468,6 @@ def _stub_video_helpers(monkeypatch: pytest.MonkeyPatch, *, generate_resp: dict)
     monkeypatch.setattr(VideoGenerationMixin, "_wait_video_editor_ready", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_switch_to_video_mode", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_set_output_count", AsyncMock())
-    monkeypatch.setattr(VideoGenerationMixin, "_set_output_count_one", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_select_video_model", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_select_video_duration", AsyncMock())
     monkeypatch.setattr(VideoGenerationMixin, "_select_video_aspect", AsyncMock())

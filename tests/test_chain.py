@@ -28,8 +28,9 @@ Behavioural contract asserted below:
   * RECORD-BEFORE-EXTRACT: for each completed link the recorder is invoked
     (clip persisted) BEFORE the extractor runs on that clip — so a crash in the
     download->extract gap resumes at extraction, never re-generates.
-  * A non-interpolation model (e.g. omni_flash) is REJECTED up front
-    (``ModelModeIncompatibilityError``) before any generate_video call fires.
+  * A model chains cannot use (omni_flash — single-clip start-frame i2v
+    only, refs #125) is REJECTED up front (``ModelModeIncompatibilityError``)
+    before any generate_video call fires.
 
 Types referenced (defined by Task 7 in chain.py): ``ChainLinkSpec`` (prompt +
 optional model/duration/aspect override) and ``ChainLinkResult`` (carries
@@ -275,8 +276,9 @@ async def test_aborts_on_wire_format_error_preserving_partial_results(tmp_path: 
 
 
 async def test_rejects_non_interpolation_model_up_front(tmp_path: Path) -> None:
-    """A non-interpolation model (omni_flash) is rejected BEFORE any spend:
-    ModelModeIncompatibilityError, and generate_video is never awaited."""
+    """omni_flash is rejected for chains BEFORE any spend (single-clip
+    start-frame i2v only, refs #125): ModelModeIncompatibilityError, and
+    generate_video is never awaited."""
     client = _make_client([])
 
     with pytest.raises(ModelModeIncompatibilityError):
