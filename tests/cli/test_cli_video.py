@@ -489,40 +489,57 @@ def test_r2v_accepts_seven_refs_for_omni_flash(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_i2v_model_choice_excludes_omni_flash() -> None:
-    """omni-flash must not be a selectable --model choice for i2v (issue #125).
-
-    Introspect the Click Choice rather than scanning help prose — the help
-    text deliberately MENTIONS omni-flash to explain why it's rejected.
-    """
+def test_i2v_model_choice_includes_omni_flash() -> None:
+    """omni-flash is a selectable --model for i2v (start-only; the 2026-08-03
+    wire re-capture resolved the #125 exclusion), and 10 is a valid duration."""
     import click
 
     i2v_cmd = video.commands["i2v"]
     model_param = next(p for p in i2v_cmd.params if p.name == "model")
     assert isinstance(model_param.type, click.Choice)
-    choices = list(model_param.type.choices)
-    assert "omni-flash" not in choices
-    assert "veo-lite" in choices
+    assert "omni-flash" in list(model_param.type.choices)
+    duration_param = next(p for p in i2v_cmd.params if p.name == "duration")
+    assert isinstance(duration_param.type, click.Choice)
+    assert "10" in list(duration_param.type.choices)
+    assert "veo-lite" in list(model_param.type.choices)
 
-    # Contrast: t2v keeps omni-flash as a valid choice.
+    # t2v likewise keeps omni-flash as a valid choice.
     t2v_cmd = video.commands["t2v"]
     t2v_model = next(p for p in t2v_cmd.params if p.name == "model")
     assert isinstance(t2v_model.type, click.Choice)
     assert "omni-flash" in list(t2v_model.type.choices)
 
 
-def test_i2v_rejects_omni_flash_via_click_choice(tmp_path: Path) -> None:
-    """Passing --model omni-flash to i2v is a Click usage error (exit 2)."""
+def test_i2v_rejects_omni_flash_end_frame_via_cli(tmp_path: Path) -> None:
+    """--model omni-flash with --end-frame exits 17 pre-spend: first+last is
+    'coming soon' for Omni Flash per Flow's support matrix (refs #125)."""
     start = tmp_path / "start.png"
+    end = tmp_path / "end.png"
     start.write_bytes(b"\x89PNG\r\n\x1a\n")
+    end.write_bytes(b"\x89PNG\r\n\x1a\n")
     runner = CliRunner()
+
+    async def _should_not_run(*_a: object, **_k: object) -> None:
+        raise AssertionError("_generate_and_report must not be reached")
+
     with (
         patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
         patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._generate_and_report", new=_should_not_run),
     ):
-        result = runner.invoke(video, ["i2v", str(start), "rise up", "--model", "omni-flash"])
-    assert result.exit_code == 2, result.output
-    assert "omni-flash" in result.output  # Click lists it among invalid choices
+        result = runner.invoke(
+            video,
+            [
+                "i2v",
+                str(start),
+                "rise up",
+                "--model",
+                "omni-flash",
+                "--end-frame",
+                str(end),
+            ],
+        )
+    assert result.exit_code == 17, result.output
 
 
 def test_i2v_run_defaults_to_veo_lite_when_model_omitted(tmp_path: Path) -> None:
@@ -554,16 +571,50 @@ def test_i2v_run_defaults_to_veo_lite_when_model_omitted(tmp_path: Path) -> None
     assert request.model is VideoModel.VEO_3_1_LITE  # type: ignore[attr-defined]
 
 
-def test_i2v_run_rejects_omni_flash_from_stale_config(tmp_path: Path) -> None:
-    """A direct/stale-config call that smuggles omni-flash past the Click Choice
-    must still be rejected with ModelModeIncompatibilityError (exit code 17)."""
+def test_i2v_run_accepts_omni_flash_start_only(tmp_path: Path) -> None:
+    """Start-only i2v with omni-flash is accepted (2026-08-03 wire re-capture,
+    refs #125) and the request carries OMNI_FLASH through to generation."""
+    import asyncio
+
+    from gflow_cli.api.video import VideoModel
+    from gflow_cli.cli_video import _I2VParams, _run_i2v
+
+    start = tmp_path / "start.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_k: object) -> None:
+        captured["request"] = request
+
+    with patch("gflow_cli.cli_video._generate_and_report", new=_capture):
+        asyncio.run(
+            _run_i2v(
+                profile_name="default",
+                profile_dir=tmp_path,
+                params=_I2VParams(
+                    image=str(start), prompt="rise up", aspect="9:16", model="omni-flash"
+                ),
+                out_dir=None,
+            )
+        )
+
+    request = captured["request"]
+    assert request.model is VideoModel.OMNI_FLASH  # type: ignore[attr-defined]
+
+
+def test_i2v_run_rejects_omni_flash_with_end_frame(tmp_path: Path) -> None:
+    """omni-flash + --end-frame must be rejected pre-spend with
+    ModelModeIncompatibilityError (exit 17): first+last is 'coming soon' for
+    Omni Flash per Flow's support matrix, with no wire proof of the route."""
     import asyncio
 
     from gflow_cli.cli_video import _I2VParams, _run_i2v
     from gflow_cli.errors import EXIT_CODE_MAP, ModelModeIncompatibilityError
 
     start = tmp_path / "start.png"
+    end = tmp_path / "end.png"
     start.write_bytes(b"\x89PNG\r\n\x1a\n")
+    end.write_bytes(b"\x89PNG\r\n\x1a\n")
 
     async def _should_not_run(*_a: object, **_k: object) -> None:
         raise AssertionError("_generate_and_report must not be reached")
@@ -575,13 +626,18 @@ def test_i2v_run_rejects_omni_flash_from_stale_config(tmp_path: Path) -> None:
                     profile_name="default",
                     profile_dir=tmp_path,
                     params=_I2VParams(
-                        image=str(start), prompt="rise up", aspect="9:16", model="omni-flash"
+                        image=str(start),
+                        prompt="rise up",
+                        aspect="9:16",
+                        model="omni-flash",
+                        end_frame=str(end),
                     ),
                     out_dir=None,
                 )
             )
         except ModelModeIncompatibilityError as e:
             assert EXIT_CODE_MAP[ModelModeIncompatibilityError] == 17
+            assert "END frame" in (e.detail or "")
             assert "#125" in (e.detail or "")
         else:
             raise AssertionError("expected ModelModeIncompatibilityError")

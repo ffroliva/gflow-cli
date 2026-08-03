@@ -496,19 +496,20 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > `t2v` and `i2v` (not `r2v`) additionally take `-o, --output PATH` (explicit file destination).
 > The mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
 >
-> **`i2v` is narrower (issue #125):** `omni-flash` is **not** an accepted
-> `--model` for `i2v`: a wire-level capture (2026-05-30) showed Flow silently
-> dropping the start/end frames and billing the run as text-to-video. The `i2v`
-> choices are `[veo-lite|veo-fast|veo-quality|veo-lite-lp]` and the **default is
-> `veo-lite`** (not Flow's UI default). `--duration` for `i2v` is `[4|6|8]` (10s
-> is omni-flash-only). `t2v` and `r2v` keep the full shared set above.
-> *Status 2026-08-03:* Flow's official support matrix now lists start-frame
-> "Frames to Video" for Omni Flash (first+last: "coming soon"), and a credit-free
-> UI recon (`scripts/dev/spike_omni_flash_i2v_ui_recon.py`) confirms the editor
-> offers the combination — the gate stays until a wire-level capture proves the
-> submit routes to `batchAsyncGenerateVideoStartImage` (the #125 failure was a
-> silent frontend reroute invisible to UI probes). For a 10s omni-flash clip
-> guided by images today, use `gflow video r2v --model omni-flash` (Ingredients).
+> **`i2v` model rules (issue #125, re-verified 2026-08-03):** every model —
+> `omni-flash` included — supports **start-frame** i2v; the **default is
+> `veo-lite`** (not Flow's UI default). `--model omni-flash` unlocks
+> `--duration 10` for i2v. The **end frame is narrower**: `--end-frame`
+> (first+last interpolation) requires a Veo 3.1 model — Flow's official
+> support matrix lists first+last as "coming soon" for Omni Flash, and gflow
+> rejects that combination up front (exit 17).
+> History: omni-flash was excluded from i2v entirely after a 2026-05-30 wire
+> capture showed Flow silently dropping the frames and billing the run as
+> text-to-video. A 2026-08-03 route-aborted re-capture
+> (`scripts/dev/capture_i2v_intercept_submit.py --model omni-flash
+> --start-only`) proved Flow now routes omni + start frame to
+> `batchAsyncGenerateVideoStartImage` with the frame bound, and a live x1
+> 10s generation confirmed the output interpolates from the start frame.
 
 ## `gflow video t2v`
 
