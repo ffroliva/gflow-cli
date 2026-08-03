@@ -331,6 +331,28 @@ SUBMIT_STAGE_TIMEOUT_S = 90.0
 # page is by definition not answering, so an unbounded best-effort capture
 # would re-hang the very code path meant to end the hang.
 STAGE_TIMEOUT_SHOT_S = 15.0
+# Playwright version gflow is tested against — kept in step with the
+# `playwright` constraint in pyproject.toml (asserted by
+# tests/test_playwright_pin.py). Surfaced in the stall error because an
+# out-of-range playwright is the known cause of that stall.
+PINNED_PLAYWRIGHT = "1.59.0"
+SUPPORTED_PLAYWRIGHT_RANGE = ">=1.59.0,<1.60.0"
+
+
+def _playwright_version() -> str:
+    """Installed playwright version, or ``'unknown'`` — never raises.
+
+    Read at failure time (not import time) so a broken/absent distribution
+    cannot turn a diagnostic into a second exception.
+    """
+    try:
+        from importlib.metadata import version  # noqa: PLC0415
+
+        return version("playwright")
+    except Exception:
+        return "unknown"
+
+
 # R2V references mode has NO Start/End slots — references are added via the
 # only button[aria-haspopup='dialog'] in the editor: a 'Create' button carrying
 # the 'add_2' icon (its visible text 'Create' / 'Add Media' is unreliable — a
@@ -3244,11 +3266,20 @@ class VideoGenerationMixin:
 
         Every UI probe in this transport carries its own per-selector timeout,
         so a stage that blows a whole-stage budget is not "slow Flow" — it is a
-        Playwright call that stopped honouring its deadline (a lingering media
-        dialog / file chooser leaves the page unable to answer the CDP command,
-        and the per-probe timer never fires). Left alone that presents as an
-        unbounded SILENT hang: browser alive, no error, no further log line, no
-        indication of which stage owns the wait.
+        Playwright call that stopped honouring its deadline, so the per-probe
+        timer never fires. Left alone that presents as an unbounded SILENT
+        hang: browser alive, no error, no further log line, no indication of
+        which stage owns the wait.
+
+        Known cause (2026-08-03): an **unpinned playwright** — an install that
+        resolved 1.62.0 against a project locked to 1.59.0 wedged every
+        ``video i2v`` run immediately after the frame upload. ``uv tool
+        install <path>`` ignores ``uv.lock``, so a local/tool install silently
+        picks the newest version the pyproject range allows; the range is now
+        upper-bounded. The version check lives in the error message rather
+        than in a preflight assert because a future driver regression may
+        present the same way on an in-range version — the watchdog is the
+        general net, the pin is the specific fix.
 
         On expiry this raises :class:`TransportTimeoutError` naming the stage,
         after a best-effort screenshot taken under its own short deadline (the
@@ -3266,20 +3297,27 @@ class VideoGenerationMixin:
                     _capture_debug_screenshot(page, out_dir, f"debug_stage_stalled_{stage}.png"),
                     timeout=STAGE_TIMEOUT_SHOT_S,
                 )
+            pw_version = _playwright_version()
             log.error(
                 "ui_automation_video.stage_stalled",
                 stage=stage,
                 timeout_s=timeout_s,
+                playwright_version=pw_version,
                 screenshot=str(shot) if shot else None,
             )
             msg = (
                 f"the {stage!r} stage did not complete within {timeout_s:.0f}s. "
                 f"Every probe inside it is individually bounded, so this means "
-                f"Flow's page stopped responding to automation (most often a "
-                f"media dialog or file chooser left open by the preceding step) "
-                f"— the run was aborted instead of hanging silently. Nothing was "
-                f"submitted, so no credit was spent. Retry; if it repeats, the "
-                f"screenshot above shows what the page was stuck on."
+                f"the browser stopped responding to automation — the run was "
+                f"aborted instead of hanging silently. Nothing was submitted, "
+                f"so no credit was spent. FIRST THING TO CHECK: your installed "
+                f"playwright is {pw_version}; gflow is tested against "
+                f"{SUPPORTED_PLAYWRIGHT_RANGE}. An out-of-range playwright is "
+                f"the known cause of this exact stall (a 1.62.0 install against "
+                f"a 1.59.0-locked project wedged every i2v run right after the "
+                f"frame upload). `uv tool install <path>` IGNORES uv.lock, so "
+                f"reinstall pinned: "
+                f"`uv tool install --force --with playwright=={PINNED_PLAYWRIGHT} .`"
                 f"{screenshot_clause(shot)}"
             )
             raise TransportTimeoutError(detail=msg) from e

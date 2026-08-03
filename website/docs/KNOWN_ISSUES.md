@@ -14,6 +14,38 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### An out-of-range Playwright silently wedges video generation
+
+- **Status:** Mitigated (v0.49.0 — upper-bounded dependency + fail-fast watchdog)
+- **Severity:** High (silent, multi-minute, indistinguishable from slowness) · **Affected:** any install that resolved a Playwright outside the tested range — most often `uv tool install <path>` from a local checkout
+
+`uv tool install <path>` **ignores `uv.lock`** and resolves from the
+`pyproject.toml` ranges, so a local/tool install could pick up a Playwright
+newer than anything this project has tested. Playwright ships the browser
+driver, so an untested minor is an untested product. Observed 2026-08-03: an
+install that resolved **1.62.0** against a project locked to **1.59.0** made
+every `gflow video i2v` run hang **silently** immediately after the frame
+upload — last log line `ui_automation_video.frame_attached`, browser alive, no
+error, no timeout, indefinitely. Reinstalling with the locked version fixed it
+on the first try.
+
+**Mitigation (two layers):**
+1. **Upper-bounded dependency.** `playwright>=1.59.0,<1.60.0` — an unpinned
+   install can no longer reach an untested minor. Raising it is a deliberate
+   act requiring a live-verified generation; offline tests and CI's
+   `resolve-drift` job (import-only) cannot see a driver-behaviour regression.
+2. **Fail-fast stage watchdog.** The prompt-submission stage runs under a named
+   wall-clock deadline. On expiry the run aborts **pre-submit** with
+   `TransportTimeoutError` (exit 8), a `stage_stalled` event, and a debug
+   screenshot — the error names the stage, prints your installed Playwright
+   version against the supported range, and gives the pinned reinstall command.
+   Nothing is submitted, so no credit is spent.
+
+**Workaround:** install from a local checkout with the lock carried explicitly —
+`uv tool install --force --with playwright==1.59.0 .` — and check what you have
+with `uv tool run --from gflow-cli python -c "import importlib.metadata as m; print(m.version('playwright'))"`.
+Installs from PyPI are unaffected.
+
 ### One-time Flow banner/modal can cover the composer on first load
 
 - **Status:** Open ([#369](https://github.com/ffroliva/gflow-cli/issues/369))
