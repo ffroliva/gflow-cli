@@ -80,6 +80,18 @@ class VideoModel(StrEnum):
         ``VEO_3_1_*`` variants preserve the refs and route to
         ``batchAsyncGenerateVideoStartImage`` /
         ``batchAsyncGenerateVideoStartAndEndImage``.
+
+        Re-checked 2026-08-03 (``scripts/dev/spike_omni_flash_i2v_ui_recon.py``,
+        credit-free): today's editor UI offers Omni Flash with the Frames
+        sub-mode active, keeps a bound Start frame across the model switch, and
+        exposes the 10s duration — and Google's official Flow support matrix
+        now lists "Frames to Video: First" as supported for Omni Flash
+        (first+last: "coming soon"). The exclusion is therefore LIKELY stale,
+        but the failure mode #125 guards against was a SILENT frontend reroute
+        at submit — invisible to every UI-level probe — so the gate stays until
+        a wire-level capture (route-aborted or one real x1 generation) shows
+        ``batchAsyncGenerateVideoStartImage`` with a non-null startImage under
+        Omni Flash.
         """
         return self is not VideoModel.OMNI_FLASH
 

@@ -194,8 +194,8 @@ NON_CLASSIC_COHORT_INDICATORS = (*AGENTIC_UI_INDICATORS, *LIBRARY_UI_INDICATORS)
 # `_set_output_count` / `_select_video_duration` — NOT by id-suffix: the count
 # tab '-trigger-4' and the duration tab '-trigger-4' (4s) share a suffix, so an
 # id match is ambiguous (this was the prior '[id*=-trigger-1]' bug that also
-# caught '-trigger-10'). Labels '1x'/'x2'.. and '4s'/'6s'.. are unambiguous and
-# locale-independent.
+# caught '-trigger-10'). Labels 'x1'/'x2'.. (legacy '1x' — issue #404 rename)
+# and '4s'/'6s'.. are unambiguous and locale-independent.
 
 # Aspect tabs inside the open menu. SOT (flow-editor-map.json): video aspect
 # tab ids end with '-trigger-PORTRAIT' (9:16, icon crop_9_16) and
@@ -1424,13 +1424,23 @@ class VideoGenerationMixin:
             log.warning("ui_automation_video.editor_ready_timeout", error=str(e))
 
     @staticmethod
-    async def _set_output_count(page: Page, n: int) -> None:
+    async def _set_output_count(page: Page, n: int, *, out_dir: Path | None = None) -> None:
         """Set the output count to `n` (1-4). Flow defaults to x2 (two videos =
         double credits — spec §10.5). Disambiguated by label text, NOT
-        id-suffix — '-trigger-4' collides with the DURATION 4s tab. The
-        count-1 label exists in two cohorts ('x1' current, '1x' legacy —
-        issue #404 rename); both are probed. Non-fatal on miss."""
-        labels = ("x1", "1x") if n == 1 else (f"x{n}",)
+        id-suffix — '-trigger-4' collides with the DURATION 4s tab (exact
+        text match keeps '4s' from ever colliding with 'x4'). BOTH affix
+        orders are probed for every digit ('x1' current / '1x' legacy — the
+        issue #404 rename class), so the next affix flip degrades to the
+        fallback selector instead of a miss.
+
+        Fatal on miss: count is a credit MULTIPLIER (every
+        ``GenerateVideoRequest`` carries a definite 1-4 value), and a miss
+        hands the run to Flow's sticky default — typically x2, silently
+        DOUBLING spend for count=1 and under-delivering for count=3/4. This
+        runs before frame attach and submit, so refusing spends nothing —
+        the same pre-spend contract as the duration probe (#288) and the
+        required i2v model select (#125)."""
+        labels = (f"x{n}", f"{n}x")
         selectors = tuple(f"[role='tab']:text-is('{label}')" for label in labels) + tuple(
             f"[role='tab']:has-text('{label}')" for label in labels
         )
@@ -1440,12 +1450,17 @@ class VideoGenerationMixin:
             selectors,
         )
         if tab is None:
-            log.warning(
-                "ui_automation_video.count_not_set",
-                count=n,
-                note="Flow default (x2) applies",
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_count_tab.png")
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "count_tab",
+                    f"the output-count tab for count={n} (label 'x{n}' or '{n}x') was "
+                    f"not found on the Flow editor; refusing to proceed — Flow's "
+                    f"sticky default (typically x2) would silently change how many "
+                    f"clips this run generates and bills for. No credits were spent.",
+                    shot,
+                )
             )
-            return
         await tab.click()
         await page.wait_for_timeout(400)
         log.info("ui_automation_video.output_count_set", count=n)
@@ -3244,9 +3259,14 @@ class VideoGenerationMixin:
             )
             raise ModelModeIncompatibilityError(
                 detail=(
-                    f"{request.model.value!r} does not support image-to-video "
-                    f"interpolation; Flow silently drops the start/end frames "
-                    f"and produces a text-only video (issue #125)."
+                    f"{request.model.value!r} is not accepted for i2v: a "
+                    f"wire-level capture (issue #125) showed Flow silently "
+                    f"dropping the start/end frames and billing the run as "
+                    f"text-to-video. Use a Veo 3.1 model, or reference-guided "
+                    f"omni-flash via `gflow video r2v`. Flow's official docs "
+                    f"now list start-frame i2v for Omni Flash, so this gate is "
+                    f"pending a wire-level re-verification of the submit "
+                    f"routing."
                 ),
             )
         effective_model = request.model
