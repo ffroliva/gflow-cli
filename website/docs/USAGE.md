@@ -489,15 +489,26 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > current UI default), `--duration [4|6|8|10]` (10 requires `--model omni-flash`),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
+> `--count` is enforced **fail-closed**: if Flow's count control cannot be
+> located (selector drift), the run refuses with exit 23 *before* submitting
+> instead of proceeding on Flow's sticky default (typically x2) and silently
+> changing what the run bills.
 > `t2v` and `i2v` (not `r2v`) additionally take `-o, --output PATH` (explicit file destination).
 > The mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
 >
-> **`i2v` is narrower (issue #125):** `omni-flash` does NOT support image-to-video
-> interpolation — Flow silently drops the start/end frames and produces a
-> text-only video — so it is **not** an accepted `--model` for `i2v`. The `i2v`
+> **`i2v` is narrower (issue #125):** `omni-flash` is **not** an accepted
+> `--model` for `i2v`: a wire-level capture (2026-05-30) showed Flow silently
+> dropping the start/end frames and billing the run as text-to-video. The `i2v`
 > choices are `[veo-lite|veo-fast|veo-quality|veo-lite-lp]` and the **default is
 > `veo-lite`** (not Flow's UI default). `--duration` for `i2v` is `[4|6|8]` (10s
 > is omni-flash-only). `t2v` and `r2v` keep the full shared set above.
+> *Status 2026-08-03:* Flow's official support matrix now lists start-frame
+> "Frames to Video" for Omni Flash (first+last: "coming soon"), and a credit-free
+> UI recon (`scripts/dev/spike_omni_flash_i2v_ui_recon.py`) confirms the editor
+> offers the combination — the gate stays until a wire-level capture proves the
+> submit routes to `batchAsyncGenerateVideoStartImage` (the #125 failure was a
+> silent frontend reroute invisible to UI probes). For a 10s omni-flash clip
+> guided by images today, use `gflow video r2v --model omni-flash` (Ingredients).
 
 ## `gflow video t2v`
 
