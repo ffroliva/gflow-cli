@@ -567,9 +567,13 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     # Validate required credentials
-    gh_token = os.environ.get("GH_COMMENT_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    gh_token = (
+        os.environ.get("GH_COMMENT_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+        or os.environ.get("GH_TOKEN")
+    )
     if not gh_token:
-        logger.error("Missing credentials. Requires GH_COMMENT_TOKEN.")
+        logger.error("Missing credentials. Requires GH_COMMENT_TOKEN, GITHUB_TOKEN, or GH_TOKEN.")
         return 1
 
     auth_error = check_claude_auth()
