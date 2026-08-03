@@ -23,19 +23,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A video run that wedges between attaching the frame and submitting the
-  prompt now fails fast and names the stage, instead of hanging silently.**
-  Reproduced twice on `gflow video i2v`: the last log line was
-  `ui_automation_video.frame_attached`, then nothing — browser alive, no error,
-  no timeout — until the operator killed it. Every probe in that window is
-  individually bounded, so the stall means a Playwright call stopped honouring
-  its own deadline (typically a media dialog / file chooser left open by the
-  preceding step) and no inner timer ever fired. The submission stage now runs
-  under a named wall-clock watchdog: on expiry it aborts pre-submit with
+- **An out-of-range Playwright silently wedged every video generation; the
+  dependency is now upper-bounded and the stall fails fast.** `uv tool install
+  <path>` ignores `uv.lock` and resolves from the `pyproject.toml` ranges, and
+  the `playwright>=1.45.0` range had no upper bound — so a local/tool install
+  could pick up a Playwright this project has never tested. Observed: an
+  install that resolved **1.62.0** against a project locked to **1.59.0** made
+  every `gflow video i2v` run hang **silently** right after the frame upload
+  (last log line `ui_automation_video.frame_attached`, browser alive, no error,
+  no timeout, indefinitely); reinstalling with the locked version fixed it on
+  the first try. Playwright ships the browser driver, so an untested minor is
+  an untested product — the constraint is now `>=1.59.0,<1.60.0` (patch
+  headroom, no untested minors), pinned by `tests/test_playwright_pin.py`.
+  Independently, the prompt-submission stage now runs under a named wall-clock
+  watchdog: on expiry the run aborts **pre-submit** with
   `TransportTimeoutError`, a `stage_stalled` event and a debug screenshot taken
-  under its own short deadline — no credit is spent. Root cause of the wedge
-  itself is still open; this converts an unbounded silent hang into a
-  diagnosable failure.
+  under its own short deadline, and the error names the stage, prints the
+  installed Playwright version against the supported range, and gives the
+  pinned reinstall command. Nothing is submitted, so no credit is spent — a
+  silent multi-minute hang is indistinguishable from slowness in an overnight
+  batch, which is what made this expensive to diagnose.
 - **A missing video output-count control now refuses before submit instead of
   silently proceeding on Flow's default of x2 — which double-billed
   `--count 1` runs (#404).** `_set_output_count` raises `UiSelectorDriftError`

@@ -53,6 +53,14 @@ Outputs land under `$GFLOW_CLI_OUTPUT_DIR`, or you can route them to S3, MinIO, 
 
 > **Why `--browser chrome`?** Google rejects Playwright's bundled Chromium. The CLI fails fast with a friendly error (`AuthBrowserRejectedError`, exit code 14) if you pick anything else.
 
+> **Installing from a local checkout?** `uv tool install <path>` **ignores `uv.lock`** and resolves dependencies from the `pyproject.toml` ranges, so it can hand you a Playwright build this project has never tested. Playwright ships the browser driver, and an untested minor can wedge a generation silently. Carry the locked version explicitly:
+>
+> ```bash
+> uv tool install --force --with playwright==1.59.0 .
+> ```
+>
+> Installing from PyPI (`uv tool install gflow-cli`) is unaffected — the published range is upper-bounded. Check what you actually have with `uv tool run --from gflow-cli python -c "import importlib.metadata as m; print(m.version('playwright'))"`.
+
 For the full 10-minute walkthrough with troubleshooting and multi-account setup, see **[USER_GUIDE: Journey 1](docs/USER_GUIDE.md#journey-1--first-time-setup-10-minutes)**.
 
 ## Examples
