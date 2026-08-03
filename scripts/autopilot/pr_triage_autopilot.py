@@ -573,12 +573,18 @@ def main(argv: list[str] | None = None) -> int:
         or os.environ.get("GH_TOKEN")
     )
     if not gh_token:
-        logger.error("Missing credentials. Requires GH_COMMENT_TOKEN, GITHUB_TOKEN, or GH_TOKEN.")
+        err_msg = "Missing credentials. Requires GH_COMMENT_TOKEN, GITHUB_TOKEN, or GH_TOKEN."
+        logger.error(err_msg)
+        send_telegram_alert(f"🚨 PR-Triage Autopilot ALERT: {err_msg}")
         return 1
 
     auth_error = check_claude_auth()
     if auth_error:
         logger.error("Claude authentication unusable", reason=auth_error)
+        send_telegram_alert(
+            "🚨 PR-Triage Autopilot ALERT: Claude authentication unusable on host.\n"
+            f"Reason: {auth_error}"
+        )
         return 1
 
     engine = resolve_engine()
