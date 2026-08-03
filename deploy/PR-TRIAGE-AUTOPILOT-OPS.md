@@ -11,7 +11,7 @@ The autopilot orchestrator (`scripts/autopilot/pr_triage_autopilot.py`) runs as 
 | Variable | Scope | Purpose |
 |---|---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | Autopilot orchestrator & sandbox | Claude **subscription** token from `claude setup-token`, valid **1 year**. This deployment has no `ANTHROPIC_API_KEY`. Passed into the container as an env var. **Not** `~/.claude/.credentials.json` — `setup-token` does not write that file. |
-| `GH_COMMENT_TOKEN` | Autopilot orchestrator (host) | The comment-only GitHub PAT used to post verdicts and reviews to `ffroliva/gflow-cli` PRs. |
+| `GH_COMMENT_TOKEN` | Autopilot orchestrator (host) | Fine-grained least-privilege GitHub PAT (scoped to `ffroliva/gflow-cli` with `pull_requests:write`) used to post verdicts and reviews to PRs. Stored encrypted in hermes-ops SOPS (`vps-prod.env.sops.yaml`) and rendered into `/opt/hermes/.env`. |
 | `TELEGRAM_BOT_TOKEN` | Autopilot orchestrator (host) | Bot token to dispatch alert messages. |
 | `TELEGRAM_USER_ID` | Autopilot orchestrator (host) | The chat ID to receive triage alert messages. |
 | `PR_TRIAGE_ENGINE` | Autopilot orchestrator (host), optional | Review engine selector. Default `council-claude`; any other value exits at startup (`council-multi-cli` is reserved backlog). |
