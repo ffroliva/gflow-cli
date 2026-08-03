@@ -842,10 +842,10 @@ async def gflow_generate_video(  # NOSONAR
         reference_images: List of reference image paths (ingredients) for r2v.
         model: Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality',
             'omni_flash' (aliases accepted, mirrors the CLI ``--model``). When
-            omitted, Flow's UI default applies EXCEPT for i2v with frames, where
-            the transport defaults to veo-lite to avoid the omni-flash
-            frame-drop credit burn (issue #125). Note: 'omni_flash' does not
-            support i2v interpolation and is rejected for i2v with frames.
+            omitted, Flow's UI default applies EXCEPT for i2v with frames,
+            where the transport defaults to veo-lite. Note: 'omni_flash'
+            supports start-frame i2v (wire-verified 2026-08-03, refs #125) but
+            NOT an end frame — i2v with 'end_frame' requires a Veo 3.1 model.
         duration: Optional clip length in seconds (mirrors the CLI ``--duration``).
             When omitted, Flow's per-model default applies.
         count: Number of videos to generate (mirrors the CLI ``--count``; default 1).

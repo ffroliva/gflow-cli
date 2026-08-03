@@ -69,38 +69,47 @@ class VideoModel(StrEnum):
         return _VIDEO_MODEL_FROM_CLI[key]
 
     def supports_i2v_interpolation(self) -> bool:
-        """Whether this model supports image-to-video with start (and optional
-        end) frame references.
+        """Whether this model supports image-to-video with a START frame.
 
-        Verified empirically (issue #125, 2026-05-30) via the
-        ``scripts/dev/capture_i2v_intercept_submit.py`` probe with
-        ``page.route(..., abort)``: ``OMNI_FLASH`` causes Flow's frontend to
-        silently drop frame refs at submit and route to
-        ``batchAsyncGenerateVideoText`` with ``image_inputs: null``. The four
-        ``VEO_3_1_*`` variants preserve the refs and route to
-        ``batchAsyncGenerateVideoStartImage`` /
-        ``batchAsyncGenerateVideoStartAndEndImage``.
+        History: a 2026-05-30 route-abort capture (issue #125, via
+        ``scripts/dev/capture_i2v_intercept_submit.py``) showed ``OMNI_FLASH``
+        silently dropping frame refs at submit and routing to
+        ``batchAsyncGenerateVideoText`` with ``image_inputs: null`` — the
+        original reason it was excluded here.
 
-        Re-checked 2026-08-03 (``scripts/dev/spike_omni_flash_i2v_ui_recon.py``,
-        credit-free): today's editor UI offers Omni Flash with the Frames
-        sub-mode active, keeps a bound Start frame across the model switch, and
-        exposes the 10s duration — and Google's official Flow support matrix
-        now lists "Frames to Video: First" as supported for Omni Flash
-        (first+last: "coming soon"). The exclusion is therefore LIKELY stale,
-        but the failure mode #125 guards against was a SILENT frontend reroute
-        at submit — invisible to every UI-level probe — so the gate stays until
-        a wire-level capture (route-aborted or one real x1 generation) shows
-        ``batchAsyncGenerateVideoStartImage`` with a non-null startImage under
-        Omni Flash.
+        Re-verified 2026-08-03 with the SAME probe (``--model omni-flash
+        --start-only``, request aborted in-browser, zero credits): Flow now
+        routes Omni Flash + bound Start frame to
+        ``batchAsyncGenerateVideoStartImage`` with a non-null ``startImage``,
+        matching Google's official support matrix ("Frames to Video: First" =
+        supported for Omni Flash, 4s–10s). Confirmed the same day by one live
+        x1 10s generation whose captured request carried the ``startImage``
+        and whose output's first frame IS the uploaded start frame. All
+        current models therefore support start-frame i2v; the method remains
+        as the seam for future models. END-frame support is narrower — see
+        :meth:`supports_i2v_end_frame`.
+        """
+        return True
+
+    def supports_i2v_end_frame(self) -> bool:
+        """Whether this model supports i2v with an END frame (first+last
+        interpolation).
+
+        ``OMNI_FLASH`` is excluded: Google's official support matrix lists
+        "Frames to Video: First + last" as "coming soon" for it (2026-08), and
+        there is no wire-level capture proving the
+        ``batchAsyncGenerateVideoStartAndEndImage`` route for Omni Flash. The
+        ``VEO_3_1_*`` variants have carried end frames on that route since the
+        original #125 captures.
         """
         return self is not VideoModel.OMNI_FLASH
 
 
 # Default model for ``gflow video i2v`` and direct ``FlowApiClient.generate_video``
 # callers when ``model`` is omitted and the request carries a start/end frame.
-# ``omni_flash`` is excluded because it silently drops frame refs at submit
-# time (issue #125). ``veo_3_1_lite`` is the cheapest interpolation-capable
-# model, matching the price tier ``omni_flash`` previously occupied for t2v.
+# ``veo_3_1_lite`` stays the default: it is the cheapest model that supports
+# BOTH start-only and start+end i2v. ``omni_flash`` (start-only, 10s capable —
+# re-verified 2026-08-03, refs #125) is opt-in via an explicit ``--model``.
 I2V_DEFAULT_MODEL: VideoModel = VideoModel.VEO_3_1_LITE
 
 

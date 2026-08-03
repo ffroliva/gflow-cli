@@ -1483,10 +1483,10 @@ class VideoGenerationMixin:
         On miss the default behaviour is non-fatal (Flow's default model
         applies) but logged at WARNING — picking the wrong model changes credit
         cost. When ``required=True`` (i2v: see issue #125), a miss is FATAL and
-        raises ``VideoModelSelectionError`` BEFORE any frame attach or submit,
-        because Flow's default model is ``omni-flash`` which silently drops i2v
-        frame refs and routes to T2V — a wasted credit. Failing here spends
-        nothing.
+        raises ``VideoModelSelectionError`` BEFORE any frame attach or submit:
+        an i2v run on an unverified model breaks the request contract (cost
+        tier, duration cap, end-frame capability — first+last is Veo-3.1-only).
+        Failing here spends nothing.
 
         Reliability (issue #125): the trigger click occasionally does not open
         the menu (the option probe then times out and Flow keeps its default).
@@ -1518,8 +1518,9 @@ class VideoGenerationMixin:
                 shot = await _capture_debug_screenshot(page, out_dir, "debug_no_model_picker.png")
                 msg = (
                     f"model picker trigger not found; cannot select {model.value!r} "
-                    f"for i2v. Refusing to proceed (Flow's default would drop the "
-                    f"frames to T2V — issue #125).{screenshot_clause(shot)}"
+                    f"for i2v. Refusing to proceed — an i2v run on an unverified "
+                    f"model breaks the request contract (refs #125)."
+                    f"{screenshot_clause(shot)}"
                 )
                 raise VideoModelSelectionError(detail=msg, route="model_picker_trigger")
             return
@@ -1559,9 +1560,10 @@ class VideoGenerationMixin:
             )
             msg = (
                 f"could not select video model {model.value!r} for i2v after 2 "
-                f"attempts. Refusing to proceed — Flow's default model "
-                f"({VideoModel.OMNI_FLASH.value}) silently drops the start/end "
-                f"frames and routes to T2V (issue #125).{screenshot_clause(shot)}"
+                f"attempts. Refusing to proceed — an i2v run on whatever model "
+                f"Flow last had selected breaks the request contract (cost "
+                f"tier, duration cap, end-frame capability — refs #125)."
+                f"{screenshot_clause(shot)}"
             )
             raise VideoModelSelectionError(detail=msg, route="model_option")
 
@@ -3240,33 +3242,43 @@ class VideoGenerationMixin:
     ) -> VideoModel | None:
         """Validate and resolve the effective model for an I2V request.
 
-        Raises ``ModelModeIncompatibilityError`` if the requested model does not
-        support I2V interpolation. Returns the effective model to use — defaults
-        to ``I2V_DEFAULT_MODEL`` when ``is_i2v_with_frames`` and no model is set.
+        Raises ``ModelModeIncompatibilityError`` when the model/frame
+        combination is unsupported: no current model rejects a START frame
+        (omni-flash re-verified on the wire 2026-08-03, refs #125), but an END
+        frame requires :meth:`VideoModel.supports_i2v_end_frame` (omni-flash:
+        Flow lists first+last as "coming soon" — no wire proof). Returns the
+        effective model to use — defaults to ``I2V_DEFAULT_MODEL`` when
+        ``is_i2v_with_frames`` and no model is set.
         """
+        has_end_ref = (
+            request.end_image is not None
+            or request.end_image_ref_id is not None
+            or request.end_image_ref_name is not None
+        )
         if (
             is_i2v_with_frames
             and request.model is not None
-            and not request.model.supports_i2v_interpolation()
+            and (
+                not request.model.supports_i2v_interpolation()
+                or (has_end_ref and not request.model.supports_i2v_end_frame())
+            )
         ):
             log.error(
                 "ui_automation_video.model_mode_rejected",
                 model=request.model.value,
                 mode=request.mode.name,
                 has_start_image=request.start_image is not None,
-                has_end_image=request.end_image is not None,
+                has_end_image=has_end_ref,
                 issue_ref="#125",
             )
             raise ModelModeIncompatibilityError(
                 detail=(
-                    f"{request.model.value!r} is not accepted for i2v: a "
-                    f"wire-level capture (issue #125) showed Flow silently "
-                    f"dropping the start/end frames and billing the run as "
-                    f"text-to-video. Use a Veo 3.1 model, or reference-guided "
-                    f"omni-flash via `gflow video r2v`. Flow's official docs "
-                    f"now list start-frame i2v for Omni Flash, so this gate is "
-                    f"pending a wire-level re-verification of the submit "
-                    f"routing."
+                    f"{request.model.value!r} does not support this i2v frame "
+                    f"combination: an END frame (first+last interpolation) "
+                    f"requires a Veo 3.1 model — Flow lists it as 'coming "
+                    f"soon' for omni-flash and gflow has no wire-level proof "
+                    f"of that route (refs #125). Drop the end frame, or use a "
+                    f"Veo 3.1 model (e.g. veo-lite)."
                 ),
             )
         effective_model = request.model
@@ -3496,9 +3508,10 @@ class VideoGenerationMixin:
         # All settings-panel selections happen while the panel is open: model
         # (gates the 10s duration), sub-mode tab, aspect, count, duration.
         # For i2v, model selection is REQUIRED (required=True): a silent miss
-        # would let Flow fall back to omni-flash and route to T2V (issue #125),
-        # so _select_video_model raises here — before any frame attach or submit,
-        # spending no credit.
+        # would run i2v on whatever model Flow last had selected, breaking the
+        # request contract (cost tier, duration cap, end-frame capability —
+        # refs #125), so _select_video_model raises here — before any frame
+        # attach or submit, spending no credit.
         await ui_driver.configure_video_settings(page, request, out_dir=out_dir)
 
         # Attach images AFTER the panel is closed — the slots / 'Add Media' button
