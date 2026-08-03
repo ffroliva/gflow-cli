@@ -7,7 +7,7 @@ import itertools
 import json
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
@@ -410,6 +410,85 @@ class TestSelectVideoDuration:
             await VideoGenerationMixin._select_video_duration(page, 6, out_dir=tmp_path)
         assert "Screenshot:" in str(exc_info.value)
         page.screenshot.assert_awaited()
+
+
+class TestRunStage:
+    """`_run_stage` converts a wedged UI stage into a fast, named error.
+
+    The bug: `gflow video i2v` hung SILENTLY after `frame_attached` — browser
+    alive, no error, no further log line — because a Playwright call stopped
+    honouring its own per-probe deadline, so no inner timeout ever fired.
+    """
+
+    @pytest.mark.asyncio
+    async def test_passes_through_result_when_fast(self) -> None:
+        page = _cascade_page(set())
+
+        async def _work() -> str:
+            return "ok"
+
+        got = await VideoGenerationMixin._run_stage(
+            _work(), stage="send_prompt", page=page, out_dir=None, timeout_s=5.0
+        )
+        assert got == "ok"
+
+    @pytest.mark.asyncio
+    async def test_stalled_stage_raises_named_transport_timeout(self) -> None:
+        page = _cascade_page(set())
+
+        async def _hang() -> None:
+            await asyncio.sleep(10)
+
+        with pytest.raises(TransportTimeoutError) as exc_info:
+            await VideoGenerationMixin._run_stage(
+                _hang(), stage="send_prompt", page=page, out_dir=None, timeout_s=0.05
+            )
+        msg = str(exc_info.value)
+        assert "send_prompt" in msg  # names the stage that owns the wait
+        assert "no credit was spent" in msg  # nothing was submitted
+
+    @pytest.mark.asyncio
+    async def test_stall_screenshot_hang_does_not_re_hang(self, tmp_path: Path) -> None:
+        """The page is wedged by definition, so an unbounded capture would
+        re-hang the very path meant to end the hang — it must stay bounded."""
+        page = _cascade_page(set())
+
+        async def _never_returns(**_k: object) -> None:
+            await asyncio.sleep(30)
+
+        page.screenshot = AsyncMock(side_effect=_never_returns)
+
+        async def _hang() -> None:
+            await asyncio.sleep(10)
+
+        from gflow_cli.api.transports import ui_automation_video as mod
+
+        with patch.object(mod, "STAGE_TIMEOUT_SHOT_S", 0.05):
+            with pytest.raises(TransportTimeoutError):
+                await VideoGenerationMixin._run_stage(
+                    _hang(), stage="send_prompt", page=page, out_dir=tmp_path, timeout_s=0.05
+                )
+
+    @pytest.mark.asyncio
+    async def test_stall_emits_diagnosable_event(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        page = _cascade_page(set())
+
+        async def _hang() -> None:
+            await asyncio.sleep(10)
+
+        with pytest.raises(TransportTimeoutError):
+            await VideoGenerationMixin._run_stage(
+                _hang(), stage="send_prompt", page=page, out_dir=None, timeout_s=0.05
+            )
+        events = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.stage_stalled"
+        ]
+        assert len(events) == 1
+        assert events[0]["stage"] == "send_prompt"
 
 
 class TestSetOutputCount:

@@ -318,6 +318,19 @@ DIALOG_ANY = "[role='dialog']"
 # the I2V remote-frame budget (was an unexplained 8s for R2V, which spuriously
 # aborted slow-but-successful attaches on large/virtualised grids — #245 review).
 REMOTE_PICKER_CLOSE_TIMEOUT_S = 120.0
+# Wall-clock ceiling for the prompt-submission stage: overlay dismissal +
+# prompt-box lookup + typing + submit click. Every probe inside is already
+# individually bounded (overlay detect <=6x1.5s, prompt box 4x10s, submit
+# 3x2s), so a healthy stage finishes in seconds and even a fully-drifted one
+# raises inside ~50s. A longer wait means a Playwright call stopped honouring
+# its own per-probe deadline — observed as a SILENT hang right after
+# `frame_attached`, browser alive, no error, no further log line. Failing
+# fast and naming the stage is what turns that into a diagnosable bug.
+SUBMIT_STAGE_TIMEOUT_S = 90.0
+# Screenshot capture after a wedged stage gets its own short deadline: the
+# page is by definition not answering, so an unbounded best-effort capture
+# would re-hang the very code path meant to end the hang.
+STAGE_TIMEOUT_SHOT_S = 15.0
 # R2V references mode has NO Start/End slots — references are added via the
 # only button[aria-haspopup='dialog'] in the editor: a 'Create' button carrying
 # the 'add_2' icon (its visible text 'Create' / 'Add Media' is unreliable — a
@@ -3219,6 +3232,65 @@ class VideoGenerationMixin:
         return media_name, flow_operation_id
 
     @staticmethod
+    async def _run_stage(
+        coro: Any,
+        *,
+        stage: str,
+        page: Page,
+        out_dir: Path | None,
+        timeout_s: float,
+    ) -> Any:
+        """Await *coro* under a named wall-clock deadline.
+
+        Every UI probe in this transport carries its own per-selector timeout,
+        so a stage that blows a whole-stage budget is not "slow Flow" — it is a
+        Playwright call that stopped honouring its deadline (a lingering media
+        dialog / file chooser leaves the page unable to answer the CDP command,
+        and the per-probe timer never fires). Left alone that presents as an
+        unbounded SILENT hang: browser alive, no error, no further log line, no
+        indication of which stage owns the wait.
+
+        On expiry this raises :class:`TransportTimeoutError` naming the stage,
+        after a best-effort screenshot taken under its own short deadline (the
+        page is by definition not answering, so an unbounded capture here would
+        re-hang the code path meant to end the hang).
+        """
+        log.info("ui_automation_video.stage_started", stage=stage, timeout_s=timeout_s)
+        started = time.monotonic()
+        try:
+            result = await asyncio.wait_for(coro, timeout=timeout_s)
+        except TimeoutError as e:
+            shot: Path | None = None
+            with contextlib.suppress(Exception):
+                shot = await asyncio.wait_for(
+                    _capture_debug_screenshot(page, out_dir, f"debug_stage_stalled_{stage}.png"),
+                    timeout=STAGE_TIMEOUT_SHOT_S,
+                )
+            log.error(
+                "ui_automation_video.stage_stalled",
+                stage=stage,
+                timeout_s=timeout_s,
+                screenshot=str(shot) if shot else None,
+            )
+            msg = (
+                f"the {stage!r} stage did not complete within {timeout_s:.0f}s. "
+                f"Every probe inside it is individually bounded, so this means "
+                f"Flow's page stopped responding to automation (most often a "
+                f"media dialog or file chooser left open by the preceding step) "
+                f"— the run was aborted instead of hanging silently. Nothing was "
+                f"submitted, so no credit was spent. Retry; if it repeats, the "
+                f"screenshot above shows what the page was stuck on."
+                f"{screenshot_clause(shot)}"
+            )
+            raise TransportTimeoutError(detail=msg) from e
+        log.info(
+            "ui_automation_video.stage_completed",
+            stage=stage,
+            elapsed_s=round(time.monotonic() - started, 2),
+        )
+        return result
+
+    @staticmethod
     async def _fire_on_started(
         on_started: VideoStartedCallback,
         started: VideoStarted,
@@ -3388,7 +3460,16 @@ class VideoGenerationMixin:
         expected_ents = set(request.reference_entities)
         try:
             async with self._intercept_reference_entities(page, expected_ents):
-                await ui_driver.send_prompt(page, request.prompt, out_dir=out_dir)
+                # Watchdog: this is the window that hung silently after
+                # `frame_attached` — overlay dismissal + prompt-box lookup +
+                # typing + submit, all of which are individually bounded.
+                await VideoGenerationMixin._run_stage(
+                    ui_driver.send_prompt(page, request.prompt, out_dir=out_dir),
+                    stage="send_prompt",
+                    page=page,
+                    out_dir=out_dir,
+                    timeout_s=SUBMIT_STAGE_TIMEOUT_S,
+                )
                 generate_resp = await VideoGenerationMixin._await_generate_response(
                     generate_captured
                 )
