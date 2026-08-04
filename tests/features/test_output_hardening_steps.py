@@ -11,7 +11,6 @@ from click.testing import CliRunner
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from gflow_cli.cli import main
-from gflow_cli.storage import storage_path
 
 scenarios("output_hardening.feature")
 
@@ -94,6 +93,7 @@ def generate_image_with_output(
     tmp_path: Path,
 ) -> None:
     import os
+
     from gflow_cli.api.client import _storage_key_from_path
 
     storage_uri = os.environ.get("GFLOW_CLI_STORAGE_URI", "")
