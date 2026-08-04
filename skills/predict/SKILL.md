@@ -194,12 +194,11 @@ On STOP, output the specific blocking concern and the minimum change required to
 
 ---
 
-## Integration with the gflow-cli workflow
+## Integration & Pipeline Continuation (Next Step Handoff)
 
-- **After GO:** proceed to PLAN.md and add a task under the relevant phase.
-- **After CAUTION:** address mitigations in the PLAN spec before invoking `/gflow:scenario` or entering EXECUTE.
-- **After STOP:** address the blocking concern first. Consider filing a PLAN.md investigation gate task.
-- **Before EXECUTE:** pair with `/gflow:scenario` for systematic edge-case coverage on the implementation.
+- **After GO:** Proactively announce: **"Predict GO. Next step: Phase 3 BDD Scaffolding (`/gflow:scenario <feature>`) or Phase 4 Implementation Plan (`/gflow:plan <feature>`)."**
+- **After CAUTION:** Address required mitigations in the PLAN spec, then announce: **"Predict CAUTION. Next step: Address mitigations in Phase 4 Implementation Plan (`/gflow:plan <feature>`)."**
+- **After STOP:** Address blocking concern or file an investigation gate task before moving to Phase 4.
 
 ---
 

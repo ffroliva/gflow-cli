@@ -634,6 +634,7 @@ async def gflow_generate_image(
     project_name: str | None = None,
     instructions: list[str] | None = None,
     ui_mode: str | None = None,
+    output: str | None = None,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
 
@@ -732,6 +733,8 @@ async def gflow_generate_image(
         payload["project_id"] = project
     if project_name is not None:
         payload["project_name"] = project_name
+    if output is not None:
+        payload["output_file"] = output
 
     task_type = "t2i"
     if reference_images:
@@ -779,6 +782,7 @@ def _build_video_payload(
     tool_specs: Any,
     project: str | None,
     project_name: str | None,
+    output: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "prompt": prompt,
@@ -796,6 +800,8 @@ def _build_video_payload(
         payload["project_id"] = project
     if project_name is not None:
         payload["project_name"] = project_name
+    if output is not None:
+        payload["output_file"] = output
     return payload
 
 
@@ -827,6 +833,7 @@ async def gflow_generate_video(  # NOSONAR
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
     project_name: str | None = None,
+    output: str | None = None,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
 
@@ -937,6 +944,7 @@ async def gflow_generate_video(  # NOSONAR
         tool_specs=tool_specs,
         project=project,
         project_name=project_name,
+        output=output,
     )
     payload.update(media)
 

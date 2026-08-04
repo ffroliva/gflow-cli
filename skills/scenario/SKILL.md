@@ -191,13 +191,13 @@ Feature: <feature name>
 
 ---
 
-## Integration with the gflow-cli workflow
+## Integration & Pipeline Continuation (Next Step Handoff)
 
 1. Run `/gflow:predict` first to validate the approach (GO/CAUTION/STOP).
 2. Run `/gflow:scenario` to enumerate edge cases and build the test matrix.
 3. Use the "Must-cover before merge" list as the acceptance criteria for the PLAN.md task.
 4. Add BDD scenarios to `tests/features/` **before** coding (TDD is non-negotiable per AGENTS.md).
-5. After implementation, verify Critical + High scenarios are covered by tests before running `/gflow:check`.
+5. **Next step:** Proactively announce: **"BDD Scenarios generated. Next step: Phase 4 Implementation Plan (`/gflow:plan <feature>`)."**
 
 ---
 

@@ -104,8 +104,14 @@ What we need next:
 
 ### 6. Hand-off decision (graded, not a hard stop)
 - Verdict ∈ {`CONFIRMED-BUG`, `LIKELY-BUG`} **and** scope is single-surface/localized
-  **and** a fix is verifiable in this environment → chain to **`issue-resolve`**.
+  **and** a fix is verifiable in this environment → chain to **`issue-resolve`** (Phase 9) or **`predict`** (Phase 2).
 - Otherwise → reply only; the next step is a human or more info.
+
+### Pipeline Continuation (Next Step Handoff)
+
+Upon completing an Issue Assessment:
+1. **Confirmed Bug / Feature Request:** Proactively announce: **"Issue assessed. Next step: Phase 2 Pre-Implementation (`/gflow:predict <proposal>`) or Phase 9 Issue Resolve (`/gflow:issue-resolve <N>`)."**
+2. **Needs Info / Unconfirmed:** Request the specific diagnostic and await information before moving to Phase 2.
 
 ---
 

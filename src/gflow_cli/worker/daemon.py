@@ -236,11 +236,24 @@ class FlowWorker:
 
                         flow_media_id = images[0].media_name if images else None
 
+                        output_file_val = task.payload.get("output_file")
+                        output_file = Path(output_file_val) if output_file_val else None
+
                         saved_paths: list[Path] = []
                         for i, img in enumerate(images, start=1):
-                            target = image_output_path(
-                                settings.output_dir, job_id=img.media_name, index=i
-                            )
+                            if output_file is not None:
+                                if len(images) == 1:
+                                    target = output_file
+                                else:
+                                    target = (
+                                        output_file.parent
+                                        / f"{output_file.stem}_{i}{output_file.suffix}"
+                                    )
+                                target.parent.mkdir(parents=True, exist_ok=True)
+                            else:
+                                target = image_output_path(
+                                    settings.output_dir, job_id=img.media_name, index=i
+                                )
                             saved = await client.download_image(img, target)
                             saved_paths.append(saved)
 
@@ -348,6 +361,16 @@ class FlowWorker:
                             on_checkpoint=observe_checkpoint,
                         )
                         flow_media_id = result.status.media_id
+
+                        output_file_val = task.payload.get("output_file")
+                        if output_file_val and result.local_path and result.local_path.exists():
+                            output_file = Path(output_file_val)
+                            output_file.parent.mkdir(parents=True, exist_ok=True)
+                            if result.local_path != output_file:
+                                result.local_path.replace(output_file)
+                                from dataclasses import replace
+
+                                result = replace(result, local_path=output_file)
 
                     try:
                         recorder.record_completed_video(
