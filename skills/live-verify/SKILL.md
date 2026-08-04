@@ -137,6 +137,12 @@ Main context or `superpowers:subagent-driven-development` — never a stateless 
 subagent. Diagnosing a live failure needs memory of what's already been tried; a fresh,
 context-less subagent call breaks a spike-then-fix-then-retest loop.
 
+## Pipeline Continuation (Next Step Handoff)
+
+Upon completing Live Verification:
+1. **Verification 🟢 PASSED:** Proactively announce: **"Live verification passed. Next step: Phase 9 PR Creation & Issue Resolution (`/gflow:issue-resolve <N>`)."**
+2. **Verification 🔴 FAILED:** Return to **Phase 6 Task Execution** to resolve the identified transport failure.
+
 ## Notes
 
 - This gate does not replace `/gflow:check` (offline gates before commit) or

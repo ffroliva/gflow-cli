@@ -109,16 +109,39 @@ def _shared_gen_tail_options(f: Any) -> Any:
     return f
 
 
-def _relocate_video_output(result: Any, output_file: Path | None) -> Any:
-    if output_file is None or result.local_path is None or not result.local_path.exists():
-        return result
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    if result.local_path != output_file:
-        result.local_path.replace(output_file)
-        from dataclasses import replace
+def _relocate_single_video(item: Any, target: Path) -> Any:
+    from dataclasses import replace
+    from typing import cast
 
-        return replace(result, local_path=output_file)
-    return result
+    local_p = cast("Path | None", getattr(item, "local_path", None))
+    if local_p is None or not local_p.exists():
+        return item
+    if local_p != target:
+        local_p.replace(target)
+        return replace(item, local_path=target)
+    return item
+
+
+def _relocate_video_output(result: Any, output_file: Path | None) -> Any:
+    if output_file is None:
+        return result
+    from typing import cast
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(result, (list, tuple)):
+        items = cast("tuple[Any, ...] | list[Any]", result)
+        relocated: list[Any] = []
+        is_single = len(items) == 1
+        for i, item in enumerate(items, start=1):
+            target = (
+                output_file
+                if is_single
+                else output_file.parent / f"{output_file.stem}_{i}{output_file.suffix}"
+            )
+            relocated.append(_relocate_single_video(item, target))
+        return relocated
+
+    return _relocate_single_video(result, output_file)
 
 
 async def _generate_and_report(
@@ -441,6 +464,7 @@ async def _run_r2v(
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
+    output_file: Path | None = None,
     as_json: bool = False,
     original_prompt: str | None = None,
     tool: AppliedTool | None = None,
@@ -467,6 +491,7 @@ async def _run_r2v(
         profile_name=profile_name,
         profile_dir=profile_dir,
         out_dir=out_dir,
+        output_file=output_file,
         command="video r2v",
         as_json=as_json,
         project_id=project_id,
@@ -757,6 +782,7 @@ async def _run_chain(
     model: str | None,
     aspect: str,
     out_dir: Path | None,
+    output_file: Path | None = None,
     max_links: int | None,
     resume_from: str | None,
     jitter: float,
@@ -1277,6 +1303,14 @@ def i2v(  # NOSONAR
 @_project_option
 @_project_name_option
 @click.option(
+    "-o",
+    "--output",
+    "output_file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Explicit output file path for the generated asset.",
+)
+@click.option(
     "--out-dir",
     "out_dir",
     default=None,
@@ -1300,6 +1334,7 @@ def r2v(
     tool_specs: tuple[str, ...],
     project_id: str | None,
     project_name: str | None,
+    output_file: Path | None,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -1335,6 +1370,7 @@ def r2v(
             duration=int(duration) if duration is not None else None,
             count=count,
             out_dir=out_dir,
+            output_file=output_file,
             as_json=as_json,
             original_prompt=None,
             tool=None,
@@ -1433,6 +1469,14 @@ def r2v(
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
 @click.option(
+    "-o",
+    "--output",
+    "output_file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Explicit output file path for the generated chain clips.",
+)
+@click.option(
     "--out-dir",
     "out_dir",
     default=None,
@@ -1457,6 +1501,7 @@ def chain(
     aspect: str,
     profile: str | None,
     tool_specs: tuple[str, ...],
+    output_file: Path | None,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -1471,6 +1516,7 @@ def chain(
             model=model,
             aspect=aspect,
             out_dir=out_dir,
+            output_file=output_file,
             max_links=max_links,
             resume_from=resume_from,
             jitter=jitter,

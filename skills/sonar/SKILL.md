@@ -77,6 +77,12 @@ GET /api/hotspots/search?projectKey=ffroliva_gflow-cli&pullRequest=<N>&status=TO
   conditions and a fix list (`file:line · rule · what to do`).
 - After any fix: re-confirm via step 1 — green check = gate passed.
 
+## Pipeline Continuation (Next Step Handoff)
+
+Upon completing SonarCloud Quality Gate:
+1. **Gate 🟢 GREEN:** Proactively announce: **"SonarCloud quality gate passed (zero new issues). Next step: Phase 10 Release Pipeline (`/gflow:release`) or merge PR."**
+2. **Gate 🔴 RED:** Fix identified code smells/coverage gaps, push, and re-run `/gflow:sonar <PR#>`.
+
 ## See also
 
 - `docs/GITHUB.md` § SonarCloud Quality Gate — full policy + coverage-exclusion rationale.

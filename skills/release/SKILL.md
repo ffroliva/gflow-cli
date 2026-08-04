@@ -249,6 +249,11 @@ Tell the user:
 - `develop` is now synced with `main` (back-merge done in step 15).
 - Next development cycle starts on `develop` — open `## [Unreleased]` in CHANGELOG is ready.
 
+### Pipeline Continuation (Next Step Handoff)
+
+Upon completing a Release:
+1. Proactively announce: **"Release v<NEW_VERSION> shipped to PyPI & GitHub Releases! Back-merge to develop complete. Next step: Phase 1 Triage (`/gflow:issue-assessment <N>`) for the next development cycle."**
+
 ---
 
 ## Critical reminders

@@ -188,28 +188,59 @@ def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:
     return resolved
 
 
-async def _run_generation_task(
+def _enqueue_generation_task(
     *,
     profile: str,
     task_type: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Enqueue a generation task, claim it atomically, run it, return the result.
+    """Enqueue a generation task into generation_queue and return task handle immediately."""
+    settings = get_settings()
+    db_path = settings.resolved_db_path()
+    task_id = str(uuid.uuid4())
 
-    1. Opens the DataStore (applying any pending migrations on first open).
-    2. Ensures the profile row exists in the ``profiles`` table (FK requirement).
-    3. Enqueues the task in ``generation_queue``.
-    4. Instantiates a :class:`FlowWorker`, atomically CLAIMS the task by id
-       (``claim_task`` — the same BEGIN IMMEDIATE claim the daemon uses, so
-       the two paths can never run the same row), then awaits
-       ``process_task()`` on the claimed task — no separate daemon needed.
-       A claim that returns ``None`` means the payload was rejected at claim
-       time (marked failed, no browser) or the row was already taken; the
-       read-back in step 5 reports that terminal state.
-    5. Reads the completed / failed status back from the queue row.
-    6. On success, resolves local file paths from the ``assets`` / ``local_files``
-       tables and returns them.  On failure, surfaces the RFC 9457 error dict.
-    """
+    with DataStore.open(db_path) as store:
+        data_repo = DataRepository(store)
+        profile_dir = settings.profile_subdir(profile)
+        data_repo.upsert_profile(profile, profile_dir)
+
+        ref_err = _resolve_payload_refs(data_repo, profile, payload, task_type)
+        if ref_err is not None:
+            return ref_err
+
+        versioned_payload = dict(payload)
+        versioned_payload.setdefault("schema_version", codec.CURRENT_SCHEMA_VERSION)
+
+        QueueRepository(store).enqueue_task(
+            task_id=task_id,
+            profile_name=profile,
+            task_type=task_type,
+            payload=versioned_payload,
+        )
+
+    log.info("mcp.tool.task_enqueued", task_id=task_id, task_type=task_type)
+    return {
+        "status": "pending",
+        "task_id": task_id,
+        "task_type": task_type,
+    }
+
+
+async def _run_generation_task(
+    *,
+    profile: str,
+    task_type: str,
+    payload: dict[str, Any],
+    wait: bool = True,
+) -> dict[str, Any]:
+    """Enqueue a generation task and either return handle immediately or wait for completion."""
+    if not wait:
+        return _enqueue_generation_task(
+            profile=profile,
+            task_type=task_type,
+            payload=payload,
+        )
+
     settings = get_settings()
     db_path = settings.resolved_db_path()
 
@@ -634,6 +665,8 @@ async def gflow_generate_image(
     project_name: str | None = None,
     instructions: list[str] | None = None,
     ui_mode: str | None = None,
+    output: str | None = None,
+    wait: bool = True,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
 
@@ -732,6 +765,8 @@ async def gflow_generate_image(
         payload["project_id"] = project
     if project_name is not None:
         payload["project_name"] = project_name
+    if output is not None:
+        payload["output_file"] = output
 
     task_type = "t2i"
     if reference_images:
@@ -750,6 +785,7 @@ async def gflow_generate_image(
         profile=resolved_profile,
         task_type=task_type,
         payload=payload,
+        wait=wait,
     )
 
     # Annotate the result with the original request parameters for context.
@@ -779,6 +815,7 @@ def _build_video_payload(
     tool_specs: Any,
     project: str | None,
     project_name: str | None,
+    output: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "prompt": prompt,
@@ -796,6 +833,8 @@ def _build_video_payload(
         payload["project_id"] = project
     if project_name is not None:
         payload["project_name"] = project_name
+    if output is not None:
+        payload["output_file"] = output
     return payload
 
 
@@ -827,6 +866,8 @@ async def gflow_generate_video(  # NOSONAR
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
     project_name: str | None = None,
+    output: str | None = None,
+    wait: bool = True,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
 
@@ -937,6 +978,7 @@ async def gflow_generate_video(  # NOSONAR
         tool_specs=tool_specs,
         project=project,
         project_name=project_name,
+        output=output,
     )
     payload.update(media)
 
@@ -945,6 +987,7 @@ async def gflow_generate_video(  # NOSONAR
         profile=resolved_profile,
         task_type=mode,
         payload=payload,
+        wait=wait,
     )
 
     # Annotate the result with the original request parameters for context.

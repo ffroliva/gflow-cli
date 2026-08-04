@@ -98,6 +98,23 @@ All AI agents and harnesses working on `gflow-cli` follow this standard 10-phase
 | 9. PR & Issue Close | `/gflow:issue-resolve <N>` | PR, SonarCloud 0-issue gate, merge to develop | Closed GitHub issue |
 | 10. Release Pipeline | `/gflow:release` | Version bump, signed tag (`git tag -s`), PyPI publish | Shipped release & back-merge |
 
+### Pipeline Continuation Mandate
+
+Every AI agent executing any phase of this pipeline MUST proactively state the completed phase result and explicitly recommend/announce the exact next sequential phase to the user. Never stop passively after a phase completes without identifying the next step.
+
+| Current Phase | Completed Artifact / Gate | Next Sequential Phase & Command |
+|---|---|---|
+| Phase 1: Triage | `issue_assessment_<N>.md` | ➔ Phase 2: Pre-Implementation (`/gflow:predict <proposal>`) |
+| Phase 2: Pre-Implementation | Verdict `GO` or `CAUTION` | ➔ Phase 3: BDD Scaffolding (`/gflow:scenario <feature>`) |
+| Phase 3: BDD Scaffolding | `Scenario:` blocks & test scaffold | ➔ Phase 4: Implementation Plan (`/gflow:plan <feature>`) |
+| Phase 4: Implementation Plan | `PLAN.md` created & approved | ➔ Phase 6: Task Execution (`/gflow:status`) |
+| Phase 6: Task Execution | All plan tasks checked | ➔ Phase 7: Pre-Commit Quality (`/gflow:check`) |
+| Phase 7: Pre-Commit Quality | All 7 quality gates green | ➔ Phase 5: Council Review (`/gflow:branch-review` or `/gflow:pr-council-review`) |
+| Phase 5: Council Review | Consensus 🟢 GREEN | ➔ Phase 8: Live Verification (`/gflow:live-verify`) or Phase 9 (`/gflow:issue-resolve <N>`) |
+| Phase 8: Live Verification | `LIVE_VERIFICATION_vX.Y.Z.md` | ➔ Phase 9: Issue Resolve & PR (`/gflow:issue-resolve <N>`) |
+| Phase 9: Issue Resolve & PR | PR open & SonarCloud 0-issue gate green | ➔ Phase 10: Release Pipeline (`/gflow:release`) |
+| Phase 10: Release Pipeline | Signed tag & PyPI published | ➔ Done (Release shipped & back-merged) |
+
 ## Skills reference (cross-tool)
 
 The `skills/` directory ships installable agent skill docs in plain Markdown with YAML frontmatter. Any agent can consume them directly:

@@ -417,3 +417,24 @@ def test_empty_token_is_reported(monkeypatch):
 def test_present_token_passes(monkeypatch):
     monkeypatch.setenv(pr_triage_autopilot.CLAUDE_TOKEN_ENV, "sk-ant-oat01-xxx")
     assert pr_triage_autopilot.check_claude_auth() is None
+
+
+def test_main_sends_telegram_alert_on_missing_token(monkeypatch, tmp_path):
+    monkeypatch.delenv("GH_COMMENT_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    with patch("pr_triage_autopilot.send_telegram_alert") as m_alert:
+        ret = pr_triage_autopilot.main(["--repo-dir", str(tmp_path), "--memory-dir", str(tmp_path)])
+        assert ret == 1
+        assert m_alert.call_count == 1
+        assert "Missing credentials" in m_alert.call_args[0][0]
+
+
+def test_main_sends_telegram_alert_on_auth_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("GH_TOKEN", "tok")
+    monkeypatch.delenv(pr_triage_autopilot.CLAUDE_TOKEN_ENV, raising=False)
+    with patch("pr_triage_autopilot.send_telegram_alert") as m_alert:
+        ret = pr_triage_autopilot.main(["--repo-dir", str(tmp_path), "--memory-dir", str(tmp_path)])
+        assert ret == 1
+        assert m_alert.call_count == 1
+        assert "Claude authentication unusable" in m_alert.call_args[0][0]

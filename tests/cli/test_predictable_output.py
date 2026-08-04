@@ -194,14 +194,14 @@ class TestPredictableOutputFlag:
             assert target_file.read_bytes() == b"i2i_bytes"
 
     def test_video_t2v_explicit_output_file(self, runner: CliRunner, tmp_path: Path) -> None:
-        target_file = tmp_path / "clip.mp4"
+        target_file = tmp_path / "nested_video" / "clip.mp4"
+        src_file = tmp_path / "temp_download.mp4"
+        src_file.write_bytes(b"video_data")
 
         def _mock_generate_video(*args: object, **kwargs: object) -> VideoResult:
-            target_file.parent.mkdir(parents=True, exist_ok=True)
-            target_file.write_bytes(b"video_data")
             return VideoResult(
                 status=VideoStatus(media_id="vid-1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
-                local_path=target_file,
+                local_path=src_file,
             )
 
         client = AsyncMock()
@@ -225,18 +225,19 @@ class TestPredictableOutputFlag:
             assert res.exit_code == 0
             assert target_file.exists()
             assert target_file.read_bytes() == b"video_data"
+            assert not src_file.exists()
 
     def test_video_i2v_explicit_output_file(self, runner: CliRunner, tmp_path: Path) -> None:
         ref_img = tmp_path / "frame.png"
         ref_img.write_bytes(b"frame")
-        target_file = tmp_path / "i2v_clip.mp4"
+        target_file = tmp_path / "nested_i2v" / "i2v_clip.mp4"
+        src_file = tmp_path / "temp_i2v_download.mp4"
+        src_file.write_bytes(b"video_data_2")
 
         def _mock_generate_video(*args: object, **kwargs: object) -> VideoResult:
-            target_file.parent.mkdir(parents=True, exist_ok=True)
-            target_file.write_bytes(b"video_data_2")
             return VideoResult(
                 status=VideoStatus(media_id="vid-2", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
-                local_path=target_file,
+                local_path=src_file,
             )
 
         client = AsyncMock()
@@ -268,3 +269,30 @@ class TestPredictableOutputFlag:
             assert res.exit_code == 0
             assert target_file.exists()
             assert target_file.read_bytes() == b"video_data_2"
+
+    def test_relocate_video_output_multi_count(self, tmp_path: Path) -> None:
+        from gflow_cli.api.video import VideoResult, VideoStatus
+        from gflow_cli.cli_video import _relocate_video_output
+
+        v1_temp = tmp_path / "temp_1.mp4"
+        v2_temp = tmp_path / "temp_2.mp4"
+        v1_temp.write_bytes(b"data_1")
+        v2_temp.write_bytes(b"data_2")
+
+        res1 = VideoResult(
+            status=VideoStatus(media_id="1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=v1_temp,
+        )
+        res2 = VideoResult(
+            status=VideoStatus(media_id="2", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=v2_temp,
+        )
+
+        out_file = tmp_path / "multi_video" / "output.mp4"
+        relocated = _relocate_video_output([res1, res2], out_file)
+
+        assert len(relocated) == 2
+        assert relocated[0].local_path == tmp_path / "multi_video" / "output_1.mp4"
+        assert relocated[1].local_path == tmp_path / "multi_video" / "output_2.mp4"
+        assert (tmp_path / "multi_video" / "output_1.mp4").read_bytes() == b"data_1"
+        assert (tmp_path / "multi_video" / "output_2.mp4").read_bytes() == b"data_2"
