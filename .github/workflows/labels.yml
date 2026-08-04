@@ -1,0 +1,79 @@
+name: Sync repository labels
+
+# ── Why this exists ──────────────────────────────────────────────────────────
+# `.github/dependabot.yml` asks for the labels `dependencies`, `python`, and
+# `github-actions`. Dependabot cannot CREATE a label — it can only apply one
+# that already exists — and none of the three ever did. Every bump PR therefore
+# opened with a bot comment ("The following labels could not be found:
+# dependencies, python. Please fix the above issues or remove invalid values
+# from dependabot.yml") and landed unlabelled, which is why `label:dependencies`
+# returns nothing across the whole dependency history.
+#
+# Creating them by hand in the UI fixes it once and silently rots: the next
+# label added to dependabot.yml reintroduces the same failure with the same
+# invisible symptom. This workflow makes the label set declarative instead, so
+# a label referenced by config is a label that exists.
+#
+# Scope note: the external-PR labels (`external-contribution`,
+# `needs-maintainer-review`, `needs-copilot-review`) are NOT listed here.
+# `external-pr-triage.yml` already creates them idempotently at the moment it
+# applies them, and duplicating the definitions would give them two owners.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    paths:
+      - .github/workflows/labels.yml
+      - .github/dependabot.yml
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    name: Ensure declared labels exist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or update labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Every label referenced by .github/dependabot.yml. Keep in sync.
+            const labels = [
+              {
+                name: "dependencies",
+                color: "0366d6",
+                description: "Dependency version or security update",
+              },
+              {
+                name: "python",
+                color: "3572a5",
+                description: "Python dependency (uv ecosystem: pyproject.toml + uv.lock)",
+              },
+              {
+                name: "github-actions",
+                color: "2088ff",
+                description: "GitHub Actions workflow dependency",
+              },
+            ];
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.createLabel({ owner, repo, ...label });
+                core.info(`Created label: ${label.name}`);
+              } catch (error) {
+                // 422 = already exists. Update it so a colour or description
+                // edit here still reaches the repository, and so a re-run is a
+                // no-op rather than a failure.
+                if (error.status !== 422) {
+                  throw error;
+                }
+                await github.rest.issues.updateLabel({ owner, repo, ...label });
+                core.info(`Label already present, updated: ${label.name}`);
+              }
+            }

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Cleared the whole Dependabot backlog in one lock update, and fixed the two
+  config faults that produced it.** `uv lock --upgrade` moved 38 locked packages
+  (aiobotocore, anyio, botocore, certifi, coverage, google-auth,
+  google-cloud-storage, grpcio, numpy, protobuf 6→7, structlog 25→26,
+  typing-extensions, uvicorn, websockets 16→17, yarl and others) to the newest
+  versions `pyproject.toml`'s bounds allow. `pip-audit` over
+  `uv export --all-extras` is clean, `ruff`/`pyright` are clean, and the offline
+  suite is unchanged against the pre-upgrade lock. The `playwright <1.60.0`
+  upper bound held, as intended — raising it still requires live verification.
+- **Dependabot now groups routine updates instead of drip-feeding them.**
+  With the `uv` ecosystem opening a PR per locked package, a normal week
+  resolves ~38 updates into a queue five wide, and the queue eats itself:
+  #441/#442 were opened and then closed unmerged ("Looks like aiohttp is
+  up-to-date now") because the CVE bumps they carried were applied by hand in
+  #443 while they waited behind the cap. Minor/patch updates now arrive as one
+  grouped PR per ecosystem. Majors stay individual so a breaking transitive
+  cannot red-light the batch, and security updates stay ungrouped so an
+  advisory fix still opens immediately.
+
+### Fixed
+
+- **Dependabot PRs land labelled again.** `dependabot.yml` asked for
+  `dependencies`, `python`, and `github-actions`, none of which existed in the
+  repository — so every bump PR opened with a bot error comment and no labels,
+  and `label:dependencies` matched nothing across the entire dependency
+  history. Dependabot can apply a label but never create one; the new
+  `.github/workflows/labels.yml` makes the referenced label set declarative so
+  the failure cannot silently return the next time a label is added to the
+  config.
+
 ## [0.50.0] — 2026-08-04
 
 ### Added

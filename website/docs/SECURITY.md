@@ -157,7 +157,8 @@ The following controls are active on this repository to prevent accidental leaka
 | **Repo hygiene script** | CI step + pre-commit | Blocks tracked images (`*.jpg/jpeg`), CDP lock files, test_assets output dirs, hardcoded Windows paths in any `.py` file |
 | **`.gitignore` hardening** | `.gitignore` | Last-resort catch-all for untracked files |
 | **CODEOWNERS** | `.github/CODEOWNERS` | Ensures security-sensitive files (auth, CI, hygiene gate) always request maintainer review |
-| **Dependabot** | `.github/dependabot.yml` | Weekly alerts + PRs for outdated Python and Actions deps |
+| **Dependabot** | `.github/dependabot.yml` | Weekly alerts + PRs for outdated Python and Actions deps. Routine minor/patch bumps are **grouped** into one PR per ecosystem; majors open individually, and security updates stay ungrouped so an advisory fix does not wait for the weekly batch |
+| **Label sync** | `.github/workflows/labels.yml` | Keeps the labels `dependabot.yml` references (`dependencies`, `python`, `github-actions`) actually present — Dependabot can apply a label but never create one, and a missing label silently drops the label from every bump PR |
 
 ### Known residual risk: git history
 
