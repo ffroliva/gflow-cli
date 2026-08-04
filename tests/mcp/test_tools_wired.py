@@ -185,10 +185,14 @@ class TestGenerateImageWired:
     @pytest.mark.asyncio
     async def test_image_explicit_output_file(self, temp_db: DataStore, tmp_path: Path) -> None:
         """When output is specified, the generated asset lands at the custom path."""
-        from gflow_cli.mcp.tools import gflow_generate_image
+        from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_image
 
         custom_output = tmp_path / "custom_sub" / "hero.png"
         with (
+            patch(
+                "gflow_cli.mcp.tools._rate_limiter",
+                _TokenBucket(capacity=8, refill_rate=0.0),
+            ),
             patch(
                 "gflow_cli.mcp.tools._resolve_and_validate_profile",
                 return_value="default",
@@ -448,8 +452,8 @@ class TestGenerateVideoWired:
 
         captured: dict[str, Any] = {}
 
-        async def _capture(
-            *, profile: str, task_type: str, payload: dict[str, Any]
+        async def _fake_run(
+            *, profile: str, task_type: str, payload: dict[str, Any], **kwargs: Any
         ) -> dict[str, Any]:
             captured.update(payload)
             return {"status": "completed", "files": []}
@@ -457,7 +461,7 @@ class TestGenerateVideoWired:
         with (
             patch("gflow_cli.mcp.tools._rate_limiter", _TokenBucket(capacity=8, refill_rate=0.0)),
             patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
-            patch("gflow_cli.mcp.tools._run_generation_task", AsyncMock(side_effect=_capture)),
+            patch("gflow_cli.mcp.tools._run_generation_task", AsyncMock(side_effect=_fake_run)),
         ):
             result = await gflow_generate_video(
                 prompt="a slow zoom", model="veo_quality", duration=8, count=2
@@ -480,7 +484,7 @@ class TestGenerateVideoWired:
         captured: dict[str, Any] = {}
 
         async def _capture(
-            *, profile: str, task_type: str, payload: dict[str, Any]
+            *, profile: str, task_type: str, payload: dict[str, Any], **kwargs: Any
         ) -> dict[str, Any]:
             captured.update(payload)
             return {"status": "completed", "files": []}
@@ -686,7 +690,9 @@ class TestProjectParam:
 
         captured: dict[str, Any] = {}
 
-        async def _fake_run(*, profile: str, task_type: str, payload: dict[str, Any]):
+        async def _fake_run(
+            *, profile: str, task_type: str, payload: dict[str, Any], **kwargs: Any
+        ):
             captured["payload"] = payload
             return {"status": "completed", "files": [], "flow_media_id": "m"}
 
@@ -709,7 +715,9 @@ class TestProjectParam:
 
         captured: dict[str, Any] = {}
 
-        async def _fake_run(*, profile: str, task_type: str, payload: dict[str, Any]):
+        async def _fake_run(
+            *, profile: str, task_type: str, payload: dict[str, Any], **kwargs: Any
+        ):
             captured["payload"] = payload
             return {"status": "completed", "files": [], "flow_media_id": "m"}
 
@@ -732,7 +740,9 @@ class TestProjectParam:
 
         captured: dict[str, Any] = {}
 
-        async def _fake_run(*, profile: str, task_type: str, payload: dict[str, Any]):
+        async def _fake_run(
+            *, profile: str, task_type: str, payload: dict[str, Any], **kwargs: Any
+        ):
             captured["payload"] = payload
             return {"status": "completed", "files": [], "flow_media_id": "m"}
 
