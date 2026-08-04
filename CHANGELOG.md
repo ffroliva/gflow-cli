@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.49.0] — 2026-08-03
+## [0.50.0] — 2026-08-04
+
+### Added
+
+- **Adopted MCP 2026-07-28 Tasks extension (SEP-2663) (#409).** Added `TasksExtension` subclass serving `tasks/get` and `tasks/cancel`. Generation tools (`gflow_generate_image`, `gflow_generate_video`) support non-blocking task handle responses (`wait=False`).
+- **Hardened CLI and MCP `-o`/`--output` path routing (#414, #415).** Custom output paths land generated assets at target locations with automatic parent directory creation, S3 cloud storage relative path preservation, and multi-count stem suffixes (`_1`, `_2`).
+
+### Fixed
+
+- **PR triage notification resilience (#428).** Fallback alerts via Telegram on missing credentials or auth failure.
 
 ### Changed
 
