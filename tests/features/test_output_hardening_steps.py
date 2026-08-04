@@ -72,7 +72,7 @@ def run_cli_command(
         output_file = kwargs.get("output_file")
         out_dir = kwargs.get("out_dir") or tmp_path
         if output_file:
-            target = output_file
+            target = output_file if output_file.is_absolute() else tmp_path / output_file
         else:
             target = out_dir / "out.png"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -94,15 +94,13 @@ def generate_image_with_output(
     tmp_path: Path,
 ) -> None:
     import os
+    from gflow_cli.api.client import _storage_key_from_path
 
-    storage_uri = os.environ.get("GFLOW_CLI_STORAGE_URI")
+    storage_uri = os.environ.get("GFLOW_CLI_STORAGE_URI", "")
     out_path = Path(output_path)
-    try:
-        key = out_path.relative_to(tmp_path).as_posix()
-    except ValueError:
-        key = out_path.as_posix()
-    target = storage_path(storage_uri, tmp_path, key)
-    cli_context["target"] = target
+    key = _storage_key_from_path(out_path, tmp_path)
+    base = storage_uri if storage_uri.endswith("/") else f"{storage_uri}/"
+    cli_context["target"] = f"{base}{key.lstrip('/')}"
 
 
 @then(parsers.parse('parent directory "{dir_name}" is created if missing'))
@@ -123,7 +121,7 @@ def check_videos_saved(path1: str, path2: str, tmp_path: Path) -> None:
     pass
 
 
-@then(parsers.parse('the cloud storage target URI is "{expected_uri}"'))
+@then(parsers.parse('the cloud storage target URI is "{expected_uri}".'))
 def check_cloud_target_uri(expected_uri: str, cli_context: dict[str, Any]) -> None:
     target = cli_context["target"]
     assert str(target) == expected_uri
