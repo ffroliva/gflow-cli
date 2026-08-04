@@ -3,8 +3,19 @@
 
 version: 2
 updates:
-  # Python dependencies (pip/uv — Dependabot reads pyproject.toml)
-  - package-ecosystem: "pip"
+  # Python dependencies.
+  #
+  # This MUST be "uv", not "pip". The "pip" ecosystem reads pyproject.toml only
+  # and has no visibility into uv.lock — but every install path in this repo
+  # (`uv sync`, CI, the release build) resolves from the LOCKFILE. The result
+  # was a repo where no transitive dependency had ever received an update PR:
+  # scan the Dependabot history before 2026-08 and every single PR is a direct
+  # dev dep (ruff, patchright) or a GitHub Action. `cryptography` is pulled in
+  # via browser-cookie3, appears nowhere in pyproject.toml, and so sat on a
+  # version with a published CVE until the v0.50.0 release PR tripped pip-audit.
+  # The "uv" ecosystem reads pyproject.toml AND uv.lock, so transitive pins
+  # finally get bumped. See docs.astral.sh/uv/guides/integration/dependabot/.
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -16,7 +27,12 @@ updates:
       - "dependencies"
       - "python"
     ignore:
-      # Playwright has its own browser download step; pin manually.
+      # playwright minors are gated by the `<1.60.0` upper bound in
+      # pyproject.toml, not by this rule — an untested driver minor silently
+      # wedged video generation (see the bound's comment). This entry keeps
+      # majors out even if that bound is ever widened. Raising playwright is a
+      # deliberate, live-verified act; the weekly `deps-watch` workflow reports
+      # how far behind the pin has drifted so it does not freeze unnoticed.
       - dependency-name: "playwright"
         update-types: ["version-update:semver-major"]
 
