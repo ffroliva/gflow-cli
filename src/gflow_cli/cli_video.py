@@ -109,40 +109,39 @@ def _shared_gen_tail_options(f: Any) -> Any:
     return f
 
 
+def _relocate_single_video(item: Any, target: Path) -> Any:
+    from dataclasses import replace
+    from typing import cast
+
+    local_p = cast("Path | None", getattr(item, "local_path", None))
+    if local_p is None or not local_p.exists():
+        return item
+    if local_p != target:
+        local_p.replace(target)
+        return replace(item, local_path=target)
+    return item
+
+
 def _relocate_video_output(result: Any, output_file: Path | None) -> Any:
     if output_file is None:
         return result
-    from dataclasses import replace
     from typing import cast
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     if isinstance(result, (list, tuple)):
-        relocated: list[Any] = []
         items = cast("tuple[Any, ...] | list[Any]", result)
+        relocated: list[Any] = []
+        is_single = len(items) == 1
         for i, item in enumerate(items, start=1):
-            local_p = cast("Path | None", getattr(item, "local_path", None))
-            if local_p is None or not local_p.exists():
-                relocated.append(item)
-                continue
             target = (
                 output_file
-                if len(items) == 1
+                if is_single
                 else output_file.parent / f"{output_file.stem}_{i}{output_file.suffix}"
             )
-            if local_p != target:
-                local_p.replace(target)
-                relocated.append(replace(item, local_path=target))
-            else:
-                relocated.append(item)
+            relocated.append(_relocate_single_video(item, target))
         return relocated
 
-    res_p = cast("Path | None", getattr(result, "local_path", None))
-    if res_p is None or not res_p.exists():
-        return result
-    if res_p != output_file:
-        res_p.replace(output_file)
-        return replace(result, local_path=output_file)
-    return result
+    return _relocate_single_video(result, output_file)
 
 
 async def _generate_and_report(

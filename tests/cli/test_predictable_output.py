@@ -269,3 +269,30 @@ class TestPredictableOutputFlag:
             assert res.exit_code == 0
             assert target_file.exists()
             assert target_file.read_bytes() == b"video_data_2"
+
+    def test_relocate_video_output_multi_count(self, tmp_path: Path) -> None:
+        from gflow_cli.api.video import VideoResult, VideoStatus
+        from gflow_cli.cli_video import _relocate_video_output
+
+        v1_temp = tmp_path / "temp_1.mp4"
+        v2_temp = tmp_path / "temp_2.mp4"
+        v1_temp.write_bytes(b"data_1")
+        v2_temp.write_bytes(b"data_2")
+
+        res1 = VideoResult(
+            status=VideoStatus(media_id="1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=v1_temp,
+        )
+        res2 = VideoResult(
+            status=VideoStatus(media_id="2", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=v2_temp,
+        )
+
+        out_file = tmp_path / "multi_video" / "output.mp4"
+        relocated = _relocate_video_output([res1, res2], out_file)
+
+        assert len(relocated) == 2
+        assert relocated[0].local_path == tmp_path / "multi_video" / "output_1.mp4"
+        assert relocated[1].local_path == tmp_path / "multi_video" / "output_2.mp4"
+        assert (tmp_path / "multi_video" / "output_1.mp4").read_bytes() == b"data_1"
+        assert (tmp_path / "multi_video" / "output_2.mp4").read_bytes() == b"data_2"
