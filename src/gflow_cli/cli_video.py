@@ -110,13 +110,37 @@ def _shared_gen_tail_options(f: Any) -> Any:
 
 
 def _relocate_video_output(result: Any, output_file: Path | None) -> Any:
-    if output_file is None or result.local_path is None or not result.local_path.exists():
+    if output_file is None:
         return result
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    if result.local_path != output_file:
-        result.local_path.replace(output_file)
-        from dataclasses import replace
+    from dataclasses import replace
+    from typing import cast
 
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(result, (list, tuple)):
+        relocated: list[Any] = []
+        items = cast("tuple[Any, ...] | list[Any]", result)
+        for i, item in enumerate(items, start=1):
+            local_p = cast("Path | None", getattr(item, "local_path", None))
+            if local_p is None or not local_p.exists():
+                relocated.append(item)
+                continue
+            target = (
+                output_file
+                if len(items) == 1
+                else output_file.parent / f"{output_file.stem}_{i}{output_file.suffix}"
+            )
+            if local_p != target:
+                local_p.replace(target)
+                relocated.append(replace(item, local_path=target))
+            else:
+                relocated.append(item)
+        return relocated
+
+    res_p = cast("Path | None", getattr(result, "local_path", None))
+    if res_p is None or not res_p.exists():
+        return result
+    if res_p != output_file:
+        res_p.replace(output_file)
         return replace(result, local_path=output_file)
     return result
 

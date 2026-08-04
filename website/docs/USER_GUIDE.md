@@ -464,24 +464,25 @@ A `--dry-run` flag that validates prompts + estimates cost without making any pa
 
 You want to feed `gflow-cli`'s output into `ffmpeg`, a CMS, or another automation step.
 
-### 11.1 The deterministic output layout
+### 11.1 Explicit output path with `-o` / `--output`
 
-Both default outputs and `--out` flags produce **predictable paths**:
+Pass `-o` / `--output` to land the generated file directly at a custom destination:
 
-```text
-$GFLOW_CLI_OUTPUT_DIR/
-├── videos/
-│   └── <YYYY-MM-DD>/
-│       └── <media_uuid>.mp4
-└── images/
-    └── <YYYY-MM-DD>/
-        └── <media_uuid>_<n>.png        # _1 / _2 / _3 / _4 for -n>1
+```bash
+# Save directly to a specific file (auto-creates parent directories)
+gflow image t2i "cinematic hero scene" -o ./assets/hero.png
+gflow video t2v "sunset over ocean" -o ./render/clip.mp4
+
+# Multi-count generations automatically receive _1, _2 stem suffixes
+gflow image t2i "concept art" -n 2 -o ./concepts/art.png
+# → ./concepts/art_1.png and ./concepts/art_2.png
 ```
 
-`<media_uuid>` is the asset UUID returned by Flow — globally unique. Same UUID across the operation poll response and the on-disk filename.
+Silent overwrite semantics: `-o` overwrites any existing file at the target path. Extension correction: if `-o asset.jpg` receives a PNG payload, `gflow` corrects the output key extension appropriately.
 
-When you pass `--out ./images/` for image commands or `--out-dir ./videos/`
-for video commands, `gflow-cli` writes there instead.
+### 11.2 The deterministic default layout
+
+When `-o` is omitted, default outputs and `--out-dir` flags produce **predictable paths**:
 
 If `GFLOW_CLI_STORAGE_URI` is set, generated asset bytes go to the configured
 bucket prefix instead of local disk. Use [Journey 15](#journey-15--sending-generated-assets-to-s3-minio-or-gcs)

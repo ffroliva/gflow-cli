@@ -194,14 +194,14 @@ class TestPredictableOutputFlag:
             assert target_file.read_bytes() == b"i2i_bytes"
 
     def test_video_t2v_explicit_output_file(self, runner: CliRunner, tmp_path: Path) -> None:
-        target_file = tmp_path / "clip.mp4"
+        target_file = tmp_path / "nested_video" / "clip.mp4"
+        src_file = tmp_path / "temp_download.mp4"
+        src_file.write_bytes(b"video_data")
 
         def _mock_generate_video(*args: object, **kwargs: object) -> VideoResult:
-            target_file.parent.mkdir(parents=True, exist_ok=True)
-            target_file.write_bytes(b"video_data")
             return VideoResult(
                 status=VideoStatus(media_id="vid-1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
-                local_path=target_file,
+                local_path=src_file,
             )
 
         client = AsyncMock()
@@ -225,18 +225,19 @@ class TestPredictableOutputFlag:
             assert res.exit_code == 0
             assert target_file.exists()
             assert target_file.read_bytes() == b"video_data"
+            assert not src_file.exists()
 
     def test_video_i2v_explicit_output_file(self, runner: CliRunner, tmp_path: Path) -> None:
         ref_img = tmp_path / "frame.png"
         ref_img.write_bytes(b"frame")
-        target_file = tmp_path / "i2v_clip.mp4"
+        target_file = tmp_path / "nested_i2v" / "i2v_clip.mp4"
+        src_file = tmp_path / "temp_i2v_download.mp4"
+        src_file.write_bytes(b"video_data_2")
 
         def _mock_generate_video(*args: object, **kwargs: object) -> VideoResult:
-            target_file.parent.mkdir(parents=True, exist_ok=True)
-            target_file.write_bytes(b"video_data_2")
             return VideoResult(
                 status=VideoStatus(media_id="vid-2", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
-                local_path=target_file,
+                local_path=src_file,
             )
 
         client = AsyncMock()
