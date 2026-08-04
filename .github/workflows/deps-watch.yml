@@ -39,7 +39,10 @@ jobs:
       # ── The gate: fails the run, which emails the repo owner ───────────────
       - name: Audit locked dependencies for known CVEs
         run: |
-          uv export --frozen --format requirements-txt --no-emit-project > requirements-audit.txt
+          # --all-extras: without it only the default group is exported, so
+          # anything reachable solely through an optional extra goes unaudited.
+          # See the matching note in ci.yml — this is how aiohttp/pyasn1 hid.
+          uv export --frozen --all-extras --format requirements-txt --no-emit-project > requirements-audit.txt
           uvx pip-audit -r requirements-audit.txt
 
       # ── The reports: never fail the run, and still run when the audit fails
