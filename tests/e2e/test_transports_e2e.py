@@ -66,6 +66,18 @@ pytestmark = pytest.mark.e2e
 
 STRATEGIES = ["evaluate_fetch", "bearer", "sapisidhash"]
 
+#: Transports a SUCCESS-path assertion may be made against. `bearer` and
+#: `sapisidhash` are obsolete and fail before the request is even issued —
+#: KNOWN_ISSUES.md: "These are obsolete — only `evaluate_fetch` is viable."
+#: `bearer` cannot intercept the OAuth token and `sapisidhash` is refused
+#: outright by FlowApiClient ("acquires its own profile lease during setup and
+#: would self-lock against the client's lease").
+#:
+#: Error-path tests legitimately keep the full `STRATEGIES` list — asserting
+#: that a broken transport degrades cleanly is the point of those. Only tests
+#: that require the transport to actually WORK belong here.
+LIVE_STRATEGIES = ["evaluate_fetch"]
+
 _PROMPT = "A motivational sunrise over mountains, cinematic, 4K"
 
 
@@ -476,13 +488,21 @@ async def test_e2e_generate_image_without_project_id(strategy: str, e2e_profile_
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("strategy", STRATEGIES)
+@pytest.mark.parametrize("strategy", LIVE_STRATEGIES)
 @pytest.mark.asyncio
 @pytest.mark.e2e_auth
 async def test_e2e_health_check_returns_true_when_active(
     strategy: str, e2e_profile_dir: Path
 ) -> None:
-    """health_check() returns True for a live browser context on a Google domain."""
+    """health_check() returns True for a live browser context on a Google domain.
+
+    Parametrized over ``LIVE_STRATEGIES``, not ``STRATEGIES``: this asserts a
+    SUCCESS path, which the obsolete ``bearer`` / ``sapisidhash`` transports
+    cannot satisfy — they fail at setup before a request is issued. The sibling
+    ``test_e2e_health_check_false_after_close`` already documents that same
+    reason for not parametrizing at all; this test kept the full list and so
+    failed on two of three strategies on every run.
+    """
     async with _make_client(strategy, e2e_profile_dir) as client:
         result = await client.health_check()
 
