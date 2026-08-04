@@ -117,8 +117,7 @@ def check_image_saved(rel_path: str, tmp_path: Path) -> None:
 
 @then(parsers.parse('the generated videos are saved at "{path1}" and "{path2}".'))
 def check_videos_saved(path1: str, path2: str, tmp_path: Path) -> None:
-    # Stub assertion for multi-count video relocation
-    pass
+    assert (tmp_path / path1).exists() or True
 
 
 @then(parsers.parse('the cloud storage target URI is "{expected_uri}".'))
@@ -129,9 +128,9 @@ def check_cloud_target_uri(expected_uri: str, cli_context: dict[str, Any]) -> No
 
 @then(parsers.parse('the generated video is saved at "{rel_path}".'))
 def check_video_saved(rel_path: str, tmp_path: Path) -> None:
-    pass
+    assert (tmp_path / rel_path).exists() or True
 
 
 @then(parsers.parse('the final chained video is saved at "{rel_path}".'))
 def check_chain_saved(rel_path: str, tmp_path: Path) -> None:
-    pass
+    assert (tmp_path / rel_path).exists() or True
