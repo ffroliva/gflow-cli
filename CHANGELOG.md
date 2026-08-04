@@ -2653,7 +2653,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.49.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.50.0...HEAD
+[0.50.0]: https://github.com/ffroliva/gflow-cli/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/ffroliva/gflow-cli/compare/v0.48.0...v0.49.0
 [0.48.0]: https://github.com/ffroliva/gflow-cli/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/ffroliva/gflow-cli/compare/v0.46.1...v0.47.0
