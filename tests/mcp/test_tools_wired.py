@@ -76,7 +76,13 @@ class _FakeFlowApiClient:
         self.create_project = AsyncMock(
             return_value=MagicMock(project_id="proj-abc", title="Test Project")
         )
-        self.download_image = AsyncMock(return_value=Path("/tmp/fake.png"))
+
+        async def _download_impl(_image: Any, out_path: Path) -> Path:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(b"PNG_FAKE")
+            return out_path
+
+        self.download_image = AsyncMock(side_effect=_download_impl)
 
     async def __aenter__(self) -> _FakeFlowApiClient:
         return self
@@ -177,6 +183,49 @@ class TestGenerateImageWired:
         assert result["params"]["count"] == 2
 
     @pytest.mark.asyncio
+    async def test_image_explicit_output_file(self, temp_db: DataStore, tmp_path: Path) -> None:
+        """When output is specified, the generated asset lands at the custom path."""
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        custom_output = tmp_path / "custom_sub" / "hero.png"
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.worker.daemon.FlowApiClient",
+                return_value=_FakeFlowApiClient(),
+            ),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    timeout_seconds=30,
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                    history_prompts=False,
+                ),
+            ),
+        ):
+            result = await gflow_generate_image(
+                prompt="custom output test",
+                output=str(custom_output),
+            )
+
+        assert result["status"] == "completed"
+        assert result["files"] == [str(custom_output)]
+        assert custom_output.is_file()
+
+    @pytest.mark.asyncio
     async def test_image_rate_limited_bypasses_worker(self, temp_db: DataStore) -> None:
         """Rate-limited calls must not invoke the worker at all."""
         from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_image
@@ -201,9 +250,13 @@ class TestGenerateVideoWired:
     @pytest.mark.asyncio
     async def test_video_t2v_returns_completed(self, temp_db: DataStore, tmp_path: Path) -> None:
         """gflow_generate_video t2v should return status='completed' with the wired path."""
-        from gflow_cli.mcp.tools import gflow_generate_video
+        from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
 
         with (
+            patch(
+                "gflow_cli.mcp.tools._rate_limiter",
+                _TokenBucket(capacity=8, refill_rate=0.0),
+            ),
             patch(
                 "gflow_cli.mcp.tools._resolve_and_validate_profile",
                 return_value="default",
@@ -235,6 +288,68 @@ class TestGenerateVideoWired:
         assert result["status"] == "completed"
         assert "flow_media_id" in result
         assert result["params"]["mode"] == "t2v"
+
+    @pytest.mark.asyncio
+    async def test_video_explicit_output_file(self, temp_db: DataStore, tmp_path: Path) -> None:
+        """When output is specified for video, the generated video relocates to custom output."""
+        from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
+
+        src_mp4 = tmp_path / "generated.mp4"
+        src_mp4.write_bytes(b"MP4_FAKE")
+        custom_output = tmp_path / "video_sub" / "clip.mp4"
+
+        fake_client = _FakeFlowApiClient()
+        fake_client.generate_video = AsyncMock(
+            return_value=VideoResult(
+                status=VideoStatus(
+                    media_id="media-vid-wired",
+                    status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                ),
+                local_path=src_mp4,
+                project_id="proj-abc",
+                flow_operation_id="op-123",
+            )
+        )
+
+        with (
+            patch(
+                "gflow_cli.mcp.tools._rate_limiter",
+                _TokenBucket(capacity=8, refill_rate=0.0),
+            ),
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.worker.daemon.FlowApiClient",
+                return_value=fake_client,
+            ),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    timeout_seconds=30,
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                    history_prompts=False,
+                ),
+            ),
+        ):
+            result = await gflow_generate_video(
+                prompt="custom video test",
+                output=str(custom_output),
+            )
+
+        assert result["status"] == "completed"
+        assert custom_output.is_file()
 
     @pytest.mark.asyncio
     async def test_video_i2v_without_initial_frame_is_rejected(self) -> None:

@@ -441,6 +441,7 @@ async def _run_r2v(
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
+    output_file: Path | None = None,
     as_json: bool = False,
     original_prompt: str | None = None,
     tool: AppliedTool | None = None,
@@ -467,6 +468,7 @@ async def _run_r2v(
         profile_name=profile_name,
         profile_dir=profile_dir,
         out_dir=out_dir,
+        output_file=output_file,
         command="video r2v",
         as_json=as_json,
         project_id=project_id,
@@ -757,6 +759,7 @@ async def _run_chain(
     model: str | None,
     aspect: str,
     out_dir: Path | None,
+    output_file: Path | None = None,
     max_links: int | None,
     resume_from: str | None,
     jitter: float,
@@ -1277,6 +1280,14 @@ def i2v(  # NOSONAR
 @_project_option
 @_project_name_option
 @click.option(
+    "-o",
+    "--output",
+    "output_file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Explicit output file path for the generated asset.",
+)
+@click.option(
     "--out-dir",
     "out_dir",
     default=None,
@@ -1300,6 +1311,7 @@ def r2v(
     tool_specs: tuple[str, ...],
     project_id: str | None,
     project_name: str | None,
+    output_file: Path | None,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -1335,6 +1347,7 @@ def r2v(
             duration=int(duration) if duration is not None else None,
             count=count,
             out_dir=out_dir,
+            output_file=output_file,
             as_json=as_json,
             original_prompt=None,
             tool=None,
@@ -1433,6 +1446,14 @@ def r2v(
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
 @click.option(
+    "-o",
+    "--output",
+    "output_file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Explicit output file path for the generated chain clips.",
+)
+@click.option(
     "--out-dir",
     "out_dir",
     default=None,
@@ -1457,6 +1478,7 @@ def chain(
     aspect: str,
     profile: str | None,
     tool_specs: tuple[str, ...],
+    output_file: Path | None,
     out_dir: Path | None,
     as_json: bool,
 ) -> None:
@@ -1471,6 +1493,7 @@ def chain(
             model=model,
             aspect=aspect,
             out_dir=out_dir,
+            output_file=output_file,
             max_links=max_links,
             resume_from=resume_from,
             jitter=jitter,
