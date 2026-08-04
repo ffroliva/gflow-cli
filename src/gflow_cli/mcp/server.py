@@ -18,6 +18,7 @@ from mcp.server import MCPServer
 from mcp.server.caching import CacheableMethod, CacheHint
 
 from gflow_cli import __version__
+from gflow_cli.mcp.tasks_extension import TasksExtension
 
 log = structlog.get_logger()
 
@@ -54,6 +55,8 @@ _CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
     "resources/read": CacheHint(ttl_ms=_FIVE_MIN_MS, scope="private"),
 }
 
+tasks_extension = TasksExtension()
+
 # ``MCPServer`` is the mcp>=2 successor to ``FastMCP`` (which 2.0.0 deleted).
 # The decorator API is unchanged; ``version`` is now a first-class constructor
 # argument, so the old ``server._mcp_server.version = ...`` private-API poke is
@@ -62,6 +65,7 @@ server = MCPServer(
     name=_SERVER_NAME,
     version=_SERVER_VERSION,
     cache_hints=_CACHE_HINTS,
+    extensions=[tasks_extension],
 )
 
 # ---------------------------------------------------------------------------
