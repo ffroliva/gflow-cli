@@ -263,6 +263,19 @@ def _unwrap_trpc(data: Any) -> JsonObject:
     return cast("JsonObject", inner)
 
 
+def _storage_key_from_path(out_path: Path, output_dir: Path) -> str:
+    """Compute a relative storage key from *out_path*.
+
+    Attempts ``out_path.relative_to(output_dir)`` first. If *out_path* is not
+    relative to *output_dir*, preserves a relative path's full POSIX key or
+    falls back to ``out_path.name`` for absolute paths outside *output_dir*.
+    """
+    try:
+        return out_path.relative_to(output_dir).as_posix()
+    except ValueError:
+        return out_path.as_posix() if not out_path.is_absolute() else out_path.name
+
+
 class FlowApiClient:
     """Async context-managed client for Flow's REST surface.
 
@@ -1579,10 +1592,7 @@ class FlowApiClient:
         # directory structure (images/YYYY-MM-DD/media_id_N.ext).
         storage_uri = self.settings.storage_uri
         if storage_uri:
-            try:
-                key = out_path.relative_to(self.settings.output_dir).as_posix()
-            except ValueError:
-                key = out_path.name
+            key = _storage_key_from_path(out_path, self.settings.output_dir)
             target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
         else:
             target = out_path
@@ -1792,10 +1802,7 @@ class FlowApiClient:
         # Write via the same storage_uri-aware path as download_image.
         storage_uri = self.settings.storage_uri
         if storage_uri:
-            try:
-                key = out_path.relative_to(self.settings.output_dir).as_posix()
-            except ValueError:
-                key = out_path.name
+            key = _storage_key_from_path(out_path, self.settings.output_dir)
             target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
         else:
             out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1930,10 +1937,7 @@ class FlowApiClient:
 
         storage_uri = self.settings.storage_uri
         if storage_uri:
-            try:
-                key = out_path.relative_to(self.settings.output_dir).as_posix()
-            except ValueError:
-                key = out_path.name
+            key = _storage_key_from_path(out_path, self.settings.output_dir)
             target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
         else:
             out_path.parent.mkdir(parents=True, exist_ok=True)
