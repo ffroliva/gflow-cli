@@ -23,9 +23,33 @@ updates:
       time: "08:00"
       timezone: "Europe/Lisbon"
     open-pull-requests-limit: 5
+    # These labels must EXIST before Dependabot can apply them. When they did
+    # not, every bump PR opened with a bot comment reading "The following labels
+    # could not be found: dependencies, python" and landed unlabelled, so
+    # `label:dependencies` matched nothing. `.github/workflows/labels.yml` is
+    # the source of truth that keeps them created — edit both together.
     labels:
       - "dependencies"
       - "python"
+    groups:
+      # Since the ecosystem became "uv", a bump PR is opened per LOCKED package
+      # -- transitives included -- so a routine week resolves ~38 updates into a
+      # queue five PRs wide. On 2026-08-04 that queue ate itself: #441/#442 were
+      # opened, then closed unmerged by Dependabot ("Looks like aiohttp is
+      # up-to-date now") because the CVE bumps they carried had already been
+      # applied by hand in #443 while they waited behind the cap. Grouping makes
+      # the week arrive as ONE reviewable PR that cannot be overtaken.
+      #
+      # Majors stay ungrouped deliberately: this cycle alone offered protobuf
+      # 6 -> 7 and structlog 25 -> 26, and a breaking transitive must be able to
+      # fail on its own rather than red-lighting the whole batch.
+      python-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    # NOTE: security updates are intentionally NOT grouped. They are exempt from
+    # `groups` unless a group sets `applies-to: security-updates`, so an advisory
+    # fix still opens immediately on its own instead of waiting for Monday.
     ignore:
       # playwright minors are gated by the `<1.60.0` upper bound in
       # pyproject.toml, not by this rule — an untested driver minor silently
@@ -45,6 +69,16 @@ updates:
       time: "08:00"
       timezone: "Europe/Lisbon"
     open-pull-requests-limit: 5
+    # Kept in sync with .github/workflows/labels.yml — see the note above.
     labels:
       - "dependencies"
       - "github-actions"
+    groups:
+      # Actions majors are grouped too. Unlike Python transitives they are few,
+      # uniform, and already reviewed as a batch in practice -- 2026-07-20 alone
+      # opened four separate PRs (#352-#355) for what is one "bump the actions"
+      # decision, including checkout 4 -> 7 on a workflow the earlier #196 had
+      # already moved to 6.
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
