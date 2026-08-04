@@ -103,7 +103,7 @@ def _make_client(strategy: str, profile: Path) -> FlowApiClient:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("strategy", STRATEGIES)
+@pytest.mark.parametrize("strategy", LIVE_STRATEGIES)
 @pytest.mark.asyncio
 @pytest.mark.e2e_image
 async def test_e2e_single_image_gen(strategy: str, e2e_profile_dir: Path) -> None:
@@ -346,7 +346,7 @@ async def test_e2e_i2v_start_end_frame_attach(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("strategy", STRATEGIES)
+@pytest.mark.parametrize("strategy", LIVE_STRATEGIES)
 @pytest.mark.asyncio
 @pytest.mark.e2e_batch
 async def test_e2e_5_sequential_batches(strategy: str, e2e_profile_dir: Path) -> None:
@@ -381,6 +381,16 @@ async def test_e2e_5_sequential_batches(strategy: str, e2e_profile_dir: Path) ->
 @pytest.mark.e2e_image
 async def test_e2e_recoverable_auth_expiry(strategy: str, e2e_profile_dir: Path) -> None:
     """C4a: Deliberately staling the cached credential triggers a silent refresh.
+
+    NOT narrowed to ``LIVE_STRATEGIES``, unlike the other success-path tests in
+    this module, and that is deliberate. This test carries purpose-built
+    staleness injection for ``bearer`` and ``sapisidhash``, so narrowing it
+    would silently delete the only refresh-path coverage those transports have.
+    It currently cannot pass for them either — they fail at ``setup()``, before
+    the injection point below is reached (KNOWN_ISSUES.md: obsolete, only
+    ``evaluate_fetch`` is viable). Resolve it together with the decision to
+    either repair or delete ``api/transports/experimental/`` — not by quietly
+    dropping the parametrization here.
 
     Strategy-specific staleness injection:
       bearer       — set _cached.expires_at to now - 1 (already expired)
@@ -463,7 +473,7 @@ async def test_e2e_unrecoverable_auth_expiry(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("strategy", STRATEGIES)
+@pytest.mark.parametrize("strategy", LIVE_STRATEGIES)
 @pytest.mark.asyncio
 @pytest.mark.e2e_image
 async def test_e2e_generate_image_without_project_id(strategy: str, e2e_profile_dir: Path) -> None:
