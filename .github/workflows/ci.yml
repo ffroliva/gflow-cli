@@ -35,8 +35,16 @@ jobs:
         uses: astral-sh/setup-uv@v7
       - name: Audit locked dependencies for known CVEs
         # Fails the build on any known advisory. Accept later via: pip-audit --ignore-vuln <GHSA-id>
+        #
+        # `--all-extras` is REQUIRED, not tidiness. Without it `uv export` emits
+        # only the default dependency group, so everything reachable solely
+        # through an optional extra is never audited. That blind spot was real:
+        # aiohttp 3.13.5 and pyasn1 0.6.3 sat in uv.lock with published high
+        # advisories while this gate reported clean, because both arrive via the
+        # `gcs`/`s3` extras (gcsfs / s3fs / google-auth). GitHub's Dependabot
+        # alerts flagged them against uv.lock; this gate could not see them.
         run: |
-          uv export --frozen --format requirements-txt --no-emit-project > requirements-audit.txt
+          uv export --frozen --all-extras --format requirements-txt --no-emit-project > requirements-audit.txt
           uvx pip-audit -r requirements-audit.txt
 
   # ── Supply-chain gate: resolve WITHOUT the lockfile ───────────────────────
