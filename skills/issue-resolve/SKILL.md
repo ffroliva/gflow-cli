@@ -107,9 +107,11 @@ checked/unchecked boxes; use `Refs #N` when a human must still verify,
 ## Common mistakes
 
 - Working on `develop` instead of a `bugfix/` branch off it (memory: `develop-divergence-recovery`).
-- A non-draft PR that auto-merges (memory: `draft-pr-merge-trap` — `gh pr ready` is a human action).
-- Verifying on the wrong surface and calling it done (memory: `pr-must-verify-on-affected-surface`).
-- Heredoc in a PR body via an MCP tool (CLAUDE.md: plain string only).
+### Pipeline Continuation (Next Step Handoff)
+
+Upon completing Issue Resolution:
+1. **PR Created & SonarCloud Gate 🟢 GREEN:** Proactively announce: **"PR created and SonarCloud gate green. Next step: Phase 10 Release Pipeline (`/gflow:release`) or merge to `develop`."**
+2. **SonarCloud Gate 🔴 FAILS:** Run `/gflow:sonar <PR#>` to resolve new code smells/coverage issues before merging.
 
 ---
 

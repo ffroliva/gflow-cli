@@ -309,6 +309,14 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 
 Always end with an `AskUserQuestion`.
 
+### Pipeline Continuation (Next Step Handoff)
+
+Upon completing a Branch / Council Review:
+- **Consensus 🟢 GREEN:** Proactively recommend the exact next step:
+  - If live browser verification is required: **Phase 8 Live Verification (`/gflow:live-verify`)**
+  - Otherwise: **Phase 9 PR Creation & Issue Resolution (`/gflow:issue-resolve <N>`)**
+- **Consensus 🟡 YELLOW or 🔴 RED:** Identify the specific failing/flagged dimension and return to **Phase 6 Task Execution** to apply fixes.
+
 ---
 
 ## 7 · Provenance & extensions

@@ -207,9 +207,9 @@ already-completed items on resume.
 
 ---
 
-## Integration with the gflow-cli workflow
+## Integration & Pipeline Continuation (Next Step Handoff)
 
 - **Claude Code:** invoke via `/gflow:plan <feature>` (thin wrapper around this skill).
 - **Cursor / Aider / Codex:** paste this file into your context and call `plan <feature>`.
 - **Antigravity (`agy`):** include in system context before asking for a plan.
-- **SkillOpt harness:** not yet usable — task dataset not yet populated for this skill.
+- **Next step:** Upon completing and user-approving `PLAN.md`, proactively announce: **"Implementation Plan approved. Next step: Phase 6 Task Execution (`/gflow:status --feature <slug>`)."**

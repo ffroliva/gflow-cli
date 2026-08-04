@@ -87,6 +87,12 @@ uv run python -m pytest -q --cov=gflow_cli --cov-fail-under=80
 - Pytest summary line and coverage percentage
 - Final verdict: all gates pass / which gates failed
 
+## Pipeline Continuation (Next Step Handoff)
+
+Upon successful completion of all quality gates:
+1. **Local Feature Branch:** Proactively announce: **"Quality gates passed. Next step: Phase 5 Branch Council Review (`/gflow:branch-review`)."**
+2. **Open PR:** Proactively announce: **"Quality gates passed. Next step: Phase 5 PR Council Review (`/gflow:pr-council-review <N>`) or Phase 8 Live Verification (`/gflow:live-verify`)."**
+
 ## Notes
 
 Ruff fix and format may rewrite multiple files. Always `git diff` before staging.
