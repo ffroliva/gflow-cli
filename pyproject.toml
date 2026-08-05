@@ -38,7 +38,7 @@ dependencies = [
     # below pins exactly for the same reason. Raise this deliberately, after
     # live-verifying a generation on the new minor — offline tests cannot see
     # a driver-behaviour regression (`resolve-drift` in CI only smoke-imports).
-    "playwright>=1.61.0,<1.62.0",
+    "playwright>=1.61.0,<1.63.0",
     "rich>=13.7.0",
     "pydantic-settings>=2.5.0",
     "platformdirs>=4.0.0",
