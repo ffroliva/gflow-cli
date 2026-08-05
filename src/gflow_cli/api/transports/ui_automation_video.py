@@ -335,8 +335,8 @@ STAGE_TIMEOUT_SHOT_S = 15.0
 # `playwright` constraint in pyproject.toml (asserted by
 # tests/test_playwright_pin.py). Surfaced in the stall error because an
 # out-of-range playwright is the known cause of that stall.
-PINNED_PLAYWRIGHT = "1.59.0"
-SUPPORTED_PLAYWRIGHT_RANGE = ">=1.59.0,<1.60.0"
+PINNED_PLAYWRIGHT = "1.61.0"
+SUPPORTED_PLAYWRIGHT_RANGE = ">=1.61.0,<1.62.0"
 
 
 def _playwright_version() -> str:
