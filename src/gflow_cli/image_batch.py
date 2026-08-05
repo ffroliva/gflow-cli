@@ -140,6 +140,59 @@ class BatchPromptItem:
     index: int = 0
     original_prompt: str | None = None
     tool: AppliedTool | None = None
+    ref: str | None = None
+    reference_entity: str | None = None
+
+
+def resolve_batch_dependencies(prompts: list[BatchPromptItem]) -> list[BatchPromptItem]:
+    """Validate references and return prompt items sorted by dependency order DAG.
+
+    Raises:
+        BatchIntegrityError: If circular dependencies exist or reference targets do not exist.
+        ConfigurationError: If reference syntax is invalid.
+    """
+    index_map: dict[int, BatchPromptItem] = {item.index: item for item in prompts}
+    adj: dict[int, list[int]] = {item.index: [] for item in prompts}
+    in_degree: dict[int, int] = {item.index: 0 for item in prompts}
+
+    for item in prompts:
+        ref_val = item.ref
+        if not ref_val and item.reference_entity and item.reference_entity.startswith("batch:"):
+            ref_val = item.reference_entity
+
+        if ref_val and ref_val.startswith("batch:"):
+            try:
+                parent_idx = int(ref_val.split(":", 1)[1])
+            except ValueError:
+                msg = f"Invalid reference format '{ref_val}' for prompt at index {item.index}."
+                raise ConfigurationError(msg) from None
+
+            if parent_idx not in index_map:
+                msg = f"Invalid reference target '{ref_val}' for prompt at index {item.index}."
+                raise BatchIntegrityError(msg)
+            if parent_idx == item.index:
+                msg = f"Circular dependency: prompt at index {item.index} references itself."
+                raise BatchIntegrityError(msg)
+
+            adj[parent_idx].append(item.index)
+            in_degree[item.index] += 1
+
+    queue = [idx for idx, deg in in_degree.items() if deg == 0]
+    ordered: list[BatchPromptItem] = []
+
+    while queue:
+        curr = queue.pop(0)
+        ordered.append(index_map[curr])
+        for nxt in adj[curr]:
+            in_degree[nxt] -= 1
+            if in_degree[nxt] == 0:
+                queue.append(nxt)
+
+    if len(ordered) != len(prompts):
+        msg = "Circular dependency detected in image batch prompt references."
+        raise BatchIntegrityError(msg)
+
+    return ordered
 
 
 @dataclass(frozen=True)
@@ -259,7 +312,7 @@ def read_prompt_file(path: Path) -> tuple[ParsedPromptLine, ...]:
 
 
 _ALLOWED_PROMPT_KEYS: frozenset[str] = frozenset(
-    {"text", "aspect_ratio", "model", "count", "output_filename"},
+    {"text", "aspect_ratio", "model", "count", "output_filename", "ref", "reference_entity"},
 )
 
 
@@ -319,6 +372,14 @@ def parse_batch_item_dict(p: dict[str, Any], idx: int) -> BatchPromptItem:
     ):
         msg = f"prompts[{idx}].output_filename must be a non-empty string."
         raise ConfigurationError(msg)
+    ref = p.get("ref")
+    if ref is not None and not isinstance(ref, str):
+        msg = f"prompts[{idx}].ref must be a string."
+        raise ConfigurationError(msg)
+    reference_entity = p.get("reference_entity")
+    if reference_entity is not None and not isinstance(reference_entity, str):
+        msg = f"prompts[{idx}].reference_entity must be a string."
+        raise ConfigurationError(msg)
     return BatchPromptItem(
         text=text_raw,
         aspect_ratio=aspect_ratio,
@@ -326,6 +387,8 @@ def parse_batch_item_dict(p: dict[str, Any], idx: int) -> BatchPromptItem:
         count=count,
         output_filename=output_filename,
         index=idx,
+        ref=ref,
+        reference_entity=reference_entity,
     )
 
 

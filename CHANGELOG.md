@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.52.0] — 2026-08-05
+
+### Added
+
+- **Intra-batch reference support for image batches (#317).** `BatchPromptItem` and `gflow image batch` now support `ref` and `reference_entity` fields (e.g. `ref="batch:0"`), with topological dependency sorting and circular dependency validation.
+- **Character entity provenance recording and video CLI flag parity (#402).** Added `--reference-entity` and `--reference-entity-name` CLI options to `gflow video` commands (`t2v`, `i2v`, `r2v`) and verified character provenance recording in `operations.metadata_json`.
+
+### Fixed
+
+- **Fix video duration selector drift (#451).** Expanded duration control selector cascade to match modern Flow editor UI elements (`button`, `role='button'`, `role='option'`, `role='menuitem'`, `role='tab'`) while preserving fail-closed behavior on missing duration controls.
+
+
+
+
+
 ## [0.51.0] — 2026-08-05
 
 ### Security
@@ -2728,7 +2743,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.51.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.52.0...HEAD
+[0.52.0]: https://github.com/ffroliva/gflow-cli/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/ffroliva/gflow-cli/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/ffroliva/gflow-cli/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/ffroliva/gflow-cli/compare/v0.48.0...v0.49.0
