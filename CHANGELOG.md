@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.0] — 2026-08-05
+
+### Security
+
+- **`pip-audit` was blind to every optional extra.** `uv export --frozen` emits
+  only the default dependency group, so anything reachable *solely* through an
+  extra was never audited — the CI gate reported clean while `uv.lock` carried
+  two published high advisories: `aiohttp` 3.13.5 (via `gcsfs`/`s3fs`) and
+  `pyasn1` 0.6.3 (via `google-auth`). The default export contains zero lines for
+  either package; `--all-extras` contains three. Both the `deps-audit` job in
+  `ci.yml` and `deps-watch.yml` now export with `--all-extras`, and both
+  packages are bumped (3.14.3 / 0.6.4). Found because GitHub's Dependabot alerts
+  flagged `uv.lock` while CI was green — `pip-audit` queries PYSEC, Dependabot
+  queries GHSA, and the two are **not** equivalent.
+
 ### Changed
 
 - **Cleared the whole Dependabot backlog in one lock update, and fixed the two
@@ -16,8 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typing-extensions, uvicorn, websockets 16→17, yarl and others) to the newest
   versions `pyproject.toml`'s bounds allow. `pip-audit` over
   `uv export --all-extras` is clean, `ruff`/`pyright` are clean, and the offline
-  suite is unchanged against the pre-upgrade lock. The `playwright <1.60.0`
-  upper bound held, as intended — raising it still requires live verification.
+  suite is unchanged against the pre-upgrade lock. The `playwright` upper bound
+  held through that sweep, as intended; it was raised separately and only after
+  live verification (below).
+- **Raised the `playwright` bound `>=1.59.0,<1.60.0` → `>=1.61.0,<1.62.0`,
+  live-verified.** The 2026-08-03 regression that motivated the bound — every
+  `video i2v` hanging *silently* right after the frame upload, browser alive,
+  no error, no timeout — does not reproduce on 1.61.0: a live i2v drove
+  `image_uploaded status=200` → `frame_attached` → `generate_captured
+  status=200` with `startImage` parsed, and a live i2i local-reference attach
+  passed outright. **1.62.0 stays excluded** — its hang has never been
+  root-caused. Raising the bound also moves `PINNED_PLAYWRIGHT` and
+  `SUPPORTED_PLAYWRIGHT_RANGE`, which are printed in the stall error that tells
+  a user how to recover; `tests/test_playwright_pin.py` enforces that pairing
+  and caught it. Evidence:
+  [`docs/LIVE_VERIFICATION_playwright_1.61.md`](docs/LIVE_VERIFICATION_playwright_1.61.md).
 - **Dependabot now groups routine updates instead of drip-feeding them.**
   With the `uv` ecosystem opening a PR per locked package, a normal week
   resolves ~38 updates into a queue five wide, and the queue eats itself:
@@ -38,6 +66,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.github/workflows/labels.yml` makes the referenced label set declarative so
   the failure cannot silently return the next time a label is added to the
   config.
+- **Two e2e tests could never have passed.** `test_daemon_e2e_lifecycle`
+  hand-rolled the *legacy* SSE transport (`GET /mcp/sse` → `event: endpoint` →
+  `POST /mcp/message?session_id=`) after the daemon moved to Streamable HTTP at
+  `HTTP_PATH`, so its readiness probe waited for a 200 that never comes and it
+  died in the "Daemon failed to start" branch **while the daemon was up and
+  healthy** — meaning the MCP daemon lifecycle had no live coverage at all. It
+  now speaks the real protocol through the SDK's own client and imports
+  `HTTP_PATH` rather than hardcoding it. Separately,
+  `test_e2e_health_check_returns_true_when_active` asserted a *success* path
+  against the obsolete `bearer`/`sapisidhash` transports, which KNOWN_ISSUES.md
+  already records as unusable; success-path tests now use `LIVE_STRATEGIES`
+  while error-path tests keep the full list on purpose. Fixing that also
+  cleared an unrelated failure — the obsolete transports were the ones holding
+  the contended profile lease. Zero-credit gate: 15 passed/3 failed → **16
+  passed/0 failed**.
 
 ## [0.50.0] — 2026-08-04
 
@@ -2685,7 +2728,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.50.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.51.0...HEAD
+[0.51.0]: https://github.com/ffroliva/gflow-cli/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/ffroliva/gflow-cli/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/ffroliva/gflow-cli/compare/v0.48.0...v0.49.0
 [0.48.0]: https://github.com/ffroliva/gflow-cli/compare/v0.47.0...v0.48.0
