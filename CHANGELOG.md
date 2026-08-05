@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Intra-batch reference support for image batches (#317).** `BatchPromptItem` and `gflow image batch` now support `ref` and `reference_entity` fields (e.g. `ref="batch:0"`), with topological dependency sorting and circular dependency validation.
+- **Character entity provenance recording and video CLI flag parity (#402).** Added `--reference-entity` and `--reference-entity-name` CLI options to `gflow video` commands (`t2v`, `i2v`, `r2v`) and verified character provenance recording in `operations.metadata_json`.
+
 
 
 ## [0.51.0] — 2026-08-05
