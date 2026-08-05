@@ -1600,7 +1600,7 @@ class VideoGenerationMixin:
     @staticmethod
     async def _select_video_duration(page: Page, seconds: int, *, out_dir: Path | None) -> None:
         """Click the duration tab for `seconds` (4/6/8, or 10 for omni_flash).
-        Disambiguated by visible tab text ('4s'..'10s'), NOT id-suffix
+        Disambiguated by visible tab/button text ('4s'..'10s'), NOT id-suffix
         (collides with count). Must run AFTER model select — the 10s tab only
         exists once omni_flash is chosen. Fatal on miss (issue #288): this
         only runs for an explicit --duration, and duration is a contract
@@ -1609,8 +1609,20 @@ class VideoGenerationMixin:
         tab = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "duration_tab",
-            (f"[role='tab']:text-is('{seconds}s')", f"[role='tab']:has-text('{seconds}s')"),
+            (
+                f"[role='tab']:text-is('{seconds}s')",
+                f"[role='tab']:has-text('{seconds}s')",
+                f"[role='button']:text-is('{seconds}s')",
+                f"[role='button']:has-text('{seconds}s')",
+                f"button:text-is('{seconds}s')",
+                f"button:has-text('{seconds}s')",
+                f"[role='option']:text-is('{seconds}s')",
+                f"[role='option']:has-text('{seconds}s')",
+                f"[role='menuitem']:text-is('{seconds}s')",
+                f"[role='menuitem']:has-text('{seconds}s')",
+            ),
         )
+
         if tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_duration_tab.png")
             raise UiSelectorDriftError(
