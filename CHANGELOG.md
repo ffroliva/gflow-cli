@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Intra-batch reference support for image batches (#317).** `BatchPromptItem` and `gflow image batch` now support `ref` and `reference_entity` fields (e.g. `ref="batch:0"`), with topological dependency sorting and circular dependency validation.
+
+
 ## [0.51.0] — 2026-08-05
 
 ### Security
