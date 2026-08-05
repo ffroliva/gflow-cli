@@ -59,6 +59,19 @@ _project_name_option = click.option(
     help="Human-readable project title to use when creating a fresh Flow project.",
 )
 
+_reference_entity_option = click.option(
+    "--reference-entity",
+    "reference_entities",
+    multiple=True,
+    help="Flow CHARACTER entity id to reference for character consistency (repeatable).",
+)
+_reference_entity_name_option = click.option(
+    "--reference-entity-name",
+    "reference_entity_names",
+    multiple=True,
+    help="Display name paired with --reference-entity.",
+)
+
 
 def _warn_persistence_failed_after_success(
     *,
@@ -82,6 +95,8 @@ def _shared_gen_tail_options(f: Any) -> Any:
             tool_option,
             _project_option,
             _project_name_option,
+            _reference_entity_option,
+            _reference_entity_name_option,
             click.option(
                 "--out-dir",
                 "out_dir",
@@ -284,6 +299,8 @@ async def _run_t2v(
     duration: int | None = None,
     count: int = 1,
     as_json: bool = False,
+    reference_entities: tuple[str, ...] = (),
+    reference_entity_names: tuple[str, ...] = (),
     original_prompt: str | None = None,
     tool: AppliedTool | None = None,
     project_id: str | None = None,
@@ -300,9 +317,12 @@ async def _run_t2v(
         model=VideoModel.from_cli(model),
         duration=duration,
         count=count,
+        reference_entities=reference_entities,
+        reference_entity_names=reference_entity_names,
         original_prompt=original_prompt,
         tool=tool,
     )
+
     await _generate_and_report(
         request,
         profile_name=profile_name,
@@ -345,6 +365,8 @@ class _I2VParams:
     # UUID frame refs, first words — Flow's media search indexes prompt text
     # (tile alt), not UUIDs.
     search_hints: tuple[str, ...] = ()
+    reference_entities: tuple[str, ...] = ()
+    reference_entity_names: tuple[str, ...] = ()
 
 
 # First words of a recorded prompt used as a picker search term (#287 round
@@ -437,6 +459,8 @@ async def _run_i2v(
         end_image_ref_id=params.end_frame_ref_id,
         project_name=params.project_name,
         search_hints=params.search_hints,
+        reference_entities=params.reference_entities,
+        reference_entity_names=params.reference_entity_names,
         original_prompt=params.original_prompt,
         tool=params.tool,
     )
@@ -466,6 +490,8 @@ async def _run_r2v(
     count: int = 1,
     output_file: Path | None = None,
     as_json: bool = False,
+    reference_entities: tuple[str, ...] = (),
+    reference_entity_names: tuple[str, ...] = (),
     original_prompt: str | None = None,
     tool: AppliedTool | None = None,
     project_id: str | None = None,
@@ -483,9 +509,12 @@ async def _run_r2v(
         duration=duration,
         count=count,
         reference_images=tuple(Path(r) for r in refs),
+        reference_entities=reference_entities,
+        reference_entity_names=reference_entity_names,
         original_prompt=original_prompt,
         tool=tool,
     )
+
     await _generate_and_report(
         request,
         profile_name=profile_name,
@@ -1012,6 +1041,8 @@ def t2v(
     tool_specs: tuple[str, ...],
     project_id: str | None,
     project_name: str | None,
+    reference_entities: tuple[str, ...],
+    reference_entity_names: tuple[str, ...],
     out_dir: Path | None,
     output_file: Path | None,
     as_json: bool,
@@ -1031,6 +1062,8 @@ def t2v(
             duration=int(duration) if duration is not None else None,
             count=count,
             as_json=as_json,
+            reference_entities=tuple(reference_entities),
+            reference_entity_names=tuple(reference_entity_names),
             original_prompt=None,
             tool=None,
             project_id=project_id,
@@ -1180,6 +1213,8 @@ def i2v(  # NOSONAR
     tool_specs: tuple[str, ...],
     project_id: str | None,
     project_name: str | None,
+    reference_entities: tuple[str, ...],
+    reference_entity_names: tuple[str, ...],
     out_dir: Path | None,
     output_file: Path | None,
     as_json: bool,
@@ -1227,6 +1262,8 @@ def i2v(  # NOSONAR
         tool=applied_tool,
         project_name=project_name,
         search_hints=search_hints,
+        reference_entities=tuple(reference_entities),
+        reference_entity_names=tuple(reference_entity_names),
     )
     run_with_handlers(
         lambda: _run_i2v(
@@ -1302,6 +1339,8 @@ def i2v(  # NOSONAR
 @tool_option
 @_project_option
 @_project_name_option
+@_reference_entity_option
+@_reference_entity_name_option
 @click.option(
     "-o",
     "--output",
@@ -1334,6 +1373,8 @@ def r2v(
     tool_specs: tuple[str, ...],
     project_id: str | None,
     project_name: str | None,
+    reference_entities: tuple[str, ...],
+    reference_entity_names: tuple[str, ...],
     output_file: Path | None,
     out_dir: Path | None,
     as_json: bool,
@@ -1372,6 +1413,8 @@ def r2v(
             out_dir=out_dir,
             output_file=output_file,
             as_json=as_json,
+            reference_entities=tuple(reference_entities),
+            reference_entity_names=tuple(reference_entity_names),
             original_prompt=None,
             tool=None,
             project_id=project_id,
