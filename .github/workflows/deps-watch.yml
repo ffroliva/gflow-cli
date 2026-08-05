@@ -1,0 +1,78 @@
+name: Dependency watch
+
+# ── Why this exists, on a CLOCK ──────────────────────────────────────────────
+# CI's `deps-audit` job runs the same pip-audit command, but only `on: push` and
+# `on: pull_request`. That gate has no clock: an advisory published *after* the
+# last push stays invisible until someone happens to push. That is exactly how
+# CVE-2026-69247 (cryptography 49.0.0) reached the v0.50.0 release PR — the
+# lockfile had been sitting on the vulnerable version for days and nothing was
+# scheduled to re-check it. This workflow gives that gate a timer.
+#
+# It also answers the question no existing job answers: "what CAN we update?"
+# Every other job installs via `uv sync` against uv.lock, so the lockfile hides
+# both halves of the picture — what upstream has published, and what our own
+# declared bounds are currently refusing. Both are printed below.
+
+on:
+  schedule:
+    # Mondays 07:00 UTC — one hour before Dependabot's 08:00 Europe/Lisbon run,
+    # so the audit result is already on screen when the bump PRs land.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    name: Audit + report upgradable dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      # ── The gate: fails the run, which emails the repo owner ───────────────
+      - name: Audit locked dependencies for known CVEs
+        run: |
+          # --all-extras: without it only the default group is exported, so
+          # anything reachable solely through an optional extra goes unaudited.
+          # See the matching note in ci.yml — this is how aiohttp/pyasn1 hid.
+          uv export --frozen --all-extras --format requirements-txt --no-emit-project > requirements-audit.txt
+          uvx pip-audit -r requirements-audit.txt
+
+      # ── The reports: never fail the run, and still run when the audit fails
+      #    (a red audit is precisely when you want to know what's upgradable) ─
+      - name: Report what our bounds allow us to take now
+        if: always()
+        # Resolves the newest versions pyproject.toml's ranges permit, without
+        # writing uv.lock. This is the "safe to merge today" list.
+        run: |
+          echo '## Upgradable within current bounds' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # uv writes this report to STDERR, so it must be folded into stdout
+          # BEFORE the pipe. `... 2>&1 >> file` would be wrong: that order sends
+          # stdout to the file and leaves stderr on the terminal, which silently
+          # published an empty summary section. tee keeps both destinations.
+          uv lock --upgrade --dry-run 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report what upstream has published
+        if: always()
+        # Unlike the step above, this ignores our constraints and reports the
+        # true latest on PyPI — so a package frozen by one of OUR upper bounds
+        # shows up here and nowhere else. This is the expiry alarm for those
+        # bounds: `playwright>=1.59.0,<1.60.0` is deliberate (an untested driver
+        # silently wedged video generation — see the comment in pyproject.toml),
+        # but a deliberate pin still needs a periodic "how stale is it now?"
+        # signal, and raising it requires a live-verified generation first.
+        run: |
+          uv sync --frozen
+          echo '## Latest upstream (ignores our bounds)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          uv pip list --outdated 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

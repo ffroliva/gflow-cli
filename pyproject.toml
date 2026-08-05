@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.50.0"
+version = "0.51.0"
 description = "Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -25,17 +25,20 @@ dependencies = [
     # library here: it ships the browser driver, and 100% of gflow's product
     # surface is automation through it, so an untested playwright minor is an
     # untested product. Observed 2026-08-03: an install that resolved 1.62.0
-    # (uv.lock pins 1.59.0, and `uv tool install <path>` ignores the lockfile)
-    # made every `video i2v` run hang SILENTLY right after the frame upload —
-    # browser alive, no error, no timeout; downgrading to 1.59.0 fixed it
-    # instantly. The floor is the version actually exercised by CI and the
-    # lockfile: >=1.45.0 was aspirational, nothing has ever been tested there.
-    # The range keeps 1.59.x patch headroom (so a CVE fix does not require a
+    # (the lockfile pinned 1.59.0, and `uv tool install <path>` ignores the
+    # lockfile) made every `video i2v` run hang SILENTLY right after the frame
+    # upload — browser alive, no error, no timeout; downgrading to 1.59.0 fixed
+    # it instantly. 1.62.0 therefore stays EXCLUDED until someone reproduces
+    # that hang against it deliberately and finds the cause.
+    # Raised 1.59.0 -> 1.61.0 on 2026-08-05. The floor is the version actually
+    # exercised by CI and the lockfile: >=1.45.0 was aspirational, nothing has
+    # ever been tested there.
+    # The range keeps 1.61.x patch headroom (so a CVE fix does not require a
     # gflow release) while excluding untested minors; the patchright extra
     # below pins exactly for the same reason. Raise this deliberately, after
     # live-verifying a generation on the new minor — offline tests cannot see
     # a driver-behaviour regression (`resolve-drift` in CI only smoke-imports).
-    "playwright>=1.59.0,<1.60.0",
+    "playwright>=1.61.0,<1.62.0",
     "rich>=13.7.0",
     "pydantic-settings>=2.5.0",
     "platformdirs>=4.0.0",

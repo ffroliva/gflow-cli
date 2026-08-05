@@ -66,6 +66,18 @@ pytestmark = pytest.mark.e2e
 
 STRATEGIES = ["evaluate_fetch", "bearer", "sapisidhash"]
 
+#: Transports a SUCCESS-path assertion may be made against. `bearer` and
+#: `sapisidhash` are obsolete and fail before the request is even issued —
+#: KNOWN_ISSUES.md: "These are obsolete — only `evaluate_fetch` is viable."
+#: `bearer` cannot intercept the OAuth token and `sapisidhash` is refused
+#: outright by FlowApiClient ("acquires its own profile lease during setup and
+#: would self-lock against the client's lease").
+#:
+#: Error-path tests legitimately keep the full `STRATEGIES` list — asserting
+#: that a broken transport degrades cleanly is the point of those. Only tests
+#: that require the transport to actually WORK belong here.
+LIVE_STRATEGIES = ["evaluate_fetch"]
+
 _PROMPT = "A motivational sunrise over mountains, cinematic, 4K"
 
 
@@ -91,7 +103,7 @@ def _make_client(strategy: str, profile: Path) -> FlowApiClient:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("strategy", STRATEGIES)
+@pytest.mark.parametrize("strategy", LIVE_STRATEGIES)
 @pytest.mark.asyncio
 @pytest.mark.e2e_image
 async def test_e2e_single_image_gen(strategy: str, e2e_profile_dir: Path) -> None:
@@ -334,7 +346,7 @@ async def test_e2e_i2v_start_end_frame_attach(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("strategy", STRATEGIES)
+@pytest.mark.parametrize("strategy", LIVE_STRATEGIES)
 @pytest.mark.asyncio
 @pytest.mark.e2e_batch
 async def test_e2e_5_sequential_batches(strategy: str, e2e_profile_dir: Path) -> None:
@@ -369,6 +381,16 @@ async def test_e2e_5_sequential_batches(strategy: str, e2e_profile_dir: Path) ->
 @pytest.mark.e2e_image
 async def test_e2e_recoverable_auth_expiry(strategy: str, e2e_profile_dir: Path) -> None:
     """C4a: Deliberately staling the cached credential triggers a silent refresh.
+
+    NOT narrowed to ``LIVE_STRATEGIES``, unlike the other success-path tests in
+    this module, and that is deliberate. This test carries purpose-built
+    staleness injection for ``bearer`` and ``sapisidhash``, so narrowing it
+    would silently delete the only refresh-path coverage those transports have.
+    It currently cannot pass for them either — they fail at ``setup()``, before
+    the injection point below is reached (KNOWN_ISSUES.md: obsolete, only
+    ``evaluate_fetch`` is viable). Resolve it together with the decision to
+    either repair or delete ``api/transports/experimental/`` — not by quietly
+    dropping the parametrization here.
 
     Strategy-specific staleness injection:
       bearer       — set _cached.expires_at to now - 1 (already expired)
@@ -451,7 +473,7 @@ async def test_e2e_unrecoverable_auth_expiry(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("strategy", STRATEGIES)
+@pytest.mark.parametrize("strategy", LIVE_STRATEGIES)
 @pytest.mark.asyncio
 @pytest.mark.e2e_image
 async def test_e2e_generate_image_without_project_id(strategy: str, e2e_profile_dir: Path) -> None:
@@ -476,13 +498,21 @@ async def test_e2e_generate_image_without_project_id(strategy: str, e2e_profile_
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("strategy", STRATEGIES)
+@pytest.mark.parametrize("strategy", LIVE_STRATEGIES)
 @pytest.mark.asyncio
 @pytest.mark.e2e_auth
 async def test_e2e_health_check_returns_true_when_active(
     strategy: str, e2e_profile_dir: Path
 ) -> None:
-    """health_check() returns True for a live browser context on a Google domain."""
+    """health_check() returns True for a live browser context on a Google domain.
+
+    Parametrized over ``LIVE_STRATEGIES``, not ``STRATEGIES``: this asserts a
+    SUCCESS path, which the obsolete ``bearer`` / ``sapisidhash`` transports
+    cannot satisfy — they fail at setup before a request is issued. The sibling
+    ``test_e2e_health_check_false_after_close`` already documents that same
+    reason for not parametrizing at all; this test kept the full list and so
+    failed on two of three strategies on every run.
+    """
     async with _make_client(strategy, e2e_profile_dir) as client:
         result = await client.health_check()
 
