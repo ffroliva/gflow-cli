@@ -450,29 +450,20 @@ TOP_BANNER_SELECTORS: tuple[str, ...] = (
 # Close-button selectors tried after a changelog iframe or banner overlay is detected.
 # Ordered from most-specific to most-generic so a precise match wins first.
 # All are tried before the Escape fallback.
-OVERLAY_CLOSE_BUTTON_SELECTORS = (
-    # Structural & ARIA anchors (100% language-agnostic)
+OVERLAY_CLOSE_BUTTON_SELECTORS: tuple[str, ...] = (
     "[role='dialog']:has(a[href*='changelog']) button",
-    "[aria-label='Close']",
-    "[aria-label='close']",
-    "[aria-label='Dismiss']",
-    "[aria-label='dismiss']",
-    "[aria-label*='Dismiss' i]",
-    "[aria-label='Cancel']",
     "button:has(i.google-symbols:text('clear'))",
     "button:has(i:text('clear'))",
     "button:has(i.google-symbols:text('close'))",
     "button:has(i:text('close'))",
-    "[aria-label*='Got it' i]",
     "[role='dialog'] button:has(i:text('close'))",
-    "[role='dialog'] button[aria-label*='close' i]",
     "button[data-dismiss]",
 )
 
-# Detectors for the "Welcome to Google Flow" splash screen.
-WELCOME_SCREEN_SELECTORS = (
-    "div:has-text('Welcome to Google Flow')",
-    "button:has-text('See what's new')",
+# Detectors for the splash screen or welcome overlay (pure structural anchors).
+WELCOME_SCREEN_SELECTORS: tuple[str, ...] = (
+    "[role='dialog']:has(a[href*='flow'])",
+    "[role='dialog']:has(a[href*='changelog'])",
 )
 
 
@@ -573,9 +564,6 @@ def aspect_cli_from_enum(aspect: Aspect) -> str | None:
 
 # Back-compat alias — kept so any remaining internal callers and the existing
 # test imports work without a rename sweep.
-_aspect_cli_from_enum = aspect_cli_from_enum
-
-
 def _prompt_hash_stable(text: str) -> str:
     """Truncated sha256 matching image_batch._prompt_hash prefix length.
 
@@ -1068,7 +1056,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 loc = page.locator(close_sel).first
                 if await loc.is_visible(timeout=500):
                     await loc.click(force=True)
-                    await page.wait_for_timeout(1000)
+                    await page.wait_for_timeout(_jitter_ms(1000))
                     log.info(
                         _EVT_OVERLAY_DISMISSED,
                         selector=close_sel,
@@ -1089,7 +1077,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                     loc = frame.locator(close_sel).first
                     if await loc.is_visible(timeout=500):
                         await loc.click(force=True)
-                        await page.wait_for_timeout(1000)
+                        await page.wait_for_timeout(_jitter_ms(1000))
                         log.info(
                             _EVT_OVERLAY_DISMISSED,
                             selector=close_sel,
@@ -1136,7 +1124,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Escape fallback (regression test case: iframe present, no close button).
         try:
             await page.keyboard.press("Escape")
-            await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(_jitter_ms(1000))
             log.info(
                 _EVT_OVERLAY_DISMISSED,
                 selector="<none>",
@@ -1515,8 +1503,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         await self._verify_body_prompt_focus(page, input_box, out_dir)
         await input_box.press("Control+A")
         await input_box.press("Delete")
-        await input_box.press_sequentially(full_prompt)
-        await page.wait_for_timeout(500)
+        await page.keyboard.insert_text(full_prompt)
+        await page.wait_for_timeout(_jitter_ms(500))
 
         # Readback guard — abort BEFORE submit if the typing landed in the
         # portrait box (mode switch not settled → the 2026-07-25 corruption).
