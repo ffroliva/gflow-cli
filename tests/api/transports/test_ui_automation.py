@@ -1835,6 +1835,19 @@ class TestDismissBlockingOverlays:
         assert result is True
         assert page._clicked == ["button:has-text('Get started')"]  # type: ignore[attr-defined]
 
+    @pytest.mark.asyncio
+    async def test_watermark_toggle_changelog_overlay_dismissed_pt_br(self) -> None:
+        """Issue #403 (Locale-invariance): Portuguese inline changelog modal with
+        'Primeiros passos' is detected and dismissed cleanly."""
+        t = UiAutomationTransport()
+        page = _make_overlay_page(
+            iframe_visible=True,
+            specific_close_selector="button:has-text('Primeiros passos')",
+        )
+        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
+        assert result is True
+        assert page._clicked == ["button:has-text('Primeiros passos')"]  # type: ignore[attr-defined]
+
 
 # ---------------------------------------------------------------------------
 # Unit 3.13 — _read_displayed_count + _set_count retry logic
