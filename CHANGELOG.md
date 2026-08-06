@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Flow release overlay detection for visible watermark toggle modal (#403).** Added `*:has-text('View all changelogs')` to `TOP_BANNER_SELECTORS` and `button:has-text('Get started')` to `OVERLAY_CLOSE_BUTTON_SELECTORS` in `ui_automation.py` to detect and dismiss inline release-note modals on fresh account profiles.
+- **Flow release overlay detection for visible watermark toggle modal (#403).** Added locale-invariant structural anchors (`a[href*='changelog']`, `[role='dialog']:has(a[href*='changelog']) button`) and a 9-locale cascade (EN, PT, ES, DE, FR, IT, JA, ZH, KO) to `TOP_BANNER_SELECTORS` and `OVERLAY_CLOSE_BUTTON_SELECTORS` in `ui_automation.py` to reliably detect and dismiss release-note modals across localized profiles.
 
 ## [0.52.0] — 2026-08-05
 

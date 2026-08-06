@@ -438,14 +438,29 @@ CHANGELOG_IFRAME_SELECTORS = (
 # — clicking (or Escaping) unknown UI is riskier than failing.
 TOP_BANNER_SELECTORS: tuple[str, ...] = (
     "[role='banner']",
+    # Tier 1: Locale-invariant structural anchors
+    "a[href*='changelog']",
+    "a[href*='changelogs']",
+    # Tier 2: Multi-locale text cascades
     "div:has-text('What\\'s new')",
     "*:has-text('View all changelogs')",
+    "*:has-text('Ver histórico de alterações')",
+    "*:has-text('Ver todas as novidades')",
+    "*:has-text('Ver historial de cambios')",
+    "*:has-text('Alle Änderungsprotokolle anzeigen')",
+    "*:has-text('Voir toutes les modifications')",
+    "*:has-text('Visualizza tutte le modifiche')",
+    "*:has-text('変更履歴をすべて表示')",
+    "*:has-text('查看所有更新日志')",
+    "*:has-text('모든 변경사항 보기')",
 )
 
 # Close-button selectors tried after a changelog iframe or banner overlay is detected.
 # Ordered from most-specific to most-generic so a precise match wins first.
 # All are tried before the Escape fallback.
 OVERLAY_CLOSE_BUTTON_SELECTORS = (
+    # Tier 1: Structural & ARIA anchors (locale-invariant)
+    "[role='dialog']:has(a[href*='changelog']) button",
     "[aria-label='Close']",
     "[aria-label='close']",
     "[aria-label='Dismiss']",
@@ -457,12 +472,46 @@ OVERLAY_CLOSE_BUTTON_SELECTORS = (
     "button:has(i.google-symbols:text('close'))",
     "button:has(i:text('close'))",
     "[aria-label*='Got it' i]",
-    "button:has-text('Got it')",
     "[role='dialog'] button:has(i:text('close'))",
     "[role='dialog'] button[aria-label*='close' i]",
     "button[data-dismiss]",
-    "button:has-text('See what\\'s new')",
+    # Tier 2: Multi-locale CTA text cascades
+    "button:has-text('Got it')",
     "button:has-text('Get started')",
+    "button:has-text('See what\\'s new')",
+    # PT
+    "button:has-text('Primeiros passos')",
+    "button:has-text('Começar')",
+    "button:has-text('Entendi')",
+    "button:has-text('Ver novidades')",
+    # ES
+    "button:has-text('Primeros pasos')",
+    "button:has-text('Comenzar')",
+    "button:has-text('Empezar')",
+    "button:has-text('Entendido')",
+    # DE
+    "button:has-text('Erste Schritte')",
+    "button:has-text('Loslegen')",
+    "button:has-text('Verstanden')",
+    # FR
+    "button:has-text('Premiers pas')",
+    "button:has-text('Commencer')",
+    'button:has-text("J\'ai compris")',
+    # IT
+    "button:has-text('Per iniziare')",
+    "button:has-text('Inizia')",
+    "button:has-text('Ho capito')",
+    # JA
+    "button:has-text('使ってみる')",
+    "button:has-text('はじめる')",
+    "button:has-text('開始')",
+    "button:has-text('了解')",
+    # ZH
+    "button:has-text('开始使用')",
+    "button:has-text('了解')",
+    # KO
+    "button:has-text('시작하기')",
+    "button:has-text('확인')",
 )
 
 # Detectors for the "Welcome to Google Flow" splash screen.
