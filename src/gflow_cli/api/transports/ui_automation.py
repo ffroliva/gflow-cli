@@ -1504,7 +1504,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         await self._verify_body_prompt_focus(page, input_box, out_dir)
         await input_box.press("Control+A")
         await input_box.press("Delete")
-        await page.keyboard.insert_text(full_prompt)
+        await input_box.press_sequentially(full_prompt)
         await page.wait_for_timeout(_jitter_ms(500))
 
         # Readback guard — abort BEFORE submit if the typing landed in the
