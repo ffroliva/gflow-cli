@@ -1693,6 +1693,7 @@ def _make_overlay_page(
     *,
     iframe_visible: bool = False,
     close_button_visible: bool = False,
+    specific_close_selector: str | None = None,
     keyboard_press_raises: bool = False,
 ) -> MagicMock:
     """Build a fake page for _dismiss_blocking_overlays tests.
@@ -1715,19 +1716,25 @@ def _make_overlay_page(
     clicked: list[str] = []
 
     def _locator(sel: str) -> MagicMock:
-        loc = MagicMock()
-        # Changelog iframe selectors
-        is_iframe = "changelogs" in sel
-        # Close-button selectors: aria-label close / role=button with close icon
-        is_close = any(
-            k in sel.lower() for k in ("aria-label", "close", "dialog", "dismiss", "cancel")
-        )
+        # Changelog iframe or banner selectors
+        is_iframe = "changelogs" in sel or "View all changelogs" in sel
+        # Close-button selectors
+        if specific_close_selector is not None:
+            is_close = sel == specific_close_selector
+        else:
+            is_close = any(
+                k in sel.lower()
+                for k in ("aria-label", "close", "dialog", "dismiss", "cancel", "get started")
+            )
 
         if is_iframe and iframe_visible:
+            loc = MagicMock()
             loc.is_visible = AsyncMock(return_value=True)
-        elif is_close and close_button_visible:
+        elif is_close and (close_button_visible or specific_close_selector is not None):
+            loc = MagicMock()
             loc.is_visible = AsyncMock(return_value=True)
         else:
+            loc = MagicMock()
             loc.is_visible = AsyncMock(return_value=False)
 
         async def _click(**kwargs: object) -> None:
@@ -1814,6 +1821,19 @@ class TestDismissBlockingOverlays:
         page = _make_overlay_page(iframe_visible=False)
         result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_watermark_toggle_changelog_overlay_dismissed(self) -> None:
+        """Issue #403: Inline changelog modal with 'View all changelogs' and 'Get started'
+        is detected and dismissed cleanly."""
+        t = UiAutomationTransport()
+        page = _make_overlay_page(
+            iframe_visible=True,
+            specific_close_selector="button:has-text('Get started')",
+        )
+        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
+        assert result is True
+        assert page._clicked == ["button:has-text('Get started')"]  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

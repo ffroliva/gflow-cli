@@ -439,6 +439,7 @@ CHANGELOG_IFRAME_SELECTORS = (
 TOP_BANNER_SELECTORS: tuple[str, ...] = (
     "[role='banner']",
     "div:has-text('What\\'s new')",
+    "*:has-text('View all changelogs')",
 )
 
 # Close-button selectors tried after a changelog iframe or banner overlay is detected.
@@ -460,7 +461,8 @@ OVERLAY_CLOSE_BUTTON_SELECTORS = (
     "[role='dialog'] button:has(i:text('close'))",
     "[role='dialog'] button[aria-label*='close' i]",
     "button[data-dismiss]",
-    "button:has-text('See what's new')",
+    "button:has-text('See what\\'s new')",
+    "button:has-text('Get started')",
 )
 
 # Detectors for the "Welcome to Google Flow" splash screen.
