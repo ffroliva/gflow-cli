@@ -57,6 +57,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | [docs/superpowers/plans/2026-07-19-live-verify/PLAN.md](superpowers/plans/2026-07-19-live-verify/PLAN.md) | Task-by-task implementation plan for `/gflow:live-verify` (skill file → AGENTS.md/check.md wiring → INDEX row) | Tracking task-by-task execution of the live-verify skill |
 | [docs/superpowers/plans/2026-07-27-tier-aware-credit-confirmations/SCENARIO.md](superpowers/plans/2026-07-27-tier-aware-credit-confirmations/SCENARIO.md) | Edge-case matrix for replacing fixed chain/movie credit estimates with truthful pending-operation guidance | Reviewing the financial-safety, resume, dry-run, and compatibility scenarios |
 | [docs/superpowers/plans/2026-07-27-tier-aware-credit-confirmations/PLAN.md](superpowers/plans/2026-07-27-tier-aware-credit-confirmations/PLAN.md) | TDD implementation plan for tier-aware chain/movie planning and confirmation output | Tracking the isolated runtime pricing-guidance bugfix |
+| **[docs/LIVE_VERIFICATION_v0.53.0.md](LIVE_VERIFICATION_v0.53.0.md)** | Live verification ledger for v0.53.0: overlay dismissal, delay jittering, intra-batch references | Verifying v0.53.0 headed live evidence against real Flow |
 
 ## Agent commands
 

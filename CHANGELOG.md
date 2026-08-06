@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.53.0] — 2026-08-06
+
 ### Added
 
 - **Driver interaction delay humanization (#315).** Added `_jitter_ms` timing entropy helper to `ui_automation.py` to randomize Playwright interaction wait durations around base values, mitigating anti-automation fingerprinting without degrading batch throughput.
@@ -2751,7 +2753,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.52.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.53.0...HEAD
+[0.53.0]: https://github.com/ffroliva/gflow-cli/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/ffroliva/gflow-cli/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/ffroliva/gflow-cli/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/ffroliva/gflow-cli/compare/v0.49.0...v0.50.0
