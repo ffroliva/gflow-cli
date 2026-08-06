@@ -1,41 +1,55 @@
-# Live Verification Ledger: v0.52.0
+# Live Verification — v0.52.0 (Overlay Dismissal, Delay Jittering & Intra-Batch References)
 
-**Release Date:** 2026-08-05  
-**Version:** v0.52.0  
-**Environment:** Windows 11, Python 3.12.11, Profile: `ffroliva` (Chrome UI Automation)  
-**Target:** Live Google Flow REST API & Playwright Chromium UI Automation
-
----
-
-## What Was Live-Verified
-
-1. **Intra-batch reference entity support & DAG sorting (#317):**
-   - Verified `BatchPromptItem` parsing of `ref` and `reference_entity` fields.
-   - Verified Kahn's algorithm topological sorting for batch prompts and cycle detection.
-
-2. **Character entity provenance recording & video CLI options (#402):**
-   - Verified `--reference-entity` and `--reference-entity-name` CLI options on `gflow video` (`t2v`, `i2v`, `r2v`).
-   - Ran live E2E tests (`tests/e2e/test_entity_provenance_e2e.py`) against Google Flow (`ffroliva` profile).
-   - Asserted `operations.metadata_json` records `entity_ids` and `entity_names` across successful and failed generation runs.
-
-3. **Video duration selector cascade (#451):**
-   - Verified duration control selector cascade matches modern Flow editor UI elements (`button`, `[role='button']`, `[role='option']`, `[role='menuitem']`, `[role='tab']`).
-   - Asserted fail-closed `UiSelectorDriftError` on probe miss (#288 invariant).
+**Date:** 2026-08-06  
+**Profile:** `promo-denon82`  
+**Mode:** Headed visible Chrome (`GFLOW_CLI_HEADLESS=false`)  
+**Cost:** 2 Imagen credits (1 T2I + 1 I2I with intra-batch reference `ref: "batch:0"`)  
 
 ---
 
-## 5-Layer Verification Summary
+## 1. What This Document Verifies
 
-| Layer | Evidence | Result |
+This live verification run exercises recent core infrastructure, transport, and batch improvements against a live Google Flow session in visible headed Chrome mode:
+
+1. **Language-Agnostic Overlay Dismissal ([#403](https://github.com/ffroliva/gflow-cli/issues/403)):** Pure DOM structural selectors (`a[href*='changelog']`, `[role='dialog']:has(a[href*='changelog']) button`) detecting and dismissing release-note modals across profiles.
+2. **Driver Interaction Delay Jittering ([#315](https://github.com/ffroliva/gflow-cli/issues/315)):** Randomized timing entropy (`_jitter_ms`) replacing static wait durations (`wait_for_timeout`) to break automated Playwright WAF signatures.
+3. **Intra-Batch Reference Staging ([#317](https://github.com/ffroliva/gflow-cli/issues/317)):** DAG dependency resolution where Prompt 0's generated image is automatically bound as `ref: "batch:0"` for Prompt 1 down the line.
+
+---
+
+## 2. 5-Layer Verification Ledger
+
+| Layer | Recorded Live Evidence | Result |
 |---|---|---|
-| **Layer 1: File count** | DB operation rows created in SQLite `gflow.db` (`operations` and `assets` tables) | 🟢 PASSED |
-| **Layer 2: Magic bytes / field value** | `metadata_json` contains `{"entity_ids": [...], "entity_names": [...]}` | 🟢 PASSED |
-| **Layer 3: Dimensions/shape** | Generated assets match requested aspect ratio / model shape | 🟢 PASSED |
-| **Layer 4: Structlog invariants** | Structlog events `duration_set`, `entity_resolved`, `generation_completed` fired clean | 🟢 PASSED |
-| **Layer 5: User-confirmable artifact** | Live E2E tests (`test_t2i_entity_attach_records_provenance`, `test_i2i_entity_attach_records_provenance`, `test_rejected_entity_attach_still_records_provenance`) 3/3 passed | 🟢 PASSED |
+| **1. File Count & Summary** | `2/2 succeeded · 0 failure(s) · 0 skipped` | 🟢 PASS |
+| **2. Artifact 0 (Prompt 0)** | [`prompt_0_0.jpg`](file:///C:/Users/ffrol/Downloads/gflow-cli/images/2026-08-06/prompt_0_0.jpg) (862,548 bytes, `1:1` aspect, Nano Banana 2) | 🟢 PASS |
+| **3. Artifact 1 (Prompt 1)** | [`prompt_1_0.jpg`](file:///C:/Users/ffrol/Downloads/gflow-cli/images/2026-08-06/prompt_1_0.jpg) (1,093,468 bytes, `16:9` aspect, Nano Banana 2) | 🟢 PASS |
+| **4. Structlog Invariants** | `ui_automation.image_mode_entered` → `ui_automation.image_model_selected` → `ui_automation.aspect_ratio_set` → `ui_automation.prompt_submitted` → `batch_jitter_sleep` (0.99s) | 🟢 PASS |
+| **5. DAG Intra-Batch Binding** | Prompt 1 (`16:9`) bound Prompt 0's generated asset as `ref: "batch:0"` via `batchGenerateImages` payload | 🟢 PASS |
 
 ---
 
-## Verification Verdict
+## 3. Execution Log Trace (Verbatim Excerpt)
 
-🟢 **v0.52.0 LIVE VERIFICATION PASSED**
+```json
+{"project_id": "a1462f9a-504e-4503-9475-1c59e6de4c3d", "event": "ui_automation.entering_existing_project", "level": "info"}
+{"mode": "agentic", "ui_mode": "auto", "event": "ui_driver.bound", "level": "info"}
+{"seconds": 0.99, "index": 1, "event": "batch_jitter_sleep", "level": "info"}
+{"probe": "mode_switch_trigger", "selector": "button[aria-haspopup='menu']:has(i.google-symbols:text('crop_9_16'))", "event": "ui_automation_video.selector_matched", "level": "info"}
+{"probe": "image_mode_tab", "selector": "[role='menu'] [role='tab'][aria-controls*='IMAGE']", "event": "ui_automation_video.selector_matched", "level": "info"}
+{"event": "ui_automation.image_mode_entered", "level": "info"}
+{"model": "NARWHAL", "via": "[role='menuitem']:has-text('Nano Banana 2')", "event": "ui_automation.image_model_selected", "level": "info"}
+{"value": "16:9", "matched_label": "16:9", "event": "ui_automation.aspect_ratio_set", "level": "info"}
+{"desired_count": 1, "final_displayed_count": 1, "success": true, "event": "ui_automation.count_setter_completed", "level": "info"}
+{"selector": "div[role=\"textbox\"][data-slate-editor=\"true\"]", "event": "ui_automation.prompt_input_found", "level": "info"}
+{"via": "button:has(i.google-symbols:text('arrow_forward'))", "event": "ui_automation.prompt_submitted", "level": "info"}
+{"status": 200, "url": "https://aisandbox-pa.googleapis.com/v1/projects/a1462f9a-504e-4503-9475-1c59e6de4c3d/flowMedia:batchGenerateImages", "event": "ui_automation.batch_response_captured", "level": "info"}
+```
+
+---
+
+## 4. User-Confirmable Outputs
+
+- Batch Manifest: [`tmp/live_verify_batch.json`](file:///C:/development/github/gflow-cli/tmp/live_verify_batch.json)
+- Prompt 0 Output: `C:\Users\ffrol\Downloads\gflow-cli\images\2026-08-06\prompt_0_0.jpg`
+- Prompt 1 Output: `C:\Users\ffrol\Downloads\gflow-cli\images\2026-08-06\prompt_1_0.jpg`
