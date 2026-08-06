@@ -432,34 +432,26 @@ CHANGELOG_IFRAME_SELECTORS = (
 # same command bound the character on the first try (`entity_patched`, real
 # `thumbnail_media_id`); with them present it failed every run.
 #
-# The media picker is a `[role='dialog']` too, so the blast radius was never
-# limited to characters. Keep this tuple to overlays we have actually captured;
-# per KNOWN_ISSUES, gflow does not guess dismiss selectors for unknown overlays
-# — clicking (or Escaping) unknown UI is riskier than failing.
+# Top banner / announcement selectors (#369, #403).
+#
+# DO NOT add bare `[role='dialog']` or `[role='alert']` here. Both shipped
+# briefly and broke `gflow character create` (#395): Flow's own working
+# surfaces carry those roles, so `_detect_overlay` matched the app itself and
+# `_dismiss_blocking_overlays` pressed Escape on the character composer.
+#
+# Overlay detection is strictly language-agnostic, anchoring on DOM roles,
+# structural element tags, and href attributes rather than localized text.
 TOP_BANNER_SELECTORS: tuple[str, ...] = (
     "[role='banner']",
-    # Tier 1: Locale-invariant structural anchors
     "a[href*='changelog']",
     "a[href*='changelogs']",
-    # Tier 2: Multi-locale text cascades
-    "div:has-text('What\\'s new')",
-    "*:has-text('View all changelogs')",
-    "*:has-text('Ver histórico de alterações')",
-    "*:has-text('Ver todas as novidades')",
-    "*:has-text('Ver historial de cambios')",
-    "*:has-text('Alle Änderungsprotokolle anzeigen')",
-    "*:has-text('Voir toutes les modifications')",
-    "*:has-text('Visualizza tutte le modifiche')",
-    "*:has-text('変更履歴をすべて表示')",
-    "*:has-text('查看所有更新日志')",
-    "*:has-text('모든 변경사항 보기')",
 )
 
 # Close-button selectors tried after a changelog iframe or banner overlay is detected.
 # Ordered from most-specific to most-generic so a precise match wins first.
 # All are tried before the Escape fallback.
 OVERLAY_CLOSE_BUTTON_SELECTORS = (
-    # Tier 1: Structural & ARIA anchors (locale-invariant)
+    # Structural & ARIA anchors (100% language-agnostic)
     "[role='dialog']:has(a[href*='changelog']) button",
     "[aria-label='Close']",
     "[aria-label='close']",
@@ -475,43 +467,6 @@ OVERLAY_CLOSE_BUTTON_SELECTORS = (
     "[role='dialog'] button:has(i:text('close'))",
     "[role='dialog'] button[aria-label*='close' i]",
     "button[data-dismiss]",
-    # Tier 2: Multi-locale CTA text cascades
-    "button:has-text('Got it')",
-    "button:has-text('Get started')",
-    "button:has-text('See what\\'s new')",
-    # PT
-    "button:has-text('Primeiros passos')",
-    "button:has-text('Começar')",
-    "button:has-text('Entendi')",
-    "button:has-text('Ver novidades')",
-    # ES
-    "button:has-text('Primeros pasos')",
-    "button:has-text('Comenzar')",
-    "button:has-text('Empezar')",
-    "button:has-text('Entendido')",
-    # DE
-    "button:has-text('Erste Schritte')",
-    "button:has-text('Loslegen')",
-    "button:has-text('Verstanden')",
-    # FR
-    "button:has-text('Premiers pas')",
-    "button:has-text('Commencer')",
-    'button:has-text("J\'ai compris")',
-    # IT
-    "button:has-text('Per iniziare')",
-    "button:has-text('Inizia')",
-    "button:has-text('Ho capito')",
-    # JA
-    "button:has-text('使ってみる')",
-    "button:has-text('はじめる')",
-    "button:has-text('開始')",
-    "button:has-text('了解')",
-    # ZH
-    "button:has-text('开始使用')",
-    "button:has-text('了解')",
-    # KO
-    "button:has-text('시작하기')",
-    "button:has-text('확인')",
 )
 
 # Detectors for the "Welcome to Google Flow" splash screen.

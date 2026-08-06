@@ -1823,30 +1823,18 @@ class TestDismissBlockingOverlays:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_watermark_toggle_changelog_overlay_dismissed(self) -> None:
-        """Issue #403: Inline changelog modal with 'View all changelogs' and 'Get started'
-        is detected and dismissed cleanly."""
+    async def test_watermark_toggle_changelog_overlay_dismissed_structurally(self) -> None:
+        """Issue #403 (Language-Agnostic): Inline changelog modal is detected via
+        href attribute and dismissed via structural dialog button anchor, completely
+        independent of display language."""
         t = UiAutomationTransport()
         page = _make_overlay_page(
             iframe_visible=True,
-            specific_close_selector="button:has-text('Get started')",
+            specific_close_selector="[role='dialog']:has(a[href*='changelog']) button",
         )
         result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
         assert result is True
-        assert page._clicked == ["button:has-text('Get started')"]  # type: ignore[attr-defined]
-
-    @pytest.mark.asyncio
-    async def test_watermark_toggle_changelog_overlay_dismissed_pt_br(self) -> None:
-        """Issue #403 (Locale-invariance): Portuguese inline changelog modal with
-        'Primeiros passos' is detected and dismissed cleanly."""
-        t = UiAutomationTransport()
-        page = _make_overlay_page(
-            iframe_visible=True,
-            specific_close_selector="button:has-text('Primeiros passos')",
-        )
-        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
-        assert result is True
-        assert page._clicked == ["button:has-text('Primeiros passos')"]  # type: ignore[attr-defined]
+        assert page._clicked == ["[role='dialog']:has(a[href*='changelog']) button"]  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
