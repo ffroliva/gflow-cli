@@ -18,6 +18,7 @@ import hashlib
 import json
 import random
 import re
+import secrets
 import time
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
@@ -770,7 +771,7 @@ def _entity_ids_from_request_body(post_data: str | None) -> set[str]:
 
 
 def _jitter_ms(base_ms: int, variance: float = 0.25) -> int:
-    """Calculate a randomized delay duration bounded around base_ms.
+    """Calculate a randomized delay around `base_ms` with `±variance` spread.
 
     Adds timing entropy to browser interaction delays to break deterministic Playwright
     automation fingerprints. Returns 0 if base_ms <= 0.
@@ -778,7 +779,7 @@ def _jitter_ms(base_ms: int, variance: float = 0.25) -> int:
     if base_ms <= 0:
         return 0
     delta = int(round(base_ms * max(0.0, min(1.0, variance))))
-    return max(1, random.randint(base_ms - delta, base_ms + delta))
+    return max(1, secrets.SystemRandom().randint(base_ms - delta, base_ms + delta))  # NOSONAR
 
 
 class UiAutomationTransport(VideoGenerationMixin):
