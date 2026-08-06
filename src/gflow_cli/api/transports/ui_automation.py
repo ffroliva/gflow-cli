@@ -781,6 +781,18 @@ def _entity_ids_from_request_body(post_data: str | None) -> set[str]:
     return out
 
 
+def _jitter_ms(base_ms: int, variance: float = 0.25) -> int:
+    """Calculate a randomized delay duration bounded around base_ms.
+
+    Adds timing entropy to browser interaction delays to break deterministic Playwright
+    automation fingerprints. Returns 0 if base_ms <= 0.
+    """
+    if base_ms <= 0:
+        return 0
+    delta = int(round(base_ms * max(0.0, min(1.0, variance))))
+    return max(1, random.randint(base_ms - delta, base_ms + delta))
+
+
 class UiAutomationTransport(VideoGenerationMixin):
     """D.2.4 — Playwright UI mimicry strategy.
 
@@ -798,6 +810,12 @@ class UiAutomationTransport(VideoGenerationMixin):
     """
 
     name = "ui_automation"
+
+    async def _wait_jitter(self, page: Page, base_ms: int, variance: float = 0.25) -> None:
+        """Wait for a jittered duration using page.wait_for_timeout."""
+        jittered = _jitter_ms(base_ms, variance=variance)
+        if jittered > 0:
+            await page.wait_for_timeout(jittered)
 
     def __init__(self) -> None:
         self._pw_cm: Any | None = None
@@ -1301,7 +1319,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         if trigger is None:
             raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="image")
         await trigger.click()
-        await page.wait_for_timeout(800)
+        await page.wait_for_timeout(_jitter_ms(800))
         image_tab = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "image_mode_tab",
@@ -1317,9 +1335,9 @@ class UiAutomationTransport(VideoGenerationMixin):
                 )
             )
         await image_tab.click()
-        await page.wait_for_timeout(1200)
+        await page.wait_for_timeout(_jitter_ms(1200))
         await page.keyboard.press("Escape")
-        await page.wait_for_timeout(200)
+        await page.wait_for_timeout(_jitter_ms(200))
         log.info("ui_automation.image_mode_entered")
 
     # ------------------------------------------------------------------
@@ -1395,7 +1413,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 # Explicit short timeout: never inherit Playwright's 30s default on
                 # a best-effort nicety sitting in front of the submit.
                 await locator.click(timeout=5000)
-                await page.wait_for_timeout(500)
+                await page.wait_for_timeout(_jitter_ms(500))
                 log.info("ui_automation.prompt_formatted", selector=selector)
                 return True
             except Exception as e:
@@ -1439,7 +1457,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # insert_text fires a single beforeinput event that Slate.js handles
         # natively — near-instant vs keyboard.type() which is ~1.5s/char.
         await page.keyboard.insert_text(prompt_text)
-        await page.wait_for_timeout(500)
+        await page.wait_for_timeout(_jitter_ms(500))
 
         if format_prompt:
             await self.format_character_prompt(page)
