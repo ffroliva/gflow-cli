@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.53.0] — 2026-08-06
+## [0.53.1] — 2026-08-06
 
 ### Added
 
@@ -2753,8 +2753,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.53.0...HEAD
-[0.53.0]: https://github.com/ffroliva/gflow-cli/compare/v0.52.0...v0.53.0
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.53.1...HEAD
+[0.53.1]: https://github.com/ffroliva/gflow-cli/compare/v0.52.0...v0.53.1
 [0.52.0]: https://github.com/ffroliva/gflow-cli/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/ffroliva/gflow-cli/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/ffroliva/gflow-cli/compare/v0.49.0...v0.50.0
