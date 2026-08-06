@@ -3387,3 +3387,35 @@ async def test_attach_batch_response_listener_records_headers():
     assert captured[0]["headers"] == {"retry-after": "30", "content-type": "application/json"}
 
     detach()
+
+
+class TestJitterMsAndWaitJitter:
+    """Issue #315: Unit tests for randomized delay jittering."""
+
+    def test_jitter_ms_zero_returns_zero(self) -> None:
+        from gflow_cli.api.transports.ui_automation import _jitter_ms
+
+        assert _jitter_ms(0) == 0
+        assert _jitter_ms(-100) == 0
+
+    def test_jitter_ms_variance_bounds(self) -> None:
+        from gflow_cli.api.transports.ui_automation import _jitter_ms
+
+        samples = [_jitter_ms(1000, 0.25) for _ in range(100)]
+        assert all(750 <= s <= 1250 for s in samples)
+        # Verify non-zero variance (randomized values differ)
+        assert len(set(samples)) > 1
+
+    @pytest.mark.asyncio
+    async def test_wait_jitter_delegates_to_page_wait_for_timeout(self) -> None:
+        from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+
+        t = UiAutomationTransport()
+        mock_page = MagicMock()
+        mock_page.wait_for_timeout = AsyncMock()
+
+        await t._wait_jitter(mock_page, 500)
+        mock_page.wait_for_timeout.assert_called_once()
+        called_ms = mock_page.wait_for_timeout.call_args[0][0]
+        assert isinstance(called_ms, int)
+        assert 375 <= called_ms <= 625

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Driver interaction delay humanization (#315).** Added `_jitter_ms` timing entropy helper to `ui_automation.py` to randomize Playwright interaction wait durations around base values, mitigating anti-automation fingerprinting without degrading batch throughput.
+
 ### Fixed
 
 - **Flow release overlay detection for visible watermark toggle modal (#403).** Added locale-invariant structural anchors (`a[href*='changelog']`, `[role='dialog']:has(a[href*='changelog']) button`) and a 9-locale cascade (EN, PT, ES, DE, FR, IT, JA, ZH, KO) to `TOP_BANNER_SELECTORS` and `OVERLAY_CLOSE_BUTTON_SELECTORS` in `ui_automation.py` to reliably detect and dismiss release-note modals across localized profiles.
