@@ -73,6 +73,20 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+      # patchright is the SAME hazard with a bigger blast radius, and the exact
+      # `==` pin protects it no better than playwright's upper bound protected
+      # playwright -- an exact pin is just another constraint for the "uv"
+      # ecosystem to rewrite. It ships a PATCHED Chromium driver that loads the
+      # real Google session (cookies, OAuth Bearer, SAPISID), so docs/SECURITY.md
+      # requires every bump to get a security review and explicitly says it is
+      # "NOT a routine dependabot auto-merge". That was prose with nothing
+      # enforcing it; this is the enforcement. ALL update-types, patch included:
+      # any version change moves the browser binary underneath the user.
+      - dependency-name: "patchright"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"

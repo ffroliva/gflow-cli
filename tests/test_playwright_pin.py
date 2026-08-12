@@ -99,6 +99,30 @@ def test_dependabot_ignores_playwright_minor_bumps() -> None:
     assert "version-update:semver-major" in ignored, "dependabot must ignore playwright MAJOR bumps"
 
 
+def test_dependabot_ignores_driver_engine_bumps() -> None:
+    """`patchright==1.61.2` is exact-pinned, and an exact pin gates nothing.
+
+    An `==` pin is just one more constraint for the `uv` ecosystem to rewrite —
+    the same move it made on playwright's upper bound in PR #465. patchright
+    ships a PATCHED Chromium driver that loads the real Google session (cookies,
+    OAuth Bearer, SAPISID), so docs/SECURITY.md requires a security review on
+    every bump and calls it explicitly "NOT a routine dependabot auto-merge".
+    Nothing enforced that until this rule, so assert ALL update-types are
+    refused: any version change moves the browser binary under the user.
+    """
+    ignored = _dependabot_uv_ignores().get("patchright", set())
+    missing = {
+        "version-update:semver-major",
+        "version-update:semver-minor",
+        "version-update:semver-patch",
+    } - ignored
+    assert not missing, (
+        f"dependabot must ignore ALL patchright bumps (missing: {sorted(missing)}); "
+        "the exact `==` pin does not stop the uv ecosystem from rewriting it, and "
+        "docs/SECURITY.md requires a security review on every driver bump"
+    )
+
+
 def test_transport_constants_match_pyproject() -> None:
     """The remediation gflow prints must match what the package actually allows.
 
