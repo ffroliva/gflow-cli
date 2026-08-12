@@ -18,6 +18,7 @@ import hashlib
 import json
 import random
 import re
+import secrets
 import time
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
@@ -432,41 +433,38 @@ CHANGELOG_IFRAME_SELECTORS = (
 # same command bound the character on the first try (`entity_patched`, real
 # `thumbnail_media_id`); with them present it failed every run.
 #
-# The media picker is a `[role='dialog']` too, so the blast radius was never
-# limited to characters. Keep this tuple to overlays we have actually captured;
-# per KNOWN_ISSUES, gflow does not guess dismiss selectors for unknown overlays
-# — clicking (or Escaping) unknown UI is riskier than failing.
+# Top banner / announcement selectors (#369, #403).
+#
+# DO NOT add bare `[role='dialog']` or `[role='alert']` here. Both shipped
+# briefly and broke `gflow character create` (#395): Flow's own working
+# surfaces carry those roles, so `_detect_overlay` matched the app itself and
+# `_dismiss_blocking_overlays` pressed Escape on the character composer.
+#
+# Overlay detection is strictly language-agnostic, anchoring on DOM roles,
+# structural element tags, and href attributes rather than localized text.
 TOP_BANNER_SELECTORS: tuple[str, ...] = (
     "[role='banner']",
-    "div:has-text('What\\'s new')",
+    "a[href*='changelog']",
+    "a[href*='changelogs']",
 )
 
 # Close-button selectors tried after a changelog iframe or banner overlay is detected.
 # Ordered from most-specific to most-generic so a precise match wins first.
 # All are tried before the Escape fallback.
-OVERLAY_CLOSE_BUTTON_SELECTORS = (
-    "[aria-label='Close']",
-    "[aria-label='close']",
-    "[aria-label='Dismiss']",
-    "[aria-label='dismiss']",
-    "[aria-label*='Dismiss' i]",
-    "[aria-label='Cancel']",
+OVERLAY_CLOSE_BUTTON_SELECTORS: tuple[str, ...] = (
+    "[role='dialog']:has(a[href*='changelog']) button",
     "button:has(i.google-symbols:text('clear'))",
     "button:has(i:text('clear'))",
     "button:has(i.google-symbols:text('close'))",
     "button:has(i:text('close'))",
-    "[aria-label*='Got it' i]",
-    "button:has-text('Got it')",
     "[role='dialog'] button:has(i:text('close'))",
-    "[role='dialog'] button[aria-label*='close' i]",
     "button[data-dismiss]",
-    "button:has-text('See what's new')",
 )
 
-# Detectors for the "Welcome to Google Flow" splash screen.
-WELCOME_SCREEN_SELECTORS = (
-    "div:has-text('Welcome to Google Flow')",
-    "button:has-text('See what's new')",
+# Detectors for the splash screen or welcome overlay (pure structural anchors).
+WELCOME_SCREEN_SELECTORS: tuple[str, ...] = (
+    "[role='dialog']:has(a[href*='flow'])",
+    "[role='dialog']:has(a[href*='changelog'])",
 )
 
 
@@ -567,9 +565,6 @@ def aspect_cli_from_enum(aspect: Aspect) -> str | None:
 
 # Back-compat alias — kept so any remaining internal callers and the existing
 # test imports work without a rename sweep.
-_aspect_cli_from_enum = aspect_cli_from_enum
-
-
 def _prompt_hash_stable(text: str) -> str:
     """Truncated sha256 matching image_batch._prompt_hash prefix length.
 
@@ -775,6 +770,18 @@ def _entity_ids_from_request_body(post_data: str | None) -> set[str]:
     return out
 
 
+def _jitter_ms(base_ms: int, variance: float = 0.25) -> int:
+    """Calculate a randomized delay around `base_ms` with `±variance` spread.
+
+    Adds timing entropy to browser interaction delays to break deterministic Playwright
+    automation fingerprints. Returns 0 if base_ms <= 0.
+    """
+    if base_ms <= 0:
+        return 0
+    delta = int(round(base_ms * max(0.0, min(1.0, variance))))
+    return max(1, secrets.SystemRandom().randint(base_ms - delta, base_ms + delta))  # NOSONAR
+
+
 class UiAutomationTransport(VideoGenerationMixin):
     """D.2.4 — Playwright UI mimicry strategy.
 
@@ -792,6 +799,12 @@ class UiAutomationTransport(VideoGenerationMixin):
     """
 
     name = "ui_automation"
+
+    async def _wait_jitter(self, page: Page, base_ms: int, variance: float = 0.25) -> None:
+        """Wait for a jittered duration using page.wait_for_timeout."""
+        jittered = _jitter_ms(base_ms, variance=variance)
+        if jittered > 0:
+            await page.wait_for_timeout(jittered)
 
     def __init__(self) -> None:
         self._pw_cm: Any | None = None
@@ -1044,7 +1057,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 loc = page.locator(close_sel).first
                 if await loc.is_visible(timeout=500):
                     await loc.click(force=True)
-                    await page.wait_for_timeout(1000)
+                    await page.wait_for_timeout(_jitter_ms(1000))
                     log.info(
                         _EVT_OVERLAY_DISMISSED,
                         selector=close_sel,
@@ -1065,7 +1078,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                     loc = frame.locator(close_sel).first
                     if await loc.is_visible(timeout=500):
                         await loc.click(force=True)
-                        await page.wait_for_timeout(1000)
+                        await page.wait_for_timeout(_jitter_ms(1000))
                         log.info(
                             _EVT_OVERLAY_DISMISSED,
                             selector=close_sel,
@@ -1112,7 +1125,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Escape fallback (regression test case: iframe present, no close button).
         try:
             await page.keyboard.press("Escape")
-            await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(_jitter_ms(1000))
             log.info(
                 _EVT_OVERLAY_DISMISSED,
                 selector="<none>",
@@ -1295,7 +1308,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         if trigger is None:
             raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="image")
         await trigger.click()
-        await page.wait_for_timeout(800)
+        await page.wait_for_timeout(_jitter_ms(800))
         image_tab = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "image_mode_tab",
@@ -1311,9 +1324,9 @@ class UiAutomationTransport(VideoGenerationMixin):
                 )
             )
         await image_tab.click()
-        await page.wait_for_timeout(1200)
+        await page.wait_for_timeout(_jitter_ms(1200))
         await page.keyboard.press("Escape")
-        await page.wait_for_timeout(200)
+        await page.wait_for_timeout(_jitter_ms(200))
         log.info("ui_automation.image_mode_entered")
 
     # ------------------------------------------------------------------
@@ -1389,7 +1402,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 # Explicit short timeout: never inherit Playwright's 30s default on
                 # a best-effort nicety sitting in front of the submit.
                 await locator.click(timeout=5000)
-                await page.wait_for_timeout(500)
+                await page.wait_for_timeout(_jitter_ms(500))
                 log.info("ui_automation.prompt_formatted", selector=selector)
                 return True
             except Exception as e:
@@ -1433,7 +1446,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # insert_text fires a single beforeinput event that Slate.js handles
         # natively — near-instant vs keyboard.type() which is ~1.5s/char.
         await page.keyboard.insert_text(prompt_text)
-        await page.wait_for_timeout(500)
+        await page.wait_for_timeout(_jitter_ms(500))
 
         if format_prompt:
             await self.format_character_prompt(page)
@@ -1492,7 +1505,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         await input_box.press("Control+A")
         await input_box.press("Delete")
         await input_box.press_sequentially(full_prompt)
-        await page.wait_for_timeout(500)
+        await page.wait_for_timeout(_jitter_ms(500))
 
         # Readback guard — abort BEFORE submit if the typing landed in the
         # portrait box (mode switch not settled → the 2026-07-25 corruption).

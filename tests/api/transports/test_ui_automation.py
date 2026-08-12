@@ -1693,6 +1693,7 @@ def _make_overlay_page(
     *,
     iframe_visible: bool = False,
     close_button_visible: bool = False,
+    specific_close_selector: str | None = None,
     keyboard_press_raises: bool = False,
 ) -> MagicMock:
     """Build a fake page for _dismiss_blocking_overlays tests.
@@ -1715,19 +1716,25 @@ def _make_overlay_page(
     clicked: list[str] = []
 
     def _locator(sel: str) -> MagicMock:
-        loc = MagicMock()
-        # Changelog iframe selectors
-        is_iframe = "changelogs" in sel
-        # Close-button selectors: aria-label close / role=button with close icon
-        is_close = any(
-            k in sel.lower() for k in ("aria-label", "close", "dialog", "dismiss", "cancel")
-        )
+        # Changelog iframe or banner selectors
+        is_iframe = "changelogs" in sel or "View all changelogs" in sel
+        # Close-button selectors
+        if specific_close_selector is not None:
+            is_close = sel == specific_close_selector
+        else:
+            is_close = any(
+                k in sel.lower()
+                for k in ("aria-label", "close", "dialog", "dismiss", "cancel", "get started")
+            )
 
         if is_iframe and iframe_visible:
+            loc = MagicMock()
             loc.is_visible = AsyncMock(return_value=True)
-        elif is_close and close_button_visible:
+        elif is_close and (close_button_visible or specific_close_selector is not None):
+            loc = MagicMock()
             loc.is_visible = AsyncMock(return_value=True)
         else:
+            loc = MagicMock()
             loc.is_visible = AsyncMock(return_value=False)
 
         async def _click(**kwargs: object) -> None:
@@ -1814,6 +1821,20 @@ class TestDismissBlockingOverlays:
         page = _make_overlay_page(iframe_visible=False)
         result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_watermark_toggle_changelog_overlay_dismissed_structurally(self) -> None:
+        """Issue #403 (Language-Agnostic): Inline changelog modal is detected via
+        href attribute and dismissed via structural dialog button anchor, completely
+        independent of display language."""
+        t = UiAutomationTransport()
+        page = _make_overlay_page(
+            iframe_visible=True,
+            specific_close_selector="[role='dialog']:has(a[href*='changelog']) button",
+        )
+        result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
+        assert result is True
+        assert page._clicked == ["[role='dialog']:has(a[href*='changelog']) button"]  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -3366,3 +3387,35 @@ async def test_attach_batch_response_listener_records_headers():
     assert captured[0]["headers"] == {"retry-after": "30", "content-type": "application/json"}
 
     detach()
+
+
+class TestJitterMsAndWaitJitter:
+    """Issue #315: Unit tests for randomized delay jittering."""
+
+    def test_jitter_ms_zero_returns_zero(self) -> None:
+        from gflow_cli.api.transports.ui_automation import _jitter_ms
+
+        assert _jitter_ms(0) == 0
+        assert _jitter_ms(-100) == 0
+
+    def test_jitter_ms_variance_bounds(self) -> None:
+        from gflow_cli.api.transports.ui_automation import _jitter_ms
+
+        samples = [_jitter_ms(1000, 0.25) for _ in range(100)]
+        assert all(750 <= s <= 1250 for s in samples)
+        # Verify non-zero variance (randomized values differ)
+        assert len(set(samples)) > 1
+
+    @pytest.mark.asyncio
+    async def test_wait_jitter_delegates_to_page_wait_for_timeout(self) -> None:
+        from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+
+        t = UiAutomationTransport()
+        mock_page = MagicMock()
+        mock_page.wait_for_timeout = AsyncMock()
+
+        await t._wait_jitter(mock_page, 500)
+        mock_page.wait_for_timeout.assert_called_once()
+        called_ms = mock_page.wait_for_timeout.call_args[0][0]
+        assert isinstance(called_ms, int)
+        assert 375 <= called_ms <= 625

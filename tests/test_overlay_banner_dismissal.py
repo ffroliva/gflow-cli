@@ -90,13 +90,12 @@ class TestTopBannerAndAlertDismissal:
     @pytest.mark.parametrize(
         "close_sel",
         [
+            "[role='dialog']:has(a[href*='changelog']) button",
             "button:has(i.google-symbols:text('clear'))",
             "button:has(i:text('clear'))",
             "button:has(i.google-symbols:text('close'))",
             "button:has(i:text('close'))",
-            "[aria-label*='Got it' i]",
-            "button:has-text('Got it')",
-            "[aria-label*='Dismiss' i]",
+            "button[data-dismiss]",
         ],
     )
     async def test_dismiss_blocking_overlays_clicks_new_close_buttons(self, close_sel: str) -> None:
@@ -171,4 +170,4 @@ class TestOverlaySelectorBlastRadius:
         from gflow_cli.api.transports.ui_automation import TOP_BANNER_SELECTORS
 
         assert "[role='banner']" in TOP_BANNER_SELECTORS
-        assert any("What" in s for s in TOP_BANNER_SELECTORS)
+        assert "a[href*='changelog']" in TOP_BANNER_SELECTORS

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.54.0] — 2026-08-12
+
+### Changed
+
+- **Clearer close-the-browser guidance in `gflow auth login` (#470).** Reworded the final passive-capture step in `real_chrome.py` from the abrupt "CLOSE THE BROWSER" command into plain-language guidance: closing the Chrome window is how you signal you're done, after which gflow verifies the Flow session automatically. No behavior change — the manual close stays required on the real-Chrome path, because Chrome holds an exclusive lock on its cookie store while running (verified empirically), so gflow cannot auto-detect completion there without breaking the zero-automation-surface stealth model.
+- **Overlay/watermark detection hardened to pure structural selectors.** Council-review cleanup of `ui_automation.py`: enforced 100% language-agnostic structural anchors, removed text-label hacks and dead aliases, and fixed a stale test assertion — strengthens the #403 release-modal dismissal across localized profiles.
+
+### Fixed
+
+- **Dependabot could re-offer the known-bad playwright 1.62.0 every Monday (#465).** The `uv` ecosystem does not respect a version bound standing in an update's way — it **rewrites** it, so the deliberate `playwright>=1.61.0,<1.62.0` bound in `pyproject.toml` never gated Dependabot as `.github/dependabot.yml` claimed. PR #465 widened it to `<1.63.0` and locked 1.62.0, the exact version documented as hanging every `video i2v` right after the frame upload. Dependabot now ignores playwright `semver-minor` alongside `semver-major` (patch bumps stay allowed so a driver CVE fix needs no gflow release), guarded by `tests/test_playwright_pin.py::test_dependabot_ignores_playwright_minor_bumps`.
+- **`patchright` was exposed to the same bug, with a bigger blast radius.** Its exact `==` pin is just another constraint the `uv` ecosystem can rewrite, so `docs/SECURITY.md`'s "a Patchright version change is NOT a routine dependabot auto-merge" was prose with nothing enforcing it. Dependabot now ignores **all** patchright update-types (any version change moves the patched Chromium driver — which loads the real Google session — underneath the user), guarded by `test_dependabot_ignores_driver_engine_bumps`. Also corrected the stale pin cited in `docs/SECURITY.md` (`1.60.1` → `1.61.2`) and the stale playwright range in `.github/workflows/deps-watch.yml`.
+- **Character-composer focus isolation.** `_submit_body_prompt` now preserves the locator-scoped `press_sequentially`, keeping correct focus during character-composer submission.
+
+### Security
+
+- **Timing-jitter entropy now uses a cryptographically-strong RNG (SonarCloud S2245).** The `_jitter_ms` interaction-delay humanization helper draws from `secrets.SystemRandom` instead of the standard `random` module, so the jitter entropy is not predictable.
+
+## [0.53.1] — 2026-08-06
+
+- Re-release of 0.53.0 (version bump only; recorded headed live-verification evidence). No functional changes.
+
+## [0.53.0] — 2026-08-06
+
+### Added
+
+- **Driver interaction delay humanization (#315).** Added `_jitter_ms` timing entropy helper to `ui_automation.py` to randomize Playwright interaction wait durations around base values, mitigating anti-automation fingerprinting without degrading batch throughput.
+
+### Fixed
+
+- **Flow release overlay detection for visible watermark toggle modal (#403).** Added locale-invariant structural anchors (`a[href*='changelog']`, `[role='dialog']:has(a[href*='changelog']) button`) and a 9-locale cascade (EN, PT, ES, DE, FR, IT, JA, ZH, KO) to `TOP_BANNER_SELECTORS` and `OVERLAY_CLOSE_BUTTON_SELECTORS` in `ui_automation.py` to reliably detect and dismiss release-note modals across localized profiles.
+
 ## [0.52.0] — 2026-08-05
 
 ### Added
@@ -2743,7 +2774,10 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.52.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.54.0...HEAD
+[0.54.0]: https://github.com/ffroliva/gflow-cli/compare/v0.53.1...v0.54.0
+[0.53.1]: https://github.com/ffroliva/gflow-cli/compare/v0.53.0...v0.53.1
+[0.53.0]: https://github.com/ffroliva/gflow-cli/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/ffroliva/gflow-cli/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/ffroliva/gflow-cli/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/ffroliva/gflow-cli/compare/v0.49.0...v0.50.0

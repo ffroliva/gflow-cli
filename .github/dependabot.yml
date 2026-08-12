@@ -51,14 +51,42 @@ updates:
     # `groups` unless a group sets `applies-to: security-updates`, so an advisory
     # fix still opens immediately on its own instead of waiting for Monday.
     ignore:
-      # playwright minors are gated by the `<1.60.0` upper bound in
-      # pyproject.toml, not by this rule — an untested driver minor silently
-      # wedged video generation (see the bound's comment). This entry keeps
-      # majors out even if that bound is ever widened. Raising playwright is a
-      # deliberate, live-verified act; the weekly `deps-watch` workflow reports
-      # how far behind the pin has drifted so it does not freeze unnoticed.
+      # playwright MINORS must be ignored here. They are NOT gated by the
+      # `<1.62.0` upper bound in pyproject.toml -- that was the assumption this
+      # rule used to state, and PR #465 falsified it. The "uv" ecosystem does
+      # not respect a constraint standing in an update's way, it REWRITES it:
+      # #465 widened `playwright>=1.61.0,<1.62.0` to `<1.63.0` and locked
+      # 1.62.0 -- the exact version observed hanging every `video i2v` right
+      # after the frame upload (see the bound's comment in pyproject.toml).
+      # Only tests/test_playwright_pin.py stopped it, and on its way out it
+      # red-lighted the whole grouped weekly batch.
+      #
+      # PATCH bumps stay allowed on purpose: the 1.61.x headroom exists so a
+      # driver CVE fix does not require a gflow release. Raising a MINOR is a
+      # deliberate, live-verified act (AGENTS.md "verify before you act") and
+      # also means hand-editing SUPPORTED_PLAYWRIGHT_RANGE in
+      # src/gflow_cli/api/transports/ui_automation_video.py, which no bot can
+      # do -- so a bot-authored minor bump can never be mergeable here anyway.
+      # The weekly `deps-watch` workflow reports how far behind the pin has
+      # drifted so it does not freeze unnoticed.
       - dependency-name: "playwright"
-        update-types: ["version-update:semver-major"]
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      # patchright is the SAME hazard with a bigger blast radius, and the exact
+      # `==` pin protects it no better than playwright's upper bound protected
+      # playwright -- an exact pin is just another constraint for the "uv"
+      # ecosystem to rewrite. It ships a PATCHED Chromium driver that loads the
+      # real Google session (cookies, OAuth Bearer, SAPISID), so docs/SECURITY.md
+      # requires every bump to get a security review and explicitly says it is
+      # "NOT a routine dependabot auto-merge". That was prose with nothing
+      # enforcing it; this is the enforcement. ALL update-types, patch included:
+      # any version change moves the browser binary underneath the user.
+      - dependency-name: "patchright"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"

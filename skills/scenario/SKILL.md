@@ -65,12 +65,12 @@ stealth flag. The `grecaptcha.execute()` call times out or returns a challenge
 that requires human interaction. The same token is submitted twice (single-use
 token reuse). A batch run fires multiple rapid token mints within one session.
 
-### D3 — Selector cascade drift (Flow UI updates)
+### D3 — Selector cascade drift & Locale Invariance (Flow UI updates)
 Google Flow ships a UI update that renames or restructures a selector anchor.
 `FRAME_SLOTS_STRUCT` matches zero elements (the PR #70 regression). The
 structural-first tier matches but selects the wrong element (e.g., two elements
 matching `div[type='button'][aria-haspopup='dialog']` after Flow adds a new
-dialog button). A new locale is used whose CMP dialog is not in
+dialog button). A non-English locale is used (e.g. `GFLOW_CLI_LOCALE=pt-BR` or a Brazilian Google account) and single-language English text selectors fail because they lack Tier 1 structural anchors (`a[href*='changelog']`, `button:has(i:text('close'))`) or Tier 2 multi-locale text cascades. A new locale is used whose CMP dialog is not in
 `_ONBOARDING_TEXT_SELECTORS`. The `--lang=en-US` Chromium arg is removed before
 `IMAGE_MODEL_OPTION_SELECTORS` is converted to structural anchors.
 

@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create or update labels
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             // Every label referenced by .github/dependabot.yml. Keep in sync.
