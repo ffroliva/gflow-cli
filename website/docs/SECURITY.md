@@ -259,10 +259,15 @@ Controls:
 
 - **Optional-only** — never in the base `dependencies`; the default install pulls
   neither the package nor its driver.
-- **Exact-pinned** (`patchright==1.60.1`) so a release cannot silently move the
+- **Exact-pinned** (`patchright==1.61.2`) so a release cannot silently move the
   browser binary underneath you.
 - **Security-review-required on bump** — a Patchright version change is treated
-  like a browser-binary change, NOT a routine dependabot auto-merge.
+  like a browser-binary change, NOT a routine dependabot auto-merge. The exact
+  pin alone does **not** enforce this: Dependabot's `uv` ecosystem rewrites a
+  constraint standing in an update's way rather than respecting it (PR #465 did
+  exactly that to playwright's upper bound). The enforcement is the explicit
+  `ignore` entry in `.github/dependabot.yml`, guarded by
+  `tests/test_playwright_pin.py::test_dependabot_ignores_driver_engine_bumps`.
 - Default engine is `playwright` (Microsoft, security-reviewed); patchright is an
   experiment you opt into per the trade-off above.
 

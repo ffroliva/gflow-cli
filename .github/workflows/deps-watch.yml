@@ -66,7 +66,7 @@ jobs:
         # Unlike the step above, this ignores our constraints and reports the
         # true latest on PyPI — so a package frozen by one of OUR upper bounds
         # shows up here and nowhere else. This is the expiry alarm for those
-        # bounds: `playwright>=1.59.0,<1.60.0` is deliberate (an untested driver
+        # bounds: `playwright>=1.61.0,<1.62.0` is deliberate (an untested driver
         # silently wedged video generation — see the comment in pyproject.toml),
         # but a deliberate pin still needs a periodic "how stale is it now?"
         # signal, and raising it requires a live-verified generation first.

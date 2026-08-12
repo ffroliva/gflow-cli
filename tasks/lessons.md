@@ -330,3 +330,13 @@ _End. Convert stable rules from this file into `project_conventions.md` once the
 **Rule:** Use the `unisolated_home` fixture in E2E/Smoke tests that must resolve real Chromium profiles from the host system. This fixture explicitly uses `monkeypatch` to restore the real `GFLOW_CLI_HOME` to satisfy security boundary checks, while preserving the temporary `GFLOW_CLI_DB_PATH` isolation for safety. Do not use scattered, imperative `os.environ` or `monkeypatch` calls.
 
 **Source:** The v0.13.0 release session.
+
+---
+
+### L29 — A version bound in `pyproject.toml` does not gate Dependabot
+
+**Rule:** An upper bound is a constraint on *resolution*, not a constraint on *Dependabot*. In the `uv` ecosystem Dependabot treats a bound standing in an update's way as something to **rewrite**, not respect — it edits `pyproject.toml` and re-locks. So "this dependency is gated by its upper bound, no ignore rule needed" is always false. Anything that must never be auto-bumped needs an explicit `ignore` entry in `.github/dependabot.yml` naming every `update-types` you are refusing, and that ignore rule needs its own test, because the config is invisible to every other gate in the repo.
+
+Corollary: a bot cannot land a bump whose remediation spans hand-written source. Raising playwright also requires editing `SUPPORTED_PLAYWRIGHT_RANGE` in `src/gflow_cli/api/transports/ui_automation_video.py` and live-verifying a generation — so a bot-authored playwright minor is *never* mergeable, and letting it open is pure noise that red-lights the whole grouped batch.
+
+**Source:** Council review of PR #465 (playwright 1.61.0 → 1.62.0), which widened `<1.62.0` to `<1.63.0` and resolved the exact version documented as silently wedging `video i2v`. Only `tests/test_playwright_pin.py` stood in the way.
