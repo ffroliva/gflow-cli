@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import Any
 
+import yaml
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
@@ -61,6 +63,40 @@ def test_known_bad_playwright_is_excluded() -> None:
     """1.62.0 is the version observed wedging i2v — it must not resolve."""
     req = _playwright_requirement()
     assert not req.specifier.contains(Version("1.62.0"))
+
+
+def _dependabot_uv_ignores() -> dict[str, set[str]]:
+    """Map `dependency-name` -> ignored update-types for the `uv` ecosystem entry."""
+    raw = yaml.safe_load((_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
+    assert isinstance(raw, dict)
+    config: dict[str, Any] = raw
+    uv_updates = [entry for entry in config["updates"] if entry["package-ecosystem"] == "uv"]
+    assert uv_updates, "the `uv` package-ecosystem entry vanished from .github/dependabot.yml"
+    return {
+        str(rule["dependency-name"]): {str(kind) for kind in rule["update-types"]}
+        for update in uv_updates
+        for rule in update.get("ignore", [])
+    }
+
+
+def test_dependabot_ignores_playwright_minor_bumps() -> None:
+    """The pyproject upper bound cannot gate Dependabot — this ignore rule must.
+
+    The `uv` ecosystem does not respect a constraint standing in an update's way,
+    it REWRITES it. PR #465 widened `playwright>=1.61.0,<1.62.0` to `<1.63.0` and
+    locked 1.62.0 — the exact version above is documented as wedging `video i2v`.
+    Ignoring only majors therefore re-offers the known-bad driver every Monday,
+    and drags the whole grouped weekly batch red on its way out.
+
+    Patch bumps stay allowed deliberately: the 1.61.x headroom exists so a driver
+    CVE fix does not require a gflow release.
+    """
+    ignored = _dependabot_uv_ignores().get("playwright", set())
+    assert "version-update:semver-minor" in ignored, (
+        "dependabot must ignore playwright MINOR bumps — the pyproject upper "
+        "bound does not stop the uv ecosystem from widening it (PR #465)"
+    )
+    assert "version-update:semver-major" in ignored, "dependabot must ignore playwright MAJOR bumps"
 
 
 def test_transport_constants_match_pyproject() -> None:

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dependabot could re-offer the known-bad playwright 1.62.0 every Monday (#465).** The `uv` ecosystem does not respect a version bound standing in an update's way — it **rewrites** it, so the deliberate `playwright>=1.61.0,<1.62.0` bound in `pyproject.toml` never gated Dependabot as `.github/dependabot.yml` claimed. PR #465 widened it to `<1.63.0` and locked 1.62.0, the exact version documented as hanging every `video i2v` right after the frame upload. Dependabot now ignores playwright `semver-minor` alongside `semver-major` (patch bumps stay allowed so a driver CVE fix needs no gflow release), guarded by `tests/test_playwright_pin.py::test_dependabot_ignores_playwright_minor_bumps`.
 - **Flow release overlay detection for visible watermark toggle modal (#403).** Added locale-invariant structural anchors (`a[href*='changelog']`, `[role='dialog']:has(a[href*='changelog']) button`) and a 9-locale cascade (EN, PT, ES, DE, FR, IT, JA, ZH, KO) to `TOP_BANNER_SELECTORS` and `OVERLAY_CLOSE_BUTTON_SELECTORS` in `ui_automation.py` to reliably detect and dismiss release-note modals across localized profiles.
 
 ## [0.52.0] — 2026-08-05
