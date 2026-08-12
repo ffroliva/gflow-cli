@@ -95,8 +95,11 @@ def _print_login_instructions() -> None:
         "   Signing in to Google is NOT enough; gflow needs a completed Flow app sign-in.",
     )
     _console.print(
-        "4. Then [bold yellow]CLOSE THE BROWSER[/bold yellow] — gflow verifies "
-        "the Flow session automatically.",
+        "4. When you're finished, simply [bold]close the Chrome window[/bold] — "
+        "that's how you let gflow know you're done.",
+    )
+    _console.print(
+        "   gflow then verifies your Flow session automatically; there's nothing else to do.",
     )
     _console.print("-" * 60)
     _console.print("Launching Chrome...")
