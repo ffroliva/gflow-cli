@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **MCP tool `gflow_list_characters` (#499).** It was a stub that always
+  answered `{"status": "ok", "characters": []}` — to an agent that reads as
+  "the user has no characters", an active lie that steered clients away from
+  real `@Name` references. The tool is gone from `tools/list`, the agent-guide
+  resource, and the parity table (`character list` is now an explicit parity
+  exemption). It returns only when it can serve real Flow-side data. Use
+  `gflow character list --project <id>` in the terminal meanwhile.
+
 ## [0.56.0] — 2026-08-13
 
 ### Added

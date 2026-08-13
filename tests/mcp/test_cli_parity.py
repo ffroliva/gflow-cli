@@ -48,7 +48,6 @@ CLI_TO_MCP: dict[str, str] = {
     "tools show": "gflow_list_tools",  # list output carries the show detail
     "data list projects": "gflow_list_projects",
     "project list": "gflow_list_projects",
-    "character list": "gflow_list_characters",
     "instructions list": "gflow_instructions_list",
     "instructions add": "gflow_instructions_add",
     "instructions enable": "gflow_instructions_set_enabled",  # enabled=True
@@ -74,6 +73,7 @@ _MCP_EXEMPT: dict[str, str] = {
     "models": "informational; models are enumerated in the generate tools' descriptions",
     "run": "chain-manifest runner — not yet ported",
     "character create": "character mutations — not yet ported",
+    "character list": "not yet ported — the old MCP stub returned a misleading empty list (#499)",
     "character rm": "character mutations — not yet ported",
     "character show": "character mutations — not yet ported",
     "character voices": "character mutations — not yet ported",
