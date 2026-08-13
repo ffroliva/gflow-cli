@@ -113,11 +113,26 @@ design for editable/local installs (PEP 610) and under `CI`. Post-release plan
 install `gflow-cli==0.55.0` in a scratch venv and run any command — expect the
 one-line stderr notice naming 0.56.0. Result to be appended below.
 
-## Post-tag evidence
+## Post-tag evidence (2026-08-13, after the PyPI publish)
 
-_(filled after the v0.56.0 PyPI publish)_
-
-- #479 update-notice e2e: install `gflow-cli==0.55.0` in a scratch venv, run a
-  command, expect the one-line stderr notice naming 0.56.0 — result pending.
-- Released-wheel smoke: install `gflow-cli==0.56.0` from PyPI, run a live t2i —
-  result pending.
+- **Release workflow**: tag push → `release.yml` completed **success**; GitHub
+  Release `v0.56.0` published (stable, not prerelease); PyPI serves 0.56.0.
+- **#479 update notice, corrected plan + result**: the original plan (0.55.0
+  install announces 0.56.0) was impossible — #479 shipped *in* 0.56.0, so no
+  older wheel contains the check; the notice first fires organically when
+  0.57.0 publishes. Verified on the **released 0.56.0 wheel** instead
+  (scratch venv, scratch `GFLOW_CLI_HOME`):
+  - Run 1 (`gflow models`): silent, cache stamped synchronously with
+    `latest: null` — the fetch daemon thread dies with a fast command and
+    feeds the *next* invocation, exactly as the module contract states.
+  - Real wire poll (`_refresh_cache` run synchronously): HTTPS GET to
+    `pypi.org/pypi/gflow-cli/json`, cache written with PyPI's answer. During
+    the test window PyPI's JSON CDN was mid-propagation (served 0.55.0 while
+    stdlib requests to the same endpoint already got 0.56.0) — the code path
+    is proven; the value converges PyPI-side.
+  - Cache seeded with `latest: 0.99.0` → next `gflow models` printed the
+    one-line stderr notice verbatim ("A newer gflow-cli is available: 0.99.0
+    (installed 0.56.0) …"), stdout untouched.
+- **Released-wheel live smoke**: `pip install gflow-cli==0.56.0` from PyPI in a
+  clean venv → `gflow image t2i` on `denon82`, exit 0, real 958,382 B JPEG
+  (`354e1d66-…_1.jpg`, log `t2i-released-056-smoke.log`).
