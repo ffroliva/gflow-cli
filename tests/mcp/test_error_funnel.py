@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-CANARY = r"SECRET-C:\Users\victim token=abc123"
+CANARY = "SECRET token=abc123 at /home/victim/profile_default"
 
 
 def test_every_registered_tool_is_guarded(mcp_server: Any) -> None:
