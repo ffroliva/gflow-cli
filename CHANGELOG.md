@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow mcp run --no-spend` (#496).** Registration-time gating of the
+  credit-spending MCP tools: under the flag (or `GFLOW_MCP_NO_SPEND=1`, which
+  also covers `gflow serve`) the `gflow_generate_image` and
+  `gflow_generate_video` tools are never registered, so a connected agent
+  cannot even see them in `tools/list` — invisible beats refused (no wasted
+  calls, no refusal path for prompt injection to probe, no reliance on the
+  model honoring an error; pattern ported from teams-mcp's read-only mode).
+  Both generate tools are gated because image generation is only
+  *empirically* free and no-spend is a hard guarantee. Listing, instructions,
+  and other read-only tools stay available.
+
 ## [0.56.0] — 2026-08-13
 
 ### Added
