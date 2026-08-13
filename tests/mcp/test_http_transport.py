@@ -40,7 +40,13 @@ async def test_serve_speaks_streamable_http(tmp_path) -> None:
         stderr=subprocess.PIPE,
         # Point HOME at an empty dir: the smoke must not depend on any profile
         # existing (CI has none) — boot and protocol only.
-        env={**os.environ, "GFLOW_CLI_HOME": str(tmp_path), "PYTHONUTF8": "1"},
+        env={
+            k: v
+            for k, v in {**os.environ, "GFLOW_CLI_HOME": str(tmp_path), "PYTHONUTF8": "1"}.items()
+            # An ambient no-spend export would strip the generate tools this
+            # smoke asserts present — isolate BOTH env knobs, not just HOME.
+            if k != "GFLOW_MCP_NO_SPEND"
+        },
         text=True,
     )
     try:
@@ -75,9 +81,12 @@ async def test_serve_speaks_streamable_http(tmp_path) -> None:
     finally:
         proc.terminate()
         try:
-            proc.wait(timeout=10)
+            # communicate() also drains the stdout/stderr PIPEs — never leave
+            # them undrained on the success path (latent block if logging
+            # output ever exceeds the pipe buffer).
+            proc.communicate(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait(timeout=10)
+            proc.communicate(timeout=10)
     # Clean shutdown: terminate must actually end the process.
     assert proc.returncode is not None

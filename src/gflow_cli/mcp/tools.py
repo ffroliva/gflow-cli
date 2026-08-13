@@ -91,19 +91,19 @@ def _rate_limited_envelope() -> dict[str, Any]:
 
     Both generate tools refuse with this exact envelope; the refusal happens
     before the ``@_guarded`` funnel, which is why #473's unification missed it.
+    Built from the canonical ``RateLimitError`` via ``_gflow_error_dict`` so
+    the type URI, ``message``, and ``retryable`` stay identical to every other
+    surface (post-merge review of the #495-#501 wave: a hand-rolled literal
+    here minted a second '…/rate-limited' spelling and dropped ``retryable``
+    from the canonical retryable case).
     """
-    return {
-        "status": "rate_limited",
-        "error": {
-            "type": "https://gflow-cli.dev/errors/rate-limited",
-            "title": "Rate Limited",
-            "status": 429,
-            "detail": (
-                "Generation rate limit reached (token bucket: capacity 8, "
-                "refill 1 per 20 s). Please wait before making another request."
-            ),
-        },
-    }
+    from gflow_cli.errors import RateLimitError
+
+    err = RateLimitError(
+        "Generation rate limit reached (token bucket: capacity 8, "
+        "refill 1 per 20 s). Please wait before making another request."
+    )
+    return {"status": "rate_limited", "error": _gflow_error_dict(err)}
 
 
 # Sentinel meaning "auto-resolve the profile like the CLI" (see
@@ -1120,6 +1120,11 @@ async def gflow_list_projects(
     # An inner `except Exception` here used to swallow GFlowErrors (e.g.
     # DataStoreError) into a masked string, and gave this tool a second,
     # incompatible error shape (council review of #473).
+    # Clamp before touching SQL: limit<=0 previously produced has_more=True
+    # with an empty page and next_offset==offset (a documented-loop trap), and
+    # negative limits reached SQLite as LIMIT -1 (unbounded read).
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
     # Fetch one extra row to learn whether another page exists without a
     # separate COUNT query (#498) — the page itself is rows[:limit].
     fetched = list_projects(
@@ -1156,8 +1161,9 @@ async def gflow_list_projects(
         "Non-interactive, credit-free Flow session probe (#497). Call this "
         "BEFORE a generation tool to fail fast on expired auth — the queue is "
         "async, so an auth failure otherwise surfaces only later from the "
-        "daemon. Never opens a browser or starts a login flow. May take up to "
-        "~45s on a slow network."
+        "daemon. Never starts an interactive login flow; may boot a "
+        "short-lived headless browser only if cookie decryption requires the "
+        "Playwright fallback. May take up to ~45s on a slow network."
     ),
 )
 @_guarded
@@ -1188,28 +1194,40 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "user_email": status.user_email,
         }
     if status.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
-        # A network/endpoint problem is not fixed by re-login — mirror the
-        # CLI's guidance and do not send the agent toward an interactive flow.
-        hint = (
-            "Could not verify the Flow session (network or endpoint problem). "
-            "Check connectivity and retry; re-login is only needed if the "
-            "session is actually dead."
-        )
+        # A network/endpoint problem is not fixed by re-login — the
+        # machine-readable discriminators must say so too (post-merge review:
+        # labeling this 401/auth-expired sent type-dispatching agents into an
+        # unnecessary interactive re-login on every network blip).
+        error: dict[str, Any] = {
+            "type": "https://gflow-cli.dev/errors/verification-error",
+            "title": "Flow session verification failed",
+            "status": 503,
+            "detail": status.detail,
+            "message": status.detail,
+            "retryable": True,
+            "remediation_hint": (
+                "Could not verify the Flow session (network or endpoint "
+                "problem). Check connectivity and retry; re-login is only "
+                "needed if the session is actually dead."
+            ),
+        }
     else:
-        hint = (
-            f"Run 'gflow auth login --profile {resolved}' in your local "
-            "terminal (interactive; not available through MCP)."
-        )
+        from gflow_cli.errors import AuthExpiredError
+
+        error = {
+            **_gflow_error_dict(AuthExpiredError(status.detail)),
+            # AuthExpiredError only carries an HTTP status when built from a
+            # real response; a dead/missing session is semantically a 401.
+            "status": 401,
+            "remediation_hint": (
+                f"Run 'gflow auth login --profile {resolved}' in your local "
+                "terminal (interactive; not available through MCP)."
+            ),
+        }
     return {
         "status": status.outcome.value,
         "profile": resolved,
-        "error": {
-            "type": "https://gflow-cli.dev/errors/auth-expired",
-            "title": "Flow session not verified",
-            "status": 401,
-            "detail": status.detail,
-            "remediation_hint": hint,
-        },
+        "error": error,
     }
 
 

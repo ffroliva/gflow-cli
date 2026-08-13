@@ -25,7 +25,7 @@ class TestMcpToolListing:
     """Verify the server exposes the expected tools."""
 
     def test_server_has_expected_tools(self, mcp_server: Any) -> None:
-        """The server should expose at least 5 core tools."""
+        """The server should expose the core generation + listing tools."""
         tools = mcp_server._tool_manager._tools
         tool_names = set(tools.keys())
         expected = {
@@ -398,7 +398,7 @@ class TestMcpResources:
         content = await known_issues()
         assert isinstance(content, str)
         assert len(content) > 0
-        assert len(content.encode()) < 8 * 1024
+        assert len(content.encode()) < 16 * 1024
         assert "gflow://docs/known-issues/" in content
 
 

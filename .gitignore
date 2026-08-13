@@ -99,3 +99,6 @@ worktrees/
 
 # MkDocs build output
 website/site/
+
+# Local git hooks dir (core.hooksPath target) — machine-local tooling, never shipped
+.githooks/

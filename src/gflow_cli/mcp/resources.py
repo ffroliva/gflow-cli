@@ -33,7 +33,40 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]  # src/gflow_cli/mcp → repo r
     ),
 )
 async def mcp_guide() -> str:
-    """Return the MCP agent guide."""
+    """Return the MCP agent guide.
+
+    Truth rule (#495, extended by the wave's post-merge review): the guide may
+    only name tools that are actually registered — so under no-spend mode the
+    generate-tool sections are replaced by an explanation instead of steering
+    agents into unknown-tool protocol errors.
+    """
+    from gflow_cli.mcp.server import no_spend_active
+
+    if no_spend_active():
+        return """\
+# gflow-cli MCP Agent Guide (no-spend mode)
+
+This server runs in NO-SPEND mode: the credit-spending generate tools
+(`gflow_generate_image`, `gflow_generate_video`) are NOT registered and any
+call to them fails as an unknown tool. Do not attempt generation; tell the
+user to restart the server without --no-spend / GFLOW_MCP_NO_SPEND to enable
+it.
+
+Available tools:
+
+### gflow_auth_status
+Credit-free, non-interactive Flow session probe.
+
+### gflow_list_projects
+Browse the local project catalog.
+
+### gflow_list_tools
+List available gflow prompt tools (name, title, description, category).
+
+## Important Rules
+1. **Use tools, not shell commands.** Do NOT run `gflow ...` via the terminal.
+2. **Generation is disabled here by operator choice.** Do not work around it.
+"""
     return """\
 # gflow-cli MCP Agent Guide
 
@@ -85,7 +118,7 @@ def _slugify(title: str) -> str:
 
 
 def _iter_issue_sections(text: str) -> list[tuple[str, str, str]]:
-    """Yield (slug, title, body) for every ``### `` heading in the doc."""
+    """Return (slug, title, body) for every ``### `` heading in the doc."""
     sections: list[tuple[str, str, str]] = []
     parts = re.split(r"^### (.+)$", text, flags=re.MULTILINE)
     # parts = [preamble, title1, body1, title2, body2, ...]
@@ -104,7 +137,9 @@ def _build_known_issues_index(text: str) -> str:
     ]
     for slug, title, body in _iter_issue_sections(text):
         status = ""
-        match = re.search(r"\*\*Status:\*\*\s*(.+)", body)
+        # Match both '**Status:** Open' and the Conventions legend's
+        # '**Status: Open**' colon-inside style (post-merge review).
+        match = re.search(r"\*\*Status:\s*(.+)", body)
         if match:
             status = " — " + re.sub(r"[*\[\]]", "", match.group(1)).split("(")[0].strip()[:80]
         lines.append(f"- `{slug}` — {title}{status}")
@@ -161,8 +196,11 @@ async def known_issues_section(slug: str) -> str:
         return "KNOWN_ISSUES.md not found."
     section = _extract_known_issue_section(text, slug)
     if section is None:
+        # Cap the echoed slug: reflecting arbitrary client input back as
+        # trusted resource content would reopen the unbounded-injection path
+        # this resource exists to close (post-merge review of #501).
         return (
-            f"Unknown section slug {slug!r}. Read gflow://docs/known-issues "
+            f"Unknown section slug {slug[:100]!r}. Read gflow://docs/known-issues "
             "for the index of valid slugs."
         )
     return _cap_section(section)

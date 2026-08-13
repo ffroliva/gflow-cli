@@ -47,6 +47,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `has_more`/`next_offset` in the response, replacing the hardcoded first
   page whose `total` field reported the page size as the table total —
   catalogs larger than `limit` were unreachable through MCP.
+
+- **Post-merge `/code-review` fixes for the #495–#501 wave.** The rate-limited
+  envelope is now built from the canonical `RateLimitError` (type
+  `…/errors/rate-limit`, `retryable`/`message` present) instead of a
+  hand-minted variant; `gflow_auth_status` labels a network
+  `verification_error` as `…/errors/verification-error` (503, retryable)
+  rather than `auth-expired` (401), so type-dispatching agents stop pushing
+  users into unnecessary re-logins, and its description no longer overclaims
+  "never opens a browser" (the cookie-decryption fallback may boot a headless
+  one); `gflow_list_projects` clamps `limit`/`offset` (a `limit<=0` call
+  previously produced an infinite `next_offset` loop and negative limits
+  reached SQLite as unbounded `LIMIT -1`); `--no-spend` gained a single
+  env-var parser (Click's `envvar` dual-parse meant `off` could disable the
+  flag yet enable the policy), an idempotent registration policy, a `serve`
+  flag, a `.env.template` row, and a no-spend-aware agent guide that no
+  longer instructs agents to call unregistered tools; the known-issues index
+  recognizes both documented `**Status:**` styles and caps the echoed slug in
+  unknown-slug replies (the last unbounded reflection path).
+
 ### Removed
 
 - **MCP tool `gflow_list_characters` (#499).** It was a stub that always

@@ -75,13 +75,32 @@ def test_oversized_section_is_capped() -> None:
 
 @pytest.mark.asyncio
 async def test_live_resource_reads_are_bounded() -> None:
-    from gflow_cli.mcp.resources import known_issues, known_issues_section
+    from gflow_cli.mcp.resources import (
+        _iter_issue_sections,
+        _known_issues_text,
+        known_issues,
+        known_issues_section,
+    )
+
+    # The real file must parse into sections at all — if the heading style
+    # ever drifts from '### ', the resource would silently serve an empty
+    # index (post-merge review: the old slug extraction grabbed the '<slug>'
+    # placeholder and passed vacuously through the unknown-slug path).
+    text = _known_issues_text()
+    assert text is not None
+    sections = _iter_issue_sections(text)
+    assert len(sections) > 0, "#501: real KNOWN_ISSUES.md yielded no sections"
 
     index = await known_issues()
-    assert len(index.encode()) < 8 * 1024, "#501: index read must stay small"
+    # 16 KB: the index grows a line per issue; 8 KB had ~1 KB headroom and
+    # would start failing docs-only commits within a few releases.
+    assert len(index.encode()) < 16 * 1024, "#501: index read must stay small"
     assert "gflow://docs/known-issues/" in index  # tells the agent how to drill in
 
-    # Drill into the first real slug listed in the index.
-    slug = index.split("gflow://docs/known-issues/")[1].split(")")[0].split("`")[0].strip()
+    # Drill into a REAL slug (from the parsed sections, not the index header's
+    # '<slug>' placeholder) and require actual section content back.
+    slug = sections[0][0]
+    assert f"`{slug}`" in index
     section = await known_issues_section(slug)
-    assert section and "not found" not in section.lower()
+    assert section is not None and section.startswith("### ")
+    assert "Unknown section slug" not in section
