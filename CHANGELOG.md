@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP `gflow://docs/known-issues` resource is now bounded (#501).** The old
+  resource returned all of KNOWN_ISSUES.md (~70 KB, growing every release) on
+  every read — pure context injection. The default read is now a small index
+  (issue titles + status + slugs, a few KB); one templated resource
+  (`gflow://docs/known-issues/{slug}`) serves a single issue's full text,
+  capped at 16 KB. No unbounded read path remains.
+
 ### Security
 
 - **CI supply-chain hardening.** Every workflow now runs with a least-privilege token (`ci.yml` gained the top-level `permissions: contents: read` it was missing — the other eight already had one; gitleaks elevates `pull-requests: write` per-job); every `uses:` action across all nine workflows is pinned to a full commit SHA with a version comment (dependabot's `github-actions` group keeps pins fresh); the CI test jobs enforce a test-count floor via `scripts/ci/check_test_count.py` ("a green build that ran nothing is not green"); and `check_repo_hygiene.py` now fails on version disagreement between `pyproject.toml`, `__init__.py`, and `.codex-plugin/plugin.json`.

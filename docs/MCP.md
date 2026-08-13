@@ -102,7 +102,7 @@ CLI↔MCP parity is enforced programmatically: `tests/mcp/test_cli_parity.py` wa
 
 ### Resources (Context feeds)
 * `gflow://docs/mcp-guide`: A specialized, agent-targeted guide instructing the LLM to use the registered MCP tools (rather than running raw shell wrapper commands).
-* `gflow://docs/known-issues`: Feeds critical reCAPTCHA, cookie expirations, and anti-bot mitigation details.
+* `gflow://docs/known-issues`: Bounded index of KNOWN_ISSUES.md (titles + status, a few KB — #501); read `gflow://docs/known-issues/{slug}` for one issue's full text (capped at 16 KB). The old behavior injected the whole ~70 KB file per fetch.
 * `gflow://db/schema`: Exposes SQLite schema definitions, allowing agents to understand project and media tables.
 
 ---
