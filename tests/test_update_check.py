@@ -194,7 +194,7 @@ class TestInstalledFromIndex:
                 assert name == "direct_url.json"
                 return payload
 
-        monkeypatch.setattr(uc, "_distribution", lambda: _Dist())
+        monkeypatch.setattr(uc, "distribution", lambda _name: _Dist())
         return uc._installed_from_index
 
     def test_no_direct_url_is_index_install(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -211,8 +211,8 @@ class TestInstalledFromIndex:
     def test_missing_distribution_is_not(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from importlib.metadata import PackageNotFoundError
 
-        def _raise() -> object:
+        def _raise(_name: str) -> object:
             raise PackageNotFoundError("gflow-cli")
 
-        monkeypatch.setattr(uc, "_distribution", _raise)
+        monkeypatch.setattr(uc, "distribution", _raise)
         assert uc._installed_from_index() is False

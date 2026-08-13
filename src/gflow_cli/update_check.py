@@ -18,7 +18,7 @@ import json
 import os
 import threading
 import time
-from importlib.metadata import Distribution, PackageNotFoundError, distribution
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from typing import cast
 
@@ -35,17 +35,13 @@ _PYPI_JSON_URL = "https://pypi.org/pypi/gflow-cli/json"
 _FETCH_TIMEOUT_SECONDS = 3.0
 
 
-def _distribution() -> Distribution:
-    """Seam for tests; raises PackageNotFoundError for pure source runs."""
-    return distribution("gflow-cli")
-
-
 def _installed_from_index() -> bool:
     """True only for an index-installed wheel — the case where "upgrade"
     advice applies. PEP 610: index installs write no ``direct_url.json``;
-    editable (PEP 660) and local/direct installs do."""
+    editable (PEP 660) and local/direct installs do (a pure source run has no
+    distribution at all)."""
     try:
-        direct_url = _distribution().read_text("direct_url.json")
+        direct_url = distribution("gflow-cli").read_text("direct_url.json")
     except PackageNotFoundError:
         return False
     if direct_url is None:
