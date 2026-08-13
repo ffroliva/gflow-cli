@@ -136,6 +136,13 @@ cannot drift. On a captured failure the envelope also carries a remote-safe
 `incident` object (`{id, capture_status}` only — never a local path); see
 [DEBUGGING § Automatic incident bundles](DEBUGGING.md#automatic-incident-bundles).
 
+Every tool routes through one error funnel. **Unexpected (non-gflow) exceptions
+are masked**: the client sees only the exception class name
+(`"Unexpected RuntimeError; details were logged server-side."`, `status: 500`,
+`retryable: false`) — raw exception text can embed filesystem paths, profile
+names, or token material and never leaves the server; the full message and
+traceback go to the server-side structured log (`mcp.tool.unexpected_error`).
+
 ---
 
 ## 4. Setup Instructions
