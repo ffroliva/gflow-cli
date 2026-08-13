@@ -87,6 +87,9 @@ object) between the UTC timestamp and a collision-resistant random suffix:
 │                             # category, canonical route, status, duration
 ├── browser.json              # last ≤100 console warn/error + ≤50 page errors —
 │                             # class/category + length only, never message text
+├── report.md                 # pre-filled Markdown bug report: version/platform,
+│                             # error class + exit code, artifact pointers — fill
+│                             # in "What I was doing" and attach when filing
 ├── sensitive/screenshot.png  # UI-state failures only — REVIEW BEFORE SHARING
 └── .pending                  # present only while a capture is still staging
 ```

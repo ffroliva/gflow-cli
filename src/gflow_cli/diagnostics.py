@@ -784,6 +784,63 @@ def build_manifest(
     }
 
 
+def render_report(manifest: dict[str, object]) -> bytes:
+    """Markdown bug-report template pre-filled from the manifest (issue #476).
+
+    Renders allowlisted manifest fields ONLY — the raw exception text never
+    reaches this function (S01), and sensitive/ artifacts are called out for
+    review before sharing."""
+    raw_error = manifest.get("error")
+    error: dict[str, object] = (
+        cast("dict[str, object]", raw_error) if isinstance(raw_error, dict) else {}
+    )
+    raw_artifacts = manifest.get("artifacts")
+    artifacts: dict[str, object] = (
+        cast("dict[str, object]", raw_artifacts) if isinstance(raw_artifacts, dict) else {}
+    )
+    pointers = (
+        "\n".join(
+            f"- `{name}`"
+            + (
+                " — review before sharing (may show account/media data)"
+                if kind == "sensitive"
+                else ""
+            )
+            for name, kind in sorted(artifacts.items())
+        )
+        or "- (no artifacts captured)"
+    )
+    lines = [
+        "# gflow-cli bug report",
+        "",
+        f"> Pre-filled from incident `{manifest.get('incident_id')}`. COPY THIS FILE",
+        "> OUT OF THE BUNDLE before editing — retention prunes old bundles and",
+        "> would take your notes with them. Complete the 'What I was doing'",
+        "> section, review every artifact, then file at",
+        "> https://github.com/ffroliva/gflow-cli/issues/new attaching this file,",
+        "> `manifest.json`, and any artifacts you are comfortable sharing.",
+        "",
+        f"- **gflow-cli:** {manifest.get('cli_version')} · "
+        f"Python {manifest.get('python_version')} · {manifest.get('os_family')}",
+        f"- **When (UTC):** {manifest.get('created_utc')}",
+        f"- **Command:** {manifest.get('command') or 'unknown'} "
+        f"(transport: {manifest.get('transport') or 'n/a'})",
+        f"- **Error:** `{error.get('class')}` (`{error.get('problem_type')}`) — "
+        f"exit code {error.get('exit_code')}, retryable: {error.get('retryable')}",
+        f"- **Phase/route:** {error.get('phase') or '-'} / {error.get('route') or '-'}",
+        "",
+        "## What I was doing",
+        "",
+        "<!-- the exact command you ran and what you expected to happen -->",
+        "",
+        "## Captured evidence (in this bundle)",
+        "",
+        pointers,
+        "",
+    ]
+    return "\n".join(lines).encode("utf-8")
+
+
 # --- IncidentRecorder (design §4.2, §5.2, §6.1–§6.2) -----------------------
 
 
@@ -1205,6 +1262,52 @@ class IncidentRecorder:
             if self._screenshot_wanted(exc):
                 await self._stage_screenshot(bundle, page, incident_id, artifacts, status, deadline)
 
+        from gflow_cli.errors import GFlowError, is_retryable
+        from gflow_cli.json_output import exit_code_for
+
+        exc_class = type(exc).__name__
+        problem_type = str(getattr(exc, "problem_type", "unexpected"))
+        exit_code = exit_code_for(exc) if isinstance(exc, GFlowError) else 1
+        retryable = is_retryable(exc) if isinstance(exc, GFlowError) else False
+        created_utc = datetime.now(UTC).isoformat()
+
+        # Pre-filled bug report (issue #476), staged LAST so it can point at
+        # every other artifact and so the IncidentRef tuple — the single
+        # source of truth for the Rich and --json surfaces — includes it.
+        # Best-effort: a report failure records status and never costs the
+        # bundle (S23). Rendered from the same allowlist as the manifest;
+        # har_state/finalized_utc are unknown here and the report omits both.
+        try:
+            report_manifest = build_manifest(
+                incident_id=incident_id,
+                settings=self._settings,
+                created_utc=created_utc,
+                finalized_utc=None,
+                cli_version=self._cli_version(),
+                exc_class=exc_class,
+                problem_type=problem_type,
+                exit_code=exit_code,
+                retryable=retryable,
+                route=route or "",
+                phase=phase,
+                command=self.command,
+                transport=self.transport,
+                artifacts=artifacts,
+                artifact_status=status,
+                har_state="pending",
+                suppressed_count=0,
+            )
+            bundle.write_artifact("report.md", render_report(report_manifest))
+            artifacts["report.md"] = "report"
+            status["report.md"] = "complete"
+        except Exception as report_exc:  # noqa: BLE001 — best-effort (S23)
+            status["report.md"] = "failed"
+            # A partially-written report must not be advertised or shared.
+            (bundle.path / "report.md").unlink(missing_ok=True)
+            emit_capture_failed(
+                incident_id, exc_class=type(report_exc).__name__, artifact_kind="report"
+            )
+
         overall = "complete"
         if any(v != "complete" for v in status.values()):
             overall = "partial" if any(v == "complete" for v in status.values()) else "failed"
@@ -1214,21 +1317,18 @@ class IncidentRecorder:
             path=bundle.path,
             artifacts=tuple(sorted(artifacts)),
         )
-        from gflow_cli.errors import GFlowError, is_retryable
-        from gflow_cli.json_output import exit_code_for
-
         return _StagedBundle(
             ref=ref,
             bundle=bundle,
-            exc_class=type(exc).__name__,
-            problem_type=str(getattr(exc, "problem_type", "unexpected")),
-            exit_code=exit_code_for(exc) if isinstance(exc, GFlowError) else 1,
-            retryable=is_retryable(exc) if isinstance(exc, GFlowError) else False,
+            exc_class=exc_class,
+            problem_type=problem_type,
+            exit_code=exit_code,
+            retryable=retryable,
             route=route or "",
             phase=phase,
             artifacts=artifacts,
             artifact_status=status,
-            created_utc=datetime.now(UTC).isoformat(),
+            created_utc=created_utc,
         )
 
     @staticmethod
@@ -1365,7 +1465,7 @@ _MANIFEST_PARSE_CAP_BYTES = 64 * 1024
 # The exact artifact universe a gflow bundle may contain. ANY other entry
 # marks the directory unknown → untouched.
 _ALLOWED_TOP_FILES = frozenset(
-    {"manifest.json", "ui.json", "network.json", "browser.json", ".pending"}
+    {"manifest.json", "ui.json", "network.json", "browser.json", "report.md", ".pending"}
 )
 _ALLOWED_SENSITIVE_FILES = frozenset({"screenshot.png"})
 

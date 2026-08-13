@@ -106,6 +106,39 @@ class TestShouldCapture:
 
 
 @pytest.mark.asyncio
+class TestBugReportTemplate:
+    """Finalized bundles carry a pre-filled Markdown bug report (issue #476)."""
+
+    async def test_staged_bundle_contains_prefilled_report(self, tmp_path: Path) -> None:
+        rec = _recorder(tmp_path)
+        ref = await rec.capture_failure(FlowAppError("crash"), page=FakePage(), phase="mode_switch")
+        assert ref is not None and ref.path is not None
+        # Written at STAGE time so the frozen IncidentRef tuple — the single
+        # source of truth for the Rich and --json surfaces — includes it.
+        assert "report.md" in ref.artifacts
+        report = (ref.path / "report.md").read_text(encoding="utf-8")
+        assert "FlowAppError" in report
+        assert "31" in report  # mapped exit code
+        assert "ui.json" in report  # artifact pointer
+        assert "COPY THIS FILE" in report  # retention can prune the bundle
+        await rec.finalize_all(close_ok=True)
+        manifest = json.loads((ref.path / "manifest.json").read_text(encoding="utf-8"))
+        assert str(manifest["cli_version"]) in report
+        assert str(manifest["os_family"]) in report
+        assert manifest["artifacts"]["report.md"] == "report"
+        assert manifest["artifact_status"]["report.md"] == "complete"
+
+    async def test_report_never_contains_exception_text(self, tmp_path: Path) -> None:
+        """Same allowlist discipline as the manifest (S01): the raw exception
+        message must never reach the report."""
+        rec = _recorder(tmp_path)
+        ref = await rec.capture_failure(FlowAppError(CANARY), page=FakePage(), phase="p")
+        assert ref is not None and ref.path is not None
+        await rec.finalize_all(close_ok=True)
+        assert CANARY not in (ref.path / "report.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
 class TestCaptureFailure:
     async def test_ui_failure_stages_dom_and_screenshot(self, tmp_path: Path) -> None:
         rec = _recorder(tmp_path)

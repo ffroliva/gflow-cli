@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Incident bundles now include a pre-filled bug-report template (#476).** On every captured incident, the recorder stages `report.md` alongside the existing artifacts: version/platform, error class + exit code + retryability, phase/route, and pointers to the captured evidence — built exclusively from the allowlisted manifest fields (never raw exception text). The CLI error message now prints the report path next to the bundle path, and retention treats `report.md` as recorder-owned. Downgrade caveat: gflow <= 0.54.x does not recognize `report.md`, so its retention classifies new bundles as unknown and stops pruning them — delete `<GFLOW_CLI_HOME>/incidents` manually if you downgrade. The report is meant to be copied out of the bundle before editing (the template says so), and the e2e privacy scanner now leak-scans `*.md` alongside the JSON artifacts.
+
 ### Changed
 
 - **`gflow auth status` now proves the Flow session and exits 0/1 (#471).** The command previously only checked that the profile directory and cookies file exist — it could report OK on a dead session. It now runs the fast `verify_flow_profile` probe (cookie snapshot + Flow session endpoint; no browser, no credits) and exits 0 only on a verified session, printing the verified account email; any other outcome exits 1 with a `gflow auth login` remediation hint. Fail-closed: an unreachable endpoint is a failure, never an OK.

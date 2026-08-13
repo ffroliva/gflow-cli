@@ -107,6 +107,20 @@ class TestRetentionSafety:
         assert (outside / "precious.txt").exists()
         assert (outside / "manifest.json").exists()
 
+    def test_bundle_with_report_is_still_classified_and_prunable(self, tmp_path: Path) -> None:
+        """report.md is recorder-owned (issue #476) — it must not flip a bundle
+        to 'unknown', which would exempt it from pruning forever."""
+        root = _root(tmp_path)
+        bundles = []
+        for i in range(3):
+            b = BundleDir.create_exclusive(root, f"r{i}", now=_NOW.replace(minute=i))
+            b.write_artifact("ui.json", b"{}")
+            b.write_artifact("report.md", b"# report")
+            b.finalize({"schema": "gflow-incident-v1", "incident_id": f"r{i}"})
+            bundles.append(b.path)
+        run_retention(root, max_complete=1)
+        assert sum(p.exists() for p in bundles) == 1
+
     def test_count_and_byte_limits_enforced(self, tmp_path: Path) -> None:
         root = _root(tmp_path)
         for i in range(4):
