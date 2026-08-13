@@ -5,8 +5,8 @@ Each tool is registered on the shared MCPServer instance and delegates
 to FlowWorker / DataStore / data.queries for actual execution.
 
 Rate limiting: a token-bucket (capacity=8, refill=1/20s) prevents runaway
-agentic loops from burning credits. Session and daily budget limits are
-enforced by checking spent amounts against SQLite records.
+agentic loops from burning credits. There is NO credit-budget accounting —
+rate limiting is the only spend brake (#495).
 
 Task claiming: the direct-execution path enqueues a task then claims it via
 the atomic ``QueueRepository.claim_task`` (the same BEGIN IMMEDIATE claim the

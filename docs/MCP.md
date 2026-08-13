@@ -251,8 +251,7 @@ Non-loopback binds (e.g. `--host 0.0.0.0`) require `GFLOW_DAEMON_TOKEN` to be se
 
 Because the MCP server runs locally, inheriting the host user's permissions and access to their authenticated browser cookies, the following security constraints are enforced:
 
-1. **Pre-flight Auth Validation:** Before launching Chromium/Playwright (which would hang on interactive stdin prompts if cookies are expired), the server checks session validity. If unauthenticated, it returns:
-   `"Authentication required. Run 'gflow auth login' in your local terminal."`
+1. **Profile Pre-flight:** Before enqueuing work, each tool resolves and validates the target profile directory (`_resolve_and_validate_profile` — existence and home-boundary checks). There is **no session-validity probe before launching Chromium**: expired cookies surface as a typed `AuthExpiredError` from the generation run itself, with the remediation `Run 'gflow auth login' in your local terminal.`
 2. **Channel Isolation:** All internal `structlog` configurations are forced to write to `sys.stderr`. The standard output stream (`sys.stdout`) is globally captured and redirected to `sys.stderr` for any unexpected prints, preserving the integrity of the stdio JSON-RPC pipe.
 3. **Windows Stdio Encoding:** During startup, stdio streams are explicitly reconfigured:
    ```python
@@ -260,5 +259,5 @@ Because the MCP server runs locally, inheriting the host user's permissions and 
    sys.stdin.reconfigure(encoding='utf-8')
    ```
    This prevents crashes caused by non-ASCII prompt strings on Windows.
-4. **Local Rate-Limiting:** Enforces a token-bucket rate limiter with a capacity of 8 tokens and a refill rate of 1 token every 20 seconds (allowing burst filmmaking tasks without timeouts). It also evaluates cumulative session and daily limits (`GFLOW_CLI_SESSION_CREDIT_LIMIT` and `GFLOW_CLI_DAILY_BUDGET`) against SQLite logs, failing fast to prevent credit depletion attacks.
-5. **CLI-MCP Parameter Symmetry:** Automated checks in the CI test suite (`tests/mcp/test_server.py`) compare CLI Click parameters with registered MCP tool signatures, ensuring that any added options or flags in the CLI are instantly mirrored in the MCP layer to prevent schema drift.
+4. **Local Rate-Limiting:** Enforces a token-bucket rate limiter with a capacity of 8 tokens and a refill rate of 1 token every 20 seconds (allowing burst filmmaking tasks without timeouts). This is the **only** spend brake — there is no credit-budget accounting or per-session/daily cap (#495; a registration-time `--no-spend` gate is tracked in #496).
+5. **CLI-MCP Parameter Symmetry:** Automated checks in the CI test suite (`tests/mcp/test_cli_parity.py`) compare CLI Click parameters with registered MCP tool signatures, ensuring that any added options or flags in the CLI are instantly mirrored in the MCP layer to prevent schema drift.
