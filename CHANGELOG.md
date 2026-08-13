@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP response-contract breaches (#498).** Both generate tools now refuse
+  rate-limited calls with the same RFC 9457 problem-details envelope (the
+  image tool used a plain error string; the video tool's detail claimed a
+  nonexistent "1 request per 30 seconds" policy — the real brake is the
+  shared token bucket, capacity 8 / refill 1 per 20 s). `gflow_list_projects`
+  paginates honestly: a new `offset` parameter, plus `count`/`offset`/
+  `has_more`/`next_offset` in the response, replacing the hardcoded first
+  page whose `total` field reported the page size as the table total —
+  catalogs larger than `limit` were unreachable through MCP.
 ### Removed
 
 - **MCP tool `gflow_list_characters` (#499).** It was a stub that always
