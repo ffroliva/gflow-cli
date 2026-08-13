@@ -1310,13 +1310,17 @@ gflow image batch ./batch-a.tsv --profile work
 gflow image batch ./batch-b.tsv --profile personal
 ```
 
-(Same profile concurrently → the second invocation fails fast with `ProfileLockedError`, exit code 11, before any Chrome process starts. Use different profiles or wait.)
+(Same profile concurrently → the second invocation fails fast with `ProfileLockedError`, exit code 11, before any Chrome process starts. Use different profiles or wait — or set `GFLOW_CLI_LEASE_WAIT_SECONDS=N` (v0.56.0, [CONFIGURATION](CONFIGURATION.md#gflow_cli_lease_wait_seconds)) to have the second invocation poll the lease and take over as soon as the holder finishes.)
 
 ### JSON logs for piping into Loki/Datadog
 
 ```bash
 GFLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
 ```
+
+> Piping stderr into `jq`? Set `GFLOW_CLI_UPDATE_CHECK=0` too — the once-a-day
+> update notice (v0.56.0) is a plain-text stderr line and would break the parse
+> the day a newer version publishes.
 
 ## Exit codes
 
@@ -1336,7 +1340,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
 | `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287; or a wedged submission stage — the error names the stage and your Playwright version) | Retry; raise the relevant timeout — for a frame-UUID miss verify the UUID belongs to the `--project` passed; for a `stage_stalled` abort check your Playwright is in range (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
 | `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |
-| `11` | `ConfigurationError`  | Local configuration or browser mode is invalid — includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile) and `ProfileEngineDowngradeError` (the profile was last written by a newer Chromium major than the bundled engine about to open it — see [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)) | Fix the option/env var shown in the error; wait / use a different `--profile` for lease contention; upgrade gflow-cli/Playwright or re-run `gflow auth login` for a downgrade refusal |
+| `11` | `ConfigurationError`  | Local configuration or browser mode is invalid — includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile) and `ProfileEngineDowngradeError` (the profile was last written by a newer Chromium major than the bundled engine about to open it — see [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)) | Fix the option/env var shown in the error; for lease contention wait, use a different `--profile`, or set `GFLOW_CLI_LEASE_WAIT_SECONDS=N` to wait bounded; upgrade gflow-cli/Playwright or re-run `gflow auth login` for a downgrade refusal |
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
 | `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
@@ -1348,7 +1352,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |
 | `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
 | `22` | `UpscaleUnavailableError` | 4K upscale is gated to Flow **Ultra** accounts (HTTP 403) | Use `--scale 2k`, or upgrade the Flow plan                |
-| `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issues #183, #493) | Update gflow-cli; file a bug with the probe name + the diagnostics JSON / debug screenshot referenced in the error message |
+| `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issues #183, #493) | Update gflow-cli; file a bug with the probe name + the diagnostics JSON / debug screenshot referenced in the error message, plus the incident bundle's `report.md` when one was written |
 | `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
 | `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation | Rare since v0.38.0 (#332): the mode controller reliably recovers agentic→classic, so first retry with `--ui-mode classic`; if it persists, see KNOWN_ISSUES on the agentic cohort |
 | `26` | `MediaAttributionError` | Generated media could not be reliably attributed to this request (issue #281) | Re-run; a dedicated project with fewer pre-existing assets avoids the ambiguity |

@@ -4,7 +4,13 @@
 
 ## Current release
 
+**v0.56.0 — alpha.** **Ops-hardening batch (#477/#478/#479) + honest mode-switch evidence (#493).** A Chromium major-version downgrade guard refuses to open a persisted profile with an older bundled engine than last wrote it (`ProfileEngineDowngradeError`, exit 11 — pre-auth, pre-credits) instead of letting Chromium's downgrade cleanup shred the session store; `GFLOW_CLI_LEASE_WAIT_SECONDS=N` adds an opt-in bounded wait on same-profile lease contention (default keeps the historical fail-fast); a once-a-day cache-served PyPI check prints a one-line stderr notice when a newer gflow-cli exists; and the exit-23 mode-switch fall-through now states that no known Flow cohort matched (the third, unrecognized editor layout from #493) while the drift remediation names the artifacts runs actually produce (`diag_mode_switch_miss.json`, the referenced screenshot, the incident bundle) instead of a phantom "debug screenshot from this message". Guard, lease wait, and the mode-switch path were live-verified; #479's notice is deferred-with-reason to a post-release check (it needs a published newer version on PyPI). See [LIVE_VERIFICATION_v0.56.0.md](LIVE_VERIFICATION_v0.56.0.md).
+
+<details><summary>v0.55.0 — Tier-1 hardening batch + docs truth sweep (#471–#476)</summary>
+
 **v0.55.0 — alpha.** **Tier-1 hardening batch (#471–#476) + docs truth sweep.** `gflow auth status` now **proves** the Flow session (cookie-jar probe of the live session endpoint, no browser, no credits) and exits 0/1 with remediation hints; `gflow mcp setup` is implemented (claude-desktop / cursor / vscode, non-destructive merge with a pristine one-time backup); incident bundles stage a pre-filled `report.md` bug-report template built from allowlisted manifest fields only; Windows profile dirs get a real restrict-to-current-user DACL at login plus a marker-gated upgrade sweep at browser launch; all 11 MCP tools route through one error funnel that masks raw exception text from clients; `llm_api_key`/`daemon_token` are `SecretStr` so a Settings dump cannot leak them. The false "requires a Google AI Ultra or Pro subscription" claim was removed everywhere — **any Google account with Flow access works**; only feature gates (4K upscale) are tier-bound. See [LIVE_VERIFICATION_v0.55.0.md](LIVE_VERIFICATION_v0.55.0.md).
+
+</details>
 
 <details><summary>v0.54.0 — login close-guidance + supply-chain guards (#465, #470)</summary>
 
@@ -48,7 +54,7 @@
 
 </details>
 
-**Develop (unreleased, post-v0.55.0):** *(empty — develop is the staging branch for the next release).*
+**Develop (unreleased, post-v0.56.0):** *(empty — develop is the staging branch for the next release).*
 
 <details><summary>v0.46.0 — prompt tools on any OpenAI-compatible endpoint (#387)</summary>
 
