@@ -661,6 +661,7 @@ def test_specific_remediation_hints() -> None:
         FrameExtractionError,
         RateLimitError,
         SceneConcatError,
+        UiSelectorDriftError,
         WireFormatError,
     )
 
@@ -691,17 +692,15 @@ def test_specific_remediation_hints() -> None:
         == "Verify input video file is readable and non-corrupt. Ensure gflow-cli[chain] "
         "dependencies (PyAV) are installed."
     )
-
-
-def test_ui_selector_drift_remediation_names_real_artifacts() -> None:
-    """#493: the class remediation asked for a 'debug screenshot from this
-    message' — but the mode-switch probe writes a diagnostics JSON and no
-    screenshot, so the ask pointed at an artifact that does not exist. The
-    remediation must cover the artifacts drift sites actually reference."""
-    from gflow_cli.errors import UiSelectorDriftError
-
-    hint = UiSelectorDriftError().remediation_hint
-    assert "diagnostics" in hint.lower()
-    assert "report.md" in hint
-    # The privacy caveat must survive the rewording.
-    assert "do NOT include tokens" in hint
+    # #493: the hint must name the artifacts drift sites actually write (the
+    # mode-switch probe produces a diagnostics JSON, not a screenshot) — exact
+    # equality so a phantom-artifact ask cannot silently return.
+    assert UiSelectorDriftError().remediation_hint == (
+        "A Flow editor UI element could not be located — Google may have updated "
+        "their frontend. Check for a newer gflow-cli release, then file a bug at "
+        "https://github.com/ffroliva/gflow-cli/issues referencing the probe name "
+        "and attaching the diagnostics JSON and/or debug screenshot referenced in "
+        "this message, plus the incident bundle's report.md when one was written "
+        "(review artifacts before sharing — screenshots may show your account "
+        "name/avatar; do NOT include tokens or signed URLs)."
+    )

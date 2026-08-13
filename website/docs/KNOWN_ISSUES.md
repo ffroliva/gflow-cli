@@ -200,8 +200,8 @@ locale-invariant — the reporter's Portuguese UI is unrelated.
 The error detail now names this hypothesis and the run writes a PII-safe DOM
 signature to `diag_mode_switch_miss.json` when it can be captured (structural
 allowlist: ligature names, tag counts — no cookies, tokens, prompts, or page
-text; if the file is absent, attach the incident bundle's `report.md`
-instead). **If you hit this, attach that JSON file to
+text; if the file is absent, attach the incident bundle instead — its
+`ui.json` carries the same DOM signature). **If you hit this, attach that JSON file to
 [#493](https://github.com/ffroliva/gflow-cli/issues/493)** — recognizing the
 variant (and restoring a clean retryable classification, or full support) needs
 exactly that DOM signature. Re-running later may land the classic editor if
@@ -230,9 +230,9 @@ generation. Rather than the old opaque `UiSelectorDriftError` "file a bug", the
 mode-switch raise site now runs a runtime DOM scan and raises a clear, **retryable**
 `FlowAgentUiError` (**exit 25**, "this cohort flaps; retry shortly"), and dumps a
 DOM-signature diagnostics artifact (`diag_mode_switch_miss.json`; the incident
-bundle carries the full-page screenshot under `sensitive/`) for reporting. The cohort is server-assigned per page load and flaps
-within ~12h, so a re-run often lands the classic UI. Driving the new UI directly
-is still out of scope.
+bundle carries a screenshot under `sensitive/`) for reporting. The cohort is
+server-assigned per page load and flaps within ~12h, so a re-run often lands
+the classic UI. Driving the new UI directly is still out of scope.
 
 **How to tell which UI your account has:** in the Flow web editor, click
 **Add Media** — a small dialog means the old (working) UI; a navigation to a

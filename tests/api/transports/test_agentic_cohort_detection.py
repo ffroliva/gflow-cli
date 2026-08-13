@@ -1,9 +1,9 @@
 """Unit tests for the #183 media-library/agentic cohort raise-site handling.
 
 `_detect_non_classic_cohort` scans the union of agentic + full-page media-library
-markers so the shared `_fail_mode_switch` raise site can emit a clean, retryable
+markers so the shared `_mode_switch_error` raise site can emit a clean, retryable
 `FlowAgentUiError` instead of the misleading `UiSelectorDriftError`.
-`capture_ui_diagnostics` is the debug-engine DOM+screenshot dump.
+`capture_ui_diagnostics` writes the structural DOM-signature JSON (no screenshot).
 """
 
 from __future__ import annotations
