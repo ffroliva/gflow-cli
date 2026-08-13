@@ -12,7 +12,13 @@ Override the root with `GFLOW_CLI_HOME`. See `docs/AUTHENTICATION.md`.
 
 from __future__ import annotations
 
+import csv
+import io
+import subprocess
+import sys
 from typing import TYPE_CHECKING
+
+import structlog
 
 from gflow_cli.config import get_settings
 from gflow_cli.paths import get_cookies_path
@@ -24,6 +30,8 @@ from .real_chrome import RealChromeStrategy
 if TYPE_CHECKING:
     from pathlib import Path
 
+logger = structlog.get_logger(__name__)
+
 __all__ = [
     "AuthStrategyFactory",
     "InternalChromiumStrategy",
@@ -31,8 +39,58 @@ __all__ = [
     "default_profile_root",
     "login",
     "profile_dir",
+    "restrict_dir_to_current_user",
     "status",
 ]
+
+
+def _current_user_sid() -> str:
+    """The current user's SID via ``whoami /user /fo csv`` (locale-safe —
+    header text localizes, the CSV shape and the SID cell do not)."""
+    out = subprocess.run(
+        ["whoami", "/user", "/fo", "csv"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    last_row = next(csv.reader(io.StringIO(out.stdout.strip().splitlines()[-1])))
+    return last_row[-1]
+
+
+def restrict_dir_to_current_user(path: Path) -> bool:
+    """Best-effort Windows DACL hardening: strip inherited ACEs and grant only
+    the current user, recursively (issue #472).
+
+    POSIX mode bits (0700/0600) cover Unix; on Windows ``chmod`` is a no-op,
+    so a profile created under a world-readable ``GFLOW_CLI_HOME`` inherits
+    that visibility. Never raises — a hardening failure must not break login.
+    Returns True only when the ACL was actually applied.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        sid = _current_user_sid()
+        # Two steps, verified empirically: applying the inheritance-flagged
+        # grant directly to files via /t leaves them without effective access
+        # (PermissionError on read). Harden the top dir, then /reset children
+        # so they INHERIT the single owner-only ACE.
+        subprocess.run(
+            ["icacls", str(path), "/inheritance:r", "/grant:r", f"*{sid}:(OI)(CI)F", "/q"],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+        subprocess.run(
+            ["icacls", str(path / "*"), "/reset", "/t", "/q"],
+            check=True,
+            capture_output=True,
+            timeout=120,  # /t rewrites every file in a Chromium profile
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort, login must proceed
+        logger.warning("auth_profile_acl_failed", error=type(exc).__name__)
+        return False
+    return True
 
 
 def default_profile_root() -> Path:
@@ -55,6 +113,10 @@ async def login(name: str = "default", browser: str = "auto", headless: bool = F
     are reused; if Google's session expires, calling this again re-captures it.
     """
     pdir = profile_dir(name)
+    # Harden BEFORE the browser runs so cookies never land in a dir with
+    # inherited world-readable ACLs (issue #472; no-op off Windows).
+    pdir.mkdir(parents=True, exist_ok=True)
+    restrict_dir_to_current_user(pdir)
     factory = AuthStrategyFactory()
     strategy = factory.create(browser)
     await strategy.login(pdir, headless=headless)
