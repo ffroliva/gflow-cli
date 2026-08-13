@@ -283,7 +283,9 @@ class TestProfileEngineDowngradeGuard:
         message = str(excinfo.value)
         assert "999.0.0.0" in message
         assert "149.0.7827.55" in message
-        assert "gflow auth login" in message
+        # Remedy comes from the class default (not the raise-site message —
+        # naming it in both printed the remedy twice in the human output).
+        assert "gflow auth login" in type(excinfo.value)._default_remediation  # noqa: SLF001
 
     def test_guard_error_is_configuration_error_exit_11(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

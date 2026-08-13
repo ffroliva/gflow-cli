@@ -354,9 +354,8 @@ def ensure_profile_engine_compatible(profile_dir: Path, channel: str | None) -> 
         f"Profile at {profile_dir} was last written by Chromium {profile_version}, "
         f"but the installed Playwright bundled Chromium is older ({engine_version}). "
         "Opening it would trigger Chromium's downgrade cleanup, which can leave the "
-        "session store unreadable. Upgrade so the bundled Chromium is at least "
-        f"{profile_version} (e.g. `uv tool upgrade gflow-cli`, then "
-        "`playwright install chromium`), or re-create the profile with "
-        "`gflow auth login`."
+        "session store unreadable."
     )
+    # Remedy lives in ProfileEngineDowngradeError._default_remediation — naming
+    # it here too printed the remedy twice in the CLI human output.
     raise ProfileEngineDowngradeError(msg)
