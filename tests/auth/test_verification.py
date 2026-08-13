@@ -613,3 +613,37 @@ class TestVerifyFlowSession:
             mock_settings.return_value.home = gflow_home
             with pytest.raises(SecurityError):
                 await verify_flow_session(outside, source="chrome")
+
+
+# ---------------------------------------------------------------------------
+# #477: profile-engine downgrade guard in the headless probe
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyFlowSessionEngineDowngrade:
+    @pytest.mark.asyncio
+    async def test_probe_refuses_downgrade_without_launching(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#477: a profile last written by a newer Chromium maps to
+        VERIFICATION_ERROR (fail-closed contract) and the persistent context is
+        never launched — the probe must not trigger downgrade cleanup either."""
+        import gflow_cli.browser_manager as bm
+
+        gflow_home = tmp_path / "gflow_home"
+        gflow_home.mkdir()
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+        (profile / "Last Version").write_text("999.0.0.0", encoding="utf-8")
+        monkeypatch.setattr(bm, "installed_chromium_version", lambda: "149.0.7827.55")
+
+        mock_ap, mock_ctx = _build_verify_mock()
+        with (
+            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
+        ):
+            mock_settings.return_value.home = gflow_home
+            status = await verify_flow_session(profile, channel=None, source="internal")
+        assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
+        mock_ap.return_value.__aenter__.assert_not_awaited()
+        mock_ctx.cookies.assert_not_awaited()

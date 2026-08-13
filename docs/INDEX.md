@@ -131,6 +131,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"When does the version get bumped?"** → [DEVELOPMENT § Version bump protocol](DEVELOPMENT.md#version-bump-protocol)
 **"How do I embed FlowApiClient in a long-lived worker / service?"** → [USER_GUIDE § Journey 14](USER_GUIDE.md#journey-14--embedding-flowapiclient-in-a-long-lived-worker)
 **"What's the standard way to import gflow errors in my code?"** → [USAGE § Programmatic use](USAGE.md#programmatic-use)
+**"gflow refuses to open my profile after a downgrade (exit 11, 'written by a newer Chromium')"** → [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)
 **"A gflow command hangs / fails — where do I start?"** → [DEBUGGING § Quick reference](DEBUGGING.md#quick-reference)
 **"A command failed — where is the incident bundle and what's in it?"** → [DEBUGGING § Automatic incident bundles](DEBUGGING.md#automatic-incident-bundles) (layout, triggers, review-before-sharing); privacy boundaries: [SECURITY § Automatic incident bundles](SECURITY.md#automatic-incident-bundles-gflow_cli_incident_capture-default-on); disable via [CONFIGURATION § GFLOW_CLI_INCIDENT_CAPTURE](CONFIGURATION.md#gflow_cli_incident_capture)
 **"Flow's UI broke a selector — how do I diagnose it?"** → [DEBUGGING § Inspecting Flow's live UI](DEBUGGING.md#inspecting-flows-live-ui)

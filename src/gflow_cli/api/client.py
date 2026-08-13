@@ -461,7 +461,11 @@ class FlowApiClient:
         'Chrome Safe Storage'), producing a logged-out context and a confusing
         HTTP 401 at project.createProject. Make that fatal with a clear
         remediation. On other platforms the bundled fallback may still work
-        (e.g. Windows DPAPI cookie key is per-user), so warn instead of raising.
+        (e.g. Windows DPAPI cookie key is per-user), so warn instead of raising —
+        UNLESS the #477 engine guard below detects that the bundled Chromium's
+        major version is older than the one that last wrote the profile: that
+        launch would trigger Chromium's downgrade cleanup and can shred the
+        session store, so it hard-stops on every platform.
 
         The diagnostic event names the resolved channel / executable /
         user-data-dir / cookie-db presence — the data needed to tell a channel
@@ -469,6 +473,7 @@ class FlowApiClient:
         """
         from gflow_cli.browser_manager import (
             chrome_strategy_requested,
+            ensure_profile_engine_compatible,
             resolved_chrome_binary,
         )
         from gflow_cli.paths import get_cookies_path
@@ -519,6 +524,9 @@ class FlowApiClient:
             if sys.platform == "darwin":
                 raise ConfigurationError(msg)
             logger.warning("client.chrome_strategy_downgraded", detail=msg)
+        # #477: refuse a bundled-Chromium open of a profile last written by a
+        # newer Chromium — downgrade cleanup can shred the session store.
+        ensure_profile_engine_compatible(self.profile_dir, channel)
 
     async def _preread_flow_session_cookies(self) -> None:
         """#222: read the profile's Flow cookies BEFORE the headed generation

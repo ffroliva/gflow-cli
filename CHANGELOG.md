@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Chromium downgrade guard for persisted profiles (#477).** Opening a profile with an older Chromium major version than last wrote it triggers Chromium's downgrade cleanup, which can shred the newer session store and surface as a mystery post-upgrade logout. Every bundled-Chromium open of a persisted profile (generation client, UI-automation transport, the experimental transports, headless verification probe) now compares the profile's `Last Version` against the active engine's bundled Chromium (`playwright`, or `patchright` when selected) and refuses on a major-version downgrade (`ProfileEngineDowngradeError`, exit 11; the fail-closed verification probe reports it as a verification failure) with an error naming both versions and the remedy. Best-effort: `chrome`-strategy profiles and unknown/unparseable versions skip the check; same-major build rollbacks are allowed; `gflow auth login` stays unguarded as the recovery path.
+
 ## [0.55.0] — 2026-08-13
 
 ### Added

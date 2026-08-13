@@ -381,6 +381,31 @@ class ProfileLockedError(ConfigurationError):
     )
 
 
+class ProfileEngineDowngradeError(ConfigurationError):
+    """Raised when a persisted profile was last written by a newer Chromium
+    than the engine about to open it (#477).
+
+    Chromium's downgrade cleanup on open can leave the newer store — session
+    cookies included — unreadable, surfacing later as a mystery logout. Like
+    :class:`ProfileLockedError`, this is a profile-state precondition that
+    fails closed before any browser starts; it inherits ConfigurationError's
+    exit code 11 (no own EXIT_CODE_MAP entry). The raise site supplies the
+    message naming both versions; login is deliberately unguarded — it re-mints
+    the session and rewrites the profile, so it is the recovery path.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/profile-engine-downgrade"
+    title = "Profile was written by a newer Chromium"
+    _default_remediation = (
+        "Upgrade so the bundled Chromium is at least the profile's major version "
+        "(e.g. `uv tool upgrade gflow-cli`, then `playwright install chromium`). "
+        "If the profile was captured with `--browser chrome`, reinstall Google "
+        "Chrome in its default location instead — the chrome channel then opens "
+        "the profile and this check does not apply. Or re-create the profile "
+        "with `gflow auth login`."
+    )
+
+
 class BrowserEngineUnavailableError(ConfigurationError):
     """Raised when GFLOW_CLI_BROWSER_ENGINE selects an engine that is unavailable.
 
