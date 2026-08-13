@@ -89,6 +89,7 @@ from gflow_cli.paths import adjust_key_extension, character_output_path, looks_l
 from gflow_cli.profile_lease import ProfileLease
 from gflow_cli.redaction import redact_sensitive_text
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
+from gflow_cli.winsec import ensure_profile_hardened
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -648,6 +649,9 @@ class FlowApiClient:
                 if ref is not None and exc.incident_ref is None:
                     exc.incident_ref = ref
             raise
+        # We own the profile now — one-time Windows DACL sweep for profiles
+        # created before #472 (marker-gated stat afterwards; no-op off Windows).
+        ensure_profile_hardened(self.profile_dir)
         self._context = await self._launch_persistent_context(kwargs)
         # Attach journal listeners BEFORE any navigation/submission that can
         # produce relevant traffic (design §6.2 step 2, S30).
