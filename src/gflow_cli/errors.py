@@ -519,7 +519,7 @@ class UiSelectorDriftError(GFlowError):
 
     This is a hard failure — gflow cannot safely proceed without the control —
     but it is *diagnosed*, not opaque: the user gets the probe name and the
-    screenshot for inspection.  Exit code 23 lets scripted callers branch on
+    captured artifact for inspection.  Exit code 23 lets scripted callers branch on
     "the UI changed and needs a selector update" versus generic error (1).
     """
 
@@ -550,9 +550,9 @@ class FlowAgentUiError(GFlowError):
         "Your account has been placed in Google Flow's new 'Agentic UI' A/B cohort, "
         "which removes the classic media generation controls. gflow-cli does not "
         "currently support driving this interface. Try using a different Chrome profile, "
-        "or wait for a future update. If you need to share a bug report, review the "
-        "diagnostic screenshot first — the viewport may show personal info (do NOT "
-        "include tokens or credentials)."
+        "or wait for a future update. If you need to share a bug report, review any "
+        "screenshot in the incident bundle first — the viewport may show personal info "
+        "(do NOT include tokens or credentials)."
     )
 
 

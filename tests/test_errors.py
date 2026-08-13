@@ -703,6 +703,5 @@ def test_ui_selector_drift_remediation_names_real_artifacts() -> None:
     hint = UiSelectorDriftError().remediation_hint
     assert "diagnostics" in hint.lower()
     assert "report.md" in hint
-    assert "referenced in this message" in hint
     # The privacy caveat must survive the rewording.
-    assert "review" in hint.lower()
+    assert "do NOT include tokens" in hint

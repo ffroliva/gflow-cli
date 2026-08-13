@@ -198,9 +198,10 @@ retryable exit-25 cohort classification. The selector cascade itself is
 locale-invariant — the reporter's Portuguese UI is unrelated.
 
 The error detail now names this hypothesis and the run writes a PII-safe DOM
-signature to `diag_mode_switch_miss.json` (structural allowlist: ligature
-names, tag counts — no cookies, tokens, prompts, or page text). **If you hit
-this, attach that JSON file to
+signature to `diag_mode_switch_miss.json` when it can be captured (structural
+allowlist: ligature names, tag counts — no cookies, tokens, prompts, or page
+text; if the file is absent, attach the incident bundle's `report.md`
+instead). **If you hit this, attach that JSON file to
 [#493](https://github.com/ffroliva/gflow-cli/issues/493)** — recognizing the
 variant (and restoring a clean retryable classification, or full support) needs
 exactly that DOM signature. Re-running later may land the classic editor if
