@@ -14,12 +14,12 @@ has no instructions support — agentic-video is a deliberate typed divergence
 (``drivers/agentic.py`` raises ``FlowAgentUiError``). An ``instructions`` param
 on the video tool would be silently dropped, so it is intentionally absent.
 
-Note on ``--output``/``-o`` (#411): intentionally NOT mirrored on the generate
-tools. The MCP generation path runs through the worker queue, whose codec
-(``worker/codec.py``) does not decode an ``output_file`` key and whose daemon
-hardcodes the date-partitioned destination — an ``output`` param there would be
-a silent no-op (a v0.48.0 pre-release audit caught exactly that and removed
-it). Wire the key through codec + daemon before re-adding the param.
+Note on ``--output``/``-o`` (#411): mirrored since the wiring landed — both
+generate tools accept ``output`` (``tools.py``) and put ``output_file`` in the
+task payload, which the daemon decodes and relocates the artifact to
+(``worker/daemon.py``). A v0.48.0 pre-release audit removed an earlier dead
+param that the queue never read; the docstring here claimed that state long
+after the real wiring shipped (#495).
 
 Note on ``image t2i --jitter`` (#241): intentionally NOT mirrored on
 ``gflow_generate_image``. The jitter paces submissions *between prompts* in a
