@@ -109,7 +109,7 @@ Deep setup, verification, and security notes live in
 ### `GFLOW_CLI_PROVIDER`
 
 **What:** Backend to use for generations.
-**Values:** `flow` (default — reverse-engineered, requires Ultra/Pro) | `official` (planned v0.5+ — Phase 5 official Veo SDK swap, will require a Gemini API key).
+**Values:** `flow` (default — reverse-engineered, works with any Google account that has Flow access) | `official` (planned v0.5+ — Phase 5 official Veo SDK swap, will require a Gemini API key).
 **Default:** `flow`
 **CLI override:** none yet — set the env var to switch backends once `official` is wired.
 

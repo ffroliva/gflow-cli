@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Removed the false "requires a Google AI Ultra or Pro subscription" claim across all docs.** Any Google account with Flow access can use gflow-cli — a paid plan only affects credit allowances and tier-gated features (e.g. 4K upscale stays Ultra-only). Swept README, AGENTS.md, DISCLAIMER.md, USER_GUIDE, CONFIGURATION, AUTHENTICATION, DEBUGGING, the medium tutorial, and the gflow-cli skill; factual tier-gating notes are unchanged.
+
 ### Added
 
 - **Incident bundles now include a pre-filled bug-report template (#476).** On every captured incident, the recorder stages `report.md` alongside the existing artifacts: version/platform, error class + exit code + retryability, phase/route, and pointers to the captured evidence — built exclusively from the allowlisted manifest fields (never raw exception text). The CLI error message now prints the report path next to the bundle path, and retention treats `report.md` as recorder-owned. Downgrade caveat: gflow <= 0.54.x does not recognize `report.md`, so its retention classifies new bundles as unknown and stops pruning them — delete `<GFLOW_CLI_HOME>/incidents` manually if you downgrade. The report is meant to be copied out of the bundle before editing (the template says so), and the e2e privacy scanner now leak-scans `*.md` alongside the JSON artifacts.

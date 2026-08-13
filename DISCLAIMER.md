@@ -19,7 +19,7 @@ If you need a stable, supported, contractual API, use the [official Google Gen A
 
 To use `gflow-cli` you must:
 
-1. **Own a valid Google account** with active access to [Google Flow](https://labs.google/fx/tools/flow) — typically an [AI Ultra or AI Pro](https://gemini.google/subscriptions/) subscription as of late 2025.
+1. **Own a valid Google account** with active access to [Google Flow](https://labs.google/fx/tools/flow) — any Google account works; a paid plan ([AI Pro or AI Ultra](https://gemini.google/subscriptions/)) only affects credit allowances and tier-gated features.
 2. **Comply with Google's terms of service** for that account, including:
    - [Google Terms of Service](https://policies.google.com/terms)
    - [Generative AI Additional Terms](https://policies.google.com/terms/generative-ai)

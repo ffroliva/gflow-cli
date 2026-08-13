@@ -10,7 +10,7 @@ This page documents the full lifecycle: capture, storage, reuse, refresh, multi-
 |---|---|
 | Re-implement Google's OAuth dance | Google's web SSO involves anti-automation challenges (CAPTCHA, device verification). A community SDK can't reliably ship that. |
 | Extract the bearer token from cookies and use `httpx` directly | Tokens are short-lived and tied to a refresh flow we don't have. Re-implementing the refresh is brittle. |
-| Use a service-account JSON | Flow doesn't currently support service accounts on the AI Ultra/Pro consumer tier. |
+| Use a service-account JSON | Flow doesn't currently support service accounts on the consumer tier. |
 | Pure stored cookie jar (no Playwright) | Some Flow endpoints set additional `x-` headers based on Chromium fingerprint; matching them by hand is fragile. |
 | **Playwright persistent context (chosen)** | Captures session once, reuses indefinitely, refreshes automatically on idle, auto-attaches every header Flow expects. One-time cost: a ~150 MB Chromium download. |
 
