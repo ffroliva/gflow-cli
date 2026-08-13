@@ -1,6 +1,5 @@
 import subprocess
 import time
-import sys
 
 PR_ID = "38"
 CHECK_INTERVAL = 3600  # 1 hour
@@ -17,16 +16,16 @@ def check_pr():
         )
         import json
         data = json.loads(result.stdout)
-        
+
         last_commit_msg = data["commits"][-1]["message"]
         decision = data["reviewDecision"]
-        
+
         print(f"  Decision: {decision}")
         print(f"  Last Commit: {last_commit_msg}")
-        
+
         if "Signed-off-by" in last_commit_msg:
              print("  [!] DCO likely fixed in last commit.")
-        
+
     except Exception as e:
         print(f"  Error: {e}")
 

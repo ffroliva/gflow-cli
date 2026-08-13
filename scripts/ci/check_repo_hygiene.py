@@ -7,6 +7,10 @@ Fails (exit 1) if:
      planning / review / session artefact at the repo root).
   3. Any Python file in src/, tests/, or scripts/ contains hardcoded Windows absolute paths
      or writes output to test_assets/ instead of tmp/.
+  4. The three declared versions disagree: pyproject.toml [project].version,
+     src/gflow_cli/__init__.py __version__, and .codex-plugin/plugin.json
+     "version" must be identical (a release bumping one but not the others
+     ships a self-contradictory artefact).
 
 Run manually:
     uv run python scripts/ci/check_repo_hygiene.py
@@ -204,6 +208,37 @@ def _check_branch_name(branch: str | None) -> list[str]:
     ]
 
 
+def _check_version_agreement() -> list[str]:
+    """pyproject == __init__ == plugin.json — one version, three declarations.
+
+    tomllib is 3.11+; the pre-commit hook may run under an older interpreter,
+    so the import failure degrades to a graceful skip instead of a traceback
+    (CI runs the gate on 3.11+ where the check is authoritative).
+    """
+    versions: dict[str, str] = {}
+    try:
+        import json
+        import tomllib
+    except ImportError:
+        return []
+    try:
+        with (ROOT / "pyproject.toml").open("rb") as fh:
+            versions["pyproject.toml"] = str(tomllib.load(fh)["project"]["version"])
+        init_text = (ROOT / "src" / "gflow_cli" / "__init__.py").read_text(encoding="utf-8")
+        match = re.search(r'^__version__\s*=\s*"([^"]+)"', init_text, re.MULTILINE)
+        if match is None:
+            return ["src/gflow_cli/__init__.py: __version__ assignment not found"]
+        versions["src/gflow_cli/__init__.py"] = match.group(1)
+        plugin_raw = (ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        versions[".codex-plugin/plugin.json"] = str(json.loads(plugin_raw)["version"])
+    except (OSError, KeyError, ValueError) as exc:
+        return [f"version-agreement check could not read a source: {exc}"]
+    if len(set(versions.values())) > 1:
+        listing = ", ".join(f"{src}={ver}" for src, ver in versions.items())
+        return [f"version disagreement — {listing} (bump all three together)"]
+    return []
+
+
 def main() -> int:
     print("── repo hygiene check ───────────────────────────────────────")
     errors: list[str] = []
@@ -212,6 +247,7 @@ def main() -> int:
     errors += _check_tracked(tracked)
     errors += _check_root_docs(tracked)
     errors += _check_sources()
+    errors += _check_version_agreement()
 
     # Advisory: warn on non-conventional branch names but never fail the gate.
     warnings = _check_branch_name(_current_branch())
