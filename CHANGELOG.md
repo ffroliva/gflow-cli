@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mode-switch drift errors now name the right evidence (#493).** An external
+  report showed a third, unrecognized Flow editor layout (composer frame slots +
+  Agent toggle, no classic `crop_*` settings button) falling through to
+  `UiSelectorDriftError` (exit 23). The fall-through detail now states that no
+  known Flow cohort matched — i.e. the editor may be a new layout this version
+  does not recognize — and the class remediation no longer asks for a "debug
+  screenshot from this message" that the mode-switch probe never writes: it
+  points at the artifacts that actually exist (the PII-safe
+  `diag_mode_switch_miss.json` DOM signature and/or the referenced screenshot,
+  plus the incident bundle's `report.md`). Recognizing the new variant itself is
+  tracked in #493 and needs an affected account's diagnostics JSON.
+
 ### Added
 
 - **Once-a-day PyPI update notice (#479).** gflow now prints a one-line stderr notice when a newer version is on PyPI: cache-served (zero added latency — a stale cache refreshes on a background daemon thread for the next run), capped at one poll per day even when the poll fails, and never blocks or fails a command. Skipped in CI (`CI` env var), for editable/local-source installs (PEP 610 detection), and when `GFLOW_CLI_UPDATE_CHECK=0`.

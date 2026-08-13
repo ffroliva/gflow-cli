@@ -181,6 +181,32 @@ accepted. Two corrections fixed it (verified end-to-end on macOS Apple Silicon):
 
 Evidence: [LIVE_VERIFICATION_v0.23.0](docs/LIVE_VERIFICATION_v0.23.0.md).
 
+### New Flow editor variant (composer frame slots + Agent toggle) is not recognized
+
+- **Status:** **Open** — awaiting a DOM signature from an affected account;
+  tracked in [#493](https://github.com/ffroliva/gflow-cli/issues/493)
+- **Severity:** High · **Affects:** `gflow image` / `gflow video` generation on
+  accounts that received the new editor, any locale
+
+A third Flow editor layout was reported on 2026-08-13 (macOS, v0.55.0; also
+v0.53.1): frame-slot buttons ("Initial"/"Final") sit directly on the composer
+next to an "Agent" pill, and there is **no** classic `crop_*` aspect/settings
+button for gflow to drive. The layout matches **none** of the known cohort
+indicators (agentic chat composer, full-page media library), so the mode-switch
+step falls through to `UiSelectorDriftError` (**exit 23**) instead of the
+retryable exit-25 cohort classification. The selector cascade itself is
+locale-invariant — the reporter's Portuguese UI is unrelated.
+
+The error detail now names this hypothesis and the run writes a PII-safe DOM
+signature to `diag_mode_switch_miss.json` when it can be captured (structural
+allowlist: ligature names, tag counts — no cookies, tokens, prompts, or page
+text; if the file is absent, attach the incident bundle's `report.md`
+instead). **If you hit this, attach that JSON file to
+[#493](https://github.com/ffroliva/gflow-cli/issues/493)** — recognizing the
+variant (and restoring a clean retryable classification, or full support) needs
+exactly that DOM signature. Re-running later may land the classic editor if
+the rollout is still an A/B arm.
+
 ### Flow's new full-page media-library UI breaks entity attach (A/B rollout)
 
 - **Status:** **Open** — Flow-side staged rollout; tracked in
@@ -203,8 +229,8 @@ classic `crop_*` aspect/mode control, so `gflow image`/`gflow video` can't drive
 generation. Rather than the old opaque `UiSelectorDriftError` "file a bug", the
 mode-switch raise site now runs a runtime DOM scan and raises a clear, **retryable**
 `FlowAgentUiError` (**exit 25**, "this cohort flaps; retry shortly"), and dumps a
-DOM-signature diagnostics artifact (`diag_mode_switch_miss.json` + a full-page
-screenshot) for reporting. The cohort is server-assigned per page load and flaps
+DOM-signature diagnostics artifact (`diag_mode_switch_miss.json`; the incident
+bundle carries the full-page screenshot under `sensitive/`) for reporting. The cohort is server-assigned per page load and flaps
 within ~12h, so a re-run often lands the classic UI. Driving the new UI directly
 is still out of scope.
 

@@ -514,12 +514,12 @@ class UiSelectorDriftError(GFlowError):
 
     Indicates that Flow's frontend has changed in a way that invalidates one
     of the selector probes (mode-switch trigger, mode tab, sub-mode tab, etc.).
-    The ``detail`` names the probe label and includes the debug screenshot path
-    when one was captured.
+    The ``detail`` names the probe label and includes the debug screenshot or
+    diagnostics JSON path when one was captured.
 
     This is a hard failure — gflow cannot safely proceed without the control —
     but it is *diagnosed*, not opaque: the user gets the probe name and the
-    screenshot for inspection.  Exit code 23 lets scripted callers branch on
+    captured artifact for inspection.  Exit code 23 lets scripted callers branch on
     "the UI changed and needs a selector update" versus generic error (1).
     """
 
@@ -529,9 +529,10 @@ class UiSelectorDriftError(GFlowError):
         "A Flow editor UI element could not be located — Google may have updated "
         "their frontend. Check for a newer gflow-cli release, then file a bug at "
         "https://github.com/ffroliva/gflow-cli/issues referencing the probe name "
-        "and attaching the debug screenshot from this message, if one was captured "
-        "(review it first — the viewport may show your account name/avatar; do NOT "
-        "include tokens or signed URLs)."
+        "and attaching the diagnostics JSON and/or debug screenshot referenced in "
+        "this message, plus the incident bundle's report.md when one was written "
+        "(review artifacts before sharing — screenshots may show your account "
+        "name/avatar; do NOT include tokens or signed URLs)."
     )
 
 
@@ -549,9 +550,9 @@ class FlowAgentUiError(GFlowError):
         "Your account has been placed in Google Flow's new 'Agentic UI' A/B cohort, "
         "which removes the classic media generation controls. gflow-cli does not "
         "currently support driving this interface. Try using a different Chrome profile, "
-        "or wait for a future update. If you need to share a bug report, review the "
-        "diagnostic screenshot first — the viewport may show personal info (do NOT "
-        "include tokens or credentials)."
+        "or wait for a future update. If you need to share a bug report, review any "
+        "screenshot in the incident bundle first — the viewport may show personal info "
+        "(do NOT include tokens or credentials)."
     )
 
 
