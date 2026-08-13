@@ -921,8 +921,10 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
 
             # Own the profile BEFORE Chrome launches (D3). Contention raises
-            # ProfileLockedError here; the except below tears the driver back down.
-            self._lease = ProfileLease(profile_dir).acquire()
+            # ProfileLockedError here; the except below tears the driver back
+            # down. aacquire so a #478 opt-in wait polls with asyncio.sleep
+            # instead of blocking the event loop.
+            self._lease = await ProfileLease(profile_dir).aacquire()
             locale_env = os.getenv("GFLOW_CLI_LOCALE", "en-US")
             channel = channel_for_profile(profile_dir)
             # #477: refuse a bundled-Chromium open of a profile last written by

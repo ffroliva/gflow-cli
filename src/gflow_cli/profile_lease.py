@@ -16,19 +16,28 @@ racing opener recreate it and land a second, independent kernel lock on a
 brand new inode while a stale reader still believes the old path is
 canonical).
 
-Sync core, thin async pass-through: every real D3 call site
+Sync core with a thin async twin: every real D3 call site
 (``FlowApiClient``, ``auth/real_chrome.py``, ``auth/internal_chromium.py``,
 ``auth/verification.py``) is ``async def``, so ``aacquire``/``__aenter__``/
-``__aexit__`` exist for ergonomic ``async with`` use at those call sites. But
-the underlying syscalls (`LK_NBLCK` / `LOCK_NB`, a dict membership check) are
-non-blocking and resolve in microseconds, and fail-fast contention has
-nothing to queue on — so the wrapper is a plain pass-through to the sync
-core, not a real ``asyncio.Lock``/executor-offload. Building that machinery
-would serve no caller: nothing here ever awaits.
+``__aexit__`` exist for ergonomic ``async with`` use at those call sites. The
+underlying syscalls (`LK_NBLCK` / `LOCK_NB`, a dict membership check) are
+non-blocking and resolve in microseconds; the only thing that ever waits is
+the opt-in #478 bounded wait between attempts, which the async twin performs
+with ``asyncio.sleep`` so the event loop keeps running.
+
+Contention behavior (#478): fail-fast by default. Setting
+``GFLOW_CLI_LEASE_WAIT_SECONDS>0`` opts a waiter into polling the kernel lock
+until the current holder — a CLI command or a daemon queue task, both of
+which release at their natural end — finishes, then taking over. Holders are
+never signalled or asked to release early (which is also why no
+minimum-hold / release-request machinery exists: every holder already runs
+to completion). Same-process contention always fails fast: this process
+holds the lease, so waiting on it would deadlock.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -172,15 +181,32 @@ def _raise_locked(
             "A live process still holds this profile — commonly a prior gflow "
             "command, a `gflow serve` daemon, or a leftover Chrome/python "
             "process (the recorded owner PID is shown with this error). Close "
-            "it and retry, or use a different --profile. If nothing is running, "
-            "the lock is already released — a leftover lock file never blocks "
-            "acquisition, so just retry."
+            "it and retry, use a different --profile, or set "
+            "GFLOW_CLI_LEASE_WAIT_SECONDS to wait for the holder to finish. "
+            "If nothing is running, the lock is already released — a leftover "
+            "lock file never blocks acquisition, so just retry."
         ),
     )
     err.owner_evidence = evidence  # private; never serialized (design §6.4)
     if cause is not None:
         raise err from cause
     raise err
+
+
+# Kernel-lock poll cadence while waiting (#478). Coarse on purpose: the
+# waiter is standing in line behind a browser session, not a mutex.
+_WAIT_POLL_SECONDS = 0.5
+
+
+def _retry_delay(deadline: float | None) -> float | None:
+    """Seconds to sleep before the next kernel-lock attempt, or None to give
+    up (fail-fast mode, or the #478 wait deadline has passed)."""
+    if deadline is None:
+        return None
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return None
+    return min(_WAIT_POLL_SECONDS, remaining)
 
 
 def _lock_nonblocking(fd: int) -> None:
@@ -205,8 +231,10 @@ class ProfileLease:
 
     ``with ProfileLease(profile_dir):`` (or ``async with`` / ``try_acquire()``)
     guarantees at most one holder — in this process AND across processes —
-    for as long as the lease is held. Fail-fast: contention raises
-    ``ProfileLockedError`` (exit code 11) immediately; it never waits.
+    for as long as the lease is held. Contention raises ``ProfileLockedError``
+    (exit code 11) immediately by default; ``GFLOW_CLI_LEASE_WAIT_SECONDS>0``
+    opts into a bounded wait for a holder in ANOTHER process to finish (#478).
+    Same-process contention always fails fast — waiting would deadlock.
     """
 
     #: Documents the release() contract for callers (esp. crash-recovery code)
@@ -214,10 +242,12 @@ class ProfileLease:
     release_does_not_unlink_lock_file: bool = True
 
     def __init__(self, profile_dir: Path | str) -> None:
+        settings = get_settings()
         self._canonical = _canonicalize(profile_dir)
-        self.lock_path: Path = locks_dir(get_settings().home) / _lock_filename(self._canonical)
+        self.lock_path: Path = locks_dir(settings.home) / _lock_filename(self._canonical)
         self._fd: int | None = None
         self._metadata: OwnerMetadata | None = None
+        self._wait_seconds = float(settings.lease_wait_seconds)
 
     @property
     def owner_metadata(self) -> OwnerMetadata:
@@ -229,6 +259,44 @@ class ProfileLease:
     # -- sync core ---------------------------------------------------------
 
     def acquire(self) -> ProfileLease:
+        return self._acquire_with_wait(self._wait_seconds)
+
+    def _acquire_with_wait(self, wait_seconds: float) -> ProfileLease:
+        self._register_same_process_fail_fast()
+        deadline = time.monotonic() + wait_seconds if wait_seconds > 0 else None
+        # BaseException, not Exception: asyncio.CancelledError (via the async
+        # twin) and KeyboardInterrupt (mid time.sleep) otherwise skip the
+        # unregister and poison this profile for the process lifetime.
+        try:
+            while True:
+                delay = _retry_delay(deadline)
+                if self._attempt(delay):
+                    return self
+                assert delay is not None  # _attempt(None) either returns True or raises
+                time.sleep(delay)
+        except BaseException:
+            self._unregister()
+            raise
+
+    def _attempt(self, delay: float | None) -> bool:
+        """One kernel-lock attempt. True = acquired; False = contended but
+        retryable (``delay`` set); raises on terminal contention. delay=None
+        marks the terminal attempt (fail-fast mode, or the #478 deadline has
+        passed): only that attempt reads/emits owner evidence — doing it on
+        every poll tick spammed the log 2x/s."""
+        try:
+            self._acquire_kernel_lock(collect_evidence=delay is None)
+        except ProfileLockedError:
+            if delay is None:
+                raise
+            return False
+        return True
+
+    def _register_same_process_fail_fast(self) -> None:
+        """Same-process contention NEVER waits (#478): the holder is this very
+        process, so polling would deadlock until the timeout. The registry
+        entry also makes a second same-process waiter fail fast instead of
+        queueing behind the first — one waiter per profile per process."""
         with _registry_guard:
             if self._canonical in _registry:
                 owner_metadata = _registry[self._canonical]._metadata  # noqa: SLF001
@@ -242,17 +310,18 @@ class ProfileLease:
                     ),
                 )
             _registry[self._canonical] = self
-        try:
-            self._acquire_kernel_lock()
-        except Exception:
-            with _registry_guard:
-                _registry.pop(self._canonical, None)
-            raise
-        return self
+
+    def _unregister(self) -> None:
+        with _registry_guard:
+            if _registry.get(self._canonical) is self:
+                del _registry[self._canonical]
 
     def try_acquire(self) -> bool:
+        """Non-blocking probe by contract: always bypasses the #478 wait —
+        probe callers (e2e polling loops, crash recovery) need an immediate
+        answer regardless of GFLOW_CLI_LEASE_WAIT_SECONDS."""
         try:
-            self.acquire()
+            self._acquire_with_wait(0.0)
         except ProfileLockedError:
             return False
         return True
@@ -265,9 +334,7 @@ class ProfileLease:
             finally:
                 os.close(fd)
         self._metadata = None
-        with _registry_guard:
-            if _registry.get(self._canonical) is self:
-                del _registry[self._canonical]
+        self._unregister()
 
     def __enter__(self) -> ProfileLease:
         return self.acquire()
@@ -280,14 +347,34 @@ class ProfileLease:
     ) -> None:
         self.release()
 
-    # -- async pass-through (see module docstring) --------------------------
+    # -- async twin (see module docstring) -----------------------------------
 
-    async def aacquire(self) -> ProfileLease:  # NOSONAR S7503 - deliberate async symmetry
-        """Async convenience wrapper for D3's async call sites. See module docstring."""
-        return self.acquire()
+    async def aacquire(self) -> ProfileLease:
+        """Async twin of :meth:`acquire` for D3's async call sites. In the
+        zero-wait default it delegates to :meth:`acquire` outright — the exact
+        historic pass-through, which is also the seam existing tests pin. With
+        the #478 wait enabled it runs its own loop whose only awaits are
+        ``asyncio.sleep`` polls, so the event loop keeps running — a blocking
+        sleep here would starve the very holder the waiter is waiting on when
+        both share a loop (e.g. a daemon task waiting out a CLI command)."""
+        if self._wait_seconds <= 0:
+            return self.acquire()
+        self._register_same_process_fail_fast()
+        deadline = time.monotonic() + self._wait_seconds
+        # BaseException: see _acquire_with_wait — CancelledError must unregister.
+        try:
+            while True:
+                delay = _retry_delay(deadline)
+                if self._attempt(delay):
+                    return self
+                assert delay is not None  # _attempt(None) either returns True or raises
+                await asyncio.sleep(delay)
+        except BaseException:
+            self._unregister()
+            raise
 
     async def __aenter__(self) -> ProfileLease:
-        return self.acquire()
+        return await self.aacquire()
 
     async def __aexit__(
         self,
@@ -299,7 +386,7 @@ class ProfileLease:
 
     # -- kernel lock ---------------------------------------------------------
 
-    def _acquire_kernel_lock(self) -> None:
+    def _acquire_kernel_lock(self, *, collect_evidence: bool = True) -> None:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         if self.lock_path.is_symlink():
             raise SecurityError(
@@ -321,8 +408,9 @@ class ProfileLease:
             try:
                 _lock_nonblocking(fd)
             except OSError as exc:
-                evidence = _read_owner_evidence(fd)
-                emit_owner_evidence_read(valid=evidence is not None)
+                evidence = _read_owner_evidence(fd) if collect_evidence else None
+                if collect_evidence:
+                    emit_owner_evidence_read(valid=evidence is not None)
                 _raise_locked(
                     f"held by another process ({exc})",
                     self._canonical,
