@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow mcp setup` is implemented (#475).** The long-stubbed command now writes the gflow MCP server entry into the target client's config: `--target claude-desktop` (default), `cursor`, or `vscode` (VS Code's `servers` + `"type": "stdio"` schema). Non-destructive by construction: existing config content is merged, a pre-existing file is backed up as `<name>.gflow-backup`, a manual `gflow-cli` entry is converged in place instead of duplicated, and a corrupt config fails loud (exit 11) without ever being touched. Also fixed the bogus `%APPDATA%\Castano\Claude` path in docs/MCP.md.
+
 ### Fixed
 
 - **Removed the false "requires a Google AI Ultra or Pro subscription" claim across all docs.** Any Google account with Flow access can use gflow-cli — a paid plan only affects credit allowances and tier-gated features (e.g. 4K upscale stays Ultra-only). Swept README, AGENTS.md, DISCLAIMER.md, USER_GUIDE, CONFIGURATION, AUTHENTICATION, DEBUGGING, the medium tutorial, and the gflow-cli skill; factual tier-gating notes are unchanged.
