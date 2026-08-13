@@ -447,7 +447,17 @@ def mcp() -> None:
         "Can also be set via the GFLOW_CLI_PROFILE environment variable."
     ),
 )
-def mcp_run(profile: str | None) -> None:
+@click.option(
+    "--no-spend",
+    is_flag=True,
+    envvar="GFLOW_MCP_NO_SPEND",
+    help=(
+        "Do not register the credit-spending generate tools (image AND video "
+        "— image generation is only empirically free). Connected agents "
+        "cannot see them in tools/list. Also settable via GFLOW_MCP_NO_SPEND=1."
+    ),
+)
+def mcp_run(profile: str | None, no_spend: bool) -> None:
     """Start the MCP server over stdio transport.
 
     Use this with Claude Desktop, Cursor, or other MCP-aware clients.
@@ -476,6 +486,12 @@ def mcp_run(profile: str | None) -> None:
     if profile:
         os.environ["GFLOW_CLI_PROFILE"] = profile
         sys.stderr.write(f"[gflow] MCP server using profile: {profile}\n")
+
+    # #496: one mechanism — the flag sets the env var the registration
+    # policy reads, so GFLOW_MCP_NO_SPEND=1 alone works too (incl. `serve`).
+    if no_spend:
+        os.environ["GFLOW_MCP_NO_SPEND"] = "1"
+        sys.stderr.write("[gflow] no-spend mode: generate tools not registered\n")
 
     main_stdio()
 
