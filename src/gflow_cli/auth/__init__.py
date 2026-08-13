@@ -15,7 +15,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from gflow_cli.config import get_settings
+from gflow_cli.errors import SecurityError
 from gflow_cli.paths import get_cookies_path
+from gflow_cli.winsec import ensure_profile_hardened, restrict_dir_to_current_user
 
 from .factory import AuthStrategyFactory
 from .internal_chromium import InternalChromiumStrategy
@@ -29,8 +31,10 @@ __all__ = [
     "InternalChromiumStrategy",
     "RealChromeStrategy",
     "default_profile_root",
+    "ensure_profile_hardened",
     "login",
     "profile_dir",
+    "restrict_dir_to_current_user",
     "status",
 ]
 
@@ -55,6 +59,18 @@ async def login(name: str = "default", browser: str = "auto", headless: bool = F
     are reused; if Google's session expires, calling this again re-captures it.
     """
     pdir = profile_dir(name)
+    # Boundary check BEFORE any mkdir or ACL rewrite: a traversal profile
+    # name must never create — let alone re-ACL — a directory outside
+    # GFLOW_CLI_HOME. The strategies re-validate, but they run too late to
+    # guard the orchestrator-level mkdir/harden below.
+    home = get_settings().home.resolve()
+    if not pdir.resolve().is_relative_to(home):
+        msg = f"Profile directory {pdir} is outside of GFLOW_CLI_HOME ({home})."
+        raise SecurityError(msg)
+    # Harden BEFORE the browser runs so cookies never land in a dir with
+    # inherited world-readable ACLs (issue #472; no-op off Windows).
+    pdir.mkdir(parents=True, exist_ok=True)
+    ensure_profile_hardened(pdir)
     factory = AuthStrategyFactory()
     strategy = factory.create(browser)
     await strategy.login(pdir, headless=headless)
