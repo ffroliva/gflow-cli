@@ -36,10 +36,10 @@ The maintainer asks that you do **not** use `gflow-cli` to:
 
 - Generate content that violates the [Generative AI Prohibited Use Policy](https://policies.google.com/terms/generative-ai/use-policy) (CSAM, harassment, IP infringement, etc.).
 - Circumvent Google's billing, quota, or rate limits via account-rotation farms.
-- Automate Flow access for users who do not have their own Ultra/Pro entitlement.
+- Automate Flow access for users who do not have their own Flow access entitlement.
 - Re-sell access to Veo via this tool as a "wrapped" commercial service.
 
-These uses can get **your** Google account banned, can put the maintainer in a difficult position with Google, and are antithetical to why this project exists (which is to let legitimate Ultra/Pro subscribers use credits they already paid for, more efficiently).
+These uses can get **your** Google account banned, can put the maintainer in a difficult position with Google, and are antithetical to why this project exists (which is to let legitimate Flow user subscribers use credits they already paid for, more efficiently).
 
 ## Takedown policy
 

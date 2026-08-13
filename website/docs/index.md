@@ -3,7 +3,7 @@
 **gflow-cli** is an unofficial CLI and MCP server for [Google Flow](https://labs.google/fx/tools/flow) — it scripts **Veo** video and **Imagen** image generation from the terminal instead of clicking through the web UI. And because it ships an MCP server, you can point an AI assistant at it and let the agent drive the generations for you.
 
 !!! warning "Read this before you install"
-    gflow-cli is **unofficial, alpha, and reverse-engineered**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk. It requires a Google AI **Ultra or Pro** subscription with Flow access, and every generation bills your account. **Not affiliated with Google.**
+    gflow-cli is **unofficial, alpha, and reverse-engineered**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk. It works with any Google account that has Flow access with Flow access, and every generation bills your account. **Not affiliated with Google.**
 
 ## Why it exists
 
@@ -42,7 +42,7 @@ Flow's web UI is fine for one-off clips. It's slow for real work — batches, ch
 
 ## Requirements
 
-- A Google AI **Ultra or Pro** subscription with Flow access.
+- A Google account with Flow access (a paid AI Pro/Ultra plan only affects credit allowances).
 - `uv` (to install the tool) and a Chromium the browser transport can drive.
 - A display for the one-time browser login.
 

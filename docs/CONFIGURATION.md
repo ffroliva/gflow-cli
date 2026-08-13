@@ -205,6 +205,12 @@ gflow tools run creative-director "cat in space" --json   # check "was_expanded"
   no env var set. If a corporate proxy is configured, add your local gateway to `NO_PROXY`
   or its traffic will be routed through the proxy and fail non-obviously.
 
+### `GFLOW_CLI_DAEMON_TOKEN` (alias: `GFLOW_DAEMON_TOKEN`)
+
+**What:** API token required before `gflow serve` will bind to a non-localhost address (`--host` other than `127.0.0.1`). Without it, non-local binds abort with exit 11.
+**Default:** unset.
+**Security:** stored as a Pydantic `SecretStr` (since v0.55.0), so a `repr()`/`str()`/`model_dump_json()` of the settings object masks it by construction — on top of the existing logging-boundary redaction. Treat it like any credential: set it via `.env`/environment, never commit it.
+
 ### `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`
 
 **What:** Maximum time (seconds) that `gflow auth login` waits for the user to complete the Google sign-in flow in the browser.

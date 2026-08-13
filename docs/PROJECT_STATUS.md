@@ -4,7 +4,43 @@
 
 ## Current release
 
+**v0.55.0 — alpha.** **Tier-1 hardening batch (#471–#476) + docs truth sweep.** `gflow auth status` now **proves** the Flow session (cookie-jar probe of the live session endpoint, no browser, no credits) and exits 0/1 with remediation hints; `gflow mcp setup` is implemented (claude-desktop / cursor / vscode, non-destructive merge with a pristine one-time backup); incident bundles stage a pre-filled `report.md` bug-report template built from allowlisted manifest fields only; Windows profile dirs get a real restrict-to-current-user DACL at login plus a marker-gated upgrade sweep at browser launch; all 11 MCP tools route through one error funnel that masks raw exception text from clients; `llm_api_key`/`daemon_token` are `SecretStr` so a Settings dump cannot leak them. The false "requires a Google AI Ultra or Pro subscription" claim was removed everywhere — **any Google account with Flow access works**; only feature gates (4K upscale) are tier-bound. See [LIVE_VERIFICATION_v0.55.0.md](LIVE_VERIFICATION_v0.55.0.md).
+
+<details><summary>v0.54.0 — login close-guidance + supply-chain guards (#465, #470)</summary>
+
+**v0.54.0 — alpha.** Clearer close-the-browser guidance in `gflow auth login` (#470); overlay/watermark detection hardened to pure structural selectors; Dependabot now ignores playwright minors and all patchright bumps after PR #465 proved a `pyproject.toml` bound does not gate the `uv` ecosystem (it rewrites it); timing-jitter entropy moved to `secrets.SystemRandom` (SonarCloud S2245). First mainline release after the orphaned v0.53.x tags. See [LIVE_VERIFICATION_v0.54.0.md](LIVE_VERIFICATION_v0.54.0.md).
+
+</details>
+
+<details><summary>v0.53.0 / v0.53.1 — interaction humanization + release-modal detection (#315, #403)</summary>
+
+**v0.53.0 — alpha.** Driver interaction delay humanization (`_jitter_ms`, #315) and locale-invariant Flow release-overlay detection for the watermark-toggle modal (#403). **v0.53.1** is a version-bump re-release recording headed live-verification evidence. Both tags were published without reaching mainline at the time; their content and honest CHANGELOG sections were reconciled during the v0.54.0 cut.
+
+</details>
+
+<details><summary>v0.52.0 — intra-batch references + entity provenance parity (#317, #402, #451)</summary>
+
+**v0.52.0 — alpha.** Intra-batch reference support for `gflow image batch` (`ref="batch:0"` DAG ordering, #317); `--reference-entity`/`--reference-entity-name` parity on the video commands with provenance recording (#402); video duration selector cascade fix (#451). See [LIVE_VERIFICATION_v0.52.0.md](LIVE_VERIFICATION_v0.52.0.md).
+
+</details>
+
+<details><summary>v0.51.0 — dependency & audit hygiene release</summary>
+
+**v0.51.0 — alpha.** `pip-audit` now covers every optional extra; the full Dependabot backlog cleared in one lock update; the `playwright` bound raised `>=1.59.0,<1.60.0` → `>=1.61.0,<1.62.0` after live A/B evidence (1.62.0 stays excluded — it hangs i2v at frame upload). See [LIVE_VERIFICATION_v0.51.0.md](LIVE_VERIFICATION_v0.51.0.md).
+
+</details>
+
+<details><summary>v0.49.0 / v0.50.0 — omni-flash I2V + MCP Tasks extension (#125, #409)</summary>
+
+**v0.49.0 — alpha.** `omni-flash` start-frame I2V (#125), playwright upper-bound pin, submission-stage watchdog, count-tab fail-closed logic (#404). **v0.50.0 — alpha.** MCP 2026-07-28 Tasks extension (SEP-2663, #409) with non-blocking task handles, `-o`/`--output` path hardening (#414/#415), PR-triage alert resilience (#428). See [LIVE_VERIFICATION_v0.49.0.md](LIVE_VERIFICATION_v0.49.0.md) / [LIVE_VERIFICATION_v0.50.0.md](LIVE_VERIFICATION_v0.50.0.md).
+
+</details>
+
+<details><summary>v0.48.0 — predictable output paths (#411)</summary>
+
 **v0.48.0 — alpha.** **Predictable output paths (#411).** Adds an explicit `-o` / `--output` flag to `image t2i`/`i2i` and `video t2v`/`i2v`: the asset lands at the exact **local** path you name (parents auto-created, `-o` beats `--out`/`--out-dir`), with deterministic `_1`, `_2`, … suffixes for multi-count image runs. Cloud (`s3://`/`gs://`) targets, `r2v`/`chain`, video multi-count suffixes, and an MCP-tool `output` param are tracked follow-ups (#414, #415 — the MCP param was cut pre-release when the audit showed the worker queue never reads it). See [LIVE_VERIFICATION_v0.48.0.md](LIVE_VERIFICATION_v0.48.0.md).
+
+</details>
 
 <details><summary>v0.47.0 — MCP SDK 2.0.0 migration + entity provenance (#402, #407, #408)</summary>
 
@@ -12,7 +48,7 @@
 
 </details>
 
-**Develop (unreleased, post-v0.48.0):** *(empty — develop is the staging branch for the next release).*
+**Develop (unreleased, post-v0.55.0):** *(empty — develop is the staging branch for the next release).*
 
 <details><summary>v0.46.0 — prompt tools on any OpenAI-compatible endpoint (#387)</summary>
 
