@@ -1212,6 +1212,7 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
         },
     }
 
+
 # gflow_list_characters was removed in #499: it was a stub that always
 # answered {"status": "ok", "characters": []} — an agent reads that as "the
 # user has no characters" and acts on the lie. Re-add only when it can
