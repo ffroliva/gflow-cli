@@ -10,13 +10,13 @@ Supported tools that auto-discover this file: Cursor, Codex, Aider, Antigravity 
 - Python 3.11+ · `uv`-managed · `hatchling` builds · Playwright Chromium transport · `pyright` strict · `ruff` · `pytest`.
 - Single-package modular monolith. Top-level modules under `src/gflow_cli/`: `api/`, `auth/`, `data/`, `mcp/`, `services/`, `tools/`, `ui/`, `worker/`, `browser_manager.py`, `cli.py`, `_cli_helpers.py`, `cli_character.py`, `cli_data.py`, `cli_image.py`, `cli_instructions.py`, `cli_models.py`, `cli_movie.py`, `cli_run.py`, `cli_scene.py`, `cli_tools.py`, `cli_video.py`, `chain.py`, `chain_manifest.py`, `composition.py`, `config.py`, `errors.py`, `exceptions.py`, `image_batch.py`, `movie_manifest.py`, `observability.py`, `paths.py`, `profile_store.py`.
 - Command surface: `gflow auth`, `gflow image` (t2i/i2i/batch/upload/upscale), `gflow video` (t2v/i2v/r2v/chain — no `batch` subcommand; the nonfunctional stub was removed, loop `gflow video t2v`/`i2v` from the shell for multi-clip runs), `gflow character` (create/list/show/rm/voices — reusable project-scoped Flow Character entities), `gflow scene` (create/show — Add Clip / Scenes, with `create --output` for credit-free server-side extended video), `gflow instructions` (persistent Agent-Mode brief cards — add/list/enable/disable/rm/apply/toggle-mode, credits-free, `--project` required), `gflow movie` (run/template — multi-scene manifest pipeline), `gflow tools` (list/show/run — prompt-rewriting tools, also `--tool` on generation commands), `gflow data` (catalog queries), `gflow models`, `gflow run`, `gflow mcp` (run/setup — stdio MCP server), and `gflow serve` (Streamable HTTP at `/mcp`; `--transport sse` is deprecated).
-- Requires a Google AI Ultra or Pro subscription with Flow access. All generations bill against the user's own Google account.
+- Works with any Google account that has Flow access. All generations bill against the user's own Google account.
 
 ## Headed-browser dependency (architectural reality)
 
 gflow-cli currently drives Flow via a **real Chrome session managed by Playwright** — `ui_automation` transport. Google's auth + reCAPTCHA stack rejects Playwright's bundled Chromium and most headless approaches. This is the project's defining trade-off:
 
-- ✅ Works end-to-end against live Pro/Ultra accounts.
+- ✅ Works end-to-end against live Google accounts.
 - ❌ Requires a saved Chrome profile, a display server for one-time login, and ~150 MB for Chromium.
 - ❌ Cannot run on serverless / headless CI workers without prerecorded profile transplant.
 - ❌ Per-account horizontal concurrency is capped by what one warm Page pool can drive.

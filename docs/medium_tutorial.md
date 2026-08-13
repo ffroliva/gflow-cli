@@ -9,7 +9,7 @@ gflow-cli is an unofficial Python command-line interface. It uses a reverse-engi
 Before you begin, ensure you have:
 * Python 3.11 or newer.
 * The `uv` package manager.
-* A Google account with a Google AI Ultra or Pro subscription and access to Google Flow.
+* A Google account with access to Google Flow.
 * A desktop environment to complete the one-time authentication.
 
 ## Step 1: Install gflow-cli and Chromium

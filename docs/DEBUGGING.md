@@ -184,7 +184,7 @@ without manual copying. Caveats verified during the v0.7.0 work:
 ### 3. Firecrawl (`firecrawl-scrape` / `firecrawl-interact`)
 Best for unauthenticated docs (e.g., Material Symbols icon names, third-
 party API references). Not ideal for Flow itself — Flow requires a
-logged-in Pro/Ultra session that Firecrawl's hosted browser doesn't
+logged-in Flow session that Firecrawl's hosted browser doesn't
 share with your local profile.
 
 ### 4. Playwright trace viewer

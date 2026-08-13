@@ -13,7 +13,7 @@
 [![Tests: TDD](https://img.shields.io/badge/tests-TDD-brightgreen.svg)](CONTRIBUTING.md)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=ffroliva_gflow-cli&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ffroliva_gflow-cli)
 
-> ⚠️ **Read this before you install.** gflow-cli is **unofficial, alpha, and reverse-engineered — not affiliated with Google**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk: automation is subject to Google's ToS, and endpoints or UI can change without notice. It requires a Google AI **Ultra or Pro** subscription with Flow access, and every generation bills your account. Read the full [DISCLAIMER](DISCLAIMER.md).
+> ⚠️ **Read this before you install.** gflow-cli is **unofficial, alpha, and reverse-engineered — not affiliated with Google**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk: automation is subject to Google's ToS, and endpoints or UI can change without notice. It works with **any Google account** that has Flow access, and every generation bills against your account's Flow credit allowance. Read the full [DISCLAIMER](DISCLAIMER.md).
 >
 > 💳 **What failure costs you.** Credits are only spent on Veo *video* generation — images and composition ops are free, so most breakage costs nothing. When Flow's UI drifts mid-run, the CLI fails fast and loudly with distinct exit codes (e.g. selector drift = exit 23) instead of resubmitting, and batch items are recorded locally *before* submission so a broken run never silently burns credits on a stale state. See [KNOWN_ISSUES](KNOWN_ISSUES.md) for the current risk list.
 >
@@ -21,7 +21,7 @@
 
 ## Why gflow-cli?
 
-You pay for Google AI Ultra or Pro, you have Veo credits, and you run real batch work. gflow-cli gives you:
+You have a Google account with Flow access, you have Veo credits, and you run real batch work. gflow-cli gives you:
 
 - **Batch generation.** Loop prompts straight from the shell: `for p in $(cat prompts.txt); do gflow image t2i "$p"; done`. Image batching plus `gflow video t2v` / `i2v` / `r2v` all ship today.
 - **Consistent subjects.** `gflow character create` mints a Flow Character (face and body reference) so the same person appears from one generation to the next.
@@ -29,7 +29,7 @@ You pay for Google AI Ultra or Pro, you have Veo credits, and you run real batch
 - **Pipelines.** Wire Veo into your content automation, AI-video stack, or batch experiments.
 - **Terminal-native.** After one `gflow auth login`, you stay in the shell. No clicking through dialogs.
 
-Same Veo and Imagen models, same quality, same Ultra/Pro billing, now programmatic.
+Same Veo and Imagen models, same quality, same billing against your own Google account, now programmatic.
 
 ## 60-second quick start
 
@@ -73,7 +73,7 @@ One command in, real Flow output back. Left: `gflow image t2i` generating a phot
 
 ![gflow image t2i runs a single 9:16 prompt, streams structlog output, and writes a PNG to disk](https://raw.githubusercontent.com/ffroliva/gflow-cli/main/docs/assets/example-run.gif)
 
-A single `gflow image t2i "..." --aspect 9:16 --model nano2` call against a logged-in Pro/Ultra profile. The terminal streams the run's `structlog` JSON, then lists the written PNG. Chromium drives the Flow editor silently in the background.
+A single `gflow image t2i "..." --aspect 9:16 --model nano2` call against a logged-in Flow profile. The terminal streams the run's `structlog` JSON, then lists the written PNG. Chromium drives the Flow editor silently in the background.
 
 Reproduce the recording with [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (Windows, OBS, ffmpeg, gifski). More formats, including the side-by-side split-screen: **[docs/DEMOS.md](docs/DEMOS.md)**.
 
@@ -131,7 +131,7 @@ Full milestone history lives in [CHANGELOG.md](CHANGELOG.md). Where the project 
 
 ## License & legal
 
-[MIT License](LICENSE) © 2026 Flavio Oliva (`ffroliva`). The MIT license covers `gflow-cli`'s code only. It grants no rights to Flow, Veo model output, or any Google service. Google's own terms (Labs Additional Terms, Ultra/Pro subscription terms) govern your generations. See the [DISCLAIMER](DISCLAIMER.md).
+[MIT License](LICENSE) © 2026 Flavio Oliva (`ffroliva`). The MIT license covers `gflow-cli`'s code only. It grants no rights to Flow, Veo model output, or any Google service. Google's own terms (Labs Additional Terms and any plan-specific subscription terms) govern your generations. See the [DISCLAIMER](DISCLAIMER.md).
 
 ## Acknowledgements
 
