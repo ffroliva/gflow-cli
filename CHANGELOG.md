@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mode-switch drift errors now name the right evidence (#493).** An external
+  report showed a third, unrecognized Flow editor layout (composer frame slots +
+  Agent toggle, no classic `crop_*` settings button) falling through to
+  `UiSelectorDriftError` (exit 23). The fall-through detail now states that no
+  known Flow cohort matched — i.e. the editor may be a new layout this version
+  does not recognize — and the class remediation no longer asks for a "debug
+  screenshot from this message" that the mode-switch probe never writes: it
+  points at the artifacts that actually exist (the PII-safe
+  `diag_mode_switch_miss.json` DOM signature and/or the referenced screenshot,
+  plus the incident bundle's `report.md`). Recognizing the new variant itself is
+  tracked in #493 and needs an affected account's diagnostics JSON.
+
 ### Added
 
 - **Opt-in bounded wait for profile-lease contention (#478).** `GFLOW_CLI_LEASE_WAIT_SECONDS=N` makes a command that hits same-profile contention poll the kernel lock (0.5 s cadence, sync and async call sites alike) and take over as soon as the current holder — a CLI command or a `gflow serve` daemon queue task, both of which release at their natural end — finishes; on timeout it raises the same `ProfileLockedError` (exit 11). Default `0` keeps the historical fail-fast. Triage note: the issue's fuller cooperative-handoff protocol (release-request channel, minimum-hold window) was validated against the actual architecture and dropped — the daemon acquires the lease per task, so every holder's safe release point already coincides with lease release; holders are never asked to release early, which satisfies the no-release-mid-call requirement by construction. Same-process contention always fails fast (waiting on yourself deadlocks).

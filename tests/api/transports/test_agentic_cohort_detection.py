@@ -176,6 +176,26 @@ async def test_mode_switch_error_is_drift_error_when_no_cohort(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_mode_switch_drift_detail_flags_unrecognized_variant(tmp_path: Path) -> None:
+    """#493: reaching the drift fall-through PROVES no known cohort indicator
+    matched — the editor may be a brand-new Flow layout (e.g. the composer
+    frame-slots + Agent-toggle variant). The detail must carry that hypothesis
+    so the report that reaches the tracker points at the right cause."""
+    from gflow_cli.errors import UiSelectorDriftError
+
+    page = _page_with_present(set())
+    page.evaluate = AsyncMock(return_value={"ligatures": []})
+    page.screenshot = AsyncMock()
+
+    err = await VideoGenerationMixin._mode_switch_error(page, tmp_path, media="video")
+
+    assert isinstance(err, UiSelectorDriftError)
+    msg = str(err)
+    assert "mode_switch_trigger" in msg
+    assert "does not recognize" in msg
+
+
+@pytest.mark.asyncio
 async def test_mode_switch_error_is_flow_app_error_on_app_crash(tmp_path: Path) -> None:
     from gflow_cli.errors import FlowAppError
 

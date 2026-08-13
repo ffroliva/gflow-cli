@@ -691,3 +691,18 @@ def test_specific_remediation_hints() -> None:
         == "Verify input video file is readable and non-corrupt. Ensure gflow-cli[chain] "
         "dependencies (PyAV) are installed."
     )
+
+
+def test_ui_selector_drift_remediation_names_real_artifacts() -> None:
+    """#493: the class remediation asked for a 'debug screenshot from this
+    message' — but the mode-switch probe writes a diagnostics JSON and no
+    screenshot, so the ask pointed at an artifact that does not exist. The
+    remediation must cover the artifacts drift sites actually reference."""
+    from gflow_cli.errors import UiSelectorDriftError
+
+    hint = UiSelectorDriftError().remediation_hint
+    assert "diagnostics" in hint.lower()
+    assert "report.md" in hint
+    assert "referenced in this message" in hint
+    # The privacy caveat must survive the rewording.
+    assert "review" in hint.lower()
