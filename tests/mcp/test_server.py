@@ -32,7 +32,6 @@ class TestMcpToolListing:
             "gflow_generate_image",
             "gflow_generate_video",
             "gflow_list_projects",
-            "gflow_list_characters",
             "gflow_list_tools",
         }
         assert expected.issubset(tool_names), (
@@ -349,14 +348,13 @@ class TestToolExecution:
         assert result["status"] == "ok"
         assert result["projects"] == []
 
-    @pytest.mark.asyncio
-    async def test_list_characters_returns_empty_list(self) -> None:
-        """gflow_list_characters should return an empty list when no data."""
-        from gflow_cli.mcp.tools import gflow_list_characters
+    def test_list_characters_stub_is_gone(self) -> None:
+        """#499: the old stub answered ok+[] — an agent reads that as "you
+        have no characters" and acts on the lie. The tool stays absent until
+        it can return real data."""
+        from gflow_cli.mcp import tools
 
-        result = await gflow_list_characters()
-        assert result["status"] == "ok"
-        assert result["characters"] == []
+        assert not hasattr(tools, "gflow_list_characters")
 
 
 # ---------------------------------------------------------------------------
@@ -393,14 +391,15 @@ class TestMcpResources:
         assert len(resources) >= 2, f"Expected at least 2 resources, got {len(resources)}"
 
     @pytest.mark.asyncio
-    async def test_known_issues_resource_returns_content(self) -> None:
-        """gflow://docs/known-issues must return KNOWN_ISSUES.md content."""
+    async def test_known_issues_resource_returns_bounded_index(self) -> None:
+        """gflow://docs/known-issues returns the #501 bounded index."""
         from gflow_cli.mcp.resources import known_issues
 
         content = await known_issues()
         assert isinstance(content, str)
         assert len(content) > 0
-        assert "##" in content
+        assert len(content.encode()) < 8 * 1024
+        assert "gflow://docs/known-issues/" in content
 
 
 # ---------------------------------------------------------------------------

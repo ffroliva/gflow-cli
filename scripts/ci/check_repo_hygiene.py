@@ -211,19 +211,20 @@ def _check_branch_name(branch: str | None) -> list[str]:
 def _check_version_agreement() -> list[str]:
     """pyproject == __init__ == plugin.json — one version, three declarations.
 
-    tomllib is 3.11+; the pre-commit hook may run under an older interpreter,
-    so the import failure degrades to a graceful skip instead of a traceback
-    (CI runs the gate on 3.11+ where the check is authoritative).
+    pyproject is read with the same anchored-regex style the release gate
+    (check_release_artifacts.py) uses — deliberately NOT tomllib, which is
+    3.11+ and would silently disable this gate under an older pre-commit
+    interpreter.
     """
+    import json
+
     versions: dict[str, str] = {}
     try:
-        import json
-        import tomllib
-    except ImportError:
-        return []
-    try:
-        with (ROOT / "pyproject.toml").open("rb") as fh:
-            versions["pyproject.toml"] = str(tomllib.load(fh)["project"]["version"])
+        pyproject_text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        pyproject_match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject_text, re.MULTILINE)
+        if pyproject_match is None:
+            return ["pyproject.toml: version assignment not found"]
+        versions["pyproject.toml"] = pyproject_match.group(1)
         init_text = (ROOT / "src" / "gflow_cli" / "__init__.py").read_text(encoding="utf-8")
         match = re.search(r'^__version__\s*=\s*"([^"]+)"', init_text, re.MULTILINE)
         if match is None:

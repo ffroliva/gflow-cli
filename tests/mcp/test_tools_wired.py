@@ -536,7 +536,9 @@ class TestListProjectsWired:
 
         assert result["status"] == "ok"
         assert result["projects"] == []
-        assert result["total"] == 0
+        assert result["count"] == 0
+        assert result["has_more"] is False
+        assert result["next_offset"] is None
 
     @pytest.mark.asyncio
     async def test_list_projects_returns_data(self, temp_db: DataStore) -> None:
@@ -560,7 +562,8 @@ class TestListProjectsWired:
             result = await gflow_list_projects(profile="default")
 
         assert result["status"] == "ok"
-        assert result["total"] == 1
+        assert result["count"] == 1
+        assert result["has_more"] is False
         assert result["projects"][0]["project_id"] == "flow-proj-1"
 
 

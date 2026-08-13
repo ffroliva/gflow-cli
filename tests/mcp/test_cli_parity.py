@@ -14,12 +14,12 @@ has no instructions support — agentic-video is a deliberate typed divergence
 (``drivers/agentic.py`` raises ``FlowAgentUiError``). An ``instructions`` param
 on the video tool would be silently dropped, so it is intentionally absent.
 
-Note on ``--output``/``-o`` (#411): intentionally NOT mirrored on the generate
-tools. The MCP generation path runs through the worker queue, whose codec
-(``worker/codec.py``) does not decode an ``output_file`` key and whose daemon
-hardcodes the date-partitioned destination — an ``output`` param there would be
-a silent no-op (a v0.48.0 pre-release audit caught exactly that and removed
-it). Wire the key through codec + daemon before re-adding the param.
+Note on ``--output``/``-o`` (#411): mirrored since the wiring landed — both
+generate tools accept ``output`` (``tools.py``) and put ``output_file`` in the
+task payload, which the daemon decodes and relocates the artifact to
+(``worker/daemon.py``). A v0.48.0 pre-release audit removed an earlier dead
+param that the queue never read; the docstring here claimed that state long
+after the real wiring shipped (#495).
 
 Note on ``image t2i --jitter`` (#241): intentionally NOT mirrored on
 ``gflow_generate_image``. The jitter paces submissions *between prompts* in a
@@ -46,9 +46,9 @@ CLI_TO_MCP: dict[str, str] = {
     "video r2v": "gflow_generate_video",  # mode="r2v"
     "tools list": "gflow_list_tools",
     "tools show": "gflow_list_tools",  # list output carries the show detail
+    "auth status": "gflow_auth_status",
     "data list projects": "gflow_list_projects",
     "project list": "gflow_list_projects",
-    "character list": "gflow_list_characters",
     "instructions list": "gflow_instructions_list",
     "instructions add": "gflow_instructions_add",
     "instructions enable": "gflow_instructions_set_enabled",  # enabled=True
@@ -66,7 +66,6 @@ _MCP_EXEMPT: dict[str, str] = {
     "auth list": "interactive session management",
     "auth login": "interactive session management",
     "auth logout": "interactive session management",
-    "auth status": "interactive session management",
     "auth use": "interactive session management",
     "mcp run": "the MCP server bootstrap itself",
     "mcp setup": "client-config generator for the MCP server itself",
@@ -74,6 +73,7 @@ _MCP_EXEMPT: dict[str, str] = {
     "models": "informational; models are enumerated in the generate tools' descriptions",
     "run": "chain-manifest runner — not yet ported",
     "character create": "character mutations — not yet ported",
+    "character list": "not yet ported — the old MCP stub returned a misleading empty list (#499)",
     "character rm": "character mutations — not yet ported",
     "character show": "character mutations — not yet ported",
     "character voices": "character mutations — not yet ported",
