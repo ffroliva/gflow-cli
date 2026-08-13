@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gflow_cli import paths
@@ -410,7 +410,7 @@ class Settings(BaseSettings):
             "OpenAI-compatible Gemini endpoint. Override via GFLOW_CLI_LLM_BASE_URL."
         ),
     )
-    llm_api_key: str | None = Field(
+    llm_api_key: SecretStr | None = Field(
         default=None,
         description=(
             "Credential presented to GFLOW_CLI_LLM_BASE_URL as an Authorization: Bearer "
@@ -603,7 +603,7 @@ class Settings(BaseSettings):
     log_format: LogFormat = LogFormat.AUTO
 
     # --- daemon -----------------------------------------------------------
-    daemon_token: str | None = Field(
+    daemon_token: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("GFLOW_CLI_DAEMON_TOKEN", "GFLOW_DAEMON_TOKEN"),
         description="API token to authenticate calls to the daemon server.",

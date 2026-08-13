@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Secret settings can no longer leak through a `Settings` dump (#474).** `llm_api_key` (`GFLOW_CLI_LLM_API_KEY`) and `daemon_token` (`GFLOW_CLI_DAEMON_TOKEN`/`GFLOW_DAEMON_TOKEN`) are now stored as Pydantic `SecretStr`, so `repr()`, `str()`, and `model_dump_json()` of the settings object mask them by construction — defense-in-depth on top of the existing logging-boundary redaction. Values are unwrapped only at the single point of use (the prompt-tools LLM client).
+
 ## [0.54.0] — 2026-08-12
 
 ### Changed

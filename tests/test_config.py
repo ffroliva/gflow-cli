@@ -420,7 +420,7 @@ class TestDaemonSettings:
         import inspect
 
         source = inspect.getsource(Settings)
-        assert source.count("daemon_token: str | None") == 1
+        assert source.count("daemon_token: SecretStr | None") == 1
 
     def test_daemon_token_keeps_both_env_aliases(self) -> None:
         """Pin the SURVIVING definition's contract: both env var spellings
@@ -437,11 +437,13 @@ class TestDaemonSettings:
 
     def test_daemon_token_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GFLOW_DAEMON_TOKEN", "secret-token")
-        assert Settings().daemon_token == "secret-token"
+        token = Settings().daemon_token
+        assert token is not None and token.get_secret_value() == "secret-token"
 
         monkeypatch.setenv("GFLOW_CLI_DAEMON_TOKEN", "other-token")
         reset_settings()
-        assert Settings().daemon_token == "other-token"
+        token = Settings().daemon_token
+        assert token is not None and token.get_secret_value() == "other-token"
 
     def test_daemon_port_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GFLOW_DAEMON_PORT", "9000")
@@ -457,6 +459,28 @@ class TestDaemonSettings:
         monkeypatch.setenv("GFLOW_DAEMON_PORT", "70000")
         with pytest.raises(ValidationError):
             Settings()
+
+
+class TestSecretFieldMasking:
+    """Secret settings must be unreadable from any Settings dump by
+    construction, not just at logging boundaries (issue #474)."""
+
+    def test_dumps_never_contain_secret_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_CLI_LLM_API_KEY", "sk-CANARY-LLM-KEY")
+        monkeypatch.setenv("GFLOW_CLI_DAEMON_TOKEN", "CANARY-DAEMON-TOKEN")
+        s = Settings()
+        for dump in (repr(s), str(s), s.model_dump_json()):
+            assert "sk-CANARY-LLM-KEY" not in dump
+            assert "CANARY-DAEMON-TOKEN" not in dump
+
+    def test_secret_values_still_accessible(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GFLOW_CLI_LLM_API_KEY", "sk-abc")
+        monkeypatch.setenv("GFLOW_CLI_DAEMON_TOKEN", "tok")
+        s = Settings()
+        assert s.llm_api_key is not None
+        assert s.llm_api_key.get_secret_value() == "sk-abc"
+        assert s.daemon_token is not None
+        assert s.daemon_token.get_secret_value() == "tok"
 
 
 class TestIncidentCapture:
@@ -500,7 +524,8 @@ class TestLlmSettings:
         monkeypatch.setenv("GFLOW_CLI_LLM_MODEL", "openai/gpt-4o-mini")
         s = Settings()
         assert s.llm_base_url == "https://gw.example/v1"
-        assert s.llm_api_key == "sk-abc"
+        assert s.llm_api_key is not None
+        assert s.llm_api_key.get_secret_value() == "sk-abc"
         assert s.llm_model == "openai/gpt-4o-mini"
 
     def test_empty_base_url_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
