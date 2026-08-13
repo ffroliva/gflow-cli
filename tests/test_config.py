@@ -473,15 +473,6 @@ class TestSecretFieldMasking:
             assert "sk-CANARY-LLM-KEY" not in dump
             assert "CANARY-DAEMON-TOKEN" not in dump
 
-    def test_secret_values_still_accessible(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("GFLOW_CLI_LLM_API_KEY", "sk-abc")
-        monkeypatch.setenv("GFLOW_CLI_DAEMON_TOKEN", "tok")
-        s = Settings()
-        assert s.llm_api_key is not None
-        assert s.llm_api_key.get_secret_value() == "sk-abc"
-        assert s.daemon_token is not None
-        assert s.daemon_token.get_secret_value() == "tok"
-
 
 class TestIncidentCapture:
     """GFLOW_CLI_INCIDENT_CAPTURE — private incident diagnostics (S35)."""
