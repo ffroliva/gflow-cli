@@ -1,0 +1,52 @@
+name: OpenSSF Scorecard
+
+# Self-run of the OpenSSF Scorecard supply-chain checks (T2 batch decision,
+# 2026-08-13). Deliberately enabled AFTER the permissions + SHA-pinning
+# hardening landed, so the first published public score reflects the hardened
+# state — Token-Permissions and Pinned-Dependencies are heavily weighted.
+# publish_results feeds the public API/badge:
+#   https://api.scorecard.dev/projects/github.com/ffroliva/gflow-cli/badge
+
+on:
+  # Re-evaluates the Branch-Protection check when protection rules change.
+  branch_protection_rule:
+  schedule:
+    - cron: "30 3 * * 1" # weekly, Monday 03:30 UTC
+  push:
+    branches: [develop] # default branch — required for publish_results
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload the SARIF to the Security tab
+      id-token: write # OIDC identity for publish_results signing
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publishing makes the score available via the public API and badge.
+          # The repo is public; every input to the score already is too.
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        with:
+          sarif_file: results.sarif
