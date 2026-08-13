@@ -259,25 +259,38 @@ class ProfileLease:
     # -- sync core ---------------------------------------------------------
 
     def acquire(self) -> ProfileLease:
+        return self._acquire_with_wait(self._wait_seconds)
+
+    def _acquire_with_wait(self, wait_seconds: float) -> ProfileLease:
         self._register_same_process_fail_fast()
-        deadline = self._wait_deadline()
-        while True:
-            # delay=None marks the terminal attempt (fail-fast mode, or the
-            # #478 deadline has passed): only that attempt reads/emits owner
-            # evidence — doing it on every poll tick spammed the log 2x/s.
-            delay = _retry_delay(deadline)
-            try:
-                self._acquire_kernel_lock(collect_evidence=delay is None)
-            except ProfileLockedError:
-                if delay is None:
-                    self._unregister()
-                    raise
+        deadline = time.monotonic() + wait_seconds if wait_seconds > 0 else None
+        # BaseException, not Exception: asyncio.CancelledError (via the async
+        # twin) and KeyboardInterrupt (mid time.sleep) otherwise skip the
+        # unregister and poison this profile for the process lifetime.
+        try:
+            while True:
+                delay = _retry_delay(deadline)
+                if self._attempt(delay):
+                    return self
+                assert delay is not None  # _attempt(None) either returns True or raises
                 time.sleep(delay)
-                continue
-            except Exception:
-                self._unregister()
+        except BaseException:
+            self._unregister()
+            raise
+
+    def _attempt(self, delay: float | None) -> bool:
+        """One kernel-lock attempt. True = acquired; False = contended but
+        retryable (``delay`` set); raises on terminal contention. delay=None
+        marks the terminal attempt (fail-fast mode, or the #478 deadline has
+        passed): only that attempt reads/emits owner evidence — doing it on
+        every poll tick spammed the log 2x/s."""
+        try:
+            self._acquire_kernel_lock(collect_evidence=delay is None)
+        except ProfileLockedError:
+            if delay is None:
                 raise
-            return self
+            return False
+        return True
 
     def _register_same_process_fail_fast(self) -> None:
         """Same-process contention NEVER waits (#478): the holder is this very
@@ -303,12 +316,12 @@ class ProfileLease:
             if _registry.get(self._canonical) is self:
                 del _registry[self._canonical]
 
-    def _wait_deadline(self) -> float | None:
-        return time.monotonic() + self._wait_seconds if self._wait_seconds > 0 else None
-
     def try_acquire(self) -> bool:
+        """Non-blocking probe by contract: always bypasses the #478 wait —
+        probe callers (e2e polling loops, crash recovery) need an immediate
+        answer regardless of GFLOW_CLI_LEASE_WAIT_SECONDS."""
         try:
-            self.acquire()
+            self._acquire_with_wait(0.0)
         except ProfileLockedError:
             return False
         return True
@@ -337,26 +350,28 @@ class ProfileLease:
     # -- async twin (see module docstring) -----------------------------------
 
     async def aacquire(self) -> ProfileLease:
-        """Async twin of :meth:`acquire` for D3's async call sites. Identical
-        semantics; the only awaits are the #478 wait polls (``asyncio.sleep``
-        so the event loop keeps running — a blocking sleep here would starve
-        the very holder the waiter is waiting on when both share a loop)."""
+        """Async twin of :meth:`acquire` for D3's async call sites. In the
+        zero-wait default it delegates to :meth:`acquire` outright — the exact
+        historic pass-through, which is also the seam existing tests pin. With
+        the #478 wait enabled it runs its own loop whose only awaits are
+        ``asyncio.sleep`` polls, so the event loop keeps running — a blocking
+        sleep here would starve the very holder the waiter is waiting on when
+        both share a loop (e.g. a daemon task waiting out a CLI command)."""
+        if self._wait_seconds <= 0:
+            return self.acquire()
         self._register_same_process_fail_fast()
-        deadline = self._wait_deadline()
-        while True:
-            delay = _retry_delay(deadline)
-            try:
-                self._acquire_kernel_lock(collect_evidence=delay is None)
-            except ProfileLockedError:
-                if delay is None:
-                    self._unregister()
-                    raise
+        deadline = time.monotonic() + self._wait_seconds
+        # BaseException: see _acquire_with_wait — CancelledError must unregister.
+        try:
+            while True:
+                delay = _retry_delay(deadline)
+                if self._attempt(delay):
+                    return self
+                assert delay is not None  # _attempt(None) either returns True or raises
                 await asyncio.sleep(delay)
-                continue
-            except Exception:
-                self._unregister()
-                raise
-            return self
+        except BaseException:
+            self._unregister()
+            raise
 
     async def __aenter__(self) -> ProfileLease:
         return await self.aacquire()

@@ -449,3 +449,49 @@ class TestLeaseBoundedWait:
         finally:
             handle.cancel()
             holder.release()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_wait_unregisters(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CancelledError mid-wait (BaseException on 3.11+) must remove the
+        waiter's registry entry — leaking it poisons the profile for the whole
+        process (code-review finding on the first #478 cut)."""
+        import asyncio
+
+        from gflow_cli.config import reset_settings
+
+        monkeypatch.setenv("GFLOW_CLI_LEASE_WAIT_SECONDS", "30")
+        reset_settings()
+        holder = self._simulate_other_process_holder(tmp_path / "profile")
+        try:
+            task = asyncio.ensure_future(ProfileLease(tmp_path / "profile").aacquire())
+            await asyncio.sleep(0.2)  # let the waiter register + start polling
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            canonical = profile_lease._canonicalize(tmp_path / "profile")
+            assert canonical not in profile_lease._registry
+        finally:
+            holder.release()
+        # The profile is usable again in this process after the cancellation.
+        ProfileLease(tmp_path / "profile").acquire().release()
+
+    def test_try_acquire_is_nonblocking_under_wait(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """try_acquire is a probe by contract: it must answer immediately even
+        with GFLOW_CLI_LEASE_WAIT_SECONDS set (e2e polling loops rely on it)."""
+        import time as _time
+
+        from gflow_cli.config import reset_settings
+
+        monkeypatch.setenv("GFLOW_CLI_LEASE_WAIT_SECONDS", "30")
+        reset_settings()
+        holder = self._simulate_other_process_holder(tmp_path / "profile")
+        try:
+            start = _time.monotonic()
+            assert ProfileLease(tmp_path / "profile").try_acquire() is False
+            assert _time.monotonic() - start < 0.4
+        finally:
+            holder.release()

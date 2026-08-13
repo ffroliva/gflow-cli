@@ -151,16 +151,16 @@ class EvaluateFetchTransport:
         # guard would skip the close).
         self._owns_playwright = True
         try:
-            # #477: refuse a bundled-Chromium open of a profile last written by
-            # a newer Chromium major — downgrade cleanup can shred the session
-            # store.
+            # Own the profile BEFORE Chrome launches (D3). Contention raises
+            # ProfileLockedError here; the except below routes to teardown, which
+            # releases the lease. aacquire so a #478 opt-in wait polls with
+            # asyncio.sleep instead of blocking the event loop.
+            self._lease = await ProfileLease(profile_dir).aacquire()
+            # #477 guard AFTER the lease: a pre-wait check would validate a
+            # 'Last Version' the holder rewrites as it releases (TOCTOU).
             from gflow_cli.browser_manager import ensure_profile_engine_compatible
 
             ensure_profile_engine_compatible(profile_dir, None)
-            # Own the profile BEFORE Chrome launches (D3). Contention raises
-            # ProfileLockedError here; the except below routes to teardown, which
-            # releases the lease.
-            self._lease = ProfileLease(profile_dir).acquire()
             pw = await pw_cm.__aenter__()
             ctx = await pw.chromium.launch_persistent_context(
                 str(profile_dir),
