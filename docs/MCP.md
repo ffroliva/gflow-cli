@@ -159,6 +159,8 @@ This merges the server entry into your Claude Desktop configuration file — exi
 
 Other targets: `gflow mcp setup --target cursor` (`~/.cursor/mcp.json`) and `--target vscode` (the user-profile `mcp.json`, written with VS Code's `servers` + `"type": "stdio"` schema).
 
+> **Existing entries are preserved:** if your config already has a `gflow` or `gflow-cli` server entry (including the local-clone `uv --directory` variant below), `gflow mcp setup` leaves it completely untouched and reports "Already configured" — it only ever adds a missing entry.
+
 #### Manual Configuration
 Depending on how you installed `gflow-cli`, add one of the following configuration blocks under the `mcpServers` key of your `claude_desktop_config.json`:
 

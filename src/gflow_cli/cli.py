@@ -490,7 +490,7 @@ def mcp_setup(target: str) -> None:
     from gflow_cli.mcp import setup as setup_mod
 
     try:
-        path = setup_mod.apply(target)
+        path, changed = setup_mod.apply(target)
     except ConfigurationError as exc:
         console.print(f"[red]{ConfigurationError.title}:[/red] {exc.detail or exc}")
         console.print(
@@ -498,9 +498,19 @@ def mcp_setup(target: str) -> None:
             "gflow mcp setup — it never overwrites a file it cannot parse.[/dim]"
         )
         sys.exit(11)
-    console.print(f"[green]gflow MCP server configured for {target}.[/green]")
-    console.print(f"  config: {path}")
-    console.print(f"[dim]Restart {target} to load the server.[/dim]")
+    except OSError as exc:
+        # Read-only/locked config file, permission problems, disk errors.
+        console.print(f"[red]Could not write the client config:[/red] {type(exc).__name__}: {exc}")
+        sys.exit(11)
+    if changed:
+        console.print(f"[green]gflow MCP server configured for {target}.[/green]")
+        console.print(f"  config: {path}")
+        console.print(f"[dim]Restart {target} to load the server.[/dim]")
+    else:
+        console.print(
+            f"[green]Already configured[/green] — an existing gflow entry in {path} "
+            "was left untouched."
+        )
 
 
 # --- serve ------------------------------------------------------------------

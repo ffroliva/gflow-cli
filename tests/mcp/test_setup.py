@@ -48,9 +48,28 @@ class TestConfigPathFor:
 
     def test_vscode_linux(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
         expected = tmp_path / ".config" / "Code" / "User" / "mcp.json"
         assert setup_mod.config_path_for("vscode") == expected
+
+    def test_linux_honours_xdg_config_home(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """VS Code (Electron) reads $XDG_CONFIG_HOME — writing ~/.config while
+        it is set would be a silent no-op (council review)."""
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        expected = tmp_path / "xdg" / "Code" / "User" / "mcp.json"
+        assert setup_mod.config_path_for("vscode") == expected
+
+    def test_windows_without_appdata_raises_configuration_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.delenv("APPDATA", raising=False)
+        with pytest.raises(ConfigurationError):
+            setup_mod.config_path_for("claude-desktop")
 
 
 class TestMergeServerEntry:
@@ -65,13 +84,17 @@ class TestMergeServerEntry:
         assert cfg["mcpServers"]["other"] == {"command": "x"}
         assert cfg["mcpServers"]["gflow"]["command"] == "gflow"
 
-    def test_updates_manual_gflow_cli_key_in_place_without_duplicate(self) -> None:
-        """docs/MCP.md's manual blocks use the key 'gflow-cli' — setup must
-        converge that entry, not add a second server."""
-        existing = json.dumps({"mcpServers": {"gflow-cli": {"command": "stale"}}})
-        cfg = json.loads(setup_mod.merge_server_entry(existing, target="claude-desktop"))
-        assert cfg["mcpServers"]["gflow-cli"] == {"command": "gflow", "args": ["mcp", "run"]}
-        assert "gflow" not in cfg["mcpServers"]
+    def test_existing_user_entry_is_never_rewritten(self) -> None:
+        """docs/MCP.md's local-clone block uses key 'gflow-cli' with a custom
+        `uv --directory` command (+ possibly env) — setup must not clobber it
+        or add a duplicate (council review)."""
+        custom = {"command": "uv", "args": ["--directory", "/x", "run", "gflow", "mcp", "run"]}
+        existing = json.dumps({"mcpServers": {"gflow-cli": custom}})
+        assert setup_mod.merge_server_entry(existing, target="claude-desktop") is None
+
+    def test_existing_gflow_key_also_short_circuits(self) -> None:
+        existing = json.dumps({"mcpServers": {"gflow": {"command": "custom", "env": {"A": "1"}}}})
+        assert setup_mod.merge_server_entry(existing, target="claude-desktop") is None
 
     def test_vscode_uses_servers_key_and_stdio_type(self) -> None:
         cfg = json.loads(setup_mod.merge_server_entry(None, target="vscode"))
@@ -122,6 +145,51 @@ class TestApplyAndCli:
         assert result.exit_code == 0, result.output
         assert json.loads(target_file.read_text(encoding="utf-8"))["mcpServers"]["gflow"]
         assert not target_file.with_name(target_file.name + ".gflow-backup").exists()
+
+    def test_second_run_is_a_noop_and_backup_stays_pristine(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Re-running setup must not rewrite the config NOR overwrite the
+        one pristine backup of the user's original file (council review)."""
+        target_file = tmp_path / "claude_desktop_config.json"
+        original = json.dumps({"mcpServers": {"other": {"command": "x"}}})
+        target_file.write_text(original, encoding="utf-8")
+        monkeypatch.setattr(setup_mod, "config_path_for", lambda t: target_file)
+
+        first = CliRunner().invoke(main, ["mcp", "setup"])
+        assert first.exit_code == 0
+        merged_once = target_file.read_text(encoding="utf-8")
+
+        second = CliRunner().invoke(main, ["mcp", "setup"])
+        assert second.exit_code == 0
+        assert "Already configured" in second.output
+        assert target_file.read_text(encoding="utf-8") == merged_once
+        backup = target_file.with_name(target_file.name + ".gflow-backup")
+        assert backup.read_text(encoding="utf-8") == original  # pristine v1
+
+    def test_bom_config_is_accepted(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """PowerShell's UTF8 encoding writes a BOM — that is not corruption."""
+        target_file = tmp_path / "claude_desktop_config.json"
+        target_file.write_bytes(b'\xef\xbb\xbf{"mcpServers": {}}')
+        monkeypatch.setattr(setup_mod, "config_path_for", lambda t: target_file)
+
+        result = CliRunner().invoke(main, ["mcp", "setup"])
+
+        assert result.exit_code == 0, result.output
+        cfg = json.loads(target_file.read_text(encoding="utf-8"))
+        assert cfg["mcpServers"]["gflow"]["command"] == "gflow"
+
+    def test_non_utf8_config_exits_11_without_traceback(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        target_file = tmp_path / "claude_desktop_config.json"
+        target_file.write_bytes(b'{"caf\xe9": 1}')  # latin-1, invalid UTF-8
+        monkeypatch.setattr(setup_mod, "config_path_for", lambda t: target_file)
+
+        result = CliRunner().invoke(main, ["mcp", "setup"])
+
+        assert result.exit_code == 11
+        assert "Traceback" not in result.output
 
     def test_corrupt_config_exits_11_and_leaves_file_untouched(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
