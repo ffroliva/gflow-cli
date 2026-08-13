@@ -469,6 +469,7 @@ class FlowApiClient:
         """
         from gflow_cli.browser_manager import (
             chrome_strategy_requested,
+            ensure_profile_engine_compatible,
             resolved_chrome_binary,
         )
         from gflow_cli.paths import get_cookies_path
@@ -519,6 +520,9 @@ class FlowApiClient:
             if sys.platform == "darwin":
                 raise ConfigurationError(msg)
             logger.warning("client.chrome_strategy_downgraded", detail=msg)
+        # #477: refuse a bundled-Chromium open of a profile last written by a
+        # newer Chromium — downgrade cleanup can shred the session store.
+        ensure_profile_engine_compatible(self.profile_dir, channel)
 
     async def _preread_flow_session_cookies(self) -> None:
         """#222: read the profile's Flow cookies BEFORE the headed generation

@@ -420,3 +420,52 @@ def test_preread_flow_session_cookies_best_effort(
     monkeypatch.setattr("gflow_cli.auth.cookies.get_chrome_cookie_snapshot", _boom)
     asyncio.run(client._preread_flow_session_cookies())  # noqa: SLF001  (must not raise)
     assert client._preread_flow_cookies == {}  # noqa: SLF001
+
+
+# --- issue #477: profile-engine (Chromium version) downgrade guard ---------------
+
+
+def test_launch_guard_refuses_profile_written_by_newer_chromium(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#477: a bundled-Chromium launch (channel=None) on a profile last written
+    by a newer Chromium must refuse BEFORE the browser starts — opening it would
+    trigger Chromium's downgrade cleanup and can shred the session store."""
+    import gflow_cli.browser_manager as bm
+    from gflow_cli.errors import ProfileEngineDowngradeError
+
+    (tmp_path / "Last Version").write_text("999.0.0.0", encoding="utf-8")
+    monkeypatch.setattr(bm, "installed_chromium_version", lambda: "149.0.7827.55")
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    with pytest.raises(ProfileEngineDowngradeError, match="999"):
+        client._log_and_guard_launch({"channel": None})  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_ui_automation_setup_refuses_profile_engine_downgrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#477: the UI-automation launch site enforces the same pre-launch guard —
+    launch_persistent_context must never be reached on a downgrade."""
+    import gflow_cli.browser_manager as bm
+    from gflow_cli.errors import ProfileEngineDowngradeError
+
+    (tmp_path / "Last Version").write_text("999.0.0.0", encoding="utf-8")
+    monkeypatch.setattr(bm, "installed_chromium_version", lambda: "149.0.7827.55")
+
+    fake_chromium = MagicMock()
+    fake_chromium.launch_persistent_context = AsyncMock()
+    fake_pw = MagicMock()
+    fake_pw.chromium = fake_chromium
+    mock_cm = MagicMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=fake_pw)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+    mock_async_playwright = MagicMock(return_value=mock_cm)
+
+    with patch("gflow_cli.api.transports.ui_automation.async_playwright", mock_async_playwright):
+        transport = UiAutomationTransport()
+        with pytest.raises(ProfileEngineDowngradeError):
+            await transport.setup(profile_dir=tmp_path)
+
+    fake_chromium.launch_persistent_context.assert_not_awaited()
+    mock_cm.__aexit__.assert_awaited_once()  # driver torn back down on refusal

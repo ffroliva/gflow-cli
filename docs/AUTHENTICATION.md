@@ -369,6 +369,31 @@ Run: gflow auth login --profile default
 
 Re-running `auth login` refreshes the cookies in place — no other state is lost.
 
+## Chromium downgrade guard
+
+Chrome profiles are not backward-compatible: opening a profile with an **older**
+Chromium than the one that last wrote it triggers Chromium's downgrade cleanup,
+which can leave the newer store — session cookies included — unreadable. That
+surfaces later as a mystery logout after a gflow/Playwright downgrade (or a
+Chrome-strategy profile silently falling back to an older bundled Chromium).
+
+Every bundled-Chromium open of a persisted profile (generation, UI automation,
+the headless verification probe) first compares the profile's
+`Last Version` file against the installed Playwright Chromium and **refuses to
+open on a downgrade** (exit 11) with an error naming both versions:
+
+```text
+ERROR: Profile at ~/.gflow/profile_default was last written by Chromium 150.x,
+but the installed Playwright bundled Chromium is older (149.x). ...
+```
+
+Remedies: upgrade so the bundled Chromium is at least the profile's version
+(`uv tool upgrade gflow-cli`, then `playwright install chromium`), or re-create
+the profile with `gflow auth login` — login is deliberately *not* guarded, it
+re-mints the session and rewrites the profile, making it the recovery path.
+The guard is best-effort: profiles under the `chrome` strategy (real Google
+Chrome opens them) and any unreadable/unknown version skip the check.
+
 ## Session verification (cookie-store fast path)
 
 Since v0.17.0, profile verification (run by `gflow auth login --browser chrome` after

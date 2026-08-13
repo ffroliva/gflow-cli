@@ -239,6 +239,12 @@ async def verify_flow_session(
     status_code: int
     body: str
     try:
+        # #477: refuse a bundled-Chromium open of a profile last written by a
+        # newer Chromium — the probe must not trigger downgrade cleanup either.
+        # Inside the fail-closed wrapper: the refusal maps to VERIFICATION_ERROR.
+        from gflow_cli.browser_manager import ensure_profile_engine_compatible
+
+        ensure_profile_engine_compatible(profile_dir, channel)
         # Own the profile for this headless probe context (D3). Lease is the
         # OUTER context so it releases only after the driver stops. Contention
         # raises ProfileLockedError before Chrome launches; the fail-closed
