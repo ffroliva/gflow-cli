@@ -1338,7 +1338,11 @@ class VideoGenerationMixin:
             )
         return UiSelectorDriftError(
             selector_drift_detail(
-                "mode_switch_trigger", "no matching element found on the Flow editor.", None
+                "mode_switch_trigger",
+                "no matching element found on the Flow editor. No known Flow "
+                "cohort matched either — the editor may be a new Flow UI layout "
+                "this gflow-cli version does not recognize yet (issue #493).",
+                None,
             )
             + diag_clause
         )

@@ -45,10 +45,11 @@ historical UI-flake noted in
 [`LIVE_VERIFICATION_v0.7.0.md`](LIVE_VERIFICATION_v0.7.0.md#open-follow-ups)
 (transient overlay swallowed the arrow-forward click).
 
-**Two extra debug-screenshot file names worth searching for in the out dir**
-when the mode switch itself fails: `debug_no_mode_trigger.png` (crop-icon
-dropdown trigger not found) and `debug_no_image_tab.png` (Image tab missing
-inside the open dropdown).
+**Two extra artifact file names worth searching for in the out dir** when the
+mode switch itself fails: `diag_mode_switch_miss.json` (crop-icon dropdown
+trigger not found — a structural DOM signature; this probe writes no
+screenshot) and `debug_no_image_tab.png` (Image tab missing inside the open
+dropdown).
 
 Pipe `--verbose` output through `Select-String` (PowerShell) or `grep` to
 filter:

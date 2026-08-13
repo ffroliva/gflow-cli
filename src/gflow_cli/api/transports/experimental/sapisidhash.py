@@ -205,22 +205,28 @@ class SapisidhashTransport:
         """One-shot Playwright launch to capture browser fingerprint headers."""
         from playwright.async_api import async_playwright  # lazy import
 
+        from gflow_cli.browser_manager import ensure_profile_engine_compatible
+
         # Own the profile for this momentary fingerprint-capture context (D3).
         # Lease is the OUTER context so it releases only after the driver stops.
-        async with ProfileLease(profile_dir), async_playwright() as pw:
-            ctx = await pw.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
-                headless=True,
-                viewport={"width": 1280, "height": 720},
-                locale="en-US",
-                args=["--password-store=basic"],
-            )
-            try:
-                page = await ctx.new_page()
-                await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30_000)
-                fp = await capture_fingerprint(page)
-            finally:
-                await ctx.close()
+        async with ProfileLease(profile_dir):
+            # #477 guard AFTER the lease: a pre-wait check would validate a
+            # 'Last Version' the holder rewrites as it releases (TOCTOU).
+            ensure_profile_engine_compatible(profile_dir, None)
+            async with async_playwright() as pw:
+                ctx = await pw.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir),
+                    headless=True,
+                    viewport={"width": 1280, "height": 720},
+                    locale="en-US",
+                    args=["--password-store=basic"],
+                )
+                try:
+                    page = await ctx.new_page()
+                    await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30_000)
+                    fp = await capture_fingerprint(page)
+                finally:
+                    await ctx.close()
         return fp
 
     # ------------------------------------------------------------------

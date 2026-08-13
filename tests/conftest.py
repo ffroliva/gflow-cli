@@ -50,6 +50,11 @@ def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
 
     monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path / "gflow_home"))
     monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(tmp_path / "test_gflow.db"))
+    # #479: the per-test empty home means the update-check cache is always
+    # stale — without this, any CliRunner test on a non-editable install
+    # without CI set would spawn a real PyPI request. tests/test_update_check.py
+    # re-enables it explicitly.
+    monkeypatch.setenv("GFLOW_CLI_UPDATE_CHECK", "0")
     reset_settings()
     yield
     reset_settings()

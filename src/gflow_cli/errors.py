@@ -381,6 +381,31 @@ class ProfileLockedError(ConfigurationError):
     )
 
 
+class ProfileEngineDowngradeError(ConfigurationError):
+    """Raised when a persisted profile was last written by a newer Chromium
+    than the engine about to open it (#477).
+
+    Chromium's downgrade cleanup on open can leave the newer store — session
+    cookies included — unreadable, surfacing later as a mystery logout. Like
+    :class:`ProfileLockedError`, this is a profile-state precondition that
+    fails closed before any browser starts; it inherits ConfigurationError's
+    exit code 11 (no own EXIT_CODE_MAP entry). The raise site supplies the
+    message naming both versions; login is deliberately unguarded — it re-mints
+    the session and rewrites the profile, so it is the recovery path.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/profile-engine-downgrade"
+    title = "Profile was written by a newer Chromium"
+    _default_remediation = (
+        "Upgrade so the bundled Chromium is at least the profile's major version "
+        "(e.g. `uv tool upgrade gflow-cli`, then `playwright install chromium`). "
+        "If the profile was captured with `--browser chrome`, reinstall Google "
+        "Chrome in its default location instead — the chrome channel then opens "
+        "the profile and this check does not apply. Or re-create the profile "
+        "with `gflow auth login`."
+    )
+
+
 class BrowserEngineUnavailableError(ConfigurationError):
     """Raised when GFLOW_CLI_BROWSER_ENGINE selects an engine that is unavailable.
 
@@ -489,12 +514,12 @@ class UiSelectorDriftError(GFlowError):
 
     Indicates that Flow's frontend has changed in a way that invalidates one
     of the selector probes (mode-switch trigger, mode tab, sub-mode tab, etc.).
-    The ``detail`` names the probe label and includes the debug screenshot path
-    when one was captured.
+    The ``detail`` names the probe label and includes the debug screenshot or
+    diagnostics JSON path when one was captured.
 
     This is a hard failure — gflow cannot safely proceed without the control —
     but it is *diagnosed*, not opaque: the user gets the probe name and the
-    screenshot for inspection.  Exit code 23 lets scripted callers branch on
+    captured artifact for inspection.  Exit code 23 lets scripted callers branch on
     "the UI changed and needs a selector update" versus generic error (1).
     """
 
@@ -504,9 +529,10 @@ class UiSelectorDriftError(GFlowError):
         "A Flow editor UI element could not be located — Google may have updated "
         "their frontend. Check for a newer gflow-cli release, then file a bug at "
         "https://github.com/ffroliva/gflow-cli/issues referencing the probe name "
-        "and attaching the debug screenshot from this message, if one was captured "
-        "(review it first — the viewport may show your account name/avatar; do NOT "
-        "include tokens or signed URLs)."
+        "and attaching the diagnostics JSON and/or debug screenshot referenced in "
+        "this message, plus the incident bundle's report.md when one was written "
+        "(review artifacts before sharing — screenshots may show your account "
+        "name/avatar; do NOT include tokens or signed URLs)."
     )
 
 
@@ -525,8 +551,9 @@ class FlowAgentUiError(GFlowError):
         "which removes the classic media generation controls. gflow-cli does not "
         "currently support driving this interface. Try using a different Chrome profile, "
         "or wait for a future update. If you need to share a bug report, review the "
-        "diagnostic screenshot first — the viewport may show personal info (do NOT "
-        "include tokens or credentials)."
+        "screenshot referenced in this message (if any) and any screenshot in the "
+        "incident bundle first — the viewport may show personal info "
+        "(do NOT include tokens or credentials)."
     )
 
 

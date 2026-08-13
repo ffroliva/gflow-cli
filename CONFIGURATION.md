@@ -7,7 +7,9 @@
 | `GFLOW_CLI_HOME` | Platform data dir | Root directory for profiles and config. |
 | `GFLOW_CLI_OUTPUT_DIR` | `~/Downloads/gflow-cli` | Where generated images and videos are saved. |
 | `CHROME_BINARY` | (autodetect) | Override Chrome binary path. Falls back to platform-standard locations. |
-| `GFLOW_CLI_CONCURRENCY` | `4` | Maximum parallel API requests per batch. |
+| `GFLOW_CLI_CONCURRENCY` | `1` | Page-pool size per batch (raising above 1 currently has no effect — see [docs/CONFIGURATION.md](docs/CONFIGURATION.md)). |
+| `GFLOW_CLI_UPDATE_CHECK` | `1` | Once-a-day stderr notice when a newer gflow-cli is on PyPI; `0` disables (v0.56.0). |
+| `GFLOW_CLI_LEASE_WAIT_SECONDS` | `0` | Bounded wait on same-profile lease contention instead of fail-fast (v0.56.0). |
 | `GFLOW_CLI_LLM_BASE_URL` | Google compat endpoint | OpenAI-compatible endpoint for the prompt tools (`--tool`). The on/off switch. |
 | `GFLOW_CLI_LLM_API_KEY` | _(unset)_ | Credential for that endpoint. Optional — omit for a keyless local gateway. [Google key](https://aistudio.google.com/apikey). |
 | `GFLOW_CLI_LLM_MODEL` | _(unset)_ | Model, and therefore the provider selector. Unset = the gateway chooses. |

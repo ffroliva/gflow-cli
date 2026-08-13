@@ -181,6 +181,32 @@ accepted. Two corrections fixed it (verified end-to-end on macOS Apple Silicon):
 
 Evidence: [LIVE_VERIFICATION_v0.23.0](docs/LIVE_VERIFICATION_v0.23.0.md).
 
+### New Flow editor variant (composer frame slots + Agent toggle) is not recognized
+
+- **Status:** **Open** — awaiting a DOM signature from an affected account;
+  tracked in [#493](https://github.com/ffroliva/gflow-cli/issues/493)
+- **Severity:** High · **Affects:** `gflow image` / `gflow video` generation on
+  accounts that received the new editor, any locale
+
+A third Flow editor layout was reported on 2026-08-13 (macOS, v0.55.0; also
+v0.53.1): frame-slot buttons ("Initial"/"Final") sit directly on the composer
+next to an "Agent" pill, and there is **no** classic `crop_*` aspect/settings
+button for gflow to drive. The layout matches **none** of the known cohort
+indicators (agentic chat composer, full-page media library), so the mode-switch
+step falls through to `UiSelectorDriftError` (**exit 23**) instead of the
+retryable exit-25 cohort classification. The selector cascade itself is
+locale-invariant — the reporter's Portuguese UI is unrelated.
+
+The error detail now names this hypothesis and the run writes a PII-safe DOM
+signature to `diag_mode_switch_miss.json` when it can be captured (structural
+allowlist: ligature names, tag counts — no cookies, tokens, prompts, or page
+text; if the file is absent, attach the incident bundle instead — its
+`ui.json` carries the same DOM signature). **If you hit this, attach that JSON file to
+[#493](https://github.com/ffroliva/gflow-cli/issues/493)** — recognizing the
+variant (and restoring a clean retryable classification, or full support) needs
+exactly that DOM signature. Re-running later may land the classic editor if
+the rollout is still an A/B arm.
+
 ### Flow's new full-page media-library UI breaks entity attach (A/B rollout)
 
 - **Status:** **Open** — Flow-side staged rollout; tracked in
@@ -203,10 +229,10 @@ classic `crop_*` aspect/mode control, so `gflow image`/`gflow video` can't drive
 generation. Rather than the old opaque `UiSelectorDriftError` "file a bug", the
 mode-switch raise site now runs a runtime DOM scan and raises a clear, **retryable**
 `FlowAgentUiError` (**exit 25**, "this cohort flaps; retry shortly"), and dumps a
-DOM-signature diagnostics artifact (`diag_mode_switch_miss.json` + a full-page
-screenshot) for reporting. The cohort is server-assigned per page load and flaps
-within ~12h, so a re-run often lands the classic UI. Driving the new UI directly
-is still out of scope.
+DOM-signature diagnostics artifact (`diag_mode_switch_miss.json`; the incident
+bundle carries a screenshot under `sensitive/`) for reporting. The cohort is
+server-assigned per page load and flaps within ~12h, so a re-run often lands
+the classic UI. Driving the new UI directly is still out of scope.
 
 **How to tell which UI your account has:** in the Flow web editor, click
 **Add Media** — a small dialog means the old (working) UI; a navigation to a
@@ -846,7 +872,7 @@ key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 
 - **Status:** Mitigated (crash → typed fail-fast rejection) · **Severity:** Low · **Affects:** all versions
 
-Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never waits and never silently corrupts the profile.
+Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** by default — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never silently corrupts the profile. Since #478, setting [`GFLOW_CLI_LEASE_WAIT_SECONDS`](docs/CONFIGURATION.md#gflow_cli_lease_wait_seconds) opts a waiter into a bounded wait that takes over as soon as the current holder finishes (holders always run to completion and are never asked to release early; same-process contention still fails fast — waiting on yourself would deadlock).
 
 **Workaround:** use different profiles for parallel work — different profiles acquire independent leases and run fully concurrently.
 
@@ -858,7 +884,7 @@ gflow image batch ./batch-a.tsv --profile work
 gflow image batch ./batch-b.tsv --profile personal
 ```
 
-**Roadmap:** Phase 4 (v0.4.0a2) added a per-worker Page pool on one shared BrowserContext (`GFLOW_CLI_CONCURRENCY=N`), intended to let one `gflow-cli` process fan out multiple in-flight generations, but no current CLI command drives more than one generation at a time through it — the only feature that did (a manifest-driven video batch runner) never worked and was removed. Cross-process same-profile serialization remains a hard constraint (Chromium can only own one persistent context per `user-data-dir`) — but it is now a clean, typed, fail-fast rejection instead of an unstructured crash. Multiple shells against the same profile remains a "use different profiles" workaround; there is no queueing/waiting mode.
+**Roadmap:** Phase 4 (v0.4.0a2) added a per-worker Page pool on one shared BrowserContext (`GFLOW_CLI_CONCURRENCY=N`), intended to let one `gflow-cli` process fan out multiple in-flight generations, but no current CLI command drives more than one generation at a time through it — the only feature that did (a manifest-driven video batch runner) never worked and was removed. Cross-process same-profile serialization remains a hard constraint (Chromium can only own one persistent context per `user-data-dir`) — but it is now a clean, typed, fail-fast rejection instead of an unstructured crash. Multiple shells against the same profile can either use different profiles (fully parallel) or opt into the bounded wait via `GFLOW_CLI_LEASE_WAIT_SECONDS` (serialized, waiter takes over when the holder finishes).
 
 ---
 

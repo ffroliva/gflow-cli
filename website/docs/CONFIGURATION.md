@@ -260,6 +260,21 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 **Recommended starting point:** `1` until a concurrent caller lands. Each additional Page would cost ~30–60 MiB of memory on Chromium headless; don't exceed `8` without measuring resident-set size. Cookies and storage state are shared at Context level, so every Page would inherit the signed-in profile for free.
 **Shipped in:** v0.4.0a2.
 
+### `GFLOW_CLI_UPDATE_CHECK`
+
+**What:** Once-a-day best-effort PyPI check that prints a one-line stderr notice when a newer gflow-cli exists. The notice is always served from a local cache (`<GFLOW_CLI_HOME>/update_check.json`); a stale cache refreshes on a background daemon thread whose result feeds the *next* invocation — the check never blocks or fails a command, and a failed poll still counts toward the once-a-day cap.
+**Values:** `1` (default) | `0` to disable
+**Skipped automatically:** in CI (`CI` env var set) and for editable/local-source installs (PEP 610 `direct_url.json` detection) — "upgrade" advice is wrong there.
+**Shipped in:** #479.
+
+### `GFLOW_CLI_LEASE_WAIT_SECONDS`
+
+**What:** How long a command waits for another gflow process to release the profile lease before giving up with `ProfileLockedError` (exit 11). The default `0` keeps the historical fail-fast behavior. With a positive value, the waiter polls the kernel lock (0.5 s cadence) and simply takes over when the current holder — a CLI command or a `gflow serve` daemon task, both of which release at their natural end — finishes. Holders are never interrupted or asked to release early.
+**Values:** `0`–`3600` seconds (fractions allowed)
+**Default:** `0` (fail fast)
+**Note:** Same-process contention always fails fast regardless of this setting — the holder is the same process, so waiting would deadlock. See [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel).
+**Shipped in:** #478.
+
 ### `GFLOW_CLI_DB_PATH`
 
 **What:** Override the path to the local SQLite operations database.

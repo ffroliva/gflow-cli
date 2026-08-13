@@ -461,7 +461,11 @@ class FlowApiClient:
         'Chrome Safe Storage'), producing a logged-out context and a confusing
         HTTP 401 at project.createProject. Make that fatal with a clear
         remediation. On other platforms the bundled fallback may still work
-        (e.g. Windows DPAPI cookie key is per-user), so warn instead of raising.
+        (e.g. Windows DPAPI cookie key is per-user), so warn instead of raising —
+        UNLESS the #477 engine guard below detects that the bundled Chromium's
+        major version is older than the one that last wrote the profile: that
+        launch would trigger Chromium's downgrade cleanup and can shred the
+        session store, so it hard-stops on every platform.
 
         The diagnostic event names the resolved channel / executable /
         user-data-dir / cookie-db presence — the data needed to tell a channel
@@ -469,6 +473,7 @@ class FlowApiClient:
         """
         from gflow_cli.browser_manager import (
             chrome_strategy_requested,
+            ensure_profile_engine_compatible,
             resolved_chrome_binary,
         )
         from gflow_cli.paths import get_cookies_path
@@ -519,6 +524,9 @@ class FlowApiClient:
             if sys.platform == "darwin":
                 raise ConfigurationError(msg)
             logger.warning("client.chrome_strategy_downgraded", detail=msg)
+        # #477: refuse a bundled-Chromium open of a profile last written by a
+        # newer Chromium — downgrade cleanup can shred the session store.
+        ensure_profile_engine_compatible(self.profile_dir, channel)
 
     async def _preread_flow_session_cookies(self) -> None:
         """#222: read the profile's Flow cookies BEFORE the headed generation
@@ -630,7 +638,6 @@ class FlowApiClient:
         # would deadlock on the singleton lock once the headed context holds it.
         await self._preread_flow_session_cookies()
         kwargs = self._persistent_context_kwargs()
-        self._log_and_guard_launch(kwargs)
         if self._recorder is not None:
             self._recorder.note_har_pre_launch(self.settings.har_path)
         # Own the profile BEFORE Chrome launches. Acquire here (not earlier):
@@ -640,7 +647,9 @@ class FlowApiClient:
         # this a same-process double-acquire. Contention raises ProfileLockedError
         # (exit 11) here, before any Chrome process starts.
         try:
-            self._lease = ProfileLease(self.profile_dir).acquire()
+            # aacquire so a #478 opt-in wait polls with asyncio.sleep instead
+            # of blocking the event loop (daemon tasks share it).
+            self._lease = await ProfileLease(self.profile_dir).aacquire()
         except ProfileLockedError as exc:
             # Metadata-only incident BEFORE any Chrome exists (S07); the
             # partial-setup guard's _close_browser_resources finalizes it.
@@ -649,6 +658,12 @@ class FlowApiClient:
                 if ref is not None and exc.incident_ref is None:
                     exc.incident_ref = ref
             raise
+        # Guard AFTER the lease (#478 review): during an opt-in lease wait the
+        # holder rewrites 'Last Version' exactly as it releases, so a
+        # pre-wait check would validate a stale value (TOCTOU). A raise here
+        # is safe post-acquire: the partial-setup leak guard releases the
+        # lease via _close_browser_resources.
+        self._log_and_guard_launch(kwargs)
         # We own the profile now — one-time Windows DACL sweep for profiles
         # created before #472 (marker-gated stat afterwards; no-op off Windows).
         ensure_profile_hardened(self.profile_dir)

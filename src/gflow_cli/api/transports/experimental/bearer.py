@@ -222,33 +222,39 @@ class BearerTransport:
         captured_token: str | None = None
         captured_fp = BrowserFingerprint()
 
+        from gflow_cli.browser_manager import ensure_profile_engine_compatible
+
         # Own the profile for this momentary Bearer-capture context (D3). Lease
         # is the OUTER context so it releases only after the driver stops.
-        async with ProfileLease(profile_dir), async_playwright() as pw:
-            ctx = await pw.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
-                headless=True,
-                viewport={"width": 1280, "height": 720},
-                locale="en-US",
-                args=["--password-store=basic"],
-            )
-            try:
-                page = await ctx.new_page()
+        async with ProfileLease(profile_dir):
+            # #477 guard AFTER the lease: a pre-wait check would validate a
+            # 'Last Version' the holder rewrites as it releases (TOCTOU).
+            ensure_profile_engine_compatible(profile_dir, None)
+            async with async_playwright() as pw:
+                ctx = await pw.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir),
+                    headless=True,
+                    viewport={"width": 1280, "height": 720},
+                    locale="en-US",
+                    args=["--password-store=basic"],
+                )
+                try:
+                    page = await ctx.new_page()
 
-                def _on_request(req: PlaywrightRequest) -> None:
-                    nonlocal captured_token
-                    if "aisandbox-pa.googleapis.com" not in req.url:
-                        return
-                    auth: str = req.headers.get("authorization", "")
-                    if auth.startswith("Bearer ") and captured_token is None:
-                        captured_token = auth[len("Bearer ") :]
+                    def _on_request(req: PlaywrightRequest) -> None:
+                        nonlocal captured_token
+                        if "aisandbox-pa.googleapis.com" not in req.url:
+                            return
+                        auth: str = req.headers.get("authorization", "")
+                        if auth.startswith("Bearer ") and captured_token is None:
+                            captured_token = auth[len("Bearer ") :]
 
-                page.on("request", _on_request)
-                await page.goto(FLOW_URL, wait_until="networkidle", timeout=60_000)
-                await page.wait_for_timeout(5_000)
-                captured_fp = await capture_fingerprint(page)
-            finally:
-                await ctx.close()
+                    page.on("request", _on_request)
+                    await page.goto(FLOW_URL, wait_until="networkidle", timeout=60_000)
+                    await page.wait_for_timeout(5_000)
+                    captured_fp = await capture_fingerprint(page)
+                finally:
+                    await ctx.close()
 
         if not captured_token:
             msg = (

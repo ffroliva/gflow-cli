@@ -1,9 +1,9 @@
 """Unit tests for the #183 media-library/agentic cohort raise-site handling.
 
 `_detect_non_classic_cohort` scans the union of agentic + full-page media-library
-markers so the shared `_fail_mode_switch` raise site can emit a clean, retryable
+markers so the shared `_mode_switch_error` raise site can emit a clean, retryable
 `FlowAgentUiError` instead of the misleading `UiSelectorDriftError`.
-`capture_ui_diagnostics` is the debug-engine DOM+screenshot dump.
+`capture_ui_diagnostics` writes the structural DOM-signature JSON (no screenshot).
 """
 
 from __future__ import annotations
@@ -164,6 +164,10 @@ async def test_mode_switch_error_is_flow_agent_ui_error_on_cohort(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_mode_switch_error_is_drift_error_when_no_cohort(tmp_path: Path) -> None:
+    """#493: reaching the drift fall-through PROVES no known cohort indicator
+    matched — the editor may be a brand-new Flow layout (e.g. the composer
+    frame-slots + Agent-toggle variant). The detail must carry that hypothesis
+    so the report that reaches the tracker points at the right cause."""
     from gflow_cli.errors import UiSelectorDriftError
 
     page = _page_with_present(set())  # genuine drift: no agentic/library marker
@@ -173,6 +177,9 @@ async def test_mode_switch_error_is_drift_error_when_no_cohort(tmp_path: Path) -
     err = await VideoGenerationMixin._mode_switch_error(page, tmp_path, media="video")
 
     assert isinstance(err, UiSelectorDriftError)
+    msg = str(err)
+    assert "mode_switch_trigger" in msg
+    assert "does not recognize" in msg
 
 
 @pytest.mark.asyncio

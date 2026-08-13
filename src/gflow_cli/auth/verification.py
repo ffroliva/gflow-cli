@@ -210,7 +210,7 @@ async def _fetch_session_httpx(client: Any) -> tuple[int, str]:
 async def verify_flow_session(
     profile_dir: Path,
     *,
-    channel: str = "chrome",
+    channel: str | None = "chrome",
     source: str = "chrome",
 ) -> FlowSessionStatus:
     """Headlessly probe `profile_dir` for a usable Flow app session.
@@ -239,23 +239,31 @@ async def verify_flow_session(
     status_code: int
     body: str
     try:
+        from gflow_cli.browser_manager import ensure_profile_engine_compatible
+
         # Own the profile for this headless probe context (D3). Lease is the
         # OUTER context so it releases only after the driver stops. Contention
         # raises ProfileLockedError before Chrome launches; the fail-closed
         # wrapper below maps it (like any probe failure) to VERIFICATION_ERROR.
-        async with ProfileLease(profile_dir), async_playwright() as pw:
-            ctx = await pw.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
-                channel=channel,
-                headless=True,
-                args=["--password-store=basic"],
-            )
-            try:
-                cookies = await ctx.cookies()
-                google_session = any(c.get("name") == "SAPISID" for c in cookies)
-                status_code, body = await _fetch_session(ctx)
-            finally:
-                await ctx.close()
+        async with ProfileLease(profile_dir):
+            # #477 guard AFTER the lease (a pre-wait check would validate a
+            # 'Last Version' the holder rewrites as it releases): the probe
+            # must not trigger downgrade cleanup either. Inside the
+            # fail-closed wrapper, so the refusal maps to VERIFICATION_ERROR.
+            ensure_profile_engine_compatible(profile_dir, channel)
+            async with async_playwright() as pw:
+                ctx = await pw.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir),
+                    channel=channel,
+                    headless=True,
+                    args=["--password-store=basic"],
+                )
+                try:
+                    cookies = await ctx.cookies()
+                    google_session = any(c.get("name") == "SAPISID" for c in cookies)
+                    status_code, body = await _fetch_session(ctx)
+                finally:
+                    await ctx.close()
     # Fail-closed: any failure here yields VERIFICATION_ERROR, never AUTHENTICATED.
     except Exception as exc:
         logger.warning("auth_flow_session_probe_error", source=source, error=type(exc).__name__)

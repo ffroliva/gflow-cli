@@ -492,6 +492,28 @@ class Settings(BaseSettings):
         ),
     )
     concurrency: int = Field(default=1, ge=1, le=16)
+    update_check: bool = Field(
+        default=True,
+        description=(
+            "Once-a-day best-effort PyPI check that prints a one-line notice "
+            "when a newer gflow-cli exists (#479). Never blocks or fails a "
+            "command; skipped in CI and for editable/source installs. "
+            "Set GFLOW_CLI_UPDATE_CHECK=0 to disable."
+        ),
+    )
+    lease_wait_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=3600.0,
+        description=(
+            "Seconds to wait for another gflow process to release the profile "
+            "lease before giving up with ProfileLockedError (0 = fail fast, "
+            "the default). Holders always run to completion — the waiter simply "
+            "takes over once the current command or daemon task releases (#478). "
+            "Same-process contention never waits (it would deadlock). "
+            "Override via GFLOW_CLI_LEASE_WAIT_SECONDS."
+        ),
+    )
     headless: bool = Field(
         default=False,
         description=(

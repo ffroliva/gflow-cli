@@ -204,7 +204,8 @@ class TestLifecycle:
         class _ContendedLease:
             def __init__(self, _profile_dir: object) -> None: ...
 
-            def acquire(self) -> None:
+            async def aacquire(self) -> None:
+                # _enter_setup awaits aacquire (#478: asyncio-friendly wait).
                 raise ProfileLockedError("held elsewhere")
 
         original = client_module.ProfileLease

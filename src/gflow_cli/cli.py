@@ -28,6 +28,7 @@ from gflow_cli.cli_tools import tools as _tools_group
 from gflow_cli.cli_video import video as _video_group
 from gflow_cli.config import get_settings, warn_if_removed_gemini_key_set
 from gflow_cli.observability import DEBUG_LEVEL, configure_logging
+from gflow_cli.update_check import maybe_notify_update
 
 console = Console()
 
@@ -147,6 +148,12 @@ def main(ctx: click.Context, verbose: bool) -> None:
             err=True,
             fg="yellow",
         )
+    # #479: once-a-day PyPI update notice. Best-effort and cache-served — it
+    # never blocks (a stale cache refreshes on a daemon thread for the next
+    # run) and never raises; stderr so piped/JSON stdout stays clean.
+    update_notice = maybe_notify_update()
+    if update_notice:
+        click.secho(update_notice, err=True, fg="yellow")
     ctx.ensure_object(dict)
 
 
