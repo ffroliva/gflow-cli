@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.56.0] — 2026-08-13
+
+### Added
+
+- **Once-a-day PyPI update notice (#479).** gflow now prints a one-line stderr notice when a newer version is on PyPI: cache-served (zero added latency — a stale cache refreshes on a background daemon thread for the next run), capped at one poll per day even when the poll fails, and never blocks or fails a command. Skipped in CI (`CI` env var), for editable/local-source installs (PEP 610 detection), and when `GFLOW_CLI_UPDATE_CHECK=0`.
+
+- **Opt-in bounded wait for profile-lease contention (#478).** `GFLOW_CLI_LEASE_WAIT_SECONDS=N` makes a command that hits same-profile contention poll the kernel lock (0.5 s cadence, sync and async call sites alike) and take over as soon as the current holder — a CLI command or a `gflow serve` daemon queue task, both of which release at their natural end — finishes; on timeout it raises the same `ProfileLockedError` (exit 11). Default `0` keeps the historical fail-fast. Triage note: the issue's fuller cooperative-handoff protocol (release-request channel, minimum-hold window) was validated against the actual architecture and dropped — the daemon acquires the lease per task, so every holder's safe release point already coincides with lease release; holders are never asked to release early, which satisfies the no-release-mid-call requirement by construction. Same-process contention always fails fast (waiting on yourself deadlocks).
+
+- **Chromium downgrade guard for persisted profiles (#477).** Opening a profile with an older Chromium major version than last wrote it triggers Chromium's downgrade cleanup, which can shred the newer session store and surface as a mystery post-upgrade logout. Every bundled-Chromium open of a persisted profile (generation client, UI-automation transport, the experimental transports, headless verification probe) now compares the profile's `Last Version` against the active engine's bundled Chromium (`playwright`, or `patchright` when selected) and refuses on a major-version downgrade (`ProfileEngineDowngradeError`, exit 11; the fail-closed verification probe reports it as a verification failure) with an error naming both versions and the remedy. Best-effort: `chrome`-strategy profiles and unknown/unparseable versions skip the check; same-major build rollbacks are allowed; `gflow auth login` stays unguarded as the recovery path.
+
 ### Fixed
 
 - **Mode-switch drift errors now name the right evidence (#493).** An external
@@ -19,15 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   points at the artifacts that actually exist (the PII-safe
   `diag_mode_switch_miss.json` DOM signature and/or the referenced screenshot,
   plus the incident bundle's `report.md`). Recognizing the new variant itself is
-  tracked in #493 and needs an affected account's diagnostics JSON.
-
-### Added
-
-- **Once-a-day PyPI update notice (#479).** gflow now prints a one-line stderr notice when a newer version is on PyPI: cache-served (zero added latency — a stale cache refreshes on a background daemon thread for the next run), capped at one poll per day even when the poll fails, and never blocks or fails a command. Skipped in CI (`CI` env var), for editable/local-source installs (PEP 610 detection), and when `GFLOW_CLI_UPDATE_CHECK=0`.
-
-- **Opt-in bounded wait for profile-lease contention (#478).** `GFLOW_CLI_LEASE_WAIT_SECONDS=N` makes a command that hits same-profile contention poll the kernel lock (0.5 s cadence, sync and async call sites alike) and take over as soon as the current holder — a CLI command or a `gflow serve` daemon queue task, both of which release at their natural end — finishes; on timeout it raises the same `ProfileLockedError` (exit 11). Default `0` keeps the historical fail-fast. Triage note: the issue's fuller cooperative-handoff protocol (release-request channel, minimum-hold window) was validated against the actual architecture and dropped — the daemon acquires the lease per task, so every holder's safe release point already coincides with lease release; holders are never asked to release early, which satisfies the no-release-mid-call requirement by construction. Same-process contention always fails fast (waiting on yourself deadlocks).
-
-- **Chromium downgrade guard for persisted profiles (#477).** Opening a profile with an older Chromium major version than last wrote it triggers Chromium's downgrade cleanup, which can shred the newer session store and surface as a mystery post-upgrade logout. Every bundled-Chromium open of a persisted profile (generation client, UI-automation transport, the experimental transports, headless verification probe) now compares the profile's `Last Version` against the active engine's bundled Chromium (`playwright`, or `patchright` when selected) and refuses on a major-version downgrade (`ProfileEngineDowngradeError`, exit 11; the fail-closed verification probe reports it as a verification failure) with an error naming both versions and the remedy. Best-effort: `chrome`-strategy profiles and unknown/unparseable versions skip the check; same-major build rollbacks are allowed; `gflow auth login` stays unguarded as the recovery path.
+  tracked in #493 and needs an affected account's diagnostics JSON. A post-merge
+  `/code-review` pass extended the same correction to the neighboring surfaces it
+  had missed: `FlowAgentUiError`'s privacy caveat now also covers the standalone
+  `debug_forced_agent_ui.png` its raise site writes, and the KNOWN_ISSUES
+  fallback points at the incident bundle's `ui.json` (which carries the DOM
+  signature) instead of `report.md` (which does not).
 
 ## [0.55.0] — 2026-08-13
 
@@ -2818,7 +2825,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.55.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.56.0...HEAD
+[0.56.0]: https://github.com/ffroliva/gflow-cli/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/ffroliva/gflow-cli/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/ffroliva/gflow-cli/compare/v0.53.1...v0.54.0
 [0.53.1]: https://github.com/ffroliva/gflow-cli/compare/v0.53.0...v0.53.1
