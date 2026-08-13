@@ -55,9 +55,6 @@ Generate videos using Google's Veo model.
 ### gflow_list_projects
 Browse the local project catalog.
 
-### gflow_list_characters
-Browse reusable Flow Character entities.
-
 ### gflow_list_tools
 List available gflow prompt tools (name, title, description, category).
 
