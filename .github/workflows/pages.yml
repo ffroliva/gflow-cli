@@ -12,10 +12,10 @@ on:
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
+# Write scopes live at JOB level on the deploy job only (Scorecard
+# Token-Permissions: workflow-level write would grant the build job too).
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Never cancel an in-progress deploy; queue instead.
 concurrency:
@@ -47,6 +47,9 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write # actual Pages deployment
+      id-token: write # OIDC handshake with the Pages service
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -20,6 +20,9 @@ import xml.etree.ElementTree as ET
 
 
 def main() -> int:
+    if len(sys.argv) != 3 or not sys.argv[2].isdigit():
+        print("usage: check_test_count.py <junit-xml> <min-executed>")
+        return 2
     report_path, floor = sys.argv[1], int(sys.argv[2])
     root = ET.parse(report_path).getroot()
     # iter() is self-inclusive, so this handles both a <testsuites> wrapper and
