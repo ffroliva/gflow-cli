@@ -492,6 +492,19 @@ class Settings(BaseSettings):
         ),
     )
     concurrency: int = Field(default=1, ge=1, le=16)
+    lease_wait_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=3600.0,
+        description=(
+            "Seconds to wait for another gflow process to release the profile "
+            "lease before giving up with ProfileLockedError (0 = fail fast, "
+            "the default). Holders always run to completion — the waiter simply "
+            "takes over once the current command or daemon task releases (#478). "
+            "Same-process contention never waits (it would deadlock). "
+            "Override via GFLOW_CLI_LEASE_WAIT_SECONDS."
+        ),
+    )
     headless: bool = Field(
         default=False,
         description=(

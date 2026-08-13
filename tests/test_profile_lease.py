@@ -326,3 +326,126 @@ def test_owner_evidence_absent_from_problem_details_and_payloads(tmp_path: Path)
             assert str(first.lock_path) not in blob
     finally:
         first.release()
+
+
+# ---------------------------------------------------------------------------
+# #478: opt-in bounded wait (cooperative handoff for per-task holders)
+# ---------------------------------------------------------------------------
+#
+# Triage evidence: every gflow holder (CLI command, daemon queue task —
+# worker/daemon.py opens FlowApiClient per task) releases the lease at its
+# natural end. The holder's "safe point" therefore coincides with release, so
+# the cooperative handoff for THIS architecture is waiter-side: an opt-in
+# bounded wait (GFLOW_CLI_LEASE_WAIT_SECONDS, default 0 = fail fast). A
+# release-request channel / minimum-hold window would have no consumer:
+# holders are never asked to release early, which also satisfies the issue's
+# no-release-while-a-call-is-in-flight requirement by construction.
+
+
+class TestLeaseBoundedWait:
+    def _simulate_other_process_holder(self, profile: Path) -> ProfileLease:
+        """Acquire and drop the registry entry so the holder looks like another
+        OS process (kernel fd stays open) — same trick as the tests above."""
+        holder = ProfileLease(profile).acquire()
+        canonical = profile_lease._canonicalize(profile)
+        profile_lease._registry.pop(canonical, None)
+        return holder
+
+    def test_default_stays_fail_fast(self, tmp_path: Path) -> None:
+        """No env opt-in: kernel contention raises immediately (no polling)."""
+        import time as _time
+
+        holder = self._simulate_other_process_holder(tmp_path / "profile")
+        try:
+            start = _time.monotonic()
+            with pytest.raises(ProfileLockedError):
+                ProfileLease(tmp_path / "profile").acquire()
+            assert _time.monotonic() - start < 0.4
+        finally:
+            holder.release()
+
+    def test_waiter_acquires_after_holder_releases(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Opt-in wait: the waiter polls and takes over once the (simulated)
+        other-process holder releases inside the window."""
+        import threading
+        import time as _time
+
+        from gflow_cli.config import reset_settings
+
+        monkeypatch.setenv("GFLOW_CLI_LEASE_WAIT_SECONDS", "10")
+        reset_settings()
+        holder = self._simulate_other_process_holder(tmp_path / "profile")
+        timer = threading.Timer(0.6, holder.release)
+        timer.start()
+        try:
+            start = _time.monotonic()
+            waiter = ProfileLease(tmp_path / "profile").acquire()
+            elapsed = _time.monotonic() - start
+            waiter.release()
+            assert elapsed >= 0.4  # actually waited
+            assert elapsed < 8  # took over well before the deadline
+        finally:
+            timer.cancel()
+            holder.release()  # idempotent if the timer already released
+
+    def test_wait_times_out_with_profile_locked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Holder outlives the window -> same ProfileLockedError as fail-fast."""
+        import time as _time
+
+        from gflow_cli.config import reset_settings
+
+        monkeypatch.setenv("GFLOW_CLI_LEASE_WAIT_SECONDS", "0.9")
+        reset_settings()
+        holder = self._simulate_other_process_holder(tmp_path / "profile")
+        try:
+            start = _time.monotonic()
+            with pytest.raises(ProfileLockedError):
+                ProfileLease(tmp_path / "profile").acquire()
+            assert _time.monotonic() - start >= 0.8
+        finally:
+            holder.release()
+
+    def test_same_process_contention_never_waits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Registry (same-process) contention stays fail-fast even with the
+        wait enabled — waiting on a lease this process holds would deadlock."""
+        import time as _time
+
+        from gflow_cli.config import reset_settings
+
+        monkeypatch.setenv("GFLOW_CLI_LEASE_WAIT_SECONDS", "10")
+        reset_settings()
+        with ProfileLease(tmp_path / "profile"):
+            start = _time.monotonic()
+            with pytest.raises(ProfileLockedError):
+                ProfileLease(tmp_path / "profile").acquire()
+            assert _time.monotonic() - start < 0.4
+
+    @pytest.mark.asyncio
+    async def test_async_wait_does_not_block_event_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """aacquire must poll with asyncio.sleep: the holder here is released
+        by a `call_later` callback on the SAME event loop, so the waiter can
+        only ever acquire if the loop keeps running during the wait — a
+        blocking time.sleep poll would deadlock into the timeout instead."""
+        import asyncio
+
+        from gflow_cli.config import reset_settings
+
+        monkeypatch.setenv("GFLOW_CLI_LEASE_WAIT_SECONDS", "5")
+        reset_settings()
+        holder = self._simulate_other_process_holder(tmp_path / "profile")
+        loop = asyncio.get_running_loop()
+        handle = loop.call_later(0.4, holder.release)
+        try:
+            waiter = await ProfileLease(tmp_path / "profile").aacquire()
+            waiter.release()
+        finally:
+            handle.cancel()
+            holder.release()

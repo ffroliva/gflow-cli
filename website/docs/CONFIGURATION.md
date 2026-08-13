@@ -260,6 +260,14 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 **Recommended starting point:** `1` until a concurrent caller lands. Each additional Page would cost ~30–60 MiB of memory on Chromium headless; don't exceed `8` without measuring resident-set size. Cookies and storage state are shared at Context level, so every Page would inherit the signed-in profile for free.
 **Shipped in:** v0.4.0a2.
 
+### `GFLOW_CLI_LEASE_WAIT_SECONDS`
+
+**What:** How long a command waits for another gflow process to release the profile lease before giving up with `ProfileLockedError` (exit 11). The default `0` keeps the historical fail-fast behavior. With a positive value, the waiter polls the kernel lock (0.5 s cadence) and simply takes over when the current holder — a CLI command or a `gflow serve` daemon task, both of which release at their natural end — finishes. Holders are never interrupted or asked to release early.
+**Values:** `0`–`3600` seconds (fractions allowed)
+**Default:** `0` (fail fast)
+**Note:** Same-process contention always fails fast regardless of this setting — the holder is the same process, so waiting would deadlock. See [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel).
+**Shipped in:** #478.
+
 ### `GFLOW_CLI_DB_PATH`
 
 **What:** Override the path to the local SQLite operations database.
