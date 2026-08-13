@@ -420,7 +420,9 @@ class TestDaemonSettings:
         import inspect
 
         source = inspect.getsource(Settings)
-        assert source.count("daemon_token: SecretStr | None") == 1
+        # Count ANY annotation spelling — a reintroduced duplicate with the old
+        # `str | None` annotation would silently shadow the SecretStr field.
+        assert source.count("daemon_token:") == 1
 
     def test_daemon_token_keeps_both_env_aliases(self) -> None:
         """Pin the SURVIVING definition's contract: both env var spellings
