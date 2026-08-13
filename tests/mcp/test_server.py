@@ -391,14 +391,15 @@ class TestMcpResources:
         assert len(resources) >= 2, f"Expected at least 2 resources, got {len(resources)}"
 
     @pytest.mark.asyncio
-    async def test_known_issues_resource_returns_content(self) -> None:
-        """gflow://docs/known-issues must return KNOWN_ISSUES.md content."""
+    async def test_known_issues_resource_returns_bounded_index(self) -> None:
+        """gflow://docs/known-issues returns the #501 bounded index."""
         from gflow_cli.mcp.resources import known_issues
 
         content = await known_issues()
         assert isinstance(content, str)
         assert len(content) > 0
-        assert "##" in content
+        assert len(content.encode()) < 8 * 1024
+        assert "gflow://docs/known-issues/" in content
 
 
 # ---------------------------------------------------------------------------

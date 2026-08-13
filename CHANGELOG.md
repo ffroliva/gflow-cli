@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP `gflow://docs/known-issues` resource is now bounded (#501).** The old
+  resource returned all of KNOWN_ISSUES.md (~70 KB, growing every release) on
+  every read — pure context injection. The default read is now a small index
+  (issue titles + status + slugs, a few KB); one templated resource
+  (`gflow://docs/known-issues/{slug}`) serves a single issue's full text,
+  capped at 16 KB. No unbounded read path remains.
 ### Added
 
 - **`gflow mcp run --no-spend` (#496).** Registration-time gating of the

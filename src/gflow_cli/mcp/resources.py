@@ -8,6 +8,7 @@ scripting and guides agents toward the proper tool-based interface.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import structlog
@@ -72,17 +73,99 @@ List available gflow prompt tools (name, title, description, category).
 """
 
 
+# #501: KNOWN_ISSUES.md is ~70 KB and grows every release — an unbounded
+# read_text() injected all of it into the agent's context on every fetch.
+# The default read is a small index; one templated fetch serves a section.
+
+_SECTION_CAP_BYTES = 16 * 1024
+
+
+def _slugify(title: str) -> str:
+    return re.sub(r"-{2,}", "-", re.sub(r"[^a-z0-9]+", "-", title.lower())).strip("-")
+
+
+def _iter_issue_sections(text: str) -> list[tuple[str, str, str]]:
+    """Yield (slug, title, body) for every ``### `` heading in the doc."""
+    sections: list[tuple[str, str, str]] = []
+    parts = re.split(r"^### (.+)$", text, flags=re.MULTILINE)
+    # parts = [preamble, title1, body1, title2, body2, ...]
+    for i in range(1, len(parts) - 1, 2):
+        title = parts[i].strip()
+        sections.append((_slugify(title), title, parts[i + 1]))
+    return sections
+
+
+def _build_known_issues_index(text: str) -> str:
+    lines = [
+        "# Known issues — index",
+        "",
+        "Full text of one issue: read `gflow://docs/known-issues/<slug>`.",
+        "",
+    ]
+    for slug, title, body in _iter_issue_sections(text):
+        status = ""
+        match = re.search(r"\*\*Status:\*\*\s*(.+)", body)
+        if match:
+            status = " — " + re.sub(r"[*\[\]]", "", match.group(1)).split("(")[0].strip()[:80]
+        lines.append(f"- `{slug}` — {title}{status}")
+    return "\n".join(lines)
+
+
+def _extract_known_issue_section(text: str, slug: str) -> str | None:
+    for section_slug, title, body in _iter_issue_sections(text):
+        if section_slug == slug:
+            return f"### {title}\n{body.rstrip()}\n"
+    return None
+
+
+def _cap_section(text: str) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= _SECTION_CAP_BYTES:
+        return text
+    return (
+        encoded[:_SECTION_CAP_BYTES].decode("utf-8", errors="ignore")
+        + "\n\n[truncated at 16 KB — read KNOWN_ISSUES.md in the repo for the rest]"
+    )
+
+
+def _known_issues_text() -> str | None:
+    path = _REPO_ROOT / "KNOWN_ISSUES.md"
+    return path.read_text(encoding="utf-8") if path.exists() else None
+
+
 @server.resource(
     uri="gflow://docs/known-issues",
     name="Known Issues",
-    description="Current known issues and workarounds for gflow-cli.",
+    description=(
+        "Index of current known issues (titles + status). Read "
+        "gflow://docs/known-issues/{slug} for one issue's full text."
+    ),
 )
 async def known_issues() -> str:
-    """Return KNOWN_ISSUES.md contents."""
-    known_issues_path = _REPO_ROOT / "KNOWN_ISSUES.md"
-    if known_issues_path.exists():
-        return known_issues_path.read_text(encoding="utf-8")
-    return "KNOWN_ISSUES.md not found."
+    """Return a bounded index of KNOWN_ISSUES.md (#501)."""
+    text = _known_issues_text()
+    if text is None:
+        return "KNOWN_ISSUES.md not found."
+    return _build_known_issues_index(text)
+
+
+@server.resource(
+    uri="gflow://docs/known-issues/{slug}",
+    name="Known Issue Section",
+    description="Full text of a single known issue, by slug from the index.",
+)
+async def known_issues_section(slug: str) -> str:
+    """Return one issue's full text, capped at 16 KB (#501)."""
+    text = _known_issues_text()
+    if text is None:
+        return "KNOWN_ISSUES.md not found."
+    section = _extract_known_issue_section(text, slug)
+    if section is None:
+        return (
+            f"Unknown section slug {slug!r}. Read gflow://docs/known-issues "
+            "for the index of valid slugs."
+        )
+    return _cap_section(section)
 
 
 @server.resource(
