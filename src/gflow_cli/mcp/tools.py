@@ -83,6 +83,27 @@ class _TokenBucket:
 
 _rate_limiter = _TokenBucket()
 
+
+def _rate_limited_envelope() -> dict[str, Any]:
+    """The ONE rate-limited refusal shape (#498) — RFC 9457 problem details.
+
+    Both generate tools refuse with this exact envelope; the refusal happens
+    before the ``@_guarded`` funnel, which is why #473's unification missed it.
+    """
+    return {
+        "status": "rate_limited",
+        "error": {
+            "type": "https://gflow-cli.dev/errors/rate-limited",
+            "title": "Rate Limited",
+            "status": 429,
+            "detail": (
+                "Generation rate limit reached (token bucket: capacity 8, "
+                "refill 1 per 20 s). Please wait before making another request."
+            ),
+        },
+    }
+
+
 # Sentinel meaning "auto-resolve the profile like the CLI" (see
 # _resolve_and_validate_profile). Shared constant, not a repeated literal (S1192).
 _DEFAULT_PROFILE = "default"
@@ -766,10 +787,7 @@ async def gflow_generate_image(
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_image")
-        return {
-            "status": "rate_limited",
-            "error": "Too many requests. Please wait before generating again.",
-        }
+        return _rate_limited_envelope()
 
     # Resolve and validate the profile BEFORE acquiring the per-profile lock so
     # that the lock key matches the real on-disk profile name, not the sentinel.
@@ -971,18 +989,7 @@ async def gflow_generate_video(  # NOSONAR
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_video")
-        return {
-            "status": "rate_limited",
-            "error": {
-                "type": "https://gflow-cli.dev/errors/rate-limited",
-                "title": "Rate Limited",
-                "status": 429,
-                "detail": (
-                    "Video generation rate limit reached (1 request per 30 seconds). "
-                    "Please wait before making another request."
-                ),
-            },
-        }
+        return _rate_limited_envelope()
 
     # Resolve and validate the profile BEFORE acquiring the per-profile lock so
     # that the lock key matches the real on-disk profile name, not the sentinel.
@@ -1088,15 +1095,19 @@ async def gflow_list_tools() -> dict[str, Any]:
 async def gflow_list_projects(
     profile: str = _DEFAULT_PROFILE,
     limit: int = 50,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """List projects from the local SQLite catalog.
 
     Args:
         profile: gflow-cli profile name to filter by.
-        limit: Maximum number of projects to return.
+        limit: Maximum number of projects to return per page.
+        offset: Number of rows to skip — pass the previous page's
+            ``next_offset`` to fetch the next page (#498).
 
     Returns:
-        Dict with 'projects' list and pagination info.
+        Dict with 'projects' list and honest pagination info: ``count``
+        (rows in this page), ``offset``, ``has_more``, ``next_offset``.
     """
     log.info("mcp.tool.list_projects", profile=profile, limit=limit)
 
@@ -1107,12 +1118,16 @@ async def gflow_list_projects(
     # An inner `except Exception` here used to swallow GFlowErrors (e.g.
     # DataStoreError) into a masked string, and gave this tool a second,
     # incompatible error shape (council review of #473).
-    rows = list_projects(
+    # Fetch one extra row to learn whether another page exists without a
+    # separate COUNT query (#498) — the page itself is rows[:limit].
+    fetched = list_projects(
         db_path=db_path,
         profile=profile if profile != "default" else None,
-        limit=limit,
-        offset=0,
+        limit=limit + 1,
+        offset=offset,
     )
+    rows = fetched[:limit]
+    has_more = len(fetched) > limit
     return {
         "status": "ok",
         "projects": [
@@ -1126,7 +1141,10 @@ async def gflow_list_projects(
             }
             for r in rows
         ],
-        "total": len(rows),
+        "count": len(rows),
+        "offset": offset,
+        "has_more": has_more,
+        "next_offset": offset + limit if has_more else None,
     }
 
 
