@@ -47,7 +47,7 @@ Before any gflow-cli invocation, verify:
    - Quick: `uvx --from gflow-cli gflow --help` (no install)
    - Persistent: `uv tool install gflow-cli && gflow --help`
 4. **Playwright Chromium** has been downloaded once: `uvx --from gflow-cli playwright install chromium` (~150 MB).
-5. **A signed-in profile** exists: `gflow auth status` should show `Profile 'default' is configured`. If not, run `gflow auth login` and walk the user through the one-time browser sign-in.
+5. **A signed-in profile** exists: `gflow auth status` should print `Flow session verified` and exit 0 (it probes the live Flow session endpoint — no browser, no credits; exit 1 means dead or missing session). If not, run `gflow auth login` and walk the user through the one-time browser sign-in.
 6. **The user has Flow access** — Google AI Ultra or Pro subscription with Flow rolled out. If `gflow image upload` returns 403, this is the cause.
 
 ## Core commands

@@ -197,18 +197,19 @@ accidental interference or data corruption.
 
 ### `gflow auth status`
 
-Reports whether a profile exists, where it lives, and whether the cookies file is present.
+Reports where the profile lives, then **proves the session**: it probes the Flow session endpoint with the profile's cookies (no browser, no credits) and exits `0` only when the session is verified — `1` otherwise. Handy for scripts: `gflow auth status && gflow run ...`.
 
 ```bash
 $ gflow auth status
-Profile 'default' is configured.
   profile: /home/you/.local/share/gflow-cli/profile_default
   exists: True
   cookies_present: True
   cookies_path: /home/you/.local/share/gflow-cli/profile_default/Default/Cookies
+  browser_engine: playwright
+Flow session verified as you@example.com.
 ```
 
-> Note: `cookies_present: True` only confirms the file exists — not that the session is still valid with Google. The first real API call (e.g. `gflow image t2i`) is the actual probe. If Google has invalidated the session, the call will fail with an authentication error and you'll be prompted to re-run `auth login`.
+> Note: `cookies_present: True` only confirms the file exists. The final verdict line is the live probe result: a dead session prints a `gflow auth login` remediation hint and exits 1; a probe that cannot reach the endpoint (offline, 5xx) also exits 1 but suggests checking connectivity instead of re-logging in.
 
 ### `gflow auth list`
 

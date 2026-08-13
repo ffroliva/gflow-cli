@@ -9,11 +9,19 @@ Feature: Authentication
     Then the exit code is 0
     And the output contains "No profiles found"
 
-  Scenario: Status of a profile
+  Scenario: Status of a profile with a live Flow session
     Given a profile "experiments" exists
+    And the Flow session probe reports authenticated
     When I run "gflow auth status --profile experiments"
     Then the exit code is 0
     And the output contains "experiments"
+
+  Scenario: Status of a profile whose session is dead
+    Given a profile "experiments" exists
+    And the Flow session probe reports no session
+    When I run "gflow auth status --profile experiments"
+    Then the exit code is 1
+    And the output contains "gflow auth login"
 
   Scenario: Use a profile
     Given a profile "experiments" exists

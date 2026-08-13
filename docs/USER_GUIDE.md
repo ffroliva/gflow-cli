@@ -84,7 +84,7 @@ The session cookies persist across reboots until Google invalidates them — typ
 gflow auth status
 ```
 
-Expected: `cookies_present: True` + `profile_dir: <path>`. If it says `False`, re-run `gflow auth login`.
+Expected: `Flow session verified as <your account>.` and exit code 0 — the command probes the live Flow session (no browser, no credits). If it exits 1, follow the printed hint (usually re-run `gflow auth login`).
 
 You're done. Skip to [Journey 2](#journey-2--your-first-video-single-t2v).
 
@@ -320,7 +320,8 @@ Then check current session state:
 
 ```bash
 gflow auth status
-# Likely output: cookies_present: True, but Google has invalidated the session.
+# A dead session exits 1 and says so, e.g.:
+#   "Signed in to Google, but not to the Flow app." + a gflow auth login hint.
 ```
 
 ### 7.2 Refresh
