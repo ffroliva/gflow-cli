@@ -5,6 +5,11 @@ on:
     branches: [develop, main]
   pull_request:
 
+# Least-privilege default token for every job (OpenSSF Scorecard:
+# Token-Permissions). Jobs that need more elevate per-job below.
+permissions:
+  contents: read
+
 env:
   # Suppress Node.js deprecation warnings and align with user request to use Node 22/remove noise.
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
@@ -15,13 +20,16 @@ jobs:
   secrets-scan:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # gitleaks-action PR feedback comments
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0  # full history so gitleaks can diff against base
 
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v3
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -30,9 +38,9 @@ jobs:
     name: Dependency audit (pip-audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       - name: Audit locked dependencies for known CVEs
         # Fails the build on any known advisory. Accept later via: pip-audit --ignore-vuln <GHSA-id>
         #
@@ -62,10 +70,10 @@ jobs:
     name: Dependency resolution drift (no lockfile)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
       - name: Set up Python
         run: uv python install 3.13
@@ -116,10 +124,10 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
       - name: Set up Python
         run: uv python install ${{ matrix.python-version }}
@@ -152,12 +160,17 @@ jobs:
         # e2e/live tests require a logged-in Chromium profile and may spend
         # Flow credits. pyproject.toml excludes both markers by default; CI
         # intentionally relies on that default smoke set.
-        run: uv run python -m pytest -q --cov=gflow_cli --cov-report=xml
+        run: uv run python -m pytest -q --cov=gflow_cli --cov-report=xml --junitxml=pytest-report.xml
+
+      - name: Test-count guard (a green build that ran nothing is not green)
+        # Floor well below the real count (~2900): catches collection collapse
+        # (bad marker/-k filter, broken conftest), never routine deletions.
+        run: uv run python scripts/ci/check_test_count.py pytest-report.xml 2000
 
       # Upload coverage XML so the sonar job can consume it
       - name: Upload coverage report
         if: matrix.python-version == '3.11'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: coverage-xml
           path: coverage.xml
@@ -180,10 +193,10 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
       - name: Set up Python
         run: uv python install 3.13
@@ -192,13 +205,21 @@ jobs:
         run: uv sync --extra dev
 
       - name: ProfileLease unit + subprocess tests
-        run: uv run python -m pytest tests/test_profile_lease.py tests/test_profile_lease_subprocess.py -q
+        run: uv run python -m pytest tests/test_profile_lease.py tests/test_profile_lease_subprocess.py -q --junitxml=pytest-lease.xml
+
+      - name: Test-count guard (lease matrix ran its suite)
+        # Floor well below the ~29 executed per OS leg — catches collapse, not
+        # routine test consolidation.
+        run: uv run python scripts/ci/check_test_count.py pytest-lease.xml 10
 
   # ── SonarCloud analysis ───────────────────────────────────────────────────
   sonar:
     name: SonarCloud analysis
     runs-on: ubuntu-latest
     needs: test   # wait for tests + coverage report
+    permissions:
+      contents: read
+      pull-requests: read  # PR-context analysis / decoration lookups
     # Forked pull_request runs do not receive repository secrets, so SONAR_TOKEN
     # is empty there and the scanner fails before analysis. Dependabot-triggered
     # runs are the same case: GitHub serves them the separate Dependabot secrets
@@ -212,12 +233,12 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository
       )
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0  # shallow clones break blame / new-code detection
 
       - name: Download coverage report
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: coverage-xml
         continue-on-error: true  # graceful if coverage upload was skipped
@@ -242,7 +263,12 @@ jobs:
 
       - name: SonarCloud scan
         if: steps.sonarcloud_health.outputs.up == 'true'
-        uses: SonarSource/sonarcloud-github-action@v5.0.0
+        # sonarcloud-github-action is ARCHIVED upstream (dependabot never bumps
+        # archived actions, so its pin would rot silently); sonarqube-scan-action
+        # is SonarSource's maintained successor and serves SonarCloud when
+        # SONAR_HOST_URL points at it.
+        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # PR decoration
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    # set in repo → Settings → Secrets
+          SONAR_HOST_URL: https://sonarcloud.io

@@ -32,7 +32,6 @@ class TestMcpToolListing:
             "gflow_generate_image",
             "gflow_generate_video",
             "gflow_list_projects",
-            "gflow_list_characters",
             "gflow_list_tools",
         }
         assert expected.issubset(tool_names), (
@@ -349,14 +348,13 @@ class TestToolExecution:
         assert result["status"] == "ok"
         assert result["projects"] == []
 
-    @pytest.mark.asyncio
-    async def test_list_characters_returns_empty_list(self) -> None:
-        """gflow_list_characters should return an empty list when no data."""
-        from gflow_cli.mcp.tools import gflow_list_characters
+    def test_list_characters_stub_is_gone(self) -> None:
+        """#499: the old stub answered ok+[] — an agent reads that as "you
+        have no characters" and acts on the lie. The tool stays absent until
+        it can return real data."""
+        from gflow_cli.mcp import tools
 
-        result = await gflow_list_characters()
-        assert result["status"] == "ok"
-        assert result["characters"] == []
+        assert not hasattr(tools, "gflow_list_characters")
 
 
 # ---------------------------------------------------------------------------
