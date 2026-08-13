@@ -52,6 +52,10 @@ Generate videos using Google's Veo model.
 - **Aspects:** 9:16 (portrait), 16:9 (landscape)
 - **Note:** i2v requires `initial_frame`; r2v requires `reference_images`
 
+### gflow_auth_status
+Credit-free, non-interactive Flow session probe — call it before a generate
+tool to fail fast on expired auth. Login itself is CLI-only.
+
 ### gflow_list_projects
 Browse the local project catalog.
 

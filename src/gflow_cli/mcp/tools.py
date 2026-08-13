@@ -30,10 +30,12 @@ from typing import Any, cast
 
 import structlog
 
+from gflow_cli import auth as auth_mod
 from gflow_cli._cli_helpers import _FLOW_ID_RE
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.video import is_media_uuid
+from gflow_cli.auth import verification
 from gflow_cli.cli_instructions import classify_refs
 from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.models import AssetLookup
@@ -1148,6 +1150,68 @@ async def gflow_list_projects(
     }
 
 
+@server.tool(
+    name="gflow_auth_status",
+    description=(
+        "Non-interactive, credit-free Flow session probe (#497). Call this "
+        "BEFORE a generation tool to fail fast on expired auth — the queue is "
+        "async, so an auth failure otherwise surfaces only later from the "
+        "daemon. Never opens a browser or starts a login flow. May take up to "
+        "~45s on a slow network."
+    ),
+)
+@_guarded
+async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
+    """Probe the profile's Flow session without any interaction.
+
+    Wraps :func:`gflow_cli.auth.verification.verify_flow_profile` — the same
+    fail-closed probe behind ``gflow auth status``. Login/logout stay CLI-only
+    (genuinely interactive); this tool only *reports*.
+
+    Args:
+        profile: gflow-cli profile name (``"default"`` auto-resolves like the CLI).
+
+    Returns:
+        ``{"status": "authenticated", "profile", "user_email"}`` on success;
+        otherwise ``{"status": <outcome>, "profile", "error": {...problem
+        details with remediation_hint...}}``.
+    """
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved
+    log.info("mcp.tool.auth_status", profile=resolved)
+    status = await verification.verify_flow_profile(auth_mod.profile_dir(resolved), source="mcp")
+    if status.authenticated:
+        return {
+            "status": "authenticated",
+            "profile": resolved,
+            "user_email": status.user_email,
+        }
+    if status.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
+        # A network/endpoint problem is not fixed by re-login — mirror the
+        # CLI's guidance and do not send the agent toward an interactive flow.
+        hint = (
+            "Could not verify the Flow session (network or endpoint problem). "
+            "Check connectivity and retry; re-login is only needed if the "
+            "session is actually dead."
+        )
+    else:
+        hint = (
+            f"Run 'gflow auth login --profile {resolved}' in your local "
+            "terminal (interactive; not available through MCP)."
+        )
+    return {
+        "status": status.outcome.value,
+        "profile": resolved,
+        "error": {
+            "type": "https://gflow-cli.dev/errors/auth-expired",
+            "title": "Flow session not verified",
+            "status": 401,
+            "detail": status.detail,
+            "remediation_hint": hint,
+        },
+    }
+
 # gflow_list_characters was removed in #499: it was a stub that always
 # answered {"status": "ok", "characters": []} — an agent reads that as "the
 # user has no characters" and acts on the lie. Re-add only when it can
@@ -1543,6 +1607,7 @@ __all__ = [
     "gflow_generate_video",
     "gflow_list_tools",
     "gflow_list_projects",
+    "gflow_auth_status",
     "gflow_instructions_list",
     "gflow_instructions_add",
     "gflow_instructions_set_enabled",

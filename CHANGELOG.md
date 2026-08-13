@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MCP tool `gflow_auth_status` (#497).** A zero-required-arg, credit-free,
+  non-interactive Flow session probe wrapping the same fail-closed
+  `verify_flow_profile` check as `gflow auth status`. Agents call it before a
+  generation tool to fail fast on expired auth — the queue is async, so an
+  auth failure otherwise surfaces only later, from the daemon. Returns
+  `authenticated` + the verified email, or a problem-details envelope whose
+  `remediation_hint` points at the CLI login (or at retrying, for a network
+  `verification_error` that re-login cannot fix). `auth status` accordingly
+  moves out of the MCP parity exemptions; login/logout stay CLI-only.
 ### Fixed
 
 - **MCP response-contract breaches (#498).** Both generate tools now refuse

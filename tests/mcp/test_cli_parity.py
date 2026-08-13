@@ -46,6 +46,7 @@ CLI_TO_MCP: dict[str, str] = {
     "video r2v": "gflow_generate_video",  # mode="r2v"
     "tools list": "gflow_list_tools",
     "tools show": "gflow_list_tools",  # list output carries the show detail
+    "auth status": "gflow_auth_status",
     "data list projects": "gflow_list_projects",
     "project list": "gflow_list_projects",
     "instructions list": "gflow_instructions_list",
@@ -65,7 +66,6 @@ _MCP_EXEMPT: dict[str, str] = {
     "auth list": "interactive session management",
     "auth login": "interactive session management",
     "auth logout": "interactive session management",
-    "auth status": "interactive session management",
     "auth use": "interactive session management",
     "mcp run": "the MCP server bootstrap itself",
     "mcp setup": "client-config generator for the MCP server itself",
