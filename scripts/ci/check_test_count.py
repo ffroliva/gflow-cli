@@ -22,13 +22,19 @@ import xml.etree.ElementTree as ET
 def main() -> int:
     report_path, floor = sys.argv[1], int(sys.argv[2])
     root = ET.parse(report_path).getroot()
-    # pytest writes <testsuites><testsuite .../></testsuites>; tolerate a bare
-    # <testsuite> root for robustness across junit_family settings.
-    suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+    # iter() is self-inclusive, so this handles both a <testsuites> wrapper and
+    # a bare <testsuite> root with one expression.
+    suites = list(root.iter("testsuite"))
     collected = sum(int(suite.get("tests", "0")) for suite in suites)
     skipped = sum(int(suite.get("skipped", "0")) for suite in suites)
-    executed = collected - skipped
-    print(f"executed={executed} (collected={collected}, skipped={skipped}), floor={floor}")
+    errors = sum(int(suite.get("errors", "0")) for suite in suites)
+    # An errored test never ran its body — it must not count as executed
+    # (matters the day someone masks pytest's own exit code).
+    executed = collected - skipped - errors
+    print(
+        f"executed={executed} (collected={collected}, skipped={skipped}, "
+        f"errors={errors}), floor={floor}"
+    )
     if executed < floor:
         print(
             f"FAIL: only {executed} tests executed but the floor is {floor} — "

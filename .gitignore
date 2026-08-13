@@ -19,6 +19,7 @@ pytest-of-*/
 .coverage
 .coverage.*
 coverage.xml
+pytest-*.xml
 htmlcov/
 .tox/
 .mypy_cache/
