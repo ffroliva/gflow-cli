@@ -107,17 +107,15 @@ What happens:
 
 **Cost:** ~1 credit per ~8-second clip on Ultra. Watch your credits at <https://labs.google/fx/tools/flow>.
 
-**Choose your aspect ratio and seed:**
+**Choose your aspect ratio:**
 
 ```bash
 gflow video t2v "a steam locomotive at dusk" \
     --aspect 16:9 \
-    --seed 4242 \
     --out-dir ./out
-
 ```
 
-`--seed` is the only knob for reproducibility — same seed + prompt + model = same output (within Veo's tolerance).
+There is no CLI seed knob — an identical prompt + model can still vary between runs (Veo is non-deterministic).
 
 ---
 

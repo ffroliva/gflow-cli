@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- A Google AI **Ultra or Pro** subscription with Flow access — every generation bills your own account.
+- A Google account with Flow access — every generation bills your own account (a paid AI Pro/Ultra plan only affects credit allowances).
 - [`uv`](https://docs.astral.sh/uv/) to install the tool.
 - A Chromium the browser transport can drive (installed via Playwright, below).
 - A display for the one-time browser login (headless CI without a prerecorded profile won't work — see [Known issues](KNOWN_ISSUES.md)).

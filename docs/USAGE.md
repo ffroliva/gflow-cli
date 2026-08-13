@@ -13,7 +13,7 @@ Commands:
   auth      Manage Google sessions for Flow.
     (no args)                   Show profile list, or trigger first login.
     login                       One-time interactive sign-in.
-    status                      Show whether a profile has a saved session.
+    status                      Prove the profile's Flow session live; exit 0 verified / 1 not.
     list                        List every profile and indicate the default.
     use NAME                    Set NAME as the default profile.
     logout                      Delete a profile's saved session (asks first).
@@ -27,7 +27,6 @@ Commands:
     t2v                         Generate a video from a text prompt.
     i2v                         Generate a video from an initial frame + motion prompt.
     r2v                         Generate a video from reference images + prompt.
-    batch                       Run a TSV manifest of video generations.
     chain                       Render a JSONL manifest as a last-frame I2V chain.
 
   scene     Compose Flow Scenes (Add Clip) — credit-free REST.
@@ -47,6 +46,14 @@ Commands:
     prune                       Remove stale local file entries.
 
   models    Print the image/video model catalog (Rich table or --json).
+
+  project   Manage Flow projects (create / rename / list).
+  instructions  Persistent Agent-Mode brief cards (add/list/enable/disable/rm/apply/toggle-mode).
+  movie     Multi-scene manifest pipeline (run / template).
+  tools     Prompt-rewriting tools (list / show / run; also --tool on generation commands).
+  run       Config-driven generation run.
+  mcp       MCP server over stdio (run) + client-config generator (setup).
+  serve     MCP server over Streamable HTTP at /mcp.
 ```
 
 Global flags:
@@ -1120,6 +1127,15 @@ use. When set:
 The data-layer recorder fires regardless of `--json`, so audit history is
 independent of the output channel.
 
+## `gflow mcp`
+
+Model Context Protocol server for IDE/agent integration. Full reference: [MCP.md](MCP.md).
+
+- **`gflow mcp run [--profile NAME]`** — start the MCP server over **stdio** (Claude Desktop, Cursor, VS Code). Auto-selects your default profile; pin one with `--profile` or `GFLOW_CLI_PROFILE`.
+- **`gflow mcp setup [--target claude-desktop|cursor|vscode]`** — write the gflow server entry into the target client's config. Non-destructive: existing content is merged, an existing `gflow`/`gflow-cli` entry is left untouched ("Already configured"), a pre-existing file is backed up once as `<name>.gflow-backup`, and a corrupt config fails loud (exit 11) without being modified. See [MCP.md § Setup Instructions](MCP.md#4-setup-instructions).
+
+For MCP over HTTP, see `gflow serve` and [MCP.md](MCP.md).
+
 ## `gflow run`
 
 Sequential JSON-described batch image generation. New in v0.5.0a1.
@@ -1310,7 +1326,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | Code | Error class           | Meaning                                          | Remediation                                                |
 |------|-----------------------|--------------------------------------------------|------------------------------------------------------------|
 | `0`  | —                     | Success                                          | —                                                          |
-| `1`  | unhandled exception   | Anything not derived from `GFlowError`           | Re-run with `--verbose`; file a bug if it persists         |
+| `1`  | unhandled exception   | Anything not derived from `GFlowError` — **or a deliberate CLI verdict**: `gflow auth status` exits 1 for a dead/unverifiable session | Re-run with `--verbose`; for `auth status` follow the printed hint; file a bug if it persists |
 | `2`  | usage error (Click)   | Bad usage / missing arg / profile missing        | Standard CLI usage error                                   |
 | `3`  | `AuthExpiredError`    | Session cookies rejected by Flow (401/403)       | `gflow auth login --profile <name>`                        |
 | `4`  | `RateLimitError`      | Quota / rate limit hit, exhausted retries        | Wait + reduce `GFLOW_CLI_CONCURRENCY`                      |

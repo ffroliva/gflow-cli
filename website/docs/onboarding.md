@@ -3,12 +3,12 @@
 From install to your first AI-generated image in about 5 minutes — or hand the whole thing to your AI assistant.
 
 !!! warning "Before you begin"
-    gflow-cli is **unofficial, alpha, and reverse-engineered**. It drives a headed browser on *your own* Google Flow session — treat it as your own account risk. It requires a Google AI **Ultra or Pro** subscription with Flow access, and every generation bills your account. **Not affiliated with Google.**
+    gflow-cli is **unofficial, alpha, and reverse-engineered**. It drives a headed browser on *your own* Google Flow session — treat it as your own account risk. It works with any Google account that has Flow access with Flow access, and every generation bills your account. **Not affiliated with Google.**
 
 ## Prerequisites
 
 - Python 3.11+ (`uv` installs a managed Python — no global install needed)
-- A Google AI **Ultra or Pro** subscription with Flow access
+- A Google account with Flow access (a paid AI Pro/Ultra plan only affects credit allowances)
 - Google Chrome installed
 - A display for the one-time browser login
 
