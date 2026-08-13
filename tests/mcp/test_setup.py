@@ -36,6 +36,7 @@ class TestConfigPathFor:
 
     def test_claude_desktop_linux(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)  # set on GitHub runners
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
         expected = tmp_path / ".config" / "Claude" / "claude_desktop_config.json"
         assert setup_mod.config_path_for("claude-desktop") == expected
