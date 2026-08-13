@@ -5,8 +5,8 @@ Each tool is registered on the shared MCPServer instance and delegates
 to FlowWorker / DataStore / data.queries for actual execution.
 
 Rate limiting: a token-bucket (capacity=8, refill=1/20s) prevents runaway
-agentic loops from burning credits. Session and daily budget limits are
-enforced by checking spent amounts against SQLite records.
+agentic loops from burning credits. There is NO credit-budget accounting —
+rate limiting is the only spend brake (#495).
 
 Task claiming: the direct-execution path enqueues a task then claims it via
 the atomic ``QueueRepository.claim_task`` (the same BEGIN IMMEDIATE claim the
@@ -30,10 +30,12 @@ from typing import Any, cast
 
 import structlog
 
+from gflow_cli import auth as auth_mod
 from gflow_cli._cli_helpers import _FLOW_ID_RE
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.video import is_media_uuid
+from gflow_cli.auth import verification
 from gflow_cli.cli_instructions import classify_refs
 from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.models import AssetLookup
@@ -82,6 +84,27 @@ class _TokenBucket:
 
 
 _rate_limiter = _TokenBucket()
+
+
+def _rate_limited_envelope() -> dict[str, Any]:
+    """The ONE rate-limited refusal shape (#498) — RFC 9457 problem details.
+
+    Both generate tools refuse with this exact envelope; the refusal happens
+    before the ``@_guarded`` funnel, which is why #473's unification missed it.
+    """
+    return {
+        "status": "rate_limited",
+        "error": {
+            "type": "https://gflow-cli.dev/errors/rate-limited",
+            "title": "Rate Limited",
+            "status": 429,
+            "detail": (
+                "Generation rate limit reached (token bucket: capacity 8, "
+                "refill 1 per 20 s). Please wait before making another request."
+            ),
+        },
+    }
+
 
 # Sentinel meaning "auto-resolve the profile like the CLI" (see
 # _resolve_and_validate_profile). Shared constant, not a repeated literal (S1192).
@@ -766,10 +789,7 @@ async def gflow_generate_image(
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_image")
-        return {
-            "status": "rate_limited",
-            "error": "Too many requests. Please wait before generating again.",
-        }
+        return _rate_limited_envelope()
 
     # Resolve and validate the profile BEFORE acquiring the per-profile lock so
     # that the lock key matches the real on-disk profile name, not the sentinel.
@@ -971,18 +991,7 @@ async def gflow_generate_video(  # NOSONAR
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_video")
-        return {
-            "status": "rate_limited",
-            "error": {
-                "type": "https://gflow-cli.dev/errors/rate-limited",
-                "title": "Rate Limited",
-                "status": 429,
-                "detail": (
-                    "Video generation rate limit reached (1 request per 30 seconds). "
-                    "Please wait before making another request."
-                ),
-            },
-        }
+        return _rate_limited_envelope()
 
     # Resolve and validate the profile BEFORE acquiring the per-profile lock so
     # that the lock key matches the real on-disk profile name, not the sentinel.
@@ -1088,15 +1097,19 @@ async def gflow_list_tools() -> dict[str, Any]:
 async def gflow_list_projects(
     profile: str = _DEFAULT_PROFILE,
     limit: int = 50,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """List projects from the local SQLite catalog.
 
     Args:
         profile: gflow-cli profile name to filter by.
-        limit: Maximum number of projects to return.
+        limit: Maximum number of projects to return per page.
+        offset: Number of rows to skip — pass the previous page's
+            ``next_offset`` to fetch the next page (#498).
 
     Returns:
-        Dict with 'projects' list and pagination info.
+        Dict with 'projects' list and honest pagination info: ``count``
+        (rows in this page), ``offset``, ``has_more``, ``next_offset``.
     """
     log.info("mcp.tool.list_projects", profile=profile, limit=limit)
 
@@ -1107,12 +1120,16 @@ async def gflow_list_projects(
     # An inner `except Exception` here used to swallow GFlowErrors (e.g.
     # DataStoreError) into a masked string, and gave this tool a second,
     # incompatible error shape (council review of #473).
-    rows = list_projects(
+    # Fetch one extra row to learn whether another page exists without a
+    # separate COUNT query (#498) — the page itself is rows[:limit].
+    fetched = list_projects(
         db_path=db_path,
         profile=profile if profile != "default" else None,
-        limit=limit,
-        offset=0,
+        limit=limit + 1,
+        offset=offset,
     )
+    rows = fetched[:limit]
+    has_more = len(fetched) > limit
     return {
         "status": "ok",
         "projects": [
@@ -1126,56 +1143,79 @@ async def gflow_list_projects(
             }
             for r in rows
         ],
-        "total": len(rows),
+        "count": len(rows),
+        "offset": offset,
+        "has_more": has_more,
+        "next_offset": offset + limit if has_more else None,
     }
 
 
 @server.tool(
-    name="gflow_list_characters",
+    name="gflow_auth_status",
     description=(
-        "List all Flow Character entities for the active profile. "
-        "Characters are reusable project-scoped entities with voices."
+        "Non-interactive, credit-free Flow session probe (#497). Call this "
+        "BEFORE a generation tool to fail fast on expired auth — the queue is "
+        "async, so an auth failure otherwise surfaces only later from the "
+        "daemon. Never opens a browser or starts a login flow. May take up to "
+        "~45s on a slow network."
     ),
 )
 @_guarded
-async def gflow_list_characters(
-    profile: str = _DEFAULT_PROFILE,
-) -> dict[str, Any]:
-    """List Flow Character entities from the local catalog.
+async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
+    """Probe the profile's Flow session without any interaction.
 
-    Characters are cloud-side Flow entities (not stored in the local SQLite
-    catalog) and require an active browser session to enumerate.  Use
-    ``gflow character list`` in the CLI for a full listing, or call this tool
-    from a context where a browser session is available.
+    Wraps :func:`gflow_cli.auth.verification.verify_flow_profile` — the same
+    fail-closed probe behind ``gflow auth status``. Login/logout stay CLI-only
+    (genuinely interactive); this tool only *reports*.
 
     Args:
-        profile: gflow-cli profile name to filter by.
+        profile: gflow-cli profile name (``"default"`` auto-resolves like the CLI).
 
     Returns:
-        Dict with 'characters' list.
-
-    Note:
-        Characters are project-scoped on the Flow side; this tool returns an
-        empty list when no project_id is provided, since listing across all
-        projects would require iterating every project.  Pass a project_id
-        via a future parameter update, or use ``gflow character list`` in the
-        terminal.
+        ``{"status": "authenticated", "profile", "user_email"}`` on success;
+        otherwise ``{"status": <outcome>, "profile", "error": {...problem
+        details with remediation_hint...}}``.
     """
-    log.info("mcp.tool.list_characters", profile=profile)
-
-    # Characters live on the Flow cloud side and are not cached in the local
-    # SQLite catalog — fetching them requires an active browser session and a
-    # specific project_id.  Return an informative empty response rather than
-    # silently returning nothing or crashing.
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved
+    log.info("mcp.tool.auth_status", profile=resolved)
+    status = await verification.verify_flow_profile(auth_mod.profile_dir(resolved), source="mcp")
+    if status.authenticated:
+        return {
+            "status": "authenticated",
+            "profile": resolved,
+            "user_email": status.user_email,
+        }
+    if status.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
+        # A network/endpoint problem is not fixed by re-login — mirror the
+        # CLI's guidance and do not send the agent toward an interactive flow.
+        hint = (
+            "Could not verify the Flow session (network or endpoint problem). "
+            "Check connectivity and retry; re-login is only needed if the "
+            "session is actually dead."
+        )
+    else:
+        hint = (
+            f"Run 'gflow auth login --profile {resolved}' in your local "
+            "terminal (interactive; not available through MCP)."
+        )
     return {
-        "status": "ok",
-        "characters": [],
-        "note": (
-            "Character listing requires a project_id and an active browser session. "
-            "Use `gflow character list --project <id>` in the terminal, or extend "
-            "this MCP tool with a project_id parameter."
-        ),
+        "status": status.outcome.value,
+        "profile": resolved,
+        "error": {
+            "type": "https://gflow-cli.dev/errors/auth-expired",
+            "title": "Flow session not verified",
+            "status": 401,
+            "detail": status.detail,
+            "remediation_hint": hint,
+        },
     }
+
+# gflow_list_characters was removed in #499: it was a stub that always
+# answered {"status": "ok", "characters": []} — an agent reads that as "the
+# user has no characters" and acts on the lie. Re-add only when it can
+# return real Flow-side data (needs project_id + a browser session).
 
 
 # ---------------------------------------------------------------------------
@@ -1567,7 +1607,7 @@ __all__ = [
     "gflow_generate_video",
     "gflow_list_tools",
     "gflow_list_projects",
-    "gflow_list_characters",
+    "gflow_auth_status",
     "gflow_instructions_list",
     "gflow_instructions_add",
     "gflow_instructions_set_enabled",
