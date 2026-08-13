@@ -159,6 +159,31 @@ The following controls are active on this repository to prevent accidental leaka
 | **CODEOWNERS** | `.github/CODEOWNERS` | Ensures security-sensitive files (auth, CI, hygiene gate) always request maintainer review |
 | **Dependabot** | `.github/dependabot.yml` | Weekly alerts + PRs for outdated Python and Actions deps. Routine minor/patch bumps are **grouped** into one PR per ecosystem; majors open individually, and security updates stay ungrouped so an advisory fix does not wait for the weekly batch |
 | **Label sync** | `.github/workflows/labels.yml` | Keeps the labels `dependabot.yml` references (`dependencies`, `python`, `github-actions`) actually present — Dependabot can apply a label but never create one, and a missing label silently drops the label from every bump PR |
+| **Least-privilege CI tokens + SHA-pinned actions** | every `.github/workflows/*.yml` | Each workflow's default `GITHUB_TOKEN` is scoped read-only (jobs elevate only what they need); every `uses:` action is pinned to a full commit SHA so a hijacked upstream tag cannot inject code — Dependabot's `github-actions` group keeps pins fresh |
+| **Test-count floors** | CI test jobs via `scripts/ci/check_test_count.py` | A green build that ran nothing is not green: collection collapse (bad marker/`-k`, broken conftest) fails the job even when pytest exits 0 |
+| **OpenSSF Scorecard self-run** | `.github/workflows/scorecard.yml` (weekly + on `develop` pushes) | Continuous supply-chain posture score, published publicly — see below |
+
+### OpenSSF Scorecard
+
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ffroliva/gflow-cli/badge)](https://scorecard.dev/viewer/?uri=github.com/ffroliva/gflow-cli)
+
+[OpenSSF Scorecard](https://scorecard.dev) is an automated audit of a repository's
+**supply-chain security posture**, scored 0–10 across ~18 checks. Highlights of
+what it measures here: CI token permissions (least privilege), whether actions
+and dependencies are pinned to immutable revisions, branch protection, code
+review practice, presence of SAST/fuzzing, dangerous workflow patterns, whether
+releases are signed, and how actively the project is maintained.
+
+The score is recomputed by our own SHA-pinned `scorecard.yml` workflow weekly
+and on every `develop` push, with `publish_results: true` — so the badge above
+and the [public viewer](https://scorecard.dev/viewer/?uri=github.com/ffroliva/gflow-cli)
+always reflect the current state (the badge links there for the full
+per-check breakdown). The run also uploads a SARIF report to the repository's
+Security tab. Scoring wasn't enabled until *after* the least-privilege +
+SHA-pinning hardening landed, so the published history starts from the
+hardened state. The score is a posture indicator, not a guarantee — some
+checks (e.g. CII Best Practices, fuzzing) are simply not pursued at this
+project's scale.
 
 ### Known residual risk: git history
 

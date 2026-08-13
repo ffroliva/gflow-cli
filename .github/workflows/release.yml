@@ -5,13 +5,17 @@ on:
     tags:
       - "v*.*.*"
 
+# Write scopes live at JOB level (Scorecard Token-Permissions: workflow-level
+# write grants every job — current and future — the elevated token).
 permissions:
-  contents: write       # for creating GitHub Releases
-  id-token: write       # for PyPI Trusted Publishing (OIDC)
+  contents: read
 
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # for creating GitHub Releases
+      id-token: write # for PyPI Trusted Publishing (OIDC)
     environment:
       name: pypi
       url: https://pypi.org/p/gflow-cli

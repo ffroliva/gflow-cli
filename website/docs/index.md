@@ -1,5 +1,7 @@
 # Introduction
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ffroliva/gflow-cli/badge)](https://scorecard.dev/viewer/?uri=github.com/ffroliva/gflow-cli)
+
 **gflow-cli** is an unofficial CLI and MCP server for [Google Flow](https://labs.google/fx/tools/flow) — it scripts **Veo** video and **Imagen** image generation from the terminal instead of clicking through the web UI. And because it ships an MCP server, you can point an AI assistant at it and let the agent drive the generations for you.
 
 !!! warning "Read this before you install"
