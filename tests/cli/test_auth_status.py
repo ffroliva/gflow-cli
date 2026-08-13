@@ -71,10 +71,25 @@ def test_exit_1_without_probe_when_no_cookies(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_exit_1_on_verification_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fail-closed: an unreachable endpoint is NOT an authenticated session."""
+    """Fail-closed: an unreachable endpoint is NOT an authenticated session —
+    but the remediation must point at connectivity, not a pointless re-login."""
     _make_profile("probed")
     _mock_probe(monkeypatch, FlowSessionOutcome.VERIFICATION_ERROR)
 
     result = CliRunner().invoke(main, ["auth", "status", "--profile", "probed"])
 
     assert result.exit_code == 1
+    assert "gflow auth login" not in result.output
+    assert "connectivity" in result.output
+
+
+def test_bracketed_email_renders_without_markup_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A server-supplied email is untrusted text — Rich markup must be escaped
+    (this repo's known bracketed-text crash class)."""
+    _make_profile("probed")
+    _mock_probe(monkeypatch, FlowSessionOutcome.AUTHENTICATED, "[user]@example.com")
+
+    result = CliRunner().invoke(main, ["auth", "status", "--profile", "probed"])
+
+    assert result.exit_code == 0
+    assert result.exception is None

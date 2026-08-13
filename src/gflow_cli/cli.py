@@ -296,18 +296,30 @@ def auth_status(profile: str | None) -> None:
 
     # Files on disk say nothing about whether the session still works — prove
     # it (issue #471). Fail-closed: only a verified session exits 0.
+    from rich.markup import escape
+
     from gflow_cli.auth import verification
 
+    console.print("[dim]Probing Flow session (may take up to ~45s on a slow network)...[/dim]")
     status_result = asyncio.run(
         verification.verify_flow_profile(auth_mod.profile_dir(name), source="status")
     )
     if not status_result.authenticated:
-        console.print(
-            f"[yellow]{status_result.detail}[/yellow] "
-            f"Run [bold]gflow auth login --profile {name}[/bold] to refresh the session.",
-        )
+        if status_result.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
+            # Re-login cannot fix an unreachable endpoint — don't send the
+            # user into an interactive browser flow for a network problem.
+            console.print(
+                f"[yellow]{status_result.detail}[/yellow] "
+                "Check network connectivity and retry; re-login is only needed "
+                "if the session is actually dead.",
+            )
+        else:
+            console.print(
+                f"[yellow]{status_result.detail}[/yellow] "
+                f"Run [bold]gflow auth login --profile {name}[/bold] to refresh the session.",
+            )
         sys.exit(1)
-    who = f" as [bold]{status_result.user_email}[/bold]" if status_result.user_email else ""
+    who = f" as [bold]{escape(status_result.user_email)}[/bold]" if status_result.user_email else ""
     console.print(f"[green]Flow session verified{who}.[/green]")
 
 

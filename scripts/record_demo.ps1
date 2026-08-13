@@ -110,15 +110,14 @@ if (-not (Test-Path $assetsDir)) {
 
 # -------- AUTH PRECHECK --------
 Step "Verifying auth on profile '$ProfileName' (no quota burn yet)"
-# Note: `gflow auth status` only checks for an exported state.json (used by
-# HTTP transports). The default UiAutomationTransport reads cookies straight
-# from the Playwright profile dir's Chromium store, which `auth status`
-# cannot see. So "no session" here is often a false negative. We surface it
-# as an advisory and let the real `gflow run` be the actual test.
+# Note: `gflow auth status` probes the live Flow session endpoint with the
+# profile's cookies and exits non-zero when it cannot verify one (#471).
+# Keep it ADVISORY here: an offline/firewalled probe must not block a
+# recording session — the real `gflow run` is the actual test.
 $statusOutput = (& uv run gflow auth status 2>&1) | Out-String
 Write-Host $statusOutput
 if ($LASTEXITCODE -ne 0) {
-    Die "gflow auth status exited $LASTEXITCODE. Cannot continue."
+    Warn "gflow auth status exited $LASTEXITCODE - continuing; the real 'gflow run' is the actual test."
 }
 $profileDir = "$env:LOCALAPPDATA\ffroliva\gflow-cli\profile_$ProfileName"
 if (-not (Test-Path $profileDir)) {
