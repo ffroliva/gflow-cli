@@ -41,6 +41,40 @@ def test_local_incident_output_warns_review_before_sharing(
     assert "account or media data" in out
 
 
+def test_report_path_printed_when_ref_carries_report(
+    captured_console: io.StringIO, tmp_path: Path
+) -> None:
+    """Issue #476: the report line keys on the ref's artifact tuple — the same
+    source of truth the --json surface serializes."""
+    exc = FlowAppError("crash")
+    exc.incident_ref = IncidentRef(
+        id="corr-fp",
+        capture_status="complete",
+        path=tmp_path,
+        artifacts=("report.md", "ui.json"),
+    )
+    cli_helpers._handle_gflow_error(exc, cli_command="video t2v")
+    out = captured_console.getvalue()
+    assert "Pre-filled bug report:" in out
+    assert str(tmp_path / "report.md") in out
+
+
+def test_no_report_line_when_report_write_failed(
+    captured_console: io.StringIO, tmp_path: Path
+) -> None:
+    """A ref without report.md (write failed and was unlinked) must not
+    advertise a report."""
+    exc = FlowAppError("crash")
+    exc.incident_ref = IncidentRef(
+        id="corr-fp",
+        capture_status="partial",
+        path=tmp_path,
+        artifacts=("ui.json",),
+    )
+    cli_helpers._handle_gflow_error(exc, cli_command="video t2v")
+    assert "Pre-filled bug report:" not in captured_console.getvalue()
+
+
 def test_no_incident_sentence_without_a_bundle(captured_console: io.StringIO) -> None:
     code = cli_helpers._handle_gflow_error(FlowAppError("crash"), cli_command="video t2v")
     assert code == 31
