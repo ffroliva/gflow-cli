@@ -123,9 +123,12 @@ def no_spend_active() -> bool:
     """True when no-spend mode is requested (#496).
 
     ``gflow mcp run --no-spend`` sets ``GFLOW_MCP_NO_SPEND=1``; the env var
-    alone also works (and covers ``gflow serve``).
+    alone also works (and covers ``gflow serve``). The falsy set matches
+    Click's boolean vocabulary so 'off'/'no'/'n'/'f' cannot mean False to the
+    CLI flag and True to this policy (post-merge review of #496).
     """
-    return os.environ.get("GFLOW_MCP_NO_SPEND", "").strip().lower() not in ("", "0", "false")
+    value = os.environ.get("GFLOW_MCP_NO_SPEND", "").strip().lower()
+    return value not in ("", "0", "false", "off", "no", "n", "f")
 
 
 def _apply_no_spend_policy() -> None:
@@ -138,9 +141,20 @@ def _apply_no_spend_policy() -> None:
     """
     if not no_spend_active():
         return
+    # Idempotent: remove_tool raises ToolError on a missing name, and this
+    # runs once per transport boot — a second _register_surfaces() call (or a
+    # test fixture that already stripped the tools) must not crash the server.
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    removed: list[str] = []
     for name in _SPEND_TOOLS:
-        server.remove_tool(name)
-    log.info("mcp.no_spend_active", removed=list(_SPEND_TOOLS))
+        try:
+            server.remove_tool(name)
+        except ToolError:
+            continue
+        removed.append(name)
+    if removed:
+        log.info("mcp.no_spend_active", removed=removed)
 
 
 def _register_surfaces() -> None:

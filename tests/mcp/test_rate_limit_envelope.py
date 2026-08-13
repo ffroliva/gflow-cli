@@ -30,8 +30,11 @@ async def test_rate_limited_envelope_identical_across_generate_tools(
     assert image == video, "#498: refusal envelopes must be identical"
     assert image["status"] == "rate_limited"
     err = image["error"]
-    assert err["type"] == "https://gflow-cli.dev/errors/rate-limited"
-    assert err["status"] == 429
+    # Canonical RateLimitError URI — NOT a hand-minted '…/rate-limited'
+    # variant (post-merge review) — and the shared retryable flag present.
+    assert err["type"] == "https://gflow-cli.dev/errors/rate-limit"
+    assert err["retryable"] is True
+    assert "message" in err
 
 
 def _fake_rows(n: int) -> list[Any]:

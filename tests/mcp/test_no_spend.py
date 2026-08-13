@@ -14,18 +14,22 @@ import pytest
 
 
 @pytest.fixture
-def registered_server():
+def registered_server(monkeypatch: pytest.MonkeyPatch):
+    # Ambient env must not pre-strip the tools during fixture setup — a shell
+    # with GFLOW_MCP_NO_SPEND exported (the dogfooding the docs advertise)
+    # would otherwise break all three tests (post-merge review).
+    monkeypatch.delenv("GFLOW_MCP_NO_SPEND", raising=False)
     from gflow_cli.mcp import server as server_mod
 
     server_mod._register_surfaces()
-    yield server_mod
-    # Re-add anything the policy removed so other tests see the full registry.
-    from gflow_cli.mcp import tools
-
     mgr = server_mod.server._tool_manager
-    for name in server_mod._SPEND_TOOLS:
-        if mgr.get_tool(name) is None:
-            server_mod.server.add_tool(getattr(tools, name))
+    # Save the exact Tool objects so restore keeps registration metadata
+    # (descriptions) intact for the rest of the session-wide registry.
+    saved = {n: mgr.get_tool(n) for n in server_mod._SPEND_TOOLS}
+    yield server_mod
+    for name, tool in saved.items():
+        if tool is not None and mgr.get_tool(name) is None:
+            mgr._tools[name] = tool
 
 
 def _tool_names(server_mod) -> set[str]:
@@ -62,3 +66,19 @@ def test_falsy_env_values_do_not_gate(
     monkeypatch.setenv("GFLOW_MCP_NO_SPEND", value)
     registered_server._apply_no_spend_policy()
     assert "gflow_generate_image" in _tool_names(registered_server)
+
+
+@pytest.mark.asyncio
+async def test_guide_matches_no_spend_registry(
+    registered_server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The agent guide may only name registered tools (#495 rule): under
+    no-spend it must not instruct agents to call the absent generate tools."""
+    from gflow_cli.mcp.resources import mcp_guide
+
+    monkeypatch.setenv("GFLOW_MCP_NO_SPEND", "1")
+    guide = await mcp_guide()
+    assert "NO-SPEND" in guide
+    assert "### gflow_generate_image" not in guide
+    assert "### gflow_generate_video" not in guide
+    assert "gflow_auth_status" in guide
