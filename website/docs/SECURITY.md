@@ -27,7 +27,7 @@
 
 - **Location:** `$GFLOW_CLI_HOME/profile_<name>/Default/Cookies` (a SQLite file managed by Chromium).
 - **Format:** Standard Chromium cookie store, encrypted at rest by Chromium with the OS keystore (`keychain` on macOS, `Credential Manager` on Windows, `kwallet`/`gnome-keyring` on Linux).
-- **Access:** OS file permissions enforce single-user access. On POSIX, `chmod 0700` is applied to the profile dir at creation time. On Windows, ACLs grant access only to the current user.
+- **Access:** OS file permissions enforce single-user access. On POSIX, `chmod 0700` is applied to the profile dir at creation time. On Windows, `gflow auth login` applies an explicit restrict-to-current-user DACL to the profile dir (`icacls`: inheritance stripped, a single owner-only ACE, children reset to inherit it) — so the protection holds even when `GFLOW_CLI_HOME` points at a location with permissive inherited ACLs, not just under `%LOCALAPPDATA%`. Profiles created by earlier versions are hardened once on their next use (marker-gated sweep at browser launch). Best-effort: an ACL failure is logged and never blocks login.
 - **Lifetime:** Persists until `gflow auth logout`, manual deletion, or session invalidation by Google.
 
 ### Google account email

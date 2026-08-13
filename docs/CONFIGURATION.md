@@ -109,7 +109,7 @@ Deep setup, verification, and security notes live in
 ### `GFLOW_CLI_PROVIDER`
 
 **What:** Backend to use for generations.
-**Values:** `flow` (default — reverse-engineered, requires Ultra/Pro) | `official` (planned v0.5+ — Phase 5 official Veo SDK swap, will require a Gemini API key).
+**Values:** `flow` (default — reverse-engineered, works with any Google account that has Flow access) | `official` (planned v0.5+ — Phase 5 official Veo SDK swap, will require a Gemini API key).
 **Default:** `flow`
 **CLI override:** none yet — set the env var to switch backends once `official` is wired.
 
@@ -204,6 +204,12 @@ gflow tools run creative-director "cat in space" --json   # check "was_expanded"
   them, and on Windows it also picks up the system proxy configured in Settings even with
   no env var set. If a corporate proxy is configured, add your local gateway to `NO_PROXY`
   or its traffic will be routed through the proxy and fail non-obviously.
+
+### `GFLOW_CLI_DAEMON_TOKEN` (alias: `GFLOW_DAEMON_TOKEN`)
+
+**What:** API token required before `gflow serve` will bind to a non-localhost address (`--host` other than `127.0.0.1`). Without it, non-local binds abort with exit 11.
+**Default:** unset.
+**Security:** stored as a Pydantic `SecretStr` (since v0.55.0), so a `repr()`/`str()`/`model_dump_json()` of the settings object masks it by construction — on top of the existing logging-boundary redaction. Treat it like any credential: set it via `.env`/environment, never commit it.
 
 ### `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`
 
@@ -338,7 +344,7 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 **Default:** `true`
 **When to disable:** shared machines where even structural failure metadata should not persist, or scripted runs that must write nothing outside the output dir.
 
-**Privacy:** the automatic JSON artifacts (`manifest.json`, `ui.json`, `network.json`, `browser.json`) are built from an explicit allowlist — no prompts, tokens, cookies, headers, request/response bodies, signed URLs, raw page titles, raw error/console text, or unknown hosts/routes ever enter them. The screenshot is inherently sensitive (it can show your account identity, prompts, and media) and therefore lives under the bundle's `sensitive/` subdirectory — **review it before sharing**. Nothing is ever uploaded; retention is bounded (at most 50 complete bundles / 250 MiB, pruned oldest-first at startup). Raw HAR capture stays separate and strictly opt-in via `GFLOW_CLI_HAR_PATH`.
+**Privacy:** the automatic artifacts (`manifest.json`, `ui.json`, `network.json`, `browser.json`, and the pre-filled `report.md` bug-report template) are built from an explicit allowlist — no prompts, tokens, cookies, headers, request/response bodies, signed URLs, raw page titles, raw error/console text, or unknown hosts/routes ever enter them. The screenshot is inherently sensitive (it can show your account identity, prompts, and media) and therefore lives under the bundle's `sensitive/` subdirectory — **review it before sharing**. Nothing is ever uploaded; retention is bounded (at most 50 complete bundles / 250 MiB, pruned oldest-first at startup). Raw HAR capture stays separate and strictly opt-in via `GFLOW_CLI_HAR_PATH`.
 
 ### `GFLOW_CLI_HAR_PATH`
 

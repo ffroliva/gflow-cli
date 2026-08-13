@@ -2,7 +2,7 @@
 name: gflow-cli
 version: "1.2"
 skillopt_epoch: 0
-description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) from the terminal or a script — including text-to-video, image-to-video, image-to-image, batch image pipelines, or burning Flow Ultra/Pro credits programmatically. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Drives the real Flow web UI through a headed Chrome session (Playwright) after a one-time browser sign-in — it does not bypass the UI, it automates it.
+description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) from the terminal or a script — including text-to-video, image-to-video, image-to-image, batch image pipelines, or spending Flow credits programmatically. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Drives the real Flow web UI through a headed Chrome session (Playwright) after a one-time browser sign-in — it does not bypass the UI, it automates it.
 optimization_notes: |
   Known weak spots for the SkillOpt training loop (targets for epoch 1+):
   - Wrong subcommand: agents emit 'gflow video generate' / 'gflow video create' instead of 'gflow video t2v' or 'gflow video i2v'
@@ -29,7 +29,7 @@ The user wants to:
 - Create a reusable, project-scoped Flow **Character** (a named subject with reference images, optional voice + personality) for consistent subjects across generations (`gflow character`)
 - Compose ordered clips into a **scene** and optionally render a credit-free server-side extended video (`gflow scene`)
 - Stitch a multi-clip story where each clip is seeded by the previous clip's last frame (`gflow video chain`)
-- Use their Google AI Ultra or Pro Flow credits via script instead of clicking through the UI
+- Use their Flow credits via script instead of clicking through the UI
 - Automate Flow inside a content pipeline, AI video production stack, or research project
 
 **Do NOT use this skill** when:
@@ -47,8 +47,8 @@ Before any gflow-cli invocation, verify:
    - Quick: `uvx --from gflow-cli gflow --help` (no install)
    - Persistent: `uv tool install gflow-cli && gflow --help`
 4. **Playwright Chromium** has been downloaded once: `uvx --from gflow-cli playwright install chromium` (~150 MB).
-5. **A signed-in profile** exists: `gflow auth status` should show `Profile 'default' is configured`. If not, run `gflow auth login` and walk the user through the one-time browser sign-in.
-6. **The user has Flow access** — Google AI Ultra or Pro subscription with Flow rolled out. If `gflow image upload` returns 403, this is the cause.
+5. **A signed-in profile** exists: `gflow auth status` should print `Flow session verified` and exit 0 (it probes the live Flow session endpoint — no browser, no credits; exit 1 means dead or missing session). If not, run `gflow auth login` and walk the user through the one-time browser sign-in.
+6. **The user has Flow access** — any Google account with Flow rolled out works. If `gflow image upload` returns 403, missing Flow access is the cause.
 
 ## Core commands
 
@@ -63,12 +63,12 @@ gflow auth logout                                         # delete a saved sessi
 gflow image upload <path>                                 # → asset UUID + dimensions
 gflow image t2i "<prompt>" [--model {nano2|nano-pro|image4}] \
                             [--aspect {9:16|16:9|1:1|4:3|3:4}] \
-                            [-n 1..4] [--seed N] [--out DIR]
+                            [-n 1..4] [--out DIR]
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]
 gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out DIR]  # shared project, up to 5 prompts
 
 # Video generation (Veo 3.1)
-gflow video t2v "<prompt>" [--out-dir DIR] [--aspect ...] [--seed N]
+gflow video t2v "<prompt>" [--out-dir DIR] [--aspect ...]
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project)
 # `gflow video` has no `batch` subcommand — that stub never worked and was
 # removed. For multi-clip runs, loop `gflow video t2v`/`i2v` from the shell.
@@ -245,7 +245,7 @@ The `gflow-cli` supports a 3-layer pipeline for persistent generation context (A
 
 ## Important constraints
 
-- **Costs real money / credits.** Each `gflow video t2v|i2v` and `gflow image t2i|i2i` call burns credits from the user's Google AI Ultra/Pro subscription. Confirm before running batches.
+- **Costs real money / credits.** Each `gflow video t2v|i2v` and `gflow image t2i|i2i` call burns Flow credits from the user's Google account. Confirm before running batches.
 - **Not for production-grade SLAs.** gflow-cli reverse-engineers a private Google API. It can break without notice. For production, use the [official Gen AI SDK](https://github.com/googleapis/python-genai).
 - **Don't share auth profiles.** The Playwright profile dir lives at the per-OS user-data location (Windows: `%LOCALAPPDATA%\gflow-cli\profile_*`; macOS: `~/Library/Application Support/gflow-cli/profile_*`; Linux: `~/.local/share/gflow-cli/profile_*`) and contains Google session cookies — treat as secrets.
 - **Same profile can't run in parallel.** Chromium refuses two persistent contexts on the same profile dir; use different `--profile` names for parallel work.

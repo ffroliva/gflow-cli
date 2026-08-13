@@ -156,8 +156,9 @@ def apply_tool(
     instruction = build_instruction(spec.config, style, category)
     if expander is None:
         settings = get_settings()
+        api_key = settings.llm_api_key.get_secret_value() if settings.llm_api_key else None
         expander = PromptExpander(
-            settings.llm_api_key,
+            api_key,
             base_url=settings.llm_base_url,
             # Precedence lives in resolve_model so this and the provenance
             # record in invocation.py cannot drift: TOML pin (the tool author

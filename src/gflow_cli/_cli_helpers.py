@@ -304,14 +304,22 @@ def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     _console.print(f"[red]{exc.title}:[/red] {exc.detail or ''}")
     if exc.remediation_hint:
         _console.print(f"[yellow]-> {exc.remediation_hint}[/yellow]")
-    ref = exc.incident_ref
-    if ref is not None and ref.path is not None:
-        _console.print(
-            f"Incident bundle: {ref.path} — review before sharing; sensitive "
-            "artifacts may contain account or media data.",
-            markup=False,
-        )
+    _print_incident_ref(exc.incident_ref)
     return _exit_code_for(exc)
+
+
+def _print_incident_ref(ref: Any) -> None:
+    """One incident sentence for both error paths (S04/S21); the report line
+    keys on the ref's artifact tuple — the same source of truth as --json."""
+    if ref is None or getattr(ref, "path", None) is None:
+        return
+    _console.print(
+        f"Incident bundle: {ref.path} — review before sharing; sensitive "
+        "artifacts may contain account or media data.",
+        markup=False,
+    )
+    if "report.md" in getattr(ref, "artifacts", ()):
+        _console.print(f"Pre-filled bug report: {ref.path / 'report.md'}", markup=False)
 
 
 def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
@@ -338,13 +346,7 @@ def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
     # Unexpected exceptions ALSO get incident bundles (should_capture returns
     # True for them) — surface the path or the evidence is written and never
     # found before retention ages it out.
-    ref = getattr(exc, "incident_ref", None)
-    if ref is not None and getattr(ref, "path", None) is not None:
-        _console.print(
-            f"Incident bundle: {ref.path} — review before sharing; sensitive "
-            "artifacts may contain account or media data.",
-            markup=False,
-        )
+    _print_incident_ref(getattr(exc, "incident_ref", None))
     return 1
 
 

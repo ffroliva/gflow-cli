@@ -87,6 +87,9 @@ object) between the UTC timestamp and a collision-resistant random suffix:
 │                             # category, canonical route, status, duration
 ├── browser.json              # last ≤100 console warn/error + ≤50 page errors —
 │                             # class/category + length only, never message text
+├── report.md                 # pre-filled Markdown bug report: version/platform,
+│                             # error class + exit code, artifact pointers — fill
+│                             # in "What I was doing" and attach when filing
 ├── sensitive/screenshot.png  # UI-state failures only — REVIEW BEFORE SHARING
 └── .pending                  # present only while a capture is still staging
 ```
@@ -181,7 +184,7 @@ without manual copying. Caveats verified during the v0.7.0 work:
 ### 3. Firecrawl (`firecrawl-scrape` / `firecrawl-interact`)
 Best for unauthenticated docs (e.g., Material Symbols icon names, third-
 party API references). Not ideal for Flow itself — Flow requires a
-logged-in Pro/Ultra session that Firecrawl's hosted browser doesn't
+logged-in Flow session that Firecrawl's hosted browser doesn't
 share with your local profile.
 
 ### 4. Playwright trace viewer

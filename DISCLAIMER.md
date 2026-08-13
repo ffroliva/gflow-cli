@@ -19,7 +19,7 @@ If you need a stable, supported, contractual API, use the [official Google Gen A
 
 To use `gflow-cli` you must:
 
-1. **Own a valid Google account** with active access to [Google Flow](https://labs.google/fx/tools/flow) — typically an [AI Ultra or AI Pro](https://gemini.google/subscriptions/) subscription as of late 2025.
+1. **Own a valid Google account** with active access to [Google Flow](https://labs.google/fx/tools/flow) — any Google account works; a paid plan ([AI Pro or AI Ultra](https://gemini.google/subscriptions/)) only affects credit allowances and tier-gated features.
 2. **Comply with Google's terms of service** for that account, including:
    - [Google Terms of Service](https://policies.google.com/terms)
    - [Generative AI Additional Terms](https://policies.google.com/terms/generative-ai)
@@ -36,10 +36,10 @@ The maintainer asks that you do **not** use `gflow-cli` to:
 
 - Generate content that violates the [Generative AI Prohibited Use Policy](https://policies.google.com/terms/generative-ai/use-policy) (CSAM, harassment, IP infringement, etc.).
 - Circumvent Google's billing, quota, or rate limits via account-rotation farms.
-- Automate Flow access for users who do not have their own Ultra/Pro entitlement.
+- Automate Flow access for users who do not have their own Flow access entitlement.
 - Re-sell access to Veo via this tool as a "wrapped" commercial service.
 
-These uses can get **your** Google account banned, can put the maintainer in a difficult position with Google, and are antithetical to why this project exists (which is to let legitimate Ultra/Pro subscribers use credits they already paid for, more efficiently).
+These uses can get **your** Google account banned, can put the maintainer in a difficult position with Google, and are antithetical to why this project exists (which is to let legitimate Flow user subscribers use credits they already paid for, more efficiently).
 
 ## Takedown policy
 

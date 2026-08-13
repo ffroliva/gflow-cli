@@ -10,7 +10,7 @@ This page documents the full lifecycle: capture, storage, reuse, refresh, multi-
 |---|---|
 | Re-implement Google's OAuth dance | Google's web SSO involves anti-automation challenges (CAPTCHA, device verification). A community SDK can't reliably ship that. |
 | Extract the bearer token from cookies and use `httpx` directly | Tokens are short-lived and tied to a refresh flow we don't have. Re-implementing the refresh is brittle. |
-| Use a service-account JSON | Flow doesn't currently support service accounts on the AI Ultra/Pro consumer tier. |
+| Use a service-account JSON | Flow doesn't currently support service accounts on the consumer tier. |
 | Pure stored cookie jar (no Playwright) | Some Flow endpoints set additional `x-` headers based on Chromium fingerprint; matching them by hand is fragile. |
 | **Playwright persistent context (chosen)** | Captures session once, reuses indefinitely, refreshes automatically on idle, auto-attaches every header Flow expects. One-time cost: a ~150 MB Chromium download. |
 
@@ -197,18 +197,20 @@ accidental interference or data corruption.
 
 ### `gflow auth status`
 
-Reports whether a profile exists, where it lives, and whether the cookies file is present.
+Reports where the profile lives, then **proves the session**: it probes the Flow session endpoint with the profile's cookies (no browser, no credits) and exits `0` only when the session is verified — `1` otherwise. Handy for scripts: `gflow auth status && gflow run ...`.
 
 ```bash
 $ gflow auth status
-Profile 'default' is configured.
   profile: /home/you/.local/share/gflow-cli/profile_default
   exists: True
   cookies_present: True
   cookies_path: /home/you/.local/share/gflow-cli/profile_default/Default/Cookies
+  browser_engine: playwright
+Probing Flow session (may take up to ~45s on a slow network)...
+Flow session verified as you@example.com.
 ```
 
-> Note: `cookies_present: True` only confirms the file exists — not that the session is still valid with Google. The first real API call (e.g. `gflow image t2i`) is the actual probe. If Google has invalidated the session, the call will fail with an authentication error and you'll be prompted to re-run `auth login`.
+> Note: `cookies_present: True` only confirms the file exists. The final verdict line is the live probe result: a dead session prints a `gflow auth login` remediation hint and exits 1; a probe that cannot reach the endpoint (offline, 5xx) also exits 1 but suggests checking connectivity instead of re-logging in.
 
 ### `gflow auth list`
 
@@ -394,7 +396,7 @@ extraction lives in `gflow_cli.auth.cookies`.
 |---|---|
 | Session file leaked to a public repo | `.gitignore` excludes profile dirs at every layer. Recommended belt-and-braces: keep the gflow-cli home outside the repo (default location via `platformdirs` already does this) and run `git status` before any commit. Automatic in-repo detection is on the backlog (not yet scheduled). |
 | Multi-user shared machine | Profiles live under each user's home dir; OS file permissions (`0700` on POSIX, ACL on Windows) prevent cross-user reads by default. |
-| `gflow-cli` itself becomes malicious | The package is open-source under MIT; pin a version (`uv tool install gflow-cli==0.5.0a1`) and review release diffs before upgrading. |
+| `gflow-cli` itself becomes malicious | The package is open-source under MIT; pin a version (`uv tool install gflow-cli==0.55.0`) and review release diffs before upgrading. |
 | Stolen laptop | Anyone with disk access has your session. Use full-disk encryption (FileVault, BitLocker, LUKS). Consider a dedicated `--profile sandbox` for short-lived experiments. |
 | Sharing a profile between machines | Technically works (copy the profile dir), but Google may flag the device-fingerprint mismatch as suspicious. Re-login on the new machine instead. |
 

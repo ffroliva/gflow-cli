@@ -2,11 +2,11 @@
 
 > **Goal:** task-oriented walkthroughs for the most common workflows. Reference material (every flag, every env var, every error class) lives in [USAGE.md](USAGE.md), [CONFIGURATION.md](CONFIGURATION.md), [AUTHENTICATION.md](AUTHENTICATION.md), and [ARCHITECTURE.md](ARCHITECTURE.md). This guide tells you *what to do* in concrete situations.
 
-**Audience:** Google AI Ultra / Pro subscribers who want to drive Flow (Veo + Imagen) from the terminal instead of the web UI.
+**Audience:** anyone with a Google account and Flow access who wants to drive Flow (Veo + Imagen) from the terminal instead of the web UI.
 
 **Prerequisites:**
 - Python 3.11+ (required for `from source` installs; `uvx` / `uv tool install` ship a managed Python)
-- An active Google AI Ultra or Pro subscription
+- A Google account with access to Google Flow (a paid AI Pro/Ultra plan only affects credit allowances)
 - ~500 MB disk (Chromium binary via Playwright)
 
 ---
@@ -69,7 +69,7 @@ This is a ~150 MB download. It happens once per user.
 gflow auth login
 ```
 
-A Chromium window opens. Sign in to your Google account that has the AI Ultra / Pro subscription. **Solve any captchas Google shows you** — `gflow-cli` cannot solve them; that's intentional (anti-bot detection). When the Flow dashboard loads, return to your terminal and confirm.
+A Chromium window opens. Sign in to the Google account you use for Flow. **Solve any captchas Google shows you** — `gflow-cli` cannot solve them; that's intentional (anti-bot detection). When the Flow dashboard loads, return to your terminal and confirm.
 
 Your session is saved under (one of):
 - Windows: `%LOCALAPPDATA%\gflow-cli\profile_default\`
@@ -84,7 +84,7 @@ The session cookies persist across reboots until Google invalidates them — typ
 gflow auth status
 ```
 
-Expected: `cookies_present: True` + `profile_dir: <path>`. If it says `False`, re-run `gflow auth login`.
+Expected: `Flow session verified as <your account>.` and exit code 0 — the command probes the live Flow session (no browser, no credits). If it exits 1, follow the printed hint (usually re-run `gflow auth login`).
 
 You're done. Skip to [Journey 2](#journey-2--your-first-video-single-t2v).
 
@@ -107,17 +107,15 @@ What happens:
 
 **Cost:** ~1 credit per ~8-second clip on Ultra. Watch your credits at <https://labs.google/fx/tools/flow>.
 
-**Choose your aspect ratio and seed:**
+**Choose your aspect ratio:**
 
 ```bash
 gflow video t2v "a steam locomotive at dusk" \
     --aspect 16:9 \
-    --seed 4242 \
     --out-dir ./out
-
 ```
 
-`--seed` is the only knob for reproducibility — same seed + prompt + model = same output (within Veo's tolerance).
+There is no CLI seed knob — an identical prompt + model can still vary between runs (Veo is non-deterministic).
 
 ---
 
@@ -320,7 +318,8 @@ Then check current session state:
 
 ```bash
 gflow auth status
-# Likely output: cookies_present: True, but Google has invalidated the session.
+# A dead session exits 1 and says so, e.g.:
+#   "Signed in to Google, but not to the Flow app." + a gflow auth login hint.
 ```
 
 ### 7.2 Refresh
@@ -404,7 +403,7 @@ Only the **Python import path** changed (`flow_cli` → `gflow_cli`). The PyPI d
 
 ## Journey 10 — Budgeting credits before a batch run
 
-Your AI Ultra/Pro subscription includes a finite Veo / Imagen credit allowance — these journeys spend real money. Before kicking off a 200-prompt run, get a rough cost estimate.
+Your Google plan includes a finite Veo / Imagen credit allowance — these journeys spend real money. Before kicking off a 200-prompt run, get a rough cost estimate.
 
 ### 10.1 Check the balance
 
@@ -586,7 +585,7 @@ Once it passes, fix the prompt in `prompts.txt` and rerun the loop.
 Flow returned `429 Too Many Requests`. The `tenacity` retry layer already retried up to 3× with exponential jittered backoff (1 s → 2 s → 4 s, ±25% jitter, capped at 60 s when `Retry-After` is set). If it still failed, you're hitting either:
 
 - **Sustained rate limit** — the API thinks you're spamming. Wait and resume.
-- **Daily quota** — your Ultra/Pro allowance for the day is exhausted. Check the credit balance UI.
+- **Daily quota** — your plan's allowance for the day is exhausted. Check the credit balance UI.
 
 **Recovery steps, in order:**
 
@@ -736,7 +735,7 @@ gflow auth login --profile <name> --browser chrome
 ```
 
 1. Chrome opens to `https://labs.google/fx/tools/flow?hl=en`.
-2. Sign in to your Google account with the AI Ultra / Pro subscription.
+2. Sign in to the Google account you use for Flow.
 3. When the Flow editor loads, **close Chrome**.
 4. `gflow auth login` probes the profile with `channel="chrome"`, verifies SAPISID is
    present, and writes `.gflow_browser_strategy = "chrome"` to the profile directory.
@@ -1015,4 +1014,4 @@ gflow video t2v "@Zoro alone on the cliff at night, rain" --project "$PROJECT"
 - [SECURITY.md](SECURITY.md) — threat model, redaction strategy, what's on disk.
 - [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) — workarounds for current limitations.
 
-_Built for Google AI Ultra / Pro subscribers who'd rather automate than click. Same Veo model, same quality, same billing — without the browser._
+_Built for Flow users who'd rather automate than click. Same Veo model, same quality, same billing — without the browser._

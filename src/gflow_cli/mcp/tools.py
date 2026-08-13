@@ -20,6 +20,7 @@ concurrently (the claim still prevents double-executing one task).
 from __future__ import annotations
 
 import asyncio
+import functools
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -114,6 +115,53 @@ def _adapt_tools(tools: list[dict[str, Any]] | None) -> tuple[str, ...] | dict[s
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+_UNKNOWN_ERROR_TYPE = "https://gflow-cli.dev/errors/unknown"
+
+
+def _masked_unexpected_dict(exc: Exception) -> dict[str, Any]:
+    """RFC-9457 envelope for a non-GFlowError (issue #473).
+
+    The exception CLASS name is safe to share; the message is NOT — it can
+    embed filesystem paths, profile names, or token text — so it goes to the
+    server-side log only, never to the MCP client."""
+    detail = f"Unexpected {type(exc).__name__}; details were logged server-side."
+    return {
+        "type": _UNKNOWN_ERROR_TYPE,
+        "title": "Unexpected Error",
+        "status": 500,
+        "detail": detail,
+        # Same key set as _gflow_error_dict so clients see ONE envelope schema.
+        "message": detail,
+        "retryable": False,
+    }
+
+
+def _guarded(
+    fn: Callable[..., Awaitable[dict[str, Any]]],
+) -> Callable[..., Awaitable[dict[str, Any]]]:
+    """Single error funnel every MCP tool routes through (issue #473).
+
+    GFlowError -> structured problem-details envelope; anything else -> the
+    masked generic envelope + a full server-side log. Tool-specific except
+    blocks may still run first for richer envelopes (task ids, partial
+    results); this is the outermost backstop, so raw exception text can
+    never reach the client via the framework's default str(exc) path."""
+
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            return await fn(*args, **kwargs)
+        except GFlowError as exc:
+            log.error("mcp.tool.gflow_error", tool=fn.__name__, error=str(exc))
+            return _error_payload(_gflow_error_dict(exc))
+        except Exception as exc:  # noqa: BLE001 — the funnel IS the handler
+            log.exception("mcp.tool.unexpected_error", tool=fn.__name__, exc_info=exc)
+            return _error_payload(_masked_unexpected_dict(exc))
+
+    wrapper.__gflow_guarded__ = True  # type: ignore[attr-defined]
+    return wrapper
 
 
 def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:
@@ -369,12 +417,7 @@ async def _run_generation_task(
         return {
             "status": "error",
             "task_id": task_id,
-            "error": {
-                "type": "https://gflow-cli.dev/errors/unknown",
-                "title": "Unexpected Error",
-                "status": 500,
-                "detail": str(exc),
-            },
+            "error": _masked_unexpected_dict(exc),
         }
 
 
@@ -652,6 +695,7 @@ def _build_video_media_inputs(
         "Returns local file paths to the generated images."
     ),
 )
+@_guarded
 async def gflow_generate_image(
     prompt: str,
     model: str = "nano2",
@@ -852,6 +896,7 @@ def _build_video_payload(
         "Returns the local file path to the generated video."
     ),
 )
+@_guarded
 async def gflow_generate_video(  # NOSONAR
     prompt: str,
     mode: str = "t2v",
@@ -1015,6 +1060,7 @@ async def gflow_generate_video(  # NOSONAR
     name="gflow_list_tools",
     description="List available gflow prompt tools (name, title, description, category).",
 )
+@_guarded
 async def gflow_list_tools() -> dict[str, Any]:
     """List available prompt tools that can be passed to gflow_generate_image/video.
 
@@ -1038,6 +1084,7 @@ async def gflow_list_tools() -> dict[str, Any]:
         "Returns project IDs, names, and creation dates from the SQLite database."
     ),
 )
+@_guarded
 async def gflow_list_projects(
     profile: str = _DEFAULT_PROFILE,
     limit: int = 50,
@@ -1056,36 +1103,31 @@ async def gflow_list_projects(
     settings = get_settings()
     db_path = settings.resolved_db_path()
 
-    try:
-        rows = list_projects(
-            db_path=db_path,
-            profile=profile if profile != "default" else None,
-            limit=limit,
-            offset=0,
-        )
-        return {
-            "status": "ok",
-            "projects": [
-                {
-                    "project_id": r.project_id,
-                    "title": r.title,
-                    "profile": r.profile,
-                    "created_at": r.created_at.isoformat(),
-                    "image_count": r.image_count,
-                    "video_count": r.video_count,
-                }
-                for r in rows
-            ],
-            "total": len(rows),
-        }
-    except Exception as exc:
-        log.error("mcp.tool.list_projects_error", error=str(exc))
-        return {
-            "status": "error",
-            "error": str(exc),
-            "projects": [],
-            "total": 0,
-        }
+    # No local funnel: @_guarded produces the ONE consistent error envelope.
+    # An inner `except Exception` here used to swallow GFlowErrors (e.g.
+    # DataStoreError) into a masked string, and gave this tool a second,
+    # incompatible error shape (council review of #473).
+    rows = list_projects(
+        db_path=db_path,
+        profile=profile if profile != "default" else None,
+        limit=limit,
+        offset=0,
+    )
+    return {
+        "status": "ok",
+        "projects": [
+            {
+                "project_id": r.project_id,
+                "title": r.title,
+                "profile": r.profile,
+                "created_at": r.created_at.isoformat(),
+                "image_count": r.image_count,
+                "video_count": r.video_count,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
 
 
 @server.tool(
@@ -1095,6 +1137,7 @@ async def gflow_list_projects(
         "Characters are reusable project-scoped entities with voices."
     ),
 )
+@_guarded
 async def gflow_list_characters(
     profile: str = _DEFAULT_PROFILE,
 ) -> dict[str, Any]:
@@ -1234,23 +1277,22 @@ async def _run_instructions_op(
     log.info("mcp.tool.instructions", tool=tool, project=project, profile=resolved)
     try:
         async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
-            return await op(client)
-    except ValueError as exc:
-        # brief.find (not-found / ambiguous) and AgentInstruction invariants.
-        return _bad_param("Invalid Instructions Request", str(exc))
+            # ValueError is scoped to op() ONLY — brief.find (not-found /
+            # ambiguous) and AgentInstruction invariants raise it with
+            # user-facing messages built from the caller's own card data. A
+            # ValueError from client session setup/teardown could embed
+            # paths/URLs and must fall through to @_guarded's masked envelope
+            # instead (council review of #473).
+            try:
+                return await op(client)
+            except ValueError as exc:
+                return _bad_param("Invalid Instructions Request", str(exc))
     except GFlowError as exc:
         log.error("mcp.tool.instructions_gflow_error", tool=tool, error=str(exc))
         return _error_payload(_gflow_error_dict(exc))
     except Exception as exc:
         log.exception("mcp.tool.instructions_unexpected_error", tool=tool, exc_info=exc)
-        return _error_payload(
-            {
-                "type": "https://gflow-cli.dev/errors/unknown",
-                "title": "Unexpected Error",
-                "status": 500,
-                "detail": str(exc),
-            }
-        )
+        return _error_payload(_masked_unexpected_dict(exc))
 
 
 @server.tool(
@@ -1260,6 +1302,7 @@ async def _run_instructions_op(
         "(reads the live server brief). Credits-free."
     ),
 )
+@_guarded
 async def gflow_instructions_list(
     project: str,
     profile: str = _DEFAULT_PROFILE,
@@ -1297,6 +1340,7 @@ async def gflow_instructions_list(
         "anything else → character id/name."
     ),
 )
+@_guarded
 async def gflow_instructions_add(
     project: str,
     title: str,
@@ -1347,6 +1391,7 @@ async def gflow_instructions_add(
         "selected by title or card id (exactly one). Credits-free."
     ),
 )
+@_guarded
 async def gflow_instructions_set_enabled(
     project: str,
     enabled: bool,
@@ -1391,6 +1436,7 @@ async def gflow_instructions_set_enabled(
         "title or card id (exactly one). Credits-free."
     ),
 )
+@_guarded
 async def gflow_instructions_rm(
     project: str,
     title: str | None = None,
@@ -1432,6 +1478,7 @@ async def gflow_instructions_rm(
         "Credits-free."
     ),
 )
+@_guarded
 async def gflow_instructions_toggle_mode(
     project: str,
     enabled: bool,
@@ -1467,6 +1514,7 @@ async def gflow_instructions_toggle_mode(
         "Credits-free."
     ),
 )
+@_guarded
 async def gflow_instructions_apply(
     project: str,
     cards: list[dict[str, Any]],

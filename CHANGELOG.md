@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.55.0] — 2026-08-13
+
+### Added
+
+- **`gflow mcp setup` is implemented (#475).** The long-stubbed command now writes the gflow MCP server entry into the target client's config: `--target claude-desktop` (default), `cursor`, or `vscode` (VS Code's `servers` + `"type": "stdio"` schema). Non-destructive by construction: existing config content is merged, a pre-existing file is backed up as `<name>.gflow-backup`, a manual `gflow-cli` entry is converged in place instead of duplicated, and a corrupt config fails loud (exit 11) without ever being touched. Also fixed the bogus `%APPDATA%\Castano\Claude` path in docs/MCP.md.
+- **Incident bundles now include a pre-filled bug-report template (#476).** On every captured incident, the recorder stages `report.md` alongside the existing artifacts: version/platform, error class + exit code + retryability, phase/route, and pointers to the captured evidence — built exclusively from the allowlisted manifest fields (never raw exception text). The CLI error message now prints the report path next to the bundle path, and retention treats `report.md` as recorder-owned. Downgrade caveat: gflow <= 0.54.x does not recognize `report.md`, so its retention classifies new bundles as unknown and stops pruning them — delete `<GFLOW_CLI_HOME>/incidents` manually if you downgrade. The report is meant to be copied out of the bundle before editing (the template says so), and the e2e privacy scanner now leak-scans `*.md` alongside the JSON artifacts.
+
+### Changed
+
+- **`gflow auth status` now proves the Flow session and exits 0/1 (#471).** The command previously only checked that the profile directory and cookies file exist — it could report OK on a dead session. It now runs the fast `verify_flow_profile` probe (cookie snapshot + Flow session endpoint; no browser, no credits) and exits 0 only on a verified session, printing the verified account email; any other outcome exits 1 with a `gflow auth login` remediation hint. Fail-closed: an unreachable endpoint is a failure, never an OK.
+
+### Fixed
+
+- **Removed the false "requires a Google AI Ultra or Pro subscription" claim across all docs.** Any Google account with Flow access can use gflow-cli — a paid plan only affects credit allowances and tier-gated features (e.g. 4K upscale stays Ultra-only). Swept README, AGENTS.md, DISCLAIMER.md, USER_GUIDE, CONFIGURATION, AUTHENTICATION, DEBUGGING, the medium tutorial, and the gflow-cli skill; factual tier-gating notes are unchanged.
+
+### Security
+
+- **MCP tools no longer leak raw exception text to clients (#473).** Every registered MCP tool now routes through one error funnel: `GFlowError`s keep their structured RFC-9457 problem-details envelope (with the shared `retryable` flag), while unexpected exceptions return a masked envelope carrying only the exception class name — messages can embed filesystem paths, profile names, or token material, so the full text goes exclusively to the server-side structured log (`mcp.tool.unexpected_error`). Previously only 3 of 11 tools had any funnel, and those leaked `str(exc)` as the `detail` field; the rest leaked through the framework's default error path. Guarded by a registry-introspection test that fails if any future tool bypasses the funnel.
+
+- **Windows profile dirs are now really restricted to the current user (#472).** POSIX `chmod 0700`/`0600` is a no-op on Windows, so a profile created under a custom `GFLOW_CLI_HOME` on a shared/world-readable volume inherited that visibility — with the live Google session cookies inside. `gflow auth login` now applies an explicit `icacls` DACL before the browser runs: inheritance stripped, a single owner-only ACE (by SID, locale-safe), children reset to inherit it. Two-step sequence verified empirically (the naive `/t` grant leaves files without effective access). Existing profiles created before this release are swept on their next use: the client's browser-launch path runs a marker-gated hardening pass once per profile. Traversal profile names are rejected before any directory is created or re-ACLed. Best-effort — an ACL failure is logged (with icacls exit code and stderr) and never blocks login; no-op off Windows.
+- **Secret settings can no longer leak through a `Settings` dump (#474).** `llm_api_key` (`GFLOW_CLI_LLM_API_KEY`) and `daemon_token` (`GFLOW_CLI_DAEMON_TOKEN`/`GFLOW_DAEMON_TOKEN`) are now stored as Pydantic `SecretStr`, so `repr()`, `str()`, and `model_dump_json()` of the settings object mask them by construction — defense-in-depth on top of the existing logging-boundary redaction. Values are unwrapped only at the single point of use (the prompt-tools LLM client).
+
 ## [0.54.0] — 2026-08-12
 
 ### Changed
@@ -2774,7 +2796,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.55.0...HEAD
+[0.55.0]: https://github.com/ffroliva/gflow-cli/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/ffroliva/gflow-cli/compare/v0.53.1...v0.54.0
 [0.53.1]: https://github.com/ffroliva/gflow-cli/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/ffroliva/gflow-cli/compare/v0.52.0...v0.53.0

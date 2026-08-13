@@ -135,7 +135,9 @@ def _load(bundle: Path, name: str) -> object | None:
 
 def _scan_leaks(bundle: Path, secrets: list[str]) -> list[str]:
     hits: list[str] = []
-    for artifact in sorted(bundle.rglob("*.json")):
+    # *.md covers report.md — the one artifact users are told to attach to a
+    # public issue, so it must clear the same leak gate as the JSON evidence.
+    for artifact in sorted([*bundle.rglob("*.json"), *bundle.rglob("*.md")]):
         text = artifact.read_text(encoding="utf-8", errors="replace")
         for secret in secrets:
             if secret and secret in text:

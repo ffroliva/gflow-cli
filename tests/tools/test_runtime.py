@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from gflow_cli.config import reset_settings
 from gflow_cli.tools.expander import ExpansionResult, PromptExpander
 from gflow_cli.tools.registry import get_tool, reset_registry
 from gflow_cli.tools.runtime import (
@@ -22,6 +25,28 @@ def test_build_instruction_appends_domain() -> None:
     assert "cinema" in instr.lower() or "ARRI" in instr  # domain vocab injected
     base = build_instruction(cfg, None)
     assert len(instr) > len(base)
+
+
+def test_apply_tool_unwraps_secret_llm_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default-expander path must hand PromptExpander the RAW key string,
+    not the SecretStr wrapper (issue #474) — otherwise the gateway would get
+    'Authorization: Bearer **********'."""
+    monkeypatch.setenv("GFLOW_CLI_LLM_API_KEY", "sk-raw-unwrapped")
+    reset_settings()
+    captured: dict[str, object] = {}
+
+    def fake_expander(api_key: object, **kwargs: object) -> MagicMock:
+        captured["api_key"] = api_key
+        mock = MagicMock()
+        mock.expand.return_value = ExpansionResult(
+            original="cat", expanded="cat", was_expanded=False
+        )
+        return mock
+
+    with patch("gflow_cli.tools.runtime.PromptExpander", side_effect=fake_expander):
+        apply_tool(get_tool("creative-director"), "cat", {})
+
+    assert captured["api_key"] == "sk-raw-unwrapped"
 
 
 def test_apply_tool_strips_banned_from_output() -> None:

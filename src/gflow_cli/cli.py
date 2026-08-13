@@ -273,22 +273,54 @@ def auth_login(profile: str | None, browser: str | None) -> None:
 @auth.command("status")
 @click.option("--profile", default=None)
 def auth_status(profile: str | None) -> None:
-    """Show whether a specific profile has a saved session."""
+    """Show whether a profile has a saved session and verify it against Flow.
+
+    Probes the Flow session endpoint with the profile's cookies (no browser,
+    no credits). Exits 0 when the session is verified, 1 otherwise.
+    """
     name = profile or _resolve_or_exit()
     s = auth_mod.status(name)
-    if s["exists"] and s["cookies_present"]:
-        console.print(f"[green]Profile '{name}' is configured.[/green]")
-    else:
-        console.print(
-            f"[yellow]Profile '{name}' has no session.[/yellow] "
-            f"Run [bold]gflow auth login --profile {name}[/bold].",
-        )
     for k, v in s.items():
         console.print(f"  {k}: {v}")
     # Surface the active browser engine so a two-engine setup is debuggable.
     from gflow_cli.config import get_settings
 
     console.print(f"  browser_engine: {get_settings().browser_engine}")
+
+    if not (s["exists"] and s["cookies_present"]):
+        console.print(
+            f"[yellow]Profile '{name}' has no session.[/yellow] "
+            f"Run [bold]gflow auth login --profile {name}[/bold].",
+        )
+        sys.exit(1)
+
+    # Files on disk say nothing about whether the session still works — prove
+    # it (issue #471). Fail-closed: only a verified session exits 0.
+    from rich.markup import escape
+
+    from gflow_cli.auth import verification
+
+    console.print("[dim]Probing Flow session (may take up to ~45s on a slow network)...[/dim]")
+    status_result = asyncio.run(
+        verification.verify_flow_profile(auth_mod.profile_dir(name), source="status")
+    )
+    if not status_result.authenticated:
+        if status_result.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
+            # Re-login cannot fix an unreachable endpoint — don't send the
+            # user into an interactive browser flow for a network problem.
+            console.print(
+                f"[yellow]{status_result.detail}[/yellow] "
+                "Check network connectivity and retry; re-login is only needed "
+                "if the session is actually dead.",
+            )
+        else:
+            console.print(
+                f"[yellow]{status_result.detail}[/yellow] "
+                f"Run [bold]gflow auth login --profile {name}[/bold] to refresh the session.",
+            )
+        sys.exit(1)
+    who = f" as [bold]{escape(status_result.user_email)}[/bold]" if status_result.user_email else ""
+    console.print(f"[green]Flow session verified{who}.[/green]")
 
 
 @auth.command("list")
@@ -449,14 +481,36 @@ def mcp_run(profile: str | None) -> None:
     help="Target IDE/agent to configure.",
 )
 def mcp_setup(target: str) -> None:
-    """Auto-configure MCP server for a supported IDE/agent.
+    """Auto-configure the gflow MCP server for a supported IDE/agent.
 
-    Writes the server configuration block to the target's config file.
+    Merges the server entry into the target's config file (existing content
+    is preserved; a pre-existing file is backed up as <name>.gflow-backup).
     """
-    console.print(
-        f"[yellow]MCP setup for {target} is not yet implemented.[/yellow]\n"
-        "[dim]Manual setup: add the gflow MCP server config to your IDE settings.[/dim]"
-    )
+    from gflow_cli.errors import ConfigurationError
+    from gflow_cli.mcp import setup as setup_mod
+
+    try:
+        path, changed = setup_mod.apply(target)
+    except ConfigurationError as exc:
+        console.print(f"[red]{ConfigurationError.title}:[/red] {exc.detail or exc}")
+        console.print(
+            "[dim]Fix (or move away) the existing config file and re-run "
+            "gflow mcp setup — it never overwrites a file it cannot parse.[/dim]"
+        )
+        sys.exit(11)
+    except OSError as exc:
+        # Read-only/locked config file, permission problems, disk errors.
+        console.print(f"[red]Could not write the client config:[/red] {type(exc).__name__}: {exc}")
+        sys.exit(11)
+    if changed:
+        console.print(f"[green]gflow MCP server configured for {target}.[/green]")
+        console.print(f"  config: {path}")
+        console.print(f"[dim]Restart {target} to load the server.[/dim]")
+    else:
+        console.print(
+            f"[green]Already configured[/green] — an existing gflow entry in {path} "
+            "was left untouched."
+        )
 
 
 # --- serve ------------------------------------------------------------------
