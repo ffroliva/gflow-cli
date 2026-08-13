@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **CI supply-chain hardening.** Every workflow now runs with a least-privilege token (`ci.yml` gained the top-level `permissions: contents: read` it was missing — the other eight already had one; gitleaks elevates `pull-requests: write` per-job); every `uses:` action across all nine workflows is pinned to a full commit SHA with a version comment (dependabot's `github-actions` group keeps pins fresh); the CI test jobs enforce a test-count floor via `scripts/ci/check_test_count.py` ("a green build that ran nothing is not green"); and `check_repo_hygiene.py` now fails on version disagreement between `pyproject.toml`, `__init__.py`, and `.codex-plugin/plugin.json`.
+- **OpenSSF Scorecard self-run.** A new SHA-pinned `scorecard.yml` workflow (weekly + on push to `develop`) runs the OpenSSF Scorecard supply-chain checks with `publish_results: true`, feeding the public API/badge and the repo Security tab — enabled deliberately after the permissions/pinning hardening so the first published score reflects the hardened state.
 
 ## [0.56.0] — 2026-08-13
 
