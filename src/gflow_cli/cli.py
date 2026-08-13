@@ -273,22 +273,42 @@ def auth_login(profile: str | None, browser: str | None) -> None:
 @auth.command("status")
 @click.option("--profile", default=None)
 def auth_status(profile: str | None) -> None:
-    """Show whether a specific profile has a saved session."""
+    """Show whether a profile has a saved session and verify it against Flow.
+
+    Probes the Flow session endpoint with the profile's cookies (no browser,
+    no credits). Exits 0 when the session is verified, 1 otherwise.
+    """
     name = profile or _resolve_or_exit()
     s = auth_mod.status(name)
-    if s["exists"] and s["cookies_present"]:
-        console.print(f"[green]Profile '{name}' is configured.[/green]")
-    else:
-        console.print(
-            f"[yellow]Profile '{name}' has no session.[/yellow] "
-            f"Run [bold]gflow auth login --profile {name}[/bold].",
-        )
     for k, v in s.items():
         console.print(f"  {k}: {v}")
     # Surface the active browser engine so a two-engine setup is debuggable.
     from gflow_cli.config import get_settings
 
     console.print(f"  browser_engine: {get_settings().browser_engine}")
+
+    if not (s["exists"] and s["cookies_present"]):
+        console.print(
+            f"[yellow]Profile '{name}' has no session.[/yellow] "
+            f"Run [bold]gflow auth login --profile {name}[/bold].",
+        )
+        sys.exit(1)
+
+    # Files on disk say nothing about whether the session still works — prove
+    # it (issue #471). Fail-closed: only a verified session exits 0.
+    from gflow_cli.auth import verification
+
+    status_result = asyncio.run(
+        verification.verify_flow_profile(auth_mod.profile_dir(name), source="status")
+    )
+    if not status_result.authenticated:
+        console.print(
+            f"[yellow]{status_result.detail}[/yellow] "
+            f"Run [bold]gflow auth login --profile {name}[/bold] to refresh the session.",
+        )
+        sys.exit(1)
+    who = f" as [bold]{status_result.user_email}[/bold]" if status_result.user_email else ""
+    console.print(f"[green]Flow session verified{who}.[/green]")
 
 
 @auth.command("list")

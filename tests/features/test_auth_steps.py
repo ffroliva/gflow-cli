@@ -20,6 +20,7 @@ from click.testing import CliRunner
 from pytest_bdd import given, scenarios, then, when
 
 from gflow_cli import config
+from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
 from gflow_cli.cli import main
 from gflow_cli.errors import AuthExpiredError
 
@@ -98,6 +99,23 @@ def _profile_experiments_exists(tmp_path: Path) -> None:
     (pdir / "Cookies").write_bytes(b"")
 
 
+def _patch_probe(monkeypatch: pytest.MonkeyPatch, outcome: FlowSessionOutcome) -> None:
+    async def fake_probe(profile_dir: Path, *, source: str = "chrome") -> FlowSessionStatus:
+        return FlowSessionStatus(outcome=outcome, user_email=None, source=source)
+
+    monkeypatch.setattr("gflow_cli.auth.verification.verify_flow_profile", fake_probe)
+
+
+@given("the Flow session probe reports authenticated")
+def _probe_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_probe(monkeypatch, FlowSessionOutcome.AUTHENTICATED)
+
+
+@given("the Flow session probe reports no session")
+def _probe_no_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_probe(monkeypatch, FlowSessionOutcome.NO_SESSION)
+
+
 @given("the mocked FlowApiClient raises AuthExpiredError")
 def _mock_auth_expired(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Patch ``_run_t2i`` to raise :class:`AuthExpiredError` so the CLI
@@ -150,6 +168,12 @@ def _run_image_t2i_some_prompt(runner: CliRunner, cli_result_holder: dict[str, A
 def _check_exit_0(cli_result_holder: dict[str, Any]) -> None:
     result = cli_result_holder["result"]
     assert result.exit_code == 0, result.output
+
+
+@then("the exit code is 1")
+def _check_exit_1(cli_result_holder: dict[str, Any]) -> None:
+    result = cli_result_holder["result"]
+    assert result.exit_code == 1, result.output
 
 
 @then("the exit code is 3")
