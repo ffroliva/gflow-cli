@@ -222,6 +222,11 @@ class BearerTransport:
         captured_token: str | None = None
         captured_fp = BrowserFingerprint()
 
+        # #477: refuse a bundled-Chromium open of a profile last written by a
+        # newer Chromium major — downgrade cleanup can shred the session store.
+        from gflow_cli.browser_manager import ensure_profile_engine_compatible
+
+        ensure_profile_engine_compatible(profile_dir, None)
         # Own the profile for this momentary Bearer-capture context (D3). Lease
         # is the OUTER context so it releases only after the driver stops.
         async with ProfileLease(profile_dir), async_playwright() as pw:

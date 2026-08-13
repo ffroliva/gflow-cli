@@ -340,3 +340,81 @@ class TestProfileEngineDowngradeGuard:
         (tmp_path / "Last Version").write_text("999.0.0.0", encoding="utf-8")
         monkeypatch.setattr(bm, "installed_chromium_version", lambda: None)
         bm.ensure_profile_engine_compatible(tmp_path, channel=None)
+
+    def test_profile_last_version_invalid_utf8_is_none(self, tmp_path: Path) -> None:
+        """Best-effort contract: a corrupt (non-UTF-8) Last Version resolves to
+        None/allow instead of escaping as UnicodeDecodeError (code-review F4)."""
+        from gflow_cli.browser_manager import profile_last_version
+
+        (tmp_path / "Last Version").write_bytes(b"\xff\xfe\x99garbage")
+        assert profile_last_version(tmp_path) is None
+
+    def test_guard_allows_same_major_build_rollback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The destructive downgrade cleanup is milestone-keyed; a same-major
+        build/patch rollback (e.g. pinning Playwright back one patch release)
+        must NOT brick generation (code-review F9/F10)."""
+        import gflow_cli.browser_manager as bm
+
+        (tmp_path / "Last Version").write_text("149.0.9999.99", encoding="utf-8")
+        monkeypatch.setattr(bm, "installed_chromium_version", lambda: "149.0.7827.55")
+        bm.ensure_profile_engine_compatible(tmp_path, channel=None)  # no raise
+
+    def test_installed_chromium_version_resolves_active_engine(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under GFLOW_CLI_BROWSER_ENGINE=patchright the guard must read
+        patchright's registry — the Chromium that will actually open the
+        profile — not playwright's (code-review F2)."""
+        import json as _json
+        import sys as _sys
+        import types
+
+        import gflow_cli.browser_manager as bm
+        from gflow_cli.config import BrowserEngine
+
+        fake_pkg_dir = tmp_path / "patchright"
+        (fake_pkg_dir / "driver" / "package").mkdir(parents=True)
+        (fake_pkg_dir / "driver" / "package" / "browsers.json").write_text(
+            _json.dumps({"browsers": [{"name": "chromium", "browserVersion": "131.0.0.1"}]}),
+            encoding="utf-8",
+        )
+        fake_module = types.ModuleType("patchright")
+        fake_module.__file__ = str(fake_pkg_dir / "__init__.py")
+        monkeypatch.setitem(_sys.modules, "patchright", fake_module)
+        monkeypatch.setattr("gflow_cli.api._engine.active_engine", lambda: BrowserEngine.PATCHRIGHT)
+        assert bm.installed_chromium_version() == "131.0.0.1"
+
+
+class TestLaunchSitesGuarded:
+    def test_every_bundled_launch_site_calls_engine_guard(self) -> None:
+        """Static sweep (code-review F6): every module in src/ that calls
+        launch_persistent_context must also reference
+        ensure_profile_engine_compatible, or sit on the explicit allowlist.
+        Pins future launch sites to the #477 guard without coupling the guard
+        into ProfileLease (lease = mutual exclusion, guard = engine compat)."""
+        import gflow_cli
+
+        src = Path(gflow_cli.__file__).parent
+        allowlist = {
+            # Login rewrites the profile and re-mints the session — it IS the
+            # documented recovery path for a downgrade refusal.
+            "auth/internal_chromium.py",
+            "auth/real_chrome.py",
+            # Chrome-marker-gated fallback: only ever launches channel="chrome".
+            "auth/cookies.py",
+        }
+        offenders = []
+        for py in src.rglob("*.py"):
+            text = py.read_text(encoding="utf-8")
+            if "launch_persistent_context" not in text:
+                continue
+            rel = py.relative_to(src).as_posix()
+            if rel in allowlist:
+                continue
+            if "ensure_profile_engine_compatible" not in text:
+                offenders.append(rel)
+        assert not offenders, (
+            f"launch_persistent_context call sites missing the #477 engine guard: {offenders}"
+        )

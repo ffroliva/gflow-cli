@@ -281,27 +281,33 @@ def profile_last_version(profile_dir: Path) -> str | None:
     """
     try:
         text = (profile_dir / "Last Version").read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     return text or None
 
 
 def installed_chromium_version() -> str | None:
-    """The bundled Chromium version of the installed Playwright, or None.
+    """The bundled Chromium version of the ACTIVE engine's package, or None.
 
     Read from the driver's ``browsers.json`` registry (the same file
-    ``playwright install`` uses), so no browser process is spawned. Best-effort:
-    any failure resolves to None.
-
-    .. note::
-        ponytail: reads the ``playwright`` package only. Under the optional
-        ``patchright`` engine the actual bundled build may differ slightly;
-        resolve the registry via the active engine's module if that ever bites.
+    ``playwright install`` uses), so no browser process is spawned. Resolves the
+    registry via the active engine — ``patchright`` when
+    ``GFLOW_CLI_BROWSER_ENGINE`` selects it, ``playwright`` otherwise — so the
+    guard compares against the Chromium that will actually open the profile.
+    Best-effort: any failure resolves to None.
     """
     try:
-        import playwright
+        import importlib
 
-        registry_path = Path(playwright.__file__).parent / "driver" / "package" / "browsers.json"
+        from gflow_cli.api._engine import active_engine
+        from gflow_cli.config import BrowserEngine
+
+        module_name = "patchright" if active_engine() == BrowserEngine.PATCHRIGHT else "playwright"
+        module = importlib.import_module(module_name)
+        module_file = module.__file__
+        if not module_file:
+            return None
+        registry_path = Path(module_file).parent / "driver" / "package" / "browsers.json"
         registry = json.loads(registry_path.read_text(encoding="utf-8"))
         for browser in registry.get("browsers", []):
             if browser.get("name") == "chromium":
@@ -312,25 +318,28 @@ def installed_chromium_version() -> str | None:
     return None
 
 
-def _version_tuple(version: str) -> tuple[int, ...] | None:
+def _major_version(version: str) -> int | None:
     try:
-        return tuple(int(part) for part in version.split("."))
+        return int(version.split(".", 1)[0])
     except ValueError:
         return None
 
 
 def ensure_profile_engine_compatible(profile_dir: Path, channel: str | None) -> None:
-    """Refuse to open ``profile_dir`` with an older bundled Chromium than last
-    wrote it (#477).
+    """Refuse to open ``profile_dir`` with an older bundled Chromium **major
+    version** than last wrote it (#477).
 
     Opening a Chrome profile with an older engine triggers Chromium's downgrade
     cleanup, which can leave the newer store — session cookies included —
-    unreadable, surfacing later as a mystery logout. Skipped when ``channel``
-    resolves to ``"chrome"`` (real Google Chrome manages its own profile
-    lifecycle) and whenever either version is unknown or unparseable
-    (best-effort guard, never a new failure mode on odd hosts). Login is
-    deliberately unguarded: it re-mints the session and rewrites the profile,
-    making it the recovery path the error message points at.
+    unreadable, surfacing later as a mystery logout. The compare is
+    major-version (milestone) only: the destructive cleanup is keyed to
+    milestone downgrades, and a same-milestone build rollback (e.g. pinning
+    Playwright back one patch release) is safe and must not brick generation.
+    Skipped when ``channel`` resolves to ``"chrome"`` (real Google Chrome
+    manages its own profile lifecycle) and whenever either version is unknown
+    or unparseable (best-effort guard, never a new failure mode on odd hosts).
+    Login is deliberately unguarded: it re-mints the session and rewrites the
+    profile, making it the recovery path the remediation points at.
     """
     if channel is not None:
         return
@@ -338,11 +347,11 @@ def ensure_profile_engine_compatible(profile_dir: Path, channel: str | None) -> 
     engine_version = installed_chromium_version()
     if profile_version is None or engine_version is None:
         return
-    profile_parts = _version_tuple(profile_version)
-    engine_parts = _version_tuple(engine_version)
-    if profile_parts is None or engine_parts is None:
+    profile_major = _major_version(profile_version)
+    engine_major = _major_version(engine_version)
+    if profile_major is None or engine_major is None:
         return
-    if engine_parts >= profile_parts:
+    if engine_major >= profile_major:
         return
     log.error(
         "browser_manager.profile_engine_downgrade",
@@ -352,9 +361,9 @@ def ensure_profile_engine_compatible(profile_dir: Path, channel: str | None) -> 
     )
     msg = (
         f"Profile at {profile_dir} was last written by Chromium {profile_version}, "
-        f"but the installed Playwright bundled Chromium is older ({engine_version}). "
-        "Opening it would trigger Chromium's downgrade cleanup, which can leave the "
-        "session store unreadable."
+        "but the bundled Chromium about to open it is an older major version "
+        f"({engine_version}). Opening it would trigger Chromium's downgrade cleanup, "
+        "which can leave the session store unreadable."
     )
     # Remedy lives in ProfileEngineDowngradeError._default_remediation — naming
     # it here too printed the remedy twice in the CLI human output.

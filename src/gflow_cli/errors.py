@@ -397,9 +397,12 @@ class ProfileEngineDowngradeError(ConfigurationError):
     problem_type = "https://gflow-cli.dev/errors/profile-engine-downgrade"
     title = "Profile was written by a newer Chromium"
     _default_remediation = (
-        "Upgrade so the bundled Chromium is at least the profile's version "
-        "(e.g. `uv tool upgrade gflow-cli`, then `playwright install chromium`), "
-        "or re-create the profile with `gflow auth login`."
+        "Upgrade so the bundled Chromium is at least the profile's major version "
+        "(e.g. `uv tool upgrade gflow-cli`, then `playwright install chromium`). "
+        "If the profile was captured with `--browser chrome`, reinstall Google "
+        "Chrome in its default location instead — the chrome channel then opens "
+        "the profile and this check does not apply. Or re-create the profile "
+        "with `gflow auth login`."
     )
 
 

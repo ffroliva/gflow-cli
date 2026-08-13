@@ -151,6 +151,12 @@ class EvaluateFetchTransport:
         # guard would skip the close).
         self._owns_playwright = True
         try:
+            # #477: refuse a bundled-Chromium open of a profile last written by
+            # a newer Chromium major — downgrade cleanup can shred the session
+            # store.
+            from gflow_cli.browser_manager import ensure_profile_engine_compatible
+
+            ensure_profile_engine_compatible(profile_dir, None)
             # Own the profile BEFORE Chrome launches (D3). Contention raises
             # ProfileLockedError here; the except below routes to teardown, which
             # releases the lease.
