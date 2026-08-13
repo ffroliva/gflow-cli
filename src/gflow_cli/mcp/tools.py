@@ -5,8 +5,8 @@ Each tool is registered on the shared MCPServer instance and delegates
 to FlowWorker / DataStore / data.queries for actual execution.
 
 Rate limiting: a token-bucket (capacity=8, refill=1/20s) prevents runaway
-agentic loops from burning credits. Session and daily budget limits are
-enforced by checking spent amounts against SQLite records.
+agentic loops from burning credits. There is NO credit-budget accounting —
+rate limiting is the only spend brake (#495).
 
 Task claiming: the direct-execution path enqueues a task then claims it via
 the atomic ``QueueRepository.claim_task`` (the same BEGIN IMMEDIATE claim the
@@ -1148,52 +1148,10 @@ async def gflow_list_projects(
     }
 
 
-@server.tool(
-    name="gflow_list_characters",
-    description=(
-        "List all Flow Character entities for the active profile. "
-        "Characters are reusable project-scoped entities with voices."
-    ),
-)
-@_guarded
-async def gflow_list_characters(
-    profile: str = _DEFAULT_PROFILE,
-) -> dict[str, Any]:
-    """List Flow Character entities from the local catalog.
-
-    Characters are cloud-side Flow entities (not stored in the local SQLite
-    catalog) and require an active browser session to enumerate.  Use
-    ``gflow character list`` in the CLI for a full listing, or call this tool
-    from a context where a browser session is available.
-
-    Args:
-        profile: gflow-cli profile name to filter by.
-
-    Returns:
-        Dict with 'characters' list.
-
-    Note:
-        Characters are project-scoped on the Flow side; this tool returns an
-        empty list when no project_id is provided, since listing across all
-        projects would require iterating every project.  Pass a project_id
-        via a future parameter update, or use ``gflow character list`` in the
-        terminal.
-    """
-    log.info("mcp.tool.list_characters", profile=profile)
-
-    # Characters live on the Flow cloud side and are not cached in the local
-    # SQLite catalog — fetching them requires an active browser session and a
-    # specific project_id.  Return an informative empty response rather than
-    # silently returning nothing or crashing.
-    return {
-        "status": "ok",
-        "characters": [],
-        "note": (
-            "Character listing requires a project_id and an active browser session. "
-            "Use `gflow character list --project <id>` in the terminal, or extend "
-            "this MCP tool with a project_id parameter."
-        ),
-    }
+# gflow_list_characters was removed in #499: it was a stub that always
+# answered {"status": "ok", "characters": []} — an agent reads that as "the
+# user has no characters" and acts on the lie. Re-add only when it can
+# return real Flow-side data (needs project_id + a browser session).
 
 
 # ---------------------------------------------------------------------------
@@ -1585,7 +1543,6 @@ __all__ = [
     "gflow_generate_video",
     "gflow_list_tools",
     "gflow_list_projects",
-    "gflow_list_characters",
     "gflow_instructions_list",
     "gflow_instructions_add",
     "gflow_instructions_set_enabled",

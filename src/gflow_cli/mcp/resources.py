@@ -50,13 +50,10 @@ Generate images using Google's Imagen model.
 Generate videos using Google's Veo model.
 - **Modes:** t2v (text-to-video), i2v (image-to-video), r2v (reference-to-video)
 - **Aspects:** 9:16 (portrait), 16:9 (landscape)
-- **Note:** i2v/r2v require an image_path
+- **Note:** i2v requires `initial_frame`; r2v requires `reference_images`
 
 ### gflow_list_projects
 Browse the local project catalog.
-
-### gflow_list_characters
-Browse reusable Flow Character entities.
 
 ### gflow_list_tools
 List available gflow prompt tools (name, title, description, category).

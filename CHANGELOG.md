@@ -18,6 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `has_more`/`next_offset` in the response, replacing the hardcoded first
   page whose `total` field reported the page size as the table total —
   catalogs larger than `limit` were unreachable through MCP.
+### Removed
+
+- **MCP tool `gflow_list_characters` (#499).** It was a stub that always
+  answered `{"status": "ok", "characters": []}` — to an agent that reads as
+  "the user has no characters", an active lie that steered clients away from
+  real `@Name` references. The tool is gone from `tools/list`, the agent-guide
+  resource, and the parity table (`character list` is now an explicit parity
+  exemption). It returns only when it can serve real Flow-side data. Use
+  `gflow character list --project <id>` in the terminal meanwhile.
+
+### Security
+
+- **CI supply-chain hardening.** Every workflow now runs with a least-privilege token (`ci.yml` gained the top-level `permissions: contents: read` it was missing — the other eight already had one; gitleaks elevates `pull-requests: write` per-job); every `uses:` action across all nine workflows is pinned to a full commit SHA with a version comment (dependabot's `github-actions` group keeps pins fresh); the CI test jobs enforce a test-count floor via `scripts/ci/check_test_count.py` ("a green build that ran nothing is not green"); and `check_repo_hygiene.py` now fails on version disagreement between `pyproject.toml`, `__init__.py`, and `.codex-plugin/plugin.json`.
+- **OpenSSF Scorecard self-run.** A new SHA-pinned `scorecard.yml` workflow (weekly + on push to `develop`) runs the OpenSSF Scorecard supply-chain checks with `publish_results: true`, feeding the public API/badge and the repo Security tab — enabled deliberately after the permissions/pinning hardening so the first published score reflects the hardened state. The score surfaces as a badge in the README and on the website index page, with a docs/SECURITY.md section explaining what it measures; `release.yml`/`pages.yml` write scopes moved from workflow level to the jobs that need them.
+
 
 ## [0.56.0] — 2026-08-13
 
