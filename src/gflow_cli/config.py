@@ -492,6 +492,15 @@ class Settings(BaseSettings):
         ),
     )
     concurrency: int = Field(default=1, ge=1, le=16)
+    update_check: bool = Field(
+        default=True,
+        description=(
+            "Once-a-day best-effort PyPI check that prints a one-line notice "
+            "when a newer gflow-cli exists (#479). Never blocks or fails a "
+            "command; skipped in CI and for editable/source installs. "
+            "Set GFLOW_CLI_UPDATE_CHECK=0 to disable."
+        ),
+    )
     lease_wait_seconds: float = Field(
         default=0.0,
         ge=0.0,
