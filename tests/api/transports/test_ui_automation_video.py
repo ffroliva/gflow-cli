@@ -3416,9 +3416,7 @@ class TestVideoUiModePolicy:
             AsyncMock(side_effect=UiModeUnavailableError(UiMode.CLASSIC)),
         )
         with pytest.raises(UiModeUnavailableError):
-            await transport.generate_video(
-                request=GenerateVideoRequest(prompt="x"), download=False
-            )
+            await transport.generate_video(request=GenerateVideoRequest(prompt="x"), download=False)
         # Pre-submit abort: neither the prompt nor any settings/attach step ran.
         cast(AsyncMock, transport._send_prompt).assert_not_awaited()
         cast(AsyncMock, VideoGenerationMixin._select_video_model).assert_not_awaited()
@@ -3467,7 +3465,9 @@ class TestVideoUiModePolicy:
         transport = self._transport(monkeypatch)
 
         def _explode(_cli: object) -> object:
-            raise AssertionError("resolve_ui_mode must not be consulted when the DTO carries a mode")
+            raise AssertionError(
+                "resolve_ui_mode must not be consulted when the DTO carries a mode"
+            )
 
         monkeypatch.setattr(config_mod, "resolve_ui_mode", _explode)
         bind_modes: list[object] = []

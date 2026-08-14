@@ -995,8 +995,7 @@ async def gflow_generate_video(  # NOSONAR
             return {
                 "status": "error",
                 "error": (
-                    f"Invalid ui_mode {ui_mode!r}; expected one of "
-                    f"{[m.value for m in UiMode]}."
+                    f"Invalid ui_mode {ui_mode!r}; expected one of {[m.value for m in UiMode]}."
                 ),
             }
         if ui_mode == UiMode.AGENTIC.value:
