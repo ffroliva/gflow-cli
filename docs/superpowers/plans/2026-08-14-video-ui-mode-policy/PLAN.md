@@ -1,11 +1,23 @@
 # PR-A Implementation Plan — #299: video joins the UI-mode policy
 
+> ## ✅ STATUS: PR-A **and** PR-B both SHIPPED in **v0.57.0** (2026-08-14)
+>
+> - **PR-A** — [#525](https://github.com/ffroliva/gflow-cli/pull/525), squash-merged as `1dacd9b`.
+> - **PR-B** — [#527](https://github.com/ffroliva/gflow-cli/pull/527), squash-merged as `606dd7b`:
+>   `mode_control.ensure_agent_mode` (real-click-first + `aria-pressed` verify, 15 s bounded
+>   reload, unknown editor variants no-op); `_force_agent_mode` **deleted**.
+>
+> **This file is retained deliberately, not because it is in flight.** It is the only
+> tracking home for the [deferred code-review findings](#deferred-code-review-findings-carry-into-pr-b--follow-ups)
+> below, and the #299 issue thread links here. Every task checkbox is done; the deferred
+> list is what remains.
+
 > **For agentic workers:** one task at a time, failing test first. `/gflow:check` before every commit.
 > Predict: **GO** w/ 7 conditions (all folded in below). Scenario: [SCENARIO.md](SCENARIO.md).
 > **Frozen surfaces:** `src/gflow_cli/api/transports/drivers/factory.py` (zero diff) and all
 > existing structlog event names.
-> Successor (separate PR, re-scoped by predict to CAUTION): `ensure_agent_mode` symmetry
-> patch in mode_control.py — NOT this PR.
+> Successor: the `ensure_agent_mode` symmetry patch in mode_control.py was re-scoped by
+> predict to CAUTION and shipped as its own PR (#527) — it was never part of PR-A.
 
 **Goal:** `gflow video t2v`/`i2v` (CLI + MCP) go through the
 live-verified `get_ui_driver` mode policy instead of a hardcoded classic bind, so an
@@ -59,12 +71,29 @@ with `--ui-mode` exposed on the video commands (agentic honestly rejected at the
 
 ### T8 — ship
 - [x] Council branch review (YELLOW → fixed in f1848aa) + second review layer (`/code-review` xhigh, 15 verified findings → the in-scope ones fixed pre-merge: post-bind overlay re-dismissal, `UiModeUnavailableError` added to `RETRYABLE_ERRORS`, MCP ui_mode case-normalization + RFC 9457 envelope for both 400 branches, DTO-level agentic rejection as the every-producer backstop, doc-scope clauses).
-- [ ] PR #525 (`Refs #299`), SonarCloud green, squash-merge to develop.
+- [x] PR #525 (`Refs #299`), SonarCloud green, squash-merge to develop. **Merged 2026-08-14 as `1dacd9b`; released in v0.57.0.**
 
 ### Deferred code-review findings (carry into PR-B / follow-ups)
-- `--ui-mode` on `video r2v`/`chain` was never decided — currently env-only (documented); decide in PR-B.
+
+> **PR-B shipped without taking any of these.** It was deliberately kept minimal
+> (`ensure_agent_mode` only, per the predict CAUTION verdict), so every item below is
+> still open after v0.57.0. Each carries its own trigger — none is scheduled work.
+
+- `--ui-mode` on `video r2v`/`chain` — **still undecided**; currently env-only (documented
+  as such in CONFIGURATION.md). PR-B did not address it. Note `r2v` *does* now run the
+  policy (it shares `_generate_video_locked`); only the **flag** is absent.
 - `submit_attempted` checkpoint is persisted before the transport's pre-submit bind → cancellation during the bind classifies indeterminate/possibly-charged despite $0; consider a `bind_completed` checkpoint (pre-existing coarseness, widened by this PR).
 - #493 third-variant cohorts now pay the full 8 s detect poll before the same exit-23 cascade — a third-variant indicator collapses it (blocked on reporter diag).
+  **Re-verified against the shipped v0.57.0 tree (2026-08-14):** the bind brings that
+  cohort **no rescue at all**, only latency. `get_ui_driver(CLASSIC)` calls
+  `ensure_media_mode(allow_reload=True)`, but the one sanctioned reload is gated on
+  `persisted_off` (`mode_control.py:188`) — which requires a *real* toggle click on
+  `AGENT_TOGGLE_SELECTOR` reading `aria-pressed="true"`. The #493 pill matches no known
+  toggle selector, so nothing is clicked, `persisted_off` stays `False`, and **the reload
+  never fires** — there is no cohort re-roll. Do not describe v0.57.0 as giving #493 a
+  free re-roll. Net: identical exit 23, ~8 s slower, plus a new
+  `mode_control.ensure_media_incomplete` warning that is itself a useful discriminator.
+  Posted to the issue 2026-08-14.
 - Cleanups: hoist a shared `ui_mode_option(help=...)` factory + one agentic-rejection message constant (3 hand-copies today); dedupe the four `_bind` monkeypatch stubs in TestVideoUiModePolicy; `pages.yml` pip cache (2 lines on setup-python).
 - Verify dependabot's `uv` ecosystem actually opens a `/website` PR on its first scheduled run (silent no-op risk if uv support is lock-file-only).
 - `detect_ui_mode`'s classic-on-timeout means "verifies" is best-effort (docs softened; a distinct timeout signal is factory territory → PR-B).
