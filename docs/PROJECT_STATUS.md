@@ -4,7 +4,13 @@
 
 ## Current release
 
+**v0.57.0 — alpha.** **Video joins the UI-mode policy (#299) + an MCP truthfulness wave (#496–#501).** `gflow video t2v`/`i2v` and MCP `gflow_generate_video` now take `--ui-mode`/`ui_mode` and bind their driver through `get_ui_driver` after editor mount instead of a hardcoded classic bind; video has only a classic driver, so `auto` ≡ `classic`, an env-sourced `agentic` degrades with a warning, and an explicit `--ui-mode agentic` is refused with exit 2 before any browser work. When Flow serves the agentic editor and classic cannot be recovered, video now fails fast pre-submit (`UiModeUnavailableError`, exit 28, zero credits) instead of burning 30–40 s of doomed selector timeouts. The agentic direction was hardened to match the classic one: `mode_control.ensure_agent_mode` replaces `_force_agent_mode` (deleted) with real-click-first + `aria-pressed` verification, no `tune`-ligature check, unknown editor variants no-op with a warning, and the sanctioned reload carries an explicit 15 s timeout. On the MCP side: `gflow mcp run --no-spend` (#496) unregisters both generate tools so an agent cannot even see them; `gflow_auth_status` (#497) gives agents a credit-free pre-flight session probe; `gflow_list_projects` paginates honestly with `offset`/`has_more`/`next_offset` (#498); the stub `gflow_list_characters` — which always answered "no characters", an active lie — is gone (#499); and `gflow://docs/known-issues` is bounded to a small index plus a per-issue templated read (#501) instead of injecting ~70 KB on every read. On the supply-chain side the release finishes the Scorecard hardening tail: every workflow now runs with a least-privilege token and every `uses:` action is pinned to a full commit SHA, the remaining in-workflow package installs are hash- or digest-pinned (`website/requirements.txt`, `Dockerfile.triage`, `pip-audit`), CI enforces a test-count floor so "a green build that ran nothing" cannot pass, `check_repo_hygiene.py` fails on version disagreement between `pyproject.toml`/`__init__.py`/`plugin.json`, and a self-run OpenSSF Scorecard workflow publishes the score as a README/website badge with a [SECURITY.md](SECURITY.md) section explaining it. Everything in this release was verified at **zero credits**. See [LIVE_VERIFICATION_v0.57.0.md](LIVE_VERIFICATION_v0.57.0.md).
+
+<details><summary>v0.56.0 — ops-hardening batch + honest mode-switch evidence (#477/#478/#479, #493)</summary>
+
 **v0.56.0 — alpha.** **Ops-hardening batch (#477/#478/#479) + honest mode-switch evidence (#493).** A Chromium major-version downgrade guard refuses to open a persisted profile with an older bundled engine than last wrote it (`ProfileEngineDowngradeError`, exit 11 — pre-auth, pre-credits) instead of letting Chromium's downgrade cleanup shred the session store; `GFLOW_CLI_LEASE_WAIT_SECONDS=N` adds an opt-in bounded wait on same-profile lease contention (default keeps the historical fail-fast); a once-a-day cache-served PyPI check prints a one-line stderr notice when a newer gflow-cli exists; and the exit-23 mode-switch fall-through now states that no known Flow cohort matched (the third, unrecognized editor layout from #493) while the drift remediation names the artifacts runs actually produce (`diag_mode_switch_miss.json`, the referenced screenshot, the incident bundle) instead of a phantom "debug screenshot from this message". Guard, lease wait, and the mode-switch path were live-verified; #479's notice is deferred-with-reason to a post-release check (it needs a published newer version on PyPI). See [LIVE_VERIFICATION_v0.56.0.md](LIVE_VERIFICATION_v0.56.0.md).
+
+</details>
 
 <details><summary>v0.55.0 — Tier-1 hardening batch + docs truth sweep (#471–#476)</summary>
 
@@ -54,7 +60,7 @@
 
 </details>
 
-**Develop (unreleased, post-v0.56.0):** *(empty — develop is the staging branch for the next release).*
+**Develop (unreleased, post-v0.57.0):** *(empty — develop is the staging branch for the next release).*
 
 <details><summary>v0.46.0 — prompt tools on any OpenAI-compatible endpoint (#387)</summary>
 
