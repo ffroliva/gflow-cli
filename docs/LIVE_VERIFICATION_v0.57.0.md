@@ -38,17 +38,21 @@
   signatures (the docs had drifted 4 params behind
   `mcp/tools.py`); a no-spend MCP-client config block (Option A2); a
   `GFLOW_MCP_NO_SPEND` section in `docs/CONFIGURATION.md` + two `docs/INDEX.md`
-  routing rows (the repo's own rule at `INDEX.md:151` requires both); `--no-spend`
+  routing rows (the repo's own rule under INDEX's *Documentation governance*
+  heading requires both); `--no-spend`
   on the `gflow mcp run` reference in `docs/USAGE.md`; `--ui-mode` and the exit-2/28
   behavior in `llms.txt`; the Security/Scorecard theme in `docs/PROJECT_STATUS.md`;
   the pin example bumped to `==0.57.0`; and **a same-release factual error in this
   changelog** — the Security entry described the triage image as pinning
   `node:20-slim` when #522 had already moved it to `node:26-slim` (the stale
   `Dockerfile.triage` line-1 comment was corrected too). Tier-3 deferred to a
-  follow-up issue (pre-existing, none introduced by this release): the
-  `--reference-entity`-on-video fiction (three docs plus the `t2v` help text claim
-  a flag that has shipped since v0.52.0 — and needs a maintainer decision on the
-  I2V contract, which `api/video.py:339` rejects), the Windows profile-path
+  follow-up issue **#531** (pre-existing, none introduced by this release): the
+  `--reference-entity`-on-video fiction (three docs plus the `t2v` help text
+  **deny** a flag that has in fact shipped since v0.52.0 and is registered on
+  t2v/i2v/r2v — and it needs a maintainer decision, because `api/video.py:339`
+  *rejects* `reference_entities` on I2V while `:366` omits it from the T2V guard,
+  so the same flag hard-errors on one mode and is silently accepted on another),
+  the Windows profile-path
   author segment (`%LOCALAPPDATA%\ffroliva\gflow-cli`) wrong in 6 docs + 2
   docstrings, the `ARCHITECTURE.md` testing-topology table naming three
   nonexistent test dirs, its missing driver/mode-control layer, module-inventory
