@@ -31,6 +31,7 @@ __all__ = [
     "GFlowError",
     "MediaAttributionError",
     "MediaUploadRejectedError",
+    "ReferenceNotFoundError",
     "MentionIndexUnavailableError",
     "ModelModeIncompatibilityError",
     "NetworkError",
@@ -643,7 +644,8 @@ class MediaAttributionError(GFlowError):
 class ReferenceNotFoundError(GFlowError):
     """Raised when a named remote reference is absent from the project picker.
 
-    Canonical case (#493 recon, 2026-08-14): ``--ref-name`` searches Flow's
+    Canonical case (#493 recon, 2026-08-14): a remote reference NAME
+    (``ref_names`` — a DTO/MCP field, not a CLI flag) searches Flow's
     media picker, which indexes Flow's own **short auto-caption** — not the
     generation prompt. Passing a prompt therefore never matches, and the miss
     used to surface as a bare Playwright ``TimeoutError`` after 8 s: no typed
@@ -655,9 +657,9 @@ class ReferenceNotFoundError(GFlowError):
     title = "Referenced media was not found"
     _default_remediation = (
         "The named asset is not in this project's media picker. Flow indexes a short "
-        "auto-caption, not the generation prompt, so a prompt passed to --ref-name will "
-        "not match. Reference the asset by its media UUID, pass a local file with --ref, "
-        "or check the name with `gflow data list images`."
+        "auto-caption, not the generation prompt, so a prompt used as a reference NAME "
+        "will not match. Reference the asset by its media UUID, pass a local file with "
+        "--ref, or check what exists with `gflow data list images`."
     )
 
 
@@ -1025,8 +1027,8 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # input file (uploadImage 4xx). Direct GFlowError subclass; exit 27 lets
     # scripts branch on "re-encode the input image" vs generic error (1).
     MediaUploadRejectedError: 27,
-    # ReferenceNotFoundError (#493 recon): --ref-name named an asset the project
-    # picker does not offer. Direct GFlowError subclass; exit 32 lets scripts
+    # ReferenceNotFoundError (#493 recon): a reference name identified an asset the
+    # project picker does not offer. Direct GFlowError subclass; exit 32 lets scripts
     # distinguish "that name is not in the picker" from a UI drift error (23),
     # which is what this previously masqueraded as via a raw TimeoutError.
     ReferenceNotFoundError: 32,

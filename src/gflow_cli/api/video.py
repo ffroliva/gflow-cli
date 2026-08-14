@@ -214,8 +214,17 @@ def model_aliases(model: VideoModel) -> list[str]:
 
 
 def max_duration_for(model: VideoModel) -> int:
-    """Maximum clip length in seconds: omni_flash=10, veo_3_1_*=8."""
-    return 10 if model is VideoModel.OMNI_FLASH else 8
+    """Maximum selectable clip length in seconds.
+
+    ``omni_flash`` = 10. The ``VEO_3_1_*`` models return **0**: verified live on
+    two accounts (2026-08-14) they render no duration control at all, so no
+    duration is selectable for them — see :meth:`VideoModel.supports_duration`
+    and issues #451/#288. Returning 8 here (the old value) contradicted that
+    predicate and made ``gflow models`` advertise a duration users cannot set.
+    """
+    if model is VideoModel.OMNI_FLASH:
+        return 10
+    return 0 if not model.supports_duration() else 8
 
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs (the same
@@ -304,6 +313,19 @@ class GenerateVideoRequest:
         self._validate_seed()
         self._validate_ui_mode()
 
+    def _has_frame_input(self) -> bool:
+        """True when the request carries an i2v start/end frame in any form."""
+        return any(
+            (
+                self.start_image,
+                self.start_image_ref_name,
+                self.start_image_ref_id,
+                self.end_image,
+                self.end_image_ref_name,
+                self.end_image_ref_id,
+            )
+        )
+
     def _validate_model_capabilities(self) -> None:
         """Reject model/feature combinations Flow's UI cannot express (#451/#288).
 
@@ -313,11 +335,21 @@ class GenerateVideoRequest:
         browser work — instead of surfacing later as a selector-drift timeout
         that blames the UI for a capability mismatch.
         """
-        if self.model is None:
+        # Resolve the model the TRANSPORT will actually use, not just the one
+        # the caller named. An i2v request with frames and no --model is bound
+        # to I2V_DEFAULT_MODEL downstream (drivers/classic.py, _resolve_i2v_model),
+        # so an unresolved `model is None` early-return let i2v's own DEFAULT
+        # path keep hitting the exact #451/#288 failure this guard exists to
+        # prevent. For t2v/r2v with no model, Flow's sticky UI default applies
+        # and is genuinely unknowable here — those stay unguarded by design.
+        effective = self.model
+        if effective is None and self.mode is Mode.I2V and self._has_frame_input():
+            effective = I2V_DEFAULT_MODEL
+        if effective is None:
             return
-        if self.duration is not None and not self.model.supports_duration():
+        if self.duration is not None and not effective.supports_duration():
             msg = (
-                f"model {self.model.value!r} has no duration control in Flow's UI, so "
+                f"model {effective.value!r} has no duration control in Flow's UI, so "
                 f"--duration {self.duration} cannot be applied. Only "
                 f"{VideoModel.OMNI_FLASH.value!r} exposes a duration (4/6/8/10s); the "
                 f"Veo 3.1 models render no duration row at all. Drop --duration to accept "

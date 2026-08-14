@@ -167,7 +167,14 @@ def _reject_duration_without_control(model: str | None, duration: str | int | No
     """
     if duration is None or model is None:
         return
-    resolved = VideoModel.from_cli(model)
+    try:
+        resolved = VideoModel.from_cli(model)
+    except ValueError:
+        # Unknown alias: Click's Choice already rejects it on the CLI path, and
+        # a programmatic caller deserves that error, not this guard's. Let the
+        # real validation report it rather than dying as "Unexpected error."
+        return
+    # from_cli returns None only for a None argument, which we returned on above.
     if resolved is not None and not resolved.supports_duration():
         msg = (
             f"--duration is not supported by --model {model} — Flow renders no duration "
@@ -1080,7 +1087,11 @@ def video() -> None:
     "--duration",
     default=None,
     type=click.Choice(["4", "6", "8", "10"]),
-    help="Clip length in seconds. 10 requires --model omni-flash. Omit for Flow's default.",
+    help=(
+        "Clip length in seconds. REQUIRES --model omni-flash: the Veo 3.1 "
+        "models render no duration control in Flow, so no length can be "
+        "selected for them (refs #451/#288). Omit for Flow's default length."
+    ),
 )
 @click.option(
     "--count",
@@ -1257,7 +1268,11 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     "--duration",
     default=None,
     type=click.Choice(["4", "6", "8", "10"]),
-    help="Clip length in seconds. 10 requires --model omni-flash.",
+    help=(
+        "Clip length in seconds. REQUIRES --model omni-flash: the Veo 3.1 "
+        "models render no duration control in Flow, so no length can be "
+        "selected for them (refs #451/#288). Omit for Flow's default length."
+    ),
 )
 @click.option(
     "--count",
@@ -1395,7 +1410,11 @@ def i2v(  # NOSONAR
     "--duration",
     default=None,
     type=click.Choice(["4", "6", "8", "10"]),
-    help="Clip length in seconds. 10 requires --model omni-flash.",
+    help=(
+        "Clip length in seconds. REQUIRES --model omni-flash: the Veo 3.1 "
+        "models render no duration control in Flow, so no length can be "
+        "selected for them (refs #451/#288). Omit for Flow's default length."
+    ),
 )
 @click.option(
     "--count",
@@ -1453,6 +1472,10 @@ def r2v(
     # CLI boundary with a clear message (exit 2) rather than letting the domain
     # ValueError surface as a generic error. GenerateVideoRequest.__post_init__
     # enforces the same caps as an invariant. Mirrors the i2i pattern.
+    # r2v carries --duration too, so it needs the same CLI-edge guard t2v/i2v
+    # get; without it the DTO's ValueError surfaces as "Unexpected error." exit 1
+    # and the explanation is lost (refs #451/#288).
+    _reject_duration_without_control(model, duration)
     if model is not None:
         model_enum = VideoModel.from_cli(model)
         assert model_enum is not None  # narrows for type-checkers; from_cli only

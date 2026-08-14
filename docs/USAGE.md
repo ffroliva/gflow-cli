@@ -1376,6 +1376,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `29` | `MentionIndexUnavailableError` | An `@mention` was present but the catalog source needed to resolve it (character entities or media assets) failed to load — distinct from an empty index, which is not an error | Check network connectivity (character source) or `GFLOW_CLI_DB_PATH` / filesystem permissions (media source), then retry |
 | `30` | `QueueSchemaError`    | A `gflow serve`/MCP worker-queue task payload has an unrecognized `schema_version` or fails validation against the typed request DTOs | Usually means gflow-cli was downgraded after a newer version enqueued the task, or the payload was hand-edited; re-enqueue with a compatible version |
 | `31` | `FlowAppError`        | Flow's web app hit a client-side exception (its error-boundary page rendered instead of the editor) — a transient Flow crash, not a gflow bug | Retry shortly; if it persists, Flow itself is degraded — wait and retry later |
+| `32` | `ReferenceNotFoundError` | A referenced media NAME is not in this project's picker. Flow indexes a short auto-caption, not the generation prompt, so a prompt used as a reference name never matches | Reference the asset by its media UUID, pass a local file with `--ref`, or check what exists with `gflow data list images` |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

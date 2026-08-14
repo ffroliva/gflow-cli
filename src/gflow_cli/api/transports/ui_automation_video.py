@@ -2169,14 +2169,14 @@ class VideoGenerationMixin:
                 raise ReferenceNotFoundError(
                     f"no media named {name!r} in this project's picker. Flow indexes a "
                     f"short auto-caption, not the generation prompt, so passing a prompt "
-                    f"as --ref-name will not match. "
+                    f"as a reference name will not match. "
                     + (
                         f"The picker offered: {offered}."
                         if offered
                         else "The picker listed no selectable media."
                     )
                     + " Pass the asset's media UUID instead, or use --ref with a local file."
-                    + (f" Screenshot: {shot}" if shot else "")
+                    + screenshot_clause(shot)
                 ) from exc
             log.info("ui_automation_video.remote_reference_attached", display_name=name)
 

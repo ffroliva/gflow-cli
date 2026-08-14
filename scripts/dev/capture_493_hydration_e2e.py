@@ -7,12 +7,16 @@ This is the scenario the reporter hits: `gflow video r2v` navigates and the
 yet. Measured live (capture_agent_pill_dom.py): a freshly navigated editor had
 **0** ``[aria-pressed]`` nodes and **0** ``crop_*`` triggers on load.
 
-Before the fix `_switch_to_video_mode` probed straight away and raised
-``UiSelectorDriftError`` (exit 23) when it lost that race. It now calls
-``mode_control.await_composer_hydrated`` first.
+RESULT (2026-08-14): the hypothesis was REFUTED by this harness. A hydration
+wait was added, then NEUTERED as an A/B control, and cold loads passed 3/3 BOTH
+ways -- ``_probe_selector_cascade`` already waits up to 4s per selector for
+``visible``, so it absorbs the race on its own. The wait was reverted rather
+than shipped; no ``await_composer_hydrated`` exists in the codebase.
 
 PASS = the production switch completes without raising, starting from a cold
-navigation. Credit-free: no prompt, no Generate.
+navigation. Keep this harness to A/B any future mode-switch change.
+
+**Credit-free:** no prompt, no Generate.
 
 Usage:
     PYTHONUTF8=1 .venv\Scripts\python.exe scripts\dev\capture_493_hydration_e2e.py \
