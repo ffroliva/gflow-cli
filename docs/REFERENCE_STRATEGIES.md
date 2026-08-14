@@ -18,7 +18,7 @@ transports.
 
 2. **HOW you author it** (only matters once you've chosen "by identity")
    - Inline, readable, agent-friendly → `@Name` in the prompt.
-   - Explicit, scriptable, name-ambiguous → `--reference-entity <entityId>` (image path only — see
+   - Explicit, scriptable, name-ambiguous → `--reference-entity <entityId>` (all paths except `i2v` — see
      the matrix below).
 
 ## Decision table
@@ -26,7 +26,7 @@ transports.
 | I want to… | Use | Why |
 |---|---|---|
 | Reference a **saved Character** by name, inline | `@Name` in the prompt | Resolves to `referenceEntities`; the model anchors on that entity. Works on every generation path. |
-| Reference a Character by **explicit id** in a script | `--reference-entity <entityId>` (`t2i`/`i2i`) | Same wire as `@Name`, no name-resolution ambiguity. **Not available on `t2v`/`r2v`** — use `@Name` there. |
+| Reference a Character by **explicit id** in a script | `--reference-entity <entityId>` (`t2i`/`i2i`/`t2v`/`r2v`) | Same wire as `@Name`, no name-resolution ambiguity. **Not available on `i2v`** (its DTO rejects reference entities). |
 | Reference a **saved media asset** (generated/uploaded) by name | `@Name` in the prompt | Resolves to the asset's UUID → `referenceImages`, zero re-upload. |
 | Reference a **one-off / arbitrary image** or a look | `--ref <path-or-uuid>` (`i2i`, `r2v`) | Stages `referenceImages` directly; no saved identity needed. |
 | Reuse the **same subject** across many generations | `gflow character` once → then `@Name` everywhere | A Character is the durable, name-addressable identity. See [CHARACTER.md](CHARACTER.md). |
@@ -52,12 +52,14 @@ Which reference methods each path accepts (design spec §2, verified against `cl
 |---|---|---|
 | `image t2i` | `@Name` · `--reference-entity <id>` | `@Name` (in-project UUID → `referenceImages`) |
 | `image i2i` | `@Name` · `--reference-entity <id>` | `@Name` · `--ref <path-or-uuid>` |
-| `video t2v` | `@Name` **only** (no `--reference-entity` flag on the video path) | ❌ — media mentions on the video path are Phase 3 |
-| `video r2v` | `@Name` **only** (no `--reference-entity` flag on the video path) | `--ref <path>` (local ingredients); `@media` is Phase 3 |
+| `video t2v` | `@Name` · `--reference-entity <id>` | ❌ — media mentions on the video path are Phase 3 |
+| `video r2v` | `@Name` · `--reference-entity <id>` | `--ref <path>` (local ingredients); `@media` is Phase 3 |
 
 Notes:
-- **The video path has no `--reference-entity` flag.** To attach a saved Character on `t2v`/`r2v`,
-  `@Name` is the only name-based route. On the image path both forms exist.
+- **`--reference-entity` IS available on `t2v` and `r2v`** (both carry `referenceEntities` on the
+  wire). It is deliberately absent from `i2v`, whose DTO rejects reference entities — an i2v
+  request carries start/end frames instead. Corrected 2026-08-14: this section previously denied
+  the flag on the whole video path while `cli_video.py` registered it. On the image path both forms exist.
 - A mention whose resolved kind is unsupported on the invoked path (e.g. `@someMedia` on `t2v`)
   fails fast with a clear exit-11 message naming the Phase-3 limitation — no silent drop, no wasted
   credit.

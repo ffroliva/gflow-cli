@@ -81,7 +81,10 @@ class TestVideoResult:
             prompt="move",
             mode=Mode.I2V,
             aspect=Aspect.PORTRAIT,
-            model=VideoModel.VEO_3_1_FAST,
+            # omni-flash, not a Veo model: it is the only model that renders a
+            # duration control, so it is the only one a duration is valid with
+            # (refs #451/#288). The JSON shape under test is model-agnostic.
+            model=VideoModel.OMNI_FLASH,
             duration=8,
             count=1,
             start_image=Path("hero.png"),
@@ -98,7 +101,7 @@ class TestVideoResult:
         assert payload["succeeded"] is True
         assert payload["media_id"] == "m-1"
         assert payload["local_path"] == str(out)
-        assert payload["request"]["model"] == "veo_3_1_fast"
+        assert payload["request"]["model"] == "omni_flash"
         assert payload["request"]["mode"] == "i2v"
         assert payload["request"]["duration"] == 8
 

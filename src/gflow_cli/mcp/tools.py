@@ -781,11 +781,18 @@ async def gflow_generate_image(
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
 
-    if ui_mode is not None and ui_mode not in {m.value for m in UiMode}:
-        return {
-            "status": "error",
-            "error": f"Invalid ui_mode {ui_mode!r}; expected one of {[m.value for m in UiMode]}.",
-        }
+    if ui_mode is not None:
+        # Normalize case to mirror the CLI's click.Choice(case_sensitive=False)
+        # and answer with the same _bad_param RFC 9457 envelope the video tool
+        # uses — this branch previously returned a flat ``error`` string, which
+        # crashes any client reading ``error["title"]`` (see the sibling
+        # rejection in gflow_generate_video).
+        ui_mode = ui_mode.lower()
+        if ui_mode not in {m.value for m in UiMode}:
+            return _bad_param(
+                "Invalid ui_mode",
+                f"Expected one of {[m.value for m in UiMode]}, got {ui_mode!r}.",
+            )
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_image")

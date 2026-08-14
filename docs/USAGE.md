@@ -423,9 +423,10 @@ Rules:
 
 `@Name` and `--reference-entity <id>` resolve to the **same** wire
 (`referenceEntities`) and dedupe against each other: reach for `@Name` for the
-inline, by-name path — it's also the **only** name-based option on video, which
-has no `--reference-entity` flag — and `--reference-entity` when you'd rather pin
-an explicit entity id in a script (image paths only). `--ref` is different: it
+inline, by-name path — and `--reference-entity` when you'd rather pin
+an explicit entity id in a script. Both are available on `t2i`/`i2i` and on
+`video t2v`/`r2v`; `video i2v` takes neither, because its DTO rejects reference
+entities (it carries start/end frames instead). `--ref` is different: it
 attaches an arbitrary **image** (`referenceImages`), not a saved identity, and can
 be combined with a `@Name` for "this identity, in this look".
 
@@ -493,9 +494,17 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 
 > **Shared video flags** (`t2v` / `i2v` / `r2v`):
 > `--model [omni-flash|veo-lite|veo-fast|veo-quality|veo-lite-lp]` (omit → Flow's
-> current UI default), `--duration [4|6|8|10]` (10 requires `--model omni-flash`),
+> current UI default), `--duration [4|6|8|10]` (**requires `--model omni-flash`** —
+> see below),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
+> **`--duration` only works on `omni-flash`** (issues #451/#288). Flow's settings
+> popover is model-conditional: `omni-flash` renders a `4s/6s/8s/10s` row, and the
+> Veo 3.1 models render **no duration control at all** — verified live on two
+> accounts and two locales. Passing `--duration` with a Veo model now fails fast
+> with a message naming the model, before any browser work; it used to burn ~30 s
+> of selector timeouts and die with exit 23 as if Flow's UI had drifted. Omit
+> `--duration` to accept Flow's default length for those models.
 > `--count` is enforced **fail-closed**: if Flow's count control cannot be
 > located (selector drift), the run refuses with exit 23 *before* submitting
 > instead of proceeding on Flow's sticky default (typically x2) and silently
@@ -1367,6 +1376,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `29` | `MentionIndexUnavailableError` | An `@mention` was present but the catalog source needed to resolve it (character entities or media assets) failed to load — distinct from an empty index, which is not an error | Check network connectivity (character source) or `GFLOW_CLI_DB_PATH` / filesystem permissions (media source), then retry |
 | `30` | `QueueSchemaError`    | A `gflow serve`/MCP worker-queue task payload has an unrecognized `schema_version` or fails validation against the typed request DTOs | Usually means gflow-cli was downgraded after a newer version enqueued the task, or the payload was hand-edited; re-enqueue with a compatible version |
 | `31` | `FlowAppError`        | Flow's web app hit a client-side exception (its error-boundary page rendered instead of the editor) — a transient Flow crash, not a gflow bug | Retry shortly; if it persists, Flow itself is degraded — wait and retry later |
+| `32` | `ReferenceNotFoundError` | A referenced media NAME is not in this project's picker. Flow indexes a short auto-caption, not the generation prompt, so a prompt used as a reference name never matches | Reference the asset by its media UUID, pass a local file with `--ref`, or check what exists with `gflow data list images` |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

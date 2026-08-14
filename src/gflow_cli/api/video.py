@@ -41,9 +41,16 @@ class VideoModel(StrEnum):
     """Flow video model, as exposed in the editor's model picker.
 
     Verified live (flow-editor-map.json): the picker offers exactly these five.
-    Only ``OMNI_FLASH`` exposes a 10s duration; the four ``VEO_3_1_*`` models
-    cap at 8s. The selector for each lives in the transport layer (this module
-    is pure — no DOM knowledge).
+    The selector for each lives in the transport layer (this module is pure —
+    no DOM knowledge).
+
+    **Capability corrections (2026-08-14, verified on two accounts and two
+    locales — see docs/superpowers/spikes/2026-08-14-video-model-capability-matrix.md):**
+    this docstring previously claimed "the four ``VEO_3_1_*`` models cap at 8s",
+    which presumed they render a duration control. They render **none at all** —
+    only ``OMNI_FLASH`` shows the 4s/6s/8s/10s row. That mistaken assumption is
+    the root cause of issues #451/#288, where ``--duration`` failures looked like
+    selector drift. See :meth:`supports_duration`.
     """
 
     OMNI_FLASH = "omni_flash"
@@ -92,6 +99,23 @@ class VideoModel(StrEnum):
         generation whose output's first frame IS the uploaded start frame.
         """
         return self is not VideoModel.OMNI_FLASH
+
+    def supports_duration(self) -> bool:
+        """Whether this model renders a duration control at all (issues #451/#288).
+
+        Verified live on two accounts and two locales (2026-08-14): the classic
+        video settings popover is **model-conditional**. ``OMNI_FLASH`` renders
+        a `4s / 6s / 8s / 10s` row; the ``VEO_3_1_*`` models render **no
+        duration control whatsoever** — so a duration simply cannot be selected
+        for them.
+
+        This is why ``--duration`` on a Veo model failed as
+        ``UiSelectorDriftError`` (exit 23): the transport hunted a control the
+        model never draws. Reproduced identically on playwright 1.59 and 1.61,
+        which is why the version bound was correctly exonerated, and the locale
+        hypothesis correctly refuted — it was never either.
+        """
+        return self is VideoModel.OMNI_FLASH
 
 
 # Default model for ``gflow video i2v`` and direct ``FlowApiClient.generate_video``
@@ -167,7 +191,16 @@ def reference_cap_for(model: VideoModel) -> int:
     """Maximum number of R2V reference images *model* accepts.
 
     Returns 0 for models that do not support R2V at all
-    (``VEO_3_1_QUALITY`` — per Google Flow's official support page).
+    (``VEO_3_1_QUALITY`` — per Google Flow's official support page, and
+    confirmed live 2026-08-14 on two accounts: selecting Veo 3.1 - Quality greys
+    an attached ingredient with "You cannot use image ingredients with this
+    model", while Omni Flash / Fast / Lite accept the same asset. A cap of 0 is
+    therefore also the answer to "does this model take image ingredients?" —
+    there is deliberately no second predicate encoding the same rule).
+
+    Ordering note: Flow flags an ingredient attached BEFORE the model was
+    switched, so the model must be chosen first. The transport already does this
+    (``configure_video_settings`` runs before ``_attach_media_inputs``).
     Unknown/future models fall back to :data:`MAX_REFERENCE_IMAGES` rather than
     raising, so adding a new ``VideoModel`` member without a cap entry degrades
     to the ceiling instead of a ``KeyError`` at request-build time.
@@ -181,8 +214,17 @@ def model_aliases(model: VideoModel) -> list[str]:
 
 
 def max_duration_for(model: VideoModel) -> int:
-    """Maximum clip length in seconds: omni_flash=10, veo_3_1_*=8."""
-    return 10 if model is VideoModel.OMNI_FLASH else 8
+    """Maximum selectable clip length in seconds.
+
+    ``omni_flash`` = 10. The ``VEO_3_1_*`` models return **0**: verified live on
+    two accounts (2026-08-14) they render no duration control at all, so no
+    duration is selectable for them — see :meth:`VideoModel.supports_duration`
+    and issues #451/#288. Returning 8 here (the old value) contradicted that
+    predicate and made ``gflow models`` advertise a duration users cannot set.
+    """
+    if model is VideoModel.OMNI_FLASH:
+        return 10
+    return 0 if not model.supports_duration() else 8
 
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs (the same
@@ -267,8 +309,57 @@ class GenerateVideoRequest:
         self._validate_frame_ref_ids()
         self._validate_mode_symmetry()
         self._validate_r2v_caps()
+        self._validate_model_capabilities()
         self._validate_seed()
         self._validate_ui_mode()
+
+    def _has_frame_input(self) -> bool:
+        """True when the request carries an i2v start/end frame in any form."""
+        return any(
+            (
+                self.start_image,
+                self.start_image_ref_name,
+                self.start_image_ref_id,
+                self.end_image,
+                self.end_image_ref_name,
+                self.end_image_ref_id,
+            )
+        )
+
+    def _validate_model_capabilities(self) -> None:
+        """Reject model/feature combinations Flow's UI cannot express (#451/#288).
+
+        Only runs when ``model`` is explicit: with ``model=None`` the picker is
+        untouched and Flow's own default applies, so there is nothing to check
+        against. Both branches fail HERE — at DTO construction, before any
+        browser work — instead of surfacing later as a selector-drift timeout
+        that blames the UI for a capability mismatch.
+        """
+        # Resolve the model the TRANSPORT will actually use, not just the one
+        # the caller named. An i2v request with frames and no --model is bound
+        # to I2V_DEFAULT_MODEL downstream (drivers/classic.py, _resolve_i2v_model),
+        # so an unresolved `model is None` early-return let i2v's own DEFAULT
+        # path keep hitting the exact #451/#288 failure this guard exists to
+        # prevent. For t2v/r2v with no model, Flow's sticky UI default applies
+        # and is genuinely unknowable here — those stay unguarded by design.
+        effective = self.model
+        if effective is None and self.mode is Mode.I2V and self._has_frame_input():
+            effective = I2V_DEFAULT_MODEL
+        if effective is None:
+            return
+        if self.duration is not None and not effective.supports_duration():
+            msg = (
+                f"model {effective.value!r} has no duration control in Flow's UI, so "
+                f"--duration {self.duration} cannot be applied. Only "
+                f"{VideoModel.OMNI_FLASH.value!r} exposes a duration (4/6/8/10s); the "
+                f"Veo 3.1 models render no duration row at all. Drop --duration to accept "
+                f"Flow's default length, or use --model omni-flash."
+            )
+            raise ValueError(msg)
+        # NOTE: the ingredient x model case is deliberately NOT re-checked here.
+        # ``_validate_r2v_caps`` already rejects it via ``reference_cap_for() == 0``
+        # (VEO_3_1_QUALITY), with a cap-aware message. A second guard would be a
+        # second source of truth for the same rule.
 
     def _validate_ui_mode(self) -> None:
         # #299: no agentic VIDEO driver exists — an explicit agentic request
@@ -344,27 +435,13 @@ class GenerateVideoRequest:
         if not self.reference_images and not self.ref_names and not self.reference_entities:
             msg = "R2V request requires reference_images, ref_names, or reference_entities"
             raise ValueError(msg)
-        if (
-            self.start_image
-            or self.start_image_ref_name
-            or self.start_image_ref_id
-            or self.end_image
-            or self.end_image_ref_name
-            or self.end_image_ref_id
-        ):
+        if self._has_frame_input():
             msg = "R2V request must not carry start/end images"
             raise ValueError(msg)
 
     def _validate_mode_symmetry(self) -> None:
         if self.mode is Mode.T2V and (
-            self.start_image
-            or self.start_image_ref_name
-            or self.start_image_ref_id
-            or self.end_image
-            or self.end_image_ref_name
-            or self.end_image_ref_id
-            or self.reference_images
-            or self.ref_names
+            self._has_frame_input() or self.reference_images or self.ref_names
         ):
             msg = "T2V request must not carry image inputs"
             raise ValueError(msg)

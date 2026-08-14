@@ -30,7 +30,10 @@ def test_models_json_lists_image_and_video() -> None:
     assert by_vid["omni_flash"]["ref_cap"] == 7
     assert by_vid["omni_flash"]["max_duration"] == 10
     assert by_vid["veo_3_1_fast"]["ref_cap"] == 3
-    assert by_vid["veo_3_1_fast"]["max_duration"] == 8
+    # 0, not 8: verified live on two accounts (2026-08-14) the Veo 3.1 models
+    # render NO duration control, so no duration is selectable for them
+    # (refs #451/#288). Advertising 8 sent users into an unreachable setting.
+    assert by_vid["veo_3_1_fast"]["max_duration"] == 0
 
 
 def test_models_table_renders_without_json() -> None:

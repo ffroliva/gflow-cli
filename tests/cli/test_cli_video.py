@@ -1435,3 +1435,48 @@ class TestUiModeOption:
         assert result.exit_code == 2
         assert "agentic" in result.output
         mock_run.assert_not_awaited()
+
+
+class TestDurationCapabilityGuard:
+    """#451/#288: --duration on a model that renders no duration control must
+    exit 2 with the reason, at the CLI edge. A bare DTO ValueError surfaces as
+    "Unexpected error." exit 1 and the explanation is lost — that regression is
+    what this pins, and it is why the guard is duplicated at the CLI."""
+
+    @pytest.mark.parametrize("command", ["t2v", "i2v", "r2v"])
+    @pytest.mark.parametrize("model", ["veo-lite", "veo-fast", "veo-quality"])
+    def test_duration_on_a_veo_model_exits_2_with_the_reason(
+        self, command: str, model: str, tmp_path: Path
+    ) -> None:
+        ref = tmp_path / "ref.png"
+        ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+        extra = {
+            "t2v": [],
+            "i2v": ["--initial-frame", str(ref)],
+            "r2v": ["--ref", str(ref)],
+        }[command]
+        result = CliRunner().invoke(
+            video, [command, "a prompt", "--model", model, "--duration", "8", *extra]
+        )
+        assert result.exit_code == 2, result.output
+        assert "no duration control" in result.output
+        assert model in result.output
+
+    def test_duration_on_omni_flash_passes_the_guard(self, tmp_path: Path) -> None:
+        """Negative control: the guard must not over-reject the one model that
+        DOES render a duration row. It should get past the guard and fail later
+        on the missing frame instead."""
+        result = CliRunner().invoke(
+            video,
+            [
+                "i2v",
+                "a prompt",
+                "--initial-frame",
+                str(tmp_path / "missing.png"),
+                "--model",
+                "omni-flash",
+                "--duration",
+                "8",
+            ],
+        )
+        assert "no duration control" not in result.output

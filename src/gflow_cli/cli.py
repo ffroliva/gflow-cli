@@ -492,8 +492,6 @@ def mcp_run(profile: str | None, no_spend: bool) -> None:
         }
       }
     """
-    import os
-
     from gflow_cli.mcp.server import main_stdio
 
     # Pin the profile for all tool calls in this server process.
