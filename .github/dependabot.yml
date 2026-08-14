@@ -110,3 +110,47 @@ updates:
       github-actions:
         applies-to: version-updates
         patterns: ["*"]
+
+  # npm — the PR-triage sandbox's pinned Claude Code CLI
+  # (scripts/autopilot/package-lock.json, installed via `npm ci` in
+  # Dockerfile.triage).
+  - package-ecosystem: "npm"
+    directory: "/scripts/autopilot"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Europe/Lisbon"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+
+  # Docker — the digest-pinned node:20-slim base of Dockerfile.triage.
+  - package-ecosystem: "docker"
+    directory: "/scripts/autopilot"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Europe/Lisbon"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+
+  # uv — the hash-pinned MkDocs set for the Pages build
+  # (website/requirements.txt, compiled from website/requirements.in).
+  # "uv", NOT "pip", for the same reason as the root entry: the pip ecosystem
+  # would regenerate the file with pip-compile, clobbering the uv-authored
+  # header/format; dependabot's uv ecosystem recompiles .in → .txt via
+  # `uv pip compile` and keeps the hashes.
+  - package-ecosystem: "uv"
+    directory: "/website"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Europe/Lisbon"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "python"

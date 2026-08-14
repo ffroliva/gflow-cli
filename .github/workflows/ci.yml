@@ -53,7 +53,9 @@ jobs:
         # alerts flagged them against uv.lock; this gate could not see them.
         run: |
           uv export --frozen --all-extras --format requirements-txt --no-emit-project > requirements-audit.txt
-          uvx pip-audit -r requirements-audit.txt
+          # pip-audit version pinned for a reproducible gate (uvx has no
+          # dependabot ecosystem — bump by hand when it drifts).
+          uvx pip-audit==2.10.1 -r requirements-audit.txt
 
   # ── Supply-chain gate: resolve WITHOUT the lockfile ───────────────────────
   # Every other job installs via `uv sync`, which honours uv.lock. That means CI

@@ -1,0 +1,3 @@
+# Source spec for website/requirements.txt (hash-pinned — Scorecard Pinned-Dependencies).
+# Regenerate: uv pip compile --universal --generate-hashes --python-version 3.12 website/requirements.in -o website/requirements.txt
+mkdocs-material>=9,<10

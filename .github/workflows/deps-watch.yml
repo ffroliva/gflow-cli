@@ -43,6 +43,9 @@ jobs:
           # anything reachable solely through an optional extra goes unaudited.
           # See the matching note in ci.yml — this is how aiohttp/pyasn1 hid.
           uv export --frozen --all-extras --format requirements-txt --no-emit-project > requirements-audit.txt
+          # pip-audit deliberately floats here (unlike the pinned gate in
+          # ci.yml): this weekly watch job never gates a merge, and fresh
+          # advisory tooling is exactly what it is for.
           uvx pip-audit -r requirements-audit.txt
 
       # ── The reports: never fail the run, and still run when the audit fails

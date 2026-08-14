@@ -31,7 +31,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install MkDocs Material
-        run: pip install "mkdocs-material>=9,<10"
+        # Hash-pinned (Scorecard Pinned-Dependencies). Compiled from
+        # website/requirements.in — regeneration command in that file's header.
+        run: pip install --require-hashes -r website/requirements.txt
       - name: Build docs portal
         working-directory: website
         run: mkdocs build
