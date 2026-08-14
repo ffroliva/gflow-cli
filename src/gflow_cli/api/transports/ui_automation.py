@@ -30,9 +30,7 @@ from gflow_cli.api.character import CHARACTER_MODELS, CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._common import extract_project_id
-from gflow_cli.api.transports.drivers.factory import AGENT_TUNE_INDICATOR_SELECTOR
 from gflow_cli.api.transports.ui_automation_video import (
-    COMPOSER_AGENT_TOGGLE_SELECTOR,
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
     VideoGenerationMixin,
@@ -241,24 +239,6 @@ PROMPT_FORMAT_SELECTORS: tuple[str, ...] = (
     "button:has(i:text-is('personal_recommendations'))",
     "button:has(span:text-is('Format'))",
 )
-
-# Agent-mode activation. Clicking the in-composer "Agent" toggle
-# (:data:`COMPOSER_AGENT_TOGGLE_SELECTOR`) flips the classic composer into the
-# agentic chat layout — the ``crop_*`` media trigger disappears and the ``tune``
-# settings gear + ``expand_content`` open button appear. Captured live
-# 2026-06-14 via ``scripts/e2e/capture_agent_toggle.py`` (cropPresent true→false,
-# tune false→true). Reached via ``GFLOW_CLI_UI_MODE=agentic`` (or an inferred
-# agentic requirement) to drive the agentic path regardless of the
-# server-assigned A/B cohort (which has no client-readable flag).
-AGENT_EXPAND_BUTTON_SELECTOR = "button:has(i.google-symbols:text-is('expand_content'))"
-
-# _force_agent_mode: after clicking the Agent toggle, POLL for the ``tune``
-# indicator instead of a single fixed sleep — the agentic composer renders a
-# beat after the click and a fixed-delay check races that render, so the probe
-# bound classic ~50% of the time and instructions silently no-op'd (#267).
-_AGENT_ACTIVATE_TIMEOUT_S = 6.0
-_AGENT_ACTIVATE_POLL_MS = 300
-_AGENT_FORCE_MAX_CLICKS = 2
 
 # Self-contained, locale-independent triptych instruction for body generation.
 # Live-verified 2026-06-02: produces a consistent front/side/back body image in ONE
@@ -1233,64 +1213,6 @@ class UiAutomationTransport(VideoGenerationMixin):
         raise RuntimeError(
             msg,
         )
-
-    @staticmethod
-    async def _force_agent_mode(page: Page) -> bool:
-        """Force the agentic composer by clicking the in-composer Agent toggle.
-
-        Opt-in helper (reached via ``GFLOW_CLI_UI_MODE=agentic``) used to drive the
-        agentic path deterministically — the server-assigned A/B cohort has no
-        client-readable flag, but the in-composer "Agent" toggle switches the
-        classic composer into the same agentic layout (``crop_*`` → ``tune``).
-
-        Idempotent: a no-op when the composer is already agentic (the ``tune``
-        gear is present). Returns ``True`` if the composer is agentic on exit.
-        """
-        if await page.locator(AGENT_TUNE_INDICATOR_SELECTOR).count() > 0:
-            log.info("ui_automation.agent_mode_already_active")
-            return True
-        # The composer renders a beat after navigation, so wait for the Agent
-        # toggle before clicking — an instant probe races the render and misses
-        # it (same failure mode as the cohort-detection race).
-        toggle = page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first
-        try:
-            await toggle.wait_for(state="visible", timeout=8000)
-        except Exception:
-            log.warning("ui_automation.agent_toggle_not_found")
-            return False
-        # Click the toggle, then POLL for the ``tune`` indicator up to
-        # ``_AGENT_ACTIVATE_TIMEOUT_S`` (the render lags the click); re-click once
-        # if the first attempt doesn't take. Replaces the old single 1.2s wait
-        # that raced the render and bound classic ~50% of the time (#267).
-        for attempt in range(_AGENT_FORCE_MAX_CLICKS):
-            await toggle.click(force=True)
-            if await UiAutomationTransport._wait_selector_present(
-                page, AGENT_TUNE_INDICATOR_SELECTOR, timeout_s=_AGENT_ACTIVATE_TIMEOUT_S
-            ):
-                # Best-effort: open the agent side panel via the expand button.
-                try:
-                    expand = page.locator(AGENT_EXPAND_BUTTON_SELECTOR).first
-                    if await expand.count() > 0:
-                        await expand.click(force=True)
-                        await page.wait_for_timeout(800)
-                except Exception as e:
-                    log.debug("ui_automation.agent_expand_failed", error=str(e)[:80])
-                log.info("ui_automation.agent_mode_forced", activated=True, attempt=attempt)
-                return True
-            log.debug("ui_automation.agent_mode_force_retry", attempt=attempt)
-        log.warning("ui_automation.agent_mode_force_failed")
-        return False
-
-    @staticmethod
-    async def _wait_selector_present(page: Page, selector: str, *, timeout_s: float) -> bool:
-        """Poll until ``selector`` matches ≥1 node, or ``timeout_s`` elapses."""
-        deadline = asyncio.get_event_loop().time() + timeout_s
-        while True:
-            if await page.locator(selector).count() > 0:
-                return True
-            if asyncio.get_event_loop().time() >= deadline:
-                return False
-            await page.wait_for_timeout(_AGENT_ACTIVATE_POLL_MS)
 
     @staticmethod
     async def _switch_to_image_mode(page: Page, *, out_dir: Path | None = None) -> None:

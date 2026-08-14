@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agentic mode-switching hardened (#299 PR-B).** The agentic direction now uses the same real-click-first + `aria-pressed` verification discipline the classic direction has had since v0.38.x: `mode_control.ensure_agent_mode` replaces the transport's `_force_agent_mode`, which verified via the `tune` ligature (a documented false-positive source) and force-clicked unconditionally — a forced click can flip the DOM without firing the React handler that persists the server-side preference. Unknown editor variants (the #493 shape) no-op with a warning and are never blind-force-clicked, and the sanctioned mode-control reload carries an explicit 15 s timeout instead of riding Playwright's 30 s default outside every budget. KNOWN_ISSUES records the server-side cohort-pinning evidence (#338) the fail-fast design rests on.
 - **Video generation on an agentic cohort now fails fast pre-submit (#299 PR-A).** When Flow serves the agentic editor and classic can't be recovered, `gflow video` commands abort with `UiModeUnavailableError` (exit 28, zero credits, retryable — the cohort flaps per page load) *before* submission, instead of burning 30–40 s of doomed selector timeouts and dying mid-flow with exit 23/25.
 
 - **MCP `gflow://docs/known-issues` resource is now bounded (#501).** The old

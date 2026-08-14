@@ -36,10 +36,11 @@ def test_tune_selector_is_a_canonical_indicator() -> None:
     assert AGENT_TUNE_INDICATOR_SELECTOR in AGENTIC_INDICATOR_SELECTORS
 
 
-def test_ui_automation_reuses_factory_tune_selector() -> None:
-    # ``is`` (not ``==``): ui_automation must import the factory constant, not
-    # carry an equal-looking local copy that can silently drift.
-    assert ui_automation.AGENT_TUNE_INDICATOR_SELECTOR is AGENT_TUNE_INDICATOR_SELECTOR
+def test_ui_automation_carries_no_tune_selector_copy() -> None:
+    # #299 PR-B deleted ui_automation's only tune-selector consumer
+    # (_force_agent_mode) and its re-import. The drift hazard the old identity
+    # lock guarded is now structural: the module must not grow a local copy.
+    assert not hasattr(ui_automation, "AGENT_TUNE_INDICATOR_SELECTOR")
 
 
 def test_factory_crop_detector_is_mode_control_canonical() -> None:

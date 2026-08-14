@@ -176,11 +176,14 @@ async def get_ui_driver(
         except Exception as exc:
             log.warning("ui_driver.ui_mode.exit_agent_failed", error=str(exc))
     elif ui_mode is UiMode.AGENTIC:
-        from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+        # #299 PR-B: delegate to the symmetric mode_control primitive (real
+        # click + aria-pressed verification) instead of the transport's old
+        # tune-ligature force-clicker. mode_control is a leaf — no cycle.
+        from gflow_cli.api.transports.mode_control import ensure_agent_mode
 
         try:
             log.info("ui_driver.ui_mode.attempt_force_agent")
-            await UiAutomationTransport._force_agent_mode(page)  # type: ignore[reportPrivateUsage]
+            await ensure_agent_mode(page)
         except Exception as exc:  # noqa: BLE001 - best-effort switch, verified below
             log.warning("ui_driver.ui_mode.force_agent_failed", error=str(exc))
 

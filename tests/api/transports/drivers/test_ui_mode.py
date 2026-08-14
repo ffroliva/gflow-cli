@@ -166,11 +166,12 @@ async def test_classic_unreachable_fails_fast(monkeypatch: pytest.MonkeyPatch) -
 @pytest.mark.asyncio
 async def test_agentic_switch_and_bind(monkeypatch: pytest.MonkeyPatch) -> None:
     import gflow_cli.api.transports.drivers.factory as factory_mod
-    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    import gflow_cli.api.transports.mode_control as mode_control_mod
 
-    # Page starts classic; the force switch "succeeds" -> re-detect reads agentic.
+    # Page starts classic; the switch "succeeds" -> re-detect reads agentic.
+    # #299 PR-B: the factory delegates to mode_control.ensure_agent_mode.
     force = AsyncMock(return_value=True)
-    monkeypatch.setattr(UiAutomationTransport, "_force_agent_mode", force)
+    monkeypatch.setattr(mode_control_mod, "ensure_agent_mode", force)
     monkeypatch.setattr(factory_mod, "detect_ui_mode", AsyncMock(return_value="agentic"))
     driver = await get_ui_driver(_fake_page({_TUNE}), ui_mode=UiMode.AGENTIC)
     assert isinstance(driver, AgenticFlowUiDriver)
@@ -180,10 +181,10 @@ async def test_agentic_switch_and_bind(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_agentic_unreachable_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     import gflow_cli.api.transports.drivers.factory as factory_mod
-    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    import gflow_cli.api.transports.mode_control as mode_control_mod
 
-    # Force does not take: page stays classic after the switch attempt.
-    monkeypatch.setattr(UiAutomationTransport, "_force_agent_mode", AsyncMock(return_value=False))
+    # The switch does not take: page stays classic after the attempt.
+    monkeypatch.setattr(mode_control_mod, "ensure_agent_mode", AsyncMock(return_value=False))
     monkeypatch.setattr(factory_mod, "detect_ui_mode", AsyncMock(return_value="classic"))
     with pytest.raises(UiModeUnavailableError) as exc:
         await get_ui_driver(_fake_page({_CROP}), ui_mode=UiMode.AGENTIC)

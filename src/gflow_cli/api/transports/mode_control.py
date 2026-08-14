@@ -77,6 +77,10 @@ _CROP_GRACE_TIMEOUT_MS = 4000
 # poll for ANY composer signal instead of trusting a fixed settle.
 _COMPOSER_READY_TIMEOUT_MS = 8000
 _POLL_INTERVAL_MS = 250
+# The sanctioned reload must be bounded: a bare ``page.reload()`` rides
+# Playwright's 30s default navigation timeout OUTSIDE every budget above
+# (#299 PR-B, code-review finding).
+_RELOAD_TIMEOUT_MS = 15_000
 
 
 async def _crop_present(page: Page) -> bool:
@@ -250,5 +254,79 @@ async def _reload_for_persisted_pref(page: Page) -> None:
     re-detect see a settled page, not the post-``load`` shell.
     """
     log.info("mode_control.reload_retry", note="toggle clicked, panel absent — reloading")
-    await page.reload()
+    await page.reload(timeout=_RELOAD_TIMEOUT_MS)
     await _wait_until(page, _composer_present, _COMPOSER_READY_TIMEOUT_MS)
+
+
+async def _agent_surface_present(page: Page) -> bool:
+    """Agent-mode evidence: the open chat sidebar (it IS the agent surface) or
+    an ``aria-pressed="true"`` toggle. Never the ``tune``/``apps_spark_2``
+    ligatures (module-docstring false-positive rule)."""
+    try:
+        if await page.locator(SIDEBAR_CLOSE_SELECTOR).first.count() > 0:
+            return True
+    except Exception:  # noqa: BLE001  # NOSONAR
+        pass
+    toggle = page.locator(AGENT_TOGGLE_SELECTOR).first
+    try:
+        if await toggle.count() > 0:
+            return await toggle.get_attribute("aria-pressed") == "true"
+    except Exception:  # noqa: BLE001  # NOSONAR
+        pass
+    return False
+
+
+async def ensure_agent_mode(page: Page) -> bool:
+    """Ensure the composer is in agent mode; return ``True`` if it acted.
+
+    The symmetric sibling of :func:`ensure_media_mode` (#299 PR-B), replacing
+    the transport's old ``_force_agent_mode`` — which verified via the ``tune``
+    ligature (a documented false-positive source, see the module docstring) and
+    clicked ``force=True`` unconditionally. Here ``aria-pressed`` is the
+    verification signal, and the click is REAL first, force only after
+    re-reading ``aria-pressed`` (the mirrored hazard: Playwright can raise
+    AFTER the click dispatched, and a blind force retry on a now-ON toggle
+    would turn agent mode back OFF).
+
+    Deliberately NO reload rescue in this direction: the classic direction has
+    an independent mount signal (the ``crop_*`` panel) proving a persisted
+    pref failed to mount; the agent direction's only DOM evidence IS
+    ``aria-pressed``, so "flipped but not served" is indistinguishable here —
+    the factory's ligature-based verify owns that call and raises exit 28.
+
+    Unknown cohorts (no crop, no toggle, no sidebar — the #493 shape) no-op
+    with a warning and never enter a click loop.
+    """
+    await _wait_until(page, _composer_present, _COMPOSER_READY_TIMEOUT_MS)
+    if await _agent_surface_present(page):
+        return False
+    acted = False
+    for _ in range(2):
+        toggle = page.locator(AGENT_TOGGLE_SELECTOR).first
+        if await toggle.count() == 0:
+            break
+        if await toggle.get_attribute("aria-pressed") != "false":
+            break
+        await _click_toggle_on(toggle)
+        acted = True
+        await page.wait_for_timeout(_SETTLE_MS)
+        if await _agent_surface_present(page):
+            return acted
+    if not await _agent_surface_present(page):
+        log.warning(
+            "mode_control.ensure_agent_incomplete",
+            note="agent surface not reached after mode-control attempts",
+        )
+    return acted
+
+
+async def _click_toggle_on(toggle: Locator) -> None:
+    """Click the Agent pill ON — real click first; force only after re-reading
+    ``aria-pressed`` (same post-dispatch-instability hazard as
+    :func:`_click_toggle_off`, mirrored)."""
+    try:
+        await toggle.click(timeout=_CLICK_TIMEOUT_MS)
+    except Exception as exc:  # noqa: BLE001  # NOSONAR
+        log.warning("mode_control.toggle_on_fallback_force", error=str(exc))
+        if await toggle.get_attribute("aria-pressed") == "false":
+            await toggle.click(force=True, timeout=_CLICK_TIMEOUT_MS)
