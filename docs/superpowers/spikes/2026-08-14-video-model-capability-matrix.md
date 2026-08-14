@@ -102,6 +102,31 @@ confirms **duration-scaled pricing**.
   `/Generating will use N credits/` regex returns `null` on pt-BR and reads as
   "no cost shown". Match a number adjacent to a `cr[ée]dito?s?|credits?` stem.
 
+## #493 hypothesis: `crop_free` trigger — **REFUTED** (2026-08-14)
+
+`CROP_SELECTORS` (`mode_control.py:49`) enumerates six *aspect* ligatures and
+omits `crop_free`, which `ui_automation_video.py:634` documents as the **Frames**
+tab icon. Since #493's reporter (pt-BR) sees frame slots "Inicial"/"Final"
+(= Frames mode) and "no `crop_*` settings button", the obvious hypothesis was:
+**the trigger renders the active sub-mode's ligature, so a Frames-mode composer
+shows an unmatched `crop_free` trigger.**
+
+Tested directly (`scripts/dev/capture_frames_mode_trigger_ligature.py`, denon82,
+pt-BR, $0): switch the popover to Frames, close it, re-read every
+`button[aria-haspopup='menu']`.
+
+**Result — refuted.** In BOTH Frames and Ingredients sub-modes the trigger still
+renders `crop_16_9`, and `CROP_SELECTORS` still matches (1 hit). **The trigger
+reflects the ASPECT, not the sub-mode.** Adding `crop_free` to the cascade would
+fix nothing. Do not re-derive this.
+
+Incidental finding: the composer's full trigger ligature inventory is
+`add`, `crop_16_9`, `filter_list`, `more_vert`, **`settings_2`**. `settings_2` is
+a second `aria-haspopup` trigger we never match — but an accidental open during
+this spike showed it serving Flow's **library/display** panel (grid / batch /
+S-M-L / Ativado-Desativado tabs), NOT the composer popover. Treat it as
+**not** a drop-in fallback without its own verification.
+
 ### Spike bug this exposed (worth keeping)
 
 The composer can be in **Image** mode, where the popover shows five aspect tabs
