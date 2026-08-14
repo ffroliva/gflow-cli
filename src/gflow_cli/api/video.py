@@ -435,27 +435,13 @@ class GenerateVideoRequest:
         if not self.reference_images and not self.ref_names and not self.reference_entities:
             msg = "R2V request requires reference_images, ref_names, or reference_entities"
             raise ValueError(msg)
-        if (
-            self.start_image
-            or self.start_image_ref_name
-            or self.start_image_ref_id
-            or self.end_image
-            or self.end_image_ref_name
-            or self.end_image_ref_id
-        ):
+        if self._has_frame_input():
             msg = "R2V request must not carry start/end images"
             raise ValueError(msg)
 
     def _validate_mode_symmetry(self) -> None:
         if self.mode is Mode.T2V and (
-            self.start_image
-            or self.start_image_ref_name
-            or self.start_image_ref_id
-            or self.end_image
-            or self.end_image_ref_name
-            or self.end_image_ref_id
-            or self.reference_images
-            or self.ref_names
+            self._has_frame_input() or self.reference_images or self.ref_names
         ):
             msg = "T2V request must not carry image inputs"
             raise ValueError(msg)
