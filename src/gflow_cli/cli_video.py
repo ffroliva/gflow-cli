@@ -88,15 +88,20 @@ def _warn_persistence_failed_after_success(
 
 
 def _shared_gen_tail_options(f: Any) -> Any:
-    """Option tail shared verbatim by ``t2v`` and ``i2v`` (profile → json)."""
+    """Option tail shared verbatim by ``t2v`` and ``i2v`` (profile → json).
+
+    NOTE: the ``--reference-entity`` pair is deliberately NOT here. It is valid
+    on ``t2v``/``r2v`` (both carry ``referenceEntities`` on the wire) but the DTO
+    rejects it for ``i2v`` (``_validate_i2v_symmetry``: an i2v request must not
+    carry reference entities). Registering it on both meant ``i2v`` advertised a
+    flag that always raised — so it is applied per-command instead.
+    """
     for opt in reversed(
         (
             click.option("--profile", default=None, help="Profile name (overrides default)."),
             tool_option,
             _project_option,
             _project_name_option,
-            _reference_entity_option,
-            _reference_entity_name_option,
             click.option(
                 "--out-dir",
                 "out_dir",
@@ -148,6 +153,27 @@ def _reject_agentic_ui_mode(ui_mode: str | None) -> None:
         msg = (
             "--ui-mode agentic is not supported for video generation yet "
             "(no agentic video driver exists; refs #299). Use classic or auto."
+        )
+        raise click.UsageError(msg)
+
+
+def _reject_duration_without_control(model: str | None, duration: str | int | None) -> None:
+    """#451/#288: reject ``--duration`` on a model that renders no duration control.
+
+    The DTO guards this too (defence in depth for API callers), but a bare
+    ``ValueError`` surfaces through the CLI as "Unexpected error." (exit 1) and
+    the explanation is lost. Raising a ``UsageError`` here gives exit 2 and
+    prints the reason — the same treatment ``--ui-mode agentic`` gets.
+    """
+    if duration is None or model is None:
+        return
+    resolved = VideoModel.from_cli(model)
+    if resolved is not None and not resolved.supports_duration():
+        msg = (
+            f"--duration is not supported by --model {model} — Flow renders no duration "
+            f"control for it (verified live; refs #451/#288). Only omni-flash exposes a "
+            f"duration (4/6/8/10s). Drop --duration to accept Flow's default length, or "
+            f"use --model omni-flash."
         )
         raise click.UsageError(msg)
 
@@ -1032,8 +1058,8 @@ def video() -> None:
         '  gflow video t2v "a golden sunset over mountains"\n'
         '  gflow video t2v "timelapse of a city" --aspect 16:9\n'
         '  gflow video t2v "portrait of a dancer" --out-dir ./videos\n\n'
-        "Tag a saved character by name inline with @Name (the video path has no "
-        "--reference-entity flag). See docs/REFERENCE_STRATEGIES.md."
+        "Tag a saved character by name inline with @Name, or pass its id with "
+        "--reference-entity. See docs/REFERENCE_STRATEGIES.md."
     ),
 )
 @click.argument("prompt")
@@ -1064,6 +1090,10 @@ def video() -> None:
     help="How many videos to generate (1-4). >1 multiplies credit cost.",
 )
 @_ui_mode_option
+# Valid on t2v (carries referenceEntities on the wire); NOT on i2v, whose DTO
+# guard rejects reference entities — see _shared_gen_tail_options.
+@_reference_entity_option
+@_reference_entity_name_option
 @_shared_gen_tail_options
 def t2v(
     prompt: str,
@@ -1084,6 +1114,7 @@ def t2v(
 ) -> None:
     """Generate a video from PROMPT."""
     _reject_agentic_ui_mode(ui_mode)
+    _reject_duration_without_control(model, duration)
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
@@ -1252,14 +1283,13 @@ def i2v(  # NOSONAR
     tool_specs: tuple[str, ...],
     project_id: str | None,
     project_name: str | None,
-    reference_entities: tuple[str, ...],
-    reference_entity_names: tuple[str, ...],
     out_dir: Path | None,
     output_file: Path | None,
     as_json: bool,
 ) -> None:
     """Generate a video from an initial frame + motion PROMPT."""
     _reject_agentic_ui_mode(ui_mode)
+    _reject_duration_without_control(model, duration)
     resolved_image, resolved_prompt = _resolve_i2v_args(image, prompt, initial_frame)
 
     end_hint = "'--end-frame'"
@@ -1302,8 +1332,6 @@ def i2v(  # NOSONAR
         tool=applied_tool,
         project_name=project_name,
         search_hints=search_hints,
-        reference_entities=tuple(reference_entities),
-        reference_entity_names=tuple(reference_entity_names),
         ui_mode=UiMode(ui_mode) if ui_mode else None,
     )
     run_with_handlers(

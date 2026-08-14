@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`--duration` now fails fast instead of masquerading as UI drift (#451, #288).**
+  Flow's video settings popover is **model-conditional**: only `omni-flash` renders
+  a `4s/6s/8s/10s` row, and the Veo 3.1 models render **no duration control at all**
+  — verified live on two accounts and two locales. `api/video.py` had claimed "the
+  four `VEO_3_1_*` models cap at 8s", which presumed a control that is never drawn,
+  so `_select_video_duration` hunted a missing element and died with
+  `UiSelectorDriftError` (exit 23) after ~30 s. That is why the bug reproduced
+  identically on playwright 1.59 and 1.61 (the version bound was correctly
+  exonerated) and why the locale hypothesis was refuted — it was never either.
+  `--duration` with a Veo model now exits **2 before any browser work**, naming the
+  model and the fix. New `VideoModel.supports_duration()`; the DTO guards it too, for
+  API callers.
+- **`--reference-entity` no longer advertised on `video i2v`, where it always failed.**
+  The flag was registered on `t2v`/`i2v`/`r2v`, but `_validate_i2v_symmetry` rejects
+  reference entities on i2v — so the i2v form raised for every caller who believed
+  the help text. It is now applied to `t2v`/`r2v` only. The reverse error was in the
+  docs: `REFERENCE_STRATEGIES.md`, `USAGE.md` and the `t2v` help text all stated "the
+  video path has no `--reference-entity` flag" while `cli_video.py` registered it —
+  corrected in all four places.
+- **A named remote reference that isn't in the picker now raises a typed error.**
+  `--ref-name` searches Flow's picker, which indexes Flow's own short auto-caption —
+  not the generation prompt — so a prompt passed as `--ref-name` surfaced as a bare
+  Playwright `TimeoutError` after 8 s, with no exit code to branch on and no hint
+  that the *name* was the problem. Now `ReferenceNotFoundError` (**exit 32**), listing
+  what the picker actually offered.
+- `VideoModel.supports_image_ingredients()` documents which models accept R2V
+  ingredients (`veo-quality` refuses them — Flow: "You cannot use image ingredients
+  with this model"), delegating to the existing `reference_cap_for` table rather than
+  duplicating the rule.
+
 - **MCP `gflow_generate_image` `ui_mode` now matches the video tool's contract.**
   The image tool rejected an unknown `ui_mode` with a flat `error` **string**, so a
   client reading `error["title"]` — the RFC 9457 shape every other 400 from these

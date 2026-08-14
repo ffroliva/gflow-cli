@@ -640,6 +640,27 @@ class MediaAttributionError(GFlowError):
     )
 
 
+class ReferenceNotFoundError(GFlowError):
+    """Raised when a named remote reference is absent from the project picker.
+
+    Canonical case (#493 recon, 2026-08-14): ``--ref-name`` searches Flow's
+    media picker, which indexes Flow's own **short auto-caption** — not the
+    generation prompt. Passing a prompt therefore never matches, and the miss
+    used to surface as a bare Playwright ``TimeoutError`` after 8 s: no typed
+    error, no exit code to branch on, and no indication that the *name* was the
+    problem rather than the UI.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/reference-not-found"
+    title = "Referenced media was not found"
+    _default_remediation = (
+        "The named asset is not in this project's media picker. Flow indexes a short "
+        "auto-caption, not the generation prompt, so a prompt passed to --ref-name will "
+        "not match. Reference the asset by its media UUID, pass a local file with --ref, "
+        "or check the name with `gflow data list images`."
+    )
+
+
 class MediaUploadRejectedError(GFlowError):
     """Raised when Flow's upload endpoint refuses a media file (issue #287).
 
@@ -1004,6 +1025,11 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # input file (uploadImage 4xx). Direct GFlowError subclass; exit 27 lets
     # scripts branch on "re-encode the input image" vs generic error (1).
     MediaUploadRejectedError: 27,
+    # ReferenceNotFoundError (#493 recon): --ref-name named an asset the project
+    # picker does not offer. Direct GFlowError subclass; exit 32 lets scripts
+    # distinguish "that name is not in the picker" from a UI drift error (23),
+    # which is what this previously masqueraded as via a raw TimeoutError.
+    ReferenceNotFoundError: 32,
     # MentionIndexUnavailableError: an @mention was present but the catalog
     # source needed to resolve it (character or media) failed to load.
     # Direct GFlowError subclass; exit 29 lets scripts distinguish "the

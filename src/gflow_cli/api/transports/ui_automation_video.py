@@ -47,6 +47,7 @@ from gflow_cli.errors import (
     FlowAppError,
     MediaUploadRejectedError,
     ModelModeIncompatibilityError,
+    ReferenceNotFoundError,
     TransportTimeoutError,
     UiSelectorDriftError,
     VideoModelSelectionError,
@@ -2131,22 +2132,70 @@ class VideoGenerationMixin:
         *,
         out_dir: Path | None,
     ) -> None:
-        """Attach remote images by searching their display_name in the All tab."""
+        """Attach remote images by searching their display_name in the All tab.
+
+        The picker indexes Flow's own short auto-caption, NOT the generation
+        prompt, so a name that never matches used to surface as a bare
+        Playwright ``TimeoutError`` after 8 s — no indication of what went
+        wrong. A miss is now a typed, self-documenting error that names the
+        term searched and lists what the picker actually offered.
+        """
+        # playwright is a TYPE_CHECKING-only import at module level; the
+        # timeout class is needed at runtime to type the picker miss.
+        from playwright.async_api import (  # noqa: PLC0415
+            TimeoutError as PlaywrightTimeoutError,
+        )
+
         for name in ref_names:
             add = page.locator(ADD_MEDIA_BUTTON).first
             await add.wait_for(state="visible", timeout=8000)
             await add.click()
             await page.wait_for_timeout(800)
 
-            await VideoGenerationMixin._pick_option_and_include(
-                page,
-                name,
-                surface="remote_reference_include",
-                detail=f"remote reference {name!r}",
-                out_dir=out_dir,
-                dialog_timeout_s=REMOTE_PICKER_CLOSE_TIMEOUT_S,
-            )
+            try:
+                await VideoGenerationMixin._pick_option_and_include(
+                    page,
+                    name,
+                    surface="remote_reference_include",
+                    detail=f"remote reference {name!r}",
+                    out_dir=out_dir,
+                    dialog_timeout_s=REMOTE_PICKER_CLOSE_TIMEOUT_S,
+                )
+            except PlaywrightTimeoutError as exc:
+                offered = await VideoGenerationMixin._picker_option_names(page)
+                shot = await _capture_debug_screenshot(
+                    page, out_dir, "debug_remote_reference_not_found.png"
+                )
+                raise ReferenceNotFoundError(
+                    f"no media named {name!r} in this project's picker. Flow indexes a "
+                    f"short auto-caption, not the generation prompt, so passing a prompt "
+                    f"as --ref-name will not match. "
+                    + (
+                        f"The picker offered: {offered}."
+                        if offered
+                        else "The picker listed no selectable media."
+                    )
+                    + " Pass the asset's media UUID instead, or use --ref with a local file."
+                    + (f" Screenshot: {shot}" if shot else "")
+                ) from exc
             log.info("ui_automation_video.remote_reference_attached", display_name=name)
+
+    @staticmethod
+    async def _picker_option_names(page: Page, limit: int = 12) -> list[str]:
+        """Names the open picker is actually offering — for a not-found error.
+
+        Best-effort: a diagnostic must never mask the failure it describes.
+        """
+        try:
+            return await page.evaluate(
+                """(n) => [...document.querySelectorAll("[role='option']")]
+                       .map(o => (o.getAttribute('aria-label') || o.textContent || '')
+                                   .replace(/\\s+/g, ' ').trim())
+                       .filter(Boolean).slice(0, n)""",
+                limit,
+            )
+        except Exception:  # noqa: BLE001 - diagnostic only
+            return []
 
     @staticmethod
     def _existing_asset_tile(page: Page, media_id: str) -> Locator:
