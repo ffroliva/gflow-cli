@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.57.1] — 2026-08-14
+
 ### Fixed
 
 - **`gflow video`/`image` can no longer get stuck behind Flow's expanded chat
@@ -2975,7 +2977,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.57.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.57.1...HEAD
+[0.57.1]: https://github.com/ffroliva/gflow-cli/compare/v0.57.0...v0.57.1
 [0.57.0]: https://github.com/ffroliva/gflow-cli/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/ffroliva/gflow-cli/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/ffroliva/gflow-cli/compare/v0.54.0...v0.55.0
