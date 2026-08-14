@@ -137,10 +137,13 @@ updates:
     labels:
       - "dependencies"
 
-  # pip — the hash-pinned MkDocs set for the Pages build
-  # (website/requirements.txt, compiled from website/requirements.in with
-  # --generate-hashes; dependabot's pip-compile support updates both).
-  - package-ecosystem: "pip"
+  # uv — the hash-pinned MkDocs set for the Pages build
+  # (website/requirements.txt, compiled from website/requirements.in).
+  # "uv", NOT "pip", for the same reason as the root entry: the pip ecosystem
+  # would regenerate the file with pip-compile, clobbering the uv-authored
+  # header/format; dependabot's uv ecosystem recompiles .in → .txt via
+  # `uv pip compile` and keeps the hashes.
+  - package-ecosystem: "uv"
     directory: "/website"
     schedule:
       interval: "weekly"
