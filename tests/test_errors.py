@@ -704,3 +704,26 @@ def test_specific_remediation_hints() -> None:
         "(review artifacts before sharing — screenshots may show your account "
         "name/avatar; do NOT include tokens or signed URLs)."
     )
+
+
+def test_reference_not_found_error_exit_code():
+    """#493 recon: a reference NAME that Flow's picker does not offer used to be
+    a bare Playwright TimeoutError (exit 1). Exit 32 lets scripts branch on
+    "that name is not in the picker" instead of guessing at UI drift (23)."""
+    from gflow_cli.errors import ReferenceNotFoundError
+
+    err = ReferenceNotFoundError(detail="no media named 'a brass key' in this project's picker")
+    assert EXIT_CODE_MAP[ReferenceNotFoundError] == 32
+    # The isinstance walk must resolve to 32, not be shadowed by GFlowError (1).
+    assert next(code for cls, code in EXIT_CODE_MAP.items() if isinstance(err, cls)) == 32
+
+
+def test_reference_not_found_error_problem_details():
+    from gflow_cli.errors import ReferenceNotFoundError
+
+    err = ReferenceNotFoundError(detail="no media named 'x' in this project's picker")
+    body = err.to_problem_details()
+    assert body["type"].endswith("/reference-not-found")
+    assert body["title"] == "Referenced media was not found"
+    # The remediation must not name a CLI flag that does not exist.
+    assert "--ref-name" not in err.remediation_hint

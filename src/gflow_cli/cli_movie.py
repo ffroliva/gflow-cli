@@ -97,8 +97,10 @@ id = "establishing"
 action = "A futuristic city skyline at golden hour"
 framing = "establishing"
 aspect = "16:9"
+# duration needs a model that renders a duration control -- only omni-flash
+# does (refs #451/#288). Drop `duration` to accept Flow's default length.
 duration = 8
-model = "veo-lite"
+model = "omni-flash"
 
 [[scenes]]
 id = "arrival"
@@ -107,7 +109,6 @@ framing = "wide"
 characters = ["Alice"]
 style_variant = "warm"  # select [style.variants.warm]; omit for base style
 aspect = "16:9"
-duration = 8
 
 [[scenes]]
 id = "close-up"
@@ -118,8 +119,7 @@ speaker = "Alice"
 line = "We made it!"
 style_suffix = "golden hour light"  # appended after the variant/base suffix
 aspect = "16:9"
-duration = 6
-model = "veo-quality"
+model = "veo-quality"  # no duration: Veo models render no duration control
 """
 
 # ---------------------------------------------------------------------------

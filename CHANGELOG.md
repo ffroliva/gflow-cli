@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow video`/`image` can no longer get stuck behind Flow's expanded chat
+  sidebar (#493).** Expanding the sidebar removes the classic composer
+  **entirely** — no `crop_*` settings trigger *and* no Agent pill — which is
+  exactly the fingerprint reported in #493 ("no `crop_*` settings button", "the
+  Agente pill matches neither selector"). It also explains the exit code: with
+  no agentic indicator on screen either, the cohort detector matches nothing, so
+  the run dies as `UiSelectorDriftError` (exit 23) instead of the retryable
+  agentic error (25). Recovery hinged on a single selector scoped to the
+  sidebar's `edit_square` affordance; a cohort whose sidebar lacks that ligature
+  never found the X, so the sidebar never closed and the composer never came
+  back. `ensure_media_mode` now falls back to an unscoped close **only** from
+  the demonstrably stuck state (no `crop_*` **and** no pill), where the classic
+  composer is gone and there is nothing else a close button could belong to.
+  Reproduced live and A/B-proven: with the scoped selector neutered the fallback
+  recovers; with both neutered it does not.
+
+- **`--duration` now fails fast instead of masquerading as UI drift (#451, #288).**
+  Flow's video settings popover is **model-conditional**: only `omni-flash` renders
+  a `4s/6s/8s/10s` row, and the Veo 3.1 models render **no duration control at all**
+  — verified live on two accounts and two locales. `api/video.py` had claimed "the
+  four `VEO_3_1_*` models cap at 8s", which presumed a control that is never drawn,
+  so `_select_video_duration` hunted a missing element and died with
+  `UiSelectorDriftError` (exit 23) after ~30 s. That is why the bug reproduced
+  identically on playwright 1.59 and 1.61 (the version bound was correctly
+  exonerated) and why the locale hypothesis was refuted — it was never either.
+  `--duration` with a Veo model now exits **2 before any browser work**, naming the
+  model and the fix. New `VideoModel.supports_duration()`; the DTO guards it too, for
+  API callers.
+- **`--reference-entity` no longer advertised on `video i2v`, where it always failed.**
+  The flag was registered on `t2v`/`i2v`/`r2v`, but `_validate_i2v_symmetry` rejects
+  reference entities on i2v — so the i2v form raised for every caller who believed
+  the help text. It is now applied to `t2v`/`r2v` only. The reverse error was in the
+  docs: `REFERENCE_STRATEGIES.md`, `USAGE.md` and the `t2v` help text all stated "the
+  video path has no `--reference-entity` flag" while `cli_video.py` registered it —
+  corrected in all four places.
+- **A named remote reference that isn't in the picker now raises a typed error.**
+  `--ref-name` searches Flow's picker, which indexes Flow's own short auto-caption —
+  not the generation prompt — so a prompt passed as `--ref-name` surfaced as a bare
+  Playwright `TimeoutError` after 8 s, with no exit code to branch on and no hint
+  that the *name* was the problem. Now `ReferenceNotFoundError` (**exit 32**), listing
+  what the picker actually offered.
+- `reference_cap_for` now records the live-verified ingredient rule it already
+  encoded: `veo-quality` refuses image ingredients (Flow: "You cannot use image
+  ingredients with this model") while Omni Flash / Fast / Lite accept them, and a cap
+  of 0 *is* the answer to "does this model take ingredients?". Deliberately no second
+  predicate — one was written, found to have no production caller, and deleted.
+
 - **MCP `gflow_generate_image` `ui_mode` now matches the video tool's contract.**
   The image tool rejected an unknown `ui_mode` with a flat `error` **string**, so a
   client reading `error["title"]` — the RFC 9457 shape every other 400 from these

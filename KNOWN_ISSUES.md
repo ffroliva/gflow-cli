@@ -181,31 +181,53 @@ accepted. Two corrections fixed it (verified end-to-end on macOS Apple Silicon):
 
 Evidence: [LIVE_VERIFICATION_v0.23.0](docs/LIVE_VERIFICATION_v0.23.0.md).
 
-### New Flow editor variant (composer frame slots + Agent toggle) is not recognized
+### Expanded chat sidebar left the composer unrecoverable (exit 23)
 
-- **Status:** **Open** — awaiting a DOM signature from an affected account;
+- **Status:** **Resolved** in the unreleased line — fixed and A/B-verified live;
   tracked in [#493](https://github.com/ffroliva/gflow-cli/issues/493)
-- **Severity:** High · **Affects:** `gflow image` / `gflow video` generation on
-  accounts that received the new editor, any locale
+- **Severity:** High · **Affected:** `gflow image` / `gflow video` generation on
+  accounts whose chat sidebar lacks the `edit_square` affordance, any locale
 
-A third Flow editor layout was reported on 2026-08-13 (macOS, v0.55.0; also
-v0.53.1): frame-slot buttons ("Initial"/"Final") sit directly on the composer
-next to an "Agent" pill, and there is **no** classic `crop_*` aspect/settings
-button for gflow to drive. The layout matches **none** of the known cohort
-indicators (agentic chat composer, full-page media library), so the mode-switch
-step falls through to `UiSelectorDriftError` (**exit 23**) instead of the
-retryable exit-25 cohort classification. The selector cascade itself is
-locale-invariant — the reporter's Portuguese UI is unrelated.
+Reported 2026-08-13 (macOS, v0.53.1 and v0.55.0) as an unrecognized "third
+editor variant": frame-slot buttons ("Inicial"/"Final") on the composer next to
+an "Agente" pill, and **no** classic `crop_*` settings button.
 
-The error detail now names this hypothesis and the run writes a PII-safe DOM
-signature to `diag_mode_switch_miss.json` when it can be captured (structural
-allowlist: ligature names, tag counts — no cookies, tokens, prompts, or page
-text; if the file is absent, attach the incident bundle instead — its
-`ui.json` carries the same DOM signature). **If you hit this, attach that JSON file to
-[#493](https://github.com/ffroliva/gflow-cli/issues/493)** — recognizing the
-variant (and restoring a clean retryable classification, or full support) needs
-exactly that DOM signature. Re-running later may land the classic editor if
-the rollout is still an A/B arm.
+**Root cause (2026-08-14, reproduced live at zero credits):** there is no third
+variant. Those are stock classic-composer features — "Inicial"/"Final" are the
+**Frames** sub-mode's Start/End slots, and the Agent pill sits alongside the
+classic popover. The real trigger is Flow's **expanded chat sidebar**, which
+removes the classic composer *entirely*:
+
+```
+in sidebar state ->  crop_* triggers = 0    Agent pill = 0
+```
+
+One state, both reported symptoms. It also explains the exit code: with no
+agentic indicator on screen either, the cohort detector matches nothing, so the
+run fails as `UiSelectorDriftError` (**exit 23**) rather than the retryable
+exit-25 classification. The Portuguese UI was unrelated — the cascade is
+locale-invariant (ligature-keyed), re-confirmed on a pt-BR account.
+
+Recovery depended on a single selector scoped to the sidebar's `edit_square`
+("new session") affordance. On a cohort whose sidebar lacks that ligature the
+close button was never found, so the sidebar never closed, the composer never
+returned, and **every** run failed. `mode_control.ensure_media_mode` now falls
+back to an unscoped close, reached **only** from the demonstrably stuck state
+(no `crop_*` **and** no Agent pill) — safe there because the classic composer is
+gone, so nothing else a close button could belong to remains.
+
+Verified by an A/B on a real editor: with the scoped selector neutered the
+fallback recovers; with both neutered it does not. Two earlier hypotheses were
+tested and refuted first (a `crop_free` sub-mode trigger, and a composer
+hydration race) — see
+[the spike evidence](docs/superpowers/spikes/2026-08-14-video-model-capability-matrix.md).
+
+If you still hit exit 23 after upgrading, the run writes a PII-safe DOM
+signature to `diag_mode_switch_miss.json` (structural allowlist: ligature names
+and tag counts — no cookies, tokens, prompts, or page text; if absent, the
+incident bundle's `ui.json` carries the same data). Attach it to
+[#493](https://github.com/ffroliva/gflow-cli/issues/493) — that would indicate a
+state genuinely different from the sidebar one.
 
 ### Flow's new full-page media-library UI breaks entity attach (A/B rollout)
 

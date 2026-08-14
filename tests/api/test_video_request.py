@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
+from gflow_cli.api.video import (
+    Aspect,
+    GenerateVideoRequest,
+    Mode,
+    VideoModel,
+    reference_cap_for,
+)
 
 
 def test_r2v_valid_with_entities_only() -> None:
@@ -81,3 +87,49 @@ def test_ui_mode_agentic_rejected_at_dto() -> None:
 
     with pytest.raises(ValueError, match="agentic"):
         GenerateVideoRequest(prompt="x", ui_mode=UiMode.AGENTIC)
+
+
+class TestModelCapabilityGuards:
+    """#451/#288: Flow's settings popover is model-conditional, so a duration
+    that the selected model cannot render must fail at the DTO — not 30s later
+    as a UiSelectorDriftError that blames the UI for a capability mismatch."""
+
+    def test_duration_rejected_on_models_without_a_duration_control(self) -> None:
+        for model in (
+            VideoModel.VEO_3_1_LITE,
+            VideoModel.VEO_3_1_FAST,
+            VideoModel.VEO_3_1_QUALITY,
+        ):
+            with pytest.raises(ValueError, match="no duration control"):
+                GenerateVideoRequest(prompt="x", mode=Mode.T2V, model=model, duration=8)
+
+    def test_duration_allowed_on_omni_flash(self) -> None:
+        req = GenerateVideoRequest(
+            prompt="x", mode=Mode.T2V, model=VideoModel.OMNI_FLASH, duration=10
+        )
+        assert req.duration == 10
+
+    def test_duration_allowed_when_model_is_unset(self) -> None:
+        """model=None leaves Flow's picker untouched, so there is no capability
+        to check against — the guard must not fire."""
+        assert GenerateVideoRequest(prompt="x", mode=Mode.T2V, duration=8).duration == 8
+
+    def test_supports_duration_matches_the_verified_matrix(self) -> None:
+        assert VideoModel.OMNI_FLASH.supports_duration()
+        assert not VideoModel.VEO_3_1_LITE.supports_duration()
+        assert not VideoModel.VEO_3_1_FAST.supports_duration()
+        assert not VideoModel.VEO_3_1_QUALITY.supports_duration()
+
+    def test_ingredient_capability_has_exactly_one_source_of_truth(self) -> None:
+        """`reference_cap_for` IS the ingredient-capability answer: a cap of 0
+        means the model takes no image ingredients. Verified live 2026-08-14 —
+        Veo 3.1 Quality refuses them, the others accept. No second predicate
+        encodes this rule (one was written, found to have no production caller,
+        and deleted)."""
+        assert reference_cap_for(VideoModel.VEO_3_1_QUALITY) == 0
+        for model in (
+            VideoModel.OMNI_FLASH,
+            VideoModel.VEO_3_1_FAST,
+            VideoModel.VEO_3_1_LITE,
+        ):
+            assert reference_cap_for(model) > 0

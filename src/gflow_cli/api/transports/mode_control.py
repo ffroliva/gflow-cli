@@ -63,6 +63,21 @@ SIDEBAR_CLOSE_SELECTOR = (
     "button:has(i.google-symbols:text-is('close'))"
 )
 
+# Last-resort sidebar close, used ONLY from the demonstrably stuck state (issue
+# #493): no ``crop_*`` trigger AND no Agent pill. Reproduced live 2026-08-14 —
+# expanding the chat sidebar removes the classic composer entirely, which is
+# exactly the reported fingerprint ("no crop_* settings button" + "the Agente
+# pill matches neither selector").
+#
+# The primary selector above is scoped to the sidebar's ``edit_square`` ("new
+# session") affordance. That scoping is a single point of failure: a cohort
+# whose sidebar lacks that ligature never finds the X, so the sidebar never
+# closes, the composer never returns, and the run dies with exit 23.
+#
+# Deliberately unscoped — safe *only* because the guard state has no composer
+# left to mis-click: the classic panel and the pill are both gone.
+SIDEBAR_CLOSE_FALLBACK_SELECTOR = "button:has(i.google-symbols:text-is('close'))"
+
 Mode = Literal["media", "agent", "unknown"]
 
 _SETTLE_MS = 1200
@@ -196,6 +211,29 @@ async def ensure_media_mode(page: Page, *, allow_reload: bool = False) -> bool:
     return acted
 
 
+async def _try_fallback_sidebar_close(page: Page) -> bool:
+    """Close the chat sidebar when the scoped selector missed (issue #493).
+
+    Only reachable from the stuck state: no ``crop_*`` (checked by the caller's
+    loop head) and no Agent pill (checked at the call site). With the classic
+    composer gone there is nothing else a ``close`` button could belong to, so
+    an unscoped match is safe here and nowhere else.
+
+    Returns whether a click landed.
+    """
+    x = page.locator(SIDEBAR_CLOSE_FALLBACK_SELECTOR).first
+    if await x.count() == 0:
+        return False
+    try:
+        await x.click(force=True, timeout=_CLICK_TIMEOUT_MS)
+    except Exception as exc:  # noqa: BLE001 - best-effort rescue
+        log.warning("mode_control.fallback_sidebar_close_failed", error=str(exc)[:120])
+        return False
+    await page.wait_for_timeout(_SETTLE_MS)
+    log.info("mode_control.fallback_sidebar_close", note="scoped selector missed (#493)")
+    return True
+
+
 async def _run_dismiss_steps(page: Page) -> tuple[bool, bool]:
     """One bounded pass of (sidebar → toggle → re-check) steps.
 
@@ -215,6 +253,9 @@ async def _run_dismiss_steps(page: Page) -> tuple[bool, bool]:
             acted = True
             continue
         toggle = page.locator(AGENT_TOGGLE_SELECTOR).first
+        if await toggle.count() == 0 and await _try_fallback_sidebar_close(page):
+            acted = True
+            continue
         if await toggle.count() > 0 and await toggle.get_attribute("aria-pressed") == "true":
             persisted_off = await _click_toggle_off(toggle) or persisted_off
             await page.wait_for_timeout(_SETTLE_MS)
