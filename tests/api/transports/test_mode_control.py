@@ -316,3 +316,13 @@ async def test_reload_carries_explicit_timeout() -> None:
     await mc.ensure_media_mode(page, allow_reload=True)  # type: ignore[arg-type]
     assert page.reloads == 1
     assert page.reload_kwargs[0].get("timeout") == mc._RELOAD_TIMEOUT_MS
+
+
+@pytest.mark.asyncio
+async def test_ensure_agent_survives_render_race() -> None:
+    # #267 regression lock (carried over from the deleted force-mode tests):
+    # an instant probe on the blank SPA shell must not no-op — the composer
+    # wait absorbs the deferred mount before any probing.
+    page = _FakePage(state="media", blank_waits=3)
+    assert await mc.ensure_agent_mode(page) is True  # type: ignore[arg-type]
+    assert page.state == "agent"
