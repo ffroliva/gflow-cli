@@ -823,3 +823,28 @@ class TestUiModeEnvelopeShape:
         result = await gflow_generate_video(prompt="x", ui_mode="AGENTIC")
         # Normalized first, THEN rejected as agentic — not as an unknown value.
         assert result["error"]["title"] == "Unsupported ui_mode for video"
+
+    @pytest.mark.asyncio
+    async def test_image_invalid_ui_mode_returns_dict_envelope(self) -> None:
+        """The image tool must answer with the same RFC 9457 envelope as video.
+
+        It used to return a flat ``error`` string, so a client doing
+        ``resp["error"]["title"]`` crashed with ``TypeError`` — the exact hazard
+        the video tool's own comment says it added ``_bad_param`` to prevent.
+        """
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        result = await gflow_generate_image(prompt="x", ui_mode="bogus")
+        assert result["status"] == "error"
+        assert result["error"]["title"] == "Invalid ui_mode"
+        assert result["error"]["status"] == 400
+
+    @pytest.mark.asyncio
+    async def test_image_ui_mode_is_case_insensitive(self) -> None:
+        """CLI ``--ui-mode`` is ``click.Choice(case_sensitive=False)``; the MCP
+        image param must match. Asserted via the echoed value in the detail so
+        the test never reaches a real generation."""
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        result = await gflow_generate_image(prompt="x", ui_mode="BOGUS")
+        assert "'bogus'" in result["error"]["detail"]

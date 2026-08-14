@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP `gflow_generate_image` `ui_mode` now matches the video tool's contract.**
+  The image tool rejected an unknown `ui_mode` with a flat `error` **string**, so a
+  client reading `error["title"]` — the RFC 9457 shape every other 400 from these
+  tools uses since #498 — crashed with `TypeError: string indices must be integers`.
+  It was also case-sensitive, while the CLI's `--ui-mode` is
+  `click.Choice(case_sensitive=False)` and the video tool normalizes. Both are fixed:
+  the value is lower-cased and an invalid one returns the standard problem-details
+  envelope. Found by `/code-review` against docs that asserted the param "mirrors the
+  CLI" — it did not.
+- **`GFLOW_MCP_NO_SPEND` documentation corrected (no behavior change).**
+  [CONFIGURATION](docs/CONFIGURATION.md) described the falsy set as a literal lowercase
+  list, so a reader setting `GFLOW_MCP_NO_SPEND=FALSE` would conclude no-spend was
+  **on** when the value is lower-cased before comparison and it is **off**. On the one
+  variable whose purpose is a hard guarantee against spending credits, the wrong
+  reading failed toward spending. Now states the match is case-insensitive.
+
 ## [0.57.0] — 2026-08-14
 
 ### Added
