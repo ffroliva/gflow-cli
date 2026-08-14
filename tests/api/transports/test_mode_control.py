@@ -60,6 +60,7 @@ class _FakePage:
         self.clicks: list[str] = []
         self.click_kwargs: list[dict[str, object]] = []
         self.reloads = 0
+        self.reload_kwargs: list[dict[str, object]] = []
         # "before": unforced toggle click raises WITHOUT dispatching;
         # "after": dispatches the state change, THEN raises (post-click
         # instability — Playwright can raise after the events fired).
@@ -76,8 +77,9 @@ class _FakePage:
             self.blank_waits -= 1
         return None
 
-    async def reload(self, **_kw: object) -> None:
+    async def reload(self, **kw: object) -> None:
         self.reloads += 1
+        self.reload_kwargs.append(kw)
         if self.state == "pinned_off":
             # The toggle click persisted isAgentModeToggled=false server-side;
             # the fresh load mounts the classic composer.
@@ -245,3 +247,72 @@ async def test_toggle_click_is_unforced() -> None:
         if sel == mc.AGENT_TOGGLE_SELECTOR
     ]
     assert toggle_kwargs and all(not kw.get("force") for kw in toggle_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# ensure_agent_mode (#299 PR-B) — the symmetric agentic direction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ensure_agent_noop_when_already_agent() -> None:
+    page = _FakePage(state="agent")
+    assert await mc.ensure_agent_mode(page) is False  # type: ignore[arg-type]
+    assert page.clicks == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_agent_noop_when_sidebar_open() -> None:
+    # The expanded chat sidebar IS the agent surface — no clicking needed.
+    page = _FakePage(state="sidebar")
+    assert await mc.ensure_agent_mode(page) is False  # type: ignore[arg-type]
+    assert page.clicks == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_agent_real_click_from_media() -> None:
+    page = _FakePage(state="media")
+    assert await mc.ensure_agent_mode(page) is True  # type: ignore[arg-type]
+    assert page.state == "agent"
+    # REAL click first — never force-first (a forced click can flip the DOM
+    # without firing the React handler that persists the server pref).
+    assert page.click_kwargs[0].get("force") is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_agent_force_fallback_only_after_rereading_aria() -> None:
+    # Unforced click raises BEFORE dispatch -> aria still "false" -> force retry.
+    page = _FakePage(state="media", raise_unforced_click="before")
+    assert await mc.ensure_agent_mode(page) is True  # type: ignore[arg-type]
+    assert page.state == "agent"
+    assert any(kw.get("force") for kw in page.click_kwargs)
+
+
+@pytest.mark.asyncio
+async def test_ensure_agent_no_double_click_on_post_dispatch_raise() -> None:
+    # Click dispatches (media->agent) THEN raises: aria now reads "true" — a
+    # blind force retry would toggle agent OFF again (the classic-direction
+    # hazard, mirrored).
+    page = _FakePage(state="media", raise_unforced_click="after")
+    assert await mc.ensure_agent_mode(page) is True  # type: ignore[arg-type]
+    assert page.state == "agent"
+    assert not any(kw.get("force") for kw in page.click_kwargs)
+
+
+@pytest.mark.asyncio
+async def test_ensure_agent_unknown_cohort_noops() -> None:
+    # #493-shaped variant: no crop, no toggle, no sidebar -> never loop, never
+    # click; the factory's verify turns this into the clean exit-28/25 abort.
+    page = _FakePage(state="void")
+    assert await mc.ensure_agent_mode(page) is False  # type: ignore[arg-type]
+    assert page.clicks == []
+
+
+@pytest.mark.asyncio
+async def test_reload_carries_explicit_timeout() -> None:
+    # code-review finding: a bare page.reload() rides Playwright's 30s default
+    # OUTSIDE every mode_control budget — the sanctioned reload must be bounded.
+    page = _FakePage(state="pinned")
+    await mc.ensure_media_mode(page, allow_reload=True)  # type: ignore[arg-type]
+    assert page.reloads == 1
+    assert page.reload_kwargs[0].get("timeout") == mc._RELOAD_TIMEOUT_MS

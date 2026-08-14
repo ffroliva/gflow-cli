@@ -842,6 +842,19 @@ continue as a seeded I2V generation — tracked as backlog.
 
 ## Mitigated
 
+### Flow can pin the agentic cohort server-side for hours
+
+The classic↔agentic editor arm is server-assigned per page load and normally
+flaps, but an account can be **pinned agentic for an extended stretch**:
+observed on the #338 cycle (2026-07), where an account stayed agentic ~2 h and
+the persisted toggle-off + one sanctioned reload (v0.38.1) recovered classic
+only once the pin lifted. **Mitigation:** the UI-mode policy fails fast
+pre-submit (`UiModeUnavailableError`, exit 28, $0 spent, machine-flagged
+retryable) instead of burning selector timeouts mid-flow, and the error text
+names the pinning case. Retrying *immediately* during a pin is futile — wait a
+while or switch `--profile`. Recorded as the #299 PR-B predict-gate evidence:
+retry loops must never key off the pinned signature.
+
 ### Auth verification depends on Google's NextAuth session endpoint
 
 - **Status:** Mitigated · **Severity:** Low (degrades fail-closed) · **Affects:** issue #15 fix onward · **Tracked:** issue #15
