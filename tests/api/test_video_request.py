@@ -120,9 +120,16 @@ class TestModelCapabilityGuards:
         assert not VideoModel.VEO_3_1_FAST.supports_duration()
         assert not VideoModel.VEO_3_1_QUALITY.supports_duration()
 
-    def test_supports_image_ingredients_delegates_to_the_cap_table(self) -> None:
-        """One source of truth: a reference cap of 0 already means 'no
-        ingredients', so the predicate must not re-encode the model list."""
-        for model in VideoModel:
-            assert model.supports_image_ingredients() is (reference_cap_for(model) > 0)
-        assert not VideoModel.VEO_3_1_QUALITY.supports_image_ingredients()
+    def test_ingredient_capability_has_exactly_one_source_of_truth(self) -> None:
+        """`reference_cap_for` IS the ingredient-capability answer: a cap of 0
+        means the model takes no image ingredients. Verified live 2026-08-14 —
+        Veo 3.1 Quality refuses them, the others accept. No second predicate
+        encodes this rule (one was written, found to have no production caller,
+        and deleted)."""
+        assert reference_cap_for(VideoModel.VEO_3_1_QUALITY) == 0
+        for model in (
+            VideoModel.OMNI_FLASH,
+            VideoModel.VEO_3_1_FAST,
+            VideoModel.VEO_3_1_LITE,
+        ):
+            assert reference_cap_for(model) > 0

@@ -34,10 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Playwright `TimeoutError` after 8 s, with no exit code to branch on and no hint
   that the *name* was the problem. Now `ReferenceNotFoundError` (**exit 32**), listing
   what the picker actually offered.
-- `VideoModel.supports_image_ingredients()` documents which models accept R2V
-  ingredients (`veo-quality` refuses them — Flow: "You cannot use image ingredients
-  with this model"), delegating to the existing `reference_cap_for` table rather than
-  duplicating the rule.
+- `reference_cap_for` now records the live-verified ingredient rule it already
+  encoded: `veo-quality` refuses image ingredients (Flow: "You cannot use image
+  ingredients with this model") while Omni Flash / Fast / Lite accept them, and a cap
+  of 0 *is* the answer to "does this model take ingredients?". Deliberately no second
+  predicate — one was written, found to have no production caller, and deleted.
 
 - **MCP `gflow_generate_image` `ui_mode` now matches the video tool's contract.**
   The image tool rejected an unknown `ui_mode` with a flat `error` **string**, so a

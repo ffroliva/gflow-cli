@@ -117,25 +117,6 @@ class VideoModel(StrEnum):
         """
         return self is VideoModel.OMNI_FLASH
 
-    def supports_image_ingredients(self) -> bool:
-        """Whether this model accepts image ingredients (R2V references).
-
-        Verified live 2026-08-14 on two accounts: selecting
-        ``VEO_3_1_QUALITY`` greys an attached ingredient and Flow states "You
-        cannot use image ingredients with this model." ``OMNI_FLASH``,
-        ``VEO_3_1_FAST`` and ``VEO_3_1_LITE`` accept the same asset.
-
-        Note the UI flags an ingredient that was attached BEFORE the model was
-        switched, so the ordering matters: pick the model first, then attach.
-        The transport already does this (``configure_video_settings`` runs
-        before ``_attach_media_inputs``).
-
-        Delegates to :func:`reference_cap_for` rather than re-encoding the rule:
-        a cap of 0 already means "this model takes no reference images", and two
-        hard-coded lists would drift apart.
-        """
-        return reference_cap_for(self) > 0
-
 
 # Default model for ``gflow video i2v`` and direct ``FlowApiClient.generate_video``
 # callers when ``model`` is omitted and the request carries a start/end frame.
@@ -210,7 +191,16 @@ def reference_cap_for(model: VideoModel) -> int:
     """Maximum number of R2V reference images *model* accepts.
 
     Returns 0 for models that do not support R2V at all
-    (``VEO_3_1_QUALITY`` — per Google Flow's official support page).
+    (``VEO_3_1_QUALITY`` — per Google Flow's official support page, and
+    confirmed live 2026-08-14 on two accounts: selecting Veo 3.1 - Quality greys
+    an attached ingredient with "You cannot use image ingredients with this
+    model", while Omni Flash / Fast / Lite accept the same asset. A cap of 0 is
+    therefore also the answer to "does this model take image ingredients?" —
+    there is deliberately no second predicate encoding the same rule).
+
+    Ordering note: Flow flags an ingredient attached BEFORE the model was
+    switched, so the model must be chosen first. The transport already does this
+    (``configure_video_settings`` runs before ``_attach_media_inputs``).
     Unknown/future models fall back to :data:`MAX_REFERENCE_IMAGES` rather than
     raising, so adding a new ``VideoModel`` member without a cap entry degrades
     to the ceiling instead of a ``KeyError`` at request-build time.
