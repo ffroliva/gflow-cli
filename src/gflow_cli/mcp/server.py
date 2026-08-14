@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import sys
 
 import structlog
@@ -112,6 +113,50 @@ def _configure_utf8_pipes() -> None:
 # ---------------------------------------------------------------------------
 
 
+# Credit-spending tools gated by --no-spend (#496). BOTH generate tools:
+# image generation is only *empirically* free ("~0 credits observed") and
+# no-spend must be a hard guarantee, so anything not contractually free is in.
+_SPEND_TOOLS = ("gflow_generate_image", "gflow_generate_video")
+
+
+def no_spend_active() -> bool:
+    """True when no-spend mode is requested (#496).
+
+    ``gflow mcp run --no-spend`` sets ``GFLOW_MCP_NO_SPEND=1``; the env var
+    alone also works (and covers ``gflow serve``). The falsy set matches
+    Click's boolean vocabulary so 'off'/'no'/'n'/'f' cannot mean False to the
+    CLI flag and True to this policy (post-merge review of #496).
+    """
+    value = os.environ.get("GFLOW_MCP_NO_SPEND", "").strip().lower()
+    return value not in ("", "0", "false", "off", "no", "n", "f")
+
+
+def _apply_no_spend_policy() -> None:
+    """Registration-policy seam (#496): under no-spend the credit-spending
+    generate tools are removed from the registry entirely, so ``tools/list``
+    never shows them. Invisible beats refused — no wasted calls, no refusal
+    path for prompt injection to probe, no reliance on the model honoring an
+    error. Tools bind via import-time decorators, so the policy runs as a
+    post-registration removal rather than an ``if`` around each decorator.
+    """
+    if not no_spend_active():
+        return
+    # Idempotent: remove_tool raises ToolError on a missing name, and this
+    # runs once per transport boot — a second _register_surfaces() call (or a
+    # test fixture that already stripped the tools) must not crash the server.
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    removed: list[str] = []
+    for name in _SPEND_TOOLS:
+        try:
+            server.remove_tool(name)
+        except ToolError:
+            continue
+        removed.append(name)
+    if removed:
+        log.info("mcp.no_spend_active", removed=removed)
+
+
 def _register_surfaces() -> None:
     """Import tools/prompts/resources so their decorators register them.
 
@@ -124,6 +169,7 @@ def _register_surfaces() -> None:
 
     # Access them to satisfy pyright unused import check
     _ = (_prompts, _resources, _tools)
+    _apply_no_spend_policy()
 
 
 async def run_stdio() -> None:

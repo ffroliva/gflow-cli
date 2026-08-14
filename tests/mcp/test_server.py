@@ -25,14 +25,13 @@ class TestMcpToolListing:
     """Verify the server exposes the expected tools."""
 
     def test_server_has_expected_tools(self, mcp_server: Any) -> None:
-        """The server should expose at least 5 core tools."""
+        """The server should expose the core generation + listing tools."""
         tools = mcp_server._tool_manager._tools
         tool_names = set(tools.keys())
         expected = {
             "gflow_generate_image",
             "gflow_generate_video",
             "gflow_list_projects",
-            "gflow_list_characters",
             "gflow_list_tools",
         }
         assert expected.issubset(tool_names), (
@@ -349,14 +348,13 @@ class TestToolExecution:
         assert result["status"] == "ok"
         assert result["projects"] == []
 
-    @pytest.mark.asyncio
-    async def test_list_characters_returns_empty_list(self) -> None:
-        """gflow_list_characters should return an empty list when no data."""
-        from gflow_cli.mcp.tools import gflow_list_characters
+    def test_list_characters_stub_is_gone(self) -> None:
+        """#499: the old stub answered ok+[] — an agent reads that as "you
+        have no characters" and acts on the lie. The tool stays absent until
+        it can return real data."""
+        from gflow_cli.mcp import tools
 
-        result = await gflow_list_characters()
-        assert result["status"] == "ok"
-        assert result["characters"] == []
+        assert not hasattr(tools, "gflow_list_characters")
 
 
 # ---------------------------------------------------------------------------
@@ -393,14 +391,15 @@ class TestMcpResources:
         assert len(resources) >= 2, f"Expected at least 2 resources, got {len(resources)}"
 
     @pytest.mark.asyncio
-    async def test_known_issues_resource_returns_content(self) -> None:
-        """gflow://docs/known-issues must return KNOWN_ISSUES.md content."""
+    async def test_known_issues_resource_returns_bounded_index(self) -> None:
+        """gflow://docs/known-issues returns the #501 bounded index."""
         from gflow_cli.mcp.resources import known_issues
 
         content = await known_issues()
         assert isinstance(content, str)
         assert len(content) > 0
-        assert "##" in content
+        assert len(content.encode()) < 16 * 1024
+        assert "gflow://docs/known-issues/" in content
 
 
 # ---------------------------------------------------------------------------
@@ -774,3 +773,53 @@ class TestProtocolEras:
 
         assert tools.ttl_ms == 0
         assert resources.ttl_ms == 0
+
+
+class TestUiModeParity:
+    """#299 PR-A: the CLI --ui-mode option mirrors to a ui_mode param on BOTH
+    generate tools (AGENTS.md §61); video rejects 'agentic' at the tool edge
+    (no agentic video driver exists)."""
+
+    def test_both_generate_tools_expose_ui_mode(self, mcp_server: Any) -> None:
+        for tool_name in ("gflow_generate_image", "gflow_generate_video"):
+            tool = mcp_server._tool_manager._tools[tool_name]
+            assert "ui_mode" in tool.parameters.get("properties", {}), (
+                f"{tool_name} missing 'ui_mode' (CLI parity, refs #299)"
+            )
+
+    @pytest.mark.asyncio
+    async def test_video_tool_rejects_agentic_ui_mode(self) -> None:
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(prompt="x", ui_mode="agentic")
+        assert result["status"] == "error"
+        assert "agentic" in str(result).lower()
+
+    @pytest.mark.asyncio
+    async def test_video_tool_rejects_unknown_ui_mode(self) -> None:
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(prompt="x", ui_mode="bogus")
+        assert result["status"] == "error"
+        assert "ui_mode" in str(result).lower()
+
+
+class TestUiModeEnvelopeShape:
+    """#299 code-review findings: ui_mode 400s use the RFC 9457 dict envelope
+    (never a flat string), and the param is case-insensitive like the CLI."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_ui_mode_returns_dict_envelope(self) -> None:
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(prompt="x", ui_mode="bogus")
+        assert result["status"] == "error"
+        assert result["error"]["title"] == "Invalid ui_mode"
+
+    @pytest.mark.asyncio
+    async def test_ui_mode_is_case_insensitive(self) -> None:
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(prompt="x", ui_mode="AGENTIC")
+        # Normalized first, THEN rejected as agentic — not as an unknown value.
+        assert result["error"]["title"] == "Unsupported ui_mode for video"

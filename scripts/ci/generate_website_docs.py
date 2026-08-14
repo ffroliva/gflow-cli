@@ -92,14 +92,37 @@ def _source_for(dest_name: str) -> Path | None:
     return None
 
 
+_GITHUB_DOCS_BLOB = "https://github.com/ffroliva/gflow-cli/blob/main/docs/"
+
+
+def _rewrite_root_doc_links(text: str) -> str:
+    """Repo-root canonical files (KNOWN_ISSUES.md) link sibling docs as
+    ``docs/X.md``; mirrored into ``website/docs/`` that resolves to a
+    nonexistent ``docs/docs/`` path (#507). Targets that are themselves
+    mirrored become sibling-relative links; everything else (release
+    evidence, recon specs, plans — deliberately unpublished) becomes an
+    absolute GitHub link so the published page never 404s."""
+
+    def repl(match: re.Match[str]) -> str:
+        target = match.group(1)
+        path_part = target.split("#", 1)[0]
+        if "/" not in path_part and (_WEB / path_part).is_file():
+            return f"]({target})"
+        return f"]({_GITHUB_DOCS_BLOB}{target})"
+
+    return re.sub(r"\]\(docs/([^)]+)\)", repl, text)
+
+
 def render(dest_name: str, source_text: str) -> str:
-    """Apply per-file overrides then the global token map."""
+    """Apply per-file overrides, root-link rewriting, then the global token map."""
     text = source_text
     for old, new in FILE_OVERRIDES.get(dest_name, ()):
         if old not in text:
             msg = f"{dest_name}: override target not found (canonical changed?): {old[:60]!r}"
             raise ValueError(msg)
         text = text.replace(old, new)
+    if _source_for(dest_name) == _REPO / dest_name:
+        text = _rewrite_root_doc_links(text)
     for pattern, repl in TOKEN_SUBS:
         text = pattern.sub(repl, text)
     return text

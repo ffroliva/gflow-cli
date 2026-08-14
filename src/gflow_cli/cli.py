@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 import uuid
@@ -436,6 +437,29 @@ def mcp() -> None:
     """Model Context Protocol server for IDE/agent integration."""
 
 
+# One flag definition for both server entry points (#496 post-merge review).
+# Deliberately NO envvar= here: Click's boolean parsing ('off' -> False,
+# junk -> UsageError) disagrees with the server-side no_spend_active() reader,
+# and two parsers of one variable meant the flag state could contradict the
+# actual registration policy. The flag sets the env var; only
+# gflow_cli.mcp.server.no_spend_active() ever reads it.
+_no_spend_option = click.option(
+    "--no-spend",
+    is_flag=True,
+    help=(
+        "Do not register the credit-spending generate tools (image AND video "
+        "— image generation is only empirically free). Connected agents "
+        "cannot see them in tools/list. Also settable via GFLOW_MCP_NO_SPEND=1."
+    ),
+)
+
+
+def _activate_no_spend(no_spend: bool) -> None:
+    if no_spend:
+        os.environ["GFLOW_MCP_NO_SPEND"] = "1"
+        sys.stderr.write("[gflow] no-spend mode: generate tools not registered\n")
+
+
 @mcp.command("run")
 @click.option(
     "--profile",
@@ -447,7 +471,8 @@ def mcp() -> None:
         "Can also be set via the GFLOW_CLI_PROFILE environment variable."
     ),
 )
-def mcp_run(profile: str | None) -> None:
+@_no_spend_option
+def mcp_run(profile: str | None, no_spend: bool) -> None:
     """Start the MCP server over stdio transport.
 
     Use this with Claude Desktop, Cursor, or other MCP-aware clients.
@@ -477,6 +502,7 @@ def mcp_run(profile: str | None) -> None:
         os.environ["GFLOW_CLI_PROFILE"] = profile
         sys.stderr.write(f"[gflow] MCP server using profile: {profile}\n")
 
+    _activate_no_spend(no_spend)
     main_stdio()
 
 
@@ -539,7 +565,8 @@ def mcp_setup(target: str) -> None:
     show_default=True,
     help="MCP HTTP transport. 'sse' is deprecated by the MCP 2026-07-28 spec.",
 )
-def serve(port: int, host: str, profile: str | None, transport: str) -> None:
+@_no_spend_option
+def serve(port: int, host: str, profile: str | None, transport: str, no_spend: bool) -> None:
     """Start the gflow MCP server over HTTP.
 
     \b
@@ -555,6 +582,8 @@ def serve(port: int, host: str, profile: str | None, transport: str) -> None:
       gflow serve --transport sse --port 8000   # deprecated transport
       gflow serve --host 0.0.0.0 --port 8000  # requires GFLOW_DAEMON_TOKEN
     """
+    _activate_no_spend(no_spend)
+
     if host != "127.0.0.1":
         token = get_settings().daemon_token if hasattr(get_settings(), "daemon_token") else None
         if not token:

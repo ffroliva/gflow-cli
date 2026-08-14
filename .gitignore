@@ -19,6 +19,7 @@ pytest-of-*/
 .coverage
 .coverage.*
 coverage.xml
+pytest-*.xml
 htmlcov/
 .tox/
 .mypy_cache/
@@ -98,3 +99,6 @@ worktrees/
 
 # MkDocs build output
 website/site/
+
+# Local git hooks dir (core.hooksPath target) — machine-local tooling, never shipped
+.githooks/

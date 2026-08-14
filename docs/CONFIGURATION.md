@@ -211,6 +211,16 @@ gflow tools run creative-director "cat in space" --json   # check "was_expanded"
 **Default:** unset.
 **Security:** stored as a Pydantic `SecretStr` (since v0.55.0), so a `repr()`/`str()`/`model_dump_json()` of the settings object masks it by construction — on top of the existing logging-boundary redaction. Treat it like any credential: set it via `.env`/environment, never commit it.
 
+### `GFLOW_MCP_NO_SPEND`
+
+**What:** Registration-time gating of the credit-spending MCP tools (#496). When set, `gflow mcp run` and `gflow serve` never register `gflow_generate_image` and `gflow_generate_video`, so a connected agent cannot even see them in `tools/list` — invisible beats refused (no wasted calls, no refusal path for prompt injection to probe, no reliance on the model honoring an error). Every read-only tool stays available.
+**Default:** unset (both generate tools registered).
+**Accepted:** any value other than the falsy set `0`/`false`/`off`/`no`/`n`/`f`/empty enables no-spend. The falsy vocabulary deliberately matches Click's, so a value cannot mean "off" to the `--no-spend` flag and "on" to the server-side policy.
+**Equivalent flag:** `gflow mcp run --no-spend` (and `gflow serve --no-spend`), which sets this variable for you. The env var is the only route that covers a server you did not start yourself — e.g. one launched from an MCP client config. See [MCP § Option A2](MCP.md#4-setup-instructions).
+**Note:** this is the one variable that does not carry the `GFLOW_CLI_` prefix — it is scoped to the MCP server, not the CLI.
+
+Both generate tools are gated, not just video: image generation is only *empirically* free ("~0 credits observed"), and no-spend is meant to be a hard guarantee.
+
 ### `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`
 
 **What:** Maximum time (seconds) that `gflow auth login` waits for the user to complete the Google sign-in flow in the browser.
@@ -333,6 +343,7 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 **How it works:** before each generation, gflow determines the required arm, clicks the classic↔agentic toggle as a **prerequisite**, **verifies** with a DOM re-probe, then binds — or fails fast. The required arm is also **inferred**: `-i` instructions are agentic-only, so they force `agentic` automatically (and `--ui-mode classic` + `-i` is a hard conflict, not a silent drop).
 **Why `classic`:** the agentic cohort treats aspect ratio as a soft prompt hint (portrait 9:16 can come back landscape). `classic` enforces it or fails fast instead of silently degrading.
 **Retry note:** the cohort flaps per load, so an exit-28 abort is **retryable** — a re-run often lands the wanted arm. A server experiment can pin the arm, in which case it's unreachable from the client (the abort still saves the credits).
+**Video commands:** `gflow video t2v`/`i2v` joined the policy in [#299](https://github.com/ffroliva/gflow-cli/issues/299) PR-A. The video pipeline only has a classic driver, so `auto` ≡ `classic` there: both verify the classic editor pre-submit and abort with exit 28 if it is unreachable. An env-sourced `agentic` **degrades to classic with a logged warning** (so a value set for image workflows can't hard-fail your video runs); only an explicit agentic *request* errors — the `--ui-mode agentic` flag immediately at the CLI edge (exit 2), or the MCP `ui_mode="agentic"` param with a 400 envelope — because no agentic video driver exists yet. `video r2v` and `video chain` have no flag and follow the env-only path.
 **Supersedes:** `GFLOW_CLI_PREFER_CLASSIC` and `GFLOW_CLI_FORCE_AGENT_UI` (below).
 
 ### `GFLOW_CLI_PREFER_CLASSIC` *(deprecated — use `GFLOW_CLI_UI_MODE=classic`)*

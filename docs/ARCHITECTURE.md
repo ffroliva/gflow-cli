@@ -113,11 +113,16 @@ When the project converges on the hexagonal target above, modules graduate to la
 > **Note: this document describes the TARGET architecture, not the current
 > package layout.** The current shape (per [PLAN.md § 2](../PLAN.md#2-architecture-steady-state)
 > and [ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)) is the simpler
-> `src/gflow_cli/{api/, auth/, browser_manager.py, cli.py, _cli_helpers.py,
-> cli_image.py, cli_run.py, cli_video.py, config.py, errors.py, exceptions.py,
-> image_batch.py, manifest.py, observability.py, paths.py, profile_store.py}`.
+> `src/gflow_cli/{api/, auth/, data/, mcp/, services/, tools/, ui/, worker/}`
+> packages plus flat modules — the `cli*.py` adapters, `browser_manager.py`,
+> `chain*.py`, `composition.py`, `config.py`, `diagnostics.py`, `errors.py`,
+> `image_batch.py`, `json_output.py`, `media.py`, `movie_manifest.py`,
+> `observability.py`, `paths.py`, `profile_lease.py`, `profile_store.py`,
+> `storage.py`, `update_check.py`, and `winsec.py` (inventory refreshed for
+> v0.56.0, #507 — it had drifted a dozen modules behind).
 > The DDD layout below was deferred indefinitely; converge toward it incrementally
-> if/when a second `Provider` or a `gflow serve` HTTP front-end justifies the split.
+> if/when a second `Provider` justifies the split (`gflow serve` shipped as a
+> thin adapter over the same core rather than forcing it).
 
 ```text
 src/gflow_cli/

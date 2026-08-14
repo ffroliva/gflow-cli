@@ -842,6 +842,19 @@ continue as a seeded I2V generation — tracked as backlog.
 
 ## Mitigated
 
+### Flow can pin the agentic cohort server-side for hours
+
+The classic↔agentic editor arm is server-assigned per page load and normally
+flaps, but an account can be **pinned agentic for an extended stretch**:
+observed on the #338 cycle (2026-07), where an account stayed agentic ~2 h and
+the persisted toggle-off + one sanctioned reload (v0.38.1) recovered classic
+only once the pin lifted. **Mitigation:** the UI-mode policy fails fast
+pre-submit (`UiModeUnavailableError`, exit 28, $0 spent, machine-flagged
+retryable) instead of burning selector timeouts mid-flow, and the error text
+names the pinning case. Retrying *immediately* during a pin is futile — wait a
+while or switch `--profile`. Recorded as the #299 PR-B predict-gate evidence:
+retry loops must never key off the pinned signature.
+
 ### Auth verification depends on Google's NextAuth session endpoint
 
 - **Status:** Mitigated · **Severity:** Low (degrades fail-closed) · **Affects:** issue #15 fix onward · **Tracked:** issue #15
@@ -875,6 +888,21 @@ key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** by default — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never silently corrupts the profile. Since #478, setting [`GFLOW_CLI_LEASE_WAIT_SECONDS`](docs/CONFIGURATION.md#gflow_cli_lease_wait_seconds) opts a waiter into a bounded wait that takes over as soon as the current holder finishes (holders always run to completion and are never asked to release early; same-process contention still fails fast — waiting on yourself would deadlock).
 
 **Workaround:** use different profiles for parallel work — different profiles acquire independent leases and run fully concurrently.
+
+### gflow refuses to open my profile after a downgrade ("written by a newer Chromium", exit 11)
+
+- **Status:** Working as intended (guard shipped in v0.56.0, #477)
+- **Affects:** any bundled-Chromium open of a persisted profile after gflow-cli
+  (and with it the bundled Playwright Chromium) was downgraded
+
+This refusal is deliberate: opening a Chrome profile with an older Chromium
+**major** version than last wrote it triggers Chromium's downgrade cleanup,
+which can shred the newer session store and surface later as a mystery logout.
+The error names both versions and the remedy. Fix: upgrade gflow-cli (and run
+`playwright install chromium`), or re-create the profile with
+`gflow auth login` — login is deliberately unguarded as the recovery path.
+`chrome`-strategy profiles are exempt (real Chrome manages its own lifecycle).
+Full detail: [AUTHENTICATION § Chromium downgrade guard](docs/AUTHENTICATION.md#chromium-downgrade-guard).
 
 ```bash
 # Terminal 1

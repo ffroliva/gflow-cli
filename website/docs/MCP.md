@@ -82,10 +82,10 @@ Both Click CLI (`src/gflow_cli/cli.py`) and MCP Server (`src/gflow_cli/mcp/`) ar
 The server registers three protocol surfaces:
 
 ### Tools (Executable actions)
-* `gflow_generate_image(prompt, model, aspect, count, seed, reference_images, tools, profile, project, instructions)`: Triggers text-to-image / image-to-image (Imagen / Nano Banana). `instructions` is an optional list of ephemeral agent-instruction strings (agentic cohort only). `reference_images` switches to i2i and accepts **either a local file path or a generated image's Flow media UUID**. A UUID reference is attached by **selecting the already-existing asset in Flow's reference picker — no duplicate copy is uploaded** (locating the tile by the media id in its thumbnail URL, and searching the recorded display name to surface it when needed); gflow falls back to uploading the asset's on-disk local file only when it can't be located in place (e.g. it lives in a different project's picker). `project` generates into an existing Flow project id (mirrors CLI `--project`) — pass the reference's project to keep it selectable in place.
-* `gflow_generate_video(prompt, mode, aspect, initial_frame, end_frame, reference_images, model, duration, count, tools, profile, project)`: Triggers vertical or landscape video generation (Veo). `mode` is `t2v`/`i2v`/`r2v`; `model` (`veo_lite`/`veo_fast`/`veo_quality`/`omni_flash`, aliases accepted), `duration` (seconds), and `count` mirror the CLI `gflow video` flags — an omitted `model` lets the transport apply its i2v veo-lite default (issue #125), and `omni_flash` is rejected for i2v-with-frames; `i2v` requires `initial_frame`, `r2v` requires `reference_images`; `project` generates into an existing Flow project id (mirrors CLI `--project`). `initial_frame`, `end_frame`, and `reference_images` each accept **either a local file path or the Flow image UUID of a generated asset** — pass a generated image's id straight in to chain image→video, and gflow attaches it for you (the UUID is resolved to the asset's already-on-disk local file and uploaded as the frame; no manual download/re-upload step). A UUID that isn't in your local asset catalog is rejected up front with a clear "Reference Not Found" error; a catalogued asset whose local file is no longer on disk gives a "Reference Not On Disk" error (re-generate it or pass a local path). Note the CLI's semantics diverge here (#287): `gflow video i2v --initial-frame <UUID>` selects the asset **in the project's media picker with no upload** and needs no local catalog entry — so the same UUID input can succeed on one surface and fail on the other.
-* `gflow_list_projects(profile, limit)`: Queries SQLite catalog for recent generation folders.
-* `gflow_list_characters(profile)`: Lists Flow Character entities (requires an active browser session).
+* `gflow_generate_image(prompt, model, aspect, count, seed, reference_images, tools, profile, project, project_name, instructions, ui_mode, output, wait)`: Triggers text-to-image / image-to-image (Imagen / Nano Banana). `instructions` is an optional list of ephemeral agent-instruction strings (agentic cohort only). `reference_images` switches to i2i and accepts **either a local file path or a generated image's Flow media UUID**. A UUID reference is attached by **selecting the already-existing asset in Flow's reference picker — no duplicate copy is uploaded** (locating the tile by the media id in its thumbnail URL, and searching the recorded display name to surface it when needed); gflow falls back to uploading the asset's on-disk local file only when it can't be located in place (e.g. it lives in a different project's picker). `project` generates into an existing Flow project id (mirrors CLI `--project`) — pass the reference's project to keep it selectable in place. `ui_mode` selects the Flow UI arm (`auto`/`classic`/`agentic`, mirroring CLI `--ui-mode`); passing `instructions` forces `agentic` automatically, so `ui_mode="classic"` + `instructions` is a hard conflict rather than a silent drop. See [CONFIGURATION § GFLOW_CLI_UI_MODE](CONFIGURATION.md#gflow_cli_ui_mode).
+* `gflow_generate_video(prompt, mode, aspect, initial_frame, end_frame, reference_images, model, duration, count, tools, profile, project, project_name, ui_mode, output, wait)`: Triggers vertical or landscape video generation (Veo). `mode` is `t2v`/`i2v`/`r2v`; `model` (`veo_lite`/`veo_fast`/`veo_quality`/`omni_flash`, aliases accepted), `duration` (seconds), and `count` mirror the CLI `gflow video` flags — an omitted `model` lets the transport apply its i2v veo-lite default (issue #125), and `omni_flash` is rejected for i2v-with-frames; `i2v` requires `initial_frame`, `r2v` requires `reference_images`; `project` generates into an existing Flow project id (mirrors CLI `--project`). `initial_frame`, `end_frame`, and `reference_images` each accept **either a local file path or the Flow image UUID of a generated asset** — pass a generated image's id straight in to chain image→video, and gflow attaches it for you (the UUID is resolved to the asset's already-on-disk local file and uploaded as the frame; no manual download/re-upload step). A UUID that isn't in your local asset catalog is rejected up front with a clear "Reference Not Found" error; a catalogued asset whose local file is no longer on disk gives a "Reference Not On Disk" error (re-generate it or pass a local path). Note the CLI's semantics diverge here (#287): `gflow video i2v --initial-frame <UUID>` selects the asset **in the project's media picker with no upload** and needs no local catalog entry — so the same UUID input can succeed on one surface and fail on the other. `ui_mode` selects the Flow UI arm (#299 PR-A, mirroring CLI `--ui-mode`): video generation has **only a classic driver**, so `auto` ≡ `classic` — both verify the classic editor pre-submit and abort with exit 28 (zero credits) if it is unreachable — and `ui_mode="agentic"` is rejected with a 400 problem-details envelope, because no agentic video driver exists yet. See [CONFIGURATION § GFLOW_CLI_UI_MODE](CONFIGURATION.md#gflow_cli_ui_mode).
+* `gflow_auth_status(profile)`: Credit-free, non-interactive Flow session probe (#497) — wraps the same fail-closed `verify_flow_profile` check as `gflow auth status`. Returns `{"status": "authenticated", "profile", "user_email"}` or a problem-details error with a `remediation_hint`; a `verification_error` outcome means a network/endpoint problem, which re-login does not fix. Call it before a generation tool to fail fast on dead auth (the queue is async — without it, an auth failure surfaces only later from the daemon). Login/logout remain CLI-only (genuinely interactive).
+* `gflow_list_projects(profile, limit, offset)`: Queries the SQLite catalog for recent generation folders, paginated — the response carries `count` (rows in this page), `offset`, `has_more`, and `next_offset` (pass it back as `offset` for the next page; `null` on the last page).
 * `gflow_list_tools()`: Lists the prompt tools (name/title/description/category) accepted by the generate tools' `tools` param.
 * `gflow_instructions_list(project, profile)`: Lists a project's persistent Agent-Mode instruction cards (live server brief; credits-free).
 * `gflow_instructions_add(project, title, text, refs, enabled, profile)`: Adds a persistent instruction card. Each ref is classified automatically — local image path → uploaded image reference, asset UUID → image reference, anything else → character id/name (mirrors CLI `instructions add --ref`).
@@ -102,7 +102,7 @@ CLI↔MCP parity is enforced programmatically: `tests/mcp/test_cli_parity.py` wa
 
 ### Resources (Context feeds)
 * `gflow://docs/mcp-guide`: A specialized, agent-targeted guide instructing the LLM to use the registered MCP tools (rather than running raw shell wrapper commands).
-* `gflow://docs/known-issues`: Feeds critical reCAPTCHA, cookie expirations, and anti-bot mitigation details.
+* `gflow://docs/known-issues`: Bounded index of KNOWN_ISSUES.md (titles + status, a few KB — #501); read `gflow://docs/known-issues/{slug}` for one issue's full text (capped at 16 KB). The old behavior injected the whole ~70 KB file per fetch.
 * `gflow://db/schema`: Exposes SQLite schema definitions, allowing agents to understand project and media tables.
 
 ---
@@ -180,6 +180,32 @@ Use this if you installed `gflow-cli` globally (e.g. via `uv tool install gflow-
 }
 ```
 
+##### Option A2: Read-only server (`--no-spend`)
+
+Use this when the agent must never be able to spend credits (#496). The two
+credit-spending tools (`gflow_generate_image`, `gflow_generate_video`) are then
+**never registered**, so they do not appear in `tools/list` at all — invisible
+rather than refused. Every read-only tool stays available.
+
+```json
+{
+  "mcpServers": {
+    "gflow-cli": {
+      "command": "gflow",
+      "args": [
+        "mcp",
+        "run",
+        "--no-spend"
+      ]
+    }
+  }
+}
+```
+
+Setting `GFLOW_MCP_NO_SPEND=1` in the environment does the same thing and also
+covers `gflow serve`. `gflow mcp setup` writes the plain (spending) block above —
+add the flag or the env var yourself if you want the read-only server.
+
 ##### Option B: Local Clone (Development)
 Use this if you cloned the repository locally and run it via `uv`:
 ```json
@@ -251,8 +277,7 @@ Non-loopback binds (e.g. `--host 0.0.0.0`) require `GFLOW_DAEMON_TOKEN` to be se
 
 Because the MCP server runs locally, inheriting the host user's permissions and access to their authenticated browser cookies, the following security constraints are enforced:
 
-1. **Pre-flight Auth Validation:** Before launching Chromium/Playwright (which would hang on interactive stdin prompts if cookies are expired), the server checks session validity. If unauthenticated, it returns:
-   `"Authentication required. Run 'gflow auth login' in your local terminal."`
+1. **Profile Pre-flight:** Before enqueuing work, each tool resolves and validates the target profile directory (`_resolve_and_validate_profile` — existence and home-boundary checks). There is **no session-validity probe before launching Chromium**: expired cookies surface as a typed `AuthExpiredError` from the generation run itself, with the remediation `Run 'gflow auth login' in your local terminal.`
 2. **Channel Isolation:** All internal `structlog` configurations are forced to write to `sys.stderr`. The standard output stream (`sys.stdout`) is globally captured and redirected to `sys.stderr` for any unexpected prints, preserving the integrity of the stdio JSON-RPC pipe.
 3. **Windows Stdio Encoding:** During startup, stdio streams are explicitly reconfigured:
    ```python
@@ -260,5 +285,6 @@ Because the MCP server runs locally, inheriting the host user's permissions and 
    sys.stdin.reconfigure(encoding='utf-8')
    ```
    This prevents crashes caused by non-ASCII prompt strings on Windows.
-4. **Local Rate-Limiting:** Enforces a token-bucket rate limiter with a capacity of 8 tokens and a refill rate of 1 token every 20 seconds (allowing burst filmmaking tasks without timeouts). It also evaluates cumulative session and daily limits (`GFLOW_CLI_SESSION_CREDIT_LIMIT` and `GFLOW_CLI_DAILY_BUDGET`) against SQLite logs, failing fast to prevent credit depletion attacks.
-5. **CLI-MCP Parameter Symmetry:** Automated checks in the CI test suite (`tests/mcp/test_server.py`) compare CLI Click parameters with registered MCP tool signatures, ensuring that any added options or flags in the CLI are instantly mirrored in the MCP layer to prevent schema drift.
+4. **Local Rate-Limiting:** Enforces a token-bucket rate limiter with a capacity of 8 tokens and a refill rate of 1 token every 20 seconds (allowing burst filmmaking tasks without timeouts). This is the **only** spend brake — there is no credit-budget accounting or per-session/daily cap (#495; a registration-time `--no-spend` gate is tracked in #496).
+5. **CLI-MCP Parameter Symmetry:** Two CI layers guard the surfaces against drift: `tests/mcp/test_cli_parity.py` forces an explicit MCP decision (mapped tool or stated exemption) for every CLI leaf command, and `tests/mcp/test_server.py::TestCliMcpParameterSymmetry` compares CLI Click parameters against registered tool signatures for the two generate tools. Parameter-level comparison does not yet cover the other tools.
+6. **No-Spend Mode (#496):** `gflow mcp run --no-spend` (or `GFLOW_MCP_NO_SPEND=1`, which also covers `gflow serve`) never registers the credit-spending generate tools — `gflow_generate_image` and `gflow_generate_video` are absent from `tools/list` entirely, rather than present-but-refusing. Both are gated because image generation is only empirically free and no-spend is a hard guarantee. Listing, instructions, and other read-only tools remain available.

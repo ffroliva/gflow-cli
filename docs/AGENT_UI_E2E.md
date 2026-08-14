@@ -81,7 +81,7 @@ tests passed throughout); each is now fixed with a regression test:
    navigation and missed the agentic `tune` indicator (it appeared ~1.25 s
    later), defaulting to classic → spurious `FlowAgentUiError` (exit 25). Fix:
    `detect_ui_mode` polls (8 s window). Test: `test_detect_agentic_after_delayed_render`.
-2. **The force-toggle raced the render too.** `_force_agent_mode` probed for the
+2. **The force-toggle raced the render too.** `_force_agent_mode` (superseded by `mode_control.ensure_agent_mode`, #299 PR-B) probed for the
    Agent toggle ~0.8 s after entering the editor, before the composer rendered →
    `agent_toggle_not_found`, silently staying classic. Fix: `wait_for` the toggle
    (8 s) before clicking.

@@ -166,11 +166,12 @@ async def test_classic_unreachable_fails_fast(monkeypatch: pytest.MonkeyPatch) -
 @pytest.mark.asyncio
 async def test_agentic_switch_and_bind(monkeypatch: pytest.MonkeyPatch) -> None:
     import gflow_cli.api.transports.drivers.factory as factory_mod
-    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    import gflow_cli.api.transports.mode_control as mode_control_mod
 
-    # Page starts classic; the force switch "succeeds" -> re-detect reads agentic.
+    # Page starts classic; the switch "succeeds" -> re-detect reads agentic.
+    # #299 PR-B: the factory delegates to mode_control.ensure_agent_mode.
     force = AsyncMock(return_value=True)
-    monkeypatch.setattr(UiAutomationTransport, "_force_agent_mode", force)
+    monkeypatch.setattr(mode_control_mod, "ensure_agent_mode", force)
     monkeypatch.setattr(factory_mod, "detect_ui_mode", AsyncMock(return_value="agentic"))
     driver = await get_ui_driver(_fake_page({_TUNE}), ui_mode=UiMode.AGENTIC)
     assert isinstance(driver, AgenticFlowUiDriver)
@@ -180,10 +181,10 @@ async def test_agentic_switch_and_bind(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_agentic_unreachable_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     import gflow_cli.api.transports.drivers.factory as factory_mod
-    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    import gflow_cli.api.transports.mode_control as mode_control_mod
 
-    # Force does not take: page stays classic after the switch attempt.
-    monkeypatch.setattr(UiAutomationTransport, "_force_agent_mode", AsyncMock(return_value=False))
+    # The switch does not take: page stays classic after the attempt.
+    monkeypatch.setattr(mode_control_mod, "ensure_agent_mode", AsyncMock(return_value=False))
     monkeypatch.setattr(factory_mod, "detect_ui_mode", AsyncMock(return_value="classic"))
     with pytest.raises(UiModeUnavailableError) as exc:
         await get_ui_driver(_fake_page({_CROP}), ui_mode=UiMode.AGENTIC)
@@ -274,3 +275,39 @@ def test_worker_ui_mode_absent_is_none() -> None:
         {"prompt": "a", "model": "nano2", "aspect": "1:1"},
     )
     assert req.ui_mode is None
+
+
+def test_worker_builds_video_ui_mode_from_payload() -> None:
+    # #299 PR-A: the video queue payload round-trips ui_mode (the image-only
+    # decode at codec.py was the documented MCP->FlowWorker silent-drop trap).
+    from gflow_cli.worker.codec import build_video_request
+
+    req = build_video_request({"prompt": "a", "ui_mode": "classic"})
+    assert req.ui_mode is UiMode.CLASSIC
+
+
+def test_worker_video_ui_mode_absent_is_none() -> None:
+    from gflow_cli.worker.codec import build_video_request
+
+    req = build_video_request({"prompt": "a"})
+    assert req.ui_mode is None
+
+
+def test_ui_mode_unavailable_is_retryable() -> None:
+    # #299 code-review finding: every doc surface (exit-code table, CHANGELOG,
+    # error docstring) says exit 28 is retryable — the machine flag consumed by
+    # CLI --json / MCP / worker envelopes must agree.
+    from gflow_cli.errors import UiModeUnavailableError, is_retryable
+
+    assert is_retryable(UiModeUnavailableError(UiMode.CLASSIC)) is True
+
+
+def test_worker_video_ui_mode_agentic_payload_rejected() -> None:
+    # A hand-edited / cross-version queue payload carrying agentic must fail
+    # typed (ValueError -> QueueSchemaError at decode_payload), never clamp.
+    import pytest as _pytest
+
+    from gflow_cli.worker.codec import build_video_request
+
+    with _pytest.raises(ValueError, match="agentic"):
+        build_video_request({"prompt": "a", "ui_mode": "agentic"})

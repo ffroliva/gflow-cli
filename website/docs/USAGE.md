@@ -523,13 +523,19 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 Generate a video from a text prompt only.
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [-t/--tool] [--project] [--out-dir] [-o/--output]
+gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [-o/--output]
 
 Options:
   -o, --output PATH     Explicit destination file path for the generated asset
                         (e.g., `./out/clip.mp4`). Overrides automatic filename.
   --project ID          Generate in this EXISTING Flow project instead of a
                         scratch project (see "Sharing one project across calls").
+  --ui-mode [auto|classic|agentic]
+                        Which Flow UI arm to require (#299). Video only has a
+                        classic driver: classic/auto verify the classic editor
+                        pre-submit and abort with exit 28 ($0 spent) if it is
+                        unreachable; agentic is rejected (exit 2) — not yet
+                        supported for video. Also on `video i2v`.
 ```
 
 ```bash
@@ -555,7 +561,7 @@ the editor's frame slot via the media dialog, then Flow fires
 (initial+end interpolation).
 
 ```text
-gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [...]
+gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [--ui-mode] [...]
 
 # Back-compat positional form (still supported):
 gflow video i2v IMAGE PROMPT [--end-frame LAST] [...]
@@ -1131,7 +1137,7 @@ independent of the output channel.
 
 Model Context Protocol server for IDE/agent integration. Full reference: [MCP.md](MCP.md).
 
-- **`gflow mcp run [--profile NAME]`** — start the MCP server over **stdio** (Claude Desktop, Cursor, VS Code). Auto-selects your default profile; pin one with `--profile` or `GFLOW_CLI_PROFILE`.
+- **`gflow mcp run [--profile NAME] [--no-spend]`** — start the MCP server over **stdio** (Claude Desktop, Cursor, VS Code). Auto-selects your default profile; pin one with `--profile` or `GFLOW_CLI_PROFILE`. `--no-spend` (#496) never registers the two credit-spending tools (`gflow_generate_image`, `gflow_generate_video`), so a connected agent cannot even see them in `tools/list` — read-only tools stay available. `GFLOW_MCP_NO_SPEND=1` does the same and also covers `gflow serve` (which takes the same flag). See [CONFIGURATION § GFLOW_MCP_NO_SPEND](CONFIGURATION.md#gflow_mcp_no_spend).
 - **`gflow mcp setup [--target claude-desktop|cursor|vscode]`** — write the gflow server entry into the target client's config. Non-destructive: existing content is merged, an existing `gflow`/`gflow-cli` entry is left untouched ("Already configured"), a pre-existing file is backed up once as `<name>.gflow-backup`, and a corrupt config fails loud (exit 11) without being modified. See [MCP.md § Setup Instructions](MCP.md#4-setup-instructions).
 
 For MCP over HTTP, see `gflow serve` and [MCP.md](MCP.md).
@@ -1357,7 +1363,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation | Rare since v0.38.0 (#332): the mode controller reliably recovers agentic→classic, so first retry with `--ui-mode classic`; if it persists, see KNOWN_ISSUES on the agentic cohort |
 | `26` | `MediaAttributionError` | Generated media could not be reliably attributed to this request (issue #281) | Re-run; a dedicated project with fewer pre-existing assets avoids the ambiguity |
 | `27` | `MediaUploadRejectedError` | Flow's upload endpoint refused the input file (`uploadImage` 4xx, issue #287) | Re-encode the image (`ffmpeg -q:v 2 -map_metadata -1`), or reference the asset by its media UUID |
-| `28` | `UiModeUnavailableError` | The Flow UI arm this command required (`GFLOW_CLI_UI_MODE`, or inferred — `-i` forces agentic) couldn't be reached after a switch attempt; aborted before submitting — no credits spent (issue #299) | Retry (the cohort flaps per load); try another `--profile`; or relax `GFLOW_CLI_UI_MODE` |
+| `28` | `UiModeUnavailableError` | The Flow UI arm this command required (`--ui-mode`/`GFLOW_CLI_UI_MODE`; `-i` forces agentic for images; **video always requires classic** — no agentic video driver exists) couldn't be reached after a switch attempt; aborted before submitting — no credits spent (issue #299) | Retry (the cohort flaps per load); try another `--profile`; for images you can also relax `GFLOW_CLI_UI_MODE` — for video there is nothing to relax |
 | `29` | `MentionIndexUnavailableError` | An `@mention` was present but the catalog source needed to resolve it (character entities or media assets) failed to load — distinct from an empty index, which is not an error | Check network connectivity (character source) or `GFLOW_CLI_DB_PATH` / filesystem permissions (media source), then retry |
 | `30` | `QueueSchemaError`    | A `gflow serve`/MCP worker-queue task payload has an unrecognized `schema_version` or fails validation against the typed request DTOs | Usually means gflow-cli was downgraded after a newer version enqueued the task, or the payload was hand-edited; re-enqueue with a compatible version |
 | `31` | `FlowAppError`        | Flow's web app hit a client-side exception (its error-boundary page rendered instead of the editor) — a transient Flow crash, not a gflow bug | Retry shortly; if it persists, Flow itself is degraded — wait and retry later |

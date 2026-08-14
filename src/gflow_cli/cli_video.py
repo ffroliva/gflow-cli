@@ -26,7 +26,7 @@ from gflow_cli._cli_helpers import (
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import VideoModel, is_media_uuid, reference_cap_for
-from gflow_cli.config import get_settings
+from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.models import OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
 from gflow_cli.errors import DataStoreError
@@ -122,6 +122,34 @@ def _shared_gen_tail_options(f: Any) -> Any:
     ):
         f = opt(f)
     return f
+
+
+_ui_mode_option = click.option(
+    "--ui-mode",
+    "ui_mode",
+    type=click.Choice([m.value for m in UiMode], case_sensitive=False),
+    default=None,
+    help=(
+        "Which Flow UI arm to require. Video generation only has a classic "
+        "driver: 'classic'/'auto' verify the classic editor pre-submit "
+        "(best-effort DOM probe) and abort with exit 28 (no credits spent) "
+        "if it is unreachable; 'agentic' is not yet supported for video and "
+        "is rejected. Overrides GFLOW_CLI_UI_MODE."
+    ),
+)
+
+
+def _reject_agentic_ui_mode(ui_mode: str | None) -> None:
+    """#299: no agentic VIDEO driver exists — reject the explicit flag at the
+    CLI edge (exit 2) instead of letting exit 28's "retry may land it"
+    remediation mislead. An env-sourced agentic degrades to classic with a
+    warning at the transport instead."""
+    if ui_mode == UiMode.AGENTIC.value:
+        msg = (
+            "--ui-mode agentic is not supported for video generation yet "
+            "(no agentic video driver exists; refs #299). Use classic or auto."
+        )
+        raise click.UsageError(msg)
 
 
 def _relocate_single_video(item: Any, target: Path) -> Any:
@@ -306,6 +334,7 @@ async def _run_t2v(
     project_id: str | None = None,
     project_name: str | None = None,
     tool_specs: tuple[str, ...] = (),
+    ui_mode: UiMode | None = None,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -321,6 +350,7 @@ async def _run_t2v(
         reference_entity_names=reference_entity_names,
         original_prompt=original_prompt,
         tool=tool,
+        ui_mode=ui_mode,
     )
 
     await _generate_and_report(
@@ -367,6 +397,8 @@ class _I2VParams:
     search_hints: tuple[str, ...] = ()
     reference_entities: tuple[str, ...] = ()
     reference_entity_names: tuple[str, ...] = ()
+    # Requested Flow UI arm (#299); agentic is rejected at the CLI edge.
+    ui_mode: UiMode | None = None
 
 
 # First words of a recorded prompt used as a picker search term (#287 round
@@ -463,6 +495,7 @@ async def _run_i2v(
         reference_entity_names=params.reference_entity_names,
         original_prompt=params.original_prompt,
         tool=params.tool,
+        ui_mode=params.ui_mode,
     )
     await _generate_and_report(
         request,
@@ -1030,6 +1063,7 @@ def video() -> None:
     type=click.IntRange(1, 4),
     help="How many videos to generate (1-4). >1 multiplies credit cost.",
 )
+@_ui_mode_option
 @_shared_gen_tail_options
 def t2v(
     prompt: str,
@@ -1037,6 +1071,7 @@ def t2v(
     model: str | None,
     duration: str | None,
     count: int,
+    ui_mode: str | None,
     profile: str | None,
     tool_specs: tuple[str, ...],
     project_id: str | None,
@@ -1048,6 +1083,7 @@ def t2v(
     as_json: bool,
 ) -> None:
     """Generate a video from PROMPT."""
+    _reject_agentic_ui_mode(ui_mode)
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
@@ -1069,6 +1105,7 @@ def t2v(
             project_id=project_id,
             project_name=project_name,
             tool_specs=tool_specs,
+            ui_mode=UiMode(ui_mode) if ui_mode else None,
         ),
         cli_command="video t2v",
         as_json=as_json,
@@ -1198,6 +1235,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     type=click.IntRange(1, 4),
     help="How many videos to generate (1-4; >1 multiplies credit cost).",
 )
+@_ui_mode_option
 @_shared_gen_tail_options
 def i2v(  # NOSONAR
     image: str | None,
@@ -1209,6 +1247,7 @@ def i2v(  # NOSONAR
     model: str | None,
     duration: str | None,
     count: int,
+    ui_mode: str | None,
     profile: str | None,
     tool_specs: tuple[str, ...],
     project_id: str | None,
@@ -1220,6 +1259,7 @@ def i2v(  # NOSONAR
     as_json: bool,
 ) -> None:
     """Generate a video from an initial frame + motion PROMPT."""
+    _reject_agentic_ui_mode(ui_mode)
     resolved_image, resolved_prompt = _resolve_i2v_args(image, prompt, initial_frame)
 
     end_hint = "'--end-frame'"
@@ -1264,6 +1304,7 @@ def i2v(  # NOSONAR
         search_hints=search_hints,
         reference_entities=tuple(reference_entities),
         reference_entity_names=tuple(reference_entity_names),
+        ui_mode=UiMode(ui_mode) if ui_mode else None,
     )
     run_with_handlers(
         lambda: _run_i2v(

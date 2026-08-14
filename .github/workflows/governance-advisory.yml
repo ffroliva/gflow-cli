@@ -19,12 +19,12 @@ jobs:
     name: Materiality + traceability (advisory)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0 # full history so `git diff origin/<base>..HEAD` resolves
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
       - name: Classify touched paths (advisory, never blocks)
         run: |

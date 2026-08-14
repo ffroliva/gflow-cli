@@ -179,7 +179,7 @@ accepted. Two corrections fixed it (verified end-to-end on macOS Apple Silicon):
    captured **pre-launch** via the working `--password-store=basic` reader. No-op on
    Windows and on runs where the context decrypts natively.
 
-Evidence: [LIVE_VERIFICATION_v0.23.0](docs/LIVE_VERIFICATION_v0.23.0.md).
+Evidence: [LIVE_VERIFICATION_v0.23.0](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.23.0.md).
 
 ### New Flow editor variant (composer frame slots + Agent toggle) is not recognized
 
@@ -245,7 +245,7 @@ same day may simply work again.
 
 **Workaround:** none yet on affected accounts — the attach gesture for the new
 UI is being reverse-engineered (recon plan in
-[docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md](docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md)).
+[docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/plans/2026-06-12-issue-174-library-ui-attach/PLAN.md)).
 If you have a second profile/account still on the old UI, entity attach works
 there. Follow [#174](https://github.com/ffroliva/gflow-cli/issues/174) for
 status; please report whether your account shows the dialog or the full-page
@@ -265,7 +265,7 @@ enforced server-side, so gflow cannot grant 4K locally.
 **Workaround:** use `--scale 2k` (available on all tiers), or upgrade the Flow
 account to Ultra. If you just upgraded, re-run `gflow auth login --profile <name>`
 to refresh the session before retrying 4K. Wire detail:
-[docs/IMAGE_UPSCALE_RECON.md](docs/IMAGE_UPSCALE_RECON.md) (#171).
+[docs/IMAGE_UPSCALE_RECON.md](https://github.com/ffroliva/gflow-cli/blob/main/docs/IMAGE_UPSCALE_RECON.md) (#171).
 
 ### Image generation returns HTTP 401 — `aisandbox-pa` generation endpoint
 
@@ -277,7 +277,7 @@ to refresh the session before retrying 4K. Wire detail:
 > full auth context — bypassing the 401 on the `aisandbox-pa` HTTP path
 > entirely. Live-verified end-to-end on the `ffroliva` profile across four
 > aspect ratios (`9:16`, `16:9`, `1:1`, `4:3`); see
-> [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md). The
+> [`docs/LIVE_VERIFICATION_v0.7.0.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.7.0.md). The
 > 401 still hits the experimental HTTP transports
 > (`evaluate_fetch` / `bearer` / `sapisidhash`) under
 > `src/gflow_cli/api/transports/experimental/` — those are not the
@@ -326,7 +326,7 @@ endpoint, a different surface from the `labs.google` tRPC API.
 > fetches+caches the token and attaches the Bearer to the **`page.request` REST
 > path** (`_post_json` / `_patch_json`, host-scoped to `aisandbox-pa`) so
 > `uploadImage` / `scenes` / `commit` authenticate — see
-> [`docs/superpowers/plans/2026-05-31-l0-bearer-pivot.md`](docs/superpowers/plans/2026-05-31-l0-bearer-pivot.md).
+> [`docs/superpowers/plans/2026-05-31-l0-bearer-pivot.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/plans/2026-05-31-l0-bearer-pivot.md).
 > **Live-verified 2026-05-31:** REST `uploadImage` returns 200
 > (`tests/e2e/test_aisandbox_auth_live.py`, credit-free).
 > **Liberating follow-up:** the same Bearer likely unlocks the `evaluate_fetch`
@@ -394,7 +394,7 @@ gflow auth login --profile <name>
 
 Re-running `auth login` reuses the existing profile dir (you typically just click "Continue as <you>" on the Google account chooser). No data is lost; only the cookie jar is refreshed.
 
-**Why we don't auto-refresh:** Google's session-refresh flow can include CAPTCHA / device verification that only a human can complete. A community SDK can't reliably automate that step. See [docs/AUTHENTICATION.md § Refresh / expiry](docs/AUTHENTICATION.md#refresh--expiry).
+**Why we don't auto-refresh:** Google's session-refresh flow can include CAPTCHA / device verification that only a human can complete. A community SDK can't reliably automate that step. See [docs/AUTHENTICATION.md § Refresh / expiry](AUTHENTICATION.md#refresh--expiry).
 
 **Roadmap:** not scheduled. The Phase 4 hardening pass (v0.4.0a2) added typed `AuthExpiredError` + exit code `3` so scripts can branch on auth expiry deterministically. A periodic "session liveness" check + a `gflow auth refresh` command are still candidates for a later phase, but not committed to a version yet.
 
@@ -508,7 +508,7 @@ Other ratios may be silently rejected or coerced server-side. We validate in the
 > **Resolution (2026-05-20, v0.7.0):** `UiAutomationTransport` drives the Flow
 > editor so Flow's own JS issues every generation request with full auth
 > context — image generation now succeeds end-to-end (see
-> [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md)). Video
+> [`docs/LIVE_VERIFICATION_v0.7.0.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.7.0.md)). Video
 > T2V works at the library level via the same transport (Phase A, PR #23);
 > CLI wiring (`gflow video t2v/i2v/batch`) is queued for Phase B. The HTTP
 > transports under `experimental/` remain blocked by this 401 by design —
@@ -586,7 +586,7 @@ batch — so it is not a global incompatibility but a per-profile WAF state.
    rejected request can raise the score further.
 4. **Widen the submission jitter** when composing multiple runs — `--jitter 10-30`
    or `GFLOW_CLI_JITTER_RANGE` (#241); cadence guidance in
-   [DEBUGGING § WAF cadence](docs/DEBUGGING.md#waf-cadence).
+   [DEBUGGING § WAF cadence](DEBUGGING.md#waf-cadence).
 
 **Tracked separately from** the architectural ["first-attempt listener-miss
 flake"](https://github.com/ffroliva/gflow-cli/pull/40) — that one was caused
@@ -842,6 +842,19 @@ continue as a seeded I2V generation — tracked as backlog.
 
 ## Mitigated
 
+### Flow can pin the agentic cohort server-side for hours
+
+The classic↔agentic editor arm is server-assigned per page load and normally
+flaps, but an account can be **pinned agentic for an extended stretch**:
+observed on the #338 cycle (2026-07), where an account stayed agentic ~2 h and
+the persisted toggle-off + one sanctioned reload (v0.38.1) recovered classic
+only once the pin lifted. **Mitigation:** the UI-mode policy fails fast
+pre-submit (`UiModeUnavailableError`, exit 28, $0 spent, machine-flagged
+retryable) instead of burning selector timeouts mid-flow, and the error text
+names the pinning case. Retrying *immediately* during a pin is futile — wait a
+while or switch `--profile`. Recorded as the #299 PR-B predict-gate evidence:
+retry loops must never key off the pinned signature.
+
 ### Auth verification depends on Google's NextAuth session endpoint
 
 - **Status:** Mitigated · **Severity:** Low (degrades fail-closed) · **Affects:** issue #15 fix onward · **Tracked:** issue #15
@@ -872,9 +885,24 @@ key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 
 - **Status:** Mitigated (crash → typed fail-fast rejection) · **Severity:** Low · **Affects:** all versions
 
-Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** by default — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never silently corrupts the profile. Since #478, setting [`GFLOW_CLI_LEASE_WAIT_SECONDS`](docs/CONFIGURATION.md#gflow_cli_lease_wait_seconds) opts a waiter into a bounded wait that takes over as soon as the current holder finishes (holders always run to completion and are never asked to release early; same-process contention still fails fast — waiting on yourself would deadlock).
+Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** by default — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never silently corrupts the profile. Since #478, setting [`GFLOW_CLI_LEASE_WAIT_SECONDS`](CONFIGURATION.md#gflow_cli_lease_wait_seconds) opts a waiter into a bounded wait that takes over as soon as the current holder finishes (holders always run to completion and are never asked to release early; same-process contention still fails fast — waiting on yourself would deadlock).
 
 **Workaround:** use different profiles for parallel work — different profiles acquire independent leases and run fully concurrently.
+
+### gflow refuses to open my profile after a downgrade ("written by a newer Chromium", exit 11)
+
+- **Status:** Working as intended (guard shipped in v0.56.0, #477)
+- **Affects:** any bundled-Chromium open of a persisted profile after gflow-cli
+  (and with it the bundled Playwright Chromium) was downgraded
+
+This refusal is deliberate: opening a Chrome profile with an older Chromium
+**major** version than last wrote it triggers Chromium's downgrade cleanup,
+which can shred the newer session store and surface later as a mystery logout.
+The error names both versions and the remedy. Fix: upgrade gflow-cli (and run
+`playwright install chromium`), or re-create the profile with
+`gflow auth login` — login is deliberately unguarded as the recovery path.
+`chrome`-strategy profiles are exempt (real Chrome manages its own lifecycle).
+Full detail: [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard).
 
 ```bash
 # Terminal 1
@@ -915,8 +943,8 @@ re-navigating and then failing loudly instead of generating on the wrong
 surface. The `parentEntityId` guard that surfaced this was correct throughout —
 it refused to report a portrait-less character as success.
 
-Wire contract: [CHARACTER_RECON § entity binding](docs/CHARACTER_RECON.md#entity-binding-entitycontext-captured-live-2026-07-28).
-Evidence: [LIVE_VERIFICATION_v0.45.0 §2](docs/LIVE_VERIFICATION_v0.45.0.md).
+Wire contract: [CHARACTER_RECON § entity binding](https://github.com/ffroliva/gflow-cli/blob/main/docs/CHARACTER_RECON.md#entity-binding-entitycontext-captured-live-2026-07-28).
+Evidence: [LIVE_VERIFICATION_v0.45.0 §2](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.45.0.md).
 
 ### `gflow video`'s manifest-driven batch subcommand didn't skip already-completed entries — RESOLVED as obsolete
 
@@ -932,7 +960,7 @@ first place. It has since been removed entirely as a nonfunctional stub.
 The underlying command no longer exists, so this gap is moot rather than
 fixed; kept here for searchability. `gflow image batch` (the real, working
 batch command) is unaffected. For video, loop `gflow video t2v`/`i2v` from
-the shell — see [`docs/USAGE.md` § Batch video generation (shell loop)](docs/USAGE.md#batch-video-generation-shell-loop).
+the shell — see [`docs/USAGE.md` § Batch video generation (shell loop)](USAGE.md#batch-video-generation-shell-loop).
 
 ### False "forced agentic — not recoverable" aborts from an icon-heuristic cohort probe
 
@@ -947,7 +975,7 @@ Agent toggle's `aria-pressed` attribute (false = classic media, true = agent —
 locale-invariant), closes the expanded chat sidebar first, toggles off only when
 actually in agent mode, and re-verifies. Live-verified with a full
 classic→agent→classic round-trip and a real agentic→classic recovery in the v0.38.0
-release run ([evidence](docs/LIVE_VERIFICATION_v0.38.0.md)).
+release run ([evidence](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.38.0.md)).
 
 ### Agentic image generation could silently attribute a pre-existing project asset as the "generated" image
 
@@ -1078,8 +1106,8 @@ Profiles created before this fix continue to work and display `unknown` in the
 account column. Re-running `gflow auth login` against an existing profile backfills
 the `.gflow_account` file.
 
-See [AUTHENTICATION.md § Profile naming](docs/AUTHENTICATION.md#profile-naming) for the
-new naming convention and [AUTHENTICATION.md § gflow auth list](docs/AUTHENTICATION.md#gflow-auth-list)
+See [AUTHENTICATION.md § Profile naming](AUTHENTICATION.md#profile-naming) for the
+new naming convention and [AUTHENTICATION.md § gflow auth list](AUTHENTICATION.md#gflow-auth-list)
 for the updated `--json` schema.
 
 ---
@@ -1107,7 +1135,7 @@ why; re-run on the next release (≥ v0.9.0).
 
 The two long Open-section entries above (*Image generation returns HTTP 401* and *REST API 401 — all `aisandbox-pa.googleapis.com` generation endpoints blocked*) were closed by the same architectural change: `UiAutomationTransport` drives the Flow web UI so Flow's own JavaScript issues every generation request with the full browser auth context (cookies, reCAPTCHA, `Origin`/`Referer` headers). The 401 had affected every direct HTTP call from `evaluate_fetch` / `bearer` / `sapisidhash`; those transports now live under `src/gflow_cli/api/transports/experimental/` and are not on the production path.
 
-End-to-end live-verified on the `ffroliva` profile across `9:16`, `16:9`, `1:1`, and `4:3` aspect ratios; see [`docs/LIVE_VERIFICATION_v0.7.0.md`](docs/LIVE_VERIFICATION_v0.7.0.md) for timing, file sizes, and exact filenames. Video T2V uses the same approach (Phase A — PR #23 — merged 2026-05-19).
+End-to-end live-verified on the `ffroliva` profile across `9:16`, `16:9`, `1:1`, and `4:3` aspect ratios; see [`docs/LIVE_VERIFICATION_v0.7.0.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.7.0.md) for timing, file sizes, and exact filenames. Video T2V uses the same approach (Phase A — PR #23 — merged 2026-05-19).
 
 ---
 
@@ -1159,4 +1187,4 @@ If you hit something not listed here:
    - OS + version
    - Exact command that failed + full error output
    - What you expected vs. what happened
-3. For **security issues**, see [docs/SECURITY.md § Reporting](docs/SECURITY.md#reporting) — email instead of public issue.
+3. For **security issues**, see [docs/SECURITY.md § Reporting](SECURITY.md#reporting) — email instead of public issue.

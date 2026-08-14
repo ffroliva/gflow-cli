@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.57.0] — 2026-08-14
+
+### Added
+
+- **`--ui-mode` on `gflow video t2v`/`i2v` + `ui_mode` on MCP `gflow_generate_video` (#299 PR-A).** The video path joins the UI-mode policy that images have had since v0.34.0: the transport now binds its driver through `get_ui_driver` (after editor mount + overlay dismissal) instead of a hardcoded classic bind. Video only has a classic driver, so `auto` ≡ `classic`; an env-sourced `GFLOW_CLI_UI_MODE=agentic` (set for image workflows) degrades to classic with a logged warning, while the explicit `--ui-mode agentic` flag (or MCP `ui_mode="agentic"`) is rejected up front — CLI exit 2 before any browser work, since exit 28's "retry may land it" remediation would mislead for a driver that doesn't exist. The worker queue codec round-trips the new payload field (it previously decoded `ui_mode` for image payloads only).
+
+- **`gflow mcp run --no-spend` (#496).** Registration-time gating of the
+  credit-spending MCP tools: under the flag (or `GFLOW_MCP_NO_SPEND=1`, which
+  also covers `gflow serve`) the `gflow_generate_image` and
+  `gflow_generate_video` tools are never registered, so a connected agent
+  cannot even see them in `tools/list` — invisible beats refused (no wasted
+  calls, no refusal path for prompt injection to probe, no reliance on the
+  model honoring an error; pattern ported from teams-mcp's read-only mode).
+  Both generate tools are gated because image generation is only
+  *empirically* free and no-spend is a hard guarantee. Listing, instructions,
+  and other read-only tools stay available.
+- **MCP tool `gflow_auth_status` (#497).** A zero-required-arg, credit-free,
+  non-interactive Flow session probe wrapping the same fail-closed
+  `verify_flow_profile` check as `gflow auth status`. Agents call it before a
+  generation tool to fail fast on expired auth — the queue is async, so an
+  auth failure otherwise surfaces only later, from the daemon. Returns
+  `authenticated` + the verified email, or a problem-details envelope whose
+  `remediation_hint` points at the CLI login (or at retrying, for a network
+  `verification_error` that re-login cannot fix). `auth status` accordingly
+  moves out of the MCP parity exemptions; login/logout stay CLI-only.
+
+### Changed
+
+- **Agentic mode-switching hardened (#299 PR-B).** The agentic direction now uses the same real-click-first + `aria-pressed` verification discipline the classic direction has had since v0.38.x: `mode_control.ensure_agent_mode` replaces the transport's `_force_agent_mode`, which verified via the `tune` ligature (a documented false-positive source) and force-clicked unconditionally — a forced click can flip the DOM without firing the React handler that persists the server-side preference. Unknown editor variants (the #493 shape) no-op with a warning and are never blind-force-clicked, and the sanctioned mode-control reload carries an explicit 15 s timeout instead of riding Playwright's 30 s default outside every budget. KNOWN_ISSUES records the server-side cohort-pinning evidence (#338) the fail-fast design rests on.
+- **Video generation on an agentic cohort now fails fast pre-submit (#299 PR-A).** When Flow serves the agentic editor and classic can't be recovered, `gflow video` commands abort with `UiModeUnavailableError` (exit 28, zero credits, retryable — the cohort flaps per page load) *before* submission, instead of burning 30–40 s of doomed selector timeouts and dying mid-flow with exit 23/25.
+
+- **MCP `gflow://docs/known-issues` resource is now bounded (#501).** The old
+  resource returned all of KNOWN_ISSUES.md (~70 KB, growing every release) on
+  every read — pure context injection. The default read is now a small index
+  (issue titles + status + slugs, a few KB); one templated resource
+  (`gflow://docs/known-issues/{slug}`) serves a single issue's full text,
+  capped at 16 KB. No unbounded read path remains.
+
+### Fixed
+
+- **MCP response-contract breaches (#498).** Both generate tools now refuse
+  rate-limited calls with the same RFC 9457 problem-details envelope (the
+  image tool used a plain error string; the video tool's detail claimed a
+  nonexistent "1 request per 30 seconds" policy — the real brake is the
+  shared token bucket, capacity 8 / refill 1 per 20 s). `gflow_list_projects`
+  paginates honestly: a new `offset` parameter, plus `count`/`offset`/
+  `has_more`/`next_offset` in the response, replacing the hardcoded first
+  page whose `total` field reported the page size as the table total —
+  catalogs larger than `limit` were unreachable through MCP.
+
+- **Post-merge `/code-review` fixes for the #495–#501 wave.** The rate-limited
+  envelope is now built from the canonical `RateLimitError` (type
+  `…/errors/rate-limit`, `retryable`/`message` present) instead of a
+  hand-minted variant; `gflow_auth_status` labels a network
+  `verification_error` as `…/errors/verification-error` (503, retryable)
+  rather than `auth-expired` (401), so type-dispatching agents stop pushing
+  users into unnecessary re-logins, and its description no longer overclaims
+  "never opens a browser" (the cookie-decryption fallback may boot a headless
+  one); `gflow_list_projects` clamps `limit`/`offset` (a `limit<=0` call
+  previously produced an infinite `next_offset` loop and negative limits
+  reached SQLite as unbounded `LIMIT -1`); `--no-spend` gained a single
+  env-var parser (Click's `envvar` dual-parse meant `off` could disable the
+  flag yet enable the policy), an idempotent registration policy, a `serve`
+  flag, a `.env.template` row, and a no-spend-aware agent guide that no
+  longer instructs agents to call unregistered tools; the known-issues index
+  recognizes both documented `**Status:**` styles and caps the echoed slug in
+  unknown-slug replies (the last unbounded reflection path).
+
+### Removed
+
+- **MCP tool `gflow_list_characters` (#499).** It was a stub that always
+  answered `{"status": "ok", "characters": []}` — to an agent that reads as
+  "the user has no characters", an active lie that steered clients away from
+  real `@Name` references. The tool is gone from `tools/list`, the agent-guide
+  resource, and the parity table (`character list` is now an explicit parity
+  exemption). It returns only when it can serve real Flow-side data. Use
+  `gflow character list --project <id>` in the terminal meanwhile.
+
+### Security
+
+- **CI supply-chain hardening.** Every workflow now runs with a least-privilege token (`ci.yml` gained the top-level `permissions: contents: read` it was missing — the other eight already had one; gitleaks elevates `pull-requests: write` per-job); every `uses:` action across all nine workflows is pinned to a full commit SHA with a version comment (dependabot's `github-actions` group keeps pins fresh); the CI test jobs enforce a test-count floor via `scripts/ci/check_test_count.py` ("a green build that ran nothing is not green"); and `check_repo_hygiene.py` now fails on version disagreement between `pyproject.toml`, `__init__.py`, and `.codex-plugin/plugin.json`.
+- **Remaining in-workflow package installs pinned (Scorecard Pinned-Dependencies).** The Pages build now installs MkDocs Material with `pip install --require-hashes` from a compiled `website/requirements.txt`; the PR-triage sandbox image (`Dockerfile.triage`) pins its Node base by digest and installs the Claude Code CLI via `npm ci` from a committed lockfile instead of a floating `npm install -g`; the CI dependency audit pins its `pip-audit` tool version (the non-gating weekly `deps-watch` job deliberately keeps a floating pip-audit — fresh advisory tooling is its purpose). New dependabot entries (uv / npm / docker) keep all three sets of pins fresh. The remaining deliberate won't-fix Scorecard alerts (SAST, Fuzzing, CII Best Practices) are dismissed on the repo with recorded reasons.
+- **OpenSSF Scorecard self-run.** A new SHA-pinned `scorecard.yml` workflow (weekly + on push to `develop`) runs the OpenSSF Scorecard supply-chain checks with `publish_results: true`, feeding the public API/badge and the repo Security tab — enabled deliberately after the permissions/pinning hardening so the first published score reflects the hardened state. The score surfaces as a badge in the README and on the website index page, with a docs/SECURITY.md section explaining what it measures; `release.yml`/`pages.yml` write scopes moved from workflow level to the jobs that need them.
+
+
 ## [0.56.0] — 2026-08-13
 
 ### Added
@@ -2825,7 +2910,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.56.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.57.0...HEAD
+[0.57.0]: https://github.com/ffroliva/gflow-cli/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/ffroliva/gflow-cli/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/ffroliva/gflow-cli/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/ffroliva/gflow-cli/compare/v0.53.1...v0.54.0

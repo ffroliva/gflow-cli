@@ -12,10 +12,10 @@ on:
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
+# Write scopes live at JOB level on the deploy job only (Scorecard
+# Token-Permissions: workflow-level write would grant the build job too).
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Never cancel an in-progress deploy; queue instead.
 concurrency:
@@ -26,12 +26,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
       - name: Install MkDocs Material
-        run: pip install "mkdocs-material>=9,<10"
+        # Hash-pinned (Scorecard Pinned-Dependencies). Compiled from
+        # website/requirements.in — regeneration command in that file's header.
+        run: pip install --require-hashes -r website/requirements.txt
       - name: Build docs portal
         working-directory: website
         run: mkdocs build
@@ -40,16 +42,19 @@ jobs:
           mkdir -p _site
           cp index.html _site/
           cp -r website/site _site/docs
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: _site
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write # actual Pages deployment
+      id-token: write # OIDC handshake with the Pages service
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5

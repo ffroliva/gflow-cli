@@ -1,5 +1,14 @@
 # Per-Command UI Mode Policy Implementation Plan
 
+> **RECONCILIATION (2026-08-14):** this plan is historical — its image-side work
+> shipped in v0.34.0–v0.38.1 under renamed symbols (`bind_ui_driver` became
+> `get_ui_driver` in `drivers/factory.py`; the factory tests live in
+> `tests/api/transports/drivers/test_ui_mode.py`, not the paths named below).
+> The unshipped remainder (video/`run` outside the policy, MCP video parity)
+> is superseded by
+> [2026-08-14-video-ui-mode-policy/PLAN.md](../2026-08-14-video-ui-mode-policy/PLAN.md)
+> (#299 PR-A). Do not execute the checkboxes below.
+
 > **For agentic workers:** Run `/gflow:status --feature ui-mode-policy` to find the next unchecked task. Implement one task at a time. Run `/gflow:check` before every commit.
 
 **Goal:** Add `--ui-mode auto|classic|agentic` CLI option, `GFLOW_CLI_UI_MODE` setting, and strict policy validation before generation submission to fail fast with `UiModeUnavailableError` (exit 28) when requested UI mode doesn't match the mounted cohort.

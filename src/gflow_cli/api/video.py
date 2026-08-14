@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from gflow_cli.config import UiMode
     from gflow_cli.tools.invocation import AppliedTool
 
 # Type alias used with cast() in response parsers — avoids repeating the
@@ -253,6 +254,11 @@ class GenerateVideoRequest:
     # the applied-tool snapshot for ``operations.metadata_json.tool``. (PR2 §8)
     original_prompt: str | None = None
     tool: AppliedTool | None = None
+    # Requested Flow UI arm (#299) from --ui-mode; None → resolve from
+    # GFLOW_CLI_UI_MODE / default at the transport. Not sent on the wire.
+    # The video pipeline clamps to classic-required (no agentic video driver
+    # exists); see _generate_video_locked.
+    ui_mode: UiMode | None = None
 
     def __post_init__(self) -> None:
         self._validate_prompt()
@@ -262,6 +268,21 @@ class GenerateVideoRequest:
         self._validate_mode_symmetry()
         self._validate_r2v_caps()
         self._validate_seed()
+        self._validate_ui_mode()
+
+    def _validate_ui_mode(self) -> None:
+        # #299: no agentic VIDEO driver exists — an explicit agentic request
+        # must fail loudly at EVERY producer (the CLI/MCP edges reject earlier
+        # with friendlier errors; this catches queue payloads and programmatic
+        # use, where a silent classic clamp would spend credits on a render
+        # the caller believes is agentic). Env-sourced agentic never reaches
+        # the DTO (stays None) and degrades at the transport with a warning.
+        if self.ui_mode is not None and self.ui_mode.value == "agentic":
+            msg = (
+                "ui_mode 'agentic' is not supported for video generation "
+                "(no agentic video driver exists; refs #299)"
+            )
+            raise ValueError(msg)
 
     def _validate_frame_ref_ids(self) -> None:
         for slot, ref_id, alternatives in (

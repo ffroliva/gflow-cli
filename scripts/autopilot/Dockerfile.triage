@@ -1,4 +1,6 @@
-FROM node:20-slim
+# node:26-slim, digest-pinned (Scorecard Pinned-Dependencies); dependabot's
+# docker ecosystem keeps the digest fresh.
+FROM node:26-slim@sha256:4ebb5ace66f15a24c14c492e01a8beeed4fddf970a856109f5126e703e5fe503
 
 # Install system dependencies: git, python3, curl, gnupg, etc.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,8 +20,12 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI globally
-RUN npm install -g @anthropic-ai/claude-code
+# Install Claude Code CLI from the committed lockfile — `npm ci` is npm's only
+# hash-pinned install (Scorecard Pinned-Dependencies). Bump via package.json +
+# package-lock.json; dependabot's npm ecosystem keeps them fresh.
+COPY package.json package-lock.json /opt/claude-code/
+RUN cd /opt/claude-code && npm ci --omit=dev \
+    && ln -s /opt/claude-code/node_modules/.bin/claude /usr/local/bin/claude
 
 # Create non-root user and set permissions.
 #
