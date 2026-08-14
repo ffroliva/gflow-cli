@@ -1364,3 +1364,74 @@ def test_image_batch_remains_a_leaf_command() -> None:
 
     result = CliRunner().invoke(image, ["batch", "--help"])
     assert result.exit_code == 0
+
+
+class TestUiModeOption:
+    """#299 PR-A: --ui-mode on the video commands. classic/auto thread through;
+    agentic is rejected at the CLI edge (exit 2) — no agentic video driver
+    exists, so exit 28's "retry may land it" remediation would mislead."""
+
+    def test_t2v_ui_mode_classic_threads(self, tmp_path: Path) -> None:
+        from gflow_cli.config import UiMode
+
+        runner = CliRunner()
+        with (
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+            patch("gflow_cli.cli_video._run_t2v", new_callable=AsyncMock) as mock_run,
+        ):
+            result = runner.invoke(video, ["t2v", "prompt", "--ui-mode", "classic"])
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["ui_mode"] is UiMode.CLASSIC
+
+    def test_t2v_ui_mode_auto_threads(self, tmp_path: Path) -> None:
+        from gflow_cli.config import UiMode
+
+        runner = CliRunner()
+        with (
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+            patch("gflow_cli.cli_video._run_t2v", new_callable=AsyncMock) as mock_run,
+        ):
+            result = runner.invoke(video, ["t2v", "prompt", "--ui-mode", "auto"])
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["ui_mode"] is UiMode.AUTO
+
+    def test_t2v_ui_mode_agentic_rejected_pre_profile(self) -> None:
+        runner = CliRunner()
+        with (
+            patch(
+                "gflow_cli.cli_video._resolve_profile",
+                side_effect=AssertionError("must reject before any profile work"),
+            ),
+            patch("gflow_cli.cli_video._run_t2v", new_callable=AsyncMock) as mock_run,
+        ):
+            result = runner.invoke(video, ["t2v", "prompt", "--ui-mode", "agentic"])
+        assert result.exit_code == 2
+        assert "agentic" in result.output
+        mock_run.assert_not_awaited()
+
+    def test_i2v_ui_mode_classic_threads(self, tmp_path: Path) -> None:
+        from gflow_cli.config import UiMode
+
+        img = tmp_path / "a.png"
+        img.touch()
+        runner = CliRunner()
+        with (
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+            patch("gflow_cli.cli_video._run_i2v", new_callable=AsyncMock) as mock_run,
+        ):
+            result = runner.invoke(video, ["i2v", str(img), "motion", "--ui-mode", "classic"])
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["params"].ui_mode is UiMode.CLASSIC
+
+    def test_i2v_ui_mode_agentic_rejected(self, tmp_path: Path) -> None:
+        img = tmp_path / "a.png"
+        img.touch()
+        runner = CliRunner()
+        with patch("gflow_cli.cli_video._run_i2v", new_callable=AsyncMock) as mock_run:
+            result = runner.invoke(video, ["i2v", str(img), "motion", "--ui-mode", "agentic"])
+        assert result.exit_code == 2
+        assert "agentic" in result.output
+        mock_run.assert_not_awaited()
