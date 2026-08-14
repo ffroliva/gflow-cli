@@ -110,3 +110,44 @@ updates:
       github-actions:
         applies-to: version-updates
         patterns: ["*"]
+
+  # npm — the PR-triage sandbox's pinned Claude Code CLI
+  # (scripts/autopilot/package-lock.json, installed via `npm ci` in
+  # Dockerfile.triage).
+  - package-ecosystem: "npm"
+    directory: "/scripts/autopilot"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Europe/Lisbon"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+
+  # Docker — the digest-pinned node:20-slim base of Dockerfile.triage.
+  - package-ecosystem: "docker"
+    directory: "/scripts/autopilot"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Europe/Lisbon"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+
+  # pip — the hash-pinned MkDocs set for the Pages build
+  # (website/requirements.txt, compiled from website/requirements.in with
+  # --generate-hashes; dependabot's pip-compile support updates both).
+  - package-ecosystem: "pip"
+    directory: "/website"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Europe/Lisbon"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "python"
