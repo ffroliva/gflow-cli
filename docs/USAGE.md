@@ -561,7 +561,7 @@ the editor's frame slot via the media dialog, then Flow fires
 (initial+end interpolation).
 
 ```text
-gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [...]
+gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [--ui-mode] [...]
 
 # Back-compat positional form (still supported):
 gflow video i2v IMAGE PROMPT [--end-frame LAST] [...]
@@ -1363,7 +1363,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation | Rare since v0.38.0 (#332): the mode controller reliably recovers agentic→classic, so first retry with `--ui-mode classic`; if it persists, see KNOWN_ISSUES on the agentic cohort |
 | `26` | `MediaAttributionError` | Generated media could not be reliably attributed to this request (issue #281) | Re-run; a dedicated project with fewer pre-existing assets avoids the ambiguity |
 | `27` | `MediaUploadRejectedError` | Flow's upload endpoint refused the input file (`uploadImage` 4xx, issue #287) | Re-encode the image (`ffmpeg -q:v 2 -map_metadata -1`), or reference the asset by its media UUID |
-| `28` | `UiModeUnavailableError` | The Flow UI arm this command required (`GFLOW_CLI_UI_MODE`, or inferred — `-i` forces agentic) couldn't be reached after a switch attempt; aborted before submitting — no credits spent (issue #299) | Retry (the cohort flaps per load); try another `--profile`; or relax `GFLOW_CLI_UI_MODE` |
+| `28` | `UiModeUnavailableError` | The Flow UI arm this command required (`--ui-mode`/`GFLOW_CLI_UI_MODE`; `-i` forces agentic for images; **video always requires classic** — no agentic video driver exists) couldn't be reached after a switch attempt; aborted before submitting — no credits spent (issue #299) | Retry (the cohort flaps per load); try another `--profile`; for images you can also relax `GFLOW_CLI_UI_MODE` — for video there is nothing to relax |
 | `29` | `MentionIndexUnavailableError` | An `@mention` was present but the catalog source needed to resolve it (character entities or media assets) failed to load — distinct from an empty index, which is not an error | Check network connectivity (character source) or `GFLOW_CLI_DB_PATH` / filesystem permissions (media source), then retry |
 | `30` | `QueueSchemaError`    | A `gflow serve`/MCP worker-queue task payload has an unrecognized `schema_version` or fails validation against the typed request DTOs | Usually means gflow-cli was downgraded after a newer version enqueued the task, or the payload was hand-edited; re-enqueue with a compatible version |
 | `31` | `FlowAppError`        | Flow's web app hit a client-side exception (its error-boundary page rendered instead of the editor) — a transient Flow crash, not a gflow bug | Retry shortly; if it persists, Flow itself is degraded — wait and retry later |

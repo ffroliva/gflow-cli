@@ -7,7 +7,7 @@
 > Successor (separate PR, re-scoped by predict to CAUTION): `ensure_agent_mode` symmetry
 > patch in mode_control.py — NOT this PR.
 
-**Goal:** `gflow video t2v`/`i2v` (CLI + MCP) and `gflow run` video legs go through the
+**Goal:** `gflow video t2v`/`i2v` (CLI + MCP) go through the
 live-verified `get_ui_driver` mode policy instead of a hardcoded classic bind, so an
 agentic cohort flip fails fast pre-submit (exit 28, $0) instead of mid-flow (exit 23/25),
 with `--ui-mode` exposed on the video commands (agentic honestly rejected at the CLI edge).

@@ -580,7 +580,8 @@ class UiModeUnavailableError(GFlowError):
     could not be reached, after a best-effort switch + re-probe (issue #299).
 
     Distinct from ``FlowAgentUiError`` (exit 25 = "gflow cannot drive the
-    agentic UI at all"): here gflow *can* drive both arms, but the caller needs
+    agentic UI at all"): here gflow *can* drive both arms (for images — the
+    video pipeline only has a classic driver, #299), but the caller needs
     a specific one and the server would not switch to it, so we abort **before**
     submitting — zero credits spent. The cohort is server-assigned per page load
     and flaps, so this failure is **retryable**: a re-run often lands the wanted

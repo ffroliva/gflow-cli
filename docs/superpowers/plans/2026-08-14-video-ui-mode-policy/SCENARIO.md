@@ -15,7 +15,7 @@
 | S5 | `GFLOW_CLI_UI_MODE=agentic` in env (set for image workflows) + any video command → structlog **warning + classic-required**, run proceeds; only the explicit flag errors | high | unit |
 | S6 | `auto` (default) on video → resolves to classic-required at the call site (`auto ≡ classic` for video until an agentic video driver exists — documented) | med | unit |
 | S7 | MCP `gflow_generate_video(ui_mode="classic")` → param accepted, **worker codec round-trips it** to the transport; `ui_mode="agentic"` → tool-layer validation error envelope | high | unit: schema + codec round-trip + parity |
-| S8 | `gflow run` manifest with video legs → **no `--ui-mode` flag** (image-batch precedent, `run` is `_MCP_EXEMPT`); env-only resolve applies per S5/S6 | med | unit |
+| S8 | `gflow run` is **image-only** (no video surface — council F1 corrected the phantom "video legs"); untouched by this PR | med | n/a |
 | S9 | Exit-28 message on video names the cohort as server-assigned and possibly pinned ("wait before retrying"); nothing auto-retries 28 | med | unit (message pin) |
 | S10 | `factory.py` has **zero diff**; structlog event names unchanged (live-verification ledger hooks) | high | review gate |
 

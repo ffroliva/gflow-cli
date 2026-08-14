@@ -3389,6 +3389,11 @@ class TestVideoUiModePolicy:
 
         monkeypatch.setattr(transport, "_enter_editor", _enter)
 
+        async def _overlays(*_a: object, **_k: object) -> None:
+            order.append("dismiss_overlays")
+
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", _overlays)
+
         async def _bind(page, *, ui_mode, transport):  # type: ignore[no-untyped-def]  # noqa: ARG001
             order.append("bind")
             bind_modes.append(ui_mode)
@@ -3397,8 +3402,10 @@ class TestVideoUiModePolicy:
         monkeypatch.setattr(factory, "get_ui_driver", _bind)
 
         await transport.generate_video(request=GenerateVideoRequest(prompt="x"), download=False)
-        # The bind probes the DOM, so it must happen after the editor mounts.
-        assert order == ["enter_editor", "bind"]
+        # The bind probes the DOM, so it must happen after the editor mounts
+        # AND after overlay dismissal (predict condition — an overlay on top of
+        # the composer would make the cohort probe misread).
+        assert order == ["enter_editor", "dismiss_overlays", "bind"]
         assert bind_modes == [UiMode.CLASSIC]
 
     @pytest.mark.asyncio
