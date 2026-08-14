@@ -88,5 +88,5 @@ async def test_serve_speaks_streamable_http(tmp_path) -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.communicate(timeout=10)
-    # Clean shutdown: terminate must actually end the process.
-    assert proc.returncode is not None
+    # (communicate() above only returns once the process has exited, so no
+    # separate returncode assert — it could never fail.)

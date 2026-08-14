@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (issue titles + status + slugs, a few KB); one templated resource
   (`gflow://docs/known-issues/{slug}`) serves a single issue's full text,
   capped at 16 KB. No unbounded read path remains.
+
 ### Added
 
 - **`gflow mcp run --no-spend` (#496).** Registration-time gating of the
@@ -36,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `remediation_hint` points at the CLI login (or at retrying, for a network
   `verification_error` that re-login cannot fix). `auth status` accordingly
   moves out of the MCP parity exemptions; login/logout stay CLI-only.
+
 ### Fixed
 
 - **MCP response-contract breaches (#498).** Both generate tools now refuse
