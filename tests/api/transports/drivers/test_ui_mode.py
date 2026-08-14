@@ -290,3 +290,23 @@ def test_worker_video_ui_mode_absent_is_none() -> None:
 
     req = build_video_request({"prompt": "a"})
     assert req.ui_mode is None
+
+
+def test_ui_mode_unavailable_is_retryable() -> None:
+    # #299 code-review finding: every doc surface (exit-code table, CHANGELOG,
+    # error docstring) says exit 28 is retryable — the machine flag consumed by
+    # CLI --json / MCP / worker envelopes must agree.
+    from gflow_cli.errors import UiModeUnavailableError, is_retryable
+
+    assert is_retryable(UiModeUnavailableError(UiMode.CLASSIC)) is True
+
+
+def test_worker_video_ui_mode_agentic_payload_rejected() -> None:
+    # A hand-edited / cross-version queue payload carrying agentic must fail
+    # typed (ValueError -> QueueSchemaError at decode_payload), never clamp.
+    import pytest as _pytest
+
+    from gflow_cli.worker.codec import build_video_request
+
+    with _pytest.raises(ValueError, match="agentic"):
+        build_video_request({"prompt": "a", "ui_mode": "agentic"})

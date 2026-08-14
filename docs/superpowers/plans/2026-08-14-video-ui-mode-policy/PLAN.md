@@ -58,5 +58,13 @@ with `--ui-mode` exposed on the video commands (agentic honestly rejected at the
   unit-locked by `TestVideoUiModePolicy::test_unreachable_arm_aborts_before_submit`.
 
 ### T8 — ship
-- [ ] Council branch review + second review layer; apply findings.
-- [ ] PR (`Refs #299`, not `Closes` — PR-B still open), SonarCloud green, squash-merge to develop.
+- [x] Council branch review (YELLOW → fixed in f1848aa) + second review layer (`/code-review` xhigh, 15 verified findings → the in-scope ones fixed pre-merge: post-bind overlay re-dismissal, `UiModeUnavailableError` added to `RETRYABLE_ERRORS`, MCP ui_mode case-normalization + RFC 9457 envelope for both 400 branches, DTO-level agentic rejection as the every-producer backstop, doc-scope clauses).
+- [ ] PR #525 (`Refs #299`), SonarCloud green, squash-merge to develop.
+
+### Deferred code-review findings (carry into PR-B / follow-ups)
+- `--ui-mode` on `video r2v`/`chain` was never decided — currently env-only (documented); decide in PR-B.
+- `submit_attempted` checkpoint is persisted before the transport's pre-submit bind → cancellation during the bind classifies indeterminate/possibly-charged despite $0; consider a `bind_completed` checkpoint (pre-existing coarseness, widened by this PR).
+- #493 third-variant cohorts now pay the full 8 s detect poll before the same exit-23 cascade — a third-variant indicator collapses it (blocked on reporter diag).
+- Cleanups: hoist a shared `ui_mode_option(help=...)` factory + one agentic-rejection message constant (3 hand-copies today); dedupe the four `_bind` monkeypatch stubs in TestVideoUiModePolicy; `pages.yml` pip cache (2 lines on setup-python).
+- Verify dependabot's `uv` ecosystem actually opens a `/website` PR on its first scheduled run (silent no-op risk if uv support is lock-file-only).
+- `detect_ui_mode`'s classic-on-timeout means "verifies" is best-effort (docs softened; a distinct timeout signal is factory territory → PR-B).

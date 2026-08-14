@@ -131,10 +131,10 @@ _ui_mode_option = click.option(
     default=None,
     help=(
         "Which Flow UI arm to require. Video generation only has a classic "
-        "driver: 'classic'/'auto' verify the classic editor pre-submit and "
-        "abort with exit 28 (no credits spent) if it is unreachable; "
-        "'agentic' is not yet supported for video and is rejected. "
-        "Overrides GFLOW_CLI_UI_MODE."
+        "driver: 'classic'/'auto' verify the classic editor pre-submit "
+        "(best-effort DOM probe) and abort with exit 28 (no credits spent) "
+        "if it is unreachable; 'agentic' is not yet supported for video and "
+        "is rejected. Overrides GFLOW_CLI_UI_MODE."
     ),
 )
 

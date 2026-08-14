@@ -802,3 +802,24 @@ class TestUiModeParity:
         result = await gflow_generate_video(prompt="x", ui_mode="bogus")
         assert result["status"] == "error"
         assert "ui_mode" in str(result).lower()
+
+
+class TestUiModeEnvelopeShape:
+    """#299 code-review findings: ui_mode 400s use the RFC 9457 dict envelope
+    (never a flat string), and the param is case-insensitive like the CLI."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_ui_mode_returns_dict_envelope(self) -> None:
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(prompt="x", ui_mode="bogus")
+        assert result["status"] == "error"
+        assert result["error"]["title"] == "Invalid ui_mode"
+
+    @pytest.mark.asyncio
+    async def test_ui_mode_is_case_insensitive(self) -> None:
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(prompt="x", ui_mode="AGENTIC")
+        # Normalized first, THEN rejected as agentic — not as an unknown value.
+        assert result["error"]["title"] == "Unsupported ui_mode for video"

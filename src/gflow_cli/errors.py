@@ -1038,6 +1038,10 @@ RETRYABLE_ERRORS: tuple[type[GFlowError], ...] = (
     BrowserSessionClosedError,
     FlowAppError,
     FlowAgentUiError,
+    # #299: the cohort is server-assigned per page load and flaps — the
+    # documented remediation for exit 28 IS "retry"; the machine flag must
+    # agree with the docs.
+    UiModeUnavailableError,
 )
 
 

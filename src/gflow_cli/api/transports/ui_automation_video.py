@@ -3643,6 +3643,13 @@ class VideoGenerationMixin:
                 reason="no agentic video driver exists; classic required",
             )
         ui_driver = await get_ui_driver(page, ui_mode=UiMode.CLASSIC, transport=self)
+        # The CLASSIC recovery inside the bind may have RELOADED the page (the
+        # sanctioned rescue re-rolls the cohort) — a fresh load can re-mount
+        # the #26 overlay and drop editor hydration, so re-run both guards
+        # before the driver starts clicking. Cheap no-ops when nothing
+        # reloaded.
+        await VideoGenerationMixin._wait_video_editor_ready(page)
+        await self._dismiss_blocking_overlays(page, out_dir)
         await ui_driver.switch_to_video_mode(page, out_dir=out_dir)
 
         # Capture project_id from the editor URL as soon as we have it —

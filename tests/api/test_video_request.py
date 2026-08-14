@@ -70,3 +70,14 @@ def test_ui_mode_field_defaults_none_and_accepts_enum() -> None:
     assert GenerateVideoRequest(prompt="x").ui_mode is None
     req = GenerateVideoRequest(prompt="x", ui_mode=UiMode.CLASSIC)
     assert req.ui_mode is UiMode.CLASSIC
+
+
+def test_ui_mode_agentic_rejected_at_dto() -> None:
+    # #299 code-review finding: the CLI/MCP edges reject agentic with friendly
+    # errors, but queue payloads and programmatic use reach the DTO directly —
+    # a silent classic clamp there would spend credits on a render the caller
+    # believes is agentic. The DTO is the every-producer backstop.
+    from gflow_cli.config import UiMode
+
+    with pytest.raises(ValueError, match="agentic"):
+        GenerateVideoRequest(prompt="x", ui_mode=UiMode.AGENTIC)

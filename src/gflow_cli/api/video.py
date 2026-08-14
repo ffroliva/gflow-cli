@@ -268,6 +268,21 @@ class GenerateVideoRequest:
         self._validate_mode_symmetry()
         self._validate_r2v_caps()
         self._validate_seed()
+        self._validate_ui_mode()
+
+    def _validate_ui_mode(self) -> None:
+        # #299: no agentic VIDEO driver exists — an explicit agentic request
+        # must fail loudly at EVERY producer (the CLI/MCP edges reject earlier
+        # with friendlier errors; this catches queue payloads and programmatic
+        # use, where a silent classic clamp would spend credits on a render
+        # the caller believes is agentic). Env-sourced agentic never reaches
+        # the DTO (stays None) and degrades at the transport with a warning.
+        if self.ui_mode is not None and self.ui_mode.value == "agentic":
+            msg = (
+                "ui_mode 'agentic' is not supported for video generation "
+                "(no agentic video driver exists; refs #299)"
+            )
+            raise ValueError(msg)
 
     def _validate_frame_ref_ids(self) -> None:
         for slot, ref_id, alternatives in (

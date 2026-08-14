@@ -3404,8 +3404,10 @@ class TestVideoUiModePolicy:
         await transport.generate_video(request=GenerateVideoRequest(prompt="x"), download=False)
         # The bind probes the DOM, so it must happen after the editor mounts
         # AND after overlay dismissal (predict condition — an overlay on top of
-        # the composer would make the cohort probe misread).
-        assert order == ["enter_editor", "dismiss_overlays", "bind"]
+        # the composer would make the cohort probe misread). Overlays are then
+        # re-dismissed AFTER the bind: the classic recovery's sanctioned reload
+        # can re-mount the #26 overlay (code-review finding).
+        assert order == ["enter_editor", "dismiss_overlays", "bind", "dismiss_overlays"]
         assert bind_modes == [UiMode.CLASSIC]
 
     @pytest.mark.asyncio

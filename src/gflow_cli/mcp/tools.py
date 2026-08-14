@@ -977,10 +977,11 @@ async def gflow_generate_video(  # NOSONAR
             CLI ``--project`` flag on ``video t2v``/``i2v``/``r2v``). When
             omitted, a scratch project is created as before.
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
-            ``video t2v``/``i2v``). Video generation only has a classic
-            driver: 'classic'/'auto' verify the classic editor pre-submit and
-            abort before spending credits if it is unreachable; 'agentic' is
-            not yet supported for video and is rejected.
+            ``video t2v``/``i2v``; applies to every mode of this tool,
+            including 'r2v'). Video generation only has a classic driver:
+            'classic'/'auto' verify the classic editor pre-submit (best-effort
+            DOM probe) and abort before spending credits if it is unreachable;
+            'agentic' is not yet supported for video and is rejected (400).
         **kwargs: Additional optional keyword arguments such as ``project_name``.
 
     Returns:
@@ -991,13 +992,16 @@ async def gflow_generate_video(  # NOSONAR
         return proj_err
 
     if ui_mode is not None:
+        # Normalize case to mirror the CLI's click.Choice(case_sensitive=False);
+        # both invalid branches answer with the same _bad_param RFC 9457
+        # envelope as every other 400 from this tool (a flat-string error
+        # would crash clients reading error["title"]).
+        ui_mode = ui_mode.lower()
         if ui_mode not in {m.value for m in UiMode}:
-            return {
-                "status": "error",
-                "error": (
-                    f"Invalid ui_mode {ui_mode!r}; expected one of {[m.value for m in UiMode]}."
-                ),
-            }
+            return _bad_param(
+                "Invalid ui_mode",
+                f"Expected one of {[m.value for m in UiMode]}, got {ui_mode!r}.",
+            )
         if ui_mode == UiMode.AGENTIC.value:
             # #299: no agentic VIDEO driver exists — mirror the CLI edge's
             # rejection instead of an exit-28 whose retry hint would mislead.
