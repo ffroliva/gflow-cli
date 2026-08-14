@@ -211,6 +211,16 @@ gflow tools run creative-director "cat in space" --json   # check "was_expanded"
 **Default:** unset.
 **Security:** stored as a Pydantic `SecretStr` (since v0.55.0), so a `repr()`/`str()`/`model_dump_json()` of the settings object masks it by construction — on top of the existing logging-boundary redaction. Treat it like any credential: set it via `.env`/environment, never commit it.
 
+### `GFLOW_MCP_NO_SPEND`
+
+**What:** Registration-time gating of the credit-spending MCP tools (#496). When set, `gflow mcp run` and `gflow serve` never register `gflow_generate_image` and `gflow_generate_video`, so a connected agent cannot even see them in `tools/list` — invisible beats refused (no wasted calls, no refusal path for prompt injection to probe, no reliance on the model honoring an error). Every read-only tool stays available.
+**Default:** unset (both generate tools registered).
+**Accepted:** any value other than the falsy set `0`/`false`/`off`/`no`/`n`/`f`/empty enables no-spend. The falsy vocabulary deliberately matches Click's, so a value cannot mean "off" to the `--no-spend` flag and "on" to the server-side policy.
+**Equivalent flag:** `gflow mcp run --no-spend` (and `gflow serve --no-spend`), which sets this variable for you. The env var is the only route that covers a server you did not start yourself — e.g. one launched from an MCP client config. See [MCP § Option A2](MCP.md#4-setup-instructions).
+**Note:** this is the one variable that does not carry the `GFLOW_CLI_` prefix — it is scoped to the MCP server, not the CLI.
+
+Both generate tools are gated, not just video: image generation is only *empirically* free ("~0 credits observed"), and no-spend is meant to be a hard guarantee.
+
 ### `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`
 
 **What:** Maximum time (seconds) that `gflow auth login` waits for the user to complete the Google sign-in flow in the browser.
