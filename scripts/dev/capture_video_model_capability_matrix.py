@@ -82,6 +82,28 @@ async def _open_settings(page: Any) -> bool:
     return False
 
 
+async def _ensure_video_mode(page: Any) -> bool:
+    """Select the popover's Video tab (the model picker only exists there).
+
+    Keyed on the Material Symbols ligature ``videocam``, NOT the tab text: on a
+    pt-BR account the label reads ``videocamVídeo``, and text matching would
+    miss (memory: flow-locale-leak-icon-ligatures). Without this the popover
+    stays in Image mode — five aspect tabs, no video model picker — and every
+    model lookup misses, which is exactly what denon82 showed.
+    """
+    tab = page.locator("[role='tab']:has(i.google-symbols:text-is('videocam'))").first
+    if await tab.count() == 0:
+        return False
+    if await tab.get_attribute("aria-selected") == "true":
+        return True
+    try:
+        await tab.click(timeout=4000)
+        await page.wait_for_timeout(700)
+    except Exception:  # noqa: BLE001 - verified by the caller's re-read
+        return False
+    return True
+
+
 async def _menu_state(page: Any) -> dict[str, Any]:
     """Structured read of the OPEN settings popover — pure DOM, no clicks."""
     return await page.evaluate(
@@ -94,22 +116,30 @@ async def _menu_state(page: Any) -> dict[str, Any]:
             selected: t.getAttribute('aria-selected') === 'true',
           })).filter(t => t.label);
           const text = (scope.textContent || '').replace(/\\s+/g, ' ').trim();
-          const creditRe = /Generating will use\\s+([\\d,]+)\\s+credits?/i;
+          // Locale-tolerant: match a number next to a credit-word stem, which
+          // covers en "120 credits", pt "120 creditos/creditos", es "creditos".
+          // An English-only /Generating will use N credits/ silently returns
+          // null on a pt-BR UI and reads as "no cost shown" (memory:
+          // flow-locale-leak-icon-ligatures).
+          const creditRe = /([\\d.,]+)\\s*(?:cr[e\\u00e9]dito?s?|credits?)/i;
           const credits = (text.match(creditRe) || [])[1] || null;
-          // The composer's dynamic summary chip, e.g. "Video · 4s ▭ x1".
+          // The composer's dynamic summary chip, e.g. "Video · 4s x1".
+          // "Video" is a product-ish word that also reads in pt ("Video"), but
+          // keep the raw menu text so a locale miss is visible, not silent.
           const chip = [...document.querySelectorAll('button, div')]
             .map(e => (e.textContent || '').replace(/\\s+/g, ' ').trim())
-            .filter(t => /^Video\\b/.test(t) && t.length <= 40)
+            .filter(t => /^V[i\\u00ed]deo\\b/i.test(t) && t.length <= 40)
             .sort((a, b) => a.length - b.length)[0] || null;
+          const body = document.body.innerText.toLowerCase();
           return {
             menu_present: !!menu,
             tabs,
             credits_text: credits,
             composer_chip: chip,
-            model_trigger_label: (document.querySelector(
-              "button[aria-haspopup='menu'] , button") && null),
-            ingredient_reject: document.body.innerText
-              .toLowerCase().includes('cannot use image ingredients'),
+            menu_text: text.slice(0, 400),
+            page_lang: document.documentElement.lang || null,
+            ingredient_reject: body.includes('cannot use image ingredients')
+              || body.includes('ingredientes de imagem'),
           };
         }"""
     )
@@ -186,16 +216,41 @@ async def _run(profile: str, project: str) -> int:
             step("menu", "ERROR: still no crop_* settings trigger after mode recovery")
             return 1
 
+        video_ok = await _ensure_video_mode(page)
+        step("mode", f"video tab selected={video_ok}")
         baseline = await _menu_state(page)
         step("menu", f"baseline tabs={len(baseline['tabs'])} credits={baseline['credits_text']}")
 
         for model in VideoModel:
             step(model.value, "selecting...")
             await _open_settings(page)
+            await _ensure_video_mode(page)
             ok = await _select_model(page, model)
             if not ok:
-                rows.append({"model": model.value, "selected": False})
-                step(model.value, "  picker miss — recorded, continuing")
+                # A miss is a RESULT, not a dead end — capture what the popover
+                # actually rendered so a cohort/locale difference is diagnosable
+                # instead of an unexplained "PICKER MISS".
+                miss_state = await _menu_state(page)
+                trigger_count = await page.locator(MODEL_PICKER_TRIGGER).count()
+                menuitems = await page.evaluate(
+                    """() => [...document.querySelectorAll("[role='menuitem']")]
+                           .map(e => (e.textContent || '').replace(/\\s+/g,' ').trim())
+                           .slice(0, 20)"""
+                )
+                rows.append(
+                    {
+                        "model": model.value,
+                        "selected": False,
+                        "menu_text": miss_state["menu_text"],
+                        "page_lang": miss_state["page_lang"],
+                        "tabs": [t["label"] for t in miss_state["tabs"]],
+                        "model_trigger_count": trigger_count,
+                        "menuitems_seen": menuitems,
+                    }
+                )
+                step(
+                    model.value, f"  picker miss — tabs={[t['label'] for t in miss_state['tabs']]}"
+                )
                 continue
             await _open_settings(page)
             state = await _menu_state(page)
@@ -210,6 +265,8 @@ async def _run(profile: str, project: str) -> int:
                 "credits_text": state["credits_text"],
                 "composer_chip": state["composer_chip"],
                 "ingredient_rejected": state["ingredient_reject"],
+                "page_lang": state["page_lang"],
+                "menu_text": state["menu_text"],
             }
             rows.append(row)
             step(
@@ -224,6 +281,8 @@ async def _run(profile: str, project: str) -> int:
         "project": project,
         "profile": profile,
         "note": "credit-free: navigation + popover reads only, never submitted",
+        "baseline": baseline,
+        "model_picker_trigger": MODEL_PICKER_TRIGGER,
         "models": rows,
     }
     out.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

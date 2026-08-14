@@ -68,6 +68,44 @@ while `Veo 3.1 - Fast` and `Omni Flash` accept the same asset.
   a drift error.
 - Add an ingredient-capability predicate and reject `r2v` + `veo_3_1_quality`
   pre-submit.
-- Re-verify the matrix on a second account before hard-coding: this is a live UI
-  observation on one cohort, and Flow's arms flap
-  (see [[flow-agent-settings-panel-sticky-defaults]], `#404` label-rename precedent).
+- Re-derive the `veo_3_1_lite_lower_priority` picker selector — it missed on
+  **both** accounts, so its `:not()` exclusion form is genuinely broken rather
+  than cohort-specific.
+
+## Second-account confirmation (`denon82`, pt-BR) — 2026-08-14
+
+Re-ran on a **different account in a different locale**. The matrix is
+**identical**, which removes the one-cohort caveat for the duration finding:
+
+| Model | Duration tabs | Credits (denon82) | Credits (ffroliva) |
+|---|---|---|---|
+| `omni_flash` | **`4s` `6s` `8s` `10s`** | 12 @8s | 15 @10s |
+| `veo_3_1_lite` | **none** | 10 | 10 |
+| `veo_3_1_fast` | **none** | 20 | 20 |
+| `veo_3_1_quality` | **none** | 100 | 100 |
+| `veo_3_1_lite_lower_priority` | picker MISS | — | picker MISS |
+
+Credits match exactly for the three Veo models; `omni_flash` differs only
+because the selected duration differs (12 @8s vs 15 @10s), which independently
+confirms **duration-scaled pricing**.
+
+### Locale findings (pt-BR) — the ligature rule holds
+
+- Video-mode tabs read `crop_freeFrames`, `chrome_extensionElementos`
+  ("Ingredients" → "Elementos"), `crop_9_169:16`, `crop_16_916:9`.
+  **Text is localized; the Material Symbols ligature is not.** Selecting by
+  ligature worked unchanged across both locales — a live re-confirmation of
+  [[flow-locale-leak-icon-ligatures]] (#56).
+- The composer chip reads `Vídeo · 8scrop_16_9x1` — localized word, embedded
+  ligature. Any chip matcher must strip ligatures AND not assume "Video".
+- The credit line is localized too; an English-only
+  `/Generating will use N credits/` regex returns `null` on pt-BR and reads as
+  "no cost shown". Match a number adjacent to a `cr[ée]dito?s?|credits?` stem.
+
+### Spike bug this exposed (worth keeping)
+
+The composer can be in **Image** mode, where the popover shows five aspect tabs
+and **no video model picker** — every model lookup then misses. The first
+denon82 run reported 5/5 picker misses for exactly this reason. Selecting the
+Video tab first (by the `videocam` ligature) fixed it. Production does this via
+`switch_to_video_mode`; any recon script must too.
