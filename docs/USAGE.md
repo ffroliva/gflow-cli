@@ -523,13 +523,19 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 Generate a video from a text prompt only.
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--profile] [-t/--tool] [--project] [--out-dir] [-o/--output]
+gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [-o/--output]
 
 Options:
   -o, --output PATH     Explicit destination file path for the generated asset
                         (e.g., `./out/clip.mp4`). Overrides automatic filename.
   --project ID          Generate in this EXISTING Flow project instead of a
                         scratch project (see "Sharing one project across calls").
+  --ui-mode [auto|classic|agentic]
+                        Which Flow UI arm to require (#299). Video only has a
+                        classic driver: classic/auto verify the classic editor
+                        pre-submit and abort with exit 28 ($0 spent) if it is
+                        unreachable; agentic is rejected (exit 2) — not yet
+                        supported for video. Also on `video i2v`.
 ```
 
 ```bash

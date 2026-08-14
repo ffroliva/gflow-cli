@@ -773,3 +773,32 @@ class TestProtocolEras:
 
         assert tools.ttl_ms == 0
         assert resources.ttl_ms == 0
+
+
+class TestUiModeParity:
+    """#299 PR-A: the CLI --ui-mode option mirrors to a ui_mode param on BOTH
+    generate tools (AGENTS.md §61); video rejects 'agentic' at the tool edge
+    (no agentic video driver exists)."""
+
+    def test_both_generate_tools_expose_ui_mode(self, mcp_server: Any) -> None:
+        for tool_name in ("gflow_generate_image", "gflow_generate_video"):
+            tool = mcp_server._tool_manager._tools[tool_name]
+            assert "ui_mode" in tool.parameters.get("properties", {}), (
+                f"{tool_name} missing 'ui_mode' (CLI parity, refs #299)"
+            )
+
+    @pytest.mark.asyncio
+    async def test_video_tool_rejects_agentic_ui_mode(self) -> None:
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(prompt="x", ui_mode="agentic")
+        assert result["status"] == "error"
+        assert "agentic" in str(result).lower()
+
+    @pytest.mark.asyncio
+    async def test_video_tool_rejects_unknown_ui_mode(self) -> None:
+        from gflow_cli.mcp.tools import gflow_generate_video
+
+        result = await gflow_generate_video(prompt="x", ui_mode="bogus")
+        assert result["status"] == "error"
+        assert "ui_mode" in str(result).lower()

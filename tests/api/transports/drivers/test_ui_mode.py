@@ -274,3 +274,19 @@ def test_worker_ui_mode_absent_is_none() -> None:
         {"prompt": "a", "model": "nano2", "aspect": "1:1"},
     )
     assert req.ui_mode is None
+
+
+def test_worker_builds_video_ui_mode_from_payload() -> None:
+    # #299 PR-A: the video queue payload round-trips ui_mode (the image-only
+    # decode at codec.py was the documented MCP->FlowWorker silent-drop trap).
+    from gflow_cli.worker.codec import build_video_request
+
+    req = build_video_request({"prompt": "a", "ui_mode": "classic"})
+    assert req.ui_mode is UiMode.CLASSIC
+
+
+def test_worker_video_ui_mode_absent_is_none() -> None:
+    from gflow_cli.worker.codec import build_video_request
+
+    req = build_video_request({"prompt": "a"})
+    assert req.ui_mode is None
