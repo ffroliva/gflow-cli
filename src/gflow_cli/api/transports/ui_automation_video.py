@@ -3610,15 +3610,6 @@ class VideoGenerationMixin:
         # with no DOM state mutated and no credit risk.
         effective_model = VideoGenerationMixin._resolve_i2v_model(request, is_i2v_with_frames)
 
-        from gflow_cli.api.transports.drivers.classic import (  # noqa: PLC0415
-            ClassicFlowUiDriver,
-        )
-
-        # Bind the driver unconditionally to classic for Task 2.  Task 3 will
-        # replace this line with ``await get_ui_driver(page)`` once the agentic
-        # driver is production-ready.
-        ui_driver = ClassicFlowUiDriver(transport=self)
-
         page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
 
         await self._enter_editor(page, out_dir, project_id=project_id)
@@ -3626,6 +3617,32 @@ class VideoGenerationMixin:
         # Dismiss any Flow changelog / "What's new" overlay that may be on top
         # of the editor before we click into mode-switch / settings / submit (#26).
         await self._dismiss_blocking_overlays(page, out_dir)
+
+        # #299: the video path binds through the mode policy like images do —
+        # get_ui_driver switches to the required arm, VERIFIES via a DOM
+        # re-probe, and fails fast pre-submit (UiModeUnavailableError, exit 28)
+        # when the arm is unreachable, so an agentic cohort flip costs $0
+        # instead of a mid-flow selector-drift failure. The video pipeline only
+        # has a classic driver, so every request clamps to classic-required:
+        # ``auto`` ≡ classic until an agentic video driver exists, and an
+        # env-sourced ``agentic`` (set for image workflows) degrades to classic
+        # with a warning — only the explicit ``--ui-mode agentic`` flag
+        # rejects, at the CLI edge (exit 2). The bind runs AFTER the editor
+        # mounts + overlays clear: the policy probes the live DOM.
+        from gflow_cli.api.transports.drivers.factory import (  # noqa: PLC0415
+            get_ui_driver,
+        )
+        from gflow_cli.config import UiMode, resolve_ui_mode  # noqa: PLC0415
+
+        base_mode = request.ui_mode if request.ui_mode is not None else resolve_ui_mode(None)
+        if base_mode is UiMode.AGENTIC:
+            log.warning(
+                "ui_automation_video.ui_mode_agentic_clamped",
+                requested=base_mode.value,
+                bound="classic",
+                reason="no agentic video driver exists; classic required",
+            )
+        ui_driver = await get_ui_driver(page, ui_mode=UiMode.CLASSIC, transport=self)
         await ui_driver.switch_to_video_mode(page, out_dir=out_dir)
 
         # Capture project_id from the editor URL as soon as we have it —

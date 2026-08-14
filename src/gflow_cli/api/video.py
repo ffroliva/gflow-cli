@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from gflow_cli.config import UiMode
     from gflow_cli.tools.invocation import AppliedTool
 
 # Type alias used with cast() in response parsers — avoids repeating the
@@ -253,6 +254,11 @@ class GenerateVideoRequest:
     # the applied-tool snapshot for ``operations.metadata_json.tool``. (PR2 §8)
     original_prompt: str | None = None
     tool: AppliedTool | None = None
+    # Requested Flow UI arm (#299) from --ui-mode; None → resolve from
+    # GFLOW_CLI_UI_MODE / default at the transport. Not sent on the wire.
+    # The video pipeline clamps to classic-required (no agentic video driver
+    # exists); see _generate_video_locked.
+    ui_mode: UiMode | None = None
 
     def __post_init__(self) -> None:
         self._validate_prompt()

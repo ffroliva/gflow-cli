@@ -59,3 +59,14 @@ def test_cap_budget_counts_entities_plus_images() -> None:
             reference_entities=("a", "b"),
             reference_images=(Path("x.png"), Path("y.png")),
         )
+
+
+def test_ui_mode_field_defaults_none_and_accepts_enum() -> None:
+    # #299 PR-A: the video DTO carries the requested UI arm like the image DTO
+    # (api/image.py ui_mode). None -> resolve from GFLOW_CLI_UI_MODE at the
+    # transport; never sent on the wire.
+    from gflow_cli.config import UiMode
+
+    assert GenerateVideoRequest(prompt="x").ui_mode is None
+    req = GenerateVideoRequest(prompt="x", ui_mode=UiMode.CLASSIC)
+    assert req.ui_mode is UiMode.CLASSIC
