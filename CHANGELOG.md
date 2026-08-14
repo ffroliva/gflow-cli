@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--ui-mode` on `gflow video t2v`/`i2v` + `ui_mode` on MCP `gflow_generate_video` (#299 PR-A).** The video path joins the UI-mode policy that images have had since v0.34.0: the transport now binds its driver through `get_ui_driver` (after editor mount + overlay dismissal) instead of a hardcoded classic bind. Video only has a classic driver, so `auto` ≡ `classic`; an env-sourced `GFLOW_CLI_UI_MODE=agentic` (set for image workflows) degrades to classic with a logged warning, while the explicit `--ui-mode agentic` flag (or MCP `ui_mode="agentic"`) is rejected up front — CLI exit 2 before any browser work, since exit 28's "retry may land it" remediation would mislead for a driver that doesn't exist. The worker queue codec round-trips the new payload field (it previously decoded `ui_mode` for image payloads only).
+
 ### Changed
+
+- **Video generation on an agentic cohort now fails fast pre-submit (#299 PR-A).** When Flow serves the agentic editor and classic can't be recovered, `gflow video` commands abort with `UiModeUnavailableError` (exit 28, zero credits, retryable — the cohort flaps per page load) *before* submission, instead of burning 30–40 s of doomed selector timeouts and dying mid-flow with exit 23/25.
 
 - **MCP `gflow://docs/known-issues` resource is now bounded (#501).** The old
   resource returned all of KNOWN_ISSUES.md (~70 KB, growing every release) on

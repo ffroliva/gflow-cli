@@ -880,6 +880,7 @@ def _build_video_payload(
     project: str | None,
     project_name: str | None,
     output: str | None = None,
+    ui_mode: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "prompt": prompt,
@@ -887,6 +888,8 @@ def _build_video_payload(
         "aspect": aspect,
         "count": count,
     }
+    if ui_mode is not None:
+        payload["ui_mode"] = ui_mode
     if model is not None:
         payload["model"] = model
     if duration is not None:
@@ -913,6 +916,8 @@ def _build_video_payload(
         "The prompt supports @CharacterName mentions to tag saved project characters by name "
         "(resolves to referenceEntities). Reference a SAVED character via @Name; pass one-off "
         "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
+        "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
+        "before spending credits if unreachable; 'agentic' is not supported for video. "
         "Returns the local file path to the generated video."
     ),
 )
@@ -931,6 +936,7 @@ async def gflow_generate_video(  # NOSONAR
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
     project_name: str | None = None,
+    ui_mode: str | None = None,
     output: str | None = None,
     wait: bool = True,
 ) -> dict[str, Any]:
@@ -970,6 +976,12 @@ async def gflow_generate_video(  # NOSONAR
         project: Optional existing Flow project id to generate into (mirrors the
             CLI ``--project`` flag on ``video t2v``/``i2v``/``r2v``). When
             omitted, a scratch project is created as before.
+        ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
+            ``video t2v``/``i2v``; applies to every mode of this tool,
+            including 'r2v'). Video generation only has a classic driver:
+            'classic'/'auto' verify the classic editor pre-submit (best-effort
+            DOM probe) and abort before spending credits if it is unreachable;
+            'agentic' is not yet supported for video and is rejected (400).
         **kwargs: Additional optional keyword arguments such as ``project_name``.
 
     Returns:
@@ -978,6 +990,27 @@ async def gflow_generate_video(  # NOSONAR
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
+
+    if ui_mode is not None:
+        # Normalize case to mirror the CLI's click.Choice(case_sensitive=False);
+        # both invalid branches answer with the same _bad_param RFC 9457
+        # envelope as every other 400 from this tool (a flat-string error
+        # would crash clients reading error["title"]).
+        ui_mode = ui_mode.lower()
+        if ui_mode not in {m.value for m in UiMode}:
+            return _bad_param(
+                "Invalid ui_mode",
+                f"Expected one of {[m.value for m in UiMode]}, got {ui_mode!r}.",
+            )
+        if ui_mode == UiMode.AGENTIC.value:
+            # #299: no agentic VIDEO driver exists — mirror the CLI edge's
+            # rejection instead of an exit-28 whose retry hint would mislead.
+            return _bad_param(
+                "Unsupported ui_mode for video",
+                "ui_mode 'agentic' is not supported for video generation yet "
+                "(no agentic video driver exists; refs #299). Use 'classic' "
+                "or 'auto'.",
+            )
 
     # Validate the model alias up front (mirrors the CLI's pre-spend check) so an
     # unknown model fails fast with a 400 instead of dying deep in the worker.
@@ -1033,6 +1066,7 @@ async def gflow_generate_video(  # NOSONAR
         project=project,
         project_name=project_name,
         output=output,
+        ui_mode=ui_mode,
     )
     payload.update(media)
 

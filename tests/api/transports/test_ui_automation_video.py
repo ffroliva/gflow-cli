@@ -563,6 +563,15 @@ def _stub_video_helpers(monkeypatch: pytest.MonkeyPatch, *, generate_resp: dict)
         "_attach_status_response_listener",
         staticmethod(lambda page: ([], object())),
     )
+    # #299: generate_video binds its driver via the mode-policy factory; stub
+    # the bind to a real classic driver so no DOM probing hits the mock page.
+    from gflow_cli.api.transports.drivers import factory
+    from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
+
+    async def _bind_classic(page, *, ui_mode, transport):  # type: ignore[no-untyped-def]  # noqa: ARG001
+        return ClassicFlowUiDriver(transport=transport)
+
+    monkeypatch.setattr(factory, "get_ui_driver", _bind_classic)
 
 
 class TestGenerateVideoGuards:
@@ -3333,3 +3342,151 @@ class TestAttachReferencesDedup:
 
         select.assert_not_awaited()
         upload.assert_awaited_once()
+
+
+class TestVideoUiModePolicy:
+    """#299 PR-A: the video path binds its driver through ``get_ui_driver`` so
+    the mode policy (pre-submit exit-28 fail-fast, $0) covers video like it
+    covers images. No agentic video driver exists, so every request clamps to
+    classic-required; an env-sourced ``agentic`` degrades with a warning."""
+
+    def _transport(self, monkeypatch: pytest.MonkeyPatch) -> UiAutomationTransport:
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        _stub_video_helpers(
+            monkeypatch,
+            generate_resp={"status": 200, "url": _T2V_URL, "body": {"media": [{"name": "vid-1"}]}},
+        )
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_poll_video_status",
+            AsyncMock(
+                return_value=VideoStatus(
+                    media_id="vid-1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"
+                )
+            ),
+        )
+        monkeypatch.setattr(transport, "_download_video", AsyncMock(return_value=Path("v.mp4")))
+        return transport
+
+    @pytest.mark.asyncio
+    async def test_binds_classic_via_policy_after_editor_mount(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.api.transports.drivers import factory
+        from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
+        from gflow_cli.config import UiMode
+
+        transport = self._transport(monkeypatch)
+        order: list[str] = []
+        bind_modes: list[object] = []
+
+        async def _enter(*_a: object, **_k: object) -> None:
+            order.append("enter_editor")
+
+        monkeypatch.setattr(transport, "_enter_editor", _enter)
+
+        async def _overlays(*_a: object, **_k: object) -> None:
+            order.append("dismiss_overlays")
+
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", _overlays)
+
+        async def _bind(page, *, ui_mode, transport):  # type: ignore[no-untyped-def]  # noqa: ARG001
+            order.append("bind")
+            bind_modes.append(ui_mode)
+            return ClassicFlowUiDriver(transport=transport)
+
+        monkeypatch.setattr(factory, "get_ui_driver", _bind)
+
+        await transport.generate_video(request=GenerateVideoRequest(prompt="x"), download=False)
+        # The bind probes the DOM, so it must happen after the editor mounts
+        # AND after overlay dismissal (predict condition — an overlay on top of
+        # the composer would make the cohort probe misread). Overlays are then
+        # re-dismissed AFTER the bind: the classic recovery's sanctioned reload
+        # can re-mount the #26 overlay (code-review finding).
+        assert order == ["enter_editor", "dismiss_overlays", "bind", "dismiss_overlays"]
+        assert bind_modes == [UiMode.CLASSIC]
+
+    @pytest.mark.asyncio
+    async def test_unreachable_arm_aborts_before_submit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.api.transports.drivers import factory
+        from gflow_cli.config import UiMode
+        from gflow_cli.errors import UiModeUnavailableError
+
+        transport = self._transport(monkeypatch)
+        monkeypatch.setattr(
+            factory,
+            "get_ui_driver",
+            AsyncMock(side_effect=UiModeUnavailableError(UiMode.CLASSIC)),
+        )
+        with pytest.raises(UiModeUnavailableError):
+            await transport.generate_video(request=GenerateVideoRequest(prompt="x"), download=False)
+        # Pre-submit abort: neither the prompt nor any settings/attach step ran.
+        cast(AsyncMock, transport._send_prompt).assert_not_awaited()
+        cast(AsyncMock, VideoGenerationMixin._select_video_model).assert_not_awaited()
+        cast(AsyncMock, VideoGenerationMixin._attach_frame).assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_env_agentic_clamps_to_classic_with_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        install_log_capture: structlog.testing.LogCapture,
+    ) -> None:
+        import gflow_cli.config as config_mod
+        from gflow_cli.api.transports.drivers import factory
+        from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
+        from gflow_cli.config import UiMode
+
+        transport = self._transport(monkeypatch)
+        monkeypatch.setattr(config_mod, "resolve_ui_mode", lambda _cli: UiMode.AGENTIC)
+        bind_modes: list[object] = []
+
+        async def _bind(page, *, ui_mode, transport):  # type: ignore[no-untyped-def]  # noqa: ARG001
+            bind_modes.append(ui_mode)
+            return ClassicFlowUiDriver(transport=transport)
+
+        monkeypatch.setattr(factory, "get_ui_driver", _bind)
+
+        await transport.generate_video(request=GenerateVideoRequest(prompt="x"), download=False)
+        assert bind_modes == [UiMode.CLASSIC]
+        events = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.ui_mode_agentic_clamped"
+        ]
+        assert len(events) == 1
+        assert events[0]["requested"] == "agentic"
+
+    @pytest.mark.asyncio
+    async def test_request_classic_threads_without_env_resolve(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gflow_cli.config as config_mod
+        from gflow_cli.api.transports.drivers import factory
+        from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
+        from gflow_cli.config import UiMode
+
+        transport = self._transport(monkeypatch)
+
+        def _explode(_cli: object) -> object:
+            raise AssertionError(
+                "resolve_ui_mode must not be consulted when the DTO carries a mode"
+            )
+
+        monkeypatch.setattr(config_mod, "resolve_ui_mode", _explode)
+        bind_modes: list[object] = []
+
+        async def _bind(page, *, ui_mode, transport):  # type: ignore[no-untyped-def]  # noqa: ARG001
+            bind_modes.append(ui_mode)
+            return ClassicFlowUiDriver(transport=transport)
+
+        monkeypatch.setattr(factory, "get_ui_driver", _bind)
+
+        req = GenerateVideoRequest(prompt="x", ui_mode=UiMode.CLASSIC)
+        await transport.generate_video(request=req, download=False)
+        assert bind_modes == [UiMode.CLASSIC]

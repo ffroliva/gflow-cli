@@ -253,6 +253,9 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
     reference_entities = tuple(payload.get("reference_entities", []))
     reference_entity_names = tuple(payload.get("reference_entity_names", []))
     reference_audio = payload.get("reference_audio")
+    # #299: the video payload carries ui_mode like the image payload does —
+    # an image-only decode here silently dropped the MCP param.
+    ui_mode = UiMode(payload["ui_mode"]) if payload.get("ui_mode") else None
 
     return GenerateVideoRequest(
         prompt=prompt,
@@ -272,4 +275,5 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
         reference_entities=reference_entities,
         reference_entity_names=reference_entity_names,
         reference_audio=reference_audio,
+        ui_mode=ui_mode,
     )
