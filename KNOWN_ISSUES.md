@@ -876,6 +876,21 @@ Chromium refuses to open two persistent contexts on the same `user-data-dir` sim
 
 **Workaround:** use different profiles for parallel work — different profiles acquire independent leases and run fully concurrently.
 
+### gflow refuses to open my profile after a downgrade ("written by a newer Chromium", exit 11)
+
+- **Status:** Working as intended (guard shipped in v0.56.0, #477)
+- **Affects:** any bundled-Chromium open of a persisted profile after gflow-cli
+  (and with it the bundled Playwright Chromium) was downgraded
+
+This refusal is deliberate: opening a Chrome profile with an older Chromium
+**major** version than last wrote it triggers Chromium's downgrade cleanup,
+which can shred the newer session store and surface later as a mystery logout.
+The error names both versions and the remedy. Fix: upgrade gflow-cli (and run
+`playwright install chromium`), or re-create the profile with
+`gflow auth login` — login is deliberately unguarded as the recovery path.
+`chrome`-strategy profiles are exempt (real Chrome manages its own lifecycle).
+Full detail: [AUTHENTICATION § Chromium downgrade guard](docs/AUTHENTICATION.md#chromium-downgrade-guard).
+
 ```bash
 # Terminal 1
 gflow image batch ./batch-a.tsv --profile work
