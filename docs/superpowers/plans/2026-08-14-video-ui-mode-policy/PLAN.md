@@ -43,7 +43,7 @@ with `--ui-mode` exposed on the video commands (agentic honestly rejected at the
 - [x] `check_repo_hygiene.py` + `check_doc_links.py`
 - [x] `ruff check` + `ruff format --check`
 - [x] `pyright src` (baseline: pre-existing errors in mcp/* + ui/app.py only — any delta blocks)
-- [ ] Scoped pytest: tests/api/transports/ tests/mcp/ tests/test_cli_video* (+ CliRunner files touched)
+- [x] Scoped pytest: tests/api tests/cli tests/mcp tests/worker — green (see commit)
 
 ### T7 — live $0 gate
 - [x] Drive the video editor bind on a real profile: N loads binding classic (assert `ui_driver.bound mode=classic` event, zero credits, abort pre-submit via route-abort or plain exit before generate).
