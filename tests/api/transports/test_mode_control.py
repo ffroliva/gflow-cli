@@ -44,6 +44,8 @@ class _FakePage:
     - media:  crop_* present; toggle present with aria-pressed=false.
     - agent:  no crop; toggle present with aria-pressed=true; expand available.
     - sidebar: no crop; no in-composer toggle; the sidebar X (close) present.
+    - sidebar_unscoped: the #493 cohort — sidebar open, but its edit_square-scoped
+      X does NOT match; only the unscoped fallback can close it.
     - pinned: server-pinned agentic arm — toggle present (aria-pressed=true),
       clicking flips aria to false BUT the crop panel never mounts in place
       (state → pinned_off); only a reload after the persisted toggle-off
@@ -93,7 +95,11 @@ class _FakePage:
         if sel == mc.AGENT_TOGGLE_SELECTOR:
             return 1 if self.state in ("media", "agent", "pinned", "pinned_off") else 0
         if sel == mc.SIDEBAR_CLOSE_SELECTOR:
+            # "sidebar_unscoped" = the #493 cohort: the sidebar exists but its
+            # edit_square-scoped X never matches, so only the fallback can find it.
             return 1 if self.state == "sidebar" else 0
+        if sel == mc.SIDEBAR_CLOSE_FALLBACK_SELECTOR:
+            return 1 if self.state in ("sidebar", "sidebar_unscoped") else 0
         return 0
 
     def attr(self, sel: str, name: str) -> str | None:
@@ -107,6 +113,9 @@ class _FakePage:
     def click(self, sel: str, kw: dict[str, object] | None = None) -> None:
         self.clicks.append(sel)
         self.click_kwargs.append(kw or {})
+        if sel == mc.SIDEBAR_CLOSE_FALLBACK_SELECTOR and self.state == "sidebar_unscoped":
+            self.state = "media"
+            return
         if sel == mc.AGENT_TOGGLE_SELECTOR:
             if self.state == "pinned":
                 self.state = "pinned_off"
@@ -326,3 +335,41 @@ async def test_ensure_agent_survives_render_race() -> None:
     page = _FakePage(state="media", blank_waits=3)
     assert await mc.ensure_agent_mode(page) is True  # type: ignore[arg-type]
     assert page.state == "agent"
+
+
+class TestSidebarCloseFallback:
+    """#493: expanding the chat sidebar removes the classic composer entirely —
+    no crop_* trigger AND no Agent pill, which is exactly the reported
+    fingerprint. Recovery hinges on SIDEBAR_CLOSE_SELECTOR, which is scoped to
+    the sidebar's `edit_square` affordance; a cohort whose sidebar lacks that
+    ligature never finds the X, so the composer never returns and the run dies
+    with exit 23.
+
+    Reproduced live 2026-08-14, and A/B-proven: with the scoped selector
+    neutered the fallback recovers; with BOTH neutered it does not."""
+
+    @pytest.mark.asyncio
+    async def test_recovers_when_the_scoped_selector_misses(self) -> None:
+        page = _FakePage(state="sidebar_unscoped")
+        acted = await mc.ensure_media_mode(page)
+        assert acted is True
+        assert await mc._crop_present(page) is True  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_does_not_recover_when_no_close_affordance_exists(self) -> None:
+        """Negative control — the loop alone does NOT rescue. With no close
+        button of either shape, ensure_media_mode must give up and leave the
+        caller's own probe to fail loudly (the documented contract)."""
+        page = _FakePage(state="stuck")  # no crop, no pill, no close of any kind
+        await mc.ensure_media_mode(page)
+        assert await mc._crop_present(page) is False  # noqa: SLF001
+        assert mc.SIDEBAR_CLOSE_FALLBACK_SELECTOR not in page.clicks
+
+    @pytest.mark.asyncio
+    async def test_fallback_is_not_used_when_the_agent_pill_is_present(self) -> None:
+        """The unscoped fallback is safe ONLY in the stuck state. With a pill on
+        screen the composer still exists, so the normal toggle path must run."""
+        page = _FakePage(state="agent")  # pill present, aria-pressed=true
+        await mc.ensure_media_mode(page)
+        assert mc.AGENT_TOGGLE_SELECTOR in page.clicks, page.clicks
+        assert mc.SIDEBAR_CLOSE_FALLBACK_SELECTOR not in page.clicks, page.clicks

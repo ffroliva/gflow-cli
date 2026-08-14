@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow video`/`image` can no longer get stuck behind Flow's expanded chat
+  sidebar (#493).** Expanding the sidebar removes the classic composer
+  **entirely** — no `crop_*` settings trigger *and* no Agent pill — which is
+  exactly the fingerprint reported in #493 ("no `crop_*` settings button", "the
+  Agente pill matches neither selector"). It also explains the exit code: with
+  no agentic indicator on screen either, the cohort detector matches nothing, so
+  the run dies as `UiSelectorDriftError` (exit 23) instead of the retryable
+  agentic error (25). Recovery hinged on a single selector scoped to the
+  sidebar's `edit_square` affordance; a cohort whose sidebar lacks that ligature
+  never found the X, so the sidebar never closed and the composer never came
+  back. `ensure_media_mode` now falls back to an unscoped close **only** from
+  the demonstrably stuck state (no `crop_*` **and** no pill), where the classic
+  composer is gone and there is nothing else a close button could belong to.
+  Reproduced live and A/B-proven: with the scoped selector neutered the fallback
+  recovers; with both neutered it does not.
+
 - **`--duration` now fails fast instead of masquerading as UI drift (#451, #288).**
   Flow's video settings popover is **model-conditional**: only `omni-flash` renders
   a `4s/6s/8s/10s` row, and the Veo 3.1 models render **no duration control at all**
