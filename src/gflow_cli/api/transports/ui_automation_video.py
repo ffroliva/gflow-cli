@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import json
 import random
+import re
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -1725,12 +1726,24 @@ class VideoGenerationMixin:
         await search_input.press_sequentially(name, delay=random.randint(10, 50))  # NOSONAR
         await page.wait_for_timeout(600)
 
-        # Role+name match — apostrophes in the display name would break a
+        # Text match — apostrophes in the display name would break a
         # `:has-text('{name}')` CSS selector.
         tile = VideoGenerationMixin._remote_option_tile(page, name).first
         await tile.wait_for(state="visible", timeout=8000)
         await tile.click()
         await page.wait_for_timeout(300)
+
+        # #529 live recon (pt profile): clicking the result tile now attaches
+        # directly and closes the picker — the include button exists only in
+        # the hover-preview pane. Treat a closed dialog as success and fall
+        # through to the legacy include-button flow only while it stays open.
+        dialog = page.locator(DIALOG_ANY).last
+        try:
+            await dialog.wait_for(state="hidden", timeout=3000)
+        except Exception:  # noqa: BLE001 - any wait failure = dialog still open
+            pass
+        else:
+            return
 
         # Include via the tiered, locale-safe resolver (a hardcoded English
         # "Add to Prompt" here previously hung non-English accounts — #170/#56).
@@ -1767,9 +1780,16 @@ class VideoGenerationMixin:
         commonly contain an apostrophe or quote that would break a
         single-quoted ``:has-text()`` CSS selector (PR #237 review).
         """
-        # exact=True: the default substring match would let 'cabin' select
+        # Anchored match: a substring match would let 'cabin' select
         # 'cabin at night' and .first attach the wrong image (PR #245 review).
-        return page.get_by_role("option", name=name, exact=True)
+        # #529 live recon: the picker dialog exposes NO accessible tree (the
+        # option's computed name is empty), so role+name matching can never
+        # find the tile — match the option's text instead. The text carries
+        # the picker's localized media-type badge after the display name
+        # ('…map\nImagem' on a pt profile); tolerate only a trailing
+        # capitalized badge word, which 'at night' is not.
+        pattern = re.compile(rf"^{re.escape(name)}(\s?[^\Wa-z0-9_]\S*)?$")
+        return page.locator("[role='option']", has_text=pattern)
 
     @staticmethod
     async def _resolve_frame_slot(

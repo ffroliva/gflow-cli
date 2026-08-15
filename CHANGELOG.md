@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **R2V named remote references (`ref_names`) work again after Flow's picker
+  redesign — live-verified end to end (#529 follow-up).** Two UI drifts had
+  silently broken the name-attach path on every locale: the picker dialog no
+  longer exposes an accessible tree, so the old ARIA role+name tile match could
+  never find a result (the tile is now matched by its text, anchored so a
+  substring name still cannot attach the wrong asset, tolerating the localized
+  media-type badge the tile text appends, e.g. `…Imagem` on a pt profile); and
+  clicking a result tile now attaches directly and closes the picker — the
+  legacy include-button flow runs only if the dialog stays open. Proven by a
+  new live e2e that seeds a t2i image, reads its recorded `displayName` back
+  from the catalog by UUID, and generates a real R2V video with it
+  (`tests/e2e/test_video_r2v_uuid_name_e2e.py`), alongside a new same-project
+  image-picker e2e pinning the #529 exact-UUID-tile happy path.
+
 ### Changed
 
 - **Catalog image UUIDs now resolve through Flow display names instead of

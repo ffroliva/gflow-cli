@@ -1566,22 +1566,31 @@ class TestRemoteRefTileLocator:
     def test_apostrophe_name_does_not_go_into_a_quoted_css_selector(self) -> None:
         page = MagicMock()
         VideoGenerationMixin._remote_option_tile(page, "Wren's cabin")
-        # role-based match: the raw name is passed as the accessible name,
-        # never interpolated into a `:has-text('...')` CSS string.
-        page.get_by_role.assert_called_once()
-        args, kwargs = page.get_by_role.call_args
-        assert args[0] == "option"
-        assert kwargs.get("name") == "Wren's cabin"
-        page.locator.assert_not_called()
+        # #529 live recon: the picker exposes no accessible tree, so the tile
+        # is matched by text via has_text — the name is escaped into an
+        # anchored regex, never interpolated into a `:has-text('...')` CSS
+        # string.
+        page.locator.assert_called_once()
+        args, kwargs = page.locator.call_args
+        assert args[0] == "[role='option']"
+        assert kwargs["has_text"].match("Wren's cabin")
+        page.get_by_role.assert_not_called()
 
-    def test_matches_exactly_so_a_substring_name_cannot_attach_the_wrong_tile(self) -> None:
-        # PR #245 review #4: without exact=True, get_by_role's default substring
-        # match makes 'cabin' also select 'cabin at night' → .first attaches the
-        # wrong image silently.
+    def test_anchored_so_a_substring_name_cannot_attach_the_wrong_tile(self) -> None:
+        # PR #245 review #4: a substring match makes 'cabin' also select
+        # 'cabin at night' → .first attaches the wrong image silently.
+        # #529 live e2e: the option's text carries the picker's localized
+        # media-type badge ('…\nImagem' on a pt profile) appended to the
+        # display name — that suffix, and only that suffix, must be tolerated.
         page = MagicMock()
         VideoGenerationMixin._remote_option_tile(page, "cabin")
-        _, kwargs = page.get_by_role.call_args
-        assert kwargs.get("exact") is True
+        pattern = page.locator.call_args.kwargs["has_text"]
+        assert pattern.match("cabin")
+        assert pattern.match("cabinImagem")
+        assert pattern.match("cabin\nImagem")
+        assert not pattern.match("cabin at night")
+        assert not pattern.match("cabin at nightImagem")
+        assert not pattern.match("cabinsImagem")
 
 
 class TestRemoteReferencesDialogGuard:

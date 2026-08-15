@@ -91,7 +91,7 @@ the browser search key.
 - [x] Run `/gflow:pr-council-review` and reach consensus green.
 - [x] Re-run the picker verification against both the implemented image-picker
   selector and real I2V Start-frame slot paths.
-- [ ] Update PR #540, then verify CI and `/gflow:sonar 540` are green.
+- [x] Update PR #540, then verify CI and `/gflow:sonar 540` are green.
 
 ## Definition of done
 
@@ -99,6 +99,6 @@ the browser search key.
 - [x] Council consensus green.
 - [x] Image-picker and I2V frame-slot paths live-verified with no generation
   submission required.
-- [ ] PR #540 updated; CI and SonarCloud show zero new issues.
+- [x] PR #540 updated; CI and SonarCloud show zero new issues.
 - [x] Current guidance supersedes the historical changelog entries that record
   UUID/prompt search and unfiltered grid scrolling experiments.
