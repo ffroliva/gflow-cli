@@ -4,30 +4,30 @@ The #393 report was that a UUID `--ref` typed the raw UUID into the picker's
 name search, found nothing, and generated WITHOUT the reference. Live runs
 against real Flow on 2026-07-27 (v0.44.0) established the true behavior:
 
-* Flow's picker search genuinely does not index UUIDs — the UUID search tiers
-  return zero tiles, which is what the reporter screenshotted. A live DOM
-  capture also showed tiles labelled with a short Flow-authored caption
-  (``alt="Box tied with crimson ribbon"``), NOT the generation prompt, so no
-  catalog-derived search term can rescue the lookup either.
+* Flow's picker search genuinely does not index UUIDs. A live DOM capture showed
+  tiles labelled with Flow's short ``displayName``, not the generation prompt.
+  That name can filter the picker when the catalog retained it; the UUID still
+  identifies the exact surfaced tile.
 * An unfindable ref does NOT generate silently: it raises and exits non-zero
   (verified live, exit 9). That contract is pinned in
   ``tests/api/transports/test_ui_automation_video.py``.
-* What was missing is the rescue: the CLI never handed the transport the
-  asset's recorded local file, so a tile the picker can't reach had no
-  fallback and failed the whole generation.
+* The CLI now hands the transport both the catalog name and any recorded local
+  file, so a named picker miss can still upload the exact image bytes.
 
 These tests pin the enrichment so it can't silently regress.
 """
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
 from gflow_cli.api.image import ImageRef
-from gflow_cli.data.models import AssetKind, SeedImage
+from gflow_cli.data.models import AssetKind
 from gflow_cli.errors import DataStoreError
 
 if TYPE_CHECKING:
@@ -36,29 +36,45 @@ if TYPE_CHECKING:
 _UUID = "5a80906f-31cc-4a87-9782-95f14bb165ce"
 
 
-def _seed(*, local_path: Path | None) -> SeedImage:
-    return SeedImage(
-        profile_name="ffroliva",
-        flow_project_id="336c35c1-eee3-4789-a274-0c04a7bdab2e",
-        flow_media_id=_UUID,
-        flow_workflow_id=None,
-        kind=AssetKind.IMAGE,
-        width=None,
-        height=None,
-        local_path=local_path,
-        prompt="a serene contented moment behind a worn wooden counter",
-        model="NARWHAL",
-        aspect_ratio=None,
-        created_at="2026-07-27T12:00:00+00:00",
+def _asset(
+    *,
+    local_path: Path | None,
+    kind: AssetKind = AssetKind.IMAGE,
+    display_name: str | None = None,
+    recorded_bytes: int | None = None,
+    recorded_sha256: str | None = None,
+) -> SimpleNamespace:
+    content = local_path.read_bytes() if local_path is not None and local_path.is_file() else None
+    return SimpleNamespace(
+        kind=kind,
+        metadata_json={"display_name": display_name} if display_name else {},
+        local_files=(
+            [
+                SimpleNamespace(
+                    path=local_path,
+                    storage_provider=None,
+                    bytes=recorded_bytes if recorded_bytes is not None else len(content or b""),
+                    sha256=(
+                        recorded_sha256
+                        if recorded_sha256 is not None
+                        else hashlib.sha256(content).hexdigest()
+                        if content is not None
+                        else None
+                    ),
+                )
+            ]
+            if local_path is not None
+            else []
+        ),
     )
 
 
 @pytest.fixture
-def patch_seed(monkeypatch: pytest.MonkeyPatch) -> Callable[[object], None]:
+def patch_asset(monkeypatch: pytest.MonkeyPatch) -> Callable[[object], None]:
     """Point the enrichment's catalog lookup at a canned result.
 
-    ``resolve_seed_image`` may be given a ``SeedImage``, ``None`` (unknown
-    asset), or an exception instance to raise (catalog unavailable).
+    The fake repository may be given an asset lookup, ``None`` (unknown asset),
+    or an exception instance to raise (catalog unavailable).
     """
 
     def _apply(result: object) -> None:
@@ -74,7 +90,7 @@ def patch_seed(monkeypatch: pytest.MonkeyPatch) -> Callable[[object], None]:
         class _FakeRepo:
             def __init__(self, _store: object) -> None: ...
 
-            def resolve_seed_image(self, _profile: str, _media_id: str) -> object:
+            def get_asset_by_flow_media_id(self, _profile: str, _media_id: str) -> object:
                 if isinstance(result, Exception):
                     raise result
                 return result
@@ -86,8 +102,34 @@ def patch_seed(monkeypatch: pytest.MonkeyPatch) -> Callable[[object], None]:
 
 
 class TestEnrichUuidRef:
+    def test_populates_catalog_display_name_for_picker_search(
+        self, patch_asset: Callable[[object], None], tmp_path: Path
+    ) -> None:
+        """A bare UUID becomes name-searchable before the browser opens.
+
+        UUID remains the exact tile identity; ``display_name`` is only the
+        browser picker's search key.
+        """
+        from gflow_cli.cli_image import _enrich_uuid_refs
+
+        local = tmp_path / f"{_UUID}_1.jpg"
+        local.write_bytes(b"\xff\xd8\xff")
+
+        patch_asset(
+            _asset(
+                local_path=local,
+                display_name="Brass key on wooden bench",
+            )
+        )
+
+        enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva")[0]
+
+        assert enriched.display_name == "Brass key on wooden bench"
+        assert enriched.local_path == str(local)
+        assert enriched.local_sha256 == hashlib.sha256(local.read_bytes()).hexdigest()
+
     def test_populates_local_path_as_upload_fallback(
-        self, patch_seed: Callable[[object], None], tmp_path: Path
+        self, patch_asset: Callable[[object], None], tmp_path: Path
     ) -> None:
         """The catalog's on-disk file becomes the transport's upload fallback
         for a tile the picker can't reach (#393)."""
@@ -95,7 +137,7 @@ class TestEnrichUuidRef:
 
         local = tmp_path / f"{_UUID}_1.jpg"
         local.write_bytes(b"\xff\xd8\xff")
-        patch_seed(_seed(local_path=local))
+        patch_asset(_asset(local_path=local))
 
         enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva")[0]
 
@@ -103,56 +145,73 @@ class TestEnrichUuidRef:
         assert enriched.local_path == str(local)
 
     def test_missing_local_file_is_not_offered_as_fallback(
-        self, patch_seed: Callable[[object], None], tmp_path: Path
+        self, patch_asset: Callable[[object], None], tmp_path: Path
     ) -> None:
         """A stale catalog path must not send the transport into uploading a
         file that no longer exists — better to fail loud than to fail deep."""
         from gflow_cli.cli_image import _enrich_uuid_refs
 
-        patch_seed(_seed(local_path=tmp_path / "deleted.jpg"))
+        patch_asset(_asset(local_path=tmp_path / "deleted.jpg"))
 
         enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva")[0]
 
         assert enriched.local_path == ""
 
     def test_asset_without_local_file_left_untouched(
-        self, patch_seed: Callable[[object], None]
+        self, patch_asset: Callable[[object], None]
     ) -> None:
         """A cataloged asset that was never downloaded has no bytes to fall
         back on; the picker lookup remains the only path."""
         from gflow_cli.cli_image import _enrich_uuid_refs
 
-        patch_seed(_seed(local_path=None))
+        patch_asset(_asset(local_path=None))
 
         enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva")[0]
 
         assert enriched == ImageRef(name=_UUID)
 
-    def test_unknown_asset_leaves_ref_untouched(self, patch_seed: Callable[[object], None]) -> None:
+    def test_unknown_asset_leaves_ref_untouched(
+        self, patch_asset: Callable[[object], None]
+    ) -> None:
         """A UUID from another machine/profile isn't in the catalog. The ref is
         passed through unchanged — the transport still tries the picker and
         still fails loud if it can't bind it."""
         from gflow_cli.cli_image import _enrich_uuid_refs
 
-        patch_seed(None)
+        patch_asset(None)
 
         enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva")[0]
 
         assert enriched == ImageRef(name=_UUID)
 
-    def test_catalog_failure_is_best_effort(self, patch_seed: Callable[[object], None]) -> None:
+    def test_video_asset_leaves_image_ref_untouched(
+        self, patch_asset: Callable[[object], None], tmp_path: Path
+    ) -> None:
+        """A UUID is not intrinsically an image UUID; never feed a cataloged
+        video file into the I2I picker/upload path."""
+        from gflow_cli.cli_image import _enrich_uuid_refs
+
+        local = tmp_path / f"{_UUID}.mp4"
+        local.write_bytes(b"video")
+        patch_asset(_asset(local_path=local, kind=AssetKind.VIDEO))
+
+        enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva")[0]
+
+        assert enriched == ImageRef(name=_UUID)
+
+    def test_catalog_failure_is_best_effort(self, patch_asset: Callable[[object], None]) -> None:
         """Enrichment is an optimization: a broken/locked catalog must never
         break a generation that would otherwise work."""
         from gflow_cli.cli_image import _enrich_uuid_refs
 
-        patch_seed(DataStoreError(detail="catalog locked"))
+        patch_asset(DataStoreError(detail="catalog locked"))
 
         enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva")[0]
 
         assert enriched == ImageRef(name=_UUID)
 
     def test_preserves_mention_display_name(
-        self, patch_seed: Callable[[object], None], tmp_path: Path
+        self, patch_asset: Callable[[object], None], tmp_path: Path
     ) -> None:
         """An `@mention`-resolved ref already carries the media's display name;
         enrichment adds the fallback file without disturbing it."""
@@ -160,7 +219,7 @@ class TestEnrichUuidRef:
 
         local = tmp_path / f"{_UUID}_1.jpg"
         local.write_bytes(b"\xff\xd8\xff")
-        patch_seed(_seed(local_path=local))
+        patch_asset(_asset(local_path=local))
 
         enriched = _enrich_uuid_refs(
             [ImageRef(name=_UUID, display_name="Shop Interior")], "ffroliva"
@@ -168,6 +227,28 @@ class TestEnrichUuidRef:
 
         assert enriched.display_name == "Shop Interior"
         assert enriched.local_path == str(local)
+        assert enriched.local_sha256 == hashlib.sha256(local.read_bytes()).hexdigest()
+
+    def test_rejects_mutated_recorded_local_fallback(
+        self, patch_asset: Callable[[object], None], tmp_path: Path
+    ) -> None:
+        from gflow_cli.cli_image import _enrich_uuid_refs
+
+        local = tmp_path / "mutated.png"
+        local.write_bytes(b"private replacement")
+        patch_asset(
+            _asset(
+                local_path=local,
+                display_name="Brass key",
+                recorded_bytes=8,
+                recorded_sha256="0" * 64,
+            )
+        )
+
+        enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva")[0]
+
+        assert enriched.display_name == "Brass key"
+        assert enriched.local_path == ""
 
 
 class TestEnrichUuidRefsBatching:
@@ -191,7 +272,7 @@ class TestEnrichUuidRefsBatching:
         class _FakeRepo:
             def __init__(self, _store: object) -> None: ...
 
-            def resolve_seed_image(self, _profile: str, _media_id: str) -> object:
+            def get_asset_by_flow_media_id(self, _profile: str, _media_id: str) -> object:
                 return None
 
         def _open(_path: object) -> _FakeStore:

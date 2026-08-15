@@ -14,7 +14,7 @@ transports.
    - A **saved, named asset** in the project — a `gflow character` entity, or a generated/uploaded
      media asset with a `display_name` → reference it *by identity*: `@Name` or `--reference-entity`.
    - An **arbitrary / one-off image** (a local file, or a look/style you don't intend to reuse) →
-     `--ref` (local path or in-project media UUID).
+     `--ref` (local path; image `i2i` also accepts an in-project media UUID).
 
 2. **HOW you author it** (only matters once you've chosen "by identity")
    - Inline, readable, agent-friendly → `@Name` in the prompt.
@@ -28,7 +28,7 @@ transports.
 | Reference a **saved Character** by name, inline | `@Name` in the prompt | Resolves to `referenceEntities`; the model anchors on that entity. Works on every generation path. |
 | Reference a Character by **explicit id** in a script | `--reference-entity <entityId>` (`t2i`/`i2i`/`t2v`/`r2v`) | Same wire as `@Name`, no name-resolution ambiguity. **Not available on `i2v`** (its DTO rejects reference entities). |
 | Reference a **saved media asset** (generated/uploaded) by name | `@Name` in the prompt | Resolves to the asset's UUID → `referenceImages`, zero re-upload. |
-| Reference a **one-off / arbitrary image** or a look | `--ref <path-or-uuid>` (`i2i`, `r2v`) | Stages `referenceImages` directly; no saved identity needed. |
+| Reference a **one-off / arbitrary image** or a look | `--ref <path>` (`i2i`, `r2v`) or `--ref <uuid>` (`i2i` only) | Stages `referenceImages` directly; no saved identity needed. |
 | Reuse the **same subject** across many generations | `gflow character` once → then `@Name` everywhere | A Character is the durable, name-addressable identity. See [CHARACTER.md](CHARACTER.md). |
 | Anchor an **identity *and* a look** in one shot | Both — a Character mention **and** a `--ref` | They complement (entity + image), and identical references dedupe, within the model's reference cap. |
 
@@ -43,6 +43,19 @@ reference caps are enforced before submit.
 `--ref` is the odd one out: it always stages `referenceImages` (an image), never `referenceEntities`
 (a saved identity). That's the whole distinction — *identity* vs *image*.
 
+For a catalog-backed `--ref <uuid>`, gflow resolves the UUID to Flow's recorded
+`display_name`, searches that name in the browser picker, and then verifies the
+exact UUID in the surfaced tile. The name is discovery; the UUID remains identity,
+so duplicate names cannot select the wrong asset. This path does not scan the
+unfiltered picker grid. If the named tile is unavailable, `image i2i` can still
+use the catalog's recorded local file as its upload fallback. I2V start/end
+frames carry the same fallback even when they have a name, so a picker miss can
+upload the exact recorded bytes without scanning. The fallback is discarded if
+its catalog byte count or SHA-256 no longer matches the file on disk. A stale
+name or missing picker search never enables an unfiltered tile click. Redacted
+prompt history deliberately does not persist Flow captions because they may
+paraphrase the prompt.
+
 ## Per-generation-path support matrix
 
 Which reference methods each path accepts (design spec §2, verified against `cli_image.py` /
@@ -53,6 +66,7 @@ Which reference methods each path accepts (design spec §2, verified against `cl
 | `image t2i` | `@Name` · `--reference-entity <id>` | `@Name` (in-project UUID → `referenceImages`) |
 | `image i2i` | `@Name` · `--reference-entity <id>` | `@Name` · `--ref <path-or-uuid>` |
 | `video t2v` | `@Name` · `--reference-entity <id>` | ❌ — media mentions on the video path are Phase 3 |
+| `video i2v` | ❌ — start/end frames replace ingredients | local path or catalog UUID via `IMAGE` / `--initial-frame` · optional `--end-frame` |
 | `video r2v` | `@Name` · `--reference-entity <id>` | `--ref <path>` (local ingredients); `@media` is Phase 3 |
 
 Notes:
@@ -99,9 +113,10 @@ Pick with one rule:
 
 - **Referencing a saved, named Character or asset?** Put `@Name` in the prompt. On `t2i`/`i2i` you may
   instead pass `--reference-entity <entityId>` when you have the id and want no name ambiguity — it's
-  the **same wire** and dedupes. There is **no** `--reference-entity` flag on `t2v`/`r2v`; use `@Name`.
-- **Referencing a one-off image or a look/style you won't reuse?** Use `--ref <path-or-uuid>`
-  (`i2i`, `r2v`).
+  the **same wire** and dedupes. The explicit entity flag is also available on `t2v`/`r2v`; it is
+  deliberately absent from `i2v`, whose inputs are start/end frames.
+- **Referencing a one-off image or a look/style you won't reuse?** Use `--ref <path>` on `i2i` or
+  `r2v`; a media UUID is accepted by image `i2i` only.
 - **Need the subject reused across many generations?** Create it once with `gflow character`, then
   `@Name` it everywhere.
 - **Prerequisite:** a Character must have a reference image before `@Name` will resolve — an

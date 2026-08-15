@@ -9,18 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Media UUID picker lookups no longer pay two guaranteed-dead searches before
-  scrolling (#529).** The full-UUID and UUID-stem tiers move behind the
-  virtualised-grid scroll fallback, removing the measured ~14.9 s delay per
-  unresolved reference (~30 s for a two-reference generation) from lookups the
-  scroll resolves. Reachability is unchanged: both tiers remain as last-resort
-  retries for any Flow cohort that does index UUIDs. This explicitly
-  **supersedes #287's claim** that those tiers are "cheap first attempts".
-  Existing attach/miss events now report the closed `resolved_by` tier without
-  copying the winning term. Picker/catalog evidence confirms tiles carry short
-  Flow captions rather than generation prompts, so the prompt-derived hint
-  tier's live value remains unproven and proposal 3 is refuted in
-  [#541](https://github.com/ffroliva/gflow-cli/issues/541).
+- **Catalog image UUIDs now resolve through Flow display names instead of
+  scrolling or UUID/prompt searches (#529).** A headed-Chrome spike against a
+  populated Compiled Growth story project proved the picker contract:
+  catalog UUID → `workflows[].metadata.displayName` → browser name search →
+  exact UUID-in-thumbnail tile. A duplicate-name search surfaced two distinct
+  UUIDs and the exact matcher selected the requested identity, with zero scroll
+  calls or generation requests. The UI response collector now preserves the
+  sibling workflow name so new generated-image catalog rows retain the picker
+  search key when prompt history is stored (`history_prompts=redacted` omits the
+  potentially prompt-derived caption); image `--ref <uuid>` and I2V frame UUIDs
+  are enriched with that name before browser work. UUID, UUID-stem, prompt-hint,
+  and unfiltered-grid scroll fallbacks are removed from this path. Image refs
+  retain their recorded local-file upload fallback; CLI and MCP I2V frames keep
+  the UUID, name, and fallback together for both slots. Local fallbacks are used
+  only when their recorded byte count/SHA-256 still matches. A missing/stale
+  name or unavailable search input falls through to that verified upload or a
+  typed failure—never an unfiltered viewport click, grid scan, or implicit
+  Playwright scroll. UUID-backed I2V requests now also activate the post-submit
+  route guard that rejects a credit-spent T2V response.
+  This supersedes #287's prompt-hint and UUID-grid-scroll guidance; the sanitized
+  evidence is recorded in the [#529 picker spike](docs/superpowers/spikes/2026-08-15-picker-tile-alt-text.md),
+  and [#541](https://github.com/ffroliva/gflow-cli/issues/541) records the refuted
+  prompt-hint hypothesis.
 
 ## [0.57.1] — 2026-08-14
 

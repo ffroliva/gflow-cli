@@ -485,7 +485,10 @@ class OperationRecorder:
         # Persist the Flow-assigned display name (when present) so a generated
         # image can later be referenced by name — the picker's searchable label.
         metadata: dict[str, str] = {"fife_url": image.fife_url}
-        if image.display_name:
+        # Flow captions can closely paraphrase the generation prompt. Respect
+        # the same privacy boundary as prompt storage: redacted history never
+        # persists the browser-searchable caption in plaintext.
+        if image.display_name and self.prompt_mode == "store":
             metadata["display_name"] = image.display_name
         repo.upsert_asset(
             AssetRecord(

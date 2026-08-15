@@ -12,7 +12,7 @@ from gflow_cli.data.models import (
     OperationStatus,
     ProjectRecord,
 )
-from gflow_cli.data.repository import DataRepository
+from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataIntegrityError
 
@@ -85,6 +85,48 @@ def test_upserts_project_asset_operation_and_file(tmp_path: Path) -> None:
         assert found is not None
         assert found.flow_project_id == "flow-project-1"
         assert found.local_files[0].path == tmp_path / "media-1.png"
+
+
+@pytest.mark.parametrize("raw_metadata", ["{broken", "[]", '"caption"'])
+def test_asset_lookup_normalizes_malformed_or_non_object_metadata(
+    tmp_path: Path, raw_metadata: str
+) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/profile_default"))
+        repo.upsert_asset(
+            AssetRecord.minimal_image(
+                id="asset-1",
+                profile_name="default",
+                flow_project_id="project-1",
+                flow_media_id="media-1",
+            )
+        )
+        store.conn.execute(
+            "UPDATE assets SET metadata_json = ? WHERE id = ?",
+            (raw_metadata, "asset-1"),
+        )
+
+        found = repo.get_asset_by_flow_media_id("default", "media-1")
+
+        assert found is not None
+        assert found.metadata_json == {}
+
+
+def test_verified_local_path_requires_recorded_sha256(tmp_path: Path) -> None:
+    path = tmp_path / "legacy.png"
+    path.write_bytes(b"same-size replacement")
+    record = LocalFileRecord(
+        id="file-1",
+        profile_name="default",
+        asset_id="asset-1",
+        path=path,
+        media_type="image/png",
+        bytes=path.stat().st_size,
+        sha256=None,
+    )
+
+    assert verified_local_path(record) is None
 
 
 def test_operation_asset_position_is_unique(tmp_path: Path) -> None:

@@ -1,35 +1,38 @@
-Feature: Media picker resolves UUID references without dead search tiers
-  The picker's full-UUID and UUID-stem search tiers are live-proven never to
-  match (#287, #393). They must not run before the scroll fallback, and the
-  reference-binding contract must be unchanged.
+Feature: Media picker resolves catalog UUIDs through Flow display names
+  A catalog UUID is stable identity, while Flow's browser picker is searched
+  by the asset's recorded display name. The surfaced tile must still match the
+  exact UUID, and the UUID path must not scan the unfiltered grid.
 
-  Scenario: A bare UUID reference off the viewport is found by scrolling
-    Given an image i2i generation with one bare "--ref <uuid>"
-    And the reference tile is not in the picker's initial viewport
-    When the transport binds the reference
-    Then no search term is typed before the grid is scrolled
-    And the tile is attached from the scroll tier
-    And the attach event reports resolved_by "scroll"
+  Scenario: A catalog name surfaces the exact UUID without scrolling
+    Given an image UUID reference named "Unique catalog caption"
+    And picker search surfaces the exact UUID tile
+    When the transport binds the image reference
+    Then only the catalog display name is typed into picker search
+    And the exact UUID tile is attached
+    And no grid scroll is attempted
 
-  Scenario: An unreachable reference still refuses to generate without it
-    Given an image i2i generation with one bare "--ref <uuid>"
-    And the reference tile is absent from the picker entirely
-    When the transport binds the reference
-    Then the demoted UUID search tiers are attempted after the scroll
-    And the recorded local file is uploaded as the fallback
-    And the generation never proceeds without the reference
+  Scenario: Duplicate display names are disambiguated by UUID
+    Given an image UUID reference named "Shared catalog caption"
+    And another picker tile has the same display name
+    And picker search surfaces the exact UUID tile
+    When the transport binds the image reference
+    Then the target locator contains the requested UUID
+    And the other same-name tile is not attached
+    And no grid scroll is attempted
 
-  Scenario: A frame-slot UUID that cannot be located fails pre-generation
-    Given a video i2v generation with an initial frame given as a media UUID
-    And the asset is absent from the picker entirely
-    When the transport binds the frame
-    Then a TransportTimeoutError naming the slot and the UUID is raised
-    And the process exits with code 9
-    And no generation is submitted
+  Scenario: A named picker miss uses the recorded local fallback
+    Given an image UUID reference named "Missing catalog image"
+    And the exact UUID tile is absent from the picker
+    And the catalog has a recorded local fallback
+    When the transport binds the image reference
+    Then only the catalog display name is typed into picker search
+    And the recorded local file is uploaded
+    And no grid scroll is attempted
 
-  Scenario: A picker cohort with no search box is never blocked by search
-    Given an image i2i generation with one bare "--ref <uuid>"
-    And the picker variant renders no search input
-    When the transport binds the reference
-    Then no search input is filled at any point
-    And the grid is scrolled to locate the tile
+  Scenario: A video frame uses its catalog name and exact UUID
+    Given a video frame UUID named "Shared catalog caption"
+    And picker search surfaces the exact UUID tile
+    When the transport binds the video frame
+    Then only the catalog display name is typed into picker search
+    And the exact UUID tile is attached
+    And no grid scroll is attempted

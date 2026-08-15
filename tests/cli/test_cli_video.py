@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli_video import video
+from gflow_cli.data.models import AssetKind
 
 
 def _make_result(succeeded: bool, local_path: Path | None = None) -> object:
@@ -791,77 +794,234 @@ def test_i2v_project_name_env_var(tmp_path: Path) -> None:
     assert captured["request"].project_name == "Env Given Name"  # type: ignore[attr-defined]
 
 
-def test_media_search_hints_resolves_prompt_first_words(
+def test_media_picker_metadata_ignores_unknown_and_unnamed_assets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#287 round 6: the CLI (which owns catalog access) resolves each ref's
-    recorded generation prompt and passes its first words as picker search
-    hints — Flow's media search doesn't index UUIDs, but tile alt text
-    carries the prompt. Best-effort: unknown media yields no hint."""
+    """Legacy rows without a Flow name cannot become browser search terms."""
     from gflow_cli import cli_video
 
-    def _get_prompt(*, db_path: Path, media_id: str) -> str | None:
-        if media_id == "uuid-1":
-            return "stickman on a chalkboard, teaching a lesson about compound interest"
-        return None
+    class _FakeStore:
+        def __enter__(self) -> _FakeStore:
+            return self
 
-    monkeypatch.setattr("gflow_cli.data.queries.get_asset_prompt", _get_prompt)
-    settings = MagicMock()
-    settings.resolved_db_path.return_value = Path("unused.db")
+        def __exit__(self, *_exc: object) -> bool:
+            return False
 
-    def _fake_get_settings() -> MagicMock:
-        return settings
+    class _FakeRepo:
+        def __init__(self, _store: object) -> None: ...
 
-    # config.get_settings is lru_cached; conftest teardown calls cache_clear().
-    _fake_get_settings.cache_clear = lambda: None  # type: ignore[attr-defined]
-    monkeypatch.setattr("gflow_cli.config.get_settings", _fake_get_settings)
+        def get_asset_by_flow_media_id(self, _profile: str, media_id: str) -> object:
+            if media_id == "uuid-unnamed":
+                return SimpleNamespace(
+                    kind=AssetKind.IMAGE,
+                    metadata_json={},
+                    local_files=[],
+                )
+            return None
 
-    hints = cli_video._media_search_hints(["uuid-1", "uuid-unknown", None])
+    monkeypatch.setattr(cli_video.DataStore, "open", staticmethod(lambda _p: _FakeStore()))
+    monkeypatch.setattr(cli_video, "DataRepository", _FakeRepo)
 
-    assert hints == ("stickman on a chalkboard, teaching a",)
+    assert cli_video._media_picker_metadata(["uuid-unnamed", "uuid-unknown", None], "ffroliva") == (
+        {},
+        {},
+    )
 
 
-def test_media_search_hints_swallows_catalog_errors(
+def test_media_picker_metadata_swallows_catalog_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gflow_cli import cli_video
 
-    def _boom(**_kwargs: object) -> str:
-        raise RuntimeError("catalog unavailable")
+    def _boom(_path: object) -> object:
+        raise OSError("catalog unavailable")
 
-    monkeypatch.setattr("gflow_cli.data.queries.get_asset_prompt", _boom)
+    monkeypatch.setattr(cli_video.DataStore, "open", staticmethod(_boom))
 
-    assert cli_video._media_search_hints(["uuid-1"]) == ()
+    assert cli_video._media_picker_metadata(["uuid-1"], "ffroliva") == ({}, {})
 
 
-def test_i2v_uuid_frame_gets_catalog_prompt_hints(tmp_path: Path) -> None:
-    """A media-UUID --initial-frame triggers hint resolution and the hints
-    land on the request for the transport's search tier."""
+def test_media_picker_metadata_resolves_names_per_uuid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each frame UUID carries its own catalog name into picker search."""
+    from gflow_cli import cli_video
+
+    class _FakeStore:
+        def __enter__(self) -> _FakeStore:
+            return self
+
+        def __exit__(self, *_exc: object) -> bool:
+            return False
+
+    class _FakeRepo:
+        def __init__(self, _store: object) -> None: ...
+
+        def get_asset_by_flow_media_id(self, profile: str, media_id: str) -> object:
+            assert profile == "ffroliva"
+            names = {
+                "uuid-start": "Brass key on marble surface",
+                "uuid-end": "Brass key on wooden bench",
+            }
+            name = names.get(media_id)
+            return (
+                None
+                if name is None
+                else SimpleNamespace(
+                    kind=AssetKind.IMAGE,
+                    metadata_json={"display_name": name},
+                    local_files=[],
+                )
+            )
+
+    monkeypatch.setattr(cli_video.DataStore, "open", staticmethod(lambda _p: _FakeStore()))
+    monkeypatch.setattr(cli_video, "DataRepository", _FakeRepo)
+
+    names, local_paths = cli_video._media_picker_metadata(
+        ["uuid-start", "uuid-end", "uuid-unknown", None], "ffroliva"
+    )
+
+    assert names == {
+        "uuid-start": "Brass key on marble surface",
+        "uuid-end": "Brass key on wooden bench",
+    }
+    assert local_paths == {}
+
+
+def test_media_picker_metadata_filters_non_images_and_stale_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from gflow_cli import cli_video
+
+    valid = tmp_path / "frame.png"
+    valid.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    class _FakeStore:
+        def __enter__(self) -> _FakeStore:
+            return self
+
+        def __exit__(self, *_exc: object) -> bool:
+            return False
+
+    def _asset(kind: AssetKind, path: Path) -> SimpleNamespace:
+        return SimpleNamespace(
+            kind=kind,
+            metadata_json={},
+            local_files=[
+                SimpleNamespace(
+                    path=path,
+                    storage_provider=None,
+                    bytes=path.stat().st_size if path.is_file() else None,
+                    sha256=(
+                        hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+                    ),
+                )
+            ],
+        )
+
+    class _FakeRepo:
+        def __init__(self, _store: object) -> None: ...
+
+        def get_asset_by_flow_media_id(self, _profile: str, media_id: str) -> object:
+            assets = {
+                "uuid-image": _asset(AssetKind.IMAGE, valid),
+                "uuid-mutated": SimpleNamespace(
+                    kind=AssetKind.IMAGE,
+                    metadata_json={},
+                    local_files=[
+                        SimpleNamespace(
+                            path=valid,
+                            storage_provider=None,
+                            bytes=valid.stat().st_size,
+                            sha256="0" * 64,
+                        )
+                    ],
+                ),
+                "uuid-stale": _asset(AssetKind.IMAGE, tmp_path / "missing.png"),
+                "uuid-video": _asset(AssetKind.VIDEO, tmp_path / "clip.mp4"),
+            }
+            return assets.get(media_id)
+
+    monkeypatch.setattr(cli_video.DataStore, "open", staticmethod(lambda _p: _FakeStore()))
+    monkeypatch.setattr(cli_video, "DataRepository", _FakeRepo)
+
+    assert cli_video._media_picker_metadata(
+        ["uuid-image", "uuid-mutated", "uuid-stale", "uuid-video", None], "default"
+    ) == ({}, {"uuid-image": (valid, hashlib.sha256(valid.read_bytes()).hexdigest())})
+
+
+def test_i2v_uuid_frame_gets_catalog_display_name(tmp_path: Path) -> None:
+    """A media UUID carries its catalog name into the transport request."""
     captured: dict[str, object] = {}
 
     async def _capture(request: object, **_kwargs: object) -> None:
         captured["request"] = request
 
     uuid_ref = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
+    recorded = tmp_path / "recorded-frame.png"
+    content = b"\x89PNG\r\n\x1a\n"
+    recorded.write_bytes(content)
+    digest = hashlib.sha256(content).hexdigest()
     runner = CliRunner()
     with (
         patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
         patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
         patch("gflow_cli.cli_video._generate_and_report", new=_capture),
         patch(
-            "gflow_cli.cli_video._media_search_hints",
-            return_value=("stickman on a chalkboard, teaching a",),
-        ) as hints,
+            "gflow_cli.cli_video._media_picker_metadata",
+            return_value=(
+                {uuid_ref: "Brass key on marble surface"},
+                {uuid_ref: (recorded, digest)},
+            ),
+        ) as names,
     ):
         result = runner.invoke(
             video,
             ["i2v", "--initial-frame", uuid_ref, "pan", "--project", "f6caf027-aaaa"],
         )
     assert result.exit_code == 0, result.output
-    assert captured["request"].search_hints == (  # type: ignore[attr-defined]
-        "stickman on a chalkboard, teaching a",
+    assert (  # type: ignore[attr-defined]
+        captured["request"].start_image_ref_display_name == "Brass key on marble surface"
     )
-    assert uuid_ref in hints.call_args.args[0]
+    assert captured["request"].start_image_ref_local_path == recorded  # type: ignore[attr-defined]
+    assert captured["request"].start_image_ref_local_sha256 == digest  # type: ignore[attr-defined]
+    assert captured["request"].start_image_ref_id == uuid_ref  # type: ignore[attr-defined]
+    assert uuid_ref in names.call_args.args[0]
+
+
+def test_i2v_unnamed_uuid_preserves_identity_and_recorded_fallback(tmp_path: Path) -> None:
+    """An unnamed UUID remains identity while its exact bytes remain fallback."""
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    uuid_ref = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
+    recorded = tmp_path / "recorded-frame.png"
+    content = b"\x89PNG\r\n\x1a\n"
+    recorded.write_bytes(content)
+    digest = hashlib.sha256(content).hexdigest()
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+        patch(
+            "gflow_cli.cli_video._media_picker_metadata",
+            return_value=({}, {uuid_ref: (recorded, digest)}),
+        ),
+    ):
+        result = runner.invoke(
+            video,
+            ["i2v", "--initial-frame", uuid_ref, "pan", "--project", "f6caf027-aaaa"],
+        )
+
+    assert result.exit_code == 0, result.output
+    request = captured["request"]
+    assert request.start_image is None  # type: ignore[attr-defined]
+    assert request.start_image_ref_id == uuid_ref  # type: ignore[attr-defined]
+    assert request.start_image_ref_local_path == recorded  # type: ignore[attr-defined]
+    assert request.start_image_ref_local_sha256 == digest  # type: ignore[attr-defined]
 
 
 def test_i2v_no_image_raises_usage_error(tmp_path: Path) -> None:

@@ -27,8 +27,10 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import VideoModel, is_media_uuid, reference_cap_for
 from gflow_cli.config import UiMode, get_settings
-from gflow_cli.data.models import OperationKind
+from gflow_cli.data.models import AssetKind, OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
+from gflow_cli.data.repository import DataRepository, verified_local_path
+from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataStoreError
 from gflow_cli.storage import cloud_info_from_path
 
@@ -424,49 +426,54 @@ class _I2VParams:
     # Picker project-menu display-name override (#287): the media picker's
     # library is per-project and its project menu lists NAMES, not ids.
     project_name: str | None = None
-    # Picker search hints (#287 round 6): the catalog-recorded prompts of the
-    # UUID frame refs, first words — Flow's media search indexes prompt text
-    # (tile alt), not UUIDs.
-    search_hints: tuple[str, ...] = ()
+    # Browser-picker search keys resolved from the catalog. UUID remains the
+    # exact tile identity after its Flow display name surfaces candidates.
+    image_ref_display_name: str = ""
+    end_frame_ref_display_name: str = ""
+    image_ref_local_path: Path | None = None
+    end_frame_ref_local_path: Path | None = None
+    image_ref_local_sha256: str = ""
+    end_frame_ref_local_sha256: str = ""
     reference_entities: tuple[str, ...] = ()
     reference_entity_names: tuple[str, ...] = ()
     # Requested Flow UI arm (#299); agentic is rejected at the CLI edge.
     ui_mode: UiMode | None = None
 
 
-# First words of a recorded prompt used as a picker search term (#287 round
-# 6) — long enough to be distinctive, short enough to survive alt-text
-# truncation in Flow's search index.
-_SEARCH_HINT_WORDS = 6
+def _media_picker_metadata(
+    media_ids: Sequence[str | None], profile_name: str
+) -> tuple[dict[str, str], dict[str, tuple[Path, str]]]:
+    """Resolve UUID frames to picker names and extant local fallbacks.
 
-
-def _media_search_hints(media_ids: Sequence[str | None]) -> tuple[str, ...]:
-    """Best-effort picker search hints for media-UUID frame refs (#287 round
-    6): Flow's media search does not index UUIDs, but each picker tile's alt
-    text carries the generation PROMPT — resolve each ref's recorded prompt
-    from the local catalog and use its first words as a search term.
-    Layering: the CLI resolves (it owns catalog access); the transport only
-    consumes. Never raises — a missing catalog, unknown asset, or absent
-    prompt just yields no hint."""
-    hints: list[str] = []
-    for media_id in media_ids:
-        if not media_id:
-            continue
-        prompt: str | None = None
-        try:
-            from gflow_cli.config import get_settings as _get_settings
-            from gflow_cli.data import queries
-
-            prompt = queries.get_asset_prompt(
-                db_path=_get_settings().resolved_db_path(), media_id=media_id
-            )
-        except Exception:  # noqa: BLE001 - hints are best-effort, never fatal
-            prompt = None
-        if prompt:
-            hint = " ".join(prompt.split()[:_SEARCH_HINT_WORDS])
-            if hint and hint not in hints:
-                hints.append(hint)
-    return tuple(hints)
+    The CLI owns catalog access; the transport receives only the name used to
+    filter the browser picker and still verifies the exact UUID in the result
+    tile's thumbnail URL. Agentic, redacted-history, and legacy rows may lack a
+    name; their exact recorded image bytes are the bounded fallback. Best-effort:
+    unknown/non-image assets and an unavailable catalog produce no entry.
+    """
+    ids = tuple(media_id for media_id in media_ids if media_id)
+    if not ids:
+        return {}, {}
+    display_names: dict[str, str] = {}
+    local_files: dict[str, tuple[Path, str]] = {}
+    try:
+        with DataStore.open(get_settings().resolved_db_path()) as store:
+            repo = DataRepository(store)
+            for media_id in ids:
+                asset = repo.get_asset_by_flow_media_id(profile_name, media_id)
+                if asset is None or asset.kind is not AssetKind.IMAGE:
+                    continue
+                display_name = asset.metadata_json.get("display_name")
+                if isinstance(display_name, str) and display_name:
+                    display_names[media_id] = display_name
+                for local_file in asset.local_files:
+                    if (path := verified_local_path(local_file)) is not None:
+                        assert local_file.sha256 is not None
+                        local_files[media_id] = (path, local_file.sha256)
+                        break
+    except (DataStoreError, OSError) as exc:
+        logger.debug("video.frame_ref_enrich_skipped", error=str(exc)[:120])
+    return display_names, local_files
 
 
 async def _run_i2v(
@@ -522,8 +529,13 @@ async def _run_i2v(
         start_image_ref_id=params.image_ref_id,
         end_image=Path(params.end_frame) if params.end_frame else None,
         end_image_ref_id=params.end_frame_ref_id,
+        start_image_ref_display_name=params.image_ref_display_name,
+        end_image_ref_display_name=params.end_frame_ref_display_name,
+        start_image_ref_local_path=params.image_ref_local_path,
+        end_image_ref_local_path=params.end_frame_ref_local_path,
+        start_image_ref_local_sha256=params.image_ref_local_sha256,
+        end_image_ref_local_sha256=params.end_frame_ref_local_sha256,
         project_name=params.project_name,
-        search_hints=params.search_hints,
         reference_entities=params.reference_entities,
         reference_entity_names=params.reference_entity_names,
         original_prompt=params.original_prompt,
@@ -1322,14 +1334,10 @@ def i2v(  # NOSONAR
     start_path, start_ref_id = _classify_frame(resolved_image, "'IMAGE' / '--initial-frame'")
     end_path, end_ref_id = _classify_frame(end_frame, end_hint)
 
-    # #287 round 6: for UUID frame refs, resolve the assets' recorded prompts
-    # into picker search hints (Flow's media search indexes prompt text, not
-    # UUIDs). Best-effort — no catalog, no hints.
-    search_hints: tuple[str, ...] = ()
-    if start_ref_id or end_ref_id:
-        search_hints = _media_search_hints([start_ref_id, end_ref_id])
-
     profile_name = _resolve_profile(profile)
+    display_names, local_files = _media_picker_metadata([start_ref_id, end_ref_id], profile_name)
+    start_local = local_files.get(start_ref_id or "")
+    end_local = local_files.get(end_ref_id or "")
     provider_dir = _make_provider_dir(profile_name)
     prompt_to_send, original_prompt, applied_tool = apply_tool_option(
         resolved_prompt, tool_specs, category="video", quiet=as_json
@@ -1346,7 +1354,12 @@ def i2v(  # NOSONAR
         original_prompt=original_prompt,
         tool=applied_tool,
         project_name=project_name,
-        search_hints=search_hints,
+        image_ref_display_name=display_names.get(start_ref_id or "", ""),
+        end_frame_ref_display_name=display_names.get(end_ref_id or "", ""),
+        image_ref_local_path=start_local[0] if start_local else None,
+        end_frame_ref_local_path=end_local[0] if end_local else None,
+        image_ref_local_sha256=start_local[1] if start_local else "",
+        end_frame_ref_local_sha256=end_local[1] if end_local else "",
         ui_mode=UiMode(ui_mode) if ui_mode else None,
     )
     run_with_handlers(

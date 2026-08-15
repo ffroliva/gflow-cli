@@ -254,6 +254,24 @@ class TestI2VFrameRefIds:
         )
         assert req.end_image_ref_id == _REF_UUID
 
+    def test_ref_local_fallback_requires_matching_ref_id(self) -> None:
+        with pytest.raises(ValueError, match="start_image_ref_local_path requires"):
+            GenerateVideoRequest(
+                prompt="x",
+                mode=Mode.I2V,
+                start_image=Path("a.png"),
+                start_image_ref_local_path=Path("fallback.png"),
+            )
+
+    def test_ref_local_fallback_requires_checksum(self) -> None:
+        with pytest.raises(ValueError, match="start_image_ref_local_path requires"):
+            GenerateVideoRequest(
+                prompt="x",
+                mode=Mode.I2V,
+                start_image_ref_id=_REF_UUID,
+                start_image_ref_local_path=Path("fallback.png"),
+            )
+
     def test_malformed_ref_id_rejected(self) -> None:
         with pytest.raises(ValueError, match="not a valid media UUID"):
             GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image_ref_id="not-a-uuid")

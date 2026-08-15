@@ -273,17 +273,21 @@ class GenerateVideoRequest:
     end_image: Path | None = None  # I2V (optional local file path)
     end_image_ref_name: str | None = None  # I2V (optional remote asset display name)
     end_image_ref_id: str | None = None  # I2V (optional in-project asset media UUID, #287)
+    # Catalog-resolved names used only to filter the browser picker for UUID
+    # refs. The UUID fields above remain the exact asset identity. Empty names
+    # remain valid for direct/legacy callers only when paired with a verified
+    # recorded local-image fallback; the transport never scans by UUID.
+    start_image_ref_display_name: str = ""
+    end_image_ref_display_name: str = ""
+    start_image_ref_local_path: Path | None = None
+    end_image_ref_local_path: Path | None = None
+    start_image_ref_local_sha256: str = ""
+    end_image_ref_local_sha256: str = ""
     # Display name of the target project for the media picker's project-menu
     # match (#287: the menu lists projects by NAME, not id). Optional override
     # (--project-name / GFLOW_CLI_PROJECT_NAME); when None the transport
     # derives a name from the live page.
     project_name: str | None = None
-    # Picker search hints for UUID frame refs (#287 round 6): Flow's media
-    # search does not index UUIDs, but tile alt text carries the generation
-    # prompt — the CLI resolves each ref's recorded prompt from the local
-    # catalog and passes its first words here; the transport types them into
-    # the picker search box and matches results by UUID-in-src.
-    search_hints: tuple[str, ...] = ()
     reference_images: tuple[Path, ...] = ()  # R2V (local file paths)
     ref_names: tuple[str, ...] = ()  # R2V (remote asset display names)
     reference_entities: tuple[str, ...] = ()  # R2V — Flow CHARACTER entity ids
@@ -376,10 +380,36 @@ class GenerateVideoRequest:
             raise ValueError(msg)
 
     def _validate_frame_ref_ids(self) -> None:
-        for slot, ref_id, alternatives in (
-            ("start", self.start_image_ref_id, (self.start_image, self.start_image_ref_name)),
-            ("end", self.end_image_ref_id, (self.end_image, self.end_image_ref_name)),
+        for slot, ref_id, display_name, local_path, local_sha256, alternatives in (
+            (
+                "start",
+                self.start_image_ref_id,
+                self.start_image_ref_display_name,
+                self.start_image_ref_local_path,
+                self.start_image_ref_local_sha256,
+                (self.start_image, self.start_image_ref_name),
+            ),
+            (
+                "end",
+                self.end_image_ref_id,
+                self.end_image_ref_display_name,
+                self.end_image_ref_local_path,
+                self.end_image_ref_local_sha256,
+                (self.end_image, self.end_image_ref_name),
+            ),
         ):
+            if display_name and ref_id is None:
+                msg = f"{slot}_image_ref_display_name requires {slot}_image_ref_id"
+                raise ValueError(msg)
+            if local_path is not None and ref_id is None:
+                msg = f"{slot}_image_ref_local_path requires {slot}_image_ref_id"
+                raise ValueError(msg)
+            if local_path is not None and not local_sha256:
+                msg = f"{slot}_image_ref_local_path requires {slot}_image_ref_local_sha256"
+                raise ValueError(msg)
+            if local_sha256 and local_path is None:
+                msg = f"{slot}_image_ref_local_sha256 requires {slot}_image_ref_local_path"
+                raise ValueError(msg)
             if ref_id is None:
                 continue
             if not is_media_uuid(ref_id):
