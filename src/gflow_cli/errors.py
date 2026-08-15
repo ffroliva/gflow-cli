@@ -650,7 +650,8 @@ class ReferenceNotFoundError(GFlowError):
     generation prompt. Passing a prompt therefore never matches, and the miss
     used to surface as a bare Playwright ``TimeoutError`` after 8 s: no typed
     error, no exit code to branch on, and no indication that the *name* was the
-    problem rather than the UI.
+    problem rather than the UI. The raw picker/catalog comparison is recorded in
+    ``docs/superpowers/spikes/2026-08-15-picker-tile-alt-text.md``.
     """
 
     problem_type = "https://gflow-cli.dev/errors/reference-not-found"

@@ -89,11 +89,11 @@ committed. **Non-blocking for T2–T5** — start those in parallel if convenien
 - `docs/superpowers/spikes/2026-08-15-picker-tile-alt-text.md` — evidence note
 
 **Steps:**
-- [ ] Search existing `debug_picker_dom_*.json` dumps in prior out-dirs first — `_PICKER_DOM_DUMP_JS` (`ui_automation_video.py:616-633`) already captures the first three tiles' `outerHTML` truncated to 500 chars, which includes `<img alt="…">`. The answer may already be on disk, for zero live cost.
-- [ ] If no dump exists: open the picker on a project with a known generated asset, dump one tile's `alt`, and compare to `queries.get_asset_prompt(db_path, media_id)` for the same id.
-- [ ] Record the verdict, the raw `alt` string, the media id, and the date in the spike note.
-- [ ] If `alt` is a **caption**: file the follow-up issue recording that `search_hints` is also a dead tier, and that #529 proposal 3 is refuted rather than deferred.
-- [ ] If `alt` is the **prompt**: file the follow-up issue for proposal 3 (derive hints on the image path) with the evidence attached.
+- [x] Search existing `debug_picker_dom_*.json` dumps in prior out-dirs first — `_PICKER_DOM_DUMP_JS` (`ui_automation_video.py:616-633`) already captures the first three tiles' `outerHTML` truncated to 500 chars, which includes `<img alt="…">`. The answer may already be on disk, for zero live cost.
+- [x] If no dump exists: open the picker on a project with a known generated asset, dump one tile's `alt`, and compare to `queries.get_asset_prompt(db_path, media_id)` for the same id. *(Not needed: two existing live dumps were compared to catalog prompts.)*
+- [x] Record the verdict, the raw `alt` string, the media id, and the date in the spike note.
+- [x] If `alt` is a **caption**: file the follow-up issue recording that `search_hints` is also a dead tier, and that #529 proposal 3 is refuted rather than deferred.
+- [x] If `alt` is the **prompt**: file the follow-up issue for proposal 3 (derive hints on the image path) with the evidence attached. *(Not applicable: the observed value is a caption; #541 records the refutation.)*
 
 **Tests created:** none — this is an evidence task, no production code.
 
@@ -110,20 +110,20 @@ new-order, post-scroll-retry, and no-search-box tests. No production code.
 - `tests/api/transports/test_ui_automation_video.py` — rewrite `:1837`, `:1841`, `:1861`, `:1865`, `:1918`
 
 **Steps:**
-- [ ] Replace `test_uuid_stem_search_is_tried_after_full_uuid` — the UUID tiers no longer run pre-scroll.
-- [ ] Rewrite the `terms == [FULL_UUID, "d6f1927a"]` assertion (`:1861`) to assert **zero** `press_sequentially` awaits before the first scroll on a bare-UUID ref.
-- [ ] Rewrite the `terms == [FULL_UUID, "d6f1927a", hint]` assertion (`:1918`) to `terms == [hint]` pre-scroll.
-- [ ] Keep `test_no_search_box_skips_search_tiers_and_scrolls` (`:1865`) passing, and add its post-scroll-retry twin.
-- [ ] Do **not** touch `test_search_tier_event_reports_term_and_rendered_count` (`:2560`) — `picker_search_tier`'s payload is unchanged.
+- [x] Replace `test_uuid_stem_search_is_tried_after_full_uuid` — the UUID tiers no longer run pre-scroll.
+- [x] Rewrite the `terms == [FULL_UUID, "d6f1927a"]` assertion (`:1861`) to assert **zero** `press_sequentially` awaits before the first scroll on a bare-UUID ref.
+- [x] Rewrite the `terms == [FULL_UUID, "d6f1927a", hint]` assertion (`:1918`) to `terms == [hint]` pre-scroll.
+- [x] Keep `test_no_search_box_skips_search_tiers_and_scrolls` (`:1865`) passing, and add its post-scroll-retry twin.
+- [x] Do **not** touch `test_search_tier_event_reports_term_and_rendered_count` (`:2560`) — `picker_search_tier`'s payload is unchanged.
 
 **Tests created (red):**
-- [ ] `test_bare_uuid_ref_scrolls_before_any_search` — S1: no search typed pre-scroll
-- [ ] `test_uuid_tiers_retried_after_scroll_miss` — S2: `terms == [FULL_UUID, "d6f1927a"]` **after** `_scroll_picker_grid_until_rendered` returns `False`
-- [ ] `test_hint_tier_runs_before_scroll_on_frame_path` — S10: `terms == [hint]` pre-scroll
-- [ ] `test_post_scroll_retry_stops_on_absent_search_box` — S6: `None` breaks the retry, no `.fill()` against an absent element
-- [ ] `test_picker_search_cleared_before_returning_false` — S7: pooled Page not handed back filtered
-- [ ] `test_tile_match_stays_uuid_in_src` — S3: an imprecise hint surfacing extra tiles never attaches a wrong one
-- [ ] `test_hyphenless_media_id_dedupes_stem` — S13: one retry pass, not two
+- [x] `test_bare_uuid_ref_scrolls_before_any_search` — S1: no search typed pre-scroll
+- [x] `test_uuid_tiers_retried_after_scroll_miss` — S2: `terms == [FULL_UUID, "d6f1927a"]` **after** `_scroll_picker_grid_until_rendered` returns `False`
+- [x] `test_hint_tier_runs_before_scroll_on_frame_path` — S10: `terms == [hint]` pre-scroll
+- [x] `test_post_scroll_retry_stops_on_absent_search_box` — S6: `None` breaks the retry, no `.fill()` against an absent element
+- [x] `test_picker_search_cleared_before_returning_false` — S7: pooled Page not handed back filtered
+- [x] `test_tile_match_stays_uuid_in_src` — S3: an imprecise hint surfacing extra tiles never attaches a wrong one
+- [x] `test_hyphenless_media_id_dedupes_stem` — S13: one retry pass, not two
 
 ---
 
@@ -136,15 +136,15 @@ new-order, post-scroll-retry, and no-search-box tests. No production code.
 - `tests/features/test_media_picker_tiers_steps.py` — step definitions
 
 **Steps:**
-- [ ] Copy the four `Scenario:` blocks verbatim from `SCENARIO.md`.
-- [ ] Reuse the existing fake-Page fixtures from `tests/api/transports/test_ui_automation_video.py` rather than inventing a second fake.
-- [ ] Pin the exit-9 `TransportTimeoutError` message for the frame-slot scenario **byte-for-byte** against v0.57.1 (`ui_automation_video.py:1890-1897`).
+- [x] Copy the four `Scenario:` blocks verbatim from `SCENARIO.md`.
+- [x] Reuse the existing fake-Page fixtures from `tests/api/transports/test_ui_automation_video.py` rather than inventing a second fake.
+- [x] Pin the exit-9 `TransportTimeoutError` message for the frame-slot scenario **byte-for-byte** against v0.57.1 (`ui_automation_video.py:1890-1897`).
 
 **Tests created (red):**
-- [ ] `A bare UUID reference off the viewport is found by scrolling` — S1
-- [ ] `An unreachable reference still refuses to generate without it` — S2 (#393 contract)
-- [ ] `A frame-slot UUID that cannot be located fails pre-generation` — S2/S10 (exit 9)
-- [ ] `A picker cohort with no search box is never blocked by search` — S5
+- [x] `A bare UUID reference off the viewport is found by scrolling` — S1
+- [x] `An unreachable reference still refuses to generate without it` — S2 (#393 contract)
+- [x] `A frame-slot UUID that cannot be located fails pre-generation` — S2/S10 (exit 9)
+- [x] `A picker cohort with no search box is never blocked by search` — S5
 
 ---
 
@@ -157,17 +157,17 @@ new-order, post-scroll-retry, and no-search-box tests. No production code.
 - `src/gflow_cli/api/transports/ui_automation_video.py` — `_select_existing_asset:2211-2321`
 
 **Steps:**
-- [ ] Extract the tier loop into a small local helper so the pre-scroll and post-scroll passes share one implementation (including the `None` → break contract and the `attempted_search` bookkeeping).
-- [ ] Pre-scroll candidates: `(display_name, *search_hints)`. Post-scroll candidates: `(media_id, uuid_stem)`. Keep the existing dedup so a hyphen-less id yields one term.
-- [ ] Preserve the existing clear-search-before-scroll block (`:2276-2283`) — a filtered grid must never be scrolled.
-- [ ] After the post-scroll retry misses, clear the search before falling through to the not-found telemetry, so the Page returns clean (S7).
-- [ ] **Rewrite, do not delete,** the docstring (`:2231-2240`) and the tier commentary (`:2247-2256`): state that the UUID tiers are demoted to last-resort, cite #287's rounds and #393's 2026-07-27 capture, and say why they are retained rather than removed. This is the guard against a future agent restoring them.
+- [x] Extract the tier loop into a small local helper so the pre-scroll and post-scroll passes share one implementation (including the `None` → break contract and the `attempted_search` bookkeeping).
+- [x] Pre-scroll candidates: `(display_name, *search_hints)`. Post-scroll candidates: `(media_id, uuid_stem)`. Keep the existing dedup so a hyphen-less id yields one term.
+- [x] Preserve the existing clear-search-before-scroll block (`:2276-2283`) — a filtered grid must never be scrolled.
+- [x] After the post-scroll retry misses, clear the search before falling through to the not-found telemetry, so the Page returns clean (S7).
+- [x] **Rewrite, do not delete,** the docstring (`:2231-2240`) and the tier commentary (`:2247-2256`): state that the UUID tiers are demoted to last-resort, cite #287's rounds and #393's 2026-07-27 capture, and say why they are retained rather than removed. This is the guard against a future agent restoring them.
 
 **Tests:**
-- [ ] All T2 unit tests green
-- [ ] All T3 BDD scenarios green
-- [ ] `tests/cli/test_cli_image_uuid_ref_enrichment.py` unchanged and green (#393 contract)
-- [ ] `tests/cli/test_cli_video.py` hint-derivation tests unchanged and green
+- [x] All T2 unit tests green
+- [x] All T3 BDD scenarios green
+- [x] `tests/cli/test_cli_image_uuid_ref_enrichment.py` unchanged and green (#393 contract)
+- [x] `tests/cli/test_cli_video.py` hint-derivation tests unchanged and green
 
 ---
 
@@ -180,15 +180,15 @@ signal the removed searches used to provide.
 - `src/gflow_cli/api/transports/ui_automation_video.py` — attach + not-found sites
 
 **Steps:**
-- [ ] Add `resolved_by` to the existing `image_ref_selected_existing` (`:2419`) and `frame_ref_attached` (`:1900`) events. **No new event name** — the picker surface already emits 14 from #287, and `docs/LIVE_VERIFICATION_*.md` treat these names as a contract.
-- [ ] Label set, closed: `viewport` · `display_name` · `hint` · `scroll` · `uuid_retry` · `upload` · `not_found`. Exactly one per reference.
-- [ ] Add `resolved_by="not_found"` to the existing `existing_asset_not_found` warning (`:2304`).
-- [ ] **Label only.** Never add the winning search *term* to these events — on the video path it is a 6-word slice of a user prompt. `picker_search_tier`'s existing `term=` field is left exactly as-is, not widened.
+- [x] Add `resolved_by` to the existing `image_ref_selected_existing` (`:2419`) and `frame_ref_attached` (`:1900`) events. **No new event name** — the picker surface already emits 14 from #287, and `docs/LIVE_VERIFICATION_*.md` treat these names as a contract.
+- [x] Label set, closed: `viewport` · `display_name` · `hint` · `scroll` · `uuid_retry` · `upload` · `not_found`. Exactly one per reference.
+- [x] Add `resolved_by="not_found"` to the existing `existing_asset_not_found` warning (`:2304`).
+- [x] **Label only.** Never add the winning search *term* to these events — on the video path it is a 6-word slice of a user prompt. `picker_search_tier`'s existing `term=` field is left exactly as-is, not widened.
 
 **Tests:**
-- [ ] `test_resolved_by_reports_scroll_tier` — S8
-- [ ] `test_resolved_by_reports_upload_fallback` — S8
-- [ ] `test_resolved_by_carries_no_search_term` — S9: assert the attach event payload contains no prompt text
+- [x] `test_resolved_by_reports_scroll_tier` — S8
+- [x] `test_resolved_by_reports_upload_fallback` — S8
+- [x] `test_resolved_by_carries_no_search_term` — S9: assert the attach event payload contains no prompt text
 
 ---
 
@@ -202,15 +202,15 @@ docstrings currently assert a reading that T1 may overturn.
 - `src/gflow_cli/cli_image.py:258`, `src/gflow_cli/errors.py:649-660`, `src/gflow_cli/api/transports/ui_automation_video.py:2137` — only if T1 resolved the contradiction
 
 **Steps:**
-- [ ] CHANGELOG entry under `[Unreleased]`: name #529, state the measured saving (~14.9 s per unresolved reference; ~30 s per 2-ref generation), and state that reachability is unchanged because the tiers are demoted rather than deleted.
-- [ ] The same entry must **name #287 and supersede** its claim (`CHANGELOG.md:1049`) that the UUID tiers "are kept as cheap first attempts". Without this the next agent re-adds them.
-- [ ] Do **not** write "hints now hit first" unless T1 confirmed the prompt reading. If T1 confirmed the caption reading, say plainly that the hint tier's live value is unproven and link the follow-up issue.
-- [ ] If T1 resolved the contradiction, align the three docstrings to the surviving reading and cite the spike note.
-- [ ] No `docs/ARCHITECTURE.md` change needed — its Observability section documents boundary events (`error_raised`, `error_unhandled`) only, not transport events.
-- [ ] No `CONFIGURATION.md` / `.env.template` change — no new env var or flag.
+- [x] CHANGELOG entry under `[Unreleased]`: name #529, state the measured saving (~14.9 s per unresolved reference; ~30 s per 2-ref generation), and state that reachability is unchanged because the tiers are demoted rather than deleted.
+- [x] The same entry must **name #287 and supersede** its claim (`CHANGELOG.md:1049`) that the UUID tiers "are kept as cheap first attempts". Without this the next agent re-adds them.
+- [x] Do **not** write "hints now hit first" unless T1 confirmed the prompt reading. If T1 confirmed the caption reading, say plainly that the hint tier's live value is unproven and link the follow-up issue.
+- [x] If T1 resolved the contradiction, align the three docstrings to the surviving reading and cite the spike note.
+- [x] No `docs/ARCHITECTURE.md` change needed — its Observability section documents boundary events (`error_raised`, `error_unhandled`) only, not transport events.
+- [x] No `CONFIGURATION.md` / `.env.template` change — no new env var or flag.
 
 **Tests:**
-- [ ] `uv run python scripts/ci/check_doc_links.py` green (merge gate)
+- [x] `uv run python scripts/ci/check_doc_links.py` green (merge gate)
 
 ---
 

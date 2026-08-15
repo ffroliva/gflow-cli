@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Media UUID picker lookups no longer pay two guaranteed-dead searches before
+  scrolling (#529).** The full-UUID and UUID-stem tiers move behind the
+  virtualised-grid scroll fallback, removing the measured ~14.9 s delay per
+  unresolved reference (~30 s for a two-reference generation) from lookups the
+  scroll resolves. Reachability is unchanged: both tiers remain as last-resort
+  retries for any Flow cohort that does index UUIDs. This explicitly
+  **supersedes #287's claim** that those tiers are "cheap first attempts".
+  Existing attach/miss events now report the closed `resolved_by` tier without
+  copying the winning term. Picker/catalog evidence confirms tiles carry short
+  Flow captions rather than generation prompts, so the prompt-derived hint
+  tier's live value remains unproven and proposal 3 is refuted in
+  [#541](https://github.com/ffroliva/gflow-cli/issues/541).
+
 ## [0.57.1] — 2026-08-14
 
 ### Fixed

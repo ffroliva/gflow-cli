@@ -20,7 +20,7 @@ import random
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import structlog
 
@@ -66,6 +66,15 @@ log = structlog.get_logger(__name__)
 # ruff's TC006 happy since call sites pass a bare name, not a subscript.
 _JsonObj = dict[str, Any]
 _JsonObjList = list[dict[str, Any]]
+_PickerResolvedBy = Literal[
+    "viewport",
+    "display_name",
+    "hint",
+    "scroll",
+    "uuid_retry",
+    "upload",
+    "not_found",
+]
 
 # The three mode-specific generate routes (spec §2.1). The listener filters on
 # these substrings only — video generate URLs carry no /projects/{id}/ path
@@ -1880,9 +1889,10 @@ class VideoGenerationMixin:
         if await search.count():
             await search.fill("")
 
-        if not await VideoGenerationMixin._select_existing_asset(
+        resolved_by = await VideoGenerationMixin._select_existing_asset(
             page, media_id, "", out_dir=out_dir, search_hints=search_hints
-        ):
+        )
+        if resolved_by is None:
             # The frame-slot dialog is the one surface this picker reuse is
             # unproven on (#237's name-search never surfaced generated media
             # here) — capture the dialog state so a live miss is diagnosable.
@@ -1897,7 +1907,12 @@ class VideoGenerationMixin:
             if shot is not None:
                 msg = f"{msg} Screenshot: {shot}"
             raise TransportTimeoutError(msg)
-        log.info("ui_automation_video.frame_ref_attached", slot=label, media_id=media_id)
+        log.info(
+            "ui_automation_video.frame_ref_attached",
+            slot=label,
+            media_id=media_id,
+            resolved_by=resolved_by,
+        )
 
     @staticmethod
     async def _upload_via_open_dialog(
@@ -2137,8 +2152,10 @@ class VideoGenerationMixin:
         The picker indexes Flow's own short auto-caption, NOT the generation
         prompt, so a name that never matches used to surface as a bare
         Playwright ``TimeoutError`` after 8 s — no indication of what went
-        wrong. A miss is now a typed, self-documenting error that names the
-        term searched and lists what the picker actually offered.
+        wrong. The raw picker/catalog comparison is recorded in
+        ``docs/superpowers/spikes/2026-08-15-picker-tile-alt-text.md``. A miss is
+        now a typed, self-documenting error that names the term searched and
+        lists what the picker actually offered.
         """
         # playwright is a TYPE_CHECKING-only import at module level; the
         # timeout class is needed at runtime to type the picker miss.
@@ -2216,22 +2233,21 @@ class VideoGenerationMixin:
         out_dir: Path | None,
         dialog_timeout_s: float = REMOTE_PICKER_CLOSE_TIMEOUT_S,
         search_hints: tuple[str, ...] = (),
-    ) -> bool:
+    ) -> _PickerResolvedBy | None:
         """In the OPEN reference picker, select the already-existing Flow asset
         identified by ``media_id`` (preferred over uploading a duplicate).
 
         Locates the tile by the media UUID in its thumbnail URL. If it isn't
-        already visible, tries the picker search tiers — ``display_name``
-        (when given), then the media UUID itself, then the UUID-derived
-        filename stem (#287: the frame-ref path has no display name, and a
-        search hit skips the scroll fallback entirely on crowded grids); if
-        it's STILL not visible, scrolls the virtualised picker grid
-        (react-virtuoso renders off-viewport tiles lazily — #282) and
-        re-checks between scrolls, bounded by evidence of progress rather
-        than a fixed attempt count (#287). Returns ``True`` once attached,
-        ``False`` when the asset can't be located by any of the above
-        (callers with a local file fall back to uploading it; the #287
-        frame-ref path has no fallback and raises instead).
+        already visible, tries ``display_name`` and any ``search_hints``, then
+        scrolls the virtualised picker grid (react-virtuoso renders off-viewport
+        tiles lazily — #282). Only after scrolling misses does it retry the media
+        UUID and UUID-derived filename stem. #287 live rounds found those UUID
+        searches never match, and #393's 2026-07-27 picker capture confirmed the
+        search surface indexes short captions rather than UUIDs; the tiers are
+        demoted instead of deleted because Flow is a blackbox and another cohort
+        may still index them. Returns the winning tier once attached, ``None``
+        when the asset can't be located (callers with a local file fall back to
+        uploading it; the #287 frame-ref path has no fallback and raises instead).
         """
         tile = VideoGenerationMixin._existing_asset_tile(page, media_id)
         visible = True
@@ -2239,33 +2255,38 @@ class VideoGenerationMixin:
             await tile.wait_for(state="visible", timeout=4000)
         except Exception:  # noqa: BLE001 - not-visible is an expected branch
             visible = False
+        resolved_by: _PickerResolvedBy | None = "viewport" if visible else None
 
         attempted_search = False
-        if not visible:
-            # Search tiers (#287): each is best-effort — an unmatched term
-            # just filters the grid to zero rows and the next tier (or the
-            # cleared-grid scroll fallback below) takes over. The UUID tiers
-            # cover generated/uploaded media whose display name embeds the
-            # UUID (or its first segment as a filename stem).
-            # #287 round 6: the UUID tiers are kept as cheap first attempts,
-            # but live rounds proved Flow's search does NOT index UUIDs — the
-            # `search_hints` (CLI-resolved recorded prompts, first words) are
-            # the tier that actually matches, since tile alt text carries the
-            # generation prompt. Tile matching stays UUID-in-src, so an
-            # imprecise hint can only surface extra tiles, never a wrong one.
-            uuid_stem = media_id.split("-", 1)[0]
-            terms: list[str] = []
-            for candidate in (display_name, media_id, uuid_stem, *search_hints):
-                if candidate and candidate not in terms:
-                    terms.append(candidate)
-            for term in terms:
+        searched_terms: set[str] = set()
+
+        async def _search_candidates(
+            candidates: tuple[tuple[str, _PickerResolvedBy], ...],
+        ) -> _PickerResolvedBy | None:
+            """Try unique picker terms and return the winning tier."""
+            nonlocal attempted_search
+            for term, tier in candidates:
+                if not term or term in searched_terms:
+                    continue
+                searched_terms.add(term)
                 found = await VideoGenerationMixin._search_picker_for_tile(page, tile, term)
                 if found is None:
-                    break  # picker variant with no search box (#174)
+                    return None  # picker variant with no search box (#174)
                 attempted_search = True
                 if found:
-                    visible = True
-                    break
+                    return tier
+            return None
+
+        if not visible:
+            # Pre-scroll tiers keep named/hinted lookup behaviour unchanged.
+            # The prompt-derived hints are retained pending #541, although the
+            # caption evidence means their live value is currently unproven.
+            pre_scroll_candidates: list[tuple[str, _PickerResolvedBy]] = [
+                (display_name, "display_name")
+            ]
+            pre_scroll_candidates.extend((hint, "hint") for hint in search_hints)
+            resolved_by = await _search_candidates(tuple(pre_scroll_candidates))
+            visible = resolved_by is not None
 
         if not visible:
             # A failed search leaves the grid filtered on the last term —
@@ -2288,6 +2309,23 @@ class VideoGenerationMixin:
                     await tile.wait_for(state="visible", timeout=4000)
                 except Exception:  # noqa: BLE001 - rendered but never became visible
                     visible = False
+                resolved_by = "scroll" if visible else None
+
+        if not visible:
+            # Last-resort UUID retries (#529): #287/#393 observed these as two
+            # guaranteed misses (~14.9 s total), so pay them only after the
+            # progress-bounded full-grid scroll has also missed. Retaining them
+            # preserves reachability on any Flow cohort that does index UUIDs.
+            uuid_stem = media_id.split("-", 1)[0]
+            resolved_by = await _search_candidates(
+                ((media_id, "uuid_retry"), (uuid_stem, "uuid_retry"))
+            )
+            visible = resolved_by is not None
+            if not visible and attempted_search:
+                clear_search = page.locator(PICKER_SEARCH_INPUT).first
+                if await clear_search.count():
+                    await clear_search.fill("")
+                    await page.wait_for_timeout(400)
 
         if not visible:
             # #287 diagnosis telemetry: capture WHAT the picker was showing
@@ -2307,9 +2345,11 @@ class VideoGenerationMixin:
                 project_id=project_id,
                 screenshot=str(shot) if shot is not None else None,
                 dom_dump=str(dump) if dump is not None else None,
+                resolved_by="not_found",
             )
-            return False
+            return None
 
+        assert resolved_by is not None
         await VideoGenerationMixin._attach_selected_tile(
             page,
             tile,
@@ -2319,7 +2359,7 @@ class VideoGenerationMixin:
             screenshot_name="image_ref_include_missing.png",
             dialog_timeout_s=dialog_timeout_s,
         )
-        return True
+        return resolved_by
 
     @staticmethod
     async def _attach_selected_tile(
@@ -2414,14 +2454,23 @@ class VideoGenerationMixin:
             if await search.count():
                 await search.fill("")
 
-            if await VideoGenerationMixin._select_existing_asset(
+            resolved_by = await VideoGenerationMixin._select_existing_asset(
                 page, media_id, display_name, out_dir=out_dir
-            ):
-                log.info("ui_automation_video.image_ref_selected_existing", media_id=media_id)
+            )
+            if resolved_by is not None:
+                log.info(
+                    "ui_automation_video.image_ref_selected_existing",
+                    media_id=media_id,
+                    resolved_by=resolved_by,
+                )
                 continue
 
             if local_path:
-                log.info("ui_automation_video.image_ref_upload_fallback", media_id=media_id)
+                log.info(
+                    "ui_automation_video.image_ref_upload_fallback",
+                    media_id=media_id,
+                    resolved_by="upload",
+                )
                 await VideoGenerationMixin._upload_via_open_dialog(
                     page, Path(local_path), log_label="image_ref", out_dir=out_dir
                 )

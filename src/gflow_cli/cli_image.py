@@ -255,7 +255,8 @@ def _enrich_uuid_refs(refs: list[ImageRef], profile_name: str) -> list[ImageRef]
     existing upload fallback (``_attach_image_uuid_refs``), previously reachable
     only from the ``@mention`` path, turning an unreachable tile into an upload
     of the exact recorded bytes. No search hint is derived: picker tiles carry a
-    short Flow-authored caption, not the prompt (see the #393 test module).
+    short Flow-authored caption, not the prompt (see the #393 test module and
+    ``docs/superpowers/spikes/2026-08-15-picker-tile-alt-text.md``).
 
     One catalog session for the whole list — ``DataStore.open`` runs the
     migration check and nano2 allows 10 refs per call. Best-effort throughout:
