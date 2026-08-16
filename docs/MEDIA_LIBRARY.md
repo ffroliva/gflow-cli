@@ -66,6 +66,39 @@ Consequence for all tooling: **search by name, verify by UUID, never treat a
 name as identity.** gflow's picker code asserts the exact UUID in the selected
 tile's thumbnail URL (`media.getMediaUrlRedirect?name=<uuid>`).
 
+### Rename staleness and the freshness model
+
+Because names are mutable, every cached name is a liability with a defined
+blast radius. The invariant that bounds it:
+
+> **Cached name = optimization. Listing = truth. UUID = identity.**
+
+What a stale name can and cannot do:
+
+- It **cannot** attach the wrong asset — a stale (or colliding) name search
+  either surfaces no tile or surfaces a tile whose UUID fails the exact-match
+  assertion; both are misses, never substitutions.
+- It **can** silently downgrade the run: miss → integrity-verified local
+  re-upload (duplicate upload) or, with no verified file, a typed error.
+
+Freshness is layered, cheapest-first:
+
+1. **Write-through** — every path that learns a name (generation response,
+   listing fetch, sync) writes it to the catalog immediately, with
+   provenance. A gflow-initiated rename (if ever built) must update the
+   catalog in the same operation, never as a follow-up.
+2. **Refresh-on-miss** ([#546](https://github.com/ffroliva/gflow-cli/issues/546),
+   planned) — on a picker miss, one `projectInitialData` GET (~0.5 s)
+   resolves the *current* name by UUID, the search retries once, and the
+   fresh name is written back. A user rename then costs one extra request,
+   once.
+3. **Bulk reconciliation** — `gflow data sync --names`
+   ([#543](https://github.com/ffroliva/gflow-cli/issues/543), planned) for
+   cold catalogs and ghost detection; `gflow doctor`
+   ([#542](https://github.com/ffroliva/gflow-cli/issues/542), planned)
+   reports the gap. Neither is load-bearing for a working generation once
+   layers 1–2 exist.
+
 ## The listing endpoint
 
 `flow.projectInitialData` (tRPC GET,
@@ -123,7 +156,7 @@ surfaces that support character entities (the tab set varies by mode), and a
 | --- | --- | --- |
 | Caption ≠ prompt | Prompt-text searches never match | Search recorded `display_name` only; typed `ReferenceNotFoundError` explains it |
 | Caption is async | Fresh assets may have no name to search | Verified local-file upload fallback; #543 backfill |
-| Names mutable + non-unique | Stale/ambiguous lookups | Exact-UUID tile assertion; UUID is identity |
+| Names mutable + non-unique | Stale/ambiguous lookups; silent downgrade to re-upload after a rename | Exact-UUID tile assertion; freshness model above (write-through + refresh-on-miss #546 + sync #543) |
 | Virtualized grid | DOM scans see ≤ ~27 of N tiles | Never scroll-scan; search-first (#529 contract) |
 | Per-picker project state | Asset "missing" though it exists | `_sync_picker_project` before every lookup |
 | Per-project library | Cross-project UUIDs unreachable in picker | Integrity-verified local re-upload fallback |
