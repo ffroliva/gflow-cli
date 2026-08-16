@@ -35,8 +35,9 @@ from typing import TYPE_CHECKING, Literal
 
 import structlog
 
-from gflow_cli import browser_manager, profile_store
-from gflow_cli._cli_helpers import safe_path_text
+# _cli_helpers is imported as a module (not `from ... import safe_path_text`)
+# so tests patching gflow_cli._cli_helpers.safe_path_text reach this layer.
+from gflow_cli import _cli_helpers, browser_manager, profile_store
 from gflow_cli.data.store import DataStore, inspect_schema
 from gflow_cli.errors import DataStoreError
 
@@ -171,7 +172,7 @@ def _check_local_file_missing(conn: sqlite3.Connection) -> list[Finding]:
         if not path.exists():
             missing.append(str(row["asset_id"]))
             if example is None:
-                example = safe_path_text(path)
+                example = _cli_helpers.safe_path_text(path)
     if not missing:
         return []
     return [
@@ -363,7 +364,7 @@ def _check_deprecated_vars(settings: Settings) -> list[Finding]:
                 "warn",
                 "GFLOW_CLI_DB_PATH disagrees with the resolved settings database path",
                 "unset GFLOW_CLI_DB_PATH or point it at"
-                f" {safe_path_text(settings.resolved_db_path())}",
+                f" {_cli_helpers.safe_path_text(settings.resolved_db_path())}",
             )
         )
     return findings

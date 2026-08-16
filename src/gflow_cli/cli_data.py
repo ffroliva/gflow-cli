@@ -43,6 +43,7 @@ _ROUTE_DATA_MEDIA = "data.media"
 __all__ = [
     "_db_path",
     "_emit_projects_table",
+    "_guard",
 ]
 
 # ---------------------------------------------------------------------------

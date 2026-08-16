@@ -85,6 +85,7 @@ _MCP_EXEMPT: dict[str, str] = {
     "data list videos": "local catalog maintenance — not yet ported",
     "data media": "local catalog maintenance — not yet ported",
     "data prune": "destructive local cleanup — deliberately CLI-only",
+    "doctor": "interactive diagnostic; MCP tool deferred (#542)",
     "image batch": "batch pipelines — not yet ported",
     "image upload": "asset upload — covered indirectly by reference_images paths",
     "image upscale": "not yet ported",
