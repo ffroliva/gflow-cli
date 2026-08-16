@@ -1774,11 +1774,11 @@ class VideoGenerationMixin:
     def _remote_option_tile(page: Page, name: str) -> Locator:
         """Locate a picker result tile by its display name.
 
-        Uses ARIA role+name matching rather than
-        ``[role='option']:has-text('{name}')``: ``name`` is a stored
-        ``display_name`` or the original generation prompt, both of which
-        commonly contain an apostrophe or quote that would break a
-        single-quoted ``:has-text()`` CSS selector (PR #237 review).
+        Matches the option's text via ``has_text`` (a Playwright arg, never a
+        CSS string): ``name`` is a stored ``display_name`` or the original
+        generation prompt, both of which commonly contain an apostrophe or
+        quote that would break a single-quoted ``:has-text()`` CSS selector
+        (PR #237 review).
         """
         # Anchored match: a substring match would let 'cabin' select
         # 'cabin at night' and .first attach the wrong image (PR #245 review).

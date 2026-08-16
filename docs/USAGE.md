@@ -74,7 +74,7 @@ See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
 
 ## `gflow image upload`
 
-Upload a local PNG/JPEG/WebP/GIF into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `video i2v`) accept as an initial frame. Note for `video i2v`: the UUID is selected from the generation project's media picker, and `upload` puts the asset in a *fresh scratch project* — so pass `--project <id>` of the project that holds the asset, or the picker lookup fails with exit 9 (#287).
+Upload a local PNG/JPEG/WebP/GIF into a fresh Flow project and print the asset UUID + dimensions Flow inferred. The UUID is what later subcommands (`gflow image i2i --ref UUID`, `video i2v`) accept as an initial frame. Note for `video i2v`: the UUID is preferentially selected from the generation project's media picker, and `upload` puts the asset in a *fresh scratch project* — pass `--project <id>` of the project that holds the asset to select it in place. Since v0.58.0 (#529) a picker miss falls back to re-uploading the catalog's recorded local file (integrity-verified); exit 9 now only occurs when neither the tile nor a verified local file is available.
 
 ```text
 gflow image upload PATH [OPTIONS]
@@ -316,7 +316,7 @@ Options:
 
 **Path-or-UUID semantics.** Each `--ref` value is classified at the CLI boundary:
 
-- **Looks like a Flow asset UUID** (case-insensitive 8-4-4-4-12 hex, e.g. `ddb6ef97-262d-49f4-8269-4a28c0fae6a2`) → passed through verbatim. No upload, no extra round-trip.
+- **Looks like a Flow asset UUID** (case-insensitive 8-4-4-4-12 hex, e.g. `ddb6ef97-262d-49f4-8269-4a28c0fae6a2`) → resolved through the local catalog (v0.58.0, #529): the asset's recorded Flow display name is searched in the project's reference picker and the **exact UUID tile** is selected — no duplicate upload, no grid scrolling, no UUID/prompt-text searches. When the tile can't be reached (different project, missing/stale name), the catalog's recorded local file is uploaded instead — only after its byte count and SHA-256 still match the recording; otherwise the run aborts with a typed error rather than attaching the wrong bytes.
 - **Anything else** → treated as a local path. The CLI canonicalises it (resolving symlinks once at validation time, closing the symlink-laundering vector where `./hero.png -> ~/.ssh/id_rsa` could exfiltrate secrets), then attaches it — **deduplicated by filename since v0.38.0 (#314):** if the target project's library already holds an asset with the exact same filename, that existing tile is selected in the picker instead of re-uploading, so repeating a ref across runs no longer piles up duplicate library entries. On a picker miss the file is uploaded as before. Caveat: the match is by exact filename only — a *different* image that happens to share the name of one already in the project will be reused, not uploaded; rename the file if you need a fresh upload. (Video `r2v` refs keep upload-only behavior.)
 
 Mix and match in a single call. UUIDs and paths can co-exist on the same command line; order is preserved so `imageInputs[]` matches the order you typed.
@@ -591,7 +591,8 @@ Options:
 ```bash
 gflow video i2v --initial-frame ./hero.png "Slow camera arc, soft golden light"
 gflow video i2v --initial-frame ./first.png --end-frame ./last.png "morph between scenes" --model veo-quality
-# Reference an existing in-project asset by media UUID (no re-upload, #287):
+# Reference an existing in-project asset by media UUID (picker-selected via its
+# catalog display name + exact-UUID tile since v0.58.0/#529; no re-upload):
 gflow video i2v --initial-frame d6f1927a-3eae-4626-bc90-9a6ea7637bab "pan left" --project f6caf027-...
 # Back-compat positional form:
 gflow video i2v ./hero.png "Slow camera arc, soft golden light"
@@ -601,7 +602,10 @@ Exit codes specific to this surface: **27** — Flow's upload endpoint rejected 
 local frame file (`MediaUploadRejectedError`; try re-encoding, e.g.
 `ffmpeg -i in.jpg -q:v 2 -map_metadata -1 out.jpg`, or reference the asset by
 UUID instead); **9** — a frame UUID could not be located in the project's media
-picker (`TransportTimeoutError`; wrong `--project` or foreign UUID).
+picker **and** had no integrity-verified local fallback to upload
+(`TransportTimeoutError`; wrong `--project`, foreign UUID, or the recorded
+local file is missing/changed — since v0.58.0 a reachable verified local file
+rescues a picker miss instead of failing).
 
 ## `gflow video r2v`
 
