@@ -52,13 +52,13 @@ from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.api.video import is_media_uuid
 from gflow_cli.config import UiMode, get_settings, parse_jitter_range
-from gflow_cli.data.models import OperationKind
+from gflow_cli.data.models import AssetKind, OperationKind
 from gflow_cli.data.recorder import (
     OperationRecorder,
     escalate_asset_collision,
     record_failed_operation_safe,
 )
-from gflow_cli.data.repository import DataRepository
+from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import (
     ConfigurationError,
@@ -245,17 +245,13 @@ def _classify_ref(ref: str) -> ImageRef | Path:
 
 
 def _enrich_uuid_refs(refs: list[ImageRef], profile_name: str) -> list[ImageRef]:
-    """Give bare ``--ref <UUID>`` values their catalog-recorded local files (#393).
+    """Give bare ``--ref <UUID>`` values their catalog name and local file.
 
     ``_classify_ref`` sees a string, not the catalog, so it can only produce
-    ``ImageRef(name=<uuid>)`` — no ``local_path``. That leaves the transport one
-    way to bind the reference: find its tile in Flow's media picker. When that
-    misses there is nothing to fall back on and the whole generation hard-fails,
-    which is what #393 hit in production. ``local_path`` feeds the transport's
-    existing upload fallback (``_attach_image_uuid_refs``), previously reachable
-    only from the ``@mention`` path, turning an unreachable tile into an upload
-    of the exact recorded bytes. No search hint is derived: picker tiles carry a
-    short Flow-authored caption, not the prompt (see the #393 test module).
+    ``ImageRef(name=<uuid>)``. The catalog supplies Flow's ``display_name`` for
+    browser search while the UUID remains the exact tile identity. A surviving
+    local file is retained as the #393 upload fallback when the named tile is no
+    longer available in the target project's picker.
 
     One catalog session for the whole list — ``DataStore.open`` runs the
     migration check and nano2 allows 10 refs per call. Best-effort throughout:
@@ -266,23 +262,41 @@ def _enrich_uuid_refs(refs: list[ImageRef], profile_name: str) -> list[ImageRef]
     if not refs:
         return refs
 
-    def _with_local_file(ref: ImageRef, repo: DataRepository) -> ImageRef:
+    def _with_catalog_metadata(ref: ImageRef, repo: DataRepository) -> ImageRef:
         try:
-            seed = repo.resolve_seed_image(profile_name, ref.name)
+            asset = repo.get_asset_by_flow_media_id(profile_name, ref.name)
         except (DataStoreError, OSError) as exc:
             logger.debug("image.ref_enrich_skipped", media_id=ref.name, error=str(exc)[:120])
             return ref
-        # Only offer a file that still exists — a stale catalog path would send
-        # the transport into uploading something that isn't there.
-        if seed is None or seed.local_path is None or not seed.local_path.is_file():
+        if asset is None or asset.kind is not AssetKind.IMAGE:
             return ref
-        return replace(ref, local_path=str(seed.local_path))
+
+        display_name = ref.display_name
+        recorded_name = asset.metadata_json.get("display_name")
+        if not display_name and isinstance(recorded_name, str) and recorded_name:
+            display_name = recorded_name
+
+        local_path = ref.local_path
+        local_sha256 = ref.local_sha256
+        if not local_path:
+            for local_file in asset.local_files:
+                if (path := verified_local_path(local_file)) is not None:
+                    local_path = str(path)
+                    local_sha256 = local_file.sha256 or ""
+                    break
+
+        return replace(
+            ref,
+            display_name=display_name,
+            local_path=local_path,
+            local_sha256=local_sha256,
+        )
 
     try:
         settings = get_settings()
         with DataStore.open(settings.resolved_db_path()) as store:
             repo = DataRepository(store)
-            return [_with_local_file(ref, repo) for ref in refs]
+            return [_with_catalog_metadata(ref, repo) for ref in refs]
     except (DataStoreError, OSError) as exc:
         logger.debug("image.ref_enrich_skipped", error=str(exc)[:120])
         return refs

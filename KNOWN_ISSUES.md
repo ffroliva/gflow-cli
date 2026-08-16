@@ -133,6 +133,28 @@ upload). Negative check: a foreign UUID exits 9 pre-generation with a
 project must be entered via `--project`, and projects that open in the
 full-page media-library UI (#174) can fail earlier at `mode_switch_trigger`.
 
+> **Superseded (v0.58.0, [#529](https://github.com/ffroliva/gflow-cli/issues/529)):**
+> the scroll-tier/UUID-search picker mechanics described above are gone. Frame
+> and image UUIDs now resolve through the catalog's recorded Flow
+> `display_name` (name search → exact UUID-in-thumbnail tile), with an
+> integrity-verified local-file upload as the only fallback. This entry is
+> retained as the historical record of the #287-era behavior.
+
+### Fresh generations may record without a `display_name` (async Flow caption)
+
+- **Status:** Open — tracked in [#543](https://github.com/ffroliva/gflow-cli/issues/543) (backfill command)
+- **Affected:** UUID `--ref` / frame references to *just-generated* assets (v0.58.0+)
+
+Flow computes an asset's caption (`displayName`) asynchronously server-side, so
+a generation's response occasionally lacks it and the recorder correctly
+stores no name (observed live 2026-08-16 during the r2v e2e). Such rows skip
+the picker-selection path and use the integrity-verified local-file upload
+fallback instead — correct but a duplicate upload. Also by design, rows
+recorded before v0.58.0 and all rows under
+`GFLOW_CLI_HISTORY_PROMPTS=redacted` have no stored name. #543 proposes a
+credit-free, privacy-gated `gflow data backfill-names` command; #542's
+`gflow doctor` will surface the affected-row count.
+
 ### Video duration tab probe misses on the current Frames-submode DOM
 
 - **Status:** Open ([#288](https://github.com/ffroliva/gflow-cli/issues/288))

@@ -11,6 +11,8 @@ exercising those DTOs' own validation, wrapped into one stable error type.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from gflow_cli.api.image import GenerateImageRequest
@@ -50,6 +52,34 @@ def test_video_payload_decodes_to_typed_request() -> None:
     assert decoded.schema_version == 0
     assert isinstance(decoded.request, GenerateVideoRequest)
     assert decoded.request.prompt == "a river flows"
+
+
+def test_i2v_uuid_picker_metadata_decodes_to_typed_request() -> None:
+    decoded = decode_payload(
+        "i2v",
+        {
+            "prompt": "pan",
+            "mode": "i2v",
+            "start_image_ref": "550e8400-e29b-41d4-a716-446655440000",
+            "start_image_ref_display_name": "Brass key",
+            "start_image_ref_local_path": "recorded.png",
+            "start_image_ref_local_sha256": "a" * 64,
+            "end_image_ref": "650e8400-e29b-41d4-a716-446655440000",
+            "end_image_ref_display_name": "Wooden bench",
+            "end_image_ref_local_path": "recorded-end.png",
+            "end_image_ref_local_sha256": "b" * 64,
+        },
+    )
+    request = decoded.request
+    assert isinstance(request, GenerateVideoRequest)
+    assert request.start_image_ref_id == "550e8400-e29b-41d4-a716-446655440000"
+    assert request.start_image_ref_display_name == "Brass key"
+    assert request.start_image_ref_local_path == Path("recorded.png")
+    assert request.start_image_ref_local_sha256 == "a" * 64
+    assert request.end_image_ref_id == "650e8400-e29b-41d4-a716-446655440000"
+    assert request.end_image_ref_display_name == "Wooden bench"
+    assert request.end_image_ref_local_path == Path("recorded-end.png")
+    assert request.end_image_ref_local_sha256 == "b" * 64
 
 
 # ---------------------------------------------------------------------------

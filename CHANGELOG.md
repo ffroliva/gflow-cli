@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.58.0] — 2026-08-16
+
+### Fixed
+
+- **R2V named remote references (`ref_names`) work again after Flow's picker
+  redesign — live-verified end to end (#529 follow-up).** Two UI drifts had
+  silently broken the name-attach path on every locale: the picker dialog no
+  longer exposes an accessible tree, so the old ARIA role+name tile match could
+  never find a result (the tile is now matched by its text, anchored so a
+  substring name still cannot attach the wrong asset, tolerating the localized
+  media-type badge the tile text appends, e.g. `…Imagem` on a pt profile); and
+  clicking a result tile now attaches directly and closes the picker — the
+  legacy include-button flow runs only if the dialog stays open. Proven by a
+  new live e2e that seeds a t2i image, reads its recorded `displayName` back
+  from the catalog by UUID, and generates a real R2V video with it
+  (`tests/e2e/test_video_r2v_uuid_name_e2e.py`), alongside a new same-project
+  image-picker e2e pinning the #529 exact-UUID-tile happy path.
+
+### Changed
+
+- **Catalog image UUIDs now resolve through Flow display names instead of
+  scrolling or UUID/prompt searches (#529).** A headed-Chrome spike against a
+  populated Compiled Growth story project proved the picker contract:
+  catalog UUID → `workflows[].metadata.displayName` → browser name search →
+  exact UUID-in-thumbnail tile. A duplicate-name search surfaced two distinct
+  UUIDs and the exact matcher selected the requested identity, with zero scroll
+  calls or generation requests. The UI response collector now preserves the
+  sibling workflow name so new generated-image catalog rows retain the picker
+  search key when prompt history is stored (`history_prompts=redacted` omits the
+  potentially prompt-derived caption); image `--ref <uuid>` and I2V frame UUIDs
+  are enriched with that name before browser work. UUID, UUID-stem, prompt-hint,
+  and unfiltered-grid scroll fallbacks are removed from this path. Image refs
+  retain their recorded local-file upload fallback; CLI and MCP I2V frames keep
+  the UUID, name, and fallback together for both slots. Local fallbacks are used
+  only when their recorded byte count/SHA-256 still matches. A missing/stale
+  name or unavailable search input falls through to that verified upload or a
+  typed failure—never an unfiltered viewport click, grid scan, or implicit
+  Playwright scroll. UUID-backed I2V requests now also activate the post-submit
+  route guard that rejects a credit-spent T2V response.
+  This supersedes #287's prompt-hint and UUID-grid-scroll guidance; the sanitized
+  evidence is recorded in the [#529 picker spike](docs/superpowers/spikes/2026-08-15-picker-tile-alt-text.md),
+  and [#541](https://github.com/ffroliva/gflow-cli/issues/541) records the refuted
+  prompt-hint hypothesis.
+
 ## [0.57.1] — 2026-08-14
 
 ### Fixed
@@ -2977,7 +3021,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.57.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.58.0...HEAD
+[0.58.0]: https://github.com/ffroliva/gflow-cli/compare/v0.57.1...v0.58.0
 [0.57.1]: https://github.com/ffroliva/gflow-cli/compare/v0.57.0...v0.57.1
 [0.57.0]: https://github.com/ffroliva/gflow-cli/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/ffroliva/gflow-cli/compare/v0.55.0...v0.56.0

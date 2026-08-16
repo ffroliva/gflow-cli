@@ -574,7 +574,13 @@ def _collect_images_from_body(body: dict[str, Any], images: list[GeneratedImage]
             continue
         item: dict[str, Any] = cast(_JsonObj, item_raw)
         try:
-            images.append(GeneratedImage.from_response_item(item))
+            # Parse a one-item full response so the sibling ``workflows[]``
+            # metadata is joined by workflow id.  Parsing the media item alone
+            # drops Flow's ``displayName`` — the browser picker's search key.
+            parsed = GeneratedImage.from_response_dict(
+                {"media": [item], "workflows": body.get("workflows", [])}
+            )
+            images.extend(parsed)
         except ValueError as e:
             log.warning("ui_automation.parse_media_item_failed", error=str(e))
 
@@ -2472,7 +2478,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         if request.refs:
             await self._attach_image_uuid_refs(
                 page,
-                [(r.name, r.display_name, r.local_path) for r in request.refs],
+                [(r.name, r.display_name, r.local_path, r.local_sha256) for r in request.refs],
                 out_dir=out_dir,
             )
 
