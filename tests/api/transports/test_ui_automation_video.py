@@ -3588,6 +3588,40 @@ class TestSelectExistingAssetNameResolver:
         tile.click.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_miss_then_retry_also_misses(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """Contract 2b (mis-loop guard): miss + a DIFFERENT resolved name whose
+        retry ALSO misses -> resolver called exactly once, exactly two searches
+        (never a loop), terminal ``False`` with the miss diagnostics fired so
+        the fallback chain proceeds."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+        resolver = MagicMock(return_value="Fresh renamed caption")
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._UUID, "Stale cached caption", out_dir=None, name_resolver=resolver
+        )
+
+        assert result is False
+        resolver.assert_called_once_with(self._UUID)
+        assert [c.args[0] for c in search.press_sequentially.await_args_list] == [
+            "Stale cached caption",
+            "Fresh renamed caption",
+        ]
+        tile.click.assert_not_awaited()
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.existing_asset_not_found"
+        ]
+        assert len(misses) == 1, "miss diagnostics must fire exactly once on final miss"
+
+    @pytest.mark.asyncio
     async def test_resolver_exception_is_swallowed_with_warning(
         self, install_log_capture: structlog.testing.LogCapture
     ) -> None:
