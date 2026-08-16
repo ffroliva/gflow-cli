@@ -3491,3 +3491,237 @@ class TestVideoUiModePolicy:
         req = GenerateVideoRequest(prompt="x", ui_mode=UiMode.CLASSIC)
         await transport.generate_video(request=req, download=False)
         assert bind_modes == [UiMode.CLASSIC]
+
+
+class TestSelectExistingAssetNameResolver:
+    """#546 rename self-healing — RED contract for the refresh-on-miss seam.
+
+    Pinned seam (this class DEFINES it; not implemented yet):
+
+    * ``_select_existing_asset`` gains a keyword-only
+      ``name_resolver: Callable[[str], str | None] | None = None``. It is a
+      SYNC callable, called with the media UUID, returning the CURRENT Flow
+      display name (or ``None`` when it cannot resolve one).
+    * On a picker-search miss with a resolver present, the search is retried
+      EXACTLY ONCE with the resolver's fresh name, then the existing fallback
+      chain proceeds unchanged. Cached name = optimization; listing = truth;
+      UUID = identity (the tile assertion stays ``img[src*=<uuid>]``).
+    * The transport never imports data/ — write-through of the fresh name
+      happens INSIDE the CLI-provided callback, so no return channel exists
+      here beyond the returned string.
+    * Both ``_select_existing_asset`` callers — ``_attach_image_uuid_refs``
+      (image-ref loop) and ``_attach_frame_by_media_id`` (i2v remote frame
+      path) — gain the same optional keyword-only ``name_resolver`` kwarg and
+      thread it through verbatim.
+    """
+
+    _UUID = "5a80906f-31cc-4a87-9782-95f14bb165ce"
+
+    @pytest.mark.asyncio
+    async def test_first_search_hit_never_calls_resolver(self) -> None:
+        """Contract 1: happy path pays zero extra work — a first-search hit
+        must not touch the resolver at all."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=None, count_side_effect=1
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        resolver = MagicMock(return_value="Fresh name")
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._UUID, "Cached name", out_dir=None, name_resolver=resolver
+        )
+
+        assert result is True
+        resolver.assert_not_called()
+        tile.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_miss_with_fresh_name_retries_once_and_attaches(self) -> None:
+        """Contract 2: miss + a DIFFERENT resolved name -> exactly one retry
+        with the fresh name; the retried hit attaches via the picker (no
+        upload fallback), and the resolver ran exactly once with the UUID."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=[TimeoutError("stale name filtered it out"), None],
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+        resolver = MagicMock(return_value="Fresh renamed caption")
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._UUID, "Stale cached caption", out_dir=None, name_resolver=resolver
+        )
+
+        assert result is True
+        resolver.assert_called_once_with(self._UUID)
+        assert [c.args[0] for c in search.press_sequentially.await_args_list] == [
+            "Stale cached caption",
+            "Fresh renamed caption",
+        ]
+        tile.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("resolved", [None, "Stale cached caption"])
+    async def test_miss_with_unhelpful_resolution_does_not_retry(
+        self, resolved: str | None
+    ) -> None:
+        """Contract 3: resolver returning ``None`` or the SAME stale name is
+        pinned as NO retry — the search runs once and the existing fallback
+        chain proceeds unchanged."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+        resolver = MagicMock(return_value=resolved)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._UUID, "Stale cached caption", out_dir=None, name_resolver=resolver
+        )
+
+        assert result is False
+        resolver.assert_called_once_with(self._UUID)
+        assert [c.args[0] for c in search.press_sequentially.await_args_list] == [
+            "Stale cached caption"
+        ]
+        tile.click.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_miss_then_retry_also_misses(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """Contract 2b (mis-loop guard): miss + a DIFFERENT resolved name whose
+        retry ALSO misses -> resolver called exactly once, exactly two searches
+        (never a loop), terminal ``False`` with the miss diagnostics fired so
+        the fallback chain proceeds."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+        resolver = MagicMock(return_value="Fresh renamed caption")
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._UUID, "Stale cached caption", out_dir=None, name_resolver=resolver
+        )
+
+        assert result is False
+        resolver.assert_called_once_with(self._UUID)
+        assert [c.args[0] for c in search.press_sequentially.await_args_list] == [
+            "Stale cached caption",
+            "Fresh renamed caption",
+        ]
+        tile.click.assert_not_awaited()
+        misses = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.existing_asset_not_found"
+        ]
+        assert len(misses) == 1, "miss diagnostics must fire exactly once on final miss"
+
+    @pytest.mark.asyncio
+    async def test_resolver_exception_is_swallowed_with_warning(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """Contract 4: a raising resolver must never crash the generation —
+        the exception is swallowed with a structlog warning and the fallback
+        chain proceeds (miss result unchanged)."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+        resolver = MagicMock(side_effect=RuntimeError("listing fetch blew up"))
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._UUID, "Stale cached caption", out_dir=None, name_resolver=resolver
+        )
+
+        assert result is False
+        resolver.assert_called_once_with(self._UUID)
+        assert [c.args[0] for c in search.press_sequentially.await_args_list] == [
+            "Stale cached caption"
+        ]
+        warnings = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation_video.name_resolver_failed"
+        ]
+        assert warnings, "resolver failure must be logged as a warning"
+        assert warnings[0]["log_level"] == "warning"
+        assert warnings[0]["media_id"] == self._UUID
+
+    @pytest.mark.asyncio
+    async def test_no_resolver_keeps_todays_miss_behavior(self) -> None:
+        """Contract 5 (regression guard, green today): with no resolver the
+        behavior is identical to the pre-#546 miss — one search, no retry,
+        terminal ``False``. Companion to ``TestSelectExistingAssetLargeGrid.
+        test_display_name_miss_does_not_scroll_or_search_uuid``."""
+        tile = TestSelectExistingAssetPickerScroll._tile_mock(
+            wait_for_side_effect=TimeoutError("never visible"),
+            count_side_effect=0,
+        )
+        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, self._UUID, "Stale cached caption", out_dir=None
+        )
+
+        assert result is False
+        assert [c.args[0] for c in search.press_sequentially.await_args_list] == [
+            "Stale cached caption"
+        ]
+        tile.click.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_attach_image_uuid_refs_threads_resolver_through(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Caller seam: the image-ref loop accepts ``name_resolver`` and hands
+        it verbatim to ``_select_existing_asset`` for every ref."""
+        helper = TestAttachImageUuidRefsPickerScroll()
+        page, _, _, _ = helper._make_page({self._UUID: helper._never_found_tile()})
+        select = AsyncMock(return_value=True)
+        monkeypatch.setattr(VideoGenerationMixin, "_select_existing_asset", select)
+        resolver = MagicMock(return_value=None)
+
+        await VideoGenerationMixin._attach_image_uuid_refs(
+            page,
+            [(self._UUID, "Cabin", "", "")],
+            out_dir=None,
+            name_resolver=resolver,
+        )
+
+        assert select.await_args.kwargs["name_resolver"] is resolver
+
+    @pytest.mark.asyncio
+    async def test_attach_frame_by_media_id_threads_resolver_through(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Caller seam: the i2v frame path accepts ``name_resolver`` and hands
+        it verbatim to ``_select_existing_asset``."""
+        slot = MagicMock()
+        slot.click = AsyncMock()
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
+        )
+        select = AsyncMock(return_value=True)
+        monkeypatch.setattr(VideoGenerationMixin, "_select_existing_asset", select)
+        page = _frame_dialog_page()
+        resolver = MagicMock(return_value=None)
+
+        await VideoGenerationMixin._attach_frame_by_media_id(
+            page,
+            0,
+            "Start",
+            _FRAME_REF_UUID,
+            _FRAME_DISPLAY_NAME,
+            out_dir=None,
+            name_resolver=resolver,
+        )
+
+        assert select.await_args.kwargs["name_resolver"] is resolver

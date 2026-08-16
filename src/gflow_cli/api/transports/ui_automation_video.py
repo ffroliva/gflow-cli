@@ -19,7 +19,7 @@ import json
 import random
 import re
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -1877,6 +1877,7 @@ class VideoGenerationMixin:
         project_name: str | None = None,
         local_path: Path | None = None,
         local_sha256: str = "",
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         """Fill the I2V first/last frame slot with an already-existing in-project
         asset without a duplicate upload. The catalog-resolved ``display_name``
@@ -1898,7 +1899,7 @@ class VideoGenerationMixin:
         )
 
         selected = await VideoGenerationMixin._select_existing_asset(
-            page, media_id, display_name, out_dir=out_dir
+            page, media_id, display_name, out_dir=out_dir, name_resolver=name_resolver
         )
         if not selected:
             if local_path is not None:
@@ -2278,6 +2279,7 @@ class VideoGenerationMixin:
         *,
         out_dir: Path | None,
         dialog_timeout_s: float = REMOTE_PICKER_CLOSE_TIMEOUT_S,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> bool:
         """In the OPEN reference picker, select the already-existing Flow asset
         identified by ``media_id`` (preferred over uploading a duplicate).
@@ -2289,11 +2291,39 @@ class VideoGenerationMixin:
         or type UUID fragments into the name search. A missing/stale name or
         unavailable search input falls through to the
         caller's verified local-file fallback or typed error.
+
+        #546 rename self-healing: on a search MISS, ``name_resolver`` (a sync
+        callable, UUID -> current Flow display name or ``None``) is consulted
+        once; a non-empty DIFFERENT name triggers exactly one retry search
+        (``_search_picker_for_tile`` clears the box before typing). Cached
+        name = optimization; listing = truth; UUID = identity. A raising
+        resolver is swallowed with a warning and the fallback chain proceeds.
+
+        The resolver is invoked via ``asyncio.to_thread`` so it may block on
+        I/O: the CLI bridge blocks its worker thread on a listing fetch it
+        schedules back onto THIS loop (``run_coroutine_threadsafe``), which
+        only completes because the loop is parked here awaiting the worker.
         """
         if not display_name:
             return False
         tile = VideoGenerationMixin._existing_asset_tile(page, media_id)
         found = await VideoGenerationMixin._search_picker_for_tile(page, tile, display_name)
+        if found is False and name_resolver is not None:
+            fresh: str | None = None
+            try:
+                # to_thread: the resolver is a SYNC callable that may block on
+                # I/O (the CLI bridge parks its worker thread on a listing
+                # fetch scheduled back onto this loop via
+                # run_coroutine_threadsafe — see cli_image.wire_refresh_resolver).
+                # Calling it inline would deadlock that bridge.
+                fresh = await asyncio.to_thread(name_resolver, media_id)
+            except Exception:  # noqa: BLE001 - resolver must never kill the generation
+                # Log only the media_id — the exception message may carry
+                # listing payload fragments (redaction).
+                log.warning("ui_automation_video.name_resolver_failed", media_id=media_id)
+            if fresh and fresh != display_name:
+                # Bounded second pass with the resolver-fresh name — NOT a loop.
+                found = await VideoGenerationMixin._search_picker_for_tile(page, tile, fresh)
         if not found:
             # #287 diagnosis telemetry: capture WHAT the picker was showing
             # when the lookup gave up — which attribute carries the media
@@ -2396,6 +2426,7 @@ class VideoGenerationMixin:
         refs: list[tuple[str, str, str, str]],
         *,
         out_dir: Path | None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         """Attach pre-generated image UUID references for I2I.
 
@@ -2417,7 +2448,7 @@ class VideoGenerationMixin:
             await VideoGenerationMixin._sync_picker_project(page, out_dir=out_dir)
 
             selected = await VideoGenerationMixin._select_existing_asset(
-                page, media_id, display_name, out_dir=out_dir
+                page, media_id, display_name, out_dir=out_dir, name_resolver=name_resolver
             )
             if selected:
                 log.info(
@@ -3251,6 +3282,7 @@ class VideoGenerationMixin:
         poll_timeout_s: float = 600.0,
         download: bool = True,
         on_started: VideoStartedCallback | None = None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> VideoResult:
         """Generate ONE video by driving the Flow editor UI (T2V / I2V / R2V).
 
@@ -3290,6 +3322,7 @@ class VideoGenerationMixin:
                 poll_timeout_s=poll_timeout_s,
                 download=download,
                 on_started=on_started,
+                name_resolver=name_resolver,
             )
 
     @staticmethod
@@ -3484,7 +3517,11 @@ class VideoGenerationMixin:
 
     @staticmethod
     async def _attach_i2v_frames(
-        page: Page, request: GenerateVideoRequest, *, out_dir: Path | None
+        page: Page,
+        request: GenerateVideoRequest,
+        *,
+        out_dir: Path | None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         """Attach the Start (and optional End) I2V frame: local path, in-project
         asset UUID (#287), or remote display-name ref."""
@@ -3503,6 +3540,7 @@ class VideoGenerationMixin:
                 project_name=request.project_name,
                 local_path=request.start_image_ref_local_path,
                 local_sha256=request.start_image_ref_local_sha256,
+                name_resolver=name_resolver,
             )
         elif request.start_image_ref_name is not None:
             await VideoGenerationMixin._attach_remote_frame(
@@ -3523,6 +3561,7 @@ class VideoGenerationMixin:
                 project_name=request.project_name,
                 local_path=request.end_image_ref_local_path,
                 local_sha256=request.end_image_ref_local_sha256,
+                name_resolver=name_resolver,
             )
         elif request.end_image_ref_name is not None:
             await VideoGenerationMixin._attach_remote_frame(
@@ -3559,10 +3598,13 @@ class VideoGenerationMixin:
         request: GenerateVideoRequest,
         *,
         out_dir: Path | None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         """Attach I2V frames or R2V references/entities to the editor before submit."""
         if request.mode is Mode.I2V:
-            await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=out_dir)
+            await VideoGenerationMixin._attach_i2v_frames(
+                page, request, out_dir=out_dir, name_resolver=name_resolver
+            )
         elif request.mode is Mode.R2V:
             await VideoGenerationMixin._attach_r2v_references(page, request, out_dir=out_dir)
 
@@ -3675,6 +3717,7 @@ class VideoGenerationMixin:
         poll_timeout_s: float,
         download: bool,
         on_started: VideoStartedCallback | None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> VideoResult:
         """Serialized body of `generate_video` — runs under `self._generate_lock`
         (shared with `generate_images`: one Page, one DOM)."""
@@ -3752,7 +3795,9 @@ class VideoGenerationMixin:
         # Attach images AFTER the panel is closed — the slots / 'Add Media' button
         # live in the main editor. This is what makes Flow fire StartImage /
         # StartAndEndImage / ReferenceImages instead of the plain Text route.
-        await VideoGenerationMixin._attach_media_inputs(page, request, out_dir=out_dir)
+        await VideoGenerationMixin._attach_media_inputs(
+            page, request, out_dir=out_dir, name_resolver=name_resolver
+        )
 
         # Submit prompt, await generate response, validate, and poll for status.
         return await self._submit_and_poll(

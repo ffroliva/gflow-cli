@@ -286,12 +286,27 @@ async def _generate_and_report(
                         local_path=None,
                     )
 
+            # #546 rename self-healing: on an i2v frame picker miss the
+            # transport re-fetches the project listing for the CURRENT name.
+            # Shared bridge with the image path; None when there is no project
+            # id (t2v scratch projects) — today's behavior then holds. The
+            # kwarg is passed only when a resolver exists, so duck-typed
+            # client fakes keep their pre-#546 signatures.
+            from gflow_cli.cli_image import wire_refresh_resolver
+
+            name_resolver = wire_refresh_resolver(
+                client, profile_name=profile_name, project_id=project_id
+            )
+            resolver_kw: dict[str, Any] = (
+                {} if name_resolver is None else {"name_resolver": name_resolver}
+            )
             result = await client.generate_video(
                 req=request,
                 project_id=project_id,
                 out_dir=out_dir,
                 download=True,
                 on_started=on_started,
+                **resolver_kw,
             )
 
         result = _relocate_video_output(result, output_file)

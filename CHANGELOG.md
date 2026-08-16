@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.59.0] — 2026-08-16
+
+### Added
+
+- **Refresh-on-miss: stale catalog names self-heal during generation
+  ([#546](https://github.com/ffroliva/gflow-cli/issues/546)).** When a UUID
+  reference's picker name-search misses (e.g. the asset was renamed in the
+  Flow UI after being cataloged), the transport now consults the credit-free
+  `flow.projectInitialData` listing once (~0.5 s) for the *current* name,
+  retries the search exactly once, and attaches the existing tile — instead
+  of silently downgrading to a duplicate upload. The fresh name is written
+  back with `sync.source = "refresh"` provenance (`store` history mode only;
+  `redacted` heals the run without touching disk). Applies to `image i2i
+  --ref <uuid>` and `video i2v` frame refs; any resolver failure is logged
+  and the pre-existing fallback chain proceeds unchanged. Completes the
+  [#543](https://github.com/ffroliva/gflow-cli/issues/543) freshness model —
+  see [MEDIA_LIBRARY § freshness](docs/MEDIA_LIBRARY.md).
+
+- **`gflow doctor` — read-only pre-flight diagnostics
+  ([#542](https://github.com/ffroliva/gflow-cli/issues/542)).** Ten checks
+  across the catalog (missing display names / local files / sha256), the
+  database (migration drift, WAL state + `PRAGMA quick_check`), stuck
+  operations and queue tasks (24h recency threshold), and the environment
+  (deprecated env vars, missing Playwright Chromium, auth profiles without
+  cookies). Brew-doctor philosophy: diagnoses, never heals — nothing is
+  migrated, repaired, or written, and all DB access is strictly read-only.
+  Exit `0` when clean, `33` when any warn/fail finding is present (a
+  successful diagnosis, not an error class); internal errors keep their typed
+  codes (e.g. `16` for `DataStoreError`). `--json` emits an experimental
+  machine-readable envelope (`overall_status` + per-check `checks[]` entries).
+  Output is redaction-safe: rows are identified by UUID only, paths are
+  sanitized, and under `GFLOW_CLI_HISTORY_PROMPTS=redacted` the display-name
+  check reports info instead of warn. See
+  [USAGE § `gflow doctor`](docs/USAGE.md#gflow-doctor).
+
+- **`gflow data sync --names` — reconcile catalog display names from Flow's
+  listing endpoint ([#543](https://github.com/ffroliva/gflow-cli/issues/543)).**
+  Sweeps nameless catalog rows project-by-project via the credit-free
+  `flow.projectInitialData` listing (~0.5s/project, session-cookie auth, no
+  generation surface) and writes back the display names the picker searches
+  by — restoring the [#529](https://github.com/ffroliva/gflow-cli/issues/529)
+  picker contract (search by name, verify by UUID) for rows recorded before
+  their caption existed. Rows whose media no longer exists remotely are
+  ghost-marked `sync.status = "missing_remote"` (tombstones, never deletions)
+  only when the listing is provably complete. Write-by-default with
+  `--dry-run` preview; scoped via `--project` / `--limit` / `--since` /
+  `--max-projects`; idempotent re-runs. Refuses under
+  `GFLOW_CLI_HISTORY_PROMPTS=redacted` (exit `11`); exit `34`
+  (`SyncPartialError`, retryable) when some projects fail mid-sweep. This is
+  the remediation `gflow doctor`'s missing-display-name check points at. See
+  [USAGE § `gflow data sync`](docs/USAGE.md#gflow-data-sync).
+
 ## [0.58.0] — 2026-08-16
 
 ### Fixed
@@ -3021,7 +3073,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.58.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.59.0...HEAD
+[0.59.0]: https://github.com/ffroliva/gflow-cli/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/ffroliva/gflow-cli/compare/v0.57.1...v0.58.0
 [0.57.1]: https://github.com/ffroliva/gflow-cli/compare/v0.57.0...v0.57.1
 [0.57.0]: https://github.com/ffroliva/gflow-cli/compare/v0.56.0...v0.57.0

@@ -41,6 +41,7 @@ __all__ = [
     "RateLimitError",
     "SceneConcatError",
     "SecurityError",
+    "SyncPartialError",
     "TransportTimeoutError",
     "UiModeUnavailableError",
     "UiSelectorDriftError",
@@ -981,6 +982,46 @@ class ChainManifestError(ConfigurationError):
     )
 
 
+class SyncPartialError(GFlowError):
+    """Raised when ``gflow data sync --names`` succeeds for some projects but
+    fails for others (#543).
+
+    Mirrors ``ChainPartialError``/``BatchPartialError``: the writes for the
+    projects that succeeded are already committed; ``summary`` carries the
+    :class:`gflow_cli.services.catalog_sync.SyncSummary` (typed loosely here to
+    keep errors.py dependency-light) including the per-project failure records.
+    Retryable — sync is idempotent, so a re-run continues where it left off.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/sync-partial"
+    title = "Catalog sync partially failed"
+    _default_remediation = (
+        "Some projects synced; others failed. Sync is idempotent — re-run "
+        "`gflow data sync --names` and it continues where it left off, "
+        "revisiting only rows that are still nameless."
+    )
+
+    def __init__(
+        self,
+        detail: str = "",
+        *,
+        status: int | None = None,
+        instance: str | None = None,
+        route: str = "",
+        remediation_hint: str | None = None,
+        summary: Any = None,
+    ) -> None:
+        super().__init__(
+            detail,
+            status=status,
+            instance=instance,
+            route=route,
+            remediation_hint=remediation_hint,
+        )
+        #: SyncSummary of the run (None when raised outside run_sync).
+        self.summary = summary
+
+
 # EXIT_CODE_MAP — most-specific class FIRST per isinstance walk semantics.
 # Subclasses inherit their parent's exit code if they don't have their own
 # entry. New entries MUST go BEFORE their parent class in this dict.
@@ -1043,6 +1084,10 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # Direct GFlowError subclass; exit 30 lets scripts distinguish "the queue
     # row is malformed/from an incompatible version" from generic error (1).
     QueueSchemaError: 30,
+    # SyncPartialError (#543): `gflow data sync --names` wrote some projects
+    # but not all. Direct GFlowError subclass; exit 34 lets scripts distinguish
+    # "partially synced, just re-run" from generic error (1).
+    SyncPartialError: 34,
     ConfigurationError: 11,
     AuthExpiredError: 3,
     RateLimitError: 4,
@@ -1071,6 +1116,9 @@ RETRYABLE_ERRORS: tuple[type[GFlowError], ...] = (
     # documented remediation for exit 28 IS "retry"; the machine flag must
     # agree with the docs.
     UiModeUnavailableError,
+    # #543: sync is idempotent — the documented remediation for exit 34 IS
+    # "re-run"; the machine flag must agree with the docs.
+    SyncPartialError,
 )
 
 

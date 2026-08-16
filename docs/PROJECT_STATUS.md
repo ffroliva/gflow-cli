@@ -4,6 +4,29 @@
 
 ## Current release
 
+**v0.59.0 — alpha.** **Catalog freshness becomes a first-class concern: `gflow doctor` (#542), `gflow data sync --names` (#543), and rename self-healing (#546).**
+`gflow doctor` is a read-only pre-flight diagnostic — 10 checks over the
+catalog, DB integrity, stuck work, and environment via a provably
+non-migrating `mode=ro` connection (byte-identical-DB test), severities
+pass/info/warn/fail, exit 33 = findings-present, experimental `--json`,
+per-profile attribution, redaction-safe output. `gflow data sync --names`
+reconciles catalog display names against Flow's `projectInitialData` listing
+by direct authenticated GET (~0.5 s/project, zero credits): write-by-default
+with `--dry-run` preview, atomic `json_set` provenance stamps, ghost
+tombstones gated on provably-complete non-empty listings (mass-tombstone
+guard), un-ghosting on reappearance, WAF/auth fail-fast, retryable exit 34,
+redacted-history refusal. Refresh-on-miss makes a stale cached name self-heal
+mid-generation: one listing fetch on a picker miss, retry-once, write-through
+(`sync.source="refresh"`). Live-verified end to end: the sync e2e (zero
+credits), a real-catalog backfill (117 projects, 398 nameless rows → 338
+named / 57 tombstoned, zero failures), and a stale-name heal e2e (~2 Imagen
+credits). Two live-caught bugs (sqlite cross-thread store open; a pagination
+depth-ceiling failing toward the destructive branch) fixed with red-first
+regression tests. See
+[LIVE_VERIFICATION_v0.59.0.md](LIVE_VERIFICATION_v0.59.0.md).
+
+<details><summary>v0.58.0 — catalog-name picker contract (#529) + r2v named-reference fixes</summary>
+
 **v0.58.0 — alpha.** **Catalog UUIDs resolve through Flow display names (#529) + r2v named references un-broken after Flow's picker redesign.** The picker
 contract is now `catalog UUID → workflows[].metadata.displayName → picker name
 search → exact UUID-in-thumbnail tile`: the UI response collector preserves the
@@ -18,6 +41,8 @@ regex), and clicking a result now attaches directly (include button demoted to
 legacy fallback). Four committed e2e tests pin all of it against real Flow,
 including a real r2v video generated from a catalog name. See
 [LIVE_VERIFICATION_v0.58.0.md](LIVE_VERIFICATION_v0.58.0.md).
+
+</details>
 
 <details><summary>v0.57.1 — two long-open UI bugs root-caused from live evidence (#493, #451/#288)</summary>
 
@@ -48,7 +73,7 @@ set. Everything verified at **zero credits**. See
 
 </details>
 
-**Develop (unreleased, post-v0.58.0):** nothing queued yet — see `CHANGELOG.md` `[Unreleased]` for the authoritative list. `develop` is the staging branch for the next release; this line is not a substitute for the changelog.
+**Develop (unreleased, post-v0.59.0):** nothing queued yet — see `CHANGELOG.md` `[Unreleased]` for the authoritative list. `develop` is the staging branch for the next release; this line is not a substitute for the changelog.
 
 <details><summary>v0.56.0 — ops-hardening batch + honest mode-switch evidence (#477/#478/#479, #493)</summary>
 
