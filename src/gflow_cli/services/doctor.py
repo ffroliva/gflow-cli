@@ -33,6 +33,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import structlog
+
 from gflow_cli import browser_manager, profile_store
 from gflow_cli._cli_helpers import safe_path_text
 from gflow_cli.data.store import DataStore, inspect_schema
@@ -43,6 +45,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from gflow_cli.config import Settings
+
+log = structlog.get_logger(__name__)
 
 Severity = Literal["pass", "info", "warn", "fail"]
 
@@ -104,7 +108,7 @@ def _finding(
         severity=severity,
         summary=_scrub(summary),
         remediation=_scrub(remediation),
-        row_uuids=tuple(row_uuids),
+        row_uuids=tuple(_scrub(str(u)) for u in row_uuids),
     )
 
 
@@ -215,7 +219,7 @@ def _check_migration_drift(db_path: Path) -> list[Finding]:
                 "db.migration_drift",
                 "fail",
                 f"schema inspection failed ({type(exc).__name__})",
-                "gflow data errors prune",
+                "Re-run with GFLOW_CLI_LOG_LEVEL=DEBUG for details, or file an issue.",
             )
         ]
     if inspection.newer_than_binary:
@@ -352,7 +356,7 @@ def _check_deprecated_vars(settings: Settings) -> list[Finding]:
         if os.environ.get(var)
     ]
     env_db = os.environ.get("GFLOW_CLI_DB_PATH")
-    if env_db and Path(env_db).expanduser() != settings.resolved_db_path():
+    if env_db and Path(env_db).expanduser().resolve() != settings.resolved_db_path().resolve():
         findings.append(
             _finding(
                 "env.deprecated_vars",
@@ -419,12 +423,13 @@ def _guarded(check_id: str, fn: Callable[[], list[Finding]]) -> list[Finding]:
     try:
         results = fn()
     except Exception as exc:  # noqa: BLE001 — doctor must never crash on a damaged DB
+        log.debug("doctor_check_failed", check=check_id, exc_info=True)
         return [
             _finding(
                 check_id,
                 "fail",
                 f"check could not run ({type(exc).__name__})",
-                "gflow data errors prune",
+                "Re-run with GFLOW_CLI_LOG_LEVEL=DEBUG for details, or file an issue.",
             )
         ]
     return results or [_finding(check_id, "pass", "ok")]
