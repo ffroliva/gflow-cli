@@ -301,6 +301,46 @@ def test_migration_drift_flags_db_newer_than_binary(
     assert _flagged(run_all(db, get_settings()), "db.migration_drift")
 
 
+def test_migration_drift_survives_tampered_version(
+    tmp_path: Path, healthy_doctor_env: None
+) -> None:
+    """A tampered schema_migrations version (non-numeric) must degrade to a
+    fail finding on db.migration_drift — run_all must not raise."""
+    db = _clean_db(tmp_path)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "UPDATE schema_migrations SET version = 'not-a-number' WHERE version ="
+            " (SELECT version FROM schema_migrations"
+            "  ORDER BY CAST(version AS INTEGER) DESC LIMIT 1)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    report = run_all(db, get_settings())
+    flagged = _flagged(report, "db.migration_drift")
+    assert flagged
+    assert flagged[0].severity == "fail"
+
+
+def test_check_exception_becomes_fail_finding_naming_the_check(
+    tmp_path: Path, healthy_doctor_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The _guarded never-crash contract: an arbitrary exception inside any
+    check becomes a fail finding for that check id — run_all never raises."""
+    import gflow_cli.services.doctor as doctor_mod
+
+    def _boom(conn: sqlite3.Connection) -> list[Finding]:
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(doctor_mod, "_check_stuck_started", _boom)
+    report = run_all(_clean_db(tmp_path), get_settings())
+    (finding,) = [f for f in report.findings if f.check == "operations.stuck_started"]
+    assert finding.severity == "fail"
+    assert "RuntimeError" in finding.summary
+
+
 def test_doctor_never_writes_the_database(tmp_path: Path, healthy_doctor_env: None) -> None:
     """Byte-identical DB before/after a run against a stale-schema DB.
 

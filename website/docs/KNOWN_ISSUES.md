@@ -142,7 +142,7 @@ full-page media-library UI (#174) can fail earlier at `mode_switch_trigger`.
 
 ### Fresh generations may record without a `display_name` (async Flow caption)
 
-- **Status:** Open — tracked in [#543](https://github.com/ffroliva/gflow-cli/issues/543) (backfill command)
+- **Status:** Mitigated — remedies shipped via [#543](https://github.com/ffroliva/gflow-cli/issues/543) and [#542](https://github.com/ffroliva/gflow-cli/issues/542)
 - **Affected:** UUID `--ref` / frame references to *just-generated* assets (v0.58.0+)
 
 Flow computes an asset's caption (`displayName`) asynchronously server-side, so
@@ -151,9 +151,11 @@ stores no name (observed live 2026-08-16 during the r2v e2e). Such rows skip
 the picker-selection path and use the integrity-verified local-file upload
 fallback instead — correct but a duplicate upload. Also by design, rows
 recorded before v0.58.0 and all rows under
-`GFLOW_CLI_HISTORY_PROMPTS=redacted` have no stored name. #543 proposes a
-credit-free, privacy-gated `gflow data backfill-names` command; #542's
-`gflow doctor` will surface the affected-row count.
+`GFLOW_CLI_HISTORY_PROMPTS=redacted` have no stored name. **Remedies:**
+`gflow data sync --names` (#543) backfills names credit-free from the Flow
+listing endpoint (privacy-gated to `store` history mode), and `gflow doctor`
+(#542) surfaces the affected-row count. Freshly generated rows whose caption
+has not landed yet stay nameless until the next sync sweep.
 
 ### Video duration tab probe misses on the current Frames-submode DOM
 

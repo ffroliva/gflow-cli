@@ -273,7 +273,8 @@ def _check_migration_drift(db_path: Path) -> list[Finding]:
                 "warn",
                 f"database schema (user_version {inspection.user_version})"
                 " does not match the packaged migrations",
-                "gflow data sync",
+                "Run any writing gflow command (e.g. `gflow data sync --names`) to"
+                " apply migrations, or restore the database from backup if tampered.",
             )
         ]
     return []
@@ -329,8 +330,8 @@ def _check_wal_state(
                     "db.wal_state",
                     "fail",
                     f"PRAGMA quick_check reported {len(results)} anomaly(ies)",
-                    "restore the database from backup, or move it aside and re-run:"
-                    " gflow data sync",
+                    "Restore the database from a backup, or export what you can and"
+                    " rebuild (`gflow data prune --dry-run` to inspect).",
                 )
             )
     return findings

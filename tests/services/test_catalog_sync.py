@@ -161,6 +161,30 @@ def test_parse_pagination_marker_nested_deep_sets_incomplete() -> None:
     assert parse_project_listing(payload).complete is False
 
 
+def test_parse_marker_beyond_depth_ceiling_still_sets_incomplete() -> None:
+    """A container too deep to inspect must count as a marker: ``complete`` is
+    the license to ghost-mark, so an uninspectable payload errs incomplete."""
+    deep: dict[str, Any] = {"nextPageToken": "deep-tok"}
+    for _ in range(20):  # well past _MARKER_WALK_MAX_DEPTH (16)
+        deep = {"wrap": deep}
+    media_id, media, wf = named_pair()
+    payload = listing_payload(media=[media], workflows=[wf], json_extra={"paging": deep})
+    assert parse_project_listing(payload).complete is False
+
+
+def test_parse_caption_control_chars_stripped() -> None:
+    """Harvested captions are remote bytes rendered in terminals and stored in
+    the catalog — C0/C1 control chars are stripped at parse time."""
+    media_id = new_id()
+    payload = listing_payload(
+        media=[media_item(media_id)],
+        workflows=[workflow_item(primary_media_id=media_id, display_name="evil\x1b[31mname")],
+    )
+    parsed = parse_project_listing(payload)
+    assert parsed.names[media_id] == "evil[31mname"
+    assert parsed.dropped == 0
+
+
 def test_parse_empty_or_null_marker_values_do_not_flag_incomplete() -> None:
     media_id, media, wf = named_pair()
     payload = listing_payload(

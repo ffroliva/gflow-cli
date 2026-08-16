@@ -34,7 +34,10 @@
 | 1 | `gflow doctor` (#542) | Offline by design — 33 unit tests over migration-built fixture DBs incl. the byte-identical never-writes proof; real-output smoke run during review (grouped report, caveat, exit 33) | ✅ |
 | 2 | `gflow data sync --names` (#543) e2e | `tests/e2e/test_data_sync_names_e2e.py` (zero credits): seeded name-stripped rows + fabricated ghost against a real project → names restored with `sync.named_at`/`sync.source="sync"`, ghost tombstoned `missing_remote`, idempotent re-run byte-identical | ✅ 1 passed, 9.7 s |
 | 3 | Sync at real scale | **Real catalog backfill**: 117 projects swept in ~4 min, zero failures — 398 nameless rows → **338 named, 57 tombstoned, 3 left** (async captions; retry harmlessly). Dry-run first (50 projects, counts matched) | ✅ |
-| 4 | Refresh-on-miss (#546) e2e | `tests/e2e/test_refresh_on_miss_e2e.py` (~2 credits/run): seed t2i → catalog name deliberately corrupted (simulated rename) → same-project `i2i --ref` → picker miss → resolver fetched the true caption mid-generation → `image_ref_selected_existing`, no upload fallback, no `name_resolver_failed`, catalog healed with `sync.source="refresh"` | ✅ 1 passed, 100 s (first attempt failed on transient live-Flow timing; clean pass on re-run) |
+| 4† | Refresh-on-miss (#546) e2e | `tests/e2e/test_refresh_on_miss_e2e.py` (~2 credits/run): seed t2i → catalog name deliberately corrupted (simulated rename) → same-project `i2i --ref` → picker miss → resolver fetched the true caption mid-generation → `image_ref_selected_existing`, no upload fallback, no `name_resolver_failed`, catalog healed with `sync.source="refresh"` | ✅ 1 passed, 100 s (first attempt failed on transient live-Flow timing; clean pass on re-run) |
+
+† i2v frame refresh shares the same `_select_existing_asset` path; live-covered
+via i2i, i2v plumbing unit-tested.
 
 ## 5-layer ledger (refresh-on-miss, the deepest chain)
 

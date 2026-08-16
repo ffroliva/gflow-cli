@@ -180,7 +180,9 @@ surfaces that support character entities (the tab set varies by mode), and a
   `catalog UUID → display name → picker search → exact-UUID tile → attach`,
   falling back to a verified local upload, else a typed error. See
   [REFERENCE_STRATEGIES.md](REFERENCE_STRATEGIES.md).
-- **Planned**: `gflow doctor` ([#542](https://github.com/ffroliva/gflow-cli/issues/542))
+- **Shipped**: `gflow doctor` ([#542](https://github.com/ffroliva/gflow-cli/issues/542))
   reports nameless/ghost rows; `gflow data sync --names`
   ([#543](https://github.com/ffroliva/gflow-cli/issues/543)) reconciles the
-  catalog from the listing endpoint.
+  catalog from the listing endpoint; refresh-on-miss
+  ([#546](https://github.com/ffroliva/gflow-cli/issues/546)) heals a stale
+  name mid-generation.

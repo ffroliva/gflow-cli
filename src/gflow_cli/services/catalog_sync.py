@@ -25,6 +25,7 @@ Safety rails (PLAN risk register):
 from __future__ import annotations
 
 import random
+import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -73,6 +74,11 @@ PAGINATION_MARKER_KEYS = frozenset(
 # and anything deeper is not a shape we should trust anyway.
 _MARKER_WALK_MAX_DEPTH = 16
 
+# Harvested captions are remote bytes later rendered in terminals and stored
+# in the catalog — strip C0/C1 control chars (ESC/BEL etc.) at parse time.
+# Same character class as doctor's _scrub, deliberately not imported from it.
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
 
 @dataclass(frozen=True)
 class ListingParse:
@@ -101,14 +107,15 @@ class SyncSummary:
     #: (project_id, error) records for per-project fetch/parse failures.
     failures: tuple[tuple[str, Exception], ...]
     #: Ghost-marked rows un-tombstoned because their media reappeared.
-    #: Kept LAST with a default so existing constructions stay valid.
     ghosts_cleared: int = 0
 
 
 def _has_pagination_marker(node: Any, depth: int = 0) -> bool:
     """True if any pagination-marker key holds a truthy value, recursively."""
     if depth > _MARKER_WALK_MAX_DEPTH:
-        return False
+        # An uninspectable container past the depth ceiling counts as a marker:
+        # "complete" is the license to ghost-mark, so err toward incomplete.
+        return isinstance(node, (dict, list))
     if isinstance(node, dict):
         mapping = cast("dict[str, Any]", node)
         return any(
@@ -158,6 +165,8 @@ def parse_project_listing(payload: dict[str, Any]) -> ListingParse:
         meta = cast("dict[str, Any]", raw_meta)
         media_id: Any = meta.get("primaryMediaId")
         display_name: Any = meta.get("displayName")
+        if isinstance(display_name, str):
+            display_name = _CONTROL_CHARS.sub("", display_name)
         if media_id is None or not isinstance(display_name, str) or not display_name.strip():
             # Degenerate workflow (no join key / no usable caption): skip,
             # uncounted. A caption that is empty after .strip() would store ""

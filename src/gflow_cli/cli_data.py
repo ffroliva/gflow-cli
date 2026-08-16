@@ -265,7 +265,7 @@ _JSON_OPT = click.option(
 
 @click.group()
 def data() -> None:
-    """Read local gflow media history."""
+    """Read and reconcile local gflow media history."""
 
 
 @data.command("media")
@@ -682,7 +682,7 @@ class _ThreadSafeListingClient:
             client = await self._ensure()
             return await client.fetch_project_listing(project_id)
 
-        return asyncio.run_coroutine_threadsafe(_fetch(), self._loop).result()
+        return asyncio.run_coroutine_threadsafe(_fetch(), self._loop).result(timeout=60.0)
 
     async def aclose(self) -> None:
         if self._client is not None:
@@ -844,6 +844,8 @@ def sync_cmd(
     display names for rows that gained captions, and ghost-marks rows whose
     media no longer exists remotely — only when the listing is provably
     complete. Writes by default; pass --dry-run to preview.
+
+    Exits 34 when some projects fail (re-run continues where it left off).
     """
     del names, sweep_all  # required scope flag / explicit-default marker only
     run_with_handlers(
