@@ -95,6 +95,22 @@ def test_parse_workflow_without_display_name_or_primary_media_skipped() -> None:
     assert parsed.complete is True
 
 
+def test_parse_blank_display_name_contributes_nothing() -> None:
+    """A caption that is blank after .strip() must vanish entirely: writing ""
+    as a name would leave the row matching the nameless query forever (eternal
+    resweep) while a ``dropped`` count would misreport a validation failure —
+    so it lands in neither ``names`` nor ``dropped``."""
+    media_id = new_id()
+    payload = listing_payload(
+        media=[media_item(media_id)],
+        workflows=[workflow_item(primary_media_id=media_id, display_name="  ")],
+    )
+    parsed = parse_project_listing(payload)
+    assert parsed.names == {}
+    assert parsed.dropped == 0
+    assert parsed.present == frozenset({media_id})
+
+
 def test_parse_malformed_uuid_dropped_and_counted() -> None:
     """Harvested ids are remote bytes later interpolated into selectors —
     strict UUID validation drops anything non-conforming (risk register S2)."""

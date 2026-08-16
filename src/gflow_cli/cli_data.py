@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import functools
 import json
@@ -15,8 +16,9 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from gflow_cli import json_output, profile_store
 from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
-from gflow_cli.config import get_settings
+from gflow_cli.config import LogFormat, get_settings
 from gflow_cli.data.models import AssetLookup
 from gflow_cli.data.queries import (
     ImageRow,
@@ -33,7 +35,11 @@ from gflow_cli.data.queries import (
 )
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataStoreError
+from gflow_cli.errors import DataStoreError, SyncPartialError
+
+# run_sync is bound in THIS module's namespace so tests can monkeypatch
+# ``gflow_cli.cli_data.run_sync`` (same pattern as ``cli_doctor.run_all``).
+from gflow_cli.services.catalog_sync import ensure_prompts_stored, run_sync
 
 console = Console()
 
@@ -607,3 +613,239 @@ def errors_prune_cmd(profile: str | None, older_than: str, dry_run: bool) -> Non
         )
     else:
         click.echo(f"Pruned {count} failed operation(s) older than {older_than}.")
+
+
+# ---------------------------------------------------------------------------
+# `gflow data sync` — catalog name/presence reconciliation (#543)
+# ---------------------------------------------------------------------------
+
+
+def _logs_emit_json() -> bool:
+    """True when structlog renders JSON on stderr (mirrors
+    ``observability.configure_logging``'s AUTO resolution: TEXT on a stderr
+    TTY, JSON otherwise). Gates the human progress echo — under TEXT logs the
+    per-project ``sync.project_started`` events already narrate progress, and
+    a second unconditional channel would break the single-channel rule."""
+    fmt = get_settings().log_format
+    if fmt == LogFormat.AUTO:
+        return not bool(getattr(sys.stderr, "isatty", lambda: False)())
+    return fmt == LogFormat.JSON
+
+
+def _sync_profile_name(profile: str | None) -> str:
+    """Resolve the profile whose catalog rows to sync.
+
+    Same precedence as ``_resolve_profile`` (flag > env > config default >
+    single discovered profile) but falls back to ``"default"`` instead of
+    exiting: sync reads the local catalog first, and an unknown profile just
+    yields zero nameless rows. Auth is enforced lazily at the first remote
+    fetch (``_ThreadSafeListingClient._ensure``).
+    """
+    if profile:
+        return profile
+    try:
+        return profile_store.resolve_profile(None)
+    except (profile_store.NoProfilesError, profile_store.NoDefaultProfileError):
+        return "default"
+
+
+class _ThreadSafeListingClient:
+    """Lazy bridge from the sync ``run_sync`` loop to the async FlowApiClient.
+
+    ``run_sync`` is synchronous and runs in a worker thread
+    (``asyncio.to_thread``) while the event loop stays on the main thread;
+    each ``fetch_project_listing`` call is marshalled back onto the loop with
+    ``run_coroutine_threadsafe``. The client is constructed and entered
+    LAZILY on the first fetch — so a monkeypatched ``run_sync`` (unit tests)
+    or an empty work list never launches a browser. ``aclose`` exits the
+    client if it was ever entered.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, profile_name: str) -> None:
+        self._loop = loop
+        self._profile_name = profile_name
+        self._client: Any = None
+
+    async def _ensure(self) -> Any:
+        if self._client is None:
+            from gflow_cli._cli_helpers import _make_provider_dir
+            from gflow_cli.api.client import FlowApiClient
+
+            profile_dir = _make_provider_dir(self._profile_name)
+            client = FlowApiClient(profile_dir=profile_dir, headless=get_settings().headless)
+            await client.__aenter__()
+            self._client = client
+        return self._client
+
+    def fetch_project_listing(self, project_id: str) -> Any:
+        """Sync facade called by ``run_sync`` from the worker thread."""
+
+        async def _fetch() -> Any:
+            client = await self._ensure()
+            return await client.fetch_project_listing(project_id)
+
+        return asyncio.run_coroutine_threadsafe(_fetch(), self._loop).result()
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            client, self._client = self._client, None
+            await client.__aexit__(None, None, None)
+
+
+def _echo_progress(event: Any) -> None:
+    """Human progress line ("[i/N] project <id>") on stderr — stdout stays
+    reserved for the summary / --json payload (single-channel rule)."""
+    click.echo(str(event), err=True)
+
+
+def _echo_sync_summary(summary: Any, *, dry_run: bool) -> None:
+    prefix = "Sync (dry-run)" if dry_run else "Sync"
+    click.echo(
+        f"{prefix}: {summary.projects_visited} project(s) visited, "
+        f"{summary.names_written} name(s) written, "
+        f"{summary.ghosts_marked} ghost(s) marked, "
+        f"{summary.rows_still_nameless} still nameless, "
+        f"{len(summary.failures)} failure(s)."
+    )
+
+
+def _sync_payload(summary: Any, *, dry_run: bool) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "dry_run": dry_run,
+        "projects_visited": summary.projects_visited,
+        "names_written": summary.names_written,
+        "ghosts_marked": summary.ghosts_marked,
+        "rows_still_nameless": summary.rows_still_nameless,
+        "failures": [
+            {"project_id": pid, "error": type(err).__name__} for pid, err in summary.failures
+        ],
+    }
+
+
+async def _run_data_sync(
+    *,
+    profile: str | None,
+    project_ids: tuple[str, ...],
+    limit: int | None,
+    since: datetime | None,
+    max_projects: int,
+    dry_run: bool,
+    as_json: bool,
+) -> None:
+    settings = get_settings()
+    # Privacy gate FIRST — before profile resolution, store open, or any
+    # client construction (exit 11, remediation names the env var).
+    ensure_prompts_stored(settings)
+    profile_name = _sync_profile_name(profile)
+    adapter = _ThreadSafeListingClient(asyncio.get_running_loop(), profile_name)
+    on_progress = _echo_progress if _logs_emit_json() else None
+    try:
+        with DataStore.open(_db_path()) as store:
+            repo = DataRepository(store)
+            try:
+                summary = await asyncio.to_thread(
+                    run_sync,  # module-global lookup — tests monkeypatch cli_data.run_sync
+                    adapter,
+                    repo,
+                    settings,
+                    profile_name=profile_name,
+                    dry_run=dry_run,
+                    max_projects=max_projects,
+                    limit=limit,
+                    since=since,
+                    project_ids=project_ids or None,
+                    on_progress=on_progress,
+                )
+            except SyncPartialError as exc:
+                # Show what DID land before the standard handler exits 34
+                # (text mode only — --json emits exactly one error document).
+                partial = getattr(exc, "summary", None)
+                if partial is not None and not as_json:
+                    _echo_sync_summary(partial, dry_run=dry_run)
+                raise
+    finally:
+        await adapter.aclose()
+    if as_json:
+        json_output.emit(_sync_payload(summary, dry_run=dry_run))
+    else:
+        _echo_sync_summary(summary, dry_run=dry_run)
+
+
+@data.command("sync")
+@click.option(
+    "--names",
+    is_flag=True,
+    required=True,
+    help="Sync display names + presence (the only sync mode; explicit by design).",
+)
+@click.option(
+    "--project",
+    "project_ids",
+    multiple=True,
+    help="Limit the sweep to specific Flow project id(s). Repeatable.",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(1),
+    default=None,
+    help="Visit at most N nameless projects (newest first).",
+)
+@click.option(
+    "--since",
+    type=click.DateTime(),
+    default=None,
+    help="Only consider rows created at/after this time (e.g. 2026-08-01 or 2026-08-01T12:00:00).",
+)
+@click.option(
+    "--all",
+    "sweep_all",
+    is_flag=True,
+    help="Explicit full sweep of all nameless projects (this is also the default scope).",
+)
+@click.option(
+    "--max-projects",
+    type=click.IntRange(1),
+    default=50,
+    show_default=True,
+    help="Hard cap on projects visited per run.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview what would be written. Without it, sync WRITES by default.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit a JSON summary instead of text.")
+@click.option("--profile", default=None, help="Profile whose catalog rows to sync.")
+def sync_cmd(
+    names: bool,
+    project_ids: tuple[str, ...],
+    limit: int | None,
+    since: datetime | None,
+    sweep_all: bool,
+    max_projects: int,
+    dry_run: bool,
+    as_json: bool,
+    profile: str | None,
+) -> None:
+    """Reconcile nameless catalog rows against remote Flow project listings.
+
+    Fetches each project's listing (credit-free, session-cookie auth), writes
+    display names for rows that gained captions, and ghost-marks rows whose
+    media no longer exists remotely — only when the listing is provably
+    complete. Writes by default; pass --dry-run to preview.
+    """
+    del names, sweep_all  # required scope flag / explicit-default marker only
+    run_with_handlers(
+        lambda: _run_data_sync(
+            profile=profile,
+            project_ids=project_ids,
+            limit=limit,
+            since=since,
+            max_projects=max_projects,
+            dry_run=dry_run,
+            as_json=as_json,
+        ),
+        cli_command="data sync",
+        as_json=as_json,
+    )

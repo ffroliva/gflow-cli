@@ -26,6 +26,7 @@ red at collection until the errors change lands (S5).
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -128,9 +129,24 @@ def test_sync_accepts_scoping_flags(monkeypatch: pytest.MonkeyPatch) -> None:
         ],
     )
     assert result.exit_code == 0, result.output
+    scoped = spy.calls[0]
+    assert scoped["profile_name"] == "default"
+    assert scoped["project_ids"] == (
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    )
+    assert scoped["limit"] == 3
+    # --since crosses the Click boundary as a real datetime (S5 bridge pin) —
+    # the repo layer takes datetime, never a raw string.
+    assert scoped["since"] == datetime(2026, 8, 1)
     result = runner.invoke(main, ["data", "sync", "--names", "--all"])
     assert result.exit_code == 0, result.output
     assert len(spy.calls) == 2
+    # --all is the explicit spelling of the default scope: no narrowing.
+    full = spy.calls[1]
+    assert full["project_ids"] is None
+    assert full["limit"] is None
+    assert full["since"] is None
 
 
 def test_sync_json_outputs_parseable_summary(monkeypatch: pytest.MonkeyPatch) -> None:

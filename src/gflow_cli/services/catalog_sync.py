@@ -36,7 +36,8 @@ from gflow_cli.config import parse_jitter_range
 from gflow_cli.errors import ConfigurationError, SyncPartialError, WafRejectionError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
+    from datetime import datetime
 
 log = structlog.get_logger(__name__)
 
@@ -149,8 +150,12 @@ def parse_project_listing(payload: dict[str, Any]) -> ListingParse:
         meta = cast("dict[str, Any]", raw_meta)
         media_id: Any = meta.get("primaryMediaId")
         display_name: Any = meta.get("displayName")
-        if media_id is None or not isinstance(display_name, str):
-            continue  # degenerate workflow (no join key / no caption): skip, uncounted
+        if media_id is None or not isinstance(display_name, str) or not display_name.strip():
+            # Degenerate workflow (no join key / no usable caption): skip,
+            # uncounted. A caption that is empty after .strip() would store ""
+            # — the row would look synced yet still match the nameless query,
+            # resweeping forever.
+            continue
         if isinstance(media_id, str) and is_media_uuid(media_id):
             names[media_id] = display_name
         else:
@@ -164,6 +169,27 @@ def parse_project_listing(payload: dict[str, Any]) -> ListingParse:
     )
 
 
+def ensure_prompts_stored(settings: Any) -> None:
+    """Privacy gate shared by ``run_sync`` and the CLI boundary (#543).
+
+    Raises ``ConfigurationError`` (exit 11) when ``history_prompts`` is
+    ``redacted`` — sync stores remote display names, which are prompt-derived
+    captions. Exposed so the CLI can refuse BEFORE building any repo/client.
+    """
+    if getattr(settings, "history_prompts", None) == "redacted":
+        msg = (
+            "history_prompts is 'redacted' — sync stores remote display names, "
+            "which are prompt-derived captions. Set GFLOW_CLI_HISTORY_PROMPTS=store "
+            "to enable `gflow data sync --names`."
+        )
+        raise ConfigurationError(
+            msg,
+            remediation_hint=(
+                "Set GFLOW_CLI_HISTORY_PROMPTS=store to allow storing prompt-derived display names."
+            ),
+        )
+
+
 def run_sync(
     client: Any,
     repo: Any,
@@ -172,6 +198,9 @@ def run_sync(
     profile_name: str,
     dry_run: bool = False,
     max_projects: int | None = None,
+    limit: int | None = None,
+    since: datetime | None = None,
+    project_ids: Sequence[str] | None = None,
     on_progress: Callable[[Any], None] | None = None,
 ) -> SyncSummary:
     """Sweep nameless catalog rows' projects and write names / ghost marks.
@@ -179,6 +208,10 @@ def run_sync(
     Seams: ``client.fetch_project_listing(project_id)``;
     ``repo.list_nameless_asset_projects`` / ``set_asset_display_name`` /
     ``mark_asset_missing_remote``. Contract: tests/services/test_catalog_sync.py.
+
+    ``limit`` / ``since`` / ``project_ids`` pass straight through to the repo
+    query; ``max_projects`` is the hard visit cap and is folded into the repo
+    ``limit`` (``min`` of the two when both are set).
 
     Raises:
         ConfigurationError: ``history_prompts == "redacted"`` — refused before
@@ -191,16 +224,26 @@ def run_sync(
             Repo write errors also propagate raw: local failures are systemic,
             earlier writes stay committed, and an idempotent re-run resumes.
     """
-    if getattr(settings, "history_prompts", None) == "redacted":
-        msg = (
-            "history_prompts is 'redacted' — sync stores remote display names, "
-            "which are prompt-derived captions. Set GFLOW_CLI_HISTORY_PROMPTS=store "
-            "to enable `gflow data sync --names`."
-        )
-        raise ConfigurationError(msg)
+    ensure_prompts_stored(settings)
 
-    work = list(repo.list_nameless_asset_projects(profile_name))
+    # Scoping is pushed down to the repo (SQL-side): ``max_projects`` folds
+    # into the ``limit`` passed through, so the DB caps the project count
+    # instead of Python slicing an over-fetched list.
+    effective_limit = (
+        limit
+        if max_projects is None
+        else max_projects
+        if limit is None
+        else min(limit, max_projects)
+    )
+    work = list(
+        repo.list_nameless_asset_projects(
+            profile_name, limit=effective_limit, since=since, project_ids=project_ids
+        )
+    )
     if max_projects is not None:
+        # ponytail: safety-net slice for repo implementations that ignore
+        # ``limit`` — the SQL cap above is the real mechanism.
         work = work[:max_projects]
     jitter_spec: Any = getattr(settings, "jitter_range", None)
     jitter_low, jitter_high = (
