@@ -18,7 +18,7 @@ from rich.table import Table
 
 from gflow_cli import json_output, profile_store
 from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
-from gflow_cli.config import LogFormat, get_settings
+from gflow_cli.config import get_settings
 from gflow_cli.data.models import AssetLookup
 from gflow_cli.data.queries import (
     ImageRow,
@@ -36,6 +36,7 @@ from gflow_cli.data.queries import (
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataStoreError, SyncPartialError
+from gflow_cli.observability import resolves_to_json
 
 # run_sync is bound in THIS module's namespace so tests can monkeypatch
 # ``gflow_cli.cli_data.run_sync`` (same pattern as ``cli_doctor.run_all``).
@@ -626,10 +627,7 @@ def _logs_emit_json() -> bool:
     TTY, JSON otherwise). Gates the human progress echo — under TEXT logs the
     per-project ``sync.project_started`` events already narrate progress, and
     a second unconditional channel would break the single-channel rule."""
-    fmt = get_settings().log_format
-    if fmt == LogFormat.AUTO:
-        return not bool(getattr(sys.stderr, "isatty", lambda: False)())
-    return fmt == LogFormat.JSON
+    return resolves_to_json(get_settings().log_format)
 
 
 def _sync_profile_name(profile: str | None) -> str:
@@ -813,7 +811,10 @@ async def _run_data_sync(
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Preview what would be written. Without it, sync WRITES by default.",
+    help=(
+        "Fetch listings and preview what would be written (no DB writes). "
+        "Without it, sync WRITES by default."
+    ),
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit a JSON summary instead of text.")
 @click.option("--profile", default=None, help="Profile whose catalog rows to sync.")

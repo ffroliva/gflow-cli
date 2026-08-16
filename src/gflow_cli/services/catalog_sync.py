@@ -179,8 +179,7 @@ def ensure_prompts_stored(settings: Any) -> None:
     if getattr(settings, "history_prompts", None) == "redacted":
         msg = (
             "history_prompts is 'redacted' — sync stores remote display names, "
-            "which are prompt-derived captions. Set GFLOW_CLI_HISTORY_PROMPTS=store "
-            "to enable `gflow data sync --names`."
+            "which are prompt-derived captions."
         )
         raise ConfigurationError(
             msg,

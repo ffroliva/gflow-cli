@@ -51,7 +51,20 @@ __all__ = [
     "configure_logging",
     "emit_error_event",
     "emit_unhandled_event",
+    "resolves_to_json",
 ]
+
+
+def resolves_to_json(fmt: LogFormat) -> bool:
+    """True when *fmt* resolves to the JSON renderer.
+
+    ``LogFormat.AUTO`` renders TEXT only on a stderr TTY (logs go to stderr).
+    Single point of truth for the AUTO resolution — shared by
+    :func:`configure_logging` and ``cli_data._logs_emit_json``.
+    """
+    if fmt == LogFormat.AUTO:
+        return not bool(getattr(sys.stderr, "isatty", lambda: False)())
+    return fmt == LogFormat.JSON
 
 
 def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
@@ -73,10 +86,7 @@ def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
     locals (auth tokens). The explicit form makes the privacy contract
     visible at the call site.
     """
-    if log_format == LogFormat.AUTO:
-        # Detect the TTY on the LOG stream (stderr) — that's where logs go.
-        is_tty = bool(getattr(sys.stderr, "isatty", lambda: False)())
-        log_format = LogFormat.TEXT if is_tty else LogFormat.JSON
+    log_format = LogFormat.JSON if resolves_to_json(log_format) else LogFormat.TEXT
 
     timestamper = structlog.processors.TimeStamper(fmt="iso", utc=True)
     exc_renderer = structlog.processors.ExceptionRenderer(
