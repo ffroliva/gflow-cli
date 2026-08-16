@@ -25,10 +25,11 @@ from click.testing import CliRunner
 
 from gflow_cli import cli_doctor
 from gflow_cli.cli import main
+from gflow_cli.config import reset_settings
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataStoreError
 from gflow_cli.profile_store import ProfileMeta
-from tests.services.test_doctor import CHECK_IDS
+from tests.fixtures.doctor_env import CHECK_IDS
 
 _NOW_TS = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -38,6 +39,7 @@ def _seed_db(
     *,
     display_name: str | None = None,
     missing_file_dir: Path | None = None,
+    missing_file_name: str = "gone.png",
     profile_name: str = "default",
 ) -> str:
     """DB with one asset; optionally a defect (no display_name / missing file)."""
@@ -61,7 +63,7 @@ def _seed_db(
                     str(uuid.uuid4()),
                     profile_name,
                     asset_id,
-                    str(missing_file_dir / "gone.png"),
+                    str(missing_file_dir / missing_file_name),
                     "ab" * 32,
                     _NOW_TS,
                 ),
@@ -69,31 +71,9 @@ def _seed_db(
     return asset_id
 
 
-@pytest.fixture
-def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make env-shaped checks pass so only seeded DB defects can flag."""
-    for var in ("GFLOW_CLI_PREFER_CLASSIC", "GFLOW_CLI_FORCE_AGENT_UI", "GEMINI_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(
-        "gflow_cli.browser_manager.installed_chromium_version",
-        lambda: "139.0.7258.5",
-    )
-    monkeypatch.setattr(
-        "gflow_cli.profile_store.list_profiles",
-        lambda: [
-            ProfileMeta(
-                name="default",
-                profile_dir=Path("profile_default"),
-                cookies_present=True,
-                last_used_at=None,
-                is_default=True,
-            )
-        ],
-    )
-
-
 def _use_db(monkeypatch: pytest.MonkeyPatch, db: Path) -> None:
     monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    reset_settings()  # never let a cached Settings resolve a stale DB path
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +81,7 @@ def _use_db(monkeypatch: pytest.MonkeyPatch, db: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("clean_env")
+@pytest.mark.usefixtures("healthy_doctor_env")
 def test_doctor_clean_exits_0(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = tmp_path / "gflow.db"
     _seed_db(db, display_name="fine")
@@ -110,7 +90,7 @@ def test_doctor_clean_exits_0(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert result.exit_code == 0, result.output
 
 
-@pytest.mark.usefixtures("clean_env")
+@pytest.mark.usefixtures("healthy_doctor_env")
 def test_doctor_findings_exit_33(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = tmp_path / "gflow.db"
     _seed_db(db, display_name=None)  # catalog.display_name_missing
@@ -119,7 +99,7 @@ def test_doctor_findings_exit_33(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert result.exit_code == 33, result.output
 
 
-@pytest.mark.usefixtures("clean_env")
+@pytest.mark.usefixtures("healthy_doctor_env")
 def test_doctor_datastore_error_exits_16(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -141,7 +121,7 @@ def test_doctor_datastore_error_exits_16(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("clean_env")
+@pytest.mark.usefixtures("healthy_doctor_env")
 def test_doctor_json_envelope_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = tmp_path / "gflow.db"
     _seed_db(db, display_name="fine")
@@ -155,7 +135,7 @@ def test_doctor_json_envelope_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert all("severity" in entry for entry in payload["checks"])
 
 
-@pytest.mark.usefixtures("clean_env")
+@pytest.mark.usefixtures("healthy_doctor_env")
 def test_doctor_json_findings_exit_33(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = tmp_path / "gflow.db"
     _seed_db(db, display_name=None)
@@ -178,7 +158,7 @@ def test_doctor_help_marks_json_experimental() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("clean_env")
+@pytest.mark.usefixtures("healthy_doctor_env")
 @pytest.mark.parametrize("flags", [[], ["--json"]], ids=["text", "json"])
 def test_doctor_output_has_uuids_never_display_names(
     tmp_path: Path,
@@ -194,16 +174,18 @@ def test_doctor_output_has_uuids_never_display_names(
     assert asset_id in result.output
 
 
-@pytest.mark.usefixtures("clean_env")
+@pytest.mark.usefixtures("healthy_doctor_env")
 def test_doctor_paths_render_via_safe_path_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The emitter must route every filesystem path through safe_path_text.
+    """Every rendered filesystem path must route through safe_path_text.
 
-    Pinned by sentinel: patch ``gflow_cli._cli_helpers.safe_path_text`` (the
-    emitter must call it via its module namespace) and assert the sentinel is
-    what reaches the terminal instead of the raw absolute path.
+    Finding texts (paths included) are composed in the SERVICE layer; the
+    module-namespace patch of ``gflow_cli._cli_helpers.safe_path_text``
+    catches either layer (service or CLI) as long as the caller resolves it
+    through the module. Assert the sentinel is what reaches the terminal
+    instead of the raw absolute path.
     """
     db = tmp_path / "gflow.db"
     _seed_db(db, display_name="fine", missing_file_dir=tmp_path)
@@ -218,7 +200,7 @@ def test_doctor_paths_render_via_safe_path_text(
     assert str(tmp_path / "gone.png") not in result.output
 
 
-@pytest.mark.usefixtures("clean_env")
+@pytest.mark.usefixtures("healthy_doctor_env")
 def test_doctor_never_prints_profile_email_plaintext(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -244,13 +226,21 @@ def test_doctor_never_prints_profile_email_plaintext(
     assert "secret.user@example.com" not in result.output
 
 
-@pytest.mark.usefixtures("clean_env")
+@pytest.mark.usefixtures("healthy_doctor_env")
 def test_doctor_strips_control_chars_from_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = tmp_path / "gflow.db"
-    _seed_db(db, display_name=None, profile_name="evil\x1b[31mred\x07name")
+    # Inject the control chars into a local_files.path filename: the missing
+    # file guarantees a catalog.local_file_missing finding that RENDERS the
+    # path, so this test cannot pass vacuously on a value doctor never prints.
+    _seed_db(
+        db,
+        display_name="fine",
+        missing_file_dir=tmp_path,
+        missing_file_name="evil\x1b[31mred\x07name.png",
+    )
     _use_db(monkeypatch, db)
     result = CliRunner().invoke(main, ["doctor"])
     assert result.exit_code == 33, result.output

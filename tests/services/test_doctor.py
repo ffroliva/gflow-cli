@@ -30,24 +30,10 @@ from gflow_cli.services.doctor import DoctorReport, Finding, run_all
 from gflow_cli.config import get_settings, reset_settings
 from gflow_cli.data.store import DataStore
 from gflow_cli.profile_store import ProfileMeta
+from tests.fixtures.doctor_env import CHECK_IDS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-# Frozen v1 check inventory — any rename/addition/removal must update this
-# list AND the plan (docs/superpowers/plans/2026-08-16-doctor-and-catalog-sync).
-CHECK_IDS = (
-    "catalog.display_name_missing",
-    "catalog.local_file_missing",
-    "catalog.sha256_null",
-    "db.migration_drift",
-    "db.wal_state",
-    "operations.stuck_started",
-    "queue.stuck_processing",
-    "env.deprecated_vars",
-    "env.browsers_missing",
-    "auth.files_present",
-)
 
 SEVERITIES = frozenset({"pass", "info", "warn", "fail"})
 
@@ -169,29 +155,6 @@ def _clean_db(tmp_path: Path) -> Path:
     return db
 
 
-@pytest.fixture
-def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make the env-shaped checks pass: browsers installed, auth present."""
-    for var in ("GFLOW_CLI_PREFER_CLASSIC", "GFLOW_CLI_FORCE_AGENT_UI", "GEMINI_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(
-        "gflow_cli.browser_manager.installed_chromium_version",
-        lambda: "139.0.7258.5",
-    )
-    monkeypatch.setattr(
-        "gflow_cli.profile_store.list_profiles",
-        lambda: [
-            ProfileMeta(
-                name="default",
-                profile_dir=Path("profile_default"),
-                cookies_present=True,
-                last_used_at=None,
-                is_default=True,
-            )
-        ],
-    )
-
-
 def _flagged(report: DoctorReport, check: str) -> list[Finding]:
     return [f for f in report.findings if f.check == check and f.severity in ("warn", "fail")]
 
@@ -218,7 +181,7 @@ def test_finding_is_frozen_with_expected_fields() -> None:
 
 def test_clean_run_reports_every_check_as_pass(
     tmp_path: Path,
-    clean_env: None,
+    healthy_doctor_env: None,
 ) -> None:
     report = run_all(_clean_db(tmp_path), get_settings())
     by_check = {f.check for f in report.findings}
@@ -229,7 +192,7 @@ def test_clean_run_reports_every_check_as_pass(
     assert report.overall_status == "ok"
 
 
-def test_any_warn_or_fail_flips_overall_status(tmp_path: Path, clean_env: None) -> None:
+def test_any_warn_or_fail_flips_overall_status(tmp_path: Path, healthy_doctor_env: None) -> None:
     db = _new_db(tmp_path)
     with DataStore.open(db) as store:
         _insert_asset(store.conn, display_name=None)
@@ -280,7 +243,7 @@ DB_SEEDERS: list[tuple[str, Callable[[sqlite3.Connection, Path], str]]] = [
 @pytest.mark.parametrize(("check_id", "seeder"), DB_SEEDERS, ids=[c for c, _ in DB_SEEDERS])
 def test_db_check_flags_seeded_defect(
     tmp_path: Path,
-    clean_env: None,
+    healthy_doctor_env: None,
     check_id: str,
     seeder: Callable[[sqlite3.Connection, Path], str],
 ) -> None:
@@ -311,13 +274,15 @@ def _forget_last_migration(db: Path) -> None:
         conn.close()
 
 
-def test_migration_drift_flags_stale_schema(tmp_path: Path, clean_env: None) -> None:
+def test_migration_drift_flags_stale_schema(tmp_path: Path, healthy_doctor_env: None) -> None:
     db = _clean_db(tmp_path)
     _forget_last_migration(db)
     assert _flagged(run_all(db, get_settings()), "db.migration_drift")
 
 
-def test_migration_drift_flags_db_newer_than_binary(tmp_path: Path, clean_env: None) -> None:
+def test_migration_drift_flags_db_newer_than_binary(
+    tmp_path: Path, healthy_doctor_env: None
+) -> None:
     db = _clean_db(tmp_path)
     conn = sqlite3.connect(db)
     try:
@@ -333,7 +298,7 @@ def test_migration_drift_flags_db_newer_than_binary(tmp_path: Path, clean_env: N
     assert _flagged(run_all(db, get_settings()), "db.migration_drift")
 
 
-def test_doctor_never_writes_the_database(tmp_path: Path, clean_env: None) -> None:
+def test_doctor_never_writes_the_database(tmp_path: Path, healthy_doctor_env: None) -> None:
     """Byte-identical DB before/after a run against a stale-schema DB.
 
     Doctor must diagnose drift, not heal it — no migration applied, no WAL
@@ -362,7 +327,7 @@ def test_doctor_never_writes_the_database(tmp_path: Path, clean_env: None) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_wal_state_flags_stale_sidecar(tmp_path: Path, clean_env: None) -> None:
+def test_wal_state_flags_stale_sidecar(tmp_path: Path, healthy_doctor_env: None) -> None:
     # ponytail: quick_check-failure seeding (a corrupted page) is left to D2's
     # implementation tests; a stale sidecar is the deterministic seedable defect.
     db = _clean_db(tmp_path)
@@ -385,13 +350,14 @@ def test_wal_state_flags_stale_sidecar(tmp_path: Path, clean_env: None) -> None:
 )
 def test_deprecated_env_var_flags(
     tmp_path: Path,
-    clean_env: None,
+    healthy_doctor_env: None,
     monkeypatch: pytest.MonkeyPatch,
     var: str,
     successor: str | None,
 ) -> None:
     db = _clean_db(tmp_path)
     monkeypatch.setenv(var, "1")
+    reset_settings()  # never let a cached Settings hide the env change
     flagged = _flagged(run_all(db, get_settings()), "env.deprecated_vars")
     assert flagged
     text = " ".join(f.summary + " " + f.remediation for f in flagged)
@@ -402,7 +368,7 @@ def test_deprecated_env_var_flags(
 
 def test_db_path_env_settings_disagreement_flags(
     tmp_path: Path,
-    clean_env: None,
+    healthy_doctor_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = _clean_db(tmp_path)
@@ -420,7 +386,7 @@ def test_db_path_env_settings_disagreement_flags(
 
 def test_browsers_missing_flags_when_no_chromium(
     tmp_path: Path,
-    clean_env: None,
+    healthy_doctor_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("gflow_cli.browser_manager.installed_chromium_version", lambda: None)
@@ -431,7 +397,7 @@ def test_browsers_missing_flags_when_no_chromium(
 
 def test_auth_files_present_flags_profile_without_cookies(
     tmp_path: Path,
-    clean_env: None,
+    healthy_doctor_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -456,7 +422,7 @@ def test_auth_files_present_flags_profile_without_cookies(
 
 def test_findings_use_uuids_never_display_name_values(
     tmp_path: Path,
-    clean_env: None,
+    healthy_doctor_env: None,
 ) -> None:
     db = _new_db(tmp_path)
     with DataStore.open(db) as store:
@@ -475,7 +441,7 @@ def test_findings_use_uuids_never_display_name_values(
 
 def test_display_name_missing_is_info_under_redacted_privacy(
     tmp_path: Path,
-    clean_env: None,
+    healthy_doctor_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = _new_db(tmp_path)
