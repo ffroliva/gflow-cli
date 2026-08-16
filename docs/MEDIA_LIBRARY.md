@@ -89,10 +89,14 @@ Freshness is layered, cheapest-first:
    provenance. A gflow-initiated rename (if ever built) must update the
    catalog in the same operation, never as a follow-up.
 2. **Refresh-on-miss** ([#546](https://github.com/ffroliva/gflow-cli/issues/546),
-   planned) — on a picker miss, one `projectInitialData` GET (~0.5 s)
-   resolves the *current* name by UUID, the search retries once, and the
-   fresh name is written back. A user rename then costs one extra request,
-   once.
+   shipped) — on a picker miss, one `projectInitialData` GET (~0.5 s)
+   resolves the *current* name by UUID, the search retries once (exactly
+   once — never a loop), and the fresh name is written back with
+   `sync.source = "refresh"` provenance (`store` history mode only; in
+   `redacted` mode the fresh name heals the run transiently without touching
+   disk). A user rename then costs one extra request, once. Applies to i2i
+   UUID refs and i2v frame refs; a resolver failure is swallowed with a
+   warning and the pre-#546 fallback chain proceeds unchanged.
 3. **Bulk reconciliation** — `gflow data sync --names`
    ([#543](https://github.com/ffroliva/gflow-cli/issues/543), shipped) for
    cold catalogs and ghost detection; `gflow doctor`

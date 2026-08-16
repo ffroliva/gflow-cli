@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Refresh-on-miss: stale catalog names self-heal during generation
+  ([#546](https://github.com/ffroliva/gflow-cli/issues/546)).** When a UUID
+  reference's picker name-search misses (e.g. the asset was renamed in the
+  Flow UI after being cataloged), the transport now consults the credit-free
+  `flow.projectInitialData` listing once (~0.5 s) for the *current* name,
+  retries the search exactly once, and attaches the existing tile — instead
+  of silently downgrading to a duplicate upload. The fresh name is written
+  back with `sync.source = "refresh"` provenance (`store` history mode only;
+  `redacted` heals the run without touching disk). Applies to `image i2i
+  --ref <uuid>` and `video i2v` frame refs; any resolver failure is logged
+  and the pre-existing fallback chain proceeds unchanged. Completes the
+  [#543](https://github.com/ffroliva/gflow-cli/issues/543) freshness model —
+  see [MEDIA_LIBRARY § freshness](docs/MEDIA_LIBRARY.md).
+
 - **`gflow doctor` — read-only pre-flight diagnostics
   ([#542](https://github.com/ffroliva/gflow-cli/issues/542)).** Ten checks
   across the catalog (missing display names / local files / sha256), the
