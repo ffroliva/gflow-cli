@@ -29,3 +29,10 @@ def test_redact_metadata_removes_signed_urls_and_tokens() -> None:
     assert redacted["clientContext"]["recaptchaContext"]["token"] == "<redacted:token>"
     assert redacted["nested"][0]["authorization"] == "<redacted:secret>"
     assert redacted["safe"] == "kept"
+
+
+def test_redact_metadata_masks_snake_case_fife_url() -> None:
+    """The recorder stores snake_case ``fife_url`` (recorder.py) — the key set
+    only covered the camelCase spelling, so the stored value leaked (#542)."""
+    raw = {"fife_url": "https://lh3.googleusercontent.com/fife/abc"}
+    assert redact_metadata(raw)["fife_url"] == "<redacted:url>"

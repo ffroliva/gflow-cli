@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from playwright.async_api import Page
@@ -85,9 +86,15 @@ class FlowTransportStrategy(Protocol):
         *,
         project_id: str | None,
         request: GenerateImageRequest,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> list[GeneratedImage]:
         """Send batchGenerateImages. recaptcha_token lives on `request` —
-        keeping the Protocol media-agnostic across image and video generation."""
+        keeping the Protocol media-agnostic across image and video generation.
+
+        ``name_resolver`` (#546): optional sync callable, media UUID -> current
+        Flow display name. Only the picker-driven UI transport consults it (on
+        a reference-search miss); wire transports accept and ignore it.
+        """
         ...
 
     async def teardown(self) -> None:
@@ -114,6 +121,11 @@ class VideoCapableTransport(Protocol):
         poll_timeout_s: float,
         download: bool,
         on_started: VideoStartedCallback | None = None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> VideoResult:
-        """Drive the Flow editor UI to generate a video and return the result."""
+        """Drive the Flow editor UI to generate a video and return the result.
+
+        ``name_resolver`` (#546): optional sync callable, media UUID -> current
+        Flow display name, consulted on an i2v frame picker-search miss.
+        """
         raise NotImplementedError

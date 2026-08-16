@@ -316,7 +316,7 @@ Options:
 
 **Path-or-UUID semantics.** Each `--ref` value is classified at the CLI boundary:
 
-- **Looks like a Flow asset UUID** (case-insensitive 8-4-4-4-12 hex, e.g. `ddb6ef97-262d-49f4-8269-4a28c0fae6a2`) → resolved through the local catalog (v0.58.0, #529): the asset's recorded Flow display name is searched in the project's reference picker and the **exact UUID tile** is selected — no duplicate upload, no grid scrolling, no UUID/prompt-text searches. When the tile can't be reached (different project, missing/stale name), the catalog's recorded local file is uploaded instead — only after its byte count and SHA-256 still match the recording; otherwise the run aborts with a typed error rather than attaching the wrong bytes.
+- **Looks like a Flow asset UUID** (case-insensitive 8-4-4-4-12 hex, e.g. `ddb6ef97-262d-49f4-8269-4a28c0fae6a2`) → resolved through the local catalog (v0.58.0, #529): the asset's recorded Flow display name is searched in the project's reference picker and the **exact UUID tile** is selected — no duplicate upload, no grid scrolling, no UUID/prompt-text searches. A stale cached name self-heals ([#546](https://github.com/ffroliva/gflow-cli/issues/546)): on a picker miss in a known project, one free ~0.5 s listing fetch resolves the *current* name by UUID, the search is retried once, and the catalog is updated (`sync.source = "refresh"`) — a rename in the Flow UI costs one extra request, once. When the tile still can't be reached (different project, no recorded name), the catalog's recorded local file is uploaded instead — only after its byte count and SHA-256 still match the recording; otherwise the run aborts with a typed error rather than attaching the wrong bytes.
 - **Anything else** → treated as a local path. The CLI canonicalises it (resolving symlinks once at validation time, closing the symlink-laundering vector where `./hero.png -> ~/.ssh/id_rsa` could exfiltrate secrets), then attaches it — **deduplicated by filename since v0.38.0 (#314):** if the target project's library already holds an asset with the exact same filename, that existing tile is selected in the picker instead of re-uploading, so repeating a ref across runs no longer piles up duplicate library entries. On a picker miss the file is uploaded as before. Caveat: the match is by exact filename only — a *different* image that happens to share the name of one already in the project will be reused, not uploaded; rename the file if you need a fresh upload. (Video `r2v` refs keep upload-only behavior.)
 
 Mix and match in a single call. UUIDs and paths can co-exist on the same command line; order is preserved so `imageInputs[]` matches the order you typed.
@@ -1093,6 +1093,143 @@ same command prints `cloud_uri_1`, `cloud_uri_2`, and so on instead of
 
 Exit codes: `0` success, `2` media ID not found in the local database, `16` database error (see exit code table below).
 
+## `gflow data sync`
+
+Reconcile the local catalog's display names against Flow's own project-listing
+endpoint (`flow.projectInitialData`) — the source of the captions the media
+picker searches by. **Credit-free**: one listing GET per project (~0.5s,
+session-cookie auth); no generation surface is touched. **Writes by
+default** — pass `--dry-run` to preview.
+
+```text
+gflow data sync --names [OPTIONS]
+
+Options:
+  --names               Sync display names + presence (required; the only
+                        sync mode, explicit by design).
+  --project ID          Limit the sweep to specific Flow project id(s).
+                        Repeatable.
+  --limit N             Visit at most N nameless projects (newest first).
+  --since DATETIME      Only consider rows created at/after this time
+                        (e.g. 2026-08-01 or 2026-08-01T12:00:00).
+  --all                 Explicit full sweep of all nameless projects
+                        (this is also the default scope).
+  --max-projects N      Hard cap on projects visited per run.  [default: 50]
+  --dry-run             Fetch listings and preview what would be written
+                        (no DB writes). Without it, sync WRITES by default.
+  --json                Emit a JSON summary instead of text.
+  --profile NAME        Profile whose catalog rows to sync.
+```
+
+**What it fixes.** Rows recorded before the caption existed (Flow computes
+display names asynchronously server-side), or recorded by a pre-0.58.0
+version, have no stored name — so `--ref <uuid>` runs fall back to a duplicate
+re-upload instead of a picker selection. One sync pass restores the names and
+the picker path works again.
+
+**Scoping.** The default sweep visits every project that still has nameless,
+non-ghost rows, newest first. `--project` restricts to explicit project ids,
+`--limit` caps how many nameless projects are considered, `--since` drops rows
+created before the cutoff, and `--max-projects` is the hard visit cap on top
+of whichever scope applies.
+
+**Multiple profiles.** Sync operates on **one profile per run** — the
+resolved default, or the one named with `--profile`. With several profiles,
+run it once per profile. `gflow doctor` shows the per-profile split in its
+catalog counts (e.g. `12 asset(s) have no display name (denon82: 9, work: 3)`)
+so you can see which profiles still need a pass.
+
+**Ghost marking.** When a listing is provably complete (no pagination
+markers) **and** contains at least one media item (a mass-tombstone guard
+against a Flow shape drift hiding the whole `media[]` array), cataloged rows
+whose media no longer exists remotely are flagged
+`sync.status = "missing_remote"` — a tombstone, **never a deletion**: the
+row and its provenance stay queryable, and tombstoned rows are skipped by
+later sweeps. On a partial listing absence proves nothing, so nothing is
+ghost-marked.
+
+**Un-ghosting.** A tombstoned row whose media reappears in a later listing
+has its tombstone cleared automatically; if still nameless it rejoins the
+next sweep.
+
+**Privacy gate.** Display names are prompt-derived captions, so under
+`GFLOW_CLI_HISTORY_PROMPTS=redacted` sync refuses up front (exit `11`) with a
+remediation naming the env var — nothing is fetched or written.
+
+**Exit codes.** `0` success (including a no-op run); `34` partial failure —
+some projects failed, at least one succeeded (`SyncPartialError`, retryable:
+completed writes stay committed and a re-run resumes where it left off); `11`
+redacted-mode refusal; `2` usage error (e.g. missing `--names`).
+
+```bash
+# Preview the full sweep without writing
+gflow data sync --names --dry-run
+
+# Restore names for one project
+gflow data sync --names --project 6e4460fb-e955-4a44-806c-9b34d4998c9f
+
+# Bounded background-friendly sweep, machine-readable summary
+gflow data sync --names --limit 10 --json
+```
+
+Sync is **idempotent**: a second run over an already-reconciled catalog visits
+nothing, writes nothing, and leaves every row's metadata byte-identical — safe
+to schedule or re-run after a partial failure.
+
+## `gflow doctor`
+
+Read-only pre-flight diagnostics over the local catalog, database, and
+environment. Doctor **diagnoses, never heals**: nothing is migrated, repaired,
+or written — not even pending schema migrations. All database access is
+strictly read-only (SQLite may create transient `-wal`/`-shm` sidecar files
+during the read-only open; the database itself is never modified), so it is
+safe to run against a live catalog at any time.
+
+```text
+gflow doctor [--json]
+
+Options:
+  --json                Emit a machine-readable JSON report
+                        (experimental; shape may change).
+```
+
+Ten checks run on every invocation:
+
+| Check id | Detects | Suggested remediation |
+|---|---|---|
+| `catalog.display_name_missing` | Assets with no recorded display name (the picker search key) | `gflow data sync --names` |
+| `catalog.local_file_missing` | Cataloged local files that no longer exist on disk | `gflow data prune --dry-run` |
+| `catalog.sha256_null` | Local files with no recorded sha256 | `gflow data sync` |
+| `db.migration_drift` | Schema does not match the packaged migrations, or was written by a newer gflow-cli | `gflow data sync` / `uv tool upgrade gflow-cli` |
+| `db.wal_state` | Stale `-wal`/`-shm` sidecars next to a non-WAL database; `PRAGMA quick_check` anomalies | Close other gflow processes and re-run; restore from backup on quick_check failures |
+| `operations.stuck_started` | Operations in `started` for over 24h with no completion | `gflow data errors prune` |
+| `queue.stuck_processing` | Queue tasks claimed as `processing` for over 24h | `gflow data prune --dry-run` |
+| `env.deprecated_vars` | Deprecated env vars still set (`GFLOW_CLI_PREFER_CLASSIC`, `GFLOW_CLI_FORCE_AGENT_UI`, `GEMINI_API_KEY`), or `GFLOW_CLI_DB_PATH` disagreeing with the resolved settings path | Unset the variable / switch to its successor |
+| `env.browsers_missing` | Playwright Chromium is not installed | `playwright install chromium` |
+| `auth.files_present` | No auth profiles, or profiles without saved cookies | `gflow auth login` |
+
+**Severity model.** Every check reports `pass`, `info`, `warn`, or `fail`.
+`info` is worth knowing but not a defect — it never flips the overall status
+or the exit code; only `warn`/`fail` do. In the brew-doctor spirit the report
+itself says it best: findings are diagnostic signals, not a to-do list — if
+everything is working as expected, there is no need to chase them.
+
+**Exit codes.** `0` when every check passes (info findings included), `33`
+when any warn/fail finding is present — a successful diagnosis, not an error
+class. Internal errors keep their standard typed codes (e.g. `16` when the
+database cannot be opened at all — see the exit-code table below).
+
+**`--json` (experimental).** Emits a machine-readable envelope whose contract
+keys are `overall_status` (`ok`/`issues`) and `checks[]`, each entry carrying
+at least `check` (the id from the table above) and `severity`. The shape may
+grow; treat unknown keys as forward-compatible.
+
+**Redacted history.** Doctor output is redaction-safe: rows are identified by
+UUID only (never display-name values), and paths are sanitized. Under
+`GFLOW_CLI_HISTORY_PROMPTS=redacted` the `catalog.display_name_missing` check
+reports `info` instead of `warn` — name backfill is deliberately suppressed by
+that privacy setting, so missing names are expected, not a defect.
+
 ## `gflow models`
 
 Print the image and video model catalog — the source of truth for what
@@ -1381,6 +1518,8 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `30` | `QueueSchemaError`    | A `gflow serve`/MCP worker-queue task payload has an unrecognized `schema_version` or fails validation against the typed request DTOs | Usually means gflow-cli was downgraded after a newer version enqueued the task, or the payload was hand-edited; re-enqueue with a compatible version |
 | `31` | `FlowAppError`        | Flow's web app hit a client-side exception (its error-boundary page rendered instead of the editor) — a transient Flow crash, not a gflow bug | Retry shortly; if it persists, Flow itself is degraded — wait and retry later |
 | `32` | `ReferenceNotFoundError` | A referenced media NAME is not in this project's picker. Flow indexes a short auto-caption, not the generation prompt, so a prompt used as a reference name never matches | Reference the asset by its media UUID, pass a local file with `--ref`, or check what exists with `gflow data list images` |
+| `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
+| `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

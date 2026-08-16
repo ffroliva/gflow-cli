@@ -55,7 +55,8 @@ else is display sugar. Rules, each live-verified:
 3. **Uploads keep their original filename verbatim** — no captioning pass.
 4. **Captions are computed asynchronously.** A fresh generation's response may
    not carry `displayName` yet; the recorder then (correctly) stores no name.
-   ([#543](https://github.com/ffroliva/gflow-cli/issues/543) tracks backfill.)
+   (Backfill shipped as `gflow data sync --names`,
+   [#543](https://github.com/ffroliva/gflow-cli/issues/543).)
 5. **Names are mutable**: users can rename assets via the Flow Agent (per
    [Google's own docs](https://support.google.com/flow/answer/16935308)) —
    so a cached name can go stale.
@@ -88,14 +89,18 @@ Freshness is layered, cheapest-first:
    provenance. A gflow-initiated rename (if ever built) must update the
    catalog in the same operation, never as a follow-up.
 2. **Refresh-on-miss** ([#546](https://github.com/ffroliva/gflow-cli/issues/546),
-   planned) — on a picker miss, one `projectInitialData` GET (~0.5 s)
-   resolves the *current* name by UUID, the search retries once, and the
-   fresh name is written back. A user rename then costs one extra request,
-   once.
+   shipped) — on a picker miss, one `projectInitialData` GET (~0.5 s)
+   resolves the *current* name by UUID, the search retries once (exactly
+   once — never a loop), and the fresh name is written back with
+   `sync.source = "refresh"` provenance (`store` history mode only; in
+   `redacted` mode the fresh name heals the run transiently without touching
+   disk). A user rename then costs one extra request, once. Applies to i2i
+   UUID refs and i2v frame refs; a resolver failure is swallowed with a
+   warning and the pre-#546 fallback chain proceeds unchanged.
 3. **Bulk reconciliation** — `gflow data sync --names`
-   ([#543](https://github.com/ffroliva/gflow-cli/issues/543), planned) for
+   ([#543](https://github.com/ffroliva/gflow-cli/issues/543), shipped) for
    cold catalogs and ghost detection; `gflow doctor`
-   ([#542](https://github.com/ffroliva/gflow-cli/issues/542), planned)
+   ([#542](https://github.com/ffroliva/gflow-cli/issues/542), shipped)
    reports the gap. Neither is load-bearing for a working generation once
    layers 1–2 exist.
 
@@ -175,7 +180,9 @@ surfaces that support character entities (the tab set varies by mode), and a
   `catalog UUID → display name → picker search → exact-UUID tile → attach`,
   falling back to a verified local upload, else a typed error. See
   [REFERENCE_STRATEGIES.md](REFERENCE_STRATEGIES.md).
-- **Planned**: `gflow doctor` ([#542](https://github.com/ffroliva/gflow-cli/issues/542))
+- **Shipped**: `gflow doctor` ([#542](https://github.com/ffroliva/gflow-cli/issues/542))
   reports nameless/ghost rows; `gflow data sync --names`
   ([#543](https://github.com/ffroliva/gflow-cli/issues/543)) reconciles the
-  catalog from the listing endpoint.
+  catalog from the listing endpoint; refresh-on-miss
+  ([#546](https://github.com/ffroliva/gflow-cli/issues/546)) heals a stale
+  name mid-generation.

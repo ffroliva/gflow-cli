@@ -26,6 +26,8 @@ from gflow_cli.errors import DataIntegrityError
 from gflow_cli.file_integrity import matches_recorded_file
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from gflow_cli.data.store import DataStore
 
 
@@ -54,6 +56,17 @@ def verified_local_path(local_file: LocalFileRecord) -> Path | None:
     ):
         return None
     return path
+
+
+@dataclasses.dataclass(frozen=True)
+class ProjectWork:
+    """One project's nameless catalog rows, grouped for the #543 sync sweep.
+
+    ``run_sync`` consumes exactly these attribute names.
+    """
+
+    flow_project_id: str
+    media_ids: tuple[str, ...]
 
 
 def _decode_metadata_json(raw: object) -> dict[str, Any]:
@@ -237,6 +250,165 @@ class DataRepository:
                 "UPDATE assets SET status = ? WHERE profile_name = ? AND flow_media_id = ?",
                 (status, profile_name, flow_media_id),
             )
+
+    def set_asset_display_name(
+        self,
+        profile_name: str,
+        flow_media_id: str,
+        name: str,
+        *,
+        source: str,
+    ) -> bool:
+        """Atomically patch ``$.display_name`` + ``$.sync`` provenance (#543).
+
+        Single-statement ``json_set`` inside ``BEGIN IMMEDIATE``: sets
+        ``$.display_name``, ``$.sync.named_at`` (UTC ISO), ``$.sync.source``
+        while preserving unrelated metadata keys. A changed name is
+        overwritten (rename semantics). Returns False without writing when
+        the media id is unknown (never inserts) or the stored name is already
+        identical — the WHERE predicate prevents timestamp churn.
+        """
+        with self._store.transaction(immediate=True):
+            cursor = self._store.conn.execute(
+                """
+                UPDATE assets
+                SET metadata_json = json_set(
+                    COALESCE(metadata_json, '{}'),
+                    '$.display_name', ?,
+                    '$.sync.named_at', ?,
+                    '$.sync.source', ?
+                )
+                WHERE profile_name = ? AND flow_media_id = ?
+                  AND COALESCE(json_extract(metadata_json, '$.display_name'), '') != ?
+                """,
+                (name, _utc_now(), source, profile_name, flow_media_id, name),
+            )
+            changed = cursor.rowcount
+        return changed > 0
+
+    def mark_asset_missing_remote(self, profile_name: str, flow_media_id: str) -> bool:
+        """Flag an asset as absent from a complete remote listing (#543).
+
+        FLAG semantics only: sets ``$.sync.status = 'missing_remote'`` +
+        ``$.sync.checked_at`` (UTC ISO) via a single atomic ``json_set`` —
+        never deletes rows or nulls other metadata. Returns False for an
+        unknown media id (never inserts).
+        """
+        with self._store.transaction(immediate=True):
+            cursor = self._store.conn.execute(
+                """
+                UPDATE assets
+                SET metadata_json = json_set(
+                    COALESCE(metadata_json, '{}'),
+                    '$.sync.status', 'missing_remote',
+                    '$.sync.checked_at', ?
+                )
+                WHERE profile_name = ? AND flow_media_id = ?
+                """,
+                (_utc_now(), profile_name, flow_media_id),
+            )
+            changed = cursor.rowcount
+        return changed > 0
+
+    def clear_missing_remote(self, profile_name: str, flow_media_id: str) -> bool:
+        """Un-ghost an asset whose media reappeared in a listing (#543).
+
+        Single atomic statement: ``json_remove`` drops ONLY ``$.sync.status``
+        (the ``$.sync`` object itself survives — ``named_at`` and other keys
+        stay) and ``json_set`` re-stamps ``$.sync.checked_at`` (UTC ISO).
+        The WHERE predicate requires the row to currently be flagged
+        ``missing_remote`` — returns False for non-ghost or unknown ids,
+        never touching their metadata.
+        """
+        with self._store.transaction(immediate=True):
+            cursor = self._store.conn.execute(
+                """
+                UPDATE assets
+                SET metadata_json = json_set(
+                    json_remove(metadata_json, '$.sync.status'),
+                    '$.sync.checked_at', ?
+                )
+                WHERE profile_name = ? AND flow_media_id = ?
+                  AND json_extract(metadata_json, '$.sync.status') = 'missing_remote'
+                """,
+                (_utc_now(), profile_name, flow_media_id),
+            )
+            changed = cursor.rowcount
+        return changed > 0
+
+    def list_missing_remote_media(self, profile_name: str, flow_project_id: str) -> tuple[str, ...]:
+        """Ghost-marked media ids of one project, for the un-ghost pass (#543)."""
+        rows = self._store.conn.execute(
+            """
+            SELECT flow_media_id
+            FROM assets
+            WHERE profile_name = ? AND flow_project_id = ?
+              AND json_extract(metadata_json, '$.sync.status') = 'missing_remote'
+            ORDER BY created_at ASC, id ASC
+            """,
+            (profile_name, flow_project_id),
+        ).fetchall()
+        return tuple(str(row["flow_media_id"]) for row in rows)
+
+    def list_nameless_asset_projects(
+        self,
+        profile_name: str,
+        *,
+        limit: int | None = None,
+        since: datetime | None = None,
+        project_ids: Sequence[str] | None = None,
+    ) -> list[ProjectWork]:
+        """Group nameless, non-ghost asset rows per project for the sync sweep.
+
+        Nameless = ``metadata_json`` NULL / no ``$.display_name`` / empty
+        string; rows already flagged ``$.sync.status = 'missing_remote'`` are
+        excluded. ``since`` drops individual rows created before it (which
+        also drops projects left with no qualifying rows); ``project_ids``
+        scopes projects; ``limit`` caps the project count. Ordered by each
+        project's earliest qualifying asset ``created_at`` DESCENDING.
+        """
+        clauses = [
+            "profile_name = ?",
+            "flow_project_id IS NOT NULL",
+            "COALESCE(json_extract(metadata_json, '$.display_name'), '') = ''",
+            "COALESCE(json_extract(metadata_json, '$.sync.status'), '') != 'missing_remote'",
+        ]
+        params: list[object] = [profile_name]
+        if since is not None:
+            # created_at is stored as recorder-format UTC ISO ("...Z") —
+            # normalize to the same shape so string comparison is chronological.
+            clauses.append("created_at >= ?")
+            params.append(
+                _coerce_utc(since)
+                .astimezone(UTC)
+                .isoformat(timespec="milliseconds")
+                .replace("+00:00", "Z")
+            )
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            placeholders = ",".join("?" * len(project_ids))
+            clauses.append(f"flow_project_id IN ({placeholders})")
+            params.extend(project_ids)
+        rows = self._store.conn.execute(
+            f"""
+            SELECT flow_project_id, flow_media_id, created_at
+            FROM assets
+            WHERE {" AND ".join(clauses)}
+            ORDER BY created_at ASC, id ASC
+            """,
+            params,
+        ).fetchall()
+        grouped: dict[str, list[str]] = {}
+        earliest: dict[str, str] = {}
+        for row in rows:
+            project_id = str(row["flow_project_id"])
+            grouped.setdefault(project_id, []).append(str(row["flow_media_id"]))
+            earliest.setdefault(project_id, str(row["created_at"]))
+        ordered = sorted(grouped, key=lambda pid: earliest[pid], reverse=True)
+        if limit is not None:
+            ordered = ordered[:limit]
+        return [ProjectWork(flow_project_id=pid, media_ids=tuple(grouped[pid])) for pid in ordered]
 
     def get_asset_by_flow_media_id(
         self,

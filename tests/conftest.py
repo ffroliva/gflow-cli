@@ -24,6 +24,11 @@ from pathlib import Path
 import pytest
 import structlog
 
+# Shared doctor fixture (#542) — defined next to its CHECK_IDS constant in
+# tests/fixtures/doctor_env.py; re-exported here so pytest registers it for
+# both tests/services/test_doctor.py and tests/cli/test_cli_doctor.py.
+from tests.fixtures.doctor_env import healthy_doctor_env  # noqa: F401
+
 
 @pytest.fixture(autouse=True)
 def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:

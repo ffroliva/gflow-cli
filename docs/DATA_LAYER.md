@@ -69,6 +69,30 @@ same treatment `character create` already gave them. Keep that in mind before
 adding a key here: anything prompt-derived must be hashed by its own builder
 (as `tool` does) rather than relying on column-level redaction.
 
+### Asset `metadata_json.sync.*` provenance (#543)
+
+`assets.metadata_json` carries a `sync` object recording what
+`gflow data sync --names` did to the row and when — so a restored name is
+distinguishable from one recorded at generation time, and a ghost mark carries
+its own audit trail:
+
+| Key | Shape | Writer |
+|---|---|---|
+| `sync.named_at` | UTC ISO timestamp | `DataRepository.set_asset_display_name` — set (with `$.display_name`) when a sync sweep writes or overwrites the name; skipped when the stored name is already identical, so re-runs never churn the timestamp |
+| `sync.source` | `"sync"` \| `"refresh"` | Same writer, same statement — provenance for the name value: `"sync"` from a bulk `gflow data sync --names` sweep; `"refresh"` from the refresh-on-miss resolver (#546, `cli_image`), which writes back the freshly fetched name after a picker miss |
+| `sync.status` | `"missing_remote"` | `DataRepository.mark_asset_missing_remote` — the ghost tombstone, set only when a **complete** remote listing lacks the asset; rows are flagged, never deleted, and tombstoned rows are excluded from later sweeps; cleared automatically if the media reappears in a listing |
+| `sync.checked_at` | UTC ISO timestamp | Same writer — when the absence was last confirmed |
+
+All four are written via single-statement atomic `json_set` updates that
+preserve unrelated metadata keys. See
+[USAGE § `gflow data sync`](USAGE.md#gflow-data-sync).
+
+Two caveats: an in-flight generation's recorder completion can overwrite
+`metadata_json` written concurrently by a sync sweep — self-healing, since the
+row simply re-enters the next sweep. And the nested `sync.*` stamps rely on
+SQLite's `json_set` auto-creating intermediate objects; a very old system
+SQLite (pre-json1 era, roughly < 3.9) may silently no-op them.
+
 ### What is NOT recorded
 
 - Signed CDN URLs (e.g., `fifeUrl?Signature=...`) — they expire and contain bearer-style tokens.

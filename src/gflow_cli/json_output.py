@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult
+    from gflow_cli.services.doctor import DoctorReport
 
 
 def emit(payload: dict[str, Any]) -> None:
@@ -109,6 +110,28 @@ def unexpected_payload(
             "artifacts": list(incident_ref.artifacts),
         }
     return {"status": "fail", "error": error}
+
+
+def doctor_payload(report: DoctorReport) -> dict[str, Any]:
+    """``{overall_status, checks: [...]}`` envelope for ``gflow doctor --json``.
+
+    Experimental shape (#542): ``overall_status`` and per-check
+    ``check``/``severity`` are the pinned contract; the remaining fields
+    surface the finding verbatim (already redacted by the service layer).
+    """
+    return {
+        "overall_status": report.overall_status,
+        "checks": [
+            {
+                "check": finding.check,
+                "severity": finding.severity,
+                "summary": finding.summary,
+                "remediation": finding.remediation,
+                "row_uuids": list(finding.row_uuids),
+            }
+            for finding in report.findings
+        ],
+    }
 
 
 def image_result(

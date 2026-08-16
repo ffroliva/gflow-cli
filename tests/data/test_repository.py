@@ -1,3 +1,6 @@
+import dataclasses
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -253,6 +256,14 @@ def test_upsert_project_repeat_preserves_existing_title_when_none(tmp_path: Path
 
 
 def test_upsert_asset_natural_key_conflict_raises_data_integrity_error(tmp_path: Path) -> None:
+    """#543 sync invariant: the conflict target is ``ON CONFLICT(id)``.
+
+    A re-record with the same (profile_name, flow_media_id) but a fresh id
+    must raise — NOT silently replace the existing row. If someone widens the
+    conflict target to the natural key, the second upsert here would succeed
+    and clobber ``metadata_json`` (display_name, sync provenance), and this
+    test fails.
+    """
     with DataStore.open(tmp_path / "gflow.db") as store:
         repo = DataRepository(store)
         repo.upsert_profile("default", Path("C:/profiles/default"))
@@ -266,11 +277,14 @@ def test_upsert_asset_natural_key_conflict_raises_data_integrity_error(tmp_path:
             )
         )
         repo.upsert_asset(
-            AssetRecord.minimal_image(
-                id="asset-a",
-                profile_name="default",
-                flow_project_id="flow-project-1",
-                flow_media_id="media-1",
+            dataclasses.replace(
+                AssetRecord.minimal_image(
+                    id="asset-a",
+                    profile_name="default",
+                    flow_project_id="flow-project-1",
+                    flow_media_id="media-1",
+                ),
+                metadata_json={"display_name": "Keep me"},
             )
         )
         with pytest.raises(DataIntegrityError):
@@ -282,6 +296,14 @@ def test_upsert_asset_natural_key_conflict_raises_data_integrity_error(tmp_path:
                     flow_media_id="media-1",
                 )
             )
+
+        rows = store.conn.execute(
+            "SELECT id, metadata_json FROM assets WHERE profile_name = ? AND flow_media_id = ?",
+            ("default", "media-1"),
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["id"] == "asset-a"
+        assert json.loads(rows[0]["metadata_json"]) == {"display_name": "Keep me"}
 
 
 def test_resolve_seed_image_returns_project_media_and_path(tmp_path: Path) -> None:
@@ -416,3 +438,367 @@ def test_get_asset_by_any_id_resolves_media_workflow_and_asset_ids(tmp_path: Pat
 
         assert repo.get_asset_by_any_id("default", "nope") is None
         assert repo.get_asset_by_any_id("other-profile", "media-any") is None
+
+
+# ---------------------------------------------------------------------------
+# Catalog sync writers + work list (#543, Task S1 red -> S4)
+#
+# Contract for the three new DataRepository methods:
+# - set_asset_display_name(profile, media_id, name, *, source) -> bool —
+#   atomic json_set patch of metadata_json: sets $.display_name,
+#   $.sync.named_at (UTC ISO), $.sync.source; preserves unrelated keys;
+#   overwrites a changed name (rename semantics); returns False without any
+#   write for an unknown media id (never inserts) AND when the name is
+#   already identical (no timestamp churn).
+# - mark_asset_missing_remote(profile, media_id) -> bool — sets
+#   $.sync.status='missing_remote' + $.sync.checked_at; same preservation
+#   and unknown-id rules.
+# - list_nameless_asset_projects(profile, *, limit, since, project_ids) ->
+#   items with .flow_project_id + .media_ids (nameless, non-ghost rows only),
+#   ordered by the project's earliest asset created_at DESCENDING.
+# ---------------------------------------------------------------------------
+
+
+def _seed_sync_asset(
+    repo: DataRepository,
+    *,
+    asset_id: str,
+    flow_project_id: str,
+    flow_media_id: str,
+    metadata: dict[str, object] | None = None,
+    created_at: str | None = None,
+) -> None:
+    record = AssetRecord.minimal_image(
+        id=asset_id,
+        profile_name="default",
+        flow_project_id=flow_project_id,
+        flow_media_id=flow_media_id,
+    )
+    record = dataclasses.replace(record, metadata_json=metadata or {}, created_at=created_at)
+    repo.upsert_asset(record)
+
+
+def _asset_metadata(store: DataStore, asset_id: str) -> dict[str, object] | None:
+    row = store.conn.execute(
+        "SELECT metadata_json FROM assets WHERE id = ?", (asset_id,)
+    ).fetchone()
+    assert row is not None
+    raw = row["metadata_json"]
+    return json.loads(raw) if raw is not None else None
+
+
+def _parseable_utc_iso(value: object) -> bool:
+    assert isinstance(value, str)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    assert parsed.tzinfo is not None  # named contract: UTC ISO, tz-aware
+    return True
+
+
+def test_set_asset_display_name_patches_metadata_preserving_other_keys(
+    tmp_path: Path,
+) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-1",
+            flow_project_id="flow-project-1",
+            flow_media_id="media-1",
+            metadata={"fife_url": "https://lh3.example/signed", "seed_of": "op-1"},
+        )
+
+        assert (
+            repo.set_asset_display_name("default", "media-1", "A cozy cabin", source="sync") is True
+        )
+
+        metadata = _asset_metadata(store, "asset-1")
+        assert metadata is not None
+        assert metadata["display_name"] == "A cozy cabin"
+        # Unrelated keys survive the json_set patch.
+        assert metadata["fife_url"] == "https://lh3.example/signed"
+        assert metadata["seed_of"] == "op-1"
+        sync = metadata["sync"]
+        assert isinstance(sync, dict)
+        assert sync["source"] == "sync"
+        assert _parseable_utc_iso(sync["named_at"])
+
+
+def test_set_asset_display_name_overwrites_changed_name(tmp_path: Path) -> None:
+    """Names are mutable via the Flow Agent — a changed remote name REPLACES
+    the cached one (locked decision), always provenance-stamped."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-1",
+            flow_project_id="flow-project-1",
+            flow_media_id="media-1",
+            metadata={"display_name": "Old name"},
+        )
+
+        assert repo.set_asset_display_name("default", "media-1", "New name", source="sync") is True
+
+        metadata = _asset_metadata(store, "asset-1")
+        assert metadata is not None
+        assert metadata["display_name"] == "New name"
+        sync = metadata["sync"]
+        assert isinstance(sync, dict)
+        assert _parseable_utc_iso(sync["named_at"])
+
+
+def test_set_asset_display_name_unknown_media_returns_false_never_inserts(
+    tmp_path: Path,
+) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+
+        assert repo.set_asset_display_name("default", "media-ghost", "Nope", source="sync") is False
+
+        count = store.conn.execute("SELECT COUNT(*) AS n FROM assets").fetchone()
+        assert count["n"] == 0  # never inserts/resurrects rows
+
+
+def test_set_asset_display_name_identical_name_is_noop(tmp_path: Path) -> None:
+    """Re-running sync with an unchanged name must not churn sync.named_at —
+    return False and leave metadata byte-for-byte identical."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-1",
+            flow_project_id="flow-project-1",
+            flow_media_id="media-1",
+        )
+        assert repo.set_asset_display_name("default", "media-1", "Same name", source="sync") is True
+        before = _asset_metadata(store, "asset-1")
+
+        assert (
+            repo.set_asset_display_name("default", "media-1", "Same name", source="sync") is False
+        )
+
+        assert _asset_metadata(store, "asset-1") == before
+
+
+def test_mark_asset_missing_remote_sets_status_preserving_other_keys(
+    tmp_path: Path,
+) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-1",
+            flow_project_id="flow-project-1",
+            flow_media_id="media-1",
+            metadata={"fife_url": "https://lh3.example/signed"},
+        )
+
+        assert repo.mark_asset_missing_remote("default", "media-1") is True
+
+        metadata = _asset_metadata(store, "asset-1")
+        assert metadata is not None
+        assert metadata["fife_url"] == "https://lh3.example/signed"
+        sync = metadata["sync"]
+        assert isinstance(sync, dict)
+        assert sync["status"] == "missing_remote"
+        assert _parseable_utc_iso(sync["checked_at"])
+
+
+def test_mark_asset_missing_remote_unknown_media_returns_false(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+
+        assert repo.mark_asset_missing_remote("default", "media-ghost") is False
+
+        count = store.conn.execute("SELECT COUNT(*) AS n FROM assets").fetchone()
+        assert count["n"] == 0
+
+
+def test_list_nameless_asset_projects_orders_and_filters(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        for n, flow_project_id in ((1, "flow-project-a"), (2, "flow-project-b")):
+            repo.upsert_project(
+                ProjectRecord(
+                    id=f"project-{n}",
+                    profile_name="default",
+                    flow_project_id=flow_project_id,
+                    title=f"P{n}",
+                    source="generated",
+                )
+            )
+        # Project A: earliest nameless asset 2026-01-01 (plus a later one).
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-a1",
+            flow_project_id="flow-project-a",
+            flow_media_id="media-a1",
+            created_at="2026-01-01T00:00:00.000Z",
+        )
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-a2",
+            flow_project_id="flow-project-a",
+            flow_media_id="media-a2",
+            metadata={"display_name": ""},  # empty string counts as nameless
+            created_at="2026-03-01T00:00:00.000Z",
+        )
+        # Project B: earliest asset 2026-02-01 -> most recent project first.
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-b1",
+            flow_project_id="flow-project-b",
+            flow_media_id="media-b1",
+            created_at="2026-02-01T00:00:00.000Z",
+        )
+        # Excluded rows: already named / already ghost-marked.
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-a3",
+            flow_project_id="flow-project-a",
+            flow_media_id="media-a3",
+            metadata={"display_name": "Named already"},
+            created_at="2026-01-02T00:00:00.000Z",
+        )
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-b2",
+            flow_project_id="flow-project-b",
+            flow_media_id="media-b2",
+            metadata={"sync": {"status": "missing_remote"}},
+            created_at="2026-02-02T00:00:00.000Z",
+        )
+        # NULL metadata_json (recorder legacy rows) also counts as nameless.
+        store.conn.execute("UPDATE assets SET metadata_json = NULL WHERE id = 'asset-a1'")
+
+        work = repo.list_nameless_asset_projects("default")
+        assert [item.flow_project_id for item in work] == [
+            "flow-project-b",
+            "flow-project-a",
+        ]
+        by_project = {item.flow_project_id: item for item in work}
+        assert set(by_project["flow-project-a"].media_ids) == {"media-a1", "media-a2"}
+        assert set(by_project["flow-project-b"].media_ids) == {"media-b1"}
+        assert isinstance(by_project["flow-project-a"].media_ids, tuple)
+
+        limited = repo.list_nameless_asset_projects("default", limit=1)
+        assert [item.flow_project_id for item in limited] == ["flow-project-b"]
+
+        scoped = repo.list_nameless_asset_projects("default", project_ids=["flow-project-a"])
+        assert [item.flow_project_id for item in scoped] == ["flow-project-a"]
+
+        since = repo.list_nameless_asset_projects(
+            "default", since=datetime(2026, 1, 15, tzinfo=UTC)
+        )
+        # Project A's only qualifying-window rows: media-a2 (2026-03-01).
+        assert {item.flow_project_id for item in since} == {
+            "flow-project-a",
+            "flow-project-b",
+        }
+        since_by_project = {item.flow_project_id: item for item in since}
+        # Media-level filtering: the pre-since row is excluded, not just
+        # project membership.
+        assert "media-a1" not in since_by_project["flow-project-a"].media_ids
+        assert since_by_project["flow-project-a"].media_ids == ("media-a2",)
+        since_late = repo.list_nameless_asset_projects(
+            "default", since=datetime(2026, 2, 15, tzinfo=UTC)
+        )
+        assert [item.flow_project_id for item in since_late] == ["flow-project-a"]
+
+        other_profile = repo.list_nameless_asset_projects("nobody")
+        assert other_profile == []
+
+
+def test_clear_missing_remote_removes_status_preserving_other_keys(tmp_path: Path) -> None:
+    """Un-ghost on reappearance (#543): json_remove drops ONLY $.sync.status;
+    display_name, sync.named_at, and unrelated keys survive; checked_at is
+    re-stamped."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-1",
+            flow_project_id="flow-project-1",
+            flow_media_id="media-1",
+            metadata={
+                "display_name": "Kept name",
+                "fife_url": "https://lh3.example/signed",
+                "sync": {
+                    "status": "missing_remote",
+                    "named_at": "2026-01-01T00:00:00.000Z",
+                    "checked_at": "2026-01-01T00:00:00.000Z",
+                },
+            },
+        )
+
+        assert repo.clear_missing_remote("default", "media-1") is True
+
+        metadata = _asset_metadata(store, "asset-1")
+        assert metadata is not None
+        assert metadata["display_name"] == "Kept name"
+        assert metadata["fife_url"] == "https://lh3.example/signed"
+        sync = metadata["sync"]
+        assert isinstance(sync, dict)
+        assert "status" not in sync  # the tombstone flag is gone
+        assert sync["named_at"] == "2026-01-01T00:00:00.000Z"
+        assert _parseable_utc_iso(sync["checked_at"])
+        assert sync["checked_at"] != "2026-01-01T00:00:00.000Z"  # re-stamped
+
+
+def test_clear_missing_remote_non_ghost_or_unknown_returns_false(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-1",
+            flow_project_id="flow-project-1",
+            flow_media_id="media-1",
+            metadata={"display_name": "Not a ghost"},
+        )
+        before = _asset_metadata(store, "asset-1")
+
+        assert repo.clear_missing_remote("default", "media-1") is False  # not ghost-marked
+        assert repo.clear_missing_remote("default", "media-unknown") is False  # unknown id
+
+        assert _asset_metadata(store, "asset-1") == before  # untouched
+
+
+def test_list_missing_remote_media_scopes_by_project_and_profile(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        ghost_meta: dict[str, object] = {"sync": {"status": "missing_remote"}}
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-1",
+            flow_project_id="flow-project-a",
+            flow_media_id="media-ghost-1",
+            metadata=dict(ghost_meta),
+        )
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-2",
+            flow_project_id="flow-project-a",
+            flow_media_id="media-alive",
+            metadata={"display_name": "Alive"},
+        )
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-3",
+            flow_project_id="flow-project-b",
+            flow_media_id="media-ghost-2",
+            metadata=dict(ghost_meta),
+        )
+
+        ghosts = repo.list_missing_remote_media("default", "flow-project-a")
+        assert ghosts == ("media-ghost-1",)  # ghost rows only, this project only
+        assert isinstance(ghosts, tuple)
+        assert repo.list_missing_remote_media("nobody", "flow-project-a") == ()

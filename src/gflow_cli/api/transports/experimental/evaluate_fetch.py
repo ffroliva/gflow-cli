@@ -23,6 +23,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from playwright.async_api import Page
@@ -205,6 +206,7 @@ class EvaluateFetchTransport:
         *,
         project_id: str | None,
         request: GenerateImageRequest,
+        name_resolver: Callable[[str], str | None] | None = None,  # noqa: ARG002 - picker-only (#546)
     ) -> list[GeneratedImage]:
         """Generate images via page.evaluate fetch.
 

@@ -2389,6 +2389,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         *,
         project_id: str | None,
         request: GenerateImageRequest,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> list[GeneratedImage]:
         """Submit ``request.prompt`` through Flow's editor and return the
         generated images as DTOs.
@@ -2406,13 +2407,16 @@ class UiAutomationTransport(VideoGenerationMixin):
                 msg,
             )
         async with self._generate_lock:
-            return await self._generate_images_locked(request, project_id=project_id)
+            return await self._generate_images_locked(
+                request, project_id=project_id, name_resolver=name_resolver
+            )
 
     async def _generate_images_locked(
         self,
         request: GenerateImageRequest,
         *,
         project_id: str | None = None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> list[GeneratedImage]:
         """Serialized body of generate_images — called under self._generate_lock."""
         from gflow_cli.api.transports.drivers.factory import (  # noqa: PLC0415
@@ -2480,6 +2484,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 page,
                 [(r.name, r.display_name, r.local_path, r.local_sha256) for r in request.refs],
                 out_dir=out_dir,
+                name_resolver=name_resolver,
             )
 
         # Entity references: attach locked CHARACTER entities via the Personagens

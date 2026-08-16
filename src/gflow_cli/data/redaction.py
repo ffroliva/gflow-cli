@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 PromptMode = Literal["store", "redacted"]
-SENSITIVE_URL_KEYS = {"fifeurl", "signedurl", "downloadurl", "mediaurl"}
+# "fife_url": the recorder persists the snake_case spelling (recorder.py),
+# which the camelCase-only "fifeurl" entry missed (#542).
+SENSITIVE_URL_KEYS = {"fifeurl", "fife_url", "signedurl", "downloadurl", "mediaurl"}
 SENSITIVE_QUERY_KEYS = ("signature=", "x-goog-signature=", "x-goog-credential=", "expires=")
 
 # Free-text secret patterns for error_detail scrubbing (#341). `redact_metadata`

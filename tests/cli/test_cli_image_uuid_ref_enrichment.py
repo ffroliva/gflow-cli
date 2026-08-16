@@ -297,3 +297,125 @@ class TestEnrichUuidRefsBatching:
         monkeypatch.setattr(cli_image.DataStore, "open", staticmethod(_boom))
 
         assert _enrich_uuid_refs([], "ffroliva") == []
+
+
+class _RecordingRepo:
+    """Duck-typed DataRepository recording ``set_asset_display_name`` calls."""
+
+    def __init__(self) -> None:
+        self.writes: list[tuple[str, str, str, str]] = []
+
+    def set_asset_display_name(
+        self, profile_name: str, flow_media_id: str, name: str, *, source: str
+    ) -> bool:
+        self.writes.append((profile_name, flow_media_id, name, source))
+        return True
+
+
+class TestBuildNameResolver:
+    """#546 rename self-healing — RED contract for the CLI resolver seam.
+
+    Pinned seam (this class DEFINES it; not implemented yet), a small pure
+    helper in ``gflow_cli.cli_image`` — browser-free and event-loop-free:
+
+    ``_build_name_resolver(fetch_listing, repo, *, profile_name, project_id,
+    prompt_mode) -> Callable[[str], str | None] | None``
+
+    * ``fetch_listing: Callable[[str], JsonObject]`` — a SYNC seam over
+      ``FlowApiClient.fetch_project_listing`` (the ~0.5s free
+      ``flow.projectInitialData`` call); the caller owns the async bridging.
+    * ``repo`` — duck-typed ``DataRepository`` (``set_asset_display_name``).
+    * ``project_id is None`` -> returns ``None`` (no listing to consult; the
+      transport then behaves exactly as today). This is condition (a): a
+      resolver exists only for a catalog UUID ref with a known project id.
+    * The returned resolver takes the media UUID, fetches THAT project's
+      listing, parses it with ``catalog_sync.parse_project_listing`` (single
+      source of listing truth), and returns the current display name (or
+      ``None`` when the UUID is not in the listing).
+    * Write-through provenance: on a fresh name with
+      ``prompt_mode == "store"`` (condition (b)) the resolver ALSO writes the
+      name to the catalog via ``set_asset_display_name(..., source="refresh")``.
+      ``prompt_mode == "redacted"`` still returns the fresh name for transient
+      in-run use but performs NO catalog write (prompt-derived captions never
+      touch disk in redacted mode).
+    """
+
+    def _resolver_for(
+        self,
+        payload: object,
+        repo: _RecordingRepo,
+        *,
+        prompt_mode: str = "store",
+        project_id: str | None = "project-1",
+        calls: list[str] | None = None,
+    ) -> Callable[[str], str | None] | None:
+        from gflow_cli.cli_image import _build_name_resolver
+
+        def _fetch(pid: str) -> object:
+            if calls is not None:
+                calls.append(pid)
+            return payload
+
+        return _build_name_resolver(
+            _fetch,
+            repo,
+            profile_name="ffroliva",
+            project_id=project_id,
+            prompt_mode=prompt_mode,
+        )
+
+    def test_store_mode_fetches_listing_and_writes_through(self) -> None:
+        """Contract 6: the resolver fetches the project listing once, returns
+        the CURRENT name for the UUID, and writes it through to the catalog
+        with ``source="refresh"`` provenance."""
+        from tests.fixtures.listing_payload import listing_payload, named_pair
+
+        media_id, media, workflow = named_pair("Rusty gate at dawn")
+        fetches: list[str] = []
+        repo = _RecordingRepo()
+        resolver = self._resolver_for(
+            listing_payload(media=[media], workflows=[workflow]), repo, calls=fetches
+        )
+
+        assert resolver is not None
+        assert resolver(media_id) == "Rusty gate at dawn"
+        assert fetches == ["project-1"]
+        assert repo.writes == [("ffroliva", media_id, "Rusty gate at dawn", "refresh")]
+
+    def test_no_project_id_builds_no_resolver(self) -> None:
+        """Condition (a): without a project id there is no listing to consult
+        — no resolver is built and the transport keeps today's behavior."""
+        repo = _RecordingRepo()
+
+        assert self._resolver_for({}, repo, project_id=None) is None
+        assert repo.writes == []
+
+    def test_redacted_mode_returns_fresh_name_without_catalog_write(self) -> None:
+        """Contract 7: redacted mode still self-heals the RUN (transient fresh
+        name) but never persists the prompt-derived caption."""
+        from tests.fixtures.listing_payload import listing_payload, named_pair
+
+        media_id, media, workflow = named_pair("Rusty gate at dawn")
+        repo = _RecordingRepo()
+        resolver = self._resolver_for(
+            listing_payload(media=[media], workflows=[workflow]),
+            repo,
+            prompt_mode="redacted",
+        )
+
+        assert resolver is not None
+        assert resolver(media_id) == "Rusty gate at dawn"
+        assert repo.writes == []
+
+    def test_unlisted_media_id_returns_none_and_writes_nothing(self) -> None:
+        """A UUID absent from the listing resolves to ``None`` — the transport
+        then proceeds down its existing fallback chain; nothing is written."""
+        from tests.fixtures.listing_payload import listing_payload, named_pair
+
+        _, media, workflow = named_pair("Rusty gate at dawn")
+        repo = _RecordingRepo()
+        resolver = self._resolver_for(listing_payload(media=[media], workflows=[workflow]), repo)
+
+        assert resolver is not None
+        assert resolver("00000000-0000-4000-8000-000000000000") is None
+        assert repo.writes == []

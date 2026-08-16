@@ -153,6 +153,56 @@ def _iter_sql_statements(sql: str) -> Iterator[str]:
         yield tail
 
 
+@dataclass(frozen=True)
+class SchemaInspection:
+    """Read-only schema report — what doctor's db.migration_drift consumes."""
+
+    user_version: int
+    applied_migrations: tuple[str, ...]
+    expected_migrations: tuple[str, ...]
+    drift: bool
+    newer_than_binary: bool
+
+
+def inspect_schema(path: Path) -> SchemaInspection:
+    """Compare the DB's migration state against the packaged migrations.
+
+    Never migrates — reads ``schema_migrations`` + ``PRAGMA user_version``
+    over :meth:`DataStore.open_readonly` and diffs against the same packaged
+    SQL files ``apply_migrations`` uses. ``drift`` is True whenever applied
+    versions/checksums differ from the packaged set or ``user_version``
+    disagrees with the packaged latest; ``newer_than_binary`` flags a DB
+    written by a newer release. Raises :class:`DataStoreError` when the DB
+    cannot be opened read-only.
+    """
+    migrations = _load_migrations()
+    expected = {m.version: m.checksum for m in migrations}
+    with DataStore.open_readonly(path) as store:
+        user_version = int(store.conn.execute("PRAGMA user_version").fetchone()[0])
+        table_exists = store.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'",
+        ).fetchone()
+        applied = (
+            {
+                str(row["version"]): str(row["checksum"])
+                for row in store.conn.execute(
+                    "SELECT version, checksum FROM schema_migrations",
+                ).fetchall()
+            }
+            if table_exists is not None
+            else {}
+        )
+    latest_known = migrations[-1].version_number
+    max_applied = max((int(version) for version in applied), default=0)
+    return SchemaInspection(
+        user_version=user_version,
+        applied_migrations=tuple(sorted(applied, key=int)),
+        expected_migrations=tuple(m.version for m in migrations),
+        drift=applied != expected or user_version != latest_known,
+        newer_than_binary=max_applied > latest_known,
+    )
+
+
 class DataStore:
     def __init__(self, conn: sqlite3.Connection, path: Path) -> None:
         self.conn = conn
@@ -174,6 +224,35 @@ class DataStore:
             raise
         except (sqlite3.Error, OSError) as exc:
             raise DataStoreError(detail=str(exc), route="data.open") from exc
+
+    @classmethod
+    def open_readonly(cls, path: Path) -> DataStore:
+        """Open an existing database strictly read-only — for diagnostics.
+
+        Mirrors :meth:`open` conventions (classmethod returning a ``DataStore``
+        with ``sqlite3.Row`` rows, usable as a context manager) so callers can
+        share query helpers, but it can NEVER write: ``mode=ro`` at the VFS
+        layer plus ``PRAGMA query_only = ON`` on the connection. It never
+        applies migrations and never creates the file or parent directories.
+
+        sqlite validates the header/WAL lazily, so a probe read runs here:
+        any failure (missing file, not-a-database, unreadable WAL state)
+        raises the typed :class:`DataStoreError` at open time, which callers
+        (doctor) can degrade to a finding instead of crashing.
+        """
+        try:
+            conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+            try:
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA query_only = ON")
+                conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+                conn.execute("PRAGMA user_version").fetchone()  # probe
+            except sqlite3.Error:
+                conn.close()
+                raise
+            return cls(conn=conn, path=path)
+        except (sqlite3.Error, OSError) as exc:
+            raise DataStoreError(detail=str(exc), route="data.open_readonly") from exc
 
     def close(self) -> None:
         self.conn.close()
