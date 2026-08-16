@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.59.0] — 2026-08-16
+
 ### Added
 
 - **Refresh-on-miss: stale catalog names self-heal during generation
@@ -3071,7 +3073,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.58.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.59.0...HEAD
+[0.59.0]: https://github.com/ffroliva/gflow-cli/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/ffroliva/gflow-cli/compare/v0.57.1...v0.58.0
 [0.57.1]: https://github.com/ffroliva/gflow-cli/compare/v0.57.0...v0.57.1
 [0.57.0]: https://github.com/ffroliva/gflow-cli/compare/v0.56.0...v0.57.0
