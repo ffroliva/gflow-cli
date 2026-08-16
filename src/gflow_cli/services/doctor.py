@@ -246,16 +246,37 @@ def _check_migration_drift(db_path: Path) -> list[Finding]:
     return []
 
 
+def _db_header_is_wal(db_path: Path) -> bool | None:
+    """True/False from the SQLite header's write-version byte; None if unreadable.
+
+    The header (offset 18, 1=rollback-journal, 2=WAL) is the only reliable
+    signal: ``PRAGMA journal_mode`` reports 'wal' whenever a ``-wal`` sidecar
+    exists — even next to a rollback-mode DB — so querying it would make the
+    stale-sidecar check vacuous.
+    """
+    try:
+        with db_path.open("rb") as fh:
+            header = fh.read(20)
+    except OSError:
+        return None
+    if len(header) < 20 or not header.startswith(b"SQLite format 3\x00"):
+        return None
+    return header[18] == 2  # noqa: PLR2004 — SQLite file-format write version
+
+
 def _check_wal_state(
     conn: sqlite3.Connection | None,
     stale_sidecars: tuple[str, ...],
+    header_is_wal: bool | None,
 ) -> list[Finding]:
     findings: list[Finding] = []
-    # Sidecar presence is sampled BEFORE the read-only open: a healthy close
-    # removes -wal/-shm, so anything still on disk at doctor time means a
-    # crashed or concurrent writer. The clean-DB pass relies on sqlite
-    # removing sidecars on last close.
-    if stale_sidecars:
+    # Sidecar presence is sampled BEFORE the read-only open. For a WAL-mode
+    # database sidecars are NORMAL (any connection — including doctor's own
+    # read-only open — creates them and may leave them behind), so they only
+    # count as stale when the DB header says the journal mode is NOT WAL.
+    # An unreadable header (None) with sidecars still warns — we cannot
+    # prove they are benign.
+    if stale_sidecars and header_is_wal is not True:
         findings.append(
             _finding(
                 "db.wal_state",
@@ -441,6 +462,7 @@ def run_all(db_path: Path, settings: Settings) -> DoctorReport:
     stale_sidecars = tuple(
         suffix for suffix in ("-wal", "-shm") if db_path.with_name(db_path.name + suffix).exists()
     )
+    header_is_wal = _db_header_is_wal(db_path)
     store: DataStore | None = None
     try:
         store = DataStore.open_readonly(db_path)
@@ -457,7 +479,7 @@ def run_all(db_path: Path, settings: Settings) -> DoctorReport:
             ("catalog.local_file_missing", lambda: _check_local_file_missing(_require(conn))),
             ("catalog.sha256_null", lambda: _check_sha256_null(_require(conn))),
             ("db.migration_drift", lambda: _check_migration_drift(db_path)),
-            ("db.wal_state", lambda: _check_wal_state(conn, stale_sidecars)),
+            ("db.wal_state", lambda: _check_wal_state(conn, stale_sidecars, header_is_wal)),
             ("operations.stuck_started", lambda: _check_stuck_started(_require(conn))),
             ("queue.stuck_processing", lambda: _check_stuck_processing(_require(conn))),
             ("env.deprecated_vars", lambda: _check_deprecated_vars(settings)),

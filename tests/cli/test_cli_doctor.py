@@ -146,6 +146,22 @@ def test_doctor_json_findings_exit_33(tmp_path: Path, monkeypatch: pytest.Monkey
     assert payload["overall_status"] == "issues"
 
 
+@pytest.mark.usefixtures("healthy_doctor_env")
+def test_doctor_text_report_names_every_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEXT report covers the full inventory — a check id with a prefix outside
+    the renderer's group table would silently vanish from the report."""
+    db = tmp_path / "gflow.db"
+    _seed_db(db, display_name="fine")
+    _use_db(monkeypatch, db)
+    result = CliRunner().invoke(main, ["doctor"])
+    assert result.exit_code == 0, result.output
+    for check_id in CHECK_IDS:
+        assert check_id in result.output, f"{check_id} missing from text report"
+
+
 def test_doctor_help_marks_json_experimental() -> None:
     result = CliRunner().invoke(main, ["doctor", "--help"])
     assert result.exit_code == 0, result.output

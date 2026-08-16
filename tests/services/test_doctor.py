@@ -25,11 +25,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from gflow_cli.services.doctor import DoctorReport, Finding, run_all
 
 from gflow_cli.config import get_settings, reset_settings
 from gflow_cli.data.store import DataStore
 from gflow_cli.profile_store import ProfileMeta
+from gflow_cli.services.doctor import DoctorReport, Finding, run_all
 from tests.fixtures.doctor_env import CHECK_IDS
 
 if TYPE_CHECKING:
@@ -327,12 +327,39 @@ def test_doctor_never_writes_the_database(tmp_path: Path, healthy_doctor_env: No
 # ---------------------------------------------------------------------------
 
 
+def _set_journal_delete(db: Path) -> None:
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("PRAGMA journal_mode = DELETE")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_wal_state_flags_stale_sidecar(tmp_path: Path, healthy_doctor_env: None) -> None:
     # ponytail: quick_check-failure seeding (a corrupted page) is left to D2's
     # implementation tests; a stale sidecar is the deterministic seedable defect.
+    # DELETE-journal DB: a -wal file next to a non-WAL database IS stale.
     db = _clean_db(tmp_path)
+    _set_journal_delete(db)
     db.with_name(db.name + "-wal").write_bytes(b"\x00" * 128)
     assert _flagged(run_all(db, get_settings()), "db.wal_state")
+
+
+def test_wal_state_ignores_sidecars_on_wal_mode_db(
+    tmp_path: Path, healthy_doctor_env: None
+) -> None:
+    """Sidecars are normal for a WAL DB — doctor must not warn about its own.
+
+    Regression for the live-smoke self-trigger: doctor's read-only open leaves
+    -wal/-shm behind, so an immediately repeated run warned about itself.
+    """
+    db = _clean_db(tmp_path)  # DataStore.open leaves the DB in WAL mode
+    DataStore.open_readonly(db).close()  # induces real -wal/-shm sidecars
+    assert db.with_name(db.name + "-wal").exists()
+    report = run_all(db, get_settings())
+    assert not _flagged(report, "db.wal_state")
+    assert report.overall_status == "ok"
 
 
 # ---------------------------------------------------------------------------
