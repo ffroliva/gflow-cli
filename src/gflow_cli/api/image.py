@@ -197,17 +197,19 @@ class ImageRef:
     from a prior ``/v1/flow/uploadImage`` call OR a generated image's media id
     (see ``samples/captured/01_upload_image.json``).
 
-    ``display_name`` and ``local_path`` are UI-automation-only hints (ignored by
+    ``display_name``, ``local_path``, and ``local_sha256`` are UI-only hints (ignored by
     :meth:`to_wire`): they let the transport attach the ref by **selecting the
     already-existing Flow asset in the picker** — located by ``name`` (the media
     UUID) in the tile's image URL, surfaced by ``display_name`` when a search is
     needed — and preferred over re-uploading a duplicate. ``local_path`` is the
-    fallback file to upload only when the asset can't be located in place.
+    fallback file to upload only when the asset can't be located in place; its
+    digest is rechecked immediately before upload.
     """
 
     name: str
     display_name: str = ""
     local_path: str = ""
+    local_sha256: str = ""
 
     def __post_init__(self) -> None:
         # Reject empty, whitespace-only, AND whitespace-padded UUIDs.
@@ -222,6 +224,8 @@ class ImageRef:
             raise ValueError(
                 msg,
             )
+        if bool(self.local_path) != bool(self.local_sha256):
+            raise ValueError("ImageRef local_path and local_sha256 must be supplied together")
 
     def to_wire(self) -> dict[str, str]:
         return {"imageInputType": _IMAGE_INPUT_TYPE_REFERENCE, "name": self.name}

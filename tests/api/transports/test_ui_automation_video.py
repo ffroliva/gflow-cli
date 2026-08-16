@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import itertools
 import json
 from pathlib import Path
@@ -22,7 +23,6 @@ from gflow_cli.api.transports.ui_automation_video import (
     FRAME_SLOTS_STRUCT,
     PICKER_CONTEXT_INCLUDE,
     PICKER_GRID_SCROLL_ATTEMPTS,
-    PICKER_GRID_SCROLL_MAX_ATTEMPTS,
     PICKER_GRID_SCROLL_STALL_LIMIT,
     PICKER_INCLUDE_BUTTON,
     PICKER_PROJECT_MENU_OPEN,
@@ -1172,6 +1172,51 @@ class TestI2vT2vRoutingBackstop:
             await transport.generate_video(request=req, download=False)
 
     @pytest.mark.asyncio
+    async def test_uuid_i2v_routed_to_t2v_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """UUID-backed frames receive the same post-submit credit-safety guard."""
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
+        _stub_video_helpers(
+            monkeypatch,
+            generate_resp={"status": 200, "url": _T2V_URL, "body": {"media": [{"name": "v"}]}},
+        )
+        monkeypatch.setattr(VideoGenerationMixin, "_attach_i2v_frames", AsyncMock())
+        req = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            start_image_ref_id=_FRAME_REF_UUID,
+        )
+
+        with pytest.raises(WireFormatError, match="#125"):
+            await transport.generate_video(request=req, download=False)
+
+    @pytest.mark.asyncio
+    async def test_named_i2v_routed_to_t2v_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
+        _stub_video_helpers(
+            monkeypatch,
+            generate_resp={"status": 200, "url": _T2V_URL, "body": {"media": [{"name": "v"}]}},
+        )
+        monkeypatch.setattr(VideoGenerationMixin, "_attach_i2v_frames", AsyncMock())
+        req = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            start_image_ref_name="Brass key",
+        )
+
+        with pytest.raises(WireFormatError, match="#125"):
+            await transport.generate_video(request=req, download=False)
+
+    @pytest.mark.asyncio
     async def test_i2v_routed_to_start_end_image_succeeds(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1521,22 +1566,31 @@ class TestRemoteRefTileLocator:
     def test_apostrophe_name_does_not_go_into_a_quoted_css_selector(self) -> None:
         page = MagicMock()
         VideoGenerationMixin._remote_option_tile(page, "Wren's cabin")
-        # role-based match: the raw name is passed as the accessible name,
-        # never interpolated into a `:has-text('...')` CSS string.
-        page.get_by_role.assert_called_once()
-        args, kwargs = page.get_by_role.call_args
-        assert args[0] == "option"
-        assert kwargs.get("name") == "Wren's cabin"
-        page.locator.assert_not_called()
+        # #529 live recon: the picker exposes no accessible tree, so the tile
+        # is matched by text via has_text — the name is escaped into an
+        # anchored regex, never interpolated into a `:has-text('...')` CSS
+        # string.
+        page.locator.assert_called_once()
+        args, kwargs = page.locator.call_args
+        assert args[0] == "[role='option']"
+        assert kwargs["has_text"].match("Wren's cabin")
+        page.get_by_role.assert_not_called()
 
-    def test_matches_exactly_so_a_substring_name_cannot_attach_the_wrong_tile(self) -> None:
-        # PR #245 review #4: without exact=True, get_by_role's default substring
-        # match makes 'cabin' also select 'cabin at night' → .first attaches the
-        # wrong image silently.
+    def test_anchored_so_a_substring_name_cannot_attach_the_wrong_tile(self) -> None:
+        # PR #245 review #4: a substring match makes 'cabin' also select
+        # 'cabin at night' → .first attaches the wrong image silently.
+        # #529 live e2e: the option's text carries the picker's localized
+        # media-type badge ('…\nImagem' on a pt profile) appended to the
+        # display name — that suffix, and only that suffix, must be tolerated.
         page = MagicMock()
         VideoGenerationMixin._remote_option_tile(page, "cabin")
-        _, kwargs = page.get_by_role.call_args
-        assert kwargs.get("exact") is True
+        pattern = page.locator.call_args.kwargs["has_text"]
+        assert pattern.match("cabin")
+        assert pattern.match("cabinImagem")
+        assert pattern.match("cabin\nImagem")
+        assert not pattern.match("cabin at night")
+        assert not pattern.match("cabin at nightImagem")
+        assert not pattern.match("cabinsImagem")
 
 
 class TestRemoteReferencesDialogGuard:
@@ -1584,11 +1638,7 @@ class TestRemoteReferencesDialogGuard:
 
 
 class TestSelectExistingAssetPickerScroll:
-    """#282: the picker grid (react-virtuoso) is virtualised — a tile that
-    isn't in the initial viewport (and isn't surfaced by the display-name
-    search) may still exist just off-screen. `_select_existing_asset` must
-    scroll and re-check between scrolls before giving up, the same way
-    `_find_picker_entity_tile` does for the entity picker."""
+    """Picker fakes shared by name-search and exact-UUID selection tests."""
 
     @staticmethod
     def _tile_mock(
@@ -1600,6 +1650,7 @@ class TestSelectExistingAssetPickerScroll:
         tile.first = tile
         tile.click = AsyncMock()
         tile.wait_for = AsyncMock(side_effect=wait_for_side_effect)
+        tile.evaluate = AsyncMock(return_value=True)
         if isinstance(count_side_effect, list):
             tile.count = AsyncMock(side_effect=count_side_effect)
         else:
@@ -1617,6 +1668,7 @@ class TestSelectExistingAssetPickerScroll:
         search.first = search
         search.press_sequentially = AsyncMock()
         search.fill = AsyncMock()
+        search.wait_for = AsyncMock()
         search.count = AsyncMock(return_value=1)
 
         def _locator(selector: str) -> MagicMock:
@@ -1632,291 +1684,154 @@ class TestSelectExistingAssetPickerScroll:
         return page
 
     @pytest.mark.asyncio
-    async def test_tile_visible_only_after_scrolling_is_selected(self) -> None:
-        # Not visible in the initial viewport, not surfaced by the UUID /
-        # UUID-stem search tiers (#287); count() reports absent for the first
-        # 3 checks, then present on the 4th — the immediate re-check right
-        # after the scroll loop breaks then succeeds.
+    async def test_named_tile_is_searched_and_selected_by_exact_uuid(self) -> None:
         tile = self._tile_mock(
-            wait_for_side_effect=[
-                TimeoutError("not visible in initial viewport"),
-                TimeoutError("not surfaced by the UUID search"),
-                TimeoutError("not surfaced by the UUID-stem search"),
-                None,
-            ],
-            count_side_effect=[0, 0, 0, 1],
-        )
-        page = self._page_with_tile(tile)
-
-        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
-
-        assert result is True, "tile found via scrolling must be selected"
-        tile.click.assert_awaited_once()
-        # 3 scrolls before the tile rendered into the DOM.
-        assert page.mouse.wheel.await_count == 3
-
-    @pytest.mark.asyncio
-    async def test_tile_absent_after_exhausting_scrolls_returns_false(self) -> None:
-        tile = self._tile_mock(
-            wait_for_side_effect=TimeoutError("never visible"),
-            count_side_effect=0,
-        )
-        page = self._page_with_tile(tile)
-
-        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
-
-        assert result is False, "existing fallback behaviour must be unchanged"
-        tile.click.assert_not_awaited()
-        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_ATTEMPTS
-
-    @pytest.mark.asyncio
-    async def test_tile_rendered_by_final_scroll_is_still_found(self) -> None:
-        """#283 off-by-one: the loop checked tile.count() BEFORE each scroll,
-        so a tile rendered into the DOM by the LAST scroll was never seen and
-        the picker gave up with the asset on screen."""
-        # count: 0 for every pre-scroll check; 1 only on the post-loop re-check.
-        tile = self._tile_mock(
-            wait_for_side_effect=[
-                TimeoutError("not in initial viewport"),
-                TimeoutError("not surfaced by the UUID search"),
-                TimeoutError("not surfaced by the UUID-stem search"),
-                None,
-            ],
-            count_side_effect=[0] * PICKER_GRID_SCROLL_ATTEMPTS + [1],
-        )
-        page = self._page_with_tile(tile)
-
-        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
-
-        assert result is True, "tile rendered by the final scroll must be found"
-        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_ATTEMPTS
-        tile.click.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_failed_display_name_search_is_cleared_before_scrolling(self) -> None:
-        """A FAILED display-name search leaves the picker grid filtered on
-        that term; scrolling a still-filtered grid can never surface a tile
-        that the filter excludes. `_select_existing_asset` must clear the
-        search input before falling back to the scroll loop."""
-        tile = self._tile_mock(
-            wait_for_side_effect=[
-                TimeoutError("not visible in initial viewport"),
-                TimeoutError("not surfaced by display-name search"),
-                TimeoutError("not surfaced by the UUID search"),
-                TimeoutError("not surfaced by the UUID-stem search"),
-                None,
-            ],
-            count_side_effect=[0, 0, 1],
+            wait_for_side_effect=None,
+            count_side_effect=1,
         )
         page = self._page_with_tile(tile)
         search = page.locator(PICKER_SEARCH_INPUT)
 
         result = await VideoGenerationMixin._select_existing_asset(
-            page, "uuid-1", "Wren's cabin", out_dir=None
+            page, "uuid-1", "Brass key on marble surface", out_dir=None
         )
 
-        assert result is True, "tile found via scrolling after the search is cleared"
-        # The display name is the FIRST search tier (#287 added UUID tiers after it).
-        assert search.press_sequentially.await_args_list[0].args[0] == "Wren's cabin"
-        # Every fill is a clear: one before each search tier (so tiers don't
-        # concatenate) plus the final clear before the scroll fallback.
-        assert search.fill.await_count == 4
-        assert all(c.args == ("",) for c in search.fill.call_args_list)
-        # 2 scrolls before the tile rendered into the DOM.
-        assert page.mouse.wheel.await_count == 2
+        assert result is True
+        search.press_sequentially.assert_awaited_once()
+        assert search.press_sequentially.await_args.args[0] == "Brass key on marble surface"
+        tile.click.assert_awaited_once()
+        page.mouse.wheel.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_waits_for_delayed_search_input_before_name_lookup(self) -> None:
+        tile = self._tile_mock(wait_for_side_effect=None, count_side_effect=1)
+        page = self._page_with_tile(tile)
+        search = page.locator(PICKER_SEARCH_INPUT)
+        search.count = AsyncMock(return_value=0)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, "uuid-1", "Brass key", out_dir=None
+        )
+
+        assert result is True
+        search.wait_for.assert_awaited_once_with(state="visible", timeout=4000)
+        assert search.press_sequentially.await_args.args[0] == "Brass key"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("probe", [False, RuntimeError("stale tile")])
+    async def test_filtered_tile_must_be_fully_visible_before_click(self, probe: object) -> None:
+        tile = self._tile_mock(wait_for_side_effect=None, count_side_effect=1)
+        tile.evaluate = (
+            AsyncMock(side_effect=probe)
+            if isinstance(probe, Exception)
+            else AsyncMock(return_value=probe)
+        )
+        page = self._page_with_tile(tile)
+
+        result = await VideoGenerationMixin._select_existing_asset(
+            page, "uuid-1", "Brass key", out_dir=None
+        )
+
+        assert result is False
+        tile.click.assert_not_awaited()
+        page.mouse.wheel.assert_not_awaited()
 
 
 class TestSelectExistingAssetLargeGrid:
-    """#287 (live repro): in a crowded project (100+ media) the target asset
-    sits deeper in the virtualised grid than the fixed 12-scroll budget could
-    reach, so `_select_existing_asset` gave up while the asset WAS in the
-    project — the i2v frame-ref path then raised `TransportTimeoutError`
-    ("Start frame asset ... could not be located in the media picker"). The
-    scroll loop is now bounded by evidence of progress: it keeps scrolling
-    while the set of rendered tile identifiers still changes between scrolls,
-    stops after PICKER_GRID_SCROLL_STALL_LIMIT consecutive no-progress
-    scrolls, and never exceeds the PICKER_GRID_SCROLL_MAX_ATTEMPTS ceiling.
-    A search-input picker also gets UUID / UUID-stem search tiers before any
-    scrolling (the frame-ref path has no display name to search)."""
+    """Name-addressed UUID selection never scans a crowded unfiltered grid."""
 
     _FULL_UUID = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
-    # Deeper than the legacy fixed budget could ever reach.
-    _DEEP_GRID_SCROLLS = 30
 
     @pytest.mark.asyncio
-    async def test_deep_tile_beyond_legacy_budget_is_reached(self) -> None:
-        """While every scroll keeps rendering NEW tiles (the grid is still
-        advancing), the loop must keep going — depth proportional to grid
-        size, not a fixed attempt count."""
-        assert self._DEEP_GRID_SCROLLS > PICKER_GRID_SCROLL_ATTEMPTS
-        tile = TestSelectExistingAssetPickerScroll._tile_mock(
-            wait_for_side_effect=[
-                TimeoutError("not visible in initial viewport"),
-                TimeoutError("not surfaced by the UUID search"),
-                TimeoutError("not surfaced by the UUID-stem search"),
-                None,
-            ],
-            count_side_effect=[0] * self._DEEP_GRID_SCROLLS + [1],
-        )
-        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
-        # Progress evidence: each fingerprint probe sees a fresh window of
-        # tiles. The JS grid-scroll probe is made to FAIL so this test pins
-        # the hover+wheel fallback path (round-6: JS scroll is primary).
-        counter = itertools.count()
+    async def test_display_name_miss_does_not_scroll_or_search_uuid(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The browser picker is name-addressed; a name miss is terminal.
 
-        def _eval(js: str, *args: object) -> object:
-            if "scrollTop" in js:
-                raise RuntimeError("no JS scroller in this fake")
-            return [f"tile-{next(counter)}"]
-
-        page.evaluate = AsyncMock(side_effect=_eval)
-
-        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
-
-        assert result is True, "an asset deep in a large grid must still be reachable"
-        tile.click.assert_awaited_once()
-        assert page.mouse.wheel.await_count == self._DEEP_GRID_SCROLLS
-
-    @pytest.mark.asyncio
-    async def test_absent_asset_stops_after_stall_limit(self) -> None:
-        """Genuinely absent asset with the grid at its end (the rendered tile
-        set never changes): the loop must terminate after the stall limit —
-        not spin to the hard ceiling, and not even out to the legacy budget."""
+        Scrolling the unfiltered catalog and typing UUID fragments are not
+        alternate resolution strategies.  The exact UUID remains the tile
+        assertion after the name search surfaces candidates.
+        """
         tile = TestSelectExistingAssetPickerScroll._tile_mock(
             wait_for_side_effect=TimeoutError("never visible"),
             count_side_effect=0,
         )
         page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
-        page.evaluate = AsyncMock(return_value=["tile-a", "tile-b"])  # never changes
-
-        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
-
-        assert result is False, "existing not-found contract must be unchanged"
-        tile.click.assert_not_awaited()
-        # 1 baseline scroll + STALL_LIMIT consecutive no-progress scrolls.
-        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_STALL_LIMIT + 1
-
-    @pytest.mark.asyncio
-    async def test_endless_grid_progress_is_capped_by_hard_ceiling(self) -> None:
-        """A pathological grid that never stops rendering new tiles must not
-        scroll forever — the hard ceiling bounds the loop."""
-        tile = TestSelectExistingAssetPickerScroll._tile_mock(
-            wait_for_side_effect=TimeoutError("never visible"),
-            count_side_effect=0,
+        search = page.locator(PICKER_SEARCH_INPUT)
+        scroll = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_scroll_picker_grid_until_rendered",
+            scroll,
         )
-        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
-        counter = itertools.count()
-        page.evaluate = AsyncMock(side_effect=lambda *_: [f"tile-{next(counter)}"])
 
-        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+        result = await VideoGenerationMixin._select_existing_asset(
+            page,
+            self._FULL_UUID,
+            "Brass key on wooden bench",
+            out_dir=None,
+        )
 
         assert result is False
-        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_MAX_ATTEMPTS
+        assert [call.args[0] for call in search.press_sequentially.await_args_list] == [
+            "Brass key on wooden bench"
+        ]
+        assert search.fill.await_count == 2
+        assert all(call.args == ("",) for call in search.fill.call_args_list)
+        scroll.assert_not_awaited()
+        page.mouse.wheel.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_uuid_search_surfaces_tile_without_scrolling(self) -> None:
-        """The #287 frame-ref path passes NO display name, so it previously
-        went straight to scrolling. Searching the media UUID itself must be
-        tried first — a hit skips the scroll fallback entirely."""
-        tile = TestSelectExistingAssetPickerScroll._tile_mock(
-            wait_for_side_effect=[
-                TimeoutError("not visible in initial viewport"),
-                None,  # surfaced by the full-UUID search
-            ],
-            count_side_effect=0,
-        )
-        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
-        search = page.locator(PICKER_SEARCH_INPUT)
-
-        result = await VideoGenerationMixin._select_existing_asset(
-            page, self._FULL_UUID, "", out_dir=None
-        )
-
-        assert result is True
-        tile.click.assert_awaited_once()
-        assert search.press_sequentially.await_args_list[0].args[0] == self._FULL_UUID
-        assert page.mouse.wheel.await_count == 0, "a search hit must skip scrolling"
-
-    @pytest.mark.asyncio
-    async def test_uuid_stem_search_is_tried_after_full_uuid(self) -> None:
-        """When the full UUID surfaces nothing, the UUID-derived filename stem
-        (the first dash-segment) is the next search tier."""
-        tile = TestSelectExistingAssetPickerScroll._tile_mock(
-            wait_for_side_effect=[
-                TimeoutError("not visible in initial viewport"),
-                TimeoutError("not surfaced by the full-UUID search"),
-                None,  # surfaced by the UUID-stem search
-            ],
-            count_side_effect=0,
-        )
-        page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
-        search = page.locator(PICKER_SEARCH_INPUT)
-
-        result = await VideoGenerationMixin._select_existing_asset(
-            page, self._FULL_UUID, "", out_dir=None
-        )
-
-        assert result is True
-        terms = [c.args[0] for c in search.press_sequentially.await_args_list]
-        assert terms == [self._FULL_UUID, "d6f1927a"]
-        assert page.mouse.wheel.await_count == 0
-
-    @pytest.mark.asyncio
-    async def test_no_search_box_skips_search_tiers_and_scrolls(self) -> None:
-        """A picker variant without a search input (#174's full-page
-        media-library drift) must skip the search tiers without touching the
-        input and fall straight through to the scroll loop."""
+    async def test_missing_display_name_does_not_scroll_or_search(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A legacy bare UUID only checks the already-rendered viewport."""
         tile = TestSelectExistingAssetPickerScroll._tile_mock(
             wait_for_side_effect=[
                 TimeoutError("not visible in initial viewport"),
                 None,  # visible after scrolling
             ],
-            count_side_effect=[0, 0, 1],
+            count_side_effect=0,
         )
         page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
         search = page.locator(PICKER_SEARCH_INPUT)
-        search.count = AsyncMock(return_value=0)  # no search box in this variant
+        scroll = AsyncMock(return_value=True)
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_scroll_picker_grid_until_rendered",
+            scroll,
+        )
 
         result = await VideoGenerationMixin._select_existing_asset(
             page, self._FULL_UUID, "", out_dir=None
         )
 
-        assert result is True
+        assert result is False
+        tile.click.assert_not_awaited()
+        scroll.assert_not_awaited()
         search.press_sequentially.assert_not_awaited()
-        search.fill.assert_not_awaited()
-        assert page.mouse.wheel.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_search_hint_tier_runs_after_uuid_tiers(self) -> None:
-        """#287 round 6: Flow's media search does NOT index UUIDs (live rounds
-        1-5), but the tile alt text carries the generation PROMPT — a
-        CLI-resolved prompt hint typed into the search box surfaces the tile
-        (matched by UUID-in-src among the results) without any scrolling."""
+    async def test_tile_match_stays_uuid_in_src(self) -> None:
+        """A non-unique name can surface extra tiles but cannot select one."""
         tile = TestSelectExistingAssetPickerScroll._tile_mock(
-            wait_for_side_effect=[
-                TimeoutError("not visible in initial viewport"),
-                TimeoutError("not surfaced by the UUID search"),
-                TimeoutError("not surfaced by the UUID-stem search"),
-                None,  # surfaced by the prompt-hint search
-            ],
+            wait_for_side_effect=None,
             count_side_effect=0,
         )
         page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
-        search = page.locator(PICKER_SEARCH_INPUT)
+        display_name = "common caption words"
 
         result = await VideoGenerationMixin._select_existing_asset(
             page,
             self._FULL_UUID,
-            "",
+            display_name,
             out_dir=None,
-            search_hints=("stickman on a chalkboard, teaching",),
         )
 
-        assert result is True
+        assert result is not None
+        exact_selector = f"[role='option']:has(img[src*='{self._FULL_UUID}'])"
+        assert page.locator.call_args_list[0].args == (exact_selector,)
         tile.click.assert_awaited_once()
-        terms = [c.args[0] for c in search.press_sequentially.await_args_list]
-        assert terms == [self._FULL_UUID, "d6f1927a", "stickman on a chalkboard, teaching"]
-        assert page.mouse.wheel.await_count == 0, "a hint hit must skip scrolling"
 
     @pytest.mark.asyncio
     async def test_grid_scroll_uses_js_scroller_and_logs_evidence(
@@ -1954,9 +1869,7 @@ class TestSelectExistingAssetLargeGrid:
 
         page.evaluate = AsyncMock(side_effect=_eval)
 
-        result = await VideoGenerationMixin._select_existing_asset(
-            page, self._FULL_UUID, "", out_dir=None
-        )
+        result = await VideoGenerationMixin._scroll_picker_grid_until_rendered(page, tile)
 
         assert result is True
         # JS scroll must replace the blind wheel when the scroller is found.
@@ -2557,28 +2470,29 @@ class TestSelectExistingAssetDiagnostics:
     _FULL_UUID = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
 
     @pytest.mark.asyncio
-    async def test_search_tier_event_reports_term_and_rendered_count(
+    async def test_search_tier_event_redacts_term_and_reports_rendered_count(
         self, install_log_capture: structlog.testing.LogCapture
     ) -> None:
         tile = TestSelectExistingAssetPickerScroll._tile_mock(
-            wait_for_side_effect=[TimeoutError("not in viewport"), None],
+            wait_for_side_effect=None,
             count_side_effect=0,
         )
         page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
         page.evaluate = AsyncMock(return_value=["tile-a", "tile-b"])
 
         result = await VideoGenerationMixin._select_existing_asset(
-            page, self._FULL_UUID, "", out_dir=None
+            page, self._FULL_UUID, "Brass key", out_dir=None
         )
 
-        assert result is True
+        assert result is not None
         tiers = [
             e
             for e in install_log_capture.entries
             if e["event"] == "ui_automation_video.picker_search_tier"
         ]
         assert tiers, "expected a picker_search_tier event"
-        assert tiers[0]["term"] == self._FULL_UUID
+        assert "term" not in tiers[0]
+        assert tiers[0]["term_length"] == len("Brass key")
         assert tiers[0]["found"] is True
         assert tiers[0]["rendered_tiles"] == 2
 
@@ -2593,7 +2507,7 @@ class TestSelectExistingAssetDiagnostics:
         page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
         page.evaluate = AsyncMock(return_value=["tile-a"])  # grid never advances
 
-        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+        result = await VideoGenerationMixin._scroll_picker_grid_until_rendered(page, tile)
 
         assert result is False
         probes = [
@@ -2629,7 +2543,7 @@ class TestSelectExistingAssetDiagnostics:
         page = TestSelectExistingAssetPickerScroll._page_with_tile(tile)
         # page.evaluate deliberately NOT configured -> probe yields no evidence.
 
-        result = await VideoGenerationMixin._select_existing_asset(page, "uuid-1", "", out_dir=None)
+        result = await VideoGenerationMixin._scroll_picker_grid_until_rendered(page, tile)
 
         assert result is False
         done = [
@@ -2673,7 +2587,7 @@ class TestSelectExistingAssetDiagnostics:
         page.evaluate = AsyncMock(side_effect=_eval)
 
         result = await VideoGenerationMixin._select_existing_asset(
-            page, self._FULL_UUID, "", out_dir=tmp_path
+            page, self._FULL_UUID, "Missing catalog name", out_dir=tmp_path
         )
 
         assert result is False
@@ -2694,6 +2608,7 @@ class TestSelectExistingAssetDiagnostics:
         assert misses[0]["project_id"] == _PROJECT_ID_287
         assert misses[0]["dom_dump"] == str(dump_path)
         assert misses[0]["screenshot"], "expected a screenshot path"
+        assert "resolved_by" not in misses[0]
 
     @pytest.mark.asyncio
     async def test_dom_dump_capture_failure_reports_none(
@@ -2716,7 +2631,7 @@ class TestSelectExistingAssetDiagnostics:
         page.evaluate = AsyncMock(side_effect=_eval)
 
         result = await VideoGenerationMixin._select_existing_asset(
-            page, self._FULL_UUID, "", out_dir=tmp_path
+            page, self._FULL_UUID, "Missing catalog name", out_dir=tmp_path
         )
 
         assert result is False
@@ -2731,10 +2646,7 @@ class TestSelectExistingAssetDiagnostics:
 
 
 class TestAttachImageUuidRefsPickerScroll:
-    """#282: every UUID ref after the first raised `TransportTimeoutError`
-    because `_select_existing_asset` gave up before the virtualised grid had
-    a chance to render the tile, and a leftover display-name search term from
-    a prior ref could shadow the next ref's lookup."""
+    """Image UUID refs search catalog names and retain local upload fallback."""
 
     @staticmethod
     def _dialog_mock() -> MagicMock:
@@ -2758,6 +2670,7 @@ class TestAttachImageUuidRefsPickerScroll:
         search.first = search
         search.press_sequentially = AsyncMock()
         search.fill = AsyncMock()
+        search.wait_for = AsyncMock()
         search.count = AsyncMock(return_value=1)
         return search
 
@@ -2797,21 +2710,89 @@ class TestAttachImageUuidRefsPickerScroll:
 
     @pytest.mark.asyncio
     async def test_tile_never_found_falls_back_to_local_upload(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        install_log_capture: structlog.testing.LogCapture,
     ) -> None:
         tile = self._never_found_tile()
         page, _, _, _ = self._make_page({"uuid-1": tile})
         upload = AsyncMock()
         monkeypatch.setattr(VideoGenerationMixin, "_upload_via_open_dialog", upload)
+        local_path = tmp_path / "cabin.png"
+        content = b"recorded cabin"
+        local_path.write_bytes(content)
 
         await VideoGenerationMixin._attach_image_uuid_refs(
-            page, [("uuid-1", "Cabin", "/tmp/cabin.png")], out_dir=None
+            page,
+            [("uuid-1", "Cabin", str(local_path), hashlib.sha256(content).hexdigest())],
+            out_dir=None,
         )
 
         upload.assert_awaited_once()
         args, _ = upload.call_args
-        assert args[1] == Path("/tmp/cabin.png")
-        assert page.mouse.wheel.await_count == PICKER_GRID_SCROLL_ATTEMPTS
+        assert args[1] == local_path
+        page.mouse.wheel.assert_not_awaited()
+        fallback = [
+            event
+            for event in install_log_capture.entries
+            if event["event"] == "ui_automation_video.image_ref_upload_fallback"
+        ]
+        assert fallback[0]["resolved_by"] == "upload"
+
+    @pytest.mark.asyncio
+    async def test_image_fallback_is_reverified_immediately_before_upload(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        tile = self._never_found_tile()
+        page, _, _, _ = self._make_page({"uuid-1": tile})
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_select_existing_asset", AsyncMock(return_value=False)
+        )
+        upload = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_upload_via_open_dialog", upload)
+        local_path = tmp_path / "recorded.png"
+        original = b"recorded bytes"
+        local_path.write_bytes(original)
+        expected_sha256 = hashlib.sha256(original).hexdigest()
+        local_path.write_bytes(b"private change")
+
+        with pytest.raises(TransportTimeoutError, match="changed since it was recorded"):
+            await VideoGenerationMixin._attach_image_uuid_refs(
+                page,
+                [("uuid-1", "Cabin", str(local_path), expected_sha256)],
+                out_dir=None,
+            )
+
+        upload.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_resolved_by_carries_no_search_term(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        install_log_capture: structlog.testing.LogCapture,
+    ) -> None:
+        display_name = "private catalog name must not escape"
+        tile = self._never_found_tile()
+        page, _, _, _ = self._make_page({"uuid-1": tile})
+        monkeypatch.setattr(
+            VideoGenerationMixin,
+            "_select_existing_asset",
+            AsyncMock(return_value=True),
+        )
+
+        await VideoGenerationMixin._attach_image_uuid_refs(
+            page, [("uuid-1", display_name, "", "")], out_dir=None
+        )
+
+        selected = [
+            event
+            for event in install_log_capture.entries
+            if event["event"] == "ui_automation_video.image_ref_selected_existing"
+        ][0]
+        assert selected["resolved_by"] == "display_name"
+        assert "term" not in selected
+        assert display_name not in str(selected)
 
     @pytest.mark.asyncio
     async def test_tile_never_found_and_no_local_path_raises_same_message(self) -> None:
@@ -2820,7 +2801,7 @@ class TestAttachImageUuidRefsPickerScroll:
 
         with pytest.raises(TransportTimeoutError) as excinfo:
             await VideoGenerationMixin._attach_image_uuid_refs(
-                page, [("uuid-1", "Cabin", "")], out_dir=None
+                page, [("uuid-1", "Cabin", "", "")], out_dir=None
             )
 
         assert excinfo.value.detail == (
@@ -2833,67 +2814,34 @@ class TestAttachImageUuidRefsPickerScroll:
         tile_1 = MagicMock()
         tile_1.first = tile_1
         tile_1.click = AsyncMock()
-        tile_1.wait_for = AsyncMock(side_effect=[TimeoutError("not visible"), None])
+        tile_1.wait_for = AsyncMock()
+        tile_1.evaluate = AsyncMock(return_value=True)
         tile_1.count = AsyncMock(return_value=0)
 
         tile_2 = MagicMock()
         tile_2.first = tile_2
         tile_2.click = AsyncMock()
         tile_2.wait_for = AsyncMock()  # visible immediately, no search needed
+        tile_2.evaluate = AsyncMock(return_value=True)
         tile_2.count = AsyncMock(return_value=0)
 
         page, _, search, _ = self._make_page({"uuid-1": tile_1, "uuid-2": tile_2})
 
         await VideoGenerationMixin._attach_image_uuid_refs(
             page,
-            [("uuid-1", "Cabin", ""), ("uuid-2", "Lighthouse", "")],
+            [("uuid-1", "Cabin", "", ""), ("uuid-2", "Lighthouse", "", "")],
             out_dir=None,
         )
 
-        # ref 1 needed the display-name search fallback...
-        search.press_sequentially.assert_awaited_once()
-        assert search.press_sequentially.call_args.args[0] == "Cabin"
+        assert [call.args[0] for call in search.press_sequentially.await_args_list] == [
+            "Cabin",
+            "Lighthouse",
+        ]
         # ...but the search box must be cleared before EVERY ref's lookup
         # (#282: a leftover search term from ref 1 previously shadowed ref 2).
-        # 2 per-ref clears + 1 tier-level clear before ref 1's display-name
-        # search (#287: each search tier clears the box so tiers don't
-        # concatenate).
-        assert search.fill.await_count == 3
+        # Each lookup clears the previous term before typing its own.
+        assert search.fill.await_count == 2
         assert all(c.args == ("",) for c in search.fill.call_args_list)
-
-    @pytest.mark.asyncio
-    async def test_attach_refs_succeeds_when_picker_has_no_search_input(self) -> None:
-        """A picker variant without a search box (#174: the full-page
-        media-library drift) must not be a hard dependency for every ref.
-        The clear-search-state fix for #282 must be presence-guarded: if the
-        search input isn't in the DOM at all (`count() == 0`), skip clearing
-        it rather than unconditionally `.fill("")`, which would otherwise
-        wait out a full actionability timeout against a non-existent element
-        before failing."""
-        tile = MagicMock()
-        tile.first = tile
-        tile.click = AsyncMock()
-        tile.wait_for = AsyncMock()  # visible immediately, no search needed
-        tile.count = AsyncMock(return_value=0)
-
-        no_search = MagicMock()
-        no_search.first = no_search
-        no_search.count = AsyncMock(return_value=0)
-        no_search.fill = AsyncMock(
-            side_effect=TimeoutError("search input not present in this picker variant")
-        )
-        no_search.press_sequentially = AsyncMock()
-
-        page, _, search, _ = self._make_page({"uuid-1": tile}, search=no_search)
-
-        # Must not raise: the tile is found immediately, so the only thing
-        # that could break this ref is an unconditional search-box clear.
-        await VideoGenerationMixin._attach_image_uuid_refs(
-            page, [("uuid-1", "Cabin", "")], out_dir=None
-        )
-
-        tile.click.assert_awaited_once()
-        search.fill.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_picker_project_synced_before_every_ref_lookup(
@@ -2918,7 +2866,7 @@ class TestAttachImageUuidRefsPickerScroll:
 
         await VideoGenerationMixin._attach_image_uuid_refs(
             page,
-            [("uuid-1", "", ""), ("uuid-2", "", "")],
+            [("uuid-1", "", "", ""), ("uuid-2", "", "", "")],
             out_dir=None,
         )
 
@@ -2931,6 +2879,7 @@ class TestAttachImageUuidRefsPickerScroll:
 # ---------------------------------------------------------------------------
 
 _FRAME_REF_UUID = "d6f1927a-3eae-4626-bc90-9a6ea7637bab"
+_FRAME_DISPLAY_NAME = "Brass key on marble surface"
 
 
 def _frame_dialog_page() -> MagicMock:
@@ -2941,6 +2890,8 @@ def _frame_dialog_page() -> MagicMock:
     loc.first = loc
     loc.count = AsyncMock(return_value=1)
     loc.fill = AsyncMock()
+    loc.wait_for = AsyncMock()
+    loc.press_sequentially = AsyncMock()
     page.locator = MagicMock(return_value=loc)
     page.wait_for_timeout = AsyncMock()
     return page
@@ -2949,7 +2900,9 @@ def _frame_dialog_page() -> MagicMock:
 class TestAttachFrameByMediaId:
     @pytest.mark.asyncio
     async def test_selects_existing_asset_in_the_frame_dialog(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        install_log_capture: structlog.testing.LogCapture,
     ) -> None:
         slot = MagicMock()
         slot.click = AsyncMock()
@@ -2960,34 +2913,17 @@ class TestAttachFrameByMediaId:
         monkeypatch.setattr(VideoGenerationMixin, "_select_existing_asset", select)
         page = _frame_dialog_page()
         await VideoGenerationMixin._attach_frame_by_media_id(
-            page, 0, "Start", _FRAME_REF_UUID, out_dir=None
+            page, 0, "Start", _FRAME_REF_UUID, _FRAME_DISPLAY_NAME, out_dir=None
         )
         slot.click.assert_awaited_once()
         assert select.await_args.args[1] == _FRAME_REF_UUID
-
-    @pytest.mark.asyncio
-    async def test_search_hints_flow_through_to_select(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """#287 round 6: prompt hints handed to the frame-ref attach must
-        reach `_select_existing_asset`'s search-hint tier."""
-        slot = MagicMock()
-        slot.click = AsyncMock()
-        monkeypatch.setattr(
-            VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
-        )
-        select = AsyncMock(return_value=True)
-        monkeypatch.setattr(VideoGenerationMixin, "_select_existing_asset", select)
-        page = _frame_dialog_page()
-        await VideoGenerationMixin._attach_frame_by_media_id(
-            page,
-            0,
-            "Start",
-            _FRAME_REF_UUID,
-            out_dir=None,
-            search_hints=("stickman on a chalkboard, teaching",),
-        )
-        assert select.await_args.kwargs["search_hints"] == ("stickman on a chalkboard, teaching",)
+        assert select.await_args.args[2] == _FRAME_DISPLAY_NAME
+        attached = [
+            event
+            for event in install_log_capture.entries
+            if event["event"] == "ui_automation_video.frame_ref_attached"
+        ]
+        assert attached[0]["resolved_by"] == "display_name"
 
     @pytest.mark.asyncio
     async def test_missing_asset_raises_transport_timeout(
@@ -2999,13 +2935,83 @@ class TestAttachFrameByMediaId:
             VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
         )
         monkeypatch.setattr(
-            VideoGenerationMixin, "_select_existing_asset", AsyncMock(return_value=False)
+            VideoGenerationMixin, "_select_existing_asset", AsyncMock(return_value=None)
         )
         page = _frame_dialog_page()
         with pytest.raises(TransportTimeoutError, match=_FRAME_REF_UUID):
             await VideoGenerationMixin._attach_frame_by_media_id(
-                page, 0, "Start", _FRAME_REF_UUID, out_dir=None
+                page, 0, "Start", _FRAME_REF_UUID, _FRAME_DISPLAY_NAME, out_dir=None
             )
+
+    @pytest.mark.asyncio
+    async def test_named_picker_miss_uploads_recorded_local_fallback(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        slot = MagicMock()
+        slot.click = AsyncMock()
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
+        )
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_select_existing_asset", AsyncMock(return_value=None)
+        )
+        upload = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_upload_via_open_dialog", upload)
+        local_path = tmp_path / "recorded-frame.png"
+        content = b"\x89PNG\r\n\x1a\n"
+        local_path.write_bytes(content)
+
+        await VideoGenerationMixin._attach_frame_by_media_id(
+            _frame_dialog_page(),
+            0,
+            "Start",
+            _FRAME_REF_UUID,
+            _FRAME_DISPLAY_NAME,
+            out_dir=None,
+            local_path=local_path,
+            local_sha256=hashlib.sha256(content).hexdigest(),
+        )
+
+        upload.assert_awaited_once()
+        assert upload.await_args.args[1] == local_path
+        assert upload.await_args.kwargs == {
+            "log_label": "Start_frame_ref",
+            "out_dir": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_frame_fallback_is_reverified_immediately_before_upload(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        slot = MagicMock()
+        slot.click = AsyncMock()
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_resolve_frame_slot", AsyncMock(return_value=slot)
+        )
+        monkeypatch.setattr(
+            VideoGenerationMixin, "_select_existing_asset", AsyncMock(return_value=False)
+        )
+        upload = AsyncMock()
+        monkeypatch.setattr(VideoGenerationMixin, "_upload_via_open_dialog", upload)
+        local_path = tmp_path / "recorded-frame.png"
+        original = b"recorded bytes"
+        local_path.write_bytes(original)
+        expected_sha256 = hashlib.sha256(original).hexdigest()
+        local_path.write_bytes(b"private change")
+
+        with pytest.raises(TransportTimeoutError, match="changed since it was recorded"):
+            await VideoGenerationMixin._attach_frame_by_media_id(
+                _frame_dialog_page(),
+                0,
+                "Start",
+                _FRAME_REF_UUID,
+                _FRAME_DISPLAY_NAME,
+                out_dir=None,
+                local_path=local_path,
+                local_sha256=expected_sha256,
+            )
+
+        upload.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_picker_project_synced_before_frame_ref_selection(
@@ -3032,7 +3038,7 @@ class TestAttachFrameByMediaId:
         page = _frame_dialog_page()
 
         await VideoGenerationMixin._attach_frame_by_media_id(
-            page, 0, "Start", _FRAME_REF_UUID, out_dir=None
+            page, 0, "Start", _FRAME_REF_UUID, _FRAME_DISPLAY_NAME, out_dir=None
         )
 
         assert calls == ["sync", "select"]
@@ -3056,6 +3062,12 @@ class TestAttachI2VFramesRefIdRouting:
             mode=Mode.I2V,
             start_image_ref_id=_FRAME_REF_UUID,
             end_image_ref_id=_FRAME_REF_UUID,
+            start_image_ref_display_name="Start key",
+            end_image_ref_display_name="End key",
+            start_image_ref_local_path=Path("start.png"),
+            end_image_ref_local_path=Path("end.png"),
+            start_image_ref_local_sha256="a" * 64,
+            end_image_ref_local_sha256="b" * 64,
         )
         page = _cascade_page(set())
         await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=None)
@@ -3064,6 +3076,15 @@ class TestAttachI2VFramesRefIdRouting:
         remote.assert_not_awaited()
         slots = [(c.args[1], c.args[2]) for c in by_id.await_args_list]
         assert slots == [(0, "Start"), (1, "End")]
+        assert [c.args[4] for c in by_id.await_args_list] == ["Start key", "End key"]
+        assert [c.kwargs["local_path"] for c in by_id.await_args_list] == [
+            Path("start.png"),
+            Path("end.png"),
+        ]
+        assert [c.kwargs["local_sha256"] for c in by_id.await_args_list] == [
+            "a" * 64,
+            "b" * 64,
+        ]
 
     @pytest.mark.asyncio
     async def test_project_name_override_reaches_frame_by_media_id(
@@ -3084,26 +3105,6 @@ class TestAttachI2VFramesRefIdRouting:
         page = _cascade_page(set())
         await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=None)
         assert by_id.await_args.kwargs["project_name"] == "Chalkboard Spike"
-
-    @pytest.mark.asyncio
-    async def test_search_hints_reach_frame_by_media_id(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """#287 round 6: CLI-resolved prompt hints ride the request into the
-        frame-ref attach, where the picker search-hint tier consumes them."""
-        from gflow_cli.api.video import GenerateVideoRequest, Mode
-
-        by_id = AsyncMock()
-        monkeypatch.setattr(VideoGenerationMixin, "_attach_frame_by_media_id", by_id)
-        request = GenerateVideoRequest(
-            prompt="x",
-            mode=Mode.I2V,
-            start_image_ref_id=_FRAME_REF_UUID,
-            search_hints=("stickman on a chalkboard, teaching",),
-        )
-        page = _cascade_page(set())
-        await VideoGenerationMixin._attach_i2v_frames(page, request, out_dir=None)
-        assert by_id.await_args.kwargs["search_hints"] == ("stickman on a chalkboard, teaching",)
 
 
 class TestUploadRejectionTypedError:

@@ -193,6 +193,7 @@ def build_image_request(payload: dict[str, Any]) -> GenerateImageRequest:
             r,
             display_name=ref_meta.get(r, {}).get("display_name", ""),
             local_path=ref_meta.get(r, {}).get("local_path", ""),
+            local_sha256=ref_meta.get(r, {}).get("local_sha256", ""),
         )
         for r in payload.get("refs", [])
     )
@@ -245,9 +246,25 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
     seed = payload.get("seed")
 
     start_image = Path(payload["start_image"]) if payload.get("start_image") else None
+    start_image_ref_id = payload.get("start_image_ref")
     start_image_ref_name = payload.get("start_image_ref_name")
+    start_image_ref_display_name = payload.get("start_image_ref_display_name", "")
+    start_image_ref_local_path = (
+        Path(payload["start_image_ref_local_path"])
+        if payload.get("start_image_ref_local_path")
+        else None
+    )
+    start_image_ref_local_sha256 = payload.get("start_image_ref_local_sha256", "")
     end_image = Path(payload["end_image"]) if payload.get("end_image") else None
+    end_image_ref_id = payload.get("end_image_ref")
     end_image_ref_name = payload.get("end_image_ref_name")
+    end_image_ref_display_name = payload.get("end_image_ref_display_name", "")
+    end_image_ref_local_path = (
+        Path(payload["end_image_ref_local_path"])
+        if payload.get("end_image_ref_local_path")
+        else None
+    )
+    end_image_ref_local_sha256 = payload.get("end_image_ref_local_sha256", "")
     reference_images = tuple(Path(p) for p in payload.get("reference_images", []))
     ref_names = tuple(payload.get("ref_names", []))
     reference_entities = tuple(payload.get("reference_entities", []))
@@ -267,9 +284,17 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
         count=count,
         seed=seed,
         start_image=start_image,
+        start_image_ref_id=start_image_ref_id,
         start_image_ref_name=start_image_ref_name,
+        start_image_ref_display_name=start_image_ref_display_name,
+        start_image_ref_local_path=start_image_ref_local_path,
+        start_image_ref_local_sha256=start_image_ref_local_sha256,
         end_image=end_image,
+        end_image_ref_id=end_image_ref_id,
         end_image_ref_name=end_image_ref_name,
+        end_image_ref_display_name=end_image_ref_display_name,
+        end_image_ref_local_path=end_image_ref_local_path,
+        end_image_ref_local_sha256=end_image_ref_local_sha256,
         reference_images=reference_images,
         ref_names=ref_names,
         reference_entities=reference_entities,

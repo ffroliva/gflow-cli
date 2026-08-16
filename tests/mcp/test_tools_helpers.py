@@ -8,8 +8,10 @@ i2v/r2v/mutual-exclusion/path branches are exercised without a worker round-trip
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
+from gflow_cli.data.models import AssetKind
 from gflow_cli.mcp.tools import (
     _bad_param,
     _build_video_media_inputs,
@@ -155,13 +157,23 @@ class _LocalFile:
     def __init__(self, path, storage_provider=None):
         self.path = path
         self.storage_provider = storage_provider
+        content = path.read_bytes() if path is not None and path.is_file() else None
+        self.bytes = len(content) if content is not None else None
+        self.sha256 = hashlib.sha256(content).hexdigest() if content is not None else None
 
 
 class _Asset:
-    def __init__(self, local_files, flow_media_id="m", metadata_json=None):
+    def __init__(
+        self,
+        local_files,
+        flow_media_id="m",
+        metadata_json=None,
+        kind: AssetKind = AssetKind.IMAGE,
+    ):
         self.local_files = list(local_files)
         self.flow_media_id = flow_media_id
         self.metadata_json = metadata_json or {}
+        self.kind = kind
 
 
 class _FakeRepo:
@@ -171,6 +183,9 @@ class _FakeRepo:
         self._asset = asset
 
     def get_asset_by_any_id(self, profile, ref_id):
+        return self._asset
+
+    def get_asset_by_flow_media_id(self, profile, ref_id):
         return self._asset
 
 
@@ -231,20 +246,39 @@ def test_resolve_ref_local_path_skips_cloud_only_files(tmp_path: Path) -> None:
     assert path == str(img)
 
 
-def test_resolve_payload_refs_i2v_frames_become_local_paths(tmp_path: Path) -> None:
-    """i2v: a start/end frame UUID is replaced by its local path (not a *_ref_name),
-    so the existing local-upload attach runs and no picker search is attempted."""
+def test_resolve_payload_refs_i2v_preserves_uuid_name_and_fallback(tmp_path: Path) -> None:
+    """MCP I2V preserves UUID identity and adds name/local picker metadata."""
     from gflow_cli.mcp.tools import _resolve_payload_refs
 
     start = tmp_path / "start.png"
     start.write_bytes(b"\x89PNG\r\n\x1a\n")
-    repo = _FakeRepo(asset=_Asset([_LocalFile(start)]))
-    payload = {"start_image_ref": _A_UUID}
+    repo = _FakeRepo(asset=_Asset([_LocalFile(start)], metadata_json={"display_name": "Brass key"}))
+    payload = {"start_image_ref": _A_UUID, "end_image_ref": _A_UUID}
     err = _resolve_payload_refs(repo, "default", payload, task_type="i2v")
     assert err is None
-    assert payload["start_image"] == str(start)
-    assert "start_image_ref" not in payload
-    assert "start_image_ref_name" not in payload
+    assert payload["start_image_ref"] == _A_UUID
+    assert payload["start_image_ref_display_name"] == "Brass key"
+    assert payload["start_image_ref_local_path"] == str(start)
+    assert payload["start_image_ref_local_sha256"] == hashlib.sha256(start.read_bytes()).hexdigest()
+    assert payload["end_image_ref"] == _A_UUID
+    assert payload["end_image_ref_display_name"] == "Brass key"
+    assert payload["end_image_ref_local_path"] == str(start)
+    assert payload["end_image_ref_local_sha256"] == hashlib.sha256(start.read_bytes()).hexdigest()
+    assert "start_image" not in payload
+
+
+def test_resolve_payload_refs_i2v_rejects_non_image_asset(tmp_path: Path) -> None:
+    from gflow_cli.mcp.tools import _resolve_payload_refs
+
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"video")
+    repo = _FakeRepo(asset=_Asset([_LocalFile(clip)], kind=AssetKind.VIDEO))
+    payload = {"start_image_ref": _A_UUID}
+
+    err = _resolve_payload_refs(repo, "default", payload, task_type="i2v")
+
+    assert err is not None
+    assert err["error"]["title"] == "Reference Not Usable"
 
 
 def test_resolve_payload_refs_r2v_refs_merge_into_reference_images(tmp_path: Path) -> None:
@@ -297,7 +331,13 @@ def test_resolve_payload_refs_image_enriches_found_ref(tmp_path: Path) -> None:
     err = _resolve_payload_refs(repo, "default", payload, task_type="i2i")
     assert err is None
     assert payload["refs"] == [_A_UUID]  # not rewritten
-    assert payload["ref_meta"] == {_A_UUID: {"display_name": "Cozy cabin", "local_path": str(img)}}
+    assert payload["ref_meta"] == {
+        _A_UUID: {
+            "display_name": "Cozy cabin",
+            "local_path": str(img),
+            "local_sha256": hashlib.sha256(img.read_bytes()).hexdigest(),
+        }
+    }
 
 
 def test_resolve_payload_refs_image_enrich_partial_meta_only() -> None:

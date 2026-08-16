@@ -38,9 +38,9 @@ from gflow_cli.api.video import is_media_uuid
 from gflow_cli.auth import verification
 from gflow_cli.cli_instructions import classify_refs
 from gflow_cli.config import UiMode, get_settings
-from gflow_cli.data.models import AssetLookup
+from gflow_cli.data.models import AssetKind, AssetLookup
 from gflow_cli.data.queries import list_projects
-from gflow_cli.data.repository import DataRepository
+from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError, is_retryable
 from gflow_cli.mcp.server import server
@@ -484,14 +484,8 @@ def _resolve_ref_local_path(
             f"{profile!r}. Generate the image first, or pass a local file path.",
         )
     for local_file in asset.local_files:
-        # A usable frame is an on-disk local file (cloud-only rows carry a
-        # storage_provider and no local path — they can't feed a file upload).
-        if (
-            local_file.storage_provider is None
-            and local_file.path is not None
-            and local_file.path.is_file()
-        ):
-            return str(local_file.path), None
+        if (path := verified_local_path(local_file)) is not None:
+            return str(path), None
     return None, _bad_param(
         "Reference Not On Disk",
         f"'{ref_id}' is in your catalog but has no local image file on disk to "
@@ -542,12 +536,9 @@ def _ref_meta_entry(asset: AssetLookup) -> dict[str, str]:
     if isinstance(name, str) and name:
         entry["display_name"] = name
     for local_file in asset.local_files:
-        if (
-            local_file.storage_provider is None
-            and local_file.path is not None
-            and local_file.path.is_file()
-        ):
-            entry["local_path"] = str(local_file.path)
+        if (path := verified_local_path(local_file)) is not None:
+            entry["local_path"] = str(path)
+            entry["local_sha256"] = local_file.sha256 or ""
             break
     return entry
 
@@ -560,16 +551,45 @@ def _resolve_payload_refs(
 ) -> dict[str, Any] | None:
     """Resolve media-id refs in ``payload`` in place, by task type.
 
-    Video task types: a start/end frame ref becomes the local
-    ``start_image``/``end_image`` path and r2v ``refs`` are merged into
-    ``reference_images`` (local-upload attach — the video frame picker doesn't
-    surface generated media). Image task types: refs are *enriched* with
+    I2V start/end frame refs retain their UUID identity and gain catalog picker
+    metadata. R2V ``refs`` are merged into ``reference_images`` for local upload.
+    Image task types: refs are *enriched* with
     display_name/local_path so the transport selects the existing asset in the
     picker (see _enrich_image_refs). Returns an error envelope on the first
     unresolvable VIDEO UUID, else ``None`` (image enrichment never errors).
     """
     if task_type not in _VIDEO_TASK_TYPES:
         _enrich_image_refs(data_repo, profile, payload)
+        return None
+    if task_type == "i2v":
+        for ref_key in ("start_image_ref", "end_image_ref"):
+            ref_id = payload.get(ref_key)
+            if ref_id is None:
+                continue
+            asset = data_repo.get_asset_by_flow_media_id(profile, ref_id)
+            if asset is None:
+                return _bad_param(
+                    "Reference Not Found",
+                    f"'{ref_id}' was not found in your asset catalog for profile "
+                    f"{profile!r}. Generate the image first, or pass a local file path.",
+                )
+            if asset.kind is not AssetKind.IMAGE:
+                return _bad_param(
+                    "Reference Not Usable",
+                    f"'{ref_id}' is not an image asset and cannot be an I2V frame.",
+                )
+            entry = _ref_meta_entry(asset)
+            if not entry:
+                return _bad_param(
+                    "Reference Not Usable",
+                    f"'{ref_id}' has neither a catalog display name nor a verified "
+                    "local image fallback.",
+                )
+            if display_name := entry.get("display_name"):
+                payload[f"{ref_key}_display_name"] = display_name
+            if local_path := entry.get("local_path"):
+                payload[f"{ref_key}_local_path"] = local_path
+                payload[f"{ref_key}_local_sha256"] = entry["local_sha256"]
         return None
     if "refs" in payload:
         resolved_paths: list[str] = []
@@ -582,13 +602,6 @@ def _resolve_payload_refs(
             resolved_paths.append(path)
         payload["reference_images"] = list(payload.get("reference_images", [])) + resolved_paths
         del payload["refs"]
-    for ref_key, path_key in (("start_image_ref", "start_image"), ("end_image_ref", "end_image")):
-        if ref_key in payload:
-            path, err = _resolve_ref_local_path(data_repo, profile, payload[ref_key])
-            if err is not None:
-                return err
-            payload[path_key] = path
-            del payload[ref_key]
     return None
 
 

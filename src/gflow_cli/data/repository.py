@@ -23,6 +23,7 @@ from gflow_cli.data.models import (
     SeedImage,
 )
 from gflow_cli.errors import DataIntegrityError
+from gflow_cli.file_integrity import matches_recorded_file
 
 if TYPE_CHECKING:
     from gflow_cli.data.store import DataStore
@@ -40,6 +41,27 @@ def _coerce_utc(dt: datetime) -> datetime:
 _ASSET_LOOKUP_COLUMNS = (
     "id, profile_name, flow_project_id, flow_media_id, flow_workflow_id, metadata_json, kind"
 )
+
+
+def verified_local_path(local_file: LocalFileRecord) -> Path | None:
+    """Return an on-disk catalog file only when its recorded integrity still matches."""
+    path = local_file.path
+    if local_file.storage_provider is not None or path is None:
+        return None
+    recorded_sha256 = local_file.sha256
+    if recorded_sha256 is None or not matches_recorded_file(
+        path, sha256=recorded_sha256, size=local_file.bytes
+    ):
+        return None
+    return path
+
+
+def _decode_metadata_json(raw: object) -> dict[str, Any]:
+    try:
+        parsed: object = json.loads(str(raw)) if raw else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return cast("dict[str, Any]", parsed) if isinstance(parsed, dict) else {}
 
 
 class DataRepository:
@@ -291,7 +313,7 @@ class DataRepository:
             flow_workflow_id=row["flow_workflow_id"],
             kind=AssetKind(row["kind"]),
             local_files=local_files,
-            metadata_json=json.loads(row["metadata_json"]) if row["metadata_json"] else {},
+            metadata_json=_decode_metadata_json(row["metadata_json"]),
         )
 
     def candidate_image_exists(self, profile_name: str, flow_media_id: str) -> bool:

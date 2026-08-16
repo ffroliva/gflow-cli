@@ -59,6 +59,7 @@ def test_record_generated_images_persists_generation_metadata(tmp_path: Path) ->
             fife_url="https://flow-content.google/path?Signature=abc",
             dimensions=(1024, 1792),
             media_generation_id="generation-1",
+            display_name="Prompt-paraphrasing private caption",
         )
         req = GenerateImageRequest(
             prompt="prompt text",
@@ -87,6 +88,8 @@ def test_record_generated_images_persists_generation_metadata(tmp_path: Path) ->
         assert operation_row["prompt_redacted"] == 1
         assert asset_row["flow_media_generation_id"] == "generation-1"
         assert "Signature=abc" not in asset_row["metadata_json"]
+        assert "Prompt-paraphrasing private caption" not in asset_row["metadata_json"]
+        assert "display_name" not in json.loads(asset_row["metadata_json"])
 
 
 def _generated_image() -> GeneratedImage:
@@ -100,6 +103,7 @@ def _generated_image() -> GeneratedImage:
         fife_url="https://flow-content.google/path?Signature=abc",
         dimensions=(1024, 1792),
         media_generation_id="generation-1",
+        display_name="Flow searchable caption",
     )
 
 
@@ -134,6 +138,12 @@ def test_record_generated_images_persists_original_and_expanded_prompt(tmp_path:
         assert row["prompt"] == "cat in space"
         assert row["expanded_prompt"] == "a richly detailed expanded prompt"
         assert row["prompt_redacted"] == 0
+        asset_metadata = store.conn.execute(
+            "SELECT metadata_json FROM assets WHERE flow_media_id='media-generated-1'"
+        ).fetchone()
+        assert json.loads(asset_metadata["metadata_json"])["display_name"] == (
+            "Flow searchable caption"
+        )
 
 
 def test_expanded_prompt_withheld_when_history_redacted(tmp_path: Path) -> None:

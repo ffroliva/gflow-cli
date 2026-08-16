@@ -3279,6 +3279,33 @@ def test_images_from_responses_raises_ratelimiterror_on_429():
     assert "45s" in str(err)
 
 
+def test_images_from_responses_preserves_workflow_display_name():
+    """The UI capture path must retain the Flow name used by picker search.
+
+    ``GeneratedImage.from_response_dict`` already joins ``media[]`` to the
+    sibling ``workflows[]`` array.  The UI response collector must use that
+    full-body parser rather than dropping the sibling metadata by parsing each
+    media item in isolation.
+    """
+    from gflow_cli.api.transports.ui_automation import _images_from_responses
+
+    body = _flow_200_body()
+    body["workflows"] = [
+        {
+            "name": "wf-001",
+            "metadata": {"displayName": "Calm forest at dawn"},
+        }
+    ]
+    images, error_status, error_route = _images_from_responses(
+        [{"status": 200, "url": "flowMedia:batchGenerateImages", "body": body}]
+    )
+
+    assert error_status is None
+    assert error_route == ""
+    assert len(images) == 1
+    assert images[0].display_name == "Calm forest at dawn"
+
+
 @pytest.mark.asyncio
 async def test_attach_batch_response_listener_records_headers():
     """_attach_batch_response_listener MUST capture response headers into the response dict."""
