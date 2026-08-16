@@ -55,7 +55,8 @@ else is display sugar. Rules, each live-verified:
 3. **Uploads keep their original filename verbatim** — no captioning pass.
 4. **Captions are computed asynchronously.** A fresh generation's response may
    not carry `displayName` yet; the recorder then (correctly) stores no name.
-   ([#543](https://github.com/ffroliva/gflow-cli/issues/543) tracks backfill.)
+   (Backfill shipped as `gflow data sync --names`,
+   [#543](https://github.com/ffroliva/gflow-cli/issues/543).)
 5. **Names are mutable**: users can rename assets via the Flow Agent (per
    [Google's own docs](https://support.google.com/flow/answer/16935308)) —
    so a cached name can go stale.
@@ -93,9 +94,9 @@ Freshness is layered, cheapest-first:
    fresh name is written back. A user rename then costs one extra request,
    once.
 3. **Bulk reconciliation** — `gflow data sync --names`
-   ([#543](https://github.com/ffroliva/gflow-cli/issues/543), planned) for
+   ([#543](https://github.com/ffroliva/gflow-cli/issues/543), shipped) for
    cold catalogs and ghost detection; `gflow doctor`
-   ([#542](https://github.com/ffroliva/gflow-cli/issues/542), planned)
+   ([#542](https://github.com/ffroliva/gflow-cli/issues/542), shipped)
    reports the gap. Neither is load-bearing for a working generation once
    layers 1–2 exist.
 

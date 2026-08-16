@@ -26,6 +26,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check reports info instead of warn. See
   [USAGE § `gflow doctor`](docs/USAGE.md#gflow-doctor).
 
+- **`gflow data sync --names` — reconcile catalog display names from Flow's
+  listing endpoint ([#543](https://github.com/ffroliva/gflow-cli/issues/543)).**
+  Sweeps nameless catalog rows project-by-project via the credit-free
+  `flow.projectInitialData` listing (~0.5s/project, session-cookie auth, no
+  generation surface) and writes back the display names the picker searches
+  by — restoring the [#529](https://github.com/ffroliva/gflow-cli/issues/529)
+  picker contract (search by name, verify by UUID) for rows recorded before
+  their caption existed. Rows whose media no longer exists remotely are
+  ghost-marked `sync.status = "missing_remote"` (tombstones, never deletions)
+  only when the listing is provably complete. Write-by-default with
+  `--dry-run` preview; scoped via `--project` / `--limit` / `--since` /
+  `--max-projects`; idempotent re-runs. Refuses under
+  `GFLOW_CLI_HISTORY_PROMPTS=redacted` (exit `11`); exit `34`
+  (`SyncPartialError`, retryable) when some projects fail mid-sweep. This is
+  the remediation `gflow doctor`'s missing-display-name check points at. See
+  [USAGE § `gflow data sync`](docs/USAGE.md#gflow-data-sync).
+
 ## [0.58.0] — 2026-08-16
 
 ### Fixed

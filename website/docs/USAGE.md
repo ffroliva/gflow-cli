@@ -1093,12 +1093,85 @@ same command prints `cloud_uri_1`, `cloud_uri_2`, and so on instead of
 
 Exit codes: `0` success, `2` media ID not found in the local database, `16` database error (see exit code table below).
 
+## `gflow data sync`
+
+Reconcile the local catalog's display names against Flow's own project-listing
+endpoint (`flow.projectInitialData`) — the source of the captions the media
+picker searches by. **Credit-free**: one listing GET per project (~0.5s,
+session-cookie auth); no generation surface is touched. **Writes by
+default** — pass `--dry-run` to preview.
+
+```text
+gflow data sync --names [OPTIONS]
+
+Options:
+  --names               Sync display names + presence (required; the only
+                        sync mode, explicit by design).
+  --project ID          Limit the sweep to specific Flow project id(s).
+                        Repeatable.
+  --limit N             Visit at most N nameless projects (newest first).
+  --since DATETIME      Only consider rows created at/after this time
+                        (e.g. 2026-08-01 or 2026-08-01T12:00:00).
+  --all                 Explicit full sweep of all nameless projects
+                        (this is also the default scope).
+  --max-projects N      Hard cap on projects visited per run.  [default: 50]
+  --dry-run             Fetch listings and preview what would be written
+                        (no DB writes). Without it, sync WRITES by default.
+  --json                Emit a JSON summary instead of text.
+  --profile NAME        Profile whose catalog rows to sync.
+```
+
+**What it fixes.** Rows recorded before the caption existed (Flow computes
+display names asynchronously server-side), or recorded by a pre-0.58.0
+version, have no stored name — so `--ref <uuid>` runs fall back to a duplicate
+re-upload instead of a picker selection. One sync pass restores the names and
+the picker path works again.
+
+**Scoping.** The default sweep visits every project that still has nameless,
+non-ghost rows, newest first. `--project` restricts to explicit project ids,
+`--limit` caps how many nameless projects are considered, `--since` drops rows
+created before the cutoff, and `--max-projects` is the hard visit cap on top
+of whichever scope applies.
+
+**Ghost marking.** When a listing is provably complete (no pagination
+markers), cataloged rows whose media no longer exists remotely are flagged
+`sync.status = "missing_remote"` — a tombstone, **never a deletion**: the
+row and its provenance stay queryable, and tombstoned rows are skipped by
+later sweeps. On a partial listing absence proves nothing, so nothing is
+ghost-marked.
+
+**Privacy gate.** Display names are prompt-derived captions, so under
+`GFLOW_CLI_HISTORY_PROMPTS=redacted` sync refuses up front (exit `11`) with a
+remediation naming the env var — nothing is fetched or written.
+
+**Exit codes.** `0` success (including a no-op run); `34` partial failure —
+some projects failed, at least one succeeded (`SyncPartialError`, retryable:
+completed writes stay committed and a re-run resumes where it left off); `11`
+redacted-mode refusal; `2` usage error (e.g. missing `--names`).
+
+```bash
+# Preview the full sweep without writing
+gflow data sync --names --dry-run
+
+# Restore names for one project
+gflow data sync --names --project 6e4460fb-e955-4a44-806c-9b34d4998c9f
+
+# Bounded background-friendly sweep, machine-readable summary
+gflow data sync --names --limit 10 --json
+```
+
+Sync is **idempotent**: a second run over an already-reconciled catalog visits
+nothing, writes nothing, and leaves every row's metadata byte-identical — safe
+to schedule or re-run after a partial failure.
+
 ## `gflow doctor`
 
 Read-only pre-flight diagnostics over the local catalog, database, and
 environment. Doctor **diagnoses, never heals**: nothing is migrated, repaired,
 or written — not even pending schema migrations. All database access is
-strictly read-only, so it is safe to run against a live catalog at any time.
+strictly read-only (SQLite may create transient `-wal`/`-shm` sidecar files
+during the read-only open; the database itself is never modified), so it is
+safe to run against a live catalog at any time.
 
 ```text
 gflow doctor [--json]
@@ -1434,6 +1507,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `31` | `FlowAppError`        | Flow's web app hit a client-side exception (its error-boundary page rendered instead of the editor) — a transient Flow crash, not a gflow bug | Retry shortly; if it persists, Flow itself is degraded — wait and retry later |
 | `32` | `ReferenceNotFoundError` | A referenced media NAME is not in this project's picker. Flow indexes a short auto-caption, not the generation prompt, so a prompt used as a reference name never matches | Reference the asset by its media UUID, pass a local file with `--ref`, or check what exists with `gflow data list images` |
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
+| `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:
