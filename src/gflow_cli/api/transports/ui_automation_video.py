@@ -2298,6 +2298,11 @@ class VideoGenerationMixin:
         (``_search_picker_for_tile`` clears the box before typing). Cached
         name = optimization; listing = truth; UUID = identity. A raising
         resolver is swallowed with a warning and the fallback chain proceeds.
+
+        The resolver is invoked via ``asyncio.to_thread`` so it may block on
+        I/O: the CLI bridge blocks its worker thread on a listing fetch it
+        schedules back onto THIS loop (``run_coroutine_threadsafe``), which
+        only completes because the loop is parked here awaiting the worker.
         """
         if not display_name:
             return False
@@ -2306,7 +2311,12 @@ class VideoGenerationMixin:
         if found is False and name_resolver is not None:
             fresh: str | None = None
             try:
-                fresh = name_resolver(media_id)
+                # to_thread: the resolver is a SYNC callable that may block on
+                # I/O (the CLI bridge parks its worker thread on a listing
+                # fetch scheduled back onto this loop via
+                # run_coroutine_threadsafe — see cli_image.wire_refresh_resolver).
+                # Calling it inline would deadlock that bridge.
+                fresh = await asyncio.to_thread(name_resolver, media_id)
             except Exception:  # noqa: BLE001 - resolver must never kill the generation
                 # Log only the media_id — the exception message may carry
                 # listing payload fragments (redaction).

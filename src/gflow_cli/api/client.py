@@ -93,7 +93,7 @@ from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 from gflow_cli.winsec import ensure_profile_hardened
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from _typeshed import DataclassInstance
@@ -1995,6 +1995,7 @@ class FlowApiClient:
         req: GenerateImageRequest,
         recaptcha_action: str,
         on_checkpoint: GenerationCheckpointObserver | None = None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> list[GeneratedImage]:
         """Mint a token, call the transport once, and return all images.
 
@@ -2017,12 +2018,18 @@ class FlowApiClient:
         req_with_token = _dc_replace(req, recaptcha_token=token)
         if on_checkpoint is not None:
             on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
+        # Kwarg passed only when set: keeps duck-typed fakes/transports that
+        # predate #546 working, while the Protocol documents the seam.
+        resolver_kw: dict[str, Any] = (
+            {} if name_resolver is None else {"name_resolver": name_resolver}
+        )
         images: list[GeneratedImage] = []
         async for retrying in post_with_retry():
             with retrying:
                 images = await self.transport.generate_images(
                     project_id=project_id,
                     request=req_with_token,
+                    **resolver_kw,
                 )
         if not images:
             raise ContentPolicyError(
@@ -2047,6 +2054,7 @@ class FlowApiClient:
         req: GenerateImageRequest,
         recaptcha_action: str,
         on_checkpoint: GenerationCheckpointObserver | None = None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> GeneratedImage:
         """Single-image shortcut — delegates to ``_drive_images_generation`` with count=1.
 
@@ -2067,6 +2075,7 @@ class FlowApiClient:
             req=req_one,
             recaptcha_action=recaptcha_action,
             on_checkpoint=on_checkpoint,
+            name_resolver=name_resolver,
         )
         if len(images) > 1:
             logger.warning(
@@ -2091,6 +2100,7 @@ class FlowApiClient:
         req: GenerateImageRequest,
         recaptcha_action: str = "imageGeneration",
         on_checkpoint: GenerationCheckpointObserver | None = None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> GeneratedImage:
         """Single-shot Imagen/Narwhal image generation.
 
@@ -2117,6 +2127,7 @@ class FlowApiClient:
                 req=req,
                 recaptcha_action=recaptcha_action,
                 on_checkpoint=on_checkpoint,
+                name_resolver=name_resolver,
             )
         except Exception as e:
             await self._raise_with_incident(e, phase="image_generation")
@@ -2129,6 +2140,7 @@ class FlowApiClient:
         count: int = 1,
         recaptcha_action: str = "imageGeneration",
         on_checkpoint: GenerationCheckpointObserver | None = None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> list[GeneratedImage]:
         """Generate ``count`` images using Flow's native count selector (1–4).
 
@@ -2162,6 +2174,7 @@ class FlowApiClient:
                 req=req_with_count,
                 recaptcha_action=recaptcha_action,
                 on_checkpoint=on_checkpoint,
+                name_resolver=name_resolver,
             )
         except Exception as e:
             await self._raise_with_incident(e, phase="image_batch")
@@ -2176,6 +2189,7 @@ class FlowApiClient:
         download: bool = True,
         on_started: VideoStartedCallback | None = None,
         on_checkpoint: GenerationCheckpointObserver | None = None,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> VideoResult:
         """Generate a video via the transport's ``generate_video`` method.
 
@@ -2226,6 +2240,11 @@ class FlowApiClient:
             wrapped_on_started = _relay
 
         try:
+            # Kwarg passed only when set — same #546 compat rule as
+            # _drive_images_generation.
+            resolver_kw: dict[str, Any] = (
+                {} if name_resolver is None else {"name_resolver": name_resolver}
+            )
             return await self.transport.generate_video(
                 request=req,
                 project_id=project_id,
@@ -2233,6 +2252,7 @@ class FlowApiClient:
                 poll_timeout_s=poll_timeout_s,
                 download=download,
                 on_started=wrapped_on_started,
+                **resolver_kw,
             )
 
         except Exception as e:
