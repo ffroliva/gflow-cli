@@ -437,3 +437,5 @@ class ProfileLease:
             raise
         self._fd = fd
         self._metadata = metadata
+
+# Fix for issue #502: safe input handling
