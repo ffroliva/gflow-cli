@@ -489,7 +489,8 @@ def _asset_metadata(store: DataStore, asset_id: str) -> dict[str, object] | None
 
 def _parseable_utc_iso(value: object) -> bool:
     assert isinstance(value, str)
-    datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    assert parsed.tzinfo is not None  # named contract: UTC ISO, tz-aware
     return True
 
 
@@ -700,6 +701,11 @@ def test_list_nameless_asset_projects_orders_and_filters(tmp_path: Path) -> None
             "flow-project-a",
             "flow-project-b",
         }
+        since_by_project = {item.flow_project_id: item for item in since}
+        # Media-level filtering: the pre-since row is excluded, not just
+        # project membership.
+        assert "media-a1" not in since_by_project["flow-project-a"].media_ids
+        assert since_by_project["flow-project-a"].media_ids == ("media-a2",)
         since_late = repo.list_nameless_asset_projects(
             "default", since=datetime(2026, 2, 15, tzinfo=UTC)
         )

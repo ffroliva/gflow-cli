@@ -33,17 +33,17 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from gflow_cli.services.catalog_sync import (
-    ListingParse,
-    SyncSummary,
-    parse_project_listing,
-    run_sync,
-)
 
 from gflow_cli.errors import (
     ConfigurationError,
     TransportTimeoutError,
     WafRejectionError,
+)
+from gflow_cli.services.catalog_sync import (
+    ListingParse,
+    SyncSummary,
+    parse_project_listing,
+    run_sync,
 )
 from tests.fixtures.listing_payload import (
     listing_payload,
@@ -200,6 +200,7 @@ class FakeRepo:
         self._work = work
         self.names: list[tuple[str, str]] = []  # (flow_media_id, name)
         self.ghosts: list[str] = []
+        self.calls: list[tuple[str, str]] = []  # ("name" | "ghost", flow_media_id)
 
     def list_nameless_asset_projects(
         self,
@@ -215,10 +216,12 @@ class FakeRepo:
         self, profile_name: str, flow_media_id: str, name: str, *, source: str
     ) -> bool:
         self.names.append((flow_media_id, name))
+        self.calls.append(("name", flow_media_id))
         return True
 
     def mark_asset_missing_remote(self, profile_name: str, flow_media_id: str) -> bool:
         self.ghosts.append(flow_media_id)
+        self.calls.append(("ghost", flow_media_id))
         return True
 
 
@@ -300,6 +303,24 @@ def test_run_sync_ghost_marked_only_on_complete_listing() -> None:
 
     assert repo.ghosts == [id_ghost]
     assert summary.ghosts_marked == 1
+
+
+def test_run_sync_named_but_absent_gets_name_and_ghost_mark() -> None:
+    """Named-but-absent edge on a COMPLETE listing: a uuid with a workflow
+    caption but no media[] row is BOTH name-cached and ghost-marked (name
+    first, then ghost), and the summary counts both."""
+    media_id = new_id()
+    wf = workflow_item(primary_media_id=media_id, display_name="Orphan caption")
+    project = new_id()
+    client = FakeClient({project: listing_payload(media=[], workflows=[wf])})
+    repo = FakeRepo([_work(project, media_id)])
+
+    summary = _run(client, repo)
+
+    assert repo.calls == [("name", media_id), ("ghost", media_id)]
+    assert summary.names_written == 1
+    assert summary.ghosts_marked == 1
+    assert summary.rows_still_nameless == 0
 
 
 def test_run_sync_incomplete_listing_never_ghost_marks() -> None:

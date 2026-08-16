@@ -188,6 +188,8 @@ def run_sync(
         SyncPartialError: some projects failed, at least one succeeded —
             ``.summary`` carries the SyncSummary including failure records.
         Exception: all visited projects failed — the FIRST failure re-raised.
+            Repo write errors also propagate raw: local failures are systemic,
+            earlier writes stay committed, and an idempotent re-run resumes.
     """
     if getattr(settings, "history_prompts", None) == "redacted":
         msg = (
@@ -236,8 +238,9 @@ def run_sync(
         for media_id in row.media_ids:
             named = media_id in parsed.names
             if named and (
-                dry_run
-                or repo.set_asset_display_name(
+                True
+                if dry_run
+                else repo.set_asset_display_name(
                     profile_name, media_id, parsed.names[media_id], source="sync"
                 )
             ):
@@ -245,7 +248,9 @@ def run_sync(
             # Absence proves nothing on a partial listing — ghost-mark ONLY
             # when the listing is complete.
             ghost = parsed.complete and media_id not in parsed.present
-            if ghost and (dry_run or repo.mark_asset_missing_remote(profile_name, media_id)):
+            if ghost and (
+                True if dry_run else repo.mark_asset_missing_remote(profile_name, media_id)
+            ):
                 project_ghosts += 1
             if not named and not ghost:
                 project_nameless += 1
