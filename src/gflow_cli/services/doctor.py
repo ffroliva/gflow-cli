@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -129,16 +130,32 @@ def _parse_ts(raw: object) -> datetime | None:
 # ---------------------------------------------------------------------------
 
 
+def _profile_suffix(counts: Counter[str]) -> str:
+    """Per-profile breakdown, appended only when rows span >1 profile.
+
+    Profile names are local user-chosen identifiers (unlike emails) so they
+    may appear in output; ``_finding`` still routes them through ``_scrub``.
+    Ordered by count descending, then name, for a stable rendering.
+    """
+    if len(counts) < 2:
+        return ""
+    parts = ", ".join(
+        f"{name}: {n}" for name, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+    return f" ({parts})"
+
+
 def _check_display_name_missing(conn: sqlite3.Connection, settings: Settings) -> list[Finding]:
     rows = conn.execute(
-        "SELECT id FROM assets WHERE metadata_json IS NULL"
+        "SELECT id, profile_name FROM assets WHERE metadata_json IS NULL"
         " OR json_extract(metadata_json, '$.display_name') IS NULL"
         " OR json_extract(metadata_json, '$.display_name') = ''",
     ).fetchall()
     if not rows:
         return []
     ids = [str(row["id"]) for row in rows]
-    summary = f"{len(ids)} asset(s) have no display name"
+    per_profile = Counter(str(row["profile_name"]) for row in rows)
+    summary = f"{len(ids)} asset(s) have no display name{_profile_suffix(per_profile)}"
     if settings.history_prompts == "redacted":
         return [
             _finding(
@@ -150,12 +167,19 @@ def _check_display_name_missing(conn: sqlite3.Connection, settings: Settings) ->
                 ids,
             )
         ]
+    if len(per_profile) > 1:
+        # Sync operates on one profile per run — suggest one command each.
+        remediation = "; ".join(
+            f"gflow data sync --names --profile {name}" for name in sorted(per_profile)
+        )
+    else:
+        remediation = "gflow data sync --names"
     return [
         _finding(
             "catalog.display_name_missing",
             "warn",
             summary,
-            "gflow data sync --names",
+            remediation,
             ids,
         )
     ]
@@ -163,14 +187,16 @@ def _check_display_name_missing(conn: sqlite3.Connection, settings: Settings) ->
 
 def _check_local_file_missing(conn: sqlite3.Connection) -> list[Finding]:
     rows = conn.execute(
-        "SELECT asset_id, path FROM local_files WHERE storage_provider IS NULL",
+        "SELECT asset_id, path, profile_name FROM local_files WHERE storage_provider IS NULL",
     ).fetchall()
     missing: list[str] = []
+    per_profile: Counter[str] = Counter()
     example: str | None = None
     for row in rows:
         path = Path(str(row["path"]))
         if not path.exists():
             missing.append(str(row["asset_id"]))
+            per_profile[str(row["profile_name"])] += 1
             if example is None:
                 example = _cli_helpers.safe_path_text(path)
     if not missing:
@@ -179,7 +205,8 @@ def _check_local_file_missing(conn: sqlite3.Connection) -> list[Finding]:
         _finding(
             "catalog.local_file_missing",
             "warn",
-            f"{len(missing)} cataloged local file(s) missing on disk (e.g. {example})",
+            f"{len(missing)} cataloged local file(s) missing on disk"
+            f" (e.g. {example}){_profile_suffix(per_profile)}",
             "gflow data prune --dry-run",
             missing,
         )
@@ -188,16 +215,18 @@ def _check_local_file_missing(conn: sqlite3.Connection) -> list[Finding]:
 
 def _check_sha256_null(conn: sqlite3.Connection) -> list[Finding]:
     rows = conn.execute(
-        "SELECT asset_id FROM local_files WHERE storage_provider IS NULL AND sha256 IS NULL",
+        "SELECT asset_id, profile_name FROM local_files"
+        " WHERE storage_provider IS NULL AND sha256 IS NULL",
     ).fetchall()
     if not rows:
         return []
     ids = [str(row["asset_id"]) for row in rows]
+    per_profile = Counter(str(row["profile_name"]) for row in rows)
     return [
         _finding(
             "catalog.sha256_null",
             "warn",
-            f"{len(ids)} local file(s) have no recorded sha256",
+            f"{len(ids)} local file(s) have no recorded sha256{_profile_suffix(per_profile)}",
             "gflow data sync",
             ids,
         )

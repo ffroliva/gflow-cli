@@ -61,13 +61,15 @@ def _new_db(tmp_path: Path) -> Path:
     return db
 
 
-def _insert_asset(conn: sqlite3.Connection, *, display_name: str | None) -> str:
+def _insert_asset(
+    conn: sqlite3.Connection, *, display_name: str | None, profile: str = "default"
+) -> str:
     asset_id = str(uuid.uuid4())
     metadata = json.dumps({"display_name": display_name}) if display_name else None
     conn.execute(
         "INSERT INTO assets(id, profile_name, flow_media_id, kind, status, created_at,"
-        " metadata_json) VALUES (?, 'default', ?, 'image', 'ready', ?, ?)",
-        (asset_id, str(uuid.uuid4()), _ts(_NOW), metadata),
+        " metadata_json) VALUES (?, ?, ?, 'image', 'ready', ?, ?)",
+        (asset_id, profile, str(uuid.uuid4()), _ts(_NOW), metadata),
     )
     return asset_id
 
@@ -78,11 +80,12 @@ def _insert_local_file(
     asset_id: str,
     path: Path,
     sha256: str | None,
+    profile: str = "default",
 ) -> None:
     conn.execute(
         "INSERT INTO local_files(id, profile_name, asset_id, path, sha256, created_at)"
-        " VALUES (?, 'default', ?, ?, ?, ?)",
-        (str(uuid.uuid4()), asset_id, str(path), sha256, _ts(_NOW)),
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), profile, asset_id, str(path), sha256, _ts(_NOW)),
     )
 
 
@@ -464,6 +467,57 @@ def test_findings_use_uuids_never_display_name_values(
     all_text = " ".join(f.summary + " " + f.remediation for f in report.findings)
     assert "TOP-SECRET-CLIENT-NAME" not in all_text
     assert asset_id in {u for f in report.findings for u in f.row_uuids}
+
+
+def test_catalog_summaries_split_counts_per_profile_when_multiple(
+    tmp_path: Path,
+    healthy_doctor_env: None,
+) -> None:
+    """When affected rows span profiles, the three catalog checks append a
+    per-profile breakdown (count desc, then name) and display_name_missing's
+    remediation names one sync command per affected profile. Single-profile
+    DBs keep the shorter summary (covered by the seeded-defect tests)."""
+    db = _new_db(tmp_path)
+    with DataStore.open(db) as store:
+        store.conn.execute(
+            "INSERT INTO profiles(name, first_seen_at) VALUES ('work', ?)",
+            (_ts(_NOW),),
+        )
+        # display_name_missing: 2 under default, 1 under work.
+        _insert_asset(store.conn, display_name=None)
+        _insert_asset(store.conn, display_name=None)
+        _insert_asset(store.conn, display_name=None, profile="work")
+        # local_file_missing: one vanished file per profile.
+        a_def = _insert_asset(store.conn, display_name="named")
+        _insert_local_file(
+            store.conn, asset_id=a_def, path=tmp_path / "gone1.png", sha256="ab" * 32
+        )
+        a_work = _insert_asset(store.conn, display_name="named", profile="work")
+        _insert_local_file(
+            store.conn,
+            asset_id=a_work,
+            path=tmp_path / "gone2.png",
+            sha256="cd" * 32,
+            profile="work",
+        )
+        # sha256_null: one existing-but-unhashed file per profile.
+        present = tmp_path / "here.png"
+        present.write_bytes(b"png")
+        b_def = _insert_asset(store.conn, display_name="named")
+        _insert_local_file(store.conn, asset_id=b_def, path=present, sha256=None)
+        b_work = _insert_asset(store.conn, display_name="named", profile="work")
+        _insert_local_file(store.conn, asset_id=b_work, path=present, sha256=None, profile="work")
+
+    report = run_all(db, get_settings())
+    by_check = {f.check: f for f in report.findings}
+
+    name_finding = by_check["catalog.display_name_missing"]
+    assert "(default: 2, work: 1)" in name_finding.summary
+    assert "gflow data sync --names --profile default" in name_finding.remediation
+    assert "gflow data sync --names --profile work" in name_finding.remediation
+
+    assert "(default: 1, work: 1)" in by_check["catalog.local_file_missing"].summary
+    assert "(default: 1, work: 1)" in by_check["catalog.sha256_null"].summary
 
 
 def test_display_name_missing_is_info_under_redacted_privacy(

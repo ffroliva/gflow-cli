@@ -35,6 +35,7 @@ from typing import Any
 import pytest
 
 from gflow_cli.errors import (
+    AuthExpiredError,
     ConfigurationError,
     TransportTimeoutError,
     WafRejectionError,
@@ -216,7 +217,9 @@ class FakeRepo:
         self._work = work
         self.names: list[tuple[str, str]] = []  # (flow_media_id, name)
         self.ghosts: list[str] = []
-        self.calls: list[tuple[str, str]] = []  # ("name" | "ghost", flow_media_id)
+        self.cleared: list[str] = []
+        self.missing_remote: dict[str, tuple[str, ...]] = {}  # project_id -> ghost rows
+        self.calls: list[tuple[str, str]] = []  # ("name" | "ghost" | "clear", flow_media_id)
 
     def list_nameless_asset_projects(
         self,
@@ -238,6 +241,14 @@ class FakeRepo:
     def mark_asset_missing_remote(self, profile_name: str, flow_media_id: str) -> bool:
         self.ghosts.append(flow_media_id)
         self.calls.append(("ghost", flow_media_id))
+        return True
+
+    def list_missing_remote_media(self, profile_name: str, flow_project_id: str) -> tuple[str, ...]:
+        return self.missing_remote.get(flow_project_id, ())
+
+    def clear_missing_remote(self, profile_name: str, flow_media_id: str) -> bool:
+        self.cleared.append(flow_media_id)
+        self.calls.append(("clear", flow_media_id))
         return True
 
 
@@ -324,11 +335,14 @@ def test_run_sync_ghost_marked_only_on_complete_listing() -> None:
 def test_run_sync_named_but_absent_gets_name_and_ghost_mark() -> None:
     """Named-but-absent edge on a COMPLETE listing: a uuid with a workflow
     caption but no media[] row is BOTH name-cached and ghost-marked (name
-    first, then ghost), and the summary counts both."""
+    first, then ghost), and the summary counts both. A bystander media row
+    keeps ``present`` non-empty so the mass-tombstone guard stays out of
+    the way."""
     media_id = new_id()
     wf = workflow_item(primary_media_id=media_id, display_name="Orphan caption")
+    _, bystander_media, _ = named_pair("Bystander")
     project = new_id()
-    client = FakeClient({project: listing_payload(media=[], workflows=[wf])})
+    client = FakeClient({project: listing_payload(media=[bystander_media], workflows=[wf])})
     repo = FakeRepo([_work(project, media_id)])
 
     summary = _run(client, repo)
@@ -337,6 +351,73 @@ def test_run_sync_named_but_absent_gets_name_and_ghost_mark() -> None:
     assert summary.names_written == 1
     assert summary.ghosts_marked == 1
     assert summary.rows_still_nameless == 0
+
+
+def test_run_sync_complete_empty_present_never_mass_tombstones() -> None:
+    """Shape-drift defense: a COMPLETE listing whose media[] yielded ZERO
+    present UUIDs must never ghost-mark — a Flow shape drift that hides
+    media[] would otherwise tombstone entire projects. The nameless row just
+    stays nameless and retries next run."""
+    project = new_id()
+    lonely = new_id()
+    client = FakeClient({project: listing_payload(media=[], workflows=[])})
+    repo = FakeRepo([_work(project, lonely)])
+
+    summary = _run(client, repo)
+
+    assert repo.ghosts == []
+    assert summary.ghosts_marked == 0
+    assert summary.rows_still_nameless == 1
+
+
+def test_run_sync_auth_expired_aborts_whole_run_keeps_partial_writes() -> None:
+    """AuthExpiredError is systemic like a WAF 403: every later project would
+    401 too. The raw error propagates (standard handler renders the auth-login
+    remediation), later projects are NEVER fetched, earlier writes stay."""
+    id_a, media_a, wf_a = named_pair("Kept write")
+    p1, p2, p3 = new_id(), new_id(), new_id()
+    client = FakeClient(
+        {
+            p1: listing_payload(media=[media_a], workflows=[wf_a]),
+            p2: AuthExpiredError("session cookie expired mid-sweep"),
+            p3: listing_payload(),
+        }
+    )
+    repo = FakeRepo([_work(p1, id_a), _work(p2, new_id()), _work(p3, new_id())])
+
+    with pytest.raises(AuthExpiredError):
+        _run(client, repo)
+
+    assert client.fetched == [p1, p2]  # p3 never fetched
+    assert repo.names == [(id_a, "Kept write")]  # partial writes kept
+
+
+def test_run_sync_clears_reappeared_ghost_even_on_incomplete_listing() -> None:
+    """A ghost-marked uuid that shows up in media[] again is un-ghosted and
+    counted in ``ghosts_cleared`` — presence is definitive evidence of
+    existence, so this holds even on an INCOMPLETE listing. A still-absent
+    ghost stays tombstoned (absence proves nothing)."""
+    id_new, media_new, wf_new = named_pair("Fresh name")
+    ghost_back = new_id()
+    ghost_gone = new_id()
+    project = new_id()
+    client = FakeClient(
+        {
+            project: listing_payload(
+                media=[media_new, media_item(ghost_back)],
+                workflows=[wf_new],
+                project_contents_extra={"nextPageToken": "more"},  # incomplete
+            )
+        }
+    )
+    repo = FakeRepo([_work(project, id_new)])
+    repo.missing_remote[project] = (ghost_back, ghost_gone)
+
+    summary = _run(client, repo)
+
+    assert repo.cleared == [ghost_back]  # ghost_gone stays tombstoned
+    assert summary.ghosts_cleared == 1
+    assert repo.ghosts == []  # incomplete listing: no new tombstones
 
 
 def test_run_sync_incomplete_listing_never_ghost_marks() -> None:

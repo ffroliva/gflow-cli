@@ -33,7 +33,12 @@ import structlog
 
 from gflow_cli.api.video import is_media_uuid
 from gflow_cli.config import parse_jitter_range
-from gflow_cli.errors import ConfigurationError, SyncPartialError, WafRejectionError
+from gflow_cli.errors import (
+    AuthExpiredError,
+    ConfigurationError,
+    SyncPartialError,
+    WafRejectionError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -95,6 +100,9 @@ class SyncSummary:
     rows_still_nameless: int
     #: (project_id, error) records for per-project fetch/parse failures.
     failures: tuple[tuple[str, Exception], ...]
+    #: Ghost-marked rows un-tombstoned because their media reappeared.
+    #: Kept LAST with a default so existing constructions stay valid.
+    ghosts_cleared: int = 0
 
 
 def _has_pagination_marker(node: Any, depth: int = 0) -> bool:
@@ -206,7 +214,8 @@ def run_sync(
 
     Seams: ``client.fetch_project_listing(project_id)``;
     ``repo.list_nameless_asset_projects`` / ``set_asset_display_name`` /
-    ``mark_asset_missing_remote``. Contract: tests/services/test_catalog_sync.py.
+    ``mark_asset_missing_remote`` / ``list_missing_remote_media`` /
+    ``clear_missing_remote``. Contract: tests/services/test_catalog_sync.py.
 
     ``limit`` / ``since`` / ``project_ids`` pass straight through to the repo
     query; ``max_projects`` is the hard visit cap and is folded into the repo
@@ -217,6 +226,9 @@ def run_sync(
             any repo/client call (sync stores remote display names).
         WafRejectionError: re-raised RAW mid-sweep; the whole run aborts
             (continuing escalates the WAF score), earlier writes stay committed.
+        AuthExpiredError: re-raised RAW mid-sweep; systemic — every later
+            project would 401 too. The standard handler renders the
+            "gflow auth login" remediation; earlier writes stay committed.
         SyncPartialError: some projects failed, at least one succeeded —
             ``.summary`` carries the SyncSummary including failure records.
         Exception: all visited projects failed — the FIRST failure re-raised.
@@ -253,6 +265,7 @@ def run_sync(
 
     names_written = 0
     ghosts_marked = 0
+    ghosts_cleared = 0
     rows_still_nameless = 0
     failures: list[tuple[str, Exception]] = []
 
@@ -265,14 +278,34 @@ def run_sync(
         log.info("sync.project_started", project_id=project_id, index=index, total=len(work))
         try:
             parsed = parse_project_listing(client.fetch_project_listing(project_id))
-        except WafRejectionError:
-            # WAF 403 mid-sweep: continuing escalates the WAF score — abort the
-            # whole run, propagate raw. Earlier projects' writes stay committed.
+        except (WafRejectionError, AuthExpiredError):
+            # Systemic failures abort the whole run, propagated raw. WAF 403:
+            # continuing escalates the WAF score. Auth expiry: every later
+            # project would 401 too (the standard handler renders the
+            # "gflow auth login" remediation). Earlier writes stay committed.
             raise
         except Exception as exc:  # noqa: BLE001 — per-project isolation is the contract
             failures.append((project_id, exc))
             log.info("sync.project_failed", project_id=project_id, error=type(exc).__name__)
             continue
+
+        # Mass-tombstone guard (shape-drift defense): ghost-marking requires a
+        # complete listing AND at least one present UUID. A Flow shape drift
+        # that hides media[] must not tombstone entire projects; a genuinely
+        # emptied project's rows stay nameless and retry harmlessly.
+        may_ghost = parsed.complete and bool(parsed.present)
+
+        # Un-ghost on reappearance: presence is definitive evidence of
+        # existence (complete or not), so any ghost-marked row of this project
+        # whose UUID is back in media[] gets its tombstone cleared. Cleared
+        # rows that are still nameless re-enter the work list next run — they
+        # are no longer excluded; this pass never tries to name them.
+        project_cleared = 0
+        for ghost_id in repo.list_missing_remote_media(profile_name, project_id):
+            if ghost_id in parsed.present and (
+                True if dry_run else repo.clear_missing_remote(profile_name, ghost_id)
+            ):
+                project_cleared += 1
 
         project_names = 0
         project_ghosts = 0
@@ -288,8 +321,8 @@ def run_sync(
             ):
                 project_names += 1
             # Absence proves nothing on a partial listing — ghost-mark ONLY
-            # when the listing is complete.
-            ghost = parsed.complete and media_id not in parsed.present
+            # when the listing is complete and yielded present UUIDs.
+            ghost = may_ghost and media_id not in parsed.present
             if ghost and (
                 True if dry_run else repo.mark_asset_missing_remote(profile_name, media_id)
             ):
@@ -298,12 +331,14 @@ def run_sync(
                 project_nameless += 1
         names_written += project_names
         ghosts_marked += project_ghosts
+        ghosts_cleared += project_cleared
         rows_still_nameless += project_nameless
         log.info(
             "sync.project_done",
             project_id=project_id,
             names=project_names,
             ghosts=project_ghosts,
+            ghosts_cleared=project_cleared,
             still_nameless=project_nameless,
             dropped=parsed.dropped,
             complete=parsed.complete,
@@ -315,12 +350,14 @@ def run_sync(
         ghosts_marked=ghosts_marked,
         rows_still_nameless=rows_still_nameless,
         failures=tuple(failures),
+        ghosts_cleared=ghosts_cleared,
     )
     log.info(
         "sync.summary",
         projects_visited=summary.projects_visited,
         names_written=summary.names_written,
         ghosts_marked=summary.ghosts_marked,
+        ghosts_cleared=summary.ghosts_cleared,
         rows_still_nameless=summary.rows_still_nameless,
         failures=len(summary.failures),
         dry_run=dry_run,

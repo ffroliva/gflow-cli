@@ -713,3 +713,92 @@ def test_list_nameless_asset_projects_orders_and_filters(tmp_path: Path) -> None
 
         other_profile = repo.list_nameless_asset_projects("nobody")
         assert other_profile == []
+
+
+def test_clear_missing_remote_removes_status_preserving_other_keys(tmp_path: Path) -> None:
+    """Un-ghost on reappearance (#543): json_remove drops ONLY $.sync.status;
+    display_name, sync.named_at, and unrelated keys survive; checked_at is
+    re-stamped."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-1",
+            flow_project_id="flow-project-1",
+            flow_media_id="media-1",
+            metadata={
+                "display_name": "Kept name",
+                "fife_url": "https://lh3.example/signed",
+                "sync": {
+                    "status": "missing_remote",
+                    "named_at": "2026-01-01T00:00:00.000Z",
+                    "checked_at": "2026-01-01T00:00:00.000Z",
+                },
+            },
+        )
+
+        assert repo.clear_missing_remote("default", "media-1") is True
+
+        metadata = _asset_metadata(store, "asset-1")
+        assert metadata is not None
+        assert metadata["display_name"] == "Kept name"
+        assert metadata["fife_url"] == "https://lh3.example/signed"
+        sync = metadata["sync"]
+        assert isinstance(sync, dict)
+        assert "status" not in sync  # the tombstone flag is gone
+        assert sync["named_at"] == "2026-01-01T00:00:00.000Z"
+        assert _parseable_utc_iso(sync["checked_at"])
+        assert sync["checked_at"] != "2026-01-01T00:00:00.000Z"  # re-stamped
+
+
+def test_clear_missing_remote_non_ghost_or_unknown_returns_false(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-1",
+            flow_project_id="flow-project-1",
+            flow_media_id="media-1",
+            metadata={"display_name": "Not a ghost"},
+        )
+        before = _asset_metadata(store, "asset-1")
+
+        assert repo.clear_missing_remote("default", "media-1") is False  # not ghost-marked
+        assert repo.clear_missing_remote("default", "media-unknown") is False  # unknown id
+
+        assert _asset_metadata(store, "asset-1") == before  # untouched
+
+
+def test_list_missing_remote_media_scopes_by_project_and_profile(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        ghost_meta: dict[str, object] = {"sync": {"status": "missing_remote"}}
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-1",
+            flow_project_id="flow-project-a",
+            flow_media_id="media-ghost-1",
+            metadata=dict(ghost_meta),
+        )
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-2",
+            flow_project_id="flow-project-a",
+            flow_media_id="media-alive",
+            metadata={"display_name": "Alive"},
+        )
+        _seed_sync_asset(
+            repo,
+            asset_id="asset-3",
+            flow_project_id="flow-project-b",
+            flow_media_id="media-ghost-2",
+            metadata=dict(ghost_meta),
+        )
+
+        ghosts = repo.list_missing_remote_media("default", "flow-project-a")
+        assert ghosts == ("media-ghost-1",)  # ghost rows only, this project only
+        assert isinstance(ghosts, tuple)
+        assert repo.list_missing_remote_media("nobody", "flow-project-a") == ()

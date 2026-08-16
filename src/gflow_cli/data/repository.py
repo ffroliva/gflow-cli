@@ -310,6 +310,46 @@ class DataRepository:
             changed = cursor.rowcount
         return changed > 0
 
+    def clear_missing_remote(self, profile_name: str, flow_media_id: str) -> bool:
+        """Un-ghost an asset whose media reappeared in a listing (#543).
+
+        Single atomic statement: ``json_remove`` drops ONLY ``$.sync.status``
+        (the ``$.sync`` object itself survives — ``named_at`` and other keys
+        stay) and ``json_set`` re-stamps ``$.sync.checked_at`` (UTC ISO).
+        The WHERE predicate requires the row to currently be flagged
+        ``missing_remote`` — returns False for non-ghost or unknown ids,
+        never touching their metadata.
+        """
+        with self._store.transaction(immediate=True):
+            cursor = self._store.conn.execute(
+                """
+                UPDATE assets
+                SET metadata_json = json_set(
+                    json_remove(metadata_json, '$.sync.status'),
+                    '$.sync.checked_at', ?
+                )
+                WHERE profile_name = ? AND flow_media_id = ?
+                  AND json_extract(metadata_json, '$.sync.status') = 'missing_remote'
+                """,
+                (_utc_now(), profile_name, flow_media_id),
+            )
+            changed = cursor.rowcount
+        return changed > 0
+
+    def list_missing_remote_media(self, profile_name: str, flow_project_id: str) -> tuple[str, ...]:
+        """Ghost-marked media ids of one project, for the un-ghost pass (#543)."""
+        rows = self._store.conn.execute(
+            """
+            SELECT flow_media_id
+            FROM assets
+            WHERE profile_name = ? AND flow_project_id = ?
+              AND json_extract(metadata_json, '$.sync.status') = 'missing_remote'
+            ORDER BY created_at ASC, id ASC
+            """,
+            (profile_name, flow_project_id),
+        ).fetchall()
+        return tuple(str(row["flow_media_id"]) for row in rows)
+
     def list_nameless_asset_projects(
         self,
         profile_name: str,

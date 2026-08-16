@@ -1133,6 +1133,12 @@ non-ghost rows, newest first. `--project` restricts to explicit project ids,
 created before the cutoff, and `--max-projects` is the hard visit cap on top
 of whichever scope applies.
 
+**Multiple profiles.** Sync operates on **one profile per run** — the
+resolved default, or the one named with `--profile`. With several profiles,
+run it once per profile. `gflow doctor` shows the per-profile split in its
+catalog counts (e.g. `12 asset(s) have no display name (my-profile: 9, work: 3)`)
+so you can see which profiles still need a pass.
+
 **Ghost marking.** When a listing is provably complete (no pagination
 markers), cataloged rows whose media no longer exists remotely are flagged
 `sync.status = "missing_remote"` — a tombstone, **never a deletion**: the
