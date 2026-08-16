@@ -65,6 +65,7 @@ from gflow_cli.api.transports.base import (
     TransportSetup,
     VideoCapableTransport,
 )
+from gflow_cli.api.video import is_media_uuid
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_incidents_root
@@ -2295,6 +2296,70 @@ class FlowApiClient:
         chars = parse_characters(_unwrap_trpc(data))
         logger.debug("character.list_fetched", project_id=project_id, count=len(chars))
         return chars
+
+    async def fetch_project_listing(self, project_id: str) -> JsonObject:
+        """Fetch the raw ``flow.projectInitialData`` listing for *project_id*.
+
+        Maps to ``GET .../trpc/flow.projectInitialData?input=…`` with
+        ``toolName="PINHOLE"`` — the Flow editor's own initial-data call.
+        Live-verified 2026-08-16: ~0.5s, session-cookie auth, no page
+        navigation, FREE (no reCAPTCHA, no credit). Returns the tRPC envelope
+        verbatim; parsing lives in :mod:`gflow_cli.services.catalog_sync`
+        (#543).
+
+        Issued through the context's APIRequestContext (not a checked-out
+        Page) so multi-project sync sweeps never contend on the page pool.
+
+        Raises:
+            ValueError: *project_id* is not a canonical UUID — harvested ids
+                must never reach URL construction unvalidated.
+            RuntimeError: client not entered (no browser context).
+        """
+        if not is_media_uuid(project_id):
+            msg = f"Invalid project_id: {project_id!r}"
+            raise ValueError(msg)
+        ctx = self._context
+        if ctx is None:
+            msg = "FlowApiClient not entered — use `async with`"
+            raise RuntimeError(msg)
+        trpc_input = json.dumps(
+            {"json": {"projectId": project_id, "toolName": "PINHOLE"}},
+            separators=(",", ":"),
+        )
+        url = f"{routes.PROJECT_INITIAL_DATA_URL}?input={quote(trpc_input, safe='')}"
+        route = "projectInitialData"
+
+        async def attempt() -> Any:
+            return await ctx.request.get(url, timeout=30_000)
+
+        resp = await self._run_with_retry(attempt, route=route)
+        text = await resp.text()
+        _raise_for_non_retryable(resp, text, route=route)
+        # Single-channel rule (docs/SECURITY.md): id + size only — never
+        # display names / captions.
+        logger.info(
+            "client.project_listing_fetched",
+            project_id=project_id,
+            byte_count=len(text.encode("utf-8")),
+        )
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise WireFormatError(
+                detail=f"non-JSON projectInitialData response: {text[:200]}",
+                status=resp.status,
+                instance=_make_instance(),
+                route=route,
+                discovery=_build_wire_format_discovery(resp, text, route),
+            ) from e
+        if not isinstance(parsed, dict):
+            raise WireFormatError(
+                detail=(f"projectInitialData returned non-object JSON ({type(parsed).__name__})"),
+                status=resp.status,
+                instance=_make_instance(),
+                route=route,
+            )
+        return cast("JsonObject", parsed)
 
     async def get_character(
         self,
