@@ -690,10 +690,10 @@ class _ThreadSafeListingClient:
             await client.__aexit__(None, None, None)
 
 
-def _echo_progress(event: Any) -> None:
+def _echo_progress(event: str) -> None:
     """Human progress line ("[i/N] project <id>") on stderr — stdout stays
     reserved for the summary / --json payload (single-channel rule)."""
-    click.echo(str(event), err=True)
+    click.echo(event, err=True)
 
 
 def _echo_sync_summary(summary: Any, *, dry_run: bool) -> None:
@@ -702,6 +702,7 @@ def _echo_sync_summary(summary: Any, *, dry_run: bool) -> None:
         f"{prefix}: {summary.projects_visited} project(s) visited, "
         f"{summary.names_written} name(s) written, "
         f"{summary.ghosts_marked} ghost(s) marked, "
+        f"{summary.ghosts_cleared} ghost(s) cleared, "
         f"{summary.rows_still_nameless} still nameless, "
         f"{len(summary.failures)} failure(s)."
     )
@@ -714,6 +715,7 @@ def _sync_payload(summary: Any, *, dry_run: bool) -> dict[str, Any]:
         "projects_visited": summary.projects_visited,
         "names_written": summary.names_written,
         "ghosts_marked": summary.ghosts_marked,
+        "ghosts_cleared": summary.ghosts_cleared,
         "rows_still_nameless": summary.rows_still_nameless,
         "failures": [
             {"project_id": pid, "error": type(err).__name__} for pid, err in summary.failures

@@ -1140,11 +1140,17 @@ catalog counts (e.g. `12 asset(s) have no display name (denon82: 9, work: 3)`)
 so you can see which profiles still need a pass.
 
 **Ghost marking.** When a listing is provably complete (no pagination
-markers), cataloged rows whose media no longer exists remotely are flagged
+markers) **and** contains at least one media item (a mass-tombstone guard
+against a Flow shape drift hiding the whole `media[]` array), cataloged rows
+whose media no longer exists remotely are flagged
 `sync.status = "missing_remote"` — a tombstone, **never a deletion**: the
 row and its provenance stay queryable, and tombstoned rows are skipped by
 later sweeps. On a partial listing absence proves nothing, so nothing is
 ghost-marked.
+
+**Un-ghosting.** A tombstoned row whose media reappears in a later listing
+has its tombstone cleared automatically; if still nameless it rejoins the
+next sweep.
 
 **Privacy gate.** Display names are prompt-derived captions, so under
 `GFLOW_CLI_HISTORY_PROMPTS=redacted` sync refuses up front (exit `11`) with a

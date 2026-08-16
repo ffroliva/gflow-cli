@@ -227,7 +227,11 @@ def _check_sha256_null(conn: sqlite3.Connection) -> list[Finding]:
             "catalog.sha256_null",
             "warn",
             f"{len(ids)} local file(s) have no recorded sha256{_profile_suffix(per_profile)}",
-            "gflow data sync",
+            # No command recomputes hashes yet (deferred `doctor fix` scope) —
+            # be honest rather than point at sync, which never touches sha256.
+            "Re-download or re-generate the asset to refresh its recorded file;"
+            " if the file is gone from disk, remove the dead row"
+            " (preview with `gflow data prune --dry-run`).",
             ids,
         )
     ]

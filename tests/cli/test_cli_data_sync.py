@@ -49,6 +49,7 @@ def _summary(**overrides: Any) -> SimpleNamespace:
         "projects_visited": 7,
         "names_written": 42,
         "ghosts_marked": 1,
+        "ghosts_cleared": 2,
         "rows_still_nameless": 3,
         "failures": (),
     }
@@ -90,6 +91,8 @@ def test_sync_names_runs_writes_by_default_and_prints_summary(
     assert spy.calls[0]["max_projects"] == 50
     # A summary line reaches the output (counts only — format not pinned).
     assert "42" in result.output
+    # ghosts_cleared is surfaced too (count appears; wording not pinned).
+    assert "cleared" in result.output
 
 
 def test_sync_dry_run_flag_passes_dry_run_true(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,6 +165,7 @@ def test_sync_json_outputs_parseable_summary(monkeypatch: pytest.MonkeyPatch) ->
     payload = json.loads(result.output)
     assert payload["projects_visited"] == 7
     assert payload["names_written"] == 42
+    assert payload["ghosts_cleared"] == 2
 
 
 def test_sync_redacted_exits_11_naming_env_var(monkeypatch: pytest.MonkeyPatch) -> None:

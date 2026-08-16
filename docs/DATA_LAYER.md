@@ -80,7 +80,7 @@ its own audit trail:
 |---|---|---|
 | `sync.named_at` | UTC ISO timestamp | `DataRepository.set_asset_display_name` — set (with `$.display_name`) when a sync sweep writes or overwrites the name; skipped when the stored name is already identical, so re-runs never churn the timestamp |
 | `sync.source` | `"sync"` | Same writer, same statement — provenance for the name value |
-| `sync.status` | `"missing_remote"` | `DataRepository.mark_asset_missing_remote` — the ghost tombstone, set only when a **complete** remote listing lacks the asset; rows are flagged, never deleted, and tombstoned rows are excluded from later sweeps |
+| `sync.status` | `"missing_remote"` | `DataRepository.mark_asset_missing_remote` — the ghost tombstone, set only when a **complete** remote listing lacks the asset; rows are flagged, never deleted, and tombstoned rows are excluded from later sweeps; cleared automatically if the media reappears in a listing |
 | `sync.checked_at` | UTC ISO timestamp | Same writer — when the absence was last confirmed |
 
 All four are written via single-statement atomic `json_set` updates that
