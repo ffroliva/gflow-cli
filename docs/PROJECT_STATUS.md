@@ -4,6 +4,23 @@
 
 ## Current release
 
+**v0.58.0 — alpha.** **Catalog UUIDs resolve through Flow display names (#529) + r2v named references un-broken after Flow's picker redesign.** The picker
+contract is now `catalog UUID → workflows[].metadata.displayName → picker name
+search → exact UUID-in-thumbnail tile`: the UI response collector preserves the
+sibling workflow name so generated-image catalog rows retain the search key
+(store-mode history only), image `--ref <uuid>` and I2V frame UUIDs are enriched
+with it, and UUID/UUID-stem/prompt-hint/grid-scroll fallbacks are gone from that
+path — a missing name falls through to the SHA-verified local-file upload or a
+typed error, never an unfiltered click. Live-verifying the r2v surface caught
+two silent UI drifts and fixed them: the picker dialog exposes no accessible
+tree (tiles are now text-matched with an anchored, locale-badge-tolerant
+regex), and clicking a result now attaches directly (include button demoted to
+legacy fallback). Four committed e2e tests pin all of it against real Flow,
+including a real r2v video generated from a catalog name. See
+[LIVE_VERIFICATION_v0.58.0.md](LIVE_VERIFICATION_v0.58.0.md).
+
+<details><summary>v0.57.1 — two long-open UI bugs root-caused from live evidence (#493, #451/#288)</summary>
+
 **v0.57.1 — alpha.** **Two long-open UI bugs root-caused from live evidence (#493, #451/#288).**
 #493 was reported as an unrecognized "third editor variant"; it is not. Flow's
 **expanded chat sidebar** removes the classic composer entirely — no `crop_*`
@@ -23,13 +40,15 @@ Playwright timeout, and `gflow models` stops advertising a duration users cannot
 set. Everything verified at **zero credits**. See
 [LIVE_VERIFICATION_v0.57.1.md](LIVE_VERIFICATION_v0.57.1.md).
 
+</details>
+
 <details><summary>v0.57.0 — video joins the UI-mode policy + MCP truthfulness wave</summary>
 
 **v0.57.0 — alpha.** **Video joins the UI-mode policy (#299) + an MCP truthfulness wave (#496–#501).** `gflow video t2v`/`i2v` and MCP `gflow_generate_video` now take `--ui-mode`/`ui_mode` and bind their driver through `get_ui_driver` after editor mount instead of a hardcoded classic bind; video has only a classic driver, so `auto` ≡ `classic`, an env-sourced `agentic` degrades with a warning, and an explicit `--ui-mode agentic` is refused with exit 2 before any browser work. When Flow serves the agentic editor and classic cannot be recovered, video now fails fast pre-submit (`UiModeUnavailableError`, exit 28, zero credits) instead of burning 30–40 s of doomed selector timeouts. The agentic direction was hardened to match the classic one: `mode_control.ensure_agent_mode` replaces `_force_agent_mode` (deleted) with real-click-first + `aria-pressed` verification, no `tune`-ligature check, unknown editor variants no-op with a warning, and the sanctioned reload carries an explicit 15 s timeout. On the MCP side: `gflow mcp run --no-spend` (#496) unregisters both generate tools so an agent cannot even see them; `gflow_auth_status` (#497) gives agents a credit-free pre-flight session probe; `gflow_list_projects` paginates honestly with `offset`/`has_more`/`next_offset` (#498); the stub `gflow_list_characters` — which always answered "no characters", an active lie — is gone (#499); and `gflow://docs/known-issues` is bounded to a small index plus a per-issue templated read (#501) instead of injecting ~70 KB on every read. On the supply-chain side the release finishes the Scorecard hardening tail: every workflow now runs with a least-privilege token and every `uses:` action is pinned to a full commit SHA, the remaining in-workflow package installs are hash- or digest-pinned (`website/requirements.txt`, `Dockerfile.triage`, `pip-audit`), CI enforces a test-count floor so "a green build that ran nothing" cannot pass, `check_repo_hygiene.py` fails on version disagreement between `pyproject.toml`/`__init__.py`/`plugin.json`, and a self-run OpenSSF Scorecard workflow publishes the score as a README/website badge with a [SECURITY.md](SECURITY.md) section explaining it. Everything in this release was verified at **zero credits**. See [LIVE_VERIFICATION_v0.57.0.md](LIVE_VERIFICATION_v0.57.0.md).
 
 </details>
 
-**Develop (unreleased, post-v0.57.1):** post-release doc-review fixes only — see `CHANGELOG.md` `[Unreleased]` for the authoritative list. `develop` is the staging branch for the next release; this line is not a substitute for the changelog.
+**Develop (unreleased, post-v0.58.0):** nothing queued yet — see `CHANGELOG.md` `[Unreleased]` for the authoritative list. `develop` is the staging branch for the next release; this line is not a substitute for the changelog.
 
 <details><summary>v0.56.0 — ops-hardening batch + honest mode-switch evidence (#477/#478/#479, #493)</summary>
 

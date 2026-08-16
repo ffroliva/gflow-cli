@@ -312,6 +312,14 @@ mode also records the submitted `expanded_prompt` and a full `metadata_json.tool
 `redacted` withholds the expanded prompt and reduces the descriptor to
 `{name, version, params_hash, config_hash}`. See [PROMPT_EXPANSION.md](PROMPT_EXPANSION.md).
 
+**Reference-resolution trade-off (v0.58.0, #529):** `redacted` also withholds the
+catalog `display_name` Flow assigns to generated images (the caption can closely
+paraphrase the prompt). Since UUID `--ref`/frame references resolve through that
+name in the media picker, redacted-mode catalog rows skip the picker-selection
+path and fall back to the integrity-verified local-file upload — or a typed
+failure when no verified file exists. This is deliberate: the privacy boundary
+outranks picker convenience.
+
 ```bash
 GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 ```
