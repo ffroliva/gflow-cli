@@ -738,30 +738,37 @@ async def _run_data_sync(
     profile_name = _sync_profile_name(profile)
     adapter = _ThreadSafeListingClient(asyncio.get_running_loop(), profile_name)
     on_progress = _echo_progress if _logs_emit_json() else None
+    db_path = _db_path()
+
+    def _sync_worker() -> Any:
+        # Store lifecycle lives INSIDE the worker thread: sqlite3 connections
+        # default to check_same_thread=True, and run_sync executes via
+        # asyncio.to_thread — a store opened on the main thread raises
+        # ProgrammingError on the repo's first statement (live-caught, #543).
+        with DataStore.open(db_path) as store:
+            return run_sync(  # module-global lookup — tests monkeypatch cli_data.run_sync
+                adapter,
+                DataRepository(store),
+                settings,
+                profile_name=profile_name,
+                dry_run=dry_run,
+                max_projects=max_projects,
+                limit=limit,
+                since=since,
+                project_ids=project_ids or None,
+                on_progress=on_progress,
+            )
+
     try:
-        with DataStore.open(_db_path()) as store:
-            repo = DataRepository(store)
-            try:
-                summary = await asyncio.to_thread(
-                    run_sync,  # module-global lookup — tests monkeypatch cli_data.run_sync
-                    adapter,
-                    repo,
-                    settings,
-                    profile_name=profile_name,
-                    dry_run=dry_run,
-                    max_projects=max_projects,
-                    limit=limit,
-                    since=since,
-                    project_ids=project_ids or None,
-                    on_progress=on_progress,
-                )
-            except SyncPartialError as exc:
-                # Show what DID land before the standard handler exits 34
-                # (text mode only — --json emits exactly one error document).
-                partial = getattr(exc, "summary", None)
-                if partial is not None and not as_json:
-                    _echo_sync_summary(partial, dry_run=dry_run)
-                raise
+        try:
+            summary = await asyncio.to_thread(_sync_worker)
+        except SyncPartialError as exc:
+            # Show what DID land before the standard handler exits 34
+            # (text mode only — --json emits exactly one error document).
+            partial = getattr(exc, "summary", None)
+            if partial is not None and not as_json:
+                _echo_sync_summary(partial, dry_run=dry_run)
+            raise
     finally:
         await adapter.aclose()
     if as_json:

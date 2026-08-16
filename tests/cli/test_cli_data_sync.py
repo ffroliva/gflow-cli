@@ -26,7 +26,10 @@ red at collection until the errors change lands (S5).
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import os
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -36,7 +39,9 @@ from click.testing import CliRunner
 from gflow_cli import cli_data
 from gflow_cli.cli import main
 from gflow_cli.config import reset_settings
+from gflow_cli.data.store import DataStore
 from gflow_cli.errors import EXIT_CODE_MAP, SyncPartialError, is_retryable
+from tests.fixtures.listing_payload import listing_payload, named_pair
 
 
 def _summary(**overrides: Any) -> SimpleNamespace:
@@ -175,6 +180,58 @@ def test_sync_partial_error_maps_to_exit_34(monkeypatch: pytest.MonkeyPatch) -> 
     _install(monkeypatch, spy)
     result = CliRunner().invoke(main, ["data", "sync", "--names"])
     assert result.exit_code == 34, result.output
+
+
+def test_sync_real_bridge_opens_store_in_worker_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for the live-caught ``sqlite3.ProgrammingError`` (#543).
+
+    ``run_sync`` executes in a worker thread (``asyncio.to_thread``) while the
+    sqlite connection defaults to ``check_same_thread=True`` — so the store
+    MUST be opened inside that worker thread. This test exercises the REAL
+    ``run_sync`` + REAL store through the real bridge (no monkeypatched
+    ``run_sync``); only the remote listing fetch is canned, so no browser
+    launches. On the broken code (store opened on the main thread) it fails
+    with exit 1 / ProgrammingError instead of exit 0.
+    """
+    media_id, media, workflow = named_pair("Restored name")
+    project_id = str(uuid.uuid4())
+    payload = listing_payload(media=[media], workflows=[workflow])
+    monkeypatch.setattr(
+        cli_data._ThreadSafeListingClient,
+        "fetch_project_listing",
+        lambda self, pid: payload,
+    )
+
+    # Seed one nameless asset row in the isolated per-test DB (autouse
+    # ``_isolate_settings`` already points GFLOW_CLI_DB_PATH at tmp).
+    db = Path(os.environ["GFLOW_CLI_DB_PATH"])
+    now = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    with DataStore.open(db) as store:
+        store.conn.execute(
+            "INSERT INTO profiles(name, first_seen_at) VALUES (?, ?)", ("default", now)
+        )
+        store.conn.execute(
+            "INSERT INTO assets(id, profile_name, flow_project_id, flow_media_id,"
+            " kind, status, created_at, metadata_json)"
+            " VALUES (?, 'default', ?, ?, 'image', 'ready', ?, NULL)",
+            (str(uuid.uuid4()), project_id, media_id, now),
+        )
+
+    result = CliRunner().invoke(
+        main, ["data", "sync", "--names", "--project", project_id, "--profile", "default"]
+    )
+    assert result.exit_code == 0, result.output
+
+    with DataStore.open(db) as store:
+        row = store.conn.execute(
+            "SELECT metadata_json FROM assets WHERE flow_media_id = ?", (media_id,)
+        ).fetchone()
+    meta = json.loads(row["metadata_json"])
+    assert meta["display_name"] == "Restored name"
+    assert meta["sync"]["source"] == "sync"
+    assert meta["sync"]["named_at"]
 
 
 def test_sync_partial_error_exit_code_and_retryability_pinned() -> None:
