@@ -89,5 +89,8 @@ the caption asynchronously, so a fresh generation may record without a
 
 ## Post-tag evidence
 
-_To be filled after the v0.58.0 tag publishes: release workflow run link, PyPI
-listing, and `pipx install gflow-cli==0.58.0` smoke check._
+- Release workflow: [run 31934310984](https://github.com/ffroliva/gflow-cli/actions/runs/31934310984)
+  — **success**, digital attestations generated and uploaded.
+- GitHub Release: `v0.58.0` published 2026-08-16T07:37:15Z, stable (not draft,
+  not prerelease).
+- PyPI: `gflow-cli` latest = **0.58.0** (JSON API confirmed post-publish).
