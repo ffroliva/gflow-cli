@@ -66,8 +66,10 @@ async def main() -> int:
         step("fetch", f"flow.projectInitialData for project {args.project}")
         payload = await client.fetch_project_listing(args.project)
 
-    contents = payload["result"]["data"]["json"]["projectContents"]
+    # Parse FIRST: a bad envelope dies with the parser's clear ValueError,
+    # not a bare KeyError from the raw indexing below.
     parsed = parse_project_listing(payload)
+    contents = payload["result"]["data"]["json"]["projectContents"]
     markers = sorted(_marker_keys_found(payload))
 
     step("media", f"{len(contents.get('media') or [])} items")

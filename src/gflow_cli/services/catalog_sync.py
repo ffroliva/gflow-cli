@@ -24,20 +24,33 @@ Safety rails (PLAN risk register):
 
 from __future__ import annotations
 
+import random
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
 from gflow_cli.api.video import is_media_uuid
+from gflow_cli.config import parse_jitter_range
+from gflow_cli.errors import ConfigurationError, SyncPartialError, WafRejectionError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 log = structlog.get_logger(__name__)
 
-# Keys whose presence (with a non-empty / non-null value) anywhere in the
-# payload signals the listing is paginated — i.e. NOT the complete project.
+# Seam for tests to patch — jitter sleeps between project fetches route here.
+_sleep = time.sleep
+
+# Minimal-jitter default (seconds) between consecutive project fetches when
+# settings carry no jitter_range — enough to break the burst signature without
+# wasting wall-clock; widen via GFLOW_CLI_JITTER_RANGE on observed WAF 403s.
+_DEFAULT_JITTER_RANGE = (0.5, 1.5)
+
+# Keys whose presence (with a truthy value — `totalCount: 0` / `hasMore: false`
+# deliberately do not flag) anywhere in the payload signals the listing is
+# paginated — i.e. NOT the complete project.
 PAGINATION_MARKER_KEYS = frozenset(
     {
         "nextPageToken",
@@ -79,9 +92,8 @@ class SyncSummary:
     names_written: int
     ghosts_marked: int
     rows_still_nameless: int
-    # (project_id, error) records for per-project fetch failures — exact
-    # element shape is pinned by S3's orchestration implementation.
-    failures: tuple[Any, ...]
+    #: (project_id, error) records for per-project fetch/parse failures.
+    failures: tuple[tuple[str, Exception], ...]
 
 
 def _has_pagination_marker(node: Any, depth: int = 0) -> bool:
@@ -167,5 +179,111 @@ def run_sync(
     Seams: ``client.fetch_project_listing(project_id)``;
     ``repo.list_nameless_asset_projects`` / ``set_asset_display_name`` /
     ``mark_asset_missing_remote``. Contract: tests/services/test_catalog_sync.py.
+
+    Raises:
+        ConfigurationError: ``history_prompts == "redacted"`` — refused before
+            any repo/client call (sync stores remote display names).
+        WafRejectionError: re-raised RAW mid-sweep; the whole run aborts
+            (continuing escalates the WAF score), earlier writes stay committed.
+        SyncPartialError: some projects failed, at least one succeeded —
+            ``.summary`` carries the SyncSummary including failure records.
+        Exception: all visited projects failed — the FIRST failure re-raised.
     """
-    raise NotImplementedError("S3")
+    if getattr(settings, "history_prompts", None) == "redacted":
+        msg = (
+            "history_prompts is 'redacted' — sync stores remote display names, "
+            "which are prompt-derived captions. Set GFLOW_CLI_HISTORY_PROMPTS=store "
+            "to enable `gflow data sync --names`."
+        )
+        raise ConfigurationError(msg)
+
+    work = list(repo.list_nameless_asset_projects(profile_name))
+    if max_projects is not None:
+        work = work[:max_projects]
+    jitter_spec: Any = getattr(settings, "jitter_range", None)
+    jitter_low, jitter_high = (
+        parse_jitter_range(jitter_spec)
+        if isinstance(jitter_spec, str) and jitter_spec.strip()
+        else _DEFAULT_JITTER_RANGE
+    )
+
+    names_written = 0
+    ghosts_marked = 0
+    rows_still_nameless = 0
+    failures: list[tuple[str, Exception]] = []
+
+    for index, row in enumerate(work):
+        project_id = str(row.flow_project_id)
+        if index > 0 and jitter_high > 0:
+            _sleep(random.uniform(jitter_low, jitter_high))  # noqa: S311  # cadence, not crypto
+        if on_progress is not None:
+            on_progress(f"[{index + 1}/{len(work)}] project {project_id}")
+        log.info("sync.project_started", project_id=project_id, index=index, total=len(work))
+        try:
+            parsed = parse_project_listing(client.fetch_project_listing(project_id))
+        except WafRejectionError:
+            # WAF 403 mid-sweep: continuing escalates the WAF score — abort the
+            # whole run, propagate raw. Earlier projects' writes stay committed.
+            raise
+        except Exception as exc:  # noqa: BLE001 — per-project isolation is the contract
+            failures.append((project_id, exc))
+            log.info("sync.project_failed", project_id=project_id, error=type(exc).__name__)
+            continue
+
+        project_names = 0
+        project_ghosts = 0
+        project_nameless = 0
+        for media_id in row.media_ids:
+            named = media_id in parsed.names
+            if named and (
+                dry_run
+                or repo.set_asset_display_name(
+                    profile_name, media_id, parsed.names[media_id], source="sync"
+                )
+            ):
+                project_names += 1
+            # Absence proves nothing on a partial listing — ghost-mark ONLY
+            # when the listing is complete.
+            ghost = parsed.complete and media_id not in parsed.present
+            if ghost and (dry_run or repo.mark_asset_missing_remote(profile_name, media_id)):
+                project_ghosts += 1
+            if not named and not ghost:
+                project_nameless += 1
+        names_written += project_names
+        ghosts_marked += project_ghosts
+        rows_still_nameless += project_nameless
+        log.info(
+            "sync.project_done",
+            project_id=project_id,
+            names=project_names,
+            ghosts=project_ghosts,
+            still_nameless=project_nameless,
+            dropped=parsed.dropped,
+            complete=parsed.complete,
+        )
+
+    summary = SyncSummary(
+        projects_visited=len(work),
+        names_written=names_written,
+        ghosts_marked=ghosts_marked,
+        rows_still_nameless=rows_still_nameless,
+        failures=tuple(failures),
+    )
+    log.info(
+        "sync.summary",
+        projects_visited=summary.projects_visited,
+        names_written=summary.names_written,
+        ghosts_marked=summary.ghosts_marked,
+        rows_still_nameless=summary.rows_still_nameless,
+        failures=len(summary.failures),
+        dry_run=dry_run,
+    )
+    if failures:
+        if len(failures) == len(work):
+            raise failures[0][1]  # every project failed — surface the first typed error raw
+        msg = (
+            f"{len(failures)} of {len(work)} projects failed; "
+            f"{names_written} names written, {ghosts_marked} ghosts marked"
+        )
+        raise SyncPartialError(msg, summary=summary)
+    return summary
