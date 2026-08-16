@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow doctor` — read-only pre-flight diagnostics
+  ([#542](https://github.com/ffroliva/gflow-cli/issues/542)).** Ten checks
+  across the catalog (missing display names / local files / sha256), the
+  database (migration drift, WAL state + `PRAGMA quick_check`), stuck
+  operations and queue tasks (24h recency threshold), and the environment
+  (deprecated env vars, missing Playwright Chromium, auth profiles without
+  cookies). Brew-doctor philosophy: diagnoses, never heals — nothing is
+  migrated, repaired, or written, and all DB access is strictly read-only.
+  Exit `0` when clean, `33` when any warn/fail finding is present (a
+  successful diagnosis, not an error class); internal errors keep their typed
+  codes (e.g. `16` for `DataStoreError`). `--json` emits an experimental
+  machine-readable envelope (`overall_status` + per-check `checks[]` entries).
+  Output is redaction-safe: rows are identified by UUID only, paths are
+  sanitized, and under `GFLOW_CLI_HISTORY_PROMPTS=redacted` the display-name
+  check reports info instead of warn. See
+  [USAGE § `gflow doctor`](docs/USAGE.md#gflow-doctor).
+
 ## [0.58.0] — 2026-08-16
 
 ### Fixed

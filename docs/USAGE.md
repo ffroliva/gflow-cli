@@ -1093,6 +1093,58 @@ same command prints `cloud_uri_1`, `cloud_uri_2`, and so on instead of
 
 Exit codes: `0` success, `2` media ID not found in the local database, `16` database error (see exit code table below).
 
+## `gflow doctor`
+
+Read-only pre-flight diagnostics over the local catalog, database, and
+environment. Doctor **diagnoses, never heals**: nothing is migrated, repaired,
+or written — not even pending schema migrations. All database access is
+strictly read-only, so it is safe to run against a live catalog at any time.
+
+```text
+gflow doctor [--json]
+
+Options:
+  --json                Emit a machine-readable JSON report
+                        (experimental; shape may change).
+```
+
+Ten checks run on every invocation:
+
+| Check id | Detects | Suggested remediation |
+|---|---|---|
+| `catalog.display_name_missing` | Assets with no recorded display name (the picker search key) | `gflow data sync --names` |
+| `catalog.local_file_missing` | Cataloged local files that no longer exist on disk | `gflow data prune --dry-run` |
+| `catalog.sha256_null` | Local files with no recorded sha256 | `gflow data sync` |
+| `db.migration_drift` | Schema does not match the packaged migrations, or was written by a newer gflow-cli | `gflow data sync` / `uv tool upgrade gflow-cli` |
+| `db.wal_state` | Stale `-wal`/`-shm` sidecars next to a non-WAL database; `PRAGMA quick_check` anomalies | Close other gflow processes and re-run; restore from backup on quick_check failures |
+| `operations.stuck_started` | Operations in `started` for over 24h with no completion | `gflow data errors prune` |
+| `queue.stuck_processing` | Queue tasks claimed as `processing` for over 24h | `gflow data prune --dry-run` |
+| `env.deprecated_vars` | Deprecated env vars still set (`GFLOW_CLI_PREFER_CLASSIC`, `GFLOW_CLI_FORCE_AGENT_UI`, `GEMINI_API_KEY`), or `GFLOW_CLI_DB_PATH` disagreeing with the resolved settings path | Unset the variable / switch to its successor |
+| `env.browsers_missing` | Playwright Chromium is not installed | `playwright install chromium` |
+| `auth.files_present` | No auth profiles, or profiles without saved cookies | `gflow auth login` |
+
+**Severity model.** Every check reports `pass`, `info`, `warn`, or `fail`.
+`info` is worth knowing but not a defect — it never flips the overall status
+or the exit code; only `warn`/`fail` do. In the brew-doctor spirit the report
+itself says it best: findings are diagnostic signals, not a to-do list — if
+everything is working as expected, there is no need to chase them.
+
+**Exit codes.** `0` when every check passes (info findings included), `33`
+when any warn/fail finding is present — a successful diagnosis, not an error
+class. Internal errors keep their standard typed codes (e.g. `16` when the
+database cannot be opened at all — see the exit-code table below).
+
+**`--json` (experimental).** Emits a machine-readable envelope whose contract
+keys are `overall_status` (`ok`/`issues`) and `checks[]`, each entry carrying
+at least `check` (the id from the table above) and `severity`. The shape may
+grow; treat unknown keys as forward-compatible.
+
+**Redacted history.** Doctor output is redaction-safe: rows are identified by
+UUID only (never display-name values), and paths are sanitized. Under
+`GFLOW_CLI_HISTORY_PROMPTS=redacted` the `catalog.display_name_missing` check
+reports `info` instead of `warn` — name backfill is deliberately suppressed by
+that privacy setting, so missing names are expected, not a defect.
+
 ## `gflow models`
 
 Print the image and video model catalog — the source of truth for what
@@ -1381,6 +1433,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `30` | `QueueSchemaError`    | A `gflow serve`/MCP worker-queue task payload has an unrecognized `schema_version` or fails validation against the typed request DTOs | Usually means gflow-cli was downgraded after a newer version enqueued the task, or the payload was hand-edited; re-enqueue with a compatible version |
 | `31` | `FlowAppError`        | Flow's web app hit a client-side exception (its error-boundary page rendered instead of the editor) — a transient Flow crash, not a gflow bug | Retry shortly; if it persists, Flow itself is degraded — wait and retry later |
 | `32` | `ReferenceNotFoundError` | A referenced media NAME is not in this project's picker. Flow indexes a short auto-caption, not the generation prompt, so a prompt used as a reference name never matches | Reference the asset by its media UUID, pass a local file with `--ref`, or check what exists with `gflow data list images` |
+| `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

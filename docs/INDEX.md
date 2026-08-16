@@ -118,6 +118,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"Where can I look up a media ID I generated yesterday?"** → [DATA_LAYER § Querying the data layer](DATA_LAYER.md#querying-the-data-layer)
 **"How do I stop gflow from storing my prompts?"** → [DATA_LAYER § Privacy and redaction](DATA_LAYER.md#privacy-and-redaction)
 **"What does exit code 16 mean and how do I recover?"** → [DATA_LAYER § Persistence-failure handling](DATA_LAYER.md#persistence-failure-handling)
+**"Is my install/catalog healthy?"** → run `gflow doctor` (read-only, never migrates; exit 33 = findings present) — see [USAGE § `gflow doctor`](USAGE.md#gflow-doctor)
 **"How do I use this project's skills in Cursor / Codex / Antigravity / Aider?"** → [skills/README.md](../skills/README.md#use-with-other-agents)
 **"How do I benchmark a skill doc against real tasks?"** → [scripts/dev/skillopt/README.md](../scripts/dev/skillopt/README.md)
 **"How do I compare Claude vs GPT-4o vs Gemini on gflow tasks?"** → `python scripts/dev/skillopt/harness.py --provider openai --model gpt-4o` (see [skillopt README](../scripts/dev/skillopt/README.md))
