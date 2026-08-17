@@ -419,6 +419,74 @@ def test_present_token_passes(monkeypatch):
     assert pr_triage_autopilot.check_claude_auth() is None
 
 
+def test_memory_dir_cli_arg_wins_over_env(monkeypatch, tmp_path):
+    env_dir = tmp_path / "from-env"
+    cli_dir = tmp_path / "from-cli"
+    env_dir.mkdir()
+    cli_dir.mkdir()
+    monkeypatch.setenv(pr_triage_autopilot.MEMORY_DIR_ENV, str(env_dir))
+    assert pr_triage_autopilot.resolve_memory_dir(str(cli_dir)) == cli_dir.resolve()
+
+
+def test_memory_dir_falls_back_to_env(monkeypatch, tmp_path):
+    env_dir = tmp_path / "from-env"
+    env_dir.mkdir()
+    monkeypatch.setenv(pr_triage_autopilot.MEMORY_DIR_ENV, str(env_dir))
+    assert pr_triage_autopilot.resolve_memory_dir(None) == env_dir.resolve()
+
+
+def test_memory_dir_falls_back_to_xdg_data_home(monkeypatch, tmp_path):
+    monkeypatch.delenv(pr_triage_autopilot.MEMORY_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    expected = tmp_path / "gflow-cli" / "memory"
+    expected.mkdir(parents=True)
+    assert pr_triage_autopilot.resolve_memory_dir(None) == expected.resolve()
+
+
+def test_memory_dir_missing_exits_naming_the_path_and_overrides(monkeypatch, tmp_path):
+    monkeypatch.delenv(pr_triage_autopilot.MEMORY_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    with pytest.raises(SystemExit) as exc:
+        pr_triage_autopilot.resolve_memory_dir(None)
+    message = str(exc.value)
+    assert "gflow-cli" in message and "memory" in message
+    assert "mkdir -p" in message
+    assert pr_triage_autopilot.MEMORY_DIR_ENV in message
+
+
+def test_main_resolves_memory_from_environment_without_cli_flag(monkeypatch, tmp_path):
+    """main() must reach run_triage_cycle with the resolved dir when no flag is passed.
+
+    The cron line carries no --memory-dir, so this is the path production uses.
+    """
+    memory = tmp_path / "xdg" / "gflow-cli" / "memory"
+    memory.mkdir(parents=True)
+    monkeypatch.delenv(pr_triage_autopilot.MEMORY_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("GH_TOKEN", "tok")
+    monkeypatch.setenv(pr_triage_autopilot.CLAUDE_TOKEN_ENV, "sk-ant-oat01-xxx")
+
+    with patch("pr_triage_autopilot.run_triage_cycle") as m_cycle:
+        ret = pr_triage_autopilot.main(["--repo-dir", str(tmp_path)])
+
+    assert ret == 0
+    assert m_cycle.call_args[0][2] == memory.resolve()
+
+
+def test_main_exits_when_resolved_memory_dir_is_absent(monkeypatch, tmp_path):
+    """A missing memory dir must abort before the lock and the container."""
+    monkeypatch.delenv(pr_triage_autopilot.MEMORY_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "empty"))
+    monkeypatch.setenv("GH_TOKEN", "tok")
+    monkeypatch.setenv(pr_triage_autopilot.CLAUDE_TOKEN_ENV, "sk-ant-oat01-xxx")
+
+    with patch("pr_triage_autopilot.run_triage_cycle") as m_cycle:
+        with pytest.raises(SystemExit):
+            pr_triage_autopilot.main(["--repo-dir", str(tmp_path)])
+
+    assert m_cycle.call_count == 0
+
+
 def test_main_sends_telegram_alert_on_missing_token(monkeypatch, tmp_path):
     monkeypatch.delenv("GH_COMMENT_TOKEN", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)

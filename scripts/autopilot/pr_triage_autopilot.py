@@ -50,6 +50,21 @@ DEFAULT_ENGINE = SUPPORTED_ENGINES[0]
 # 16 days with nothing reporting it.
 CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
+# Council memory directory (D5 reads this tree read-only inside the sandbox).
+#
+# RESOLVED per host, never hardcoded. A literal path in the cron line is what
+# broke every review from deployment until 2026-08-17: it named
+# /opt/experience-vault/projects/C--development-github-gflow-cli/memory, which
+# spliced a VPS repo root onto a Claude-internal project-slug layout and so
+# existed on no machine. Resolution belongs in code that can see its own
+# environment; the cron line must not carry a machine-specific path.
+#
+# XDG_DATA_HOME (not STATE or CACHE): council memory is durable curated
+# knowledge meant to outlive the machine and be backed up, which is exactly the
+# data slot in the XDG Base Directory Specification.
+MEMORY_DIR_ENV = "GFLOW_TRIAGE_MEMORY_DIR"
+MEMORY_XDG_SUBDIR = "gflow-cli/memory"
+
 
 def check_claude_auth() -> str | None:
     """Return an error string when Claude auth is unusable, else None.
@@ -305,6 +320,34 @@ def resolve_engine() -> str:
     if engine not in SUPPORTED_ENGINES:
         raise SystemExit(f"Unsupported PR_TRIAGE_ENGINE={engine!r}; supported: {SUPPORTED_ENGINES}")
     return engine
+
+
+def resolve_memory_dir(cli_value: str | None = None) -> Path:
+    """Return the council memory directory for THIS host; refuse a missing one.
+
+    Precedence: ``--memory-dir`` > ``$GFLOW_TRIAGE_MEMORY_DIR`` > XDG default.
+    Checked on the HOST before the container starts, for the same reason
+    ``check_claude_auth`` is: an unresolvable path otherwise surfaces as an
+    opaque "Docker sandbox failed (exit 1)" from a ``cd`` deep inside the
+    wrapper script, after the lock is taken and a ledger failure is recorded.
+    """
+    if cli_value:
+        memory_dir, source = Path(cli_value), "--memory-dir"
+    elif os.environ.get(MEMORY_DIR_ENV):
+        memory_dir, source = Path(os.environ[MEMORY_DIR_ENV]), f"${MEMORY_DIR_ENV}"
+    else:
+        data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+        memory_dir, source = data_home / MEMORY_XDG_SUBDIR, "XDG default"
+
+    memory_dir = memory_dir.expanduser().resolve()
+    if not memory_dir.is_dir():
+        raise SystemExit(
+            f"Council memory directory does not exist: {memory_dir} (resolved from {source}).\n"
+            f"  Create it:            mkdir -p {memory_dir}\n"
+            f"  Or point elsewhere:   --memory-dir <path>  |  export {MEMORY_DIR_ENV}=<path>\n"
+            "An empty directory is valid — D5 then reports that no memory is available."
+        )
+    return memory_dir
 
 
 def run_review(
@@ -563,7 +606,14 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Main Host Orchestrator for PR-Triage Autopilot.")
     ap.add_argument("--repo", default="ffroliva/gflow-cli", help="owner/repo name")
     ap.add_argument("--repo-dir", required=True, help="path to local host clone")
-    ap.add_argument("--memory-dir", required=True, help="path to project-specific memory directory")
+    ap.add_argument(
+        "--memory-dir",
+        default=None,
+        help=(
+            f"council memory directory; defaults to ${MEMORY_DIR_ENV}, "
+            f"else $XDG_DATA_HOME/{MEMORY_XDG_SUBDIR}"
+        ),
+    )
     args = ap.parse_args(argv)
 
     # Validate required credentials
@@ -590,7 +640,7 @@ def main(argv: list[str] | None = None) -> int:
     engine = resolve_engine()
 
     repo_dir = Path(args.repo_dir).resolve()
-    memory_dir = Path(args.memory_dir).resolve()
+    memory_dir = resolve_memory_dir(args.memory_dir)
     ledger_path = repo_dir / LEDGER_FILE
 
     # Acquire lock
