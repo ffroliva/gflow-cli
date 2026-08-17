@@ -6,7 +6,9 @@ set -eo pipefail
 
 # Print usage
 usage() {
-  echo "Usage: $0 --pr <num> --repo <path> --memory <path> --token <gh_token>"
+  echo "Usage: $0 --pr <num> --repo <path> --memory <path> --token <gh_read_token>"
+  echo "  --token MUST be read-only (GH_SANDBOX_TOKEN). The container reads the PR;"
+  echo "  the host orchestrator posts the comment with the write-scoped token."
   echo "  Claude auth comes from CLAUDE_CODE_OAUTH_TOKEN in the environment."
   exit 1
 }
@@ -55,9 +57,22 @@ fi
 HOST_REPO=$(cd "$HOST_REPO" && pwd)
 HOST_MEMORY=$(cd "$HOST_MEMORY" && pwd)
 
+# Self-heal before we start. The cleanup trap below fires on EXIT, which a
+# SIGKILL (OOM, hard reboot) skips entirely -- stranding that run's network.
+# `docker network rm` refuses a network with attached containers, so this can
+# never disturb a concurrent review.
+for stale_net in $(docker network ls --filter "name=triage-net-" --format '{{.Name}}' 2>/dev/null); do
+  docker network rm "$stale_net" &>/dev/null && echo "Swept stale network $stale_net" || true
+done
+
 echo "Building Docker sandbox image..."
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 docker build -t gflow-triage:latest -f "$SCRIPT_DIR/Dockerfile.triage" "$SCRIPT_DIR"
+
+# The build reuses one tag, so whenever the Dockerfile or its context changes
+# the previous ~1GB image is orphaned as dangling. The label filter keeps this
+# scoped to our own images -- never other projects' on a shared host.
+docker image prune -f --filter "label=app=gflow-triage" &>/dev/null || true
 
 NET_NAME="triage-net-$PR_NUM"
 echo "Creating network $NET_NAME..."
