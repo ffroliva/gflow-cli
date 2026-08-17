@@ -82,7 +82,12 @@ def test_run_triage_cycle_success(
     mock_post_comment,
     mock_telegram,
     tmp_path,
+    monkeypatch,
 ):
+    # The deployed shape: a dedicated read-only token exists, so the container
+    # must receive THAT, never the write-scoped token used to post comments.
+    monkeypatch.setenv("GH_SANDBOX_TOKEN", "ro-token")
+
     # Mock Open PRs
     mock_gh_json.return_value = [
         {
@@ -125,9 +130,12 @@ def test_run_triage_cycle_success(
 
     # Assertions
     mock_fetch.assert_called_once_with(101, repo_dir)
-    mock_sandbox.assert_called_once_with(101, repo_dir, memory_dir, "token-test")
+    # read-only token into the sandbox, NOT the write-scoped "token-test"
+    mock_sandbox.assert_called_once_with(101, repo_dir, memory_dir, "ro-token")
+    assert mock_post_comment.call_args.kwargs["token"] == "token-test"
     mock_post_comment.assert_called_once()
-    mock_restore.assert_called_once_with(repo_dir)
+    # pr_num is passed so the fetched pr-<N>-review branch is deleted, not left behind
+    mock_restore.assert_called_once_with(repo_dir, pr_num=101)
     mock_append_ledger.assert_called_once()
     mock_telegram.assert_called_once()
 
@@ -417,6 +425,88 @@ def test_empty_token_is_reported(monkeypatch):
 def test_present_token_passes(monkeypatch):
     monkeypatch.setenv(pr_triage_autopilot.CLAUDE_TOKEN_ENV, "sk-ant-oat01-xxx")
     assert pr_triage_autopilot.check_claude_auth() is None
+
+
+def test_sandbox_token_prefers_the_dedicated_readonly_token(monkeypatch):
+    monkeypatch.setenv("GH_SANDBOX_TOKEN", "github_pat_readonly")
+    with patch("pr_triage_autopilot.send_telegram_alert") as m_alert:
+        assert pr_triage_autopilot.resolve_sandbox_token("write-token") == "github_pat_readonly"
+    assert m_alert.call_count == 0
+
+
+def test_sandbox_token_falls_back_loudly_when_unset(monkeypatch):
+    """Absent secret must degrade noisily, never silently re-grant write access."""
+    monkeypatch.delenv("GH_SANDBOX_TOKEN", raising=False)
+    with patch("pr_triage_autopilot.send_telegram_alert") as m_alert:
+        assert pr_triage_autopilot.resolve_sandbox_token("write-token") == "write-token"
+    assert m_alert.call_count == 1
+    assert "GH_SANDBOX_TOKEN" in m_alert.call_args[0][0]
+
+
+def test_post_gh_comment_passes_the_write_token_explicitly():
+    """Must not rely on ambient GH_TOKEN — the host env carries several tokens."""
+    with patch("pr_triage_autopilot.subprocess.run") as m_run:
+        m_run.return_value.returncode = 0
+        pr_triage_autopilot.post_gh_comment(7, "body", "o/r", token="write-token")
+    assert m_run.call_args.kwargs["env"]["GH_TOKEN"] == "write-token"
+
+
+def _git(repo, *args):
+    import subprocess
+
+    subprocess.run(["git", *args], cwd=repo, capture_output=True, check=True)
+
+
+def _make_repo(tmp_path):
+    """A real repo on develop with a pr-999-review branch checked out."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "develop")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (repo / "f.txt").write_text("x")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "init")
+    _git(repo, "branch", "pr-999-review")
+    _git(repo, "checkout", "-q", "pr-999-review")
+    return repo
+
+
+def _branches(repo):
+    import subprocess
+
+    out = subprocess.run(
+        ["git", "branch", "--format=%(refname:short)"], cwd=repo, capture_output=True, text=True
+    )
+    return set(out.stdout.split())
+
+
+def test_restore_repo_branch_deletes_the_pr_branch(tmp_path):
+    """The fetched pr-<N>-review branch must not outlive the review."""
+    repo = _make_repo(tmp_path)
+    assert "pr-999-review" in _branches(repo)
+
+    pr_triage_autopilot.restore_repo_branch(repo, pr_num=999)
+
+    assert "pr-999-review" not in _branches(repo)
+    assert _branches(repo) == {"develop"}
+
+
+def test_restore_repo_branch_tolerates_absent_pr_branch(tmp_path):
+    """A run that failed before fetching leaves no branch; cleanup must not raise."""
+    repo = _make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "develop")
+    _git(repo, "branch", "-D", "pr-999-review")
+
+    pr_triage_autopilot.restore_repo_branch(repo, pr_num=999)
+
+    assert _branches(repo) == {"develop"}
+
+
+def test_restore_repo_branch_without_pr_num_still_restores_develop(tmp_path):
+    repo = _make_repo(tmp_path)
+    pr_triage_autopilot.restore_repo_branch(repo)
+    assert "pr-999-review" in _branches(repo)
 
 
 def test_memory_dir_cli_arg_wins_over_env(monkeypatch, tmp_path):

@@ -16,6 +16,7 @@ The autopilot orchestrator (`scripts/autopilot/pr_triage_autopilot.py`) runs as 
 | `TELEGRAM_USER_ID` | Autopilot orchestrator (host) | The chat ID to receive triage alert messages. |
 | `PR_TRIAGE_ENGINE` | Autopilot orchestrator (host), optional | Review engine selector. Default `council-claude`; any other value exits at startup (`council-multi-cli` is reserved backlog). |
 | `HERMES_OPS_DIR` | Autopilot orchestrator (host), optional | Location of the hermes-ops checkout hosting the Resend email notifier. Default `/opt/hermes-ops`. |
+| `GH_SANDBOX_TOKEN` | Review **container** | Fine-grained **read-only** PAT for the repo under review. The container only reads the PR; the host posts the comment. If unset the orchestrator falls back and raises an alert rather than degrading silently. Stored in the SOPS secret store. |
 | `GFLOW_TRIAGE_MEMORY_DIR` | Autopilot orchestrator (host), optional | Council memory directory mounted read-only for D5. Set it only to override the XDG default (`$XDG_DATA_HOME/gflow-cli/memory`, i.e. `~/.local/share/gflow-cli/memory`). **Never put a machine-specific path in the cron line** — see §2. |
 | `RESEND_API_KEY` | Email notifier (hermes-ops) | Resend API key consumed by `$HERMES_OPS_DIR/scripts/notify/email_notify.py`. |
 | `HERMES_NOTIFY_EMAIL_TO` | Email notifier (hermes-ops) | Recipient address for high-signal triage emails. |
@@ -41,7 +42,7 @@ An **empty** directory is a valid deployment — D5 then reports that no memory 
 
 > **The memory path is resolved by the orchestrator, never hardcoded.** Precedence is `--memory-dir` > `$GFLOW_TRIAGE_MEMORY_DIR` > `$XDG_DATA_HOME/gflow-cli/memory` (XDG default, falling back to `~/.local/share`). `XDG_DATA_HOME` is the correct slot per the XDG Base Directory Specification: council memory is durable knowledge that should be backed up, not regenerable cache or throwaway state.
 >
-> This replaces a hardcoded `/opt/experience-vault/projects/C--development-github-gflow-cli/memory` in the cron line, which spliced a VPS repo root onto a Claude-internal project-slug layout and therefore existed on no machine. It failed every review from deployment until 2026-08-17 — silently, because nothing validated the path before the container started. The orchestrator now refuses to start with an actionable error instead.
+> The orchestrator validates the resolved path on the host and refuses to start with an actionable error if it is missing, rather than failing later inside the container.
 
 ---
 
@@ -94,6 +95,17 @@ Do **NOT** register the orchestrator directly via `hermes cron create --script p
 
 - **(a) Plain crontab** — the line above, under the `hermes` system user.
 - **(b) Thin shim in `HERMES_HOME/scripts/`** — a script that does `cd /opt/gflow-cli && exec uv run python scripts/autopilot/pr_triage_autopilot.py "$@"` (mirrors the existing EV ops-health shim pattern), registered with `hermes cron create "1h" --no-agent --script <shim> --deliver telegram`.
+
+### Log rotation
+
+`pr_triage.log` grows without bound otherwise. Install once, as root:
+
+```bash
+install -m 644 /opt/gflow-cli/deploy/logrotate-pr-triage /etc/logrotate.d/pr-triage
+logrotate --debug /etc/logrotate.d/pr-triage    # dry-run
+```
+
+Scoped to `pr_triage.log` alone — the rest of `/var/log/hermes/` belongs to hermes-ops, and two packages rotating one glob is how logs get silently truncated.
 
 ### Check Logs & Status
 - **Log Location**: `/var/log/hermes/pr_triage.log`

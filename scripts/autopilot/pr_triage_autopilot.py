@@ -52,18 +52,17 @@ CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
 # Council memory directory (D5 reads this tree read-only inside the sandbox).
 #
-# RESOLVED per host, never hardcoded. A literal path in the cron line is what
-# broke every review from deployment until 2026-08-17: it named
-# /opt/experience-vault/projects/C--development-github-gflow-cli/memory, which
-# spliced a VPS repo root onto a Claude-internal project-slug layout and so
-# existed on no machine. Resolution belongs in code that can see its own
-# environment; the cron line must not carry a machine-specific path.
-#
-# XDG_DATA_HOME (not STATE or CACHE): council memory is durable curated
-# knowledge meant to outlive the machine and be backed up, which is exactly the
-# data slot in the XDG Base Directory Specification.
+# Resolved per host, never hardcoded -- a machine-specific path in a cron line
+# is not portable and cannot be validated. XDG_DATA_HOME (not STATE or CACHE):
+# this is durable curated knowledge meant to be backed up, which is the data
+# slot in the XDG Base Directory Specification.
 MEMORY_DIR_ENV = "GFLOW_TRIAGE_MEMORY_DIR"
 MEMORY_XDG_SUBDIR = "gflow-cli/memory"
+
+# Read-only GitHub token handed to the review container (see
+# resolve_sandbox_token). Provisioned in hermes-ops SOPS, rendered into
+# /opt/hermes/.env, delivered by the cron line that sources it.
+SANDBOX_TOKEN_ENV = "GH_SANDBOX_TOKEN"
 
 
 def check_claude_auth() -> str | None:
@@ -174,13 +173,42 @@ def _gh_json(args: list[str], repo: str) -> any:
     return json.loads(proc.stdout)
 
 
-def post_gh_comment(pr_num: int, body: str, repo: str) -> None:
-    """Post comment back to PR using GitHub CLI."""
+def resolve_sandbox_token(write_token: str) -> str:
+    """Return the read-only token handed to the review container.
+
+    The container only reads the PR; the host posts the comment. Least
+    privilege: no write credential belongs in the container.
+
+    Falls back to the write token so a missing secret never takes the
+    pipeline down, but alerts rather than degrading silently.
+    """
+    sandbox_token = os.environ.get(SANDBOX_TOKEN_ENV)
+    if sandbox_token:
+        return sandbox_token
+    logger.warning(
+        "Sandbox token missing; falling back to the write-scoped token",
+        env_var=SANDBOX_TOKEN_ENV,
+    )
+    send_telegram_alert(
+        f"⚠️ {SANDBOX_TOKEN_ENV} is not set — the review sandbox is running with a "
+        "WRITE-scoped GitHub token. Restore the read-only token in hermes-ops SOPS."
+    )
+    return write_token
+
+
+def post_gh_comment(pr_num: int, body: str, repo: str, token: str | None = None) -> None:
+    """Post comment back to PR using GitHub CLI.
+
+    The token is passed explicitly rather than inherited from ambient env, so
+    the intended credential is always the one used.
+    """
+    env = {**os.environ, "GH_TOKEN": token} if token else None
     proc = subprocess.run(
         ["gh", "pr", "comment", str(pr_num), "--body", body, "--repo", repo],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"Failed to post comment to PR #{pr_num}: {proc.stderr.strip()}")
@@ -262,10 +290,24 @@ def fetch_and_checkout_pr(pr_num: int, repo_dir: Path) -> str:
     return head_sha
 
 
-def restore_repo_branch(repo_dir: Path) -> None:
-    """Restore host clone repository back to develop branch."""
+def restore_repo_branch(repo_dir: Path, pr_num: int | None = None) -> None:
+    """Restore the host clone to develop and drop the fetched PR branch.
+
+    Deleting matters: ``fetch_and_checkout_pr`` creates ``pr-<N>-review`` on
+    every review and nothing ever removed it, so the clone accumulated one
+    branch per PR forever (``pr-549-review`` was still present on the VPS
+    weeks later). Best-effort -- a run that failed before fetching has no
+    branch to drop, and cleanup must never mask the original error.
+    """
     logger.info("Restoring repository to develop branch")
     subprocess.run(["git", "checkout", "develop"], cwd=repo_dir, capture_output=True, check=True)
+    if pr_num is not None:
+        branch = f"pr-{pr_num}-review"
+        proc = subprocess.run(
+            ["git", "branch", "-D", branch], cwd=repo_dir, capture_output=True, check=False
+        )
+        if proc.returncode == 0:
+            logger.info("Deleted PR review branch", branch=branch)
 
 
 def run_docker_sandbox(pr_num: int, repo_dir: Path, memory_dir: Path, gh_token: str) -> str:
@@ -456,7 +498,7 @@ def run_triage_cycle(
                 f"Reason: {reasons_str}"
             )
             try:
-                post_gh_comment(pr_num, comment_body, repo)
+                post_gh_comment(pr_num, comment_body, repo, token=gh_token)
             except Exception as exc:
                 logger.error("Failed to post comment to flagged PR", pr=pr_num, error=str(exc))
 
@@ -510,7 +552,10 @@ def run_triage_cycle(
                 continue
 
             # Run Stage 1 Pre-eval & Full sandboxed review
-            output = run_review(engine, pr_num, repo_dir, memory_dir, gh_token)
+            # Read-only token into the sandbox; the write token stays on the host.
+            output = run_review(
+                engine, pr_num, repo_dir, memory_dir, resolve_sandbox_token(gh_token)
+            )
 
             # Parse verdict & MUST-FIX count
             parsed_verdict, must_fixes = parse_summary_verdict(output)
@@ -530,7 +575,7 @@ def run_triage_cycle(
                 f"{output}\n</details>"
             )
 
-            post_gh_comment(pr_num, comment_body, repo)
+            post_gh_comment(pr_num, comment_body, repo, token=gh_token)
 
             # Record completed in ledger
             append_ledger_entry(
@@ -599,7 +644,7 @@ def run_triage_cycle(
                 send_telegram_alert(f"⚠️ PR #{pr_num} review attempt {failures} failed: {exc}")
 
         finally:
-            restore_repo_branch(repo_dir)
+            restore_repo_branch(repo_dir, pr_num=pr_num)
 
 
 def main(argv: list[str] | None = None) -> int:
