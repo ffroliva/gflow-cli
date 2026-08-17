@@ -48,7 +48,10 @@ if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
   exit 1
 fi
 
-# Ensure absolute paths
+# Ensure absolute paths. Guarded first: a bare `cd` reports only the path, so a
+# bad argument reads as a mystery filesystem error rather than a named flag.
+[ -d "$HOST_REPO" ] || { echo "Error: --repo is not a directory: $HOST_REPO"; exit 1; }
+[ -d "$HOST_MEMORY" ] || { echo "Error: --memory is not a directory: $HOST_MEMORY"; exit 1; }
 HOST_REPO=$(cd "$HOST_REPO" && pwd)
 HOST_MEMORY=$(cd "$HOST_MEMORY" && pwd)
 

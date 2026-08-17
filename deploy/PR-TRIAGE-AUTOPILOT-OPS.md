@@ -16,6 +16,7 @@ The autopilot orchestrator (`scripts/autopilot/pr_triage_autopilot.py`) runs as 
 | `TELEGRAM_USER_ID` | Autopilot orchestrator (host) | The chat ID to receive triage alert messages. |
 | `PR_TRIAGE_ENGINE` | Autopilot orchestrator (host), optional | Review engine selector. Default `council-claude`; any other value exits at startup (`council-multi-cli` is reserved backlog). |
 | `HERMES_OPS_DIR` | Autopilot orchestrator (host), optional | Location of the hermes-ops checkout hosting the Resend email notifier. Default `/opt/hermes-ops`. |
+| `GFLOW_TRIAGE_MEMORY_DIR` | Autopilot orchestrator (host), optional | Council memory directory mounted read-only for D5. Set it only to override the XDG default (`$XDG_DATA_HOME/gflow-cli/memory`, i.e. `~/.local/share/gflow-cli/memory`). **Never put a machine-specific path in the cron line** — see §2. |
 | `RESEND_API_KEY` | Email notifier (hermes-ops) | Resend API key consumed by `$HERMES_OPS_DIR/scripts/notify/email_notify.py`. |
 | `HERMES_NOTIFY_EMAIL_TO` | Email notifier (hermes-ops) | Recipient address for high-signal triage emails. |
 | `HERMES_NOTIFY_EMAIL_FROM` | Email notifier (hermes-ops) | Verified sender address for the Resend account. |
@@ -28,8 +29,19 @@ The autopilot orchestrator (`scripts/autopilot/pr_triage_autopilot.py`) runs as 
 
 Deploy the following layout on the VPS:
 - `/opt/gflow-cli`: Dedicated git repository checkout representing the active branch.
-- `/opt/experience-vault`: Host experience vault directory structure.
-- `/opt/experience-vault/projects/C--development-github-gflow-cli/memory`: The project-specific memory namespace to mount.
+- `~hermes/.local/share/gflow-cli/memory`: Council memory namespace, mounted read-only into the sandbox for dimension D5.
+
+Create the memory directory once, as the user the cron runs under:
+
+```bash
+sudo -u hermes mkdir -p ~hermes/.local/share/gflow-cli/memory
+```
+
+An **empty** directory is a valid deployment — D5 then reports that no memory is available, and the other 13 dimensions run normally. Populate it only if you want the council to consult durable project memory.
+
+> **The memory path is resolved by the orchestrator, never hardcoded.** Precedence is `--memory-dir` > `$GFLOW_TRIAGE_MEMORY_DIR` > `$XDG_DATA_HOME/gflow-cli/memory` (XDG default, falling back to `~/.local/share`). `XDG_DATA_HOME` is the correct slot per the XDG Base Directory Specification: council memory is durable knowledge that should be backed up, not regenerable cache or throwaway state.
+>
+> This replaces a hardcoded `/opt/experience-vault/projects/C--development-github-gflow-cli/memory` in the cron line, which spliced a VPS repo root onto a Claude-internal project-slug layout and therefore existed on no machine. It failed every review from deployment until 2026-08-17 — silently, because nothing validated the path before the container started. The orchestrator now refuses to start with an actionable error instead.
 
 ---
 
@@ -51,7 +63,7 @@ Ensure `iptables` is installed on the host VPS. If `iptables` permissions are wi
 Configure a cron job checking every hour on the hour under the `hermes` system user:
 
 ```cron
-0 * * * * set -a; . /opt/hermes/.env 2>/dev/null; set +a; cd /opt/gflow-cli && uv run python scripts/autopilot/pr_triage_autopilot.py --repo-dir /opt/gflow-cli --memory-dir /opt/experience-vault/projects/C--development-github-gflow-cli/memory >> /var/log/hermes/pr_triage.log 2>&1
+0 * * * * set -a; . /opt/hermes/.env 2>/dev/null; set +a; cd /opt/gflow-cli && uv run python scripts/autopilot/pr_triage_autopilot.py --repo-dir /opt/gflow-cli >> /var/log/hermes/pr_triage.log 2>&1
 ```
 
 Sourcing `/opt/hermes/.env` first (`set -a` exports everything it defines) is what delivers `GH_COMMENT_TOKEN`, `TELEGRAM_*`, and the `RESEND_API_KEY` / `HERMES_NOTIFY_EMAIL_*` vars to the process. Without it the email channel silently disables itself, and without `GH_COMMENT_TOKEN` the run exits 1.
@@ -110,5 +122,5 @@ If a PR enters the `FAILED_PERMANENT` state in `pr_triage_ledger.jsonl` due to 3
 2. Fix the underlying environmental or syntax issue.
 3. To trigger a re-review, delete or edit the `FAILED_PERMANENT` entries for that PR number/SHA in `pr_triage_ledger.jsonl`, then run the script manually:
    ```bash
-   uv run python scripts/autopilot/pr_triage_autopilot.py --repo-dir /opt/gflow-cli --memory-dir /opt/experience-vault/projects/C--development-github-gflow-cli/memory
+   uv run python scripts/autopilot/pr_triage_autopilot.py --repo-dir /opt/gflow-cli
    ```
