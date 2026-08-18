@@ -666,3 +666,20 @@ def test_add_dir_follows_the_positional_prompt():
     # match the flag as used, not the word: the surrounding comment mentions it too
     flag = sh.index('--add-dir "$COUNCIL_MEMORY_DIR"')
     assert flag > prompt.end(), "--add-dir precedes the positional prompt and will swallow it"
+
+
+def test_firewall_resolves_only_ipv4_addresses():
+    """iptables is v4-only and errors out on an AAAA result.
+
+    api.anthropic.com publishes both an A and an AAAA record. Feeding the AAAA
+    to `iptables -d` fails, and under `set -e` that killed the run before
+    `docker run` was ever reached -- observed on the ops VPS 2026-08-18.
+    """
+    sh = SANDBOX_SH.read_text(encoding="utf-8")
+    assert "getent ahosts " not in sh, (
+        "firewall setup resolves AAAA records; iptables rejects them and set -e "
+        "aborts the review before the container starts. Use `getent ahostsv4`."
+    )
+    assert sh.count("getent ahostsv4 ") == 4, (
+        "expected all four host lookups (2 setup, 2 cleanup) to be IPv4-only"
+    )
