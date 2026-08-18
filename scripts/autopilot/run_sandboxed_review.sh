@@ -85,10 +85,10 @@ cleanup() {
   echo "Cleaning up network rules and Docker network..."
   if [ -n "$SUBNET" ] && command -v iptables &> /dev/null; then
     sudo iptables -D FORWARD -s "$SUBNET" -j DROP &>/dev/null || true
-    for ip in $(getent ahosts github.com | awk '{print $1}' | sort -u); do
+    for ip in $(getent ahostsv4 github.com | awk '{print $1}' | sort -u); do
       sudo iptables -D FORWARD -s "$SUBNET" -d "$ip" -p tcp --dport 443 -j ACCEPT &>/dev/null || true
     done
-    for ip in $(getent ahosts api.anthropic.com | awk '{print $1}' | sort -u); do
+    for ip in $(getent ahostsv4 api.anthropic.com | awk '{print $1}' | sort -u); do
       sudo iptables -D FORWARD -s "$SUBNET" -d "$ip" -p tcp --dport 443 -j ACCEPT &>/dev/null || true
     done
     sudo iptables -D FORWARD -s "$SUBNET" -p tcp --dport 53 -j ACCEPT &>/dev/null || true
@@ -105,13 +105,19 @@ if [ -n "$SUBNET" ] && command -v iptables &> /dev/null; then
   sudo iptables -I FORWARD -s "$SUBNET" -p udp --dport 53 -j ACCEPT
   sudo iptables -I FORWARD -s "$SUBNET" -p tcp --dport 53 -j ACCEPT
   
+  # ahostsv4, not ahosts: api.anthropic.com also resolves to an AAAA record,
+  # and iptables (v4) rejects an IPv6 destination outright --
+  #   iptables v1.8.10 (nf_tables): host/network '2607:6bc0::10' not found
+  # Under `set -e` that aborted the whole script before `docker run`, so every
+  # review died during firewall setup. The bridge network is IPv4-only
+  # (no --ipv6 on `docker network create`), so v4 rules cover all its egress.
   # Allow api.anthropic.com
-  for ip in $(getent ahosts api.anthropic.com | awk '{print $1}' | sort -u); do
+  for ip in $(getent ahostsv4 api.anthropic.com | awk '{print $1}' | sort -u); do
     sudo iptables -I FORWARD -s "$SUBNET" -d "$ip" -p tcp --dport 443 -j ACCEPT
   done
   
   # Allow github.com
-  for ip in $(getent ahosts github.com | awk '{print $1}' | sort -u); do
+  for ip in $(getent ahostsv4 github.com | awk '{print $1}' | sort -u); do
     sudo iptables -I FORWARD -s "$SUBNET" -d "$ip" -p tcp --dport 443 -j ACCEPT
   done
   
