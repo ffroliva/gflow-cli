@@ -137,6 +137,13 @@ COUNCIL_MEMORY_DIR="/home/nonroot/.claude/projects/C--development-github-gflow-c
 # --add-dir is the other half: the tree sits outside the /workspace cwd, so
 # without it the agent is permission-denied and reports no memory at all.
 # It must follow the positional prompt -- it is variadic and swallows it.
+# --dangerously-skip-permissions: in -p mode there is no one to answer a
+# permission prompt, so every `gh` call auto-denies and the reviewer stops to
+# ask a question nobody reads. The container is the security boundary, not
+# Claude's prompt: non-root uid 1001, read-only repo and memory mounts, a
+# read-only GitHub PAT, iptables egress limited to github.com,
+# api.anthropic.com and DNS, and --rm. Requires a non-root user; the flag is
+# refused when running as root.
 docker run --rm \
   --net "$NET_NAME" \
   -v "$HOST_REPO:/workspace:ro" \
@@ -146,4 +153,5 @@ docker run --rm \
   -e GITHUB_TOKEN="$GH_TOKEN" \
   gflow-triage:latest \
   claude -p "Conduct a multi-dimensional council review of PR $PR_NUM in autonomous mode following /workspace/skills/pr-council-review/SKILL.md." \
-  --add-dir "$COUNCIL_MEMORY_DIR"
+  --add-dir "$COUNCIL_MEMORY_DIR" \
+  --dangerously-skip-permissions

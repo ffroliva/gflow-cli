@@ -683,3 +683,26 @@ def test_firewall_resolves_only_ipv4_addresses():
     assert sh.count("getent ahostsv4 ") == 4, (
         "expected all four host lookups (2 setup, 2 cleanup) to be IPv4-only"
     )
+
+
+def test_sandbox_runs_the_agent_without_interactive_permission_prompts():
+    """In -p mode a permission prompt is an auto-deny, not a pause.
+
+    Observed on the ops VPS 2026-08-18: every `gh` call came back "This command
+    requires approval" and the reviewer halted to ask a question no one would
+    read. The container is the boundary (non-root, ro mounts, read-only PAT,
+    egress firewall, --rm), so the in-container prompt only blocks work.
+    """
+    sh = SANDBOX_SH.read_text(encoding="utf-8")
+    assert "--dangerously-skip-permissions" in sh, (
+        "the sandboxed reviewer cannot run gh without this; it will auto-deny and stall"
+    )
+
+
+def test_entrypoint_has_no_dangling_memory_symlink():
+    """The old symlink pointed at /memory, which is no longer a mount target."""
+    ep = (ROOT / "scripts" / "autopilot" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "ln -sf /memory" not in ep, (
+        "entrypoint still links /memory, which nothing mounts since the memory tree "
+        "moved to the path SKILL.md reads"
+    )

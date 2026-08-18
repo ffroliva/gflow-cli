@@ -1,9 +1,10 @@
 #!/bin/bash
 set -e
 
-# Setup writable project memory via symlink to the mounted read-only memory dir
-mkdir -p /tmp/claude/projects/C--development-github-gflow-cli
-ln -sf /memory /tmp/claude/projects/C--development-github-gflow-cli/memory
+# No memory symlink here: council memory is bind-mounted straight to the path
+# SKILL.md D5 reads. This used to link /memory into CLAUDE_CONFIG_DIR, which
+# resolved to nothing -- Claude derives its project slug from the cwd
+# (/workspace), never from the workstation slug this path was named after.
 
 # Execute the passed command
 exec "$@"
