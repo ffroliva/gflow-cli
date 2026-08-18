@@ -620,17 +620,49 @@ def _skill_memory_path() -> str:
     return CONTAINER_HOME + match.group(1)
 
 
+def _sandbox_memory_dir() -> str:
+    """The container path run_sandboxed_review.sh mounts council memory at."""
+    match = re.search(r'COUNCIL_MEMORY_DIR="([^"]+)"', SANDBOX_SH.read_text(encoding="utf-8"))
+    assert match, "run_sandboxed_review.sh no longer declares COUNCIL_MEMORY_DIR"
+    return match.group(1)
+
+
 def test_sandbox_mounts_memory_where_the_skill_looks_for_it():
-    expected = _skill_memory_path()
-    mounts = re.findall(r'-v "\$HOST_MEMORY:([^:]+):ro"', SANDBOX_SH.read_text(encoding="utf-8"))
-    assert mounts == [expected], (
-        f"sandbox mounts council memory at {mounts}, but SKILL.md tells the reviewer "
-        f"to read {expected} — the reviewer will find no memory"
+    assert _sandbox_memory_dir() == _skill_memory_path(), (
+        "the sandbox mounts council memory somewhere the reviewer is not told to look; "
+        "D5 will report no memory no matter what the host tree contains"
     )
 
 
 def test_sandbox_mounts_memory_read_only():
-    assert '-v "$HOST_MEMORY:' in SANDBOX_SH.read_text(encoding="utf-8")
-    assert re.search(r'-v "\$HOST_MEMORY:[^"]+:ro"', SANDBOX_SH.read_text(encoding="utf-8")), (
-        "council memory must be mounted read-only; the container only reads it"
+    sh = SANDBOX_SH.read_text(encoding="utf-8")
+    assert '-v "$HOST_MEMORY:$COUNCIL_MEMORY_DIR:ro"' in sh, (
+        "council memory must be mounted read-only; the container only ever reads it"
     )
+
+
+def test_sandbox_grants_the_agent_access_to_the_memory_dir():
+    """The mount is necessary but not sufficient.
+
+    The tree is outside the agent's /workspace cwd, so without --add-dir Claude
+    Code refuses to read it ("I don't have permission to read that file") and
+    the council silently reviews with no memory.
+    """
+    sh = SANDBOX_SH.read_text(encoding="utf-8")
+    assert '--add-dir "$COUNCIL_MEMORY_DIR"' in sh, (
+        "sandbox mounts council memory but never grants the agent access to it"
+    )
+
+
+def test_add_dir_follows_the_positional_prompt():
+    """--add-dir is variadic: placed before the prompt it consumes it.
+
+    Symptom is not a permission error but a hard start-up failure:
+    "Input must be provided either through stdin or as a prompt argument".
+    """
+    sh = SANDBOX_SH.read_text(encoding="utf-8")
+    prompt = re.search(r'claude -p "(?P<body>[^"]+)"', sh)
+    assert prompt, "could not locate the claude -p invocation"
+    # match the flag as used, not the word: the surrounding comment mentions it too
+    flag = sh.index('--add-dir "$COUNCIL_MEMORY_DIR"')
+    assert flag > prompt.end(), "--add-dir precedes the positional prompt and will swallow it"
