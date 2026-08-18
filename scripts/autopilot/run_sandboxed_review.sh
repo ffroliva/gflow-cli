@@ -128,7 +128,7 @@ else
 fi
 
 echo "Launching sandboxed review for PR $PR_NUM..."
-COUNCIL_TOOLS="Bash(gh pr view:*) Bash(gh pr diff:*) Bash(gh pr checks:*) Bash(gh pr list:*) Bash(git show:*) Bash(git log:*) Bash(git diff:*) Read Grep Glob Task TodoWrite"
+COUNCIL_TOOLS="Bash(gh auth status:*) Bash(gh pr view:*) Bash(gh pr diff:*) Bash(gh pr checks:*) Bash(gh pr list:*) Bash(git show:*) Bash(git rev-parse:*) Bash(git diff:*) Bash(git log:*) Bash(git ls-remote:*) Bash(grep:*) Bash(sort:*) Bash(head:*) Bash(tail:*) Bash(wc:*) Bash(awk:*) Bash(jq:*) Bash(cat:*) Bash(ls:*) Bash(comm:*) Bash(cut:*) Bash(uniq:*) Bash(tr:*) Read Grep Glob Task TodoWrite"
 COUNCIL_MEMORY_DIR="/home/nonroot/.claude/projects/C--development-github-gflow-cli/memory"
 # The council memory mount target is not arbitrary: SKILL.md D5 tells the
 # reviewer to inspect ~/.claude/projects/<slug>/memory, and $HOME in the image
@@ -151,8 +151,14 @@ COUNCIL_MEMORY_DIR="/home/nonroot/.claude/projects/C--development-github-gflow-c
 # unrestricted tool surface in here is a confused-deputy path, not a sandbox
 # escape. Raised by the council reviewing PR #557 against itself.
 #
+# The list is enumerated from SKILL.md's own invocations, read-only subcommands
+# only. Deliberately absent: gh pr merge/review/ready/comment/close and gh auth
+# login, git push/stash/tag/worktree/branch. The host posts the review comment
+# with the write-scoped token; the container's PAT 403s on POST regardless.
+#
 # Widen only with evidence: a missing entry shows up as the reviewer stalling on
-# a denied tool, never as a wrong verdict.
+# a denied tool (`gh auth status` was the first, found by running it), never as
+# a wrong verdict.
 docker run --rm \
   --net "$NET_NAME" \
   -v "$HOST_REPO:/workspace:ro" \

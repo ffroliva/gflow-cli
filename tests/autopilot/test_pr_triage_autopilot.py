@@ -744,6 +744,34 @@ def test_council_tool_grant_carries_no_write_capable_tools():
             f"{g} is not a scoped Bash grant; Bash must be granted per read-only subcommand"
         )
 
+    # the mutating subcommands SKILL.md also mentions must never be granted:
+    # the host posts the review comment, the container only ever reads
+    granted = " ".join(bash_grants)
+    for mutation in (
+        "gh pr merge",
+        "gh pr review",
+        "gh pr ready",
+        "gh pr comment",
+        "gh pr close",
+        "gh auth login",
+        "git push",
+        "git stash",
+        "git tag",
+    ):
+        assert mutation not in granted, f"{mutation!r} mutates state and must stay denied"
+
+
+def test_council_tool_grant_covers_the_protocol_preflight():
+    """SKILL.md section 0 runs `gh auth status` before anything else.
+
+    Omitting it stalled a real run on the VPS: the reviewer stopped to ask for
+    approval of `gh auth status` and the council never started.
+    """
+    grant = re.search(r'COUNCIL_TOOLS="([^"]+)"', _sandbox_code())
+    assert grant, "run_sandboxed_review.sh no longer declares COUNCIL_TOOLS"
+    for required in ("gh auth status", "gh pr view", "gh pr diff", "gh pr checks", "git show"):
+        assert required in grant.group(1), f"protocol calls {required!r} but it is not granted"
+
 
 def test_entrypoint_has_no_dangling_memory_symlink():
     """The old symlink pointed at /memory, which is no longer a mount target."""
