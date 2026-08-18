@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -596,3 +597,40 @@ def test_main_sends_telegram_alert_on_auth_error(monkeypatch, tmp_path):
         assert ret == 1
         assert m_alert.call_count == 1
         assert "Claude authentication unusable" in m_alert.call_args[0][0]
+
+
+# --- council memory reaches the reviewer inside the sandbox -------------------
+# The mount target and the path SKILL.md tells reviewers to read are two halves
+# of one contract, held in two files that nothing linked. They disagreed: the
+# sandbox mounted /memory while D5 was instructed to inspect
+# ~/.claude/projects/<slug>/memory, which does not exist in the container. The
+# council therefore found no memory even once the host tree was populated.
+
+SANDBOX_SH = ROOT / "scripts" / "autopilot" / "run_sandboxed_review.sh"
+COUNCIL_SKILL = ROOT / "skills" / "pr-council-review" / "SKILL.md"
+CONTAINER_HOME = "/home/nonroot"
+
+
+def _skill_memory_path() -> str:
+    """The memory path SKILL.md § D5 instructs a reviewer to inspect."""
+    match = re.search(
+        r"Inspect `~(/\.claude/projects/[^`]+?)/?`", COUNCIL_SKILL.read_text(encoding="utf-8")
+    )
+    assert match, "SKILL.md no longer states a D5 memory path in the expected form"
+    return CONTAINER_HOME + match.group(1)
+
+
+def test_sandbox_mounts_memory_where_the_skill_looks_for_it():
+    expected = _skill_memory_path()
+    mounts = re.findall(r'-v "\$HOST_MEMORY:([^:]+):ro"', SANDBOX_SH.read_text(encoding="utf-8"))
+    assert mounts == [expected], (
+        f"sandbox mounts council memory at {mounts}, but SKILL.md tells the reviewer "
+        f"to read {expected} — the reviewer will find no memory"
+    )
+
+
+def test_sandbox_mounts_memory_read_only():
+    assert '-v "$HOST_MEMORY:' in SANDBOX_SH.read_text(encoding="utf-8")
+    assert re.search(r'-v "\$HOST_MEMORY:[^"]+:ro"', SANDBOX_SH.read_text(encoding="utf-8")), (
+        "council memory must be mounted read-only; the container only reads it"
+    )

@@ -122,10 +122,15 @@ else
 fi
 
 echo "Launching sandboxed review for PR $PR_NUM..."
+# The council memory mount target is not arbitrary: SKILL.md D5 tells the
+# reviewer to inspect ~/.claude/projects/<slug>/memory, and $HOME in the image
+# is /home/nonroot. It was /memory until 2026-08-18, so the reviewer read a
+# path that did not exist and the council ran with no memory at all while the
+# mount looked perfectly healthy from the host.
 docker run --rm \
   --net "$NET_NAME" \
   -v "$HOST_REPO:/workspace:ro" \
-  -v "$HOST_MEMORY:/memory:ro" \
+  -v "$HOST_MEMORY:/home/nonroot/.claude/projects/C--development-github-gflow-cli/memory:ro" \
   -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
   -e GH_TOKEN="$GH_TOKEN" \
   -e GITHUB_TOKEN="$GH_TOKEN" \
