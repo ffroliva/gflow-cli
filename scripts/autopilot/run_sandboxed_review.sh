@@ -128,6 +128,7 @@ else
 fi
 
 echo "Launching sandboxed review for PR $PR_NUM..."
+COUNCIL_TOOLS="Bash(gh pr view:*) Bash(gh pr diff:*) Bash(gh pr checks:*) Bash(gh pr list:*) Bash(git show:*) Bash(git log:*) Bash(git diff:*) Read Grep Glob Task TodoWrite"
 COUNCIL_MEMORY_DIR="/home/nonroot/.claude/projects/C--development-github-gflow-cli/memory"
 # The council memory mount target is not arbitrary: SKILL.md D5 tells the
 # reviewer to inspect ~/.claude/projects/<slug>/memory, and $HOME in the image
@@ -137,13 +138,21 @@ COUNCIL_MEMORY_DIR="/home/nonroot/.claude/projects/C--development-github-gflow-c
 # --add-dir is the other half: the tree sits outside the /workspace cwd, so
 # without it the agent is permission-denied and reports no memory at all.
 # It must follow the positional prompt -- it is variadic and swallows it.
-# --dangerously-skip-permissions: in -p mode there is no one to answer a
-# permission prompt, so every `gh` call auto-denies and the reviewer stops to
-# ask a question nobody reads. The container is the security boundary, not
-# Claude's prompt: non-root uid 1001, read-only repo and memory mounts, a
-# read-only GitHub PAT, iptables egress limited to github.com,
-# api.anthropic.com and DNS, and --rm. Requires a non-root user; the flag is
-# refused when running as root.
+# COUNCIL_TOOLS: in -p mode a permission prompt is an auto-deny, not a pause --
+# every `gh` call came back "This command requires approval" and the reviewer
+# halted to ask a question nobody reads. The gate still has to go, but only for
+# the reads the protocol actually makes.
+#
+# Deliberately NOT --dangerously-skip-permissions. That would also unlock Write,
+# Edit and arbitrary Bash, and the permission gate is the only technical
+# enforcement of SKILL.md section 9's no-write-tools rule. The container bounds a
+# different threat (host and repo compromise) than that rule does: the agent
+# ingests PR diffs and comments an external contributor controls, so an
+# unrestricted tool surface in here is a confused-deputy path, not a sandbox
+# escape. Raised by the council reviewing PR #557 against itself.
+#
+# Widen only with evidence: a missing entry shows up as the reviewer stalling on
+# a denied tool, never as a wrong verdict.
 docker run --rm \
   --net "$NET_NAME" \
   -v "$HOST_REPO:/workspace:ro" \
@@ -154,4 +163,4 @@ docker run --rm \
   gflow-triage:latest \
   claude -p "Conduct a multi-dimensional council review of PR $PR_NUM in autonomous mode following /workspace/skills/pr-council-review/SKILL.md." \
   --add-dir "$COUNCIL_MEMORY_DIR" \
-  --dangerously-skip-permissions
+  --allowedTools "$COUNCIL_TOOLS"

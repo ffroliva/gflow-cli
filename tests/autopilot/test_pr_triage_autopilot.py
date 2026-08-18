@@ -685,18 +685,64 @@ def test_firewall_resolves_only_ipv4_addresses():
     )
 
 
-def test_sandbox_runs_the_agent_without_interactive_permission_prompts():
-    """In -p mode a permission prompt is an auto-deny, not a pause.
-
-    Observed on the ops VPS 2026-08-18: every `gh` call came back "This command
-    requires approval" and the reviewer halted to ask a question no one would
-    read. The container is the boundary (non-root, ro mounts, read-only PAT,
-    egress firewall, --rm), so the in-container prompt only blocks work.
-    """
-    sh = SANDBOX_SH.read_text(encoding="utf-8")
-    assert "--dangerously-skip-permissions" in sh, (
-        "the sandboxed reviewer cannot run gh without this; it will auto-deny and stall"
+def _sandbox_code() -> str:
+    """The script with comment lines stripped, so prose cannot satisfy a check."""
+    return "\n".join(
+        line
+        for line in SANDBOX_SH.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("#")
     )
+
+
+def test_sandbox_grants_tools_without_disabling_the_permission_system():
+    """In -p mode a permission prompt is an auto-deny, so some grant is required.
+
+    It must stay scoped. --dangerously-skip-permissions would also unlock Write,
+    Edit and arbitrary Bash, and that gate is the only technical enforcement of
+    SKILL.md section 9's no-write-tools rule for an agent that reads
+    contributor-controlled PR content.
+    """
+    code = _sandbox_code()
+    assert '--allowedTools "$COUNCIL_TOOLS"' in code, (
+        "the sandboxed reviewer cannot run gh without a tool grant; it auto-denies and stalls"
+    )
+    assert "--dangerously-skip-permissions" not in code, (
+        "blanket bypass unlocks Write/Edit/Bash for an agent ingesting attacker-influenced "
+        "PR content; grant only the reads the protocol makes"
+    )
+
+
+def test_council_tool_grant_carries_no_write_capable_tools():
+    """A write tool in the allowlist would reintroduce exactly what it prevents."""
+    grant = re.search(r'COUNCIL_TOOLS="([^"]+)"', _sandbox_code())
+    assert grant, "run_sandboxed_review.sh no longer declares COUNCIL_TOOLS"
+
+    # split on the top level: "Bash(gh pr view:*)" is one entry despite its spaces
+    tools, depth, current = [], 0, ""
+    for ch in grant.group(1):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == " " and depth == 0:
+            if current:
+                tools.append(current)
+            current = ""
+        else:
+            current += ch
+    if current:
+        tools.append(current)
+
+    # exact names, so TodoWrite is not mistaken for Write
+    for forbidden in ("Write", "Edit", "NotebookEdit", "WebFetch", "Bash"):
+        assert forbidden not in tools, f"{forbidden} must not be granted to the reviewer"
+
+    bash_grants = [x for x in tools if x.startswith("Bash")]
+    assert bash_grants, "the reviewer needs at least the gh reads"
+    for g in bash_grants:
+        assert g.startswith("Bash(") and g.endswith(")"), (
+            f"{g} is not a scoped Bash grant; Bash must be granted per read-only subcommand"
+        )
 
 
 def test_entrypoint_has_no_dangling_memory_symlink():
