@@ -683,3 +683,100 @@ def test_firewall_resolves_only_ipv4_addresses():
     assert sh.count("getent ahostsv4 ") == 4, (
         "expected all four host lookups (2 setup, 2 cleanup) to be IPv4-only"
     )
+
+
+def _sandbox_code() -> str:
+    """The script with comment lines stripped, so prose cannot satisfy a check."""
+    return "\n".join(
+        line
+        for line in SANDBOX_SH.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
+def test_sandbox_grants_tools_without_disabling_the_permission_system():
+    """In -p mode a permission prompt is an auto-deny, so some grant is required.
+
+    It must stay scoped. --dangerously-skip-permissions would also unlock Write,
+    Edit and arbitrary Bash, and that gate is the only technical enforcement of
+    SKILL.md section 9's no-write-tools rule for an agent that reads
+    contributor-controlled PR content.
+    """
+    code = _sandbox_code()
+    assert '--allowedTools "$COUNCIL_TOOLS"' in code, (
+        "the sandboxed reviewer cannot run gh without a tool grant; it auto-denies and stalls"
+    )
+    assert "--dangerously-skip-permissions" not in code, (
+        "blanket bypass unlocks Write/Edit/Bash for an agent ingesting attacker-influenced "
+        "PR content; grant only the reads the protocol makes"
+    )
+
+
+def test_council_tool_grant_carries_no_write_capable_tools():
+    """A write tool in the allowlist would reintroduce exactly what it prevents."""
+    grant = re.search(r'COUNCIL_TOOLS="([^"]+)"', _sandbox_code())
+    assert grant, "run_sandboxed_review.sh no longer declares COUNCIL_TOOLS"
+
+    # split on the top level: "Bash(gh pr view:*)" is one entry despite its spaces
+    tools, depth, current = [], 0, ""
+    for ch in grant.group(1):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == " " and depth == 0:
+            if current:
+                tools.append(current)
+            current = ""
+        else:
+            current += ch
+    if current:
+        tools.append(current)
+
+    # exact names, so TodoWrite is not mistaken for Write
+    for forbidden in ("Write", "Edit", "NotebookEdit", "WebFetch", "Bash"):
+        assert forbidden not in tools, f"{forbidden} must not be granted to the reviewer"
+
+    bash_grants = [x for x in tools if x.startswith("Bash")]
+    assert bash_grants, "the reviewer needs at least the gh reads"
+    for g in bash_grants:
+        assert g.startswith("Bash(") and g.endswith(")"), (
+            f"{g} is not a scoped Bash grant; Bash must be granted per read-only subcommand"
+        )
+
+    # the mutating subcommands SKILL.md also mentions must never be granted:
+    # the host posts the review comment, the container only ever reads
+    granted = " ".join(bash_grants)
+    for mutation in (
+        "gh pr merge",
+        "gh pr review",
+        "gh pr ready",
+        "gh pr comment",
+        "gh pr close",
+        "gh auth login",
+        "git push",
+        "git stash",
+        "git tag",
+    ):
+        assert mutation not in granted, f"{mutation!r} mutates state and must stay denied"
+
+
+def test_council_tool_grant_covers_the_protocol_preflight():
+    """SKILL.md section 0 runs `gh auth status` before anything else.
+
+    Omitting it stalled a real run on the VPS: the reviewer stopped to ask for
+    approval of `gh auth status` and the council never started.
+    """
+    grant = re.search(r'COUNCIL_TOOLS="([^"]+)"', _sandbox_code())
+    assert grant, "run_sandboxed_review.sh no longer declares COUNCIL_TOOLS"
+    for required in ("gh auth status", "gh pr view", "gh pr diff", "gh pr checks", "git show"):
+        assert required in grant.group(1), f"protocol calls {required!r} but it is not granted"
+
+
+def test_entrypoint_has_no_dangling_memory_symlink():
+    """The old symlink pointed at /memory, which is no longer a mount target."""
+    ep = (ROOT / "scripts" / "autopilot" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "ln -sf /memory" not in ep, (
+        "entrypoint still links /memory, which nothing mounts since the memory tree "
+        "moved to the path SKILL.md reads"
+    )

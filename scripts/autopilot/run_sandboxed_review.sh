@@ -128,6 +128,7 @@ else
 fi
 
 echo "Launching sandboxed review for PR $PR_NUM..."
+COUNCIL_TOOLS="Bash(gh auth status:*) Bash(gh pr view:*) Bash(gh pr diff:*) Bash(gh pr checks:*) Bash(gh pr list:*) Bash(git show:*) Bash(git rev-parse:*) Bash(git diff:*) Bash(git log:*) Bash(git ls-remote:*) Bash(grep:*) Bash(sort:*) Bash(head:*) Bash(tail:*) Bash(wc:*) Bash(awk:*) Bash(jq:*) Bash(cat:*) Bash(ls:*) Bash(comm:*) Bash(cut:*) Bash(uniq:*) Bash(tr:*) Read Grep Glob Task TodoWrite"
 COUNCIL_MEMORY_DIR="/home/nonroot/.claude/projects/C--development-github-gflow-cli/memory"
 # The council memory mount target is not arbitrary: SKILL.md D5 tells the
 # reviewer to inspect ~/.claude/projects/<slug>/memory, and $HOME in the image
@@ -137,6 +138,27 @@ COUNCIL_MEMORY_DIR="/home/nonroot/.claude/projects/C--development-github-gflow-c
 # --add-dir is the other half: the tree sits outside the /workspace cwd, so
 # without it the agent is permission-denied and reports no memory at all.
 # It must follow the positional prompt -- it is variadic and swallows it.
+# COUNCIL_TOOLS: in -p mode a permission prompt is an auto-deny, not a pause --
+# every `gh` call came back "This command requires approval" and the reviewer
+# halted to ask a question nobody reads. The gate still has to go, but only for
+# the reads the protocol actually makes.
+#
+# Deliberately NOT --dangerously-skip-permissions. That would also unlock Write,
+# Edit and arbitrary Bash, and the permission gate is the only technical
+# enforcement of SKILL.md section 9's no-write-tools rule. The container bounds a
+# different threat (host and repo compromise) than that rule does: the agent
+# ingests PR diffs and comments an external contributor controls, so an
+# unrestricted tool surface in here is a confused-deputy path, not a sandbox
+# escape. Raised by the council reviewing PR #557 against itself.
+#
+# The list is enumerated from SKILL.md's own invocations, read-only subcommands
+# only. Deliberately absent: gh pr merge/review/ready/comment/close and gh auth
+# login, git push/stash/tag/worktree/branch. The host posts the review comment
+# with the write-scoped token; the container's PAT 403s on POST regardless.
+#
+# Widen only with evidence: a missing entry shows up as the reviewer stalling on
+# a denied tool (`gh auth status` was the first, found by running it), never as
+# a wrong verdict.
 docker run --rm \
   --net "$NET_NAME" \
   -v "$HOST_REPO:/workspace:ro" \
@@ -146,4 +168,5 @@ docker run --rm \
   -e GITHUB_TOKEN="$GH_TOKEN" \
   gflow-triage:latest \
   claude -p "Conduct a multi-dimensional council review of PR $PR_NUM in autonomous mode following /workspace/skills/pr-council-review/SKILL.md." \
-  --add-dir "$COUNCIL_MEMORY_DIR"
+  --add-dir "$COUNCIL_MEMORY_DIR" \
+  --allowedTools "$COUNCIL_TOOLS"
