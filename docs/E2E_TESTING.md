@@ -149,6 +149,84 @@ See [DEVELOPMENT.md § E2e gate](DEVELOPMENT.md#e2e-gate-before-merging-develop-
 
 ---
 
+## Nightly canary (#502)
+
+Between releases the live tiers are invisible, so Flow-side drift (cohort flaps,
+selector renames, auth rot) surfaces ad-hoc during feature work instead of on a
+schedule. The canary closes that gap.
+
+It runs **locally, not in hosted CI** — the live tiers need a real authenticated
+Chrome profile, and Google bot-detection plus reCAPTCHA make hosted auth
+infeasible. Results are published to a single **rolling issue**; the canary never
+opens new ones (issue spam trains red-blindness) and **gates nothing** (a gate on
+a machine that might be off is self-DoS).
+
+### Four states
+
+| State | Meaning | Action |
+|---|---|---|
+| `GREEN` | every selected $0 tier passed | none |
+| `RED` | auth healthy, a $0 tier failed | **real drift or regression** — triage |
+| `AUTH-EXPIRED` | session rot (expected) | `gflow auth login` |
+| `DEFERRED` | profile precondition blocked it | fix the profile — nothing ran |
+
+Splitting the last two out of `RED` is the point: `RED` must always mean "code or
+Flow drifted", never "please re-login" or "you had Chrome open". The classifier is
+a pure function with all four states covered in
+`tests/scripts/test_canary_classify.py`.
+
+**Rot vs. drift is decided by a second probe, not by error names.** When a tier
+fails, the canary re-runs `gflow auth status`. Session still valid ⇒ the failure is
+drift (`RED`); session now dead ⇒ genuine rot (`AUTH-EXPIRED`). The first live run
+proved why this matters: an `AuthExpiredError` from the aisandbox upload path
+*looked* exactly like session rot, but the session verified clean seconds later —
+so it was a real divergence between two auth surfaces, and a name-matching
+classifier would have buried it. The extra probe costs ~45s and only runs after a
+failure.
+
+`DEFERRED` covers **profile-state preconditions** — a held `ProfileLease` or a
+`ProfileEngineDowngradeError` (profile written by a newer Chromium than the bundled
+engine). Both fail closed before any browser starts, so the run never reached Flow
+and cannot evidence drift. They share `ConfigurationError`'s exit 11, so the class
+name is the only discriminator.
+
+Because the issue carries a last-updated timestamp, a machine that was off is
+*visibly stale* — unlike a lingering green commit status, which lies.
+
+### Scope
+
+`-m e2e_auth` only ($0, no reCAPTCHA); fast-follow adds `e2e_scene` ($0). Credit
+tiers (`e2e_image` / `e2e_video` / `smoke`) stay **strictly manual** via
+`/gflow:live-verify` — no unattended credit spend on a personal account.
+
+### Run it
+
+```bash
+# dry run — executes for real, prints the payload, touches nothing on GitHub
+python scripts/canary/run_canary.py --profile <name> --dry-run
+
+# exercise any state's publish path without waiting for the condition
+python scripts/canary/run_canary.py --simulate AUTH-EXPIRED --dry-run
+```
+
+### Schedule it
+
+```powershell
+.\scripts\canary\register_task.ps1 -Profile <name> -Issue <n> `
+    -RepoRoot C:\path\to\dedicated\clone
+```
+
+Point `-RepoRoot` at a **dedicated clone**, never your working tree: the runner's
+`--pull` refuses to run on a dirty checkout rather than resetting over
+uncommitted work, so a shared tree would simply never run.
+
+Publishing uses your already-authenticated local `gh` — **no new secrets or
+tokens**. Published content is sanitized for a public repo: SHA, pass/fail
+counts, duration, failure class, and failing test *names* only — never raw logs,
+profile paths, prompts, or signed URLs.
+
+---
+
 ## File map
 
 ```
