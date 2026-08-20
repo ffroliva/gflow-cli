@@ -180,6 +180,26 @@ def parse_junit(path: Path) -> tuple[int, int, int, tuple[str, ...]]:
     return total - failed - skipped, failed, skipped, tuple(failing)
 
 
+def preserve_evidence(stamp: str) -> Path | None:
+    """Keep the failing JUnit XML so a RED stays triageable days later.
+
+    ``JUNIT_PATH`` is overwritten every run, so without this a Monday red is
+    gone by Wednesday. Learned from the first live run (#561): the only reason
+    that failure could be investigated at all was that the file happened to
+    still be on disk.
+
+    Stays LOCAL and out of the issue — it carries raw tracebacks, which the
+    sanitization contract keeps off a public repo. ``tmp/`` is gitignored.
+    """
+    if not JUNIT_PATH.exists():
+        return None
+    slug = stamp.replace(":", "").replace(" ", "-")
+    kept = JUNIT_PATH.with_name(f"canary-red-{slug}.xml")
+    kept.write_bytes(JUNIT_PATH.read_bytes())
+    print(f"evidence preserved: {kept}")
+    return kept
+
+
 def render(result: Result, sha: str, markers: str, stamp: str) -> str:
     headline = {
         GREEN: "All selected $0 tiers passed.",
@@ -290,6 +310,9 @@ def main() -> int:
             result = Result(state, passed, failed, skipped, secs, failing)
         else:
             result = Result(classify(False, None, ""))
+
+    if result.state == RED:
+        preserve_evidence(stamp)
 
     body = render(result, sha, args.markers, stamp)
     if not args.issue and not args.dry_run:

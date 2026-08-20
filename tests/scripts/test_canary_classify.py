@@ -142,3 +142,25 @@ def test_engine_downgrade_is_deferred_not_red() -> None:
         "by a newer Chromium: 151.0.7922.137 vs 149.0.7827.55"
     )
     assert classify(auth_ok_before=True, pytest_rc=1, failure_text=downgrade) == DEFERRED
+
+
+def test_preserve_evidence_copies_junit_under_a_stamped_name(tmp_path, monkeypatch) -> None:
+    """A RED must stay triageable after the next run overwrites the JUnit file."""
+    from scripts.canary import run_canary
+
+    junit = tmp_path / "canary-junit.xml"
+    junit.write_text("<testsuites/>", encoding="utf-8")
+    monkeypatch.setattr(run_canary, "JUNIT_PATH", junit)
+
+    kept = run_canary.preserve_evidence("2026-08-20 21:05 UTC")
+    assert kept is not None
+    assert kept.exists() and kept != junit
+    assert kept.read_text(encoding="utf-8") == "<testsuites/>"
+
+
+def test_preserve_evidence_is_a_noop_when_pytest_wrote_nothing(tmp_path, monkeypatch) -> None:
+    """A crashed pytest leaves no XML; preserving must not raise on the way to publishing."""
+    from scripts.canary import run_canary
+
+    monkeypatch.setattr(run_canary, "JUNIT_PATH", tmp_path / "absent.xml")
+    assert run_canary.preserve_evidence("2026-08-20 21:05 UTC") is None
