@@ -162,7 +162,7 @@ class Selector:
 | `required` | All entries defaulted `True`, and its `False` branch returned the same grade as the mode branch. Two encodings, one outcome. |
 | `Surface.modes` | Never read — `for_surface()` filters on `Selector.mode`. Same category as `features`, cut in the same review that added it. |
 
-**Keys are a public promise** — they appear in canary reports and any future override.
+**Keys are a public promise** — they appear in probe reports, and eventually in exit-23 messages.
 
 ### 3.2 One pass: navigate, detect, resolve, grade
 
@@ -219,21 +219,38 @@ same regression class far more cheaply.
   together is part of the deferred §3.5.
 - **EXPECTED_ABSENT** — the observed `mode` says it should not be here.
 
-### 3.5 Error contract — BLOCKED, pending a scope decision
+### 3.5 Rejected: an operator selector override
 
-Adding `selector_key` to `UiSelectorDriftError` and shipping
-`GFLOW_CLI_SELECTOR_OVERRIDE` both require the **drivers** to read from the registry.
-Today all 7 `UiSelectorDriftError(` raise sites are in `ui_automation.py` (2) and
-`ui_automation_video.py` (5), and nothing in those modules consumes the registry — so
-`selector_key` would stay `None` in production and an override would change what is
-*checked*, never what is *clicked*.
+An earlier draft proposed `GFLOW_CLI_SELECTOR_OVERRIDE`, letting a user patch a drifted
+selector from the environment instead of waiting for a release:
 
-That makes §6's non-goal *"not replacing the driver code"* incompatible with this section.
-Three independent findings say cut: no user has requested an override
-(`gh issue list --state all --search "selector override"` → none), it does not work as
-specified, and making it work means inverting imports across two 3,800-line modules.
+```
+GFLOW_CLI_SELECTOR_OVERRIDE='editor.count_tabs=[role=tab]:text-is("x1")'
+```
 
-**Deferred, not deleted** — the scope call belongs to the maintainer.
+**Rejected — recorded here so it is not re-proposed.**
+
+It is a hack: an env var that injects arbitrary DOM selectors into production automation,
+papering over the real problem rather than fixing it. The real fix for a rename is a
+registry edit and a release; the real fix for *not knowing about the rename* is the probe
+this document specifies. An override addresses neither and adds a permanently-supported
+public surface whose values nobody can validate.
+
+Three supporting findings, each verified:
+
+- **No demand.** `gh issue list --state all --search "selector override"` → nobody has
+  asked, ever.
+- **It did not work as specified.** It was wired into the probe, so it would change what
+  gflow *checks* and leave what gflow *clicks* untouched — the user stays broken.
+- **The borrowed precedent does not transfer.** `notebooklm-py` ships an override for RPC
+  method IDs: 6-character strings copied from a network tab, which any user can do.
+  Authoring a Playwright selector with `:has()` and Material Symbols ligature matching for
+  a React app is a different skill. The only person who could use it is the maintainer,
+  who can edit the registry instead.
+
+**What replaces it:** nothing. The probe already reports drift *by key*
+(`editor.composer.input DRIFT`), which is the half that carries the value — you learn what
+moved the morning it moves.
 
 ---
 
@@ -252,7 +269,8 @@ specified, and making it work means inverting imports across two 3,800-line modu
    gates on base state, resolves against the live page. `schedule` +
    `workflow_dispatch` only.
 
-**Deferred to a follow-up plan:** the AST guardrail (it flags **9 real offenders** today —
+**Deferred to a follow-up plan:** `selector_key` on `UiSelectorDriftError`, the AST
+guardrail (it flags **9 real offenders** today —
 `ui_automation_video.py:91-96,162`, `agentic.py:62`, `diagnostics.py:1738` — so it reds on
 arrival while its migration is still deferred), inverting the import direction, additional
 surfaces, and §3.5 if the maintainer keeps it.
@@ -276,8 +294,11 @@ surfaces, and §3.5 if the maintainer keeps it.
 
 ## 6. Non-goals
 
-- **Not** replacing the driver code *in this phase*. §3.5 is deferred precisely because it
-  would require that; the two cannot both hold.
+- **Not** replacing the driver code in this phase. `selector_key` on
+  `UiSelectorDriftError` needs it (all 7 raise sites live in `ui_automation*`, and
+  `GFlowError.__init__` takes a fixed kwarg list), so that stays deferred to the
+  follow-up, where the drivers start reading from the registry anyway.
+- **Not** an operator selector override, ever — see §3.5.
 - **Not** a Page Object Model rewrite — POM hides selectors inside classes; enumerability
   is the point.
 - **Not** the master token — §2.2 makes it unnecessary. See `[[master-token-tier0-deferred]]`.

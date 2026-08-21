@@ -738,5 +738,6 @@ same-repo branch PRs alongside attacker-editable probe code."
 ## Deferred to a follow-up plan
 
 - **AST guardrail.** It flags **9 real offenders today** (`ui_automation_video.py:91-96,162`, `agentic.py:62`, `diagnostics.py:1738`), so it reds on arrival while its own migration is deferred.
-- **`selector_key` on `UiSelectorDriftError` and `GFLOW_CLI_SELECTOR_OVERRIDE`** — blocked on a scope decision (spec §3.5). Both need the drivers to read from the registry; `GFlowError.__init__` also takes a fixed kwarg list, so `selector_key` is not a one-line addition.
+- **`selector_key` on `UiSelectorDriftError`** — needs the drivers to read from the registry (all 7 raise sites are in `ui_automation*`), and `GFlowError.__init__` takes a fixed kwarg list, so it is not a one-line addition. Lands with the import inversion.
+- **`GFLOW_CLI_SELECTOR_OVERRIDE` is NOT deferred — it is rejected.** See spec §3.5: an env var injecting arbitrary DOM selectors into production automation is a hack, and the probe already delivers the half that matters by reporting drift by key.
 - Remaining ~35 selectors, inverting the import direction, `Reach` for state-gated surfaces, additional surfaces.
