@@ -145,7 +145,7 @@ class Surface:
 
 @dataclass(frozen=True)
 class Selector:
-    key: str                     # "editor.composer.input" — stable, public, in errors
+    key: str                     # "editor.composer.input" — stable, public, in reports
     surface: str                 # → Surface.key
     candidates: tuple[str, ...]  # ORDERED: [0] preferred, then cohort variants / fallbacks
     mode: UiMode | None          # None = every mode of that surface
@@ -213,7 +213,10 @@ same regression class far more cheaply.
   Drivers call `.first`, so a second match means gflow clicks the wrong thing while a
   count-based check reports success. `SIDEBAR_CLOSE_FALLBACK_SELECTOR` is deliberately
   unscoped and is the standing candidate for this.
-- **MISS** — nothing resolved → drift → exit 23.
+- **MISS** — nothing resolved → drift. The **probe** exits 1 (exit 2 is reserved for
+  inconclusive: expired token, dead project, alternate base state). Exit 23 is
+  production's `UiSelectorDriftError`, which the probe does not raise — wiring the two
+  together is part of the deferred §3.5.
 - **EXPECTED_ABSENT** — the observed `mode` says it should not be here.
 
 ### 3.5 Error contract — BLOCKED, pending a scope decision

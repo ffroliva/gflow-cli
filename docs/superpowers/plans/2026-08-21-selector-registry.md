@@ -439,9 +439,11 @@ def test_report_names_the_drifted_selector() -> None:
     assert "DRIFT" in body
 
 
-def test_fallback_is_a_warning_not_drift() -> None:
-    body = render_report([Outcome("editor.sidebar.close", Grade.FALLBACK, 1)])
-    assert "FALLBACK" in body
+def test_fallback_names_which_candidate_held() -> None:
+    """crop_control has six candidates; "a later one held" is not actionable
+    without knowing how far down the cascade the page has drifted."""
+    body = render_report([Outcome("editor.crop_control", Grade.FALLBACK, 3)])
+    assert "FALLBACK[3]" in body
     assert "DRIFT" not in body
 
 
@@ -521,10 +523,23 @@ _LABEL = {
 }
 
 
+def _cell(outcome: Outcome) -> str:
+    """FALLBACK names WHICH candidate held.
+
+    `crop_control` carries six candidates; "a later one held" is not actionable
+    without the index, and the index is what says how far down the cascade the
+    page has drifted. Safe to publish — it is an ordinal, not a selector.
+    """
+    label = _LABEL[outcome.grade]
+    if outcome.grade is Grade.FALLBACK:
+        return f"{label}[{outcome.resolved_index}]"
+    return label
+
+
 def render_report(outcomes: list[Outcome]) -> str:
-    """Publication-safe: keys and grades only, never selectors or DOM."""
+    """Publication-safe: keys, grades and candidate ordinals — never selectors or DOM."""
     lines = ["| selector | result |", "| --- | --- |"]
-    lines += [f"| `{o.selector_key}` | {_LABEL[o.grade]} |" for o in outcomes]
+    lines += [f"| `{o.selector_key}` | {_cell(o)} |" for o in outcomes]
     bad = [o.selector_key for o in outcomes if o.is_failure]
     lines += ["", f"**{len(bad)} need attention**" if bad else "**0 need attention.**"]
     return "\n".join(lines)
