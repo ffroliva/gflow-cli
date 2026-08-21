@@ -31,7 +31,7 @@
 
 **Interfaces:**
 - Consumes: `gflow_cli.config.UiMode`; the existing constants in `mode_control` / `ui_automation`.
-- Produces: `Surface`, `Selector`, `Grade`, `Outcome`, `grade(...)`, `SURFACES`, `SELECTORS`, `by_key()`, `for_surface()`.
+- Produces: `Surface`, `Selector`, `Grade`, `Outcome`, `grade(...)`, `SURFACES`, `SELECTORS`, `for_surface()`.
 
 - [ ] **Step 1: Write the failing model + grading tests**
 
@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import pytest
 
-from gflow_cli.config import UiMode
 from gflow_cli.flow_selectors.model import Selector, Surface
 
 
@@ -305,19 +304,16 @@ def test_state_gated_families_are_deliberately_absent() -> None:
 
 
 def test_incident_families_are_registered() -> None:
-    for key in ("editor.composer.input", "editor.composer.submit",
-                "editor.agent_toggle", "editor.crop_control"):
-        registry.by_key(key)  # raises KeyError if missing
+    keys = {s.key for s in registry.SELECTORS}
+    assert keys >= {"editor.composer.input", "editor.composer.submit",
+                    "editor.agent_toggle", "editor.crop_control"}
 
 
-def test_by_key_raises_for_unknown() -> None:
-    with pytest.raises(KeyError):
-        registry.by_key("editor.nope")
-
-
-def test_for_surface_filters_by_mode() -> None:
-    agentic = {s.key for s in registry.for_surface("editor", mode=UiMode.AGENTIC)}
-    assert "editor.crop_control" not in agentic
+def test_for_surface_returns_every_entry_including_mode_scoped_ones() -> None:
+    """Mode belongs to grading, not selection — a mode-scoped entry must still
+    reach the report as EXPECTED_ABSENT rather than vanishing from it."""
+    keys = {s.key for s in registry.for_surface("editor")}
+    assert "editor.crop_control" in keys
 
 
 ```
@@ -359,7 +355,9 @@ SELECTORS: tuple[Selector, ...] = (
         key="editor.composer.submit",
         surface="editor",
         candidates=tuple(ui_automation.SUBMIT_BUTTON_SELECTORS),
-        expect_unique=True,
+        note="NOT expect_unique: scripts/dev/capture_i2v_post_bind_state.py "
+        "exists because this can legitimately match a top-level submit, an "
+        "in-panel submit and a Send-to-Agent submit at once.",
     ),
     Selector(
         key="editor.agent_toggle",
@@ -379,19 +377,15 @@ SELECTORS: tuple[Selector, ...] = (
     ),
 )
 
-_BY_KEY = {s.key: s for s in SELECTORS}
+def for_surface(surface_key: str) -> tuple[Selector, ...]:
+    """Every entry on a surface, in registry order.
 
-
-def by_key(key: str) -> Selector:
-    return _BY_KEY[key]
-
-
-def for_surface(surface_key: str, mode: UiMode | None = None) -> tuple[Selector, ...]:
-    return tuple(
-        s
-        for s in SELECTORS
-        if s.surface == surface_key and (mode is None or s.mode is None or s.mode == mode)
-    )
+    Deliberately does NOT filter by mode. Mode belongs to grading, not
+    selection: a mode-scoped entry absent on the other arm must still appear in
+    the report as EXPECTED_ABSENT, or the report silently shrinks and nobody
+    notices coverage was skipped.
+    """
+    return tuple(s for s in SELECTORS if s.surface == surface_key)
 ```
 
 - [ ] **Step 8: Run the whole suite, lint, commit**
@@ -418,14 +412,19 @@ Refs #404 #493 #313"
 ### Task 2: CI probe
 
 **Files:**
-- Create: `src/gflow_cli/flow_selectors/check.py`
 - Create: `scripts/probe/run_probe.py`
 - Create: `.github/workflows/selector-probe.yml`
 - Test: `tests/flow_selectors/test_report.py`
 
 **Interfaces:**
 - Consumes: `registry`, `grade`, `Outcome`.
-- Produces: `async check_html(html, entries, observed_mode) -> list[Outcome]`; `render_report(outcomes) -> str`.
+- Produces: `render_report(outcomes) -> str`; `async resolve(page, entries, mode) -> list[Outcome]`.
+
+> **No `check_html` / no static re-parse.** An earlier draft closed the live page,
+> launched a *second* chromium and re-parsed `page.content()` through
+> `set_content()` — which drops external CSS/JS and shadow roots, making it
+> strictly lower fidelity than the live page it had just discarded. It was
+> residue from the cut snapshot layer. Resolve against the live `page`.
 
 - [ ] **Step 1: Write the failing report test** (pure — no browser, so it is safe in the default suite)
 
@@ -455,6 +454,15 @@ def test_ambiguous_is_reported_as_a_failure() -> None:
     assert "1 need" in body
 
 
+def test_alternate_state_names_are_stable_report_vocabulary() -> None:
+    """R8: the two known zero-click states must be enumerable, or an executor
+    cannot tell 'panel covering the composer' from 'Google moved it'."""
+    from scripts.probe.run_probe import _ALTERNATE_STATE_INDICATORS
+
+    labels = {label for label, _ in _ALTERNATE_STATE_INDICATORS}
+    assert labels == {"expanded chat sidebar", "agent chat panel"}
+
+
 def test_expected_absent_is_visible_but_not_a_failure() -> None:
     """A mode-scoped entry absent on the other arm must still appear, or the
     report silently shrinks and nobody notices coverage was skipped."""
@@ -468,51 +476,7 @@ def test_expected_absent_is_visible_but_not_a_failure() -> None:
 Run: `.venv/Scripts/python.exe -m pytest tests/flow_selectors/test_report.py -v`
 Expected: FAIL — `No module named 'scripts.probe.run_probe'`
 
-- [ ] **Step 3: Implement check + probe**
-
-```python
-# src/gflow_cli/flow_selectors/check.py
-"""Resolve registry candidates against DOM text and grade them.
-
-Needs a headless chromium only for Playwright's selector engines; no network,
-auth or credits. Asserts STRUCTURAL PRESENCE only — set_content() drops
-external CSS/JS and page.content() omits shadow roots, so visible/enabled is
-out of scope for both callers.
-"""
-
-from __future__ import annotations
-
-from collections.abc import Sequence
-
-from playwright.async_api import async_playwright
-
-from gflow_cli.config import UiMode
-from gflow_cli.flow_selectors.grading import Outcome, grade
-from gflow_cli.flow_selectors.model import Selector
-
-
-async def check_html(
-    html: str, entries: Sequence[Selector], observed_mode: UiMode | None = None
-) -> list[Outcome]:
-    results: list[Outcome] = []
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        try:
-            page = await browser.new_page()
-            await page.set_content(html)
-            for entry in entries:
-                index: int | None = None
-                count = 0
-                for i, candidate in enumerate(entry.candidates):
-                    count = await page.locator(candidate).count()
-                    if count:
-                        index = i
-                        break
-                results.append(grade(entry, index, count, observed_mode))
-        finally:
-            await browser.close()
-    return results
-```
+- [ ] **Step 3: Implement the probe**
 
 ```python
 # scripts/probe/run_probe.py
@@ -531,15 +495,17 @@ import argparse
 import asyncio
 import os
 import sys
+from collections.abc import Sequence
 
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
+from gflow_cli.api.transports import mode_control, ui_automation_video
 from gflow_cli.api.transports.drivers import factory
 from gflow_cli.config import UiMode
 from gflow_cli.flow_selectors import registry
-from gflow_cli.flow_selectors.check import check_html
-from gflow_cli.flow_selectors.grading import Grade, Outcome
+from gflow_cli.flow_selectors.grading import Grade, Outcome, grade
+from gflow_cli.flow_selectors.model import Selector
 
 SESSION_COOKIE = "__Secure-next-auth.session-token"
 _LABEL = {
@@ -558,6 +524,53 @@ def render_report(outcomes: list[Outcome]) -> str:
     bad = [o.selector_key for o in outcomes if o.is_failure]
     lines += ["", f"**{len(bad)} need attention**" if bad else "**0 need attention.**"]
     return "\n".join(lines)
+
+
+# Known ZERO-CLICK alternate states. Neither is drift, and both hide the
+# composer, so grading through them would report drift that did not happen.
+#   mode_control.py:66-84  — an expanded chat sidebar "removes the classic
+#                            composer entirely... no crop_* trigger AND no Agent pill"
+#   ui_automation_video.py:149-153 — a chat panel "appears on some project opens
+#                            and not others"; while up "the in-composer pill is
+#                            NOT in the DOM at all"
+_ALTERNATE_STATE_INDICATORS: tuple[tuple[str, str], ...] = (
+    ("expanded chat sidebar", mode_control.SIDEBAR_CLOSE_SELECTOR),
+    ("agent chat panel", ui_automation_video.AGENT_CHAT_PANEL_CLOSE_SELECTOR),
+)
+
+
+async def alternate_state(page: object) -> str | None:
+    """Name the known alternate state the editor is in, if any.
+
+    This is the difference between "the composer is gone because Google moved
+    it" (drift, exit 1) and "the composer is gone because a panel is covering
+    it" (inconclusive, exit 2). Three of the four registered selectors are
+    absent in these states, so without this gate a cohort flap reads as drift.
+    """
+    for label, selector in _ALTERNATE_STATE_INDICATORS:
+        if await page.locator(selector).count():  # type: ignore[attr-defined]
+            return label
+    return None
+
+
+async def resolve(page: object, entries: Sequence[Selector], mode: UiMode) -> list[Outcome]:
+    """Resolve each entry against the LIVE page and grade it.
+
+    Against the live page, not a re-parsed copy: set_content() drops external
+    CSS/JS and page.content() omits shadow roots, so a static round-trip is
+    strictly lower fidelity than the page already open here.
+    """
+    results: list[Outcome] = []
+    for entry in entries:
+        index: int | None = None
+        count = 0
+        for i, candidate in enumerate(entry.candidates):
+            count = await page.locator(candidate).count()  # type: ignore[attr-defined]
+            if count:
+                index = i
+                break
+        results.append(grade(entry, index, count, mode))
+    return results
 
 
 async def run(token: str, project_id: str, surface_key: str) -> int:
@@ -600,11 +613,15 @@ async def run(token: str, project_id: str, surface_key: str) -> int:
                 if await factory._any_present(page, factory._CLASSIC_CROP_SELECTORS)  # noqa: SLF001
                 else UiMode.AGENTIC
             )
-            html = await page.content()
+            blocked = await alternate_state(page)
+            if blocked is not None:
+                # NOT drift: a known cohort/load state hides the composer.
+                print(f"::warning::editor is in a known alternate state ({blocked})")
+                return 2
+            outcomes = await resolve(page, registry.for_surface(surface_key), mode)
         finally:
             await browser.close()
 
-    outcomes = await check_html(html, registry.for_surface(surface_key), mode)
     print(f"observed mode: {mode.value}")
     print(render_report(outcomes))
     return 1 if any(o.is_failure for o in outcomes) else 0
@@ -673,7 +690,7 @@ code. Never use `pull_request_target`.
 .venv/Scripts/python.exe -m ruff format --check src tests
 .venv/Scripts/python.exe scripts/ci/check_repo_hygiene.py
 .venv/Scripts/python.exe -m pytest tests/flow_selectors tests/scripts -v
-git add src/gflow_cli/flow_selectors/check.py scripts/probe/run_probe.py .github/workflows/selector-probe.yml tests/flow_selectors/test_report.py
+git add scripts/probe/run_probe.py .github/workflows/selector-probe.yml tests/flow_selectors/test_report.py
 git commit -m "feat(probe): CI selector-drift probe on a single session cookie
 
 Exit 2 (infrastructure) stays distinct from exit 1 (drift): an expired token or

@@ -93,9 +93,12 @@ Replicated independently (arm N2: 431KB / 3 buttons / 0 icons, single variable).
 established, not merely plausible.**
 
 > **Binding consequence:** any probe navigating to a fixed project id can produce a
-> convincing false negative. Every DOM probe MUST carry a positive control in the same
-> run and MUST create-or-verify its project. §2.2 shows the same rule applies in the
-> other direction: an all-HIT matrix without a falsifying arm proves nothing either.
+> convincing false negative. A DOM probe MUST therefore be able to tell "the surface
+> did not load" from "a selector drifted", and report the former as inconclusive
+> (exit 2) rather than as drift. The CI probe does this with its hydration gate — it
+> does **not** create projects, which would be a mutating operation against the $0
+> invariant. §2.2 shows the same rule applies in the other direction: an all-HIT
+> matrix without a falsifying arm proves nothing either.
 
 ### 2.4 Locale is account-driven
 
@@ -161,7 +164,7 @@ class Selector:
 
 **Keys are a public promise** — they appear in canary reports and any future override.
 
-### 3.2 Capture / check split, and the mode sidecar
+### 3.2 One pass: navigate, detect, resolve, grade
 
 ```
 CAPTURE  navigate (viewport-pinned) → page.content() + observed context → HTML + JSON
@@ -258,6 +261,7 @@ surfaces, and §3.5 if the maintainer keeps it.
 | R4 | **State-gated selectors.** `SIDEBAR_CLOSE` needs an expanded sidebar; **count tabs need the generation-settings panel opened**. A URL-only surface grades both MISS. | Phase 1 registers only selectors present on a freshly-loaded editor. Both wait for `Reach` — including #404's family (§4). |
 | R5 | **CI has no browser.** `ci.yml:165` runs plain pytest; no workflow installs Playwright. | Probe workflow installs chromium itself. No default-suite test may require a real browser. |
 | R6 | **Secrets in a public repo.** | Dedicated throwaway account, never the maintainer's. Reuse `src/gflow_cli/data/redaction.py` (already covers `Bearer`, `SAPISIDHASH`, `__Secure-next-auth.session-token`, signed queries) for any published output — do not write a fourth redactor. |
+| R8 | **Known zero-click alternate states.** `mode_control.py:66-84` — an expanded chat sidebar "removes the classic composer entirely… no `crop_*` trigger AND no Agent pill". `ui_automation_video.py:149-153` — a chat panel "appears on some project opens and not others", and while up "the in-composer pill is NOT in the DOM at all". Both are load states, no clicks. Three of the four registered selectors would MISS there and report drift that did not happen. | The probe checks a **base-state precondition** before grading: if a known alternate-state indicator is present, absence is *explained* → exit 2 (inconclusive), never exit 1. If no indicator is present and the composer is still gone, that is real drift. Reuses production's own detectors. |
 | R7 | **Same-repo branch PRs would receive the secret** while checking out attacker-editable probe code. Fork PRs are safe (GitHub withholds secrets). | Never add `pull_request`; never `pull_request_target`. |
 
 ---
