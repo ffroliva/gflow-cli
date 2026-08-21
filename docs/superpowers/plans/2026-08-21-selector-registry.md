@@ -16,7 +16,7 @@
 - **$0 invariant:** reach steps MUST be non-mutating and credit-free. Never submit.
 - **Pin the viewport to 1920×1080.** `ui_automation.py:117-124`: smaller *"would cross the responsive breakpoint and drift the selectors"*. `FlowApiClient` (1280×720) and Playwright's default (1280×720) are both **below** it.
 - **`observed_mode` is REQUIRED by the grader**, and must come from production's own detector: `factory._any_present(page, _CLASSIC_CROP_SELECTORS)` over **all six** ratio variants. Checking only `candidates[0]` is a silent-pass hole — a classic editor on a 9:16 project reads AGENTIC, so a drifted `crop_control` grades EXPECTED_ABSENT and hides permanently.
-- **Every DOM probe creates-or-verifies its project.** A stale id renders an error shell (~441KB, 3 buttons, 0 icons) indistinguishable from an auth wall.
+- **A stale project renders an error shell** (~441KB, 3 buttons, 0 icons) indistinguishable from an auth wall. The probe must therefore be able to say *"the surface did not load"* (exit 2) rather than *"a selector drifted"* (exit 1). It does **not** create projects — that would be a mutating operation against the $0 invariant.
 - **No default-suite test may launch a real browser.** `ci.yml:165` runs plain pytest and **no workflow installs Playwright**. Browser-touching tests live in the probe workflow, which installs chromium itself.
 - **Secrets:** `__Secure-next-auth.session-token` only, from a dedicated throwaway account. Never log a cookie value. For any published output reuse `src/gflow_cli/data/redaction.py` — it already covers `Bearer`, `SAPISIDHASH`, `__Secure-next-auth.session-token` and signed queries.
 - **Package name:** `gflow_cli.flow_selectors`, NOT `gflow_cli.ui` — `src/gflow_cli/ui/` already means gflow's own UI (`app.py`, `server.py`).
@@ -454,13 +454,20 @@ def test_ambiguous_is_reported_as_a_failure() -> None:
     assert "1 need" in body
 
 
-def test_alternate_state_names_are_stable_report_vocabulary() -> None:
-    """R8: the two known zero-click states must be enumerable, or an executor
-    cannot tell 'panel covering the composer' from 'Google moved it'."""
-    from scripts.probe.run_probe import _ALTERNATE_STATE_INDICATORS
+def test_alternate_state_gate_has_a_scoped_and_an_unscoped_candidate() -> None:
+    """R8. Two guards in one test:
 
-    labels = {label for label, _ in _ALTERNATE_STATE_INDICATORS}
-    assert labels == {"expanded chat sidebar", "agent chat panel"}
+    - the gate must not rely on the edit_square scoping alone — that was #493's
+      single point of failure, and a drifted scope would silently disable it
+    - the candidates must be DISTINCT. SIDEBAR_CLOSE_SELECTOR and
+      AGENT_CHAT_PANEL_CLOSE_SELECTOR are byte-equal aliases, so an earlier
+      draft listed one selector twice and certified a label it could not emit.
+    """
+    from scripts.probe.run_probe import _ALTERNATE_STATE_CANDIDATES
+
+    assert len(set(_ALTERNATE_STATE_CANDIDATES)) == len(_ALTERNATE_STATE_CANDIDATES)
+    assert any("edit_square" in c for c in _ALTERNATE_STATE_CANDIDATES)
+    assert any("edit_square" not in c for c in _ALTERNATE_STATE_CANDIDATES)
 
 
 def test_expected_absent_is_visible_but_not_a_failure() -> None:
@@ -500,7 +507,7 @@ from collections.abc import Sequence
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
-from gflow_cli.api.transports import mode_control, ui_automation_video
+from gflow_cli.api.transports import mode_control
 from gflow_cli.api.transports.drivers import factory
 from gflow_cli.config import UiMode
 from gflow_cli.flow_selectors import registry
@@ -533,10 +540,17 @@ def render_report(outcomes: list[Outcome]) -> str:
 #   ui_automation_video.py:149-153 — a chat panel "appears on some project opens
 #                            and not others"; while up "the in-composer pill is
 #                            NOT in the DOM at all"
-_ALTERNATE_STATE_INDICATORS: tuple[tuple[str, str], ...] = (
-    ("expanded chat sidebar", mode_control.SIDEBAR_CLOSE_SELECTOR),
-    ("agent chat panel", ui_automation_video.AGENT_CHAT_PANEL_CLOSE_SELECTOR),
+# NOTE: mode_control.SIDEBAR_CLOSE_SELECTOR and
+# ui_automation_video.AGENT_CHAT_PANEL_CLOSE_SELECTOR are BYTE-EQUAL — two names
+# for one selector. Listing both would make the second entry unreachable. One
+# scoped candidate plus the genuinely-different unscoped fallback, mirroring
+# production's two-tier close: the edit_square scoping was #493's single point
+# of failure, so relying on it alone would let a drifted scope disable this gate.
+_ALTERNATE_STATE_CANDIDATES: tuple[str, ...] = (
+    mode_control.SIDEBAR_CLOSE_SELECTOR,
+    mode_control.SIDEBAR_CLOSE_FALLBACK_SELECTOR,
 )
+_ALTERNATE_STATE_LABEL = "expanded chat sidebar / agent chat panel"
 
 
 async def alternate_state(page: object) -> str | None:
@@ -547,9 +561,9 @@ async def alternate_state(page: object) -> str | None:
     it" (inconclusive, exit 2). Three of the four registered selectors are
     absent in these states, so without this gate a cohort flap reads as drift.
     """
-    for label, selector in _ALTERNATE_STATE_INDICATORS:
+    for selector in _ALTERNATE_STATE_CANDIDATES:
         if await page.locator(selector).count():  # type: ignore[attr-defined]
-            return label
+            return _ALTERNATE_STATE_LABEL
     return None
 
 
@@ -646,7 +660,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run the report tests**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/flow_selectors/test_report.py -v`
-Expected: PASS (4 tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 5: Add the workflow**
 

@@ -167,9 +167,13 @@ class Selector:
 ### 3.2 One pass: navigate, detect, resolve, grade
 
 ```
-CAPTURE  navigate (viewport-pinned) → page.content() + observed context → HTML + JSON
-CHECK    (html, entries, observed) → HIT | FALLBACK | AMBIGUOUS | MISS | EXPECTED_ABSENT
+navigate (viewport-pinned) → detect arm → base-state gate → resolve against the
+LIVE page → HIT | FALLBACK | AMBIGUOUS | MISS | EXPECTED_ABSENT
 ```
+
+Resolution runs against the live page, never a re-parsed copy: `set_content()` drops
+external CSS/JS and `page.content()` omits shadow roots, so a static round-trip is
+strictly lower fidelity than the page already open.
 
 **`observed_mode` is a REQUIRED argument to the grader.** Without it,
 `editor.crop_control` (`mode=CLASSIC`) grades MISS = drift on every agentic capture — the
@@ -241,8 +245,9 @@ specified, and making it work means inverting imports across two 3,800-line modu
    closed). Registering them would grade MISS on every clean capture. The incident this
    design leans on hardest therefore needs `Reach` — which is the strongest argument for
    prioritising `Reach` in the follow-up, not for registering a selector that reds nightly.
-2. **Capture** — viewport-pinned, creates its own project, writes the mode sidecar.
-3. **CI probe workflow** — `schedule` + `workflow_dispatch` only.
+2. **CI probe** — viewport-pinned, detects the arm with production's detector,
+   gates on base state, resolves against the live page. `schedule` +
+   `workflow_dispatch` only.
 
 **Deferred to a follow-up plan:** the AST guardrail (it flags **9 real offenders** today —
 `ui_automation_video.py:91-96,162`, `agentic.py:62`, `diagnostics.py:1738` — so it reds on
@@ -257,7 +262,7 @@ surfaces, and §3.5 if the maintainer keeps it.
 |---|---|---|
 | R1 | **Datacenter IP** — all measurements from a residential IP. | Unresolvable locally. `workflow_dispatch` once and read the result. Must also include a **day-7 token re-run** (§2.2 scope limit). |
 | R2 | **Token hard-dies at day 30** (§2.7 — no rotation, so no warning). | Nightly canary reports remaining life. It MUST pin the profile path — two `profile_denon82` trees exist on the maintainer's machine and the orphaned one reports "expired 38 days ago". |
-| R3 | **Project validity** (§2.3). | Probe creates-or-verifies per run. |
+| R3 | **Project validity** (§2.3). | The hydration gate reports exit 2 (inconclusive) when the surface never renders, so a dead project can never be published as drift. The probe does not create projects — that would be mutating. |
 | R4 | **State-gated selectors.** `SIDEBAR_CLOSE` needs an expanded sidebar; **count tabs need the generation-settings panel opened**. A URL-only surface grades both MISS. | Phase 1 registers only selectors present on a freshly-loaded editor. Both wait for `Reach` — including #404's family (§4). |
 | R5 | **CI has no browser.** `ci.yml:165` runs plain pytest; no workflow installs Playwright. | Probe workflow installs chromium itself. No default-suite test may require a real browser. |
 | R6 | **Secrets in a public repo.** | Dedicated throwaway account, never the maintainer's. Reuse `src/gflow_cli/data/redaction.py` (already covers `Bearer`, `SAPISIDHASH`, `__Secure-next-auth.session-token`, signed queries) for any published output — do not write a fourth redactor. |
