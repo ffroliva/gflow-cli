@@ -9,6 +9,7 @@ These scripts require a live authenticated Chrome profile to run. They are inves
 | `capture_flow_traffic.py` | Capture Flow's outgoing API requests via `page.route` | `gflow auth login` | `uv run python scripts/diag/capture_flow_traffic.py --profile NAME` |
 | `recaptcha_mint.py` | What `site_key` + token does gflow-cli's `TokenMinter` produce? | `gflow auth login` (headed) | `uv run python scripts/diag/recaptcha_mint.py --profile NAME` |
 | `memory_profile.py` | Chrome process-tree RSS at key milestones (issue #155) | `gflow auth login` + `pip install psutil` | `uv run python scripts/diag/memory_profile.py --profile NAME` |
+| `diag_aisandbox_bearer.py` | Is the aisandbox Bearer path broken, or only `uploadImage`? (#561) | `gflow auth login` | `uv run python scripts/diag/diag_aisandbox_bearer.py --profile NAME` |
 
 ## What belongs here
 

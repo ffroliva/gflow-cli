@@ -18,6 +18,8 @@ Cost: $0 — a project create (labs.google tRPC, cookie auth), one entity read,
 and one image upload. None spends a generation credit; none touches reCAPTCHA.
 
 Credentials are never printed: the token is reported by length and prefix only.
+Output DOES include a project id and a truncated authenticated response body —
+review it before pasting into a public issue.
 
 Usage:
     python scripts/diag/diag_aisandbox_bearer.py --profile denon82
@@ -33,7 +35,7 @@ import sys
 from typing import Any
 
 from gflow_cli.api import routes
-from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.client import _AISANDBOX_CONTENT_TYPE, FlowApiClient
 from gflow_cli.auth import profile_dir as resolve_profile_dir
 
 # Same 1x1 transparent PNG the e2e test uploads — passes the magic-byte check.
@@ -41,7 +43,6 @@ _PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4"
     "2mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 )
-_AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
 
 
 def _report(label: str, status: int, body: str) -> None:
@@ -104,10 +105,10 @@ async def run(profile_name: str, transport: str | None) -> int:
             print("H-A: Bearer auth works; uploadImage specifically is rejected.")
         elif r_read.status >= 400 and r_up.status >= 400:
             print("H-B: the whole aisandbox Bearer path is rejected. Escalate.")
-        elif r_up.status < 400:
-            print("Neither reproduces — uploadImage succeeded. Suspect intermittency.")
         else:
-            print("Mixed result; read the statuses above.")
+            # r_up < 400 is the only remaining case: the three arms are a total
+            # cover, so a trailing `else` here would be unreachable.
+            print("Neither reproduces — uploadImage succeeded. Suspect intermittency.")
     return 0
 
 

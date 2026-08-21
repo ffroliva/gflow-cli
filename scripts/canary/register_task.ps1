@@ -18,7 +18,7 @@
 
 .EXAMPLE
     # one-time, from an ordinary PowerShell prompt
-    .\scripts\canary\register_task.ps1 -Profile denon82 -Issue 600 `
+    .\scripts\canary\register_task.ps1 -CanaryProfile denon82 -Issue 600 `
         -RepoRoot C:\development\canary\gflow-cli
 
 .EXAMPLE
@@ -28,7 +28,7 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string]$Profile,
+    [Parameter(Mandatory)][string]$CanaryProfile,
     [Parameter(Mandatory)][int]$Issue,
     [string]$RepoRoot = (Resolve-Path "$PSScriptRoot\..\.."),
     [string]$Time = '03:00',
@@ -49,11 +49,14 @@ foreach ($path in @($python, $runner)) {
 & gh auth status *> $null
 if ($LASTEXITCODE -ne 0) { throw 'gh is not authenticated. Run: gh auth login' }
 
+# Every value is quoted: -Markers 'e2e_auth or e2e_scene' (the documented
+# fast-follow) contains spaces and would otherwise split into three argv tokens
+# that argparse rejects.
 $arguments = @(
     "`"$runner`""
-    '--profile', $Profile
-    '--issue', $Issue
-    '--markers', $Markers
+    '--profile', "`"$CanaryProfile`""
+    '--issue', "$Issue"
+    '--markers', "`"$Markers`""
     '--pull'
 ) -join ' '
 
@@ -61,7 +64,7 @@ $action    = New-ScheduledTaskAction -Execute $python -Argument $arguments -Work
 $trigger   = New-ScheduledTaskTrigger -Daily -At $Time
 # Never wake or start the machine: an off machine is a stale issue, by design.
 # StartWhenAvailable catches up after a missed night rather than skipping it.
-$settings  = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+$settings  = New-ScheduledTaskSettingsSet -StartWhenAvailable -Priority 5 `
     -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries `
     -ExecutionTimeLimit (New-TimeSpan -Hours 1)
 
@@ -70,7 +73,7 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
 
 Write-Host "Registered '$TaskName' — daily at $Time"
 Write-Host "  repo:    $RepoRoot"
-Write-Host "  profile: $Profile   issue: #$Issue   markers: $Markers"
+Write-Host "  profile: $CanaryProfile   issue: #$Issue   markers: $Markers"
 Write-Host ''
 Write-Host "Smoke it now:  Start-ScheduledTask -TaskName '$TaskName'"
 Write-Host "Remove it:     Unregister-ScheduledTask -TaskName '$TaskName' -Confirm:`$false"

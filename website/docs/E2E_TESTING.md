@@ -168,7 +168,7 @@ a machine that might be off is self-DoS).
 | `GREEN` | every selected $0 tier passed | none |
 | `RED` | auth healthy, a $0 tier failed | **real drift or regression** — triage |
 | `AUTH-EXPIRED` | session rot (expected) | `gflow auth login` |
-| `DEFERRED` | profile precondition blocked it | fix the profile — nothing ran |
+| `DEFERRED` | nothing conclusive ran | fix the profile / config — says nothing about Flow |
 
 Splitting the last two out of `RED` is the point: `RED` must always mean "code or
 Flow drifted", never "please re-login" or "you had Chrome open". The classifier is
@@ -176,7 +176,8 @@ a pure function with all four states covered in
 `tests/scripts/test_canary_classify.py`.
 
 **Rot vs. drift is decided by a second probe, not by error names.** When a tier
-fails, the canary re-runs `gflow auth status`. Session still valid ⇒ the failure is
+fails for a reason other than a profile precondition, the canary re-runs
+`gflow auth status`. Session still valid ⇒ the failure is
 drift (`RED`); session now dead ⇒ genuine rot (`AUTH-EXPIRED`). The first live run
 proved why this matters: an `AuthExpiredError` from the aisandbox upload path
 *looked* exactly like session rot, but the session verified clean seconds later —
@@ -184,11 +185,21 @@ so it was a real divergence between two auth surfaces, and a name-matching
 classifier would have buried it. The extra probe costs ~45s and only runs after a
 failure.
 
-`DEFERRED` covers **profile-state preconditions** — a held `ProfileLease` or a
+`DEFERRED` covers every run that **exercised nothing**: a held `ProfileLease`, a
 `ProfileEngineDowngradeError` (profile written by a newer Chromium than the bundled
-engine). Both fail closed before any browser starts, so the run never reached Flow
-and cannot evidence drift. They share `ConfigurationError`'s exit 11, so the class
-name is the only discriminator.
+engine), a refused `--pull`, or a run where every selected test skipped. All fail
+before reaching Flow, so none can evidence drift.
+
+Two subtleties, both found by council review and both regression-tested:
+
+- **A precondition is matched on the raised exception, never a substring.** Two
+  `e2e_auth` tests mention `ProfileLockedError` in ordinary source — one in an
+  assertion message, one in a comment — and pytest echoes the failing function's
+  source into its traceback. Substring matching therefore published a genuine
+  regression in those tests as `DEFERRED`, the one label that says "ignore me".
+- **A green run that executed nothing is not green.** pytest exits 0 when every
+  test skips, and every e2e test skips on a missing profile directory. `GREEN`
+  requires `passed > 0`.
 
 Because the issue carries a last-updated timestamp, a machine that was off is
 *visibly stale* — unlike a lingering green commit status, which lies.
@@ -203,11 +214,12 @@ tiers (`e2e_image` / `e2e_video` / `smoke`) stay **strictly manual** via
 
 ```bash
 # dry run — executes for real, prints the payload, touches nothing on GitHub
-python scripts/canary/run_canary.py --profile <name> --dry-run
-
-# exercise any state's publish path without waiting for the condition
-python scripts/canary/run_canary.py --simulate AUTH-EXPIRED --dry-run
+uv run python scripts/canary/run_canary.py --profile <name> --dry-run
 ```
+
+Credit-spending markers (`e2e_image`, `e2e_video`, `e2e_batch`, `e2e_character`,
+`smoke`) are **refused outright** — the canary never spends credits unattended.
+Run those manually via `/gflow:live-verify`.
 
 ### Schedule it
 
@@ -217,8 +229,10 @@ python scripts/canary/run_canary.py --simulate AUTH-EXPIRED --dry-run
 ```
 
 Point `-RepoRoot` at a **dedicated clone**, never your working tree: the runner's
-`--pull` refuses to run on a dirty checkout rather than resetting over
-uncommitted work, so a shared tree would simply never run.
+`--pull` refuses a dirty checkout rather than resetting over uncommitted work, and
+reports that refusal as `DEFERRED` rather than exiting silently. `--pull` also
+re-syncs dependencies, so a lockfile bump on `develop` cannot masquerade as a
+`RED` import error.
 
 Publishing uses your already-authenticated local `gh` — **no new secrets or
 tokens**. Published content is sanitized for a public repo: SHA, pass/fail
