@@ -270,9 +270,6 @@ Expected: PASS (11 tests: 5 model + 6 grading)
 # tests/flow_selectors/test_registry.py
 from __future__ import annotations
 
-import pytest
-
-from gflow_cli.config import UiMode
 from gflow_cli.flow_selectors import registry
 
 
@@ -535,7 +532,7 @@ def render_report(outcomes: list[Outcome]) -> str:
 
 # Known ZERO-CLICK alternate states. Neither is drift, and both hide the
 # composer, so grading through them would report drift that did not happen.
-#   mode_control.py:66-84  — an expanded chat sidebar "removes the classic
+#   mode_control.py:61-84  — an expanded chat sidebar "removes the classic
 #                            composer entirely... no crop_* trigger AND no Agent pill"
 #   ui_automation_video.py:149-153 — a chat panel "appears on some project opens
 #                            and not others"; while up "the in-composer pill is
