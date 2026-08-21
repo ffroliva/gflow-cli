@@ -1,0 +1,25 @@
+name: Selector drift probe
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    if: github.repository == 'ffroliva/gflow-cli'
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen
+      - run: uv run playwright install chromium --with-deps
+      - name: Probe
+        env:
+          GFLOW_CI_SESSION_TOKEN: ${{ secrets.GFLOW_CI_SESSION_TOKEN }}
+          GFLOW_CI_PROJECT_ID: ${{ secrets.GFLOW_CI_PROJECT_ID }}
+        run: uv run python scripts/probe/run_probe.py --surface editor
