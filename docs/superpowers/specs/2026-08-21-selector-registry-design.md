@@ -139,7 +139,6 @@ class Surface:
     key: str                     # "editor"
     url_template: str
     viewport: tuple[int, int]    # (1920, 1080) — below the breakpoint drifts selectors (§2.5)
-    modes: tuple[UiMode, ...]
 
 @dataclass(frozen=True)
 class Selector:
@@ -158,6 +157,7 @@ class Selector:
 | `min_plan` / `Plan` enum | No plan-gated selector is in the initial registry. Add the day one is — 4 lines then. |
 | `features` | Nothing reads it; `surface` + `note` already carry the context. |
 | `required` | All entries defaulted `True`, and its `False` branch returned the same grade as the mode branch. Two encodings, one outcome. |
+| `Surface.modes` | Never read — `for_surface()` filters on `Selector.mode`. Same category as `features`, cut in the same review that added it. |
 
 **Keys are a public promise** — they appear in canary reports and any future override.
 
@@ -168,11 +168,16 @@ CAPTURE  navigate (viewport-pinned) → page.content() + observed context → HT
 CHECK    (html, entries, observed) → HIT | FALLBACK | AMBIGUOUS | MISS | EXPECTED_ABSENT
 ```
 
-**`observed_mode` must be a capture-time sidecar, not inferred at check time.** Inferring
-it from the DOM is circular: the mode detector *is* `factory.py:116`'s crop/ligature
-probe. Without the sidecar, `editor.crop_control` (`mode=CLASSIC`) grades MISS = drift on
-every agentic capture — the exact error this design exists to prevent. Capture writes
-`{"mode": "agentic", "viewport": [1920,1080], "captured_at": "..."}` beside the HTML.
+**`observed_mode` is a REQUIRED argument to the grader.** Without it,
+`editor.crop_control` (`mode=CLASSIC`) grades MISS = drift on every agentic capture — the
+exact error this design exists to prevent. Making it required enforces that at the type
+level, which is cheaper and stricter than a sentinel grade for "no context".
+
+**Mode detection must reuse production's detector**, never a reimplementation:
+`factory._any_present(page, _CLASSIC_CROP_SELECTORS)` over **all six** ratio variants.
+Checking only `candidates[0]` (`crop_16_9`) is a silent-pass hole: a classic editor on a
+9:16 project reads as AGENTIC, so `crop_control` grades EXPECTED_ABSENT and real drift
+hides permanently. That is the same one-of-six error §2.4 documents.
 
 **Correction to an earlier claim.** This does *not* mean snapshot and live checks "cannot
 disagree". `set_content()` drops external CSS/JS and re-executes inline scripts, and
@@ -202,7 +207,7 @@ same regression class far more cheaply.
   count-based check reports success. `SIDEBAR_CLOSE_FALLBACK_SELECTOR` is deliberately
   unscoped and is the standing candidate for this.
 - **MISS** — nothing resolved → drift → exit 23.
-- **EXPECTED_ABSENT** — the sidecar's `mode` says it should not be here.
+- **EXPECTED_ABSENT** — the observed `mode` says it should not be here.
 
 ### 3.5 Error contract — BLOCKED, pending a scope decision
 
@@ -224,9 +229,15 @@ specified, and making it work means inverting imports across two 3,800-line modu
 
 ## 4. Migration
 
-1. **Registry + grader** — drift-prone families only (composer, submit, agent toggle,
-   sidebar close, crop control, **count tabs**). #404 must be registered; the first draft
-   tested `editor.count_tabs` nine times without ever defining it.
+1. **Registry + grader** — only selectors present on a **freshly-loaded** editor:
+   composer input, composer submit, agent toggle, crop control.
+
+   **#404's count tabs are NOT registerable yet, and that is worth stating plainly.**
+   They live inside the generation-settings panel, which must be clicked open
+   (`_open_gen_settings_panel`; `_is_settings_panel_open` exists because it is normally
+   closed). Registering them would grade MISS on every clean capture. The incident this
+   design leans on hardest therefore needs `Reach` — which is the strongest argument for
+   prioritising `Reach` in the follow-up, not for registering a selector that reds nightly.
 2. **Capture** — viewport-pinned, creates its own project, writes the mode sidecar.
 3. **CI probe workflow** — `schedule` + `workflow_dispatch` only.
 
@@ -244,7 +255,7 @@ surfaces, and §3.5 if the maintainer keeps it.
 | R1 | **Datacenter IP** — all measurements from a residential IP. | Unresolvable locally. `workflow_dispatch` once and read the result. Must also include a **day-7 token re-run** (§2.2 scope limit). |
 | R2 | **Token hard-dies at day 30** (§2.7 — no rotation, so no warning). | Nightly canary reports remaining life. It MUST pin the profile path — two `profile_denon82` trees exist on the maintainer's machine and the orphaned one reports "expired 38 days ago". |
 | R3 | **Project validity** (§2.3). | Probe creates-or-verifies per run. |
-| R4 | **State-gated selectors.** `SIDEBAR_CLOSE` exists only while the sidebar is expanded, so a URL-only surface grades it MISS. | Phase 1 registers only selectors present on a freshly-loaded editor. State-gated entries wait for `Reach`. |
+| R4 | **State-gated selectors.** `SIDEBAR_CLOSE` needs an expanded sidebar; **count tabs need the generation-settings panel opened**. A URL-only surface grades both MISS. | Phase 1 registers only selectors present on a freshly-loaded editor. Both wait for `Reach` — including #404's family (§4). |
 | R5 | **CI has no browser.** `ci.yml:165` runs plain pytest; no workflow installs Playwright. | Probe workflow installs chromium itself. No default-suite test may require a real browser. |
 | R6 | **Secrets in a public repo.** | Dedicated throwaway account, never the maintainer's. Reuse `src/gflow_cli/data/redaction.py` (already covers `Bearer`, `SAPISIDHASH`, `__Secure-next-auth.session-token`, signed queries) for any published output — do not write a fourth redactor. |
 | R7 | **Same-repo branch PRs would receive the secret** while checking out attacker-editable probe code. Fork PRs are safe (GitHub withholds secrets). | Never add `pull_request`; never `pull_request_target`. |

@@ -4,7 +4,7 @@
 
 **Goal:** Turn gflow's scattered Flow DOM selectors into a structured, enumerable registry that a $0 CI probe walks nightly, so drift is *named* rather than inferred from a failing test.
 
-**Architecture:** A pure-data registry (`Surface` + `Selector`) and a pure grader. Capture (navigate at a pinned viewport → `page.content()` + a mode sidecar) is separate from check (`html + entries + observed → grade`), so the probe's evidence and its verdict are independently inspectable.
+**Architecture:** A pure-data registry (`Surface` + `Selector`) and a pure grader, driven by one CI probe: navigate at a pinned viewport, detect the UI arm with production's own detector, read the DOM once, grade.
 
 **Tech Stack:** Python 3.11+, Playwright (already a dep), pytest, ruff, GitHub Actions.
 
@@ -15,7 +15,7 @@
 - **Windows dev:** `.venv/Scripts/python.exe -m pytest`, never `uv run pytest` (broken here). Never pipe pytest to `tail` — it masks the exit code.
 - **$0 invariant:** reach steps MUST be non-mutating and credit-free. Never submit.
 - **Pin the viewport to 1920×1080.** `ui_automation.py:117-124`: smaller *"would cross the responsive breakpoint and drift the selectors"*. `FlowApiClient` (1280×720) and Playwright's default (1280×720) are both **below** it.
-- **`observed_mode` is a capture-time sidecar, never inferred at check time** — inferring it is circular, because the mode detector IS the crop probe.
+- **`observed_mode` is REQUIRED by the grader**, and must come from production's own detector: `factory._any_present(page, _CLASSIC_CROP_SELECTORS)` over **all six** ratio variants. Checking only `candidates[0]` is a silent-pass hole — a classic editor on a 9:16 project reads AGENTIC, so a drifted `crop_control` grades EXPECTED_ABSENT and hides permanently.
 - **Every DOM probe creates-or-verifies its project.** A stale id renders an error shell (~441KB, 3 buttons, 0 icons) indistinguishable from an auth wall.
 - **No default-suite test may launch a real browser.** `ci.yml:165` runs plain pytest and **no workflow installs Playwright**. Browser-touching tests live in the probe workflow, which installs chromium itself.
 - **Secrets:** `__Secure-next-auth.session-token` only, from a dedicated throwaway account. Never log a cookie value. For any published output reuse `src/gflow_cli/data/redaction.py` — it already covers `Bearer`, `SAPISIDHASH`, `__Secure-next-auth.session-token` and signed queries.
@@ -60,34 +60,43 @@ def test_surface_pins_a_viewport_at_or_above_the_breakpoint() -> None:
     breakpoint and drifts the selectors. A probe that forgets this reports
     false drift, so the model refuses to let it be forgotten."""
     with pytest.raises(ValueError, match="breakpoint"):
-        Surface(key="editor", url_template="/x", viewport=(1280, 720),
-                modes=(UiMode.CLASSIC,))
+        Surface(key="editor", url_template="/x", viewport=(1280, 720))
 
 
 def test_surface_accepts_the_production_viewport() -> None:
-    s = Surface(key="editor", url_template="/x", viewport=(1920, 1080),
-                modes=(UiMode.CLASSIC, UiMode.AGENTIC))
-    assert s.viewport == (1920, 1080)
+    assert Surface(key="editor", url_template="/x", viewport=(1920, 1080)).viewport == (
+        1920,
+        1080,
+    )
+
+
+def test_a_wide_but_short_viewport_is_still_rejected() -> None:
+    """Tuple comparison would ACCEPT (2560, 720): lexicographically 2560 > 1920
+    ends the comparison before height is considered. Verified by execution."""
+    with pytest.raises(ValueError, match="breakpoint"):
+        Surface(key="editor", url_template="/x", viewport=(2560, 720))
 ```
 
 ```python
 # tests/flow_selectors/test_grading.py
 from __future__ import annotations
 
+import pytest
+
 from gflow_cli.config import UiMode
 from gflow_cli.flow_selectors.grading import Grade, grade
 from gflow_cli.flow_selectors.model import Selector
 
-SEL = Selector(key="editor.count_tabs", surface="editor",
-               candidates=("[role=tab]:text-is('x2')", "[role=tab]:text-is('2x')"))
+SEL = Selector(key="editor.composer.input", surface="editor",
+               candidates=("div[data-slate-editor]", "div[role=textbox]"))
 
 
 def test_first_candidate_is_a_hit() -> None:
-    assert grade(SEL, resolved_index=0, match_count=1).grade is Grade.HIT
+    assert grade(SEL, 0, match_count=1, observed_mode=UiMode.CLASSIC).grade is Grade.HIT
 
 
 def test_later_candidate_is_fallback_not_failure() -> None:
-    out = grade(SEL, resolved_index=1, match_count=1)
+    out = grade(SEL, 1, match_count=1, observed_mode=UiMode.CLASSIC)
     assert out.grade is Grade.FALLBACK
     assert out.is_failure is False
 
@@ -98,34 +107,30 @@ def test_multiple_matches_on_a_unique_selector_is_ambiguous() -> None:
     is deliberately unscoped and is the standing candidate for this."""
     unique = Selector(key="editor.sidebar.close", surface="editor",
                       candidates=("button",), expect_unique=True)
-    out = grade(unique, resolved_index=0, match_count=2)
+    out = grade(unique, 0, match_count=2, observed_mode=UiMode.CLASSIC)
     assert out.grade is Grade.AMBIGUOUS
     assert out.is_failure is True
 
 
 def test_nothing_resolving_is_drift() -> None:
-    assert grade(SEL, resolved_index=None, match_count=0).is_failure is True
+    assert grade(SEL, None, match_count=0, observed_mode=UiMode.CLASSIC).is_failure is True
 
 
 def test_wrong_mode_makes_a_miss_expected() -> None:
     classic = Selector(key="editor.crop_control", surface="editor",
                        candidates=("button",), mode=UiMode.CLASSIC)
-    out = grade(classic, resolved_index=None, match_count=0,
-                observed_mode=UiMode.AGENTIC)
+    out = grade(classic, None, match_count=0, observed_mode=UiMode.AGENTIC)
     assert out.grade is Grade.EXPECTED_ABSENT
     assert out.is_failure is False
 
 
-def test_missing_sidecar_mode_does_not_silently_pass_a_mode_scoped_miss() -> None:
-    """Without observed_mode the grader CANNOT know whether an absent
-    classic-only control is drift or the wrong arm. It must say so rather than
-    guess — guessing MISS is what produced a guaranteed false DRIFT in the
-    first draft of this plan."""
+def test_grade_cannot_be_called_without_a_mode() -> None:
+    """The false-DRIFT guarantee is enforced by the signature, not a sentinel
+    grade: omitting observed_mode is a TypeError, not a silent misgrade."""
     classic = Selector(key="editor.crop_control", surface="editor",
                        candidates=("button",), mode=UiMode.CLASSIC)
-    out = grade(classic, resolved_index=None, match_count=0, observed_mode=None)
-    assert out.grade is Grade.UNKNOWN_CONTEXT
-    assert out.is_failure is False
+    with pytest.raises(TypeError):
+        grade(classic, None, match_count=0)  # type: ignore[call-arg]
 ```
 
 - [ ] **Step 2: Run both to confirm they fail**
@@ -165,13 +170,14 @@ class Surface:
     key: str
     url_template: str
     viewport: tuple[int, int]
-    modes: tuple[UiMode, ...] = ()
 
     def __post_init__(self) -> None:
         if not _SURFACE_KEY_RE.match(self.key):
             msg = f"surface key must be lower_snake, optionally dotted: {self.key!r}"
             raise ValueError(msg)
-        if self.viewport < MIN_VIEWPORT:
+        # Per-AXIS, not tuple comparison: (2560, 720) < (1920, 1080) is False
+        # lexicographically, so a 720px-tall surface would slip the guard.
+        if self.viewport[0] < MIN_VIEWPORT[0] or self.viewport[1] < MIN_VIEWPORT[1]:
             msg = (
                 f"{self.key}: viewport {self.viewport} is below Flow's responsive "
                 f"breakpoint {MIN_VIEWPORT}; selectors drift below it"
@@ -218,7 +224,6 @@ class Grade(Enum):
     AMBIGUOUS = "ambiguous"            # >1 match; drivers use .first, so this misclicks
     MISS = "miss"
     EXPECTED_ABSENT = "expected_absent"
-    UNKNOWN_CONTEXT = "unknown_context"  # mode-scoped, but no sidecar mode to judge against
 
 
 @dataclass(frozen=True)
@@ -236,27 +241,29 @@ def grade(
     selector: Selector,
     resolved_index: int | None,
     match_count: int,
-    observed_mode: UiMode | None = None,
+    observed_mode: UiMode,
 ) -> Outcome:
+    """``observed_mode`` is REQUIRED, deliberately.
+
+    Defaulting it to None let a mode-scoped selector be graded with no context,
+    which produced a guaranteed false DRIFT on every agentic capture. Requiring
+    it moves that guarantee to the type level — the caller cannot forget.
+    """
     if resolved_index is not None:
         if selector.expect_unique and match_count > 1:
             return Outcome(selector.key, Grade.AMBIGUOUS, resolved_index)
         g = Grade.HIT if resolved_index == 0 else Grade.FALLBACK
         return Outcome(selector.key, g, resolved_index)
 
-    if selector.mode is not None:
-        if observed_mode is None:
-            # Never guess: guessing MISS here is a guaranteed false DRIFT.
-            return Outcome(selector.key, Grade.UNKNOWN_CONTEXT, None)
-        if selector.mode != observed_mode:
-            return Outcome(selector.key, Grade.EXPECTED_ABSENT, None)
+    if selector.mode is not None and selector.mode != observed_mode:
+        return Outcome(selector.key, Grade.EXPECTED_ABSENT, None)
     return Outcome(selector.key, Grade.MISS, None)
 ```
 
 - [ ] **Step 5: Run model + grading tests**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/flow_selectors/test_model.py tests/flow_selectors/test_grading.py -v`
-Expected: PASS (11 tests)
+Expected: PASS (11 tests: 5 model + 6 grading)
 
 - [ ] **Step 6: Write the failing registry test**
 
@@ -280,11 +287,21 @@ def test_keys_are_unique() -> None:
     assert len(keys) == len(set(keys))
 
 
-def test_the_404_family_is_registered() -> None:
-    """#404 (1x -> x2 rename) is the most-cited incident in the spec; the first
-    draft of this plan tested editor.count_tabs nine times without defining it."""
-    sel = registry.by_key("editor.count_tabs")
-    assert len(sel.candidates) >= 2, "must match BOTH cohorts, picking by digit"
+def test_state_gated_families_are_deliberately_absent() -> None:
+    """Two incident families CANNOT live on a URL-only surface:
+
+    - sidebar close needs the sidebar EXPANDED
+    - #404's count tabs sit inside the generation-settings panel, which must be
+      clicked open (`_open_gen_settings_panel`; `_is_settings_panel_open` exists
+      because it is normally closed)
+
+    Registering either grades MISS on every clean capture. That #404 — the
+    incident this design leans on hardest — needs `Reach` is the argument FOR
+    prioritising Reach, not for registering a selector that reds nightly.
+    """
+    keys = {s.key for s in registry.SELECTORS}
+    assert "editor.sidebar.close" not in keys
+    assert "editor.count_tabs" not in keys
 
 
 def test_incident_families_are_registered() -> None:
@@ -303,11 +320,6 @@ def test_for_surface_filters_by_mode() -> None:
     assert "editor.crop_control" not in agentic
 
 
-def test_no_state_gated_selector_is_registered_yet() -> None:
-    """R4: SIDEBAR_CLOSE only exists while the sidebar is EXPANDED. On a
-    freshly-loaded editor it is legitimately absent, so registering it now
-    would grade MISS on every clean capture. It waits for Reach."""
-    assert "editor.sidebar.close" not in {s.key for s in registry.SELECTORS}
 ```
 
 - [ ] **Step 7: Implement the registry**
@@ -333,7 +345,6 @@ SURFACES: dict[str, Surface] = {
         key="editor",
         url_template="https://labs.google/fx/{locale}/tools/flow/project/{project_id}",
         viewport=(1920, 1080),
-        modes=(UiMode.CLASSIC, UiMode.AGENTIC),
     ),
 }
 
@@ -358,20 +369,13 @@ SELECTORS: tuple[Selector, ...] = (
         note="#313 — agent settings panel became sticky.",
     ),
     Selector(
-        key="editor.count_tabs",
-        surface="editor",
-        candidates=("[role=tab]:text-is('x1')", "[role=tab]:text-is('1x')"),
-        note="#404 — Google renamed 1x -> x1. BOTH cohorts must match, and the "
-        "driver picks by DIGIT, never by position.",
-    ),
-    Selector(
         key="editor.crop_control",
         surface="editor",
         candidates=tuple(mode_control.CROP_SELECTORS),
         mode=UiMode.CLASSIC,
         note="Classic-mode INDICATOR (factory.py:116). Absent on the agentic arm "
         "by design — grading that MISS as drift is the error this registry exists "
-        "to prevent, which is why an absent sidecar mode yields UNKNOWN_CONTEXT.",
+        "to prevent — which is why observed_mode is a REQUIRED grader argument.",
     ),
 )
 
@@ -402,163 +406,16 @@ git commit -m "feat(selectors): registry model, grader, and the incident familie
 Surface pins 1920x1080: below Flow's responsive breakpoint the selectors drift,
 so a probe that forgets the viewport reports drift that is not there.
 
-A mode-scoped selector with no sidecar mode grades UNKNOWN_CONTEXT, never MISS.
-Guessing MISS there is a guaranteed false DRIFT on every agentic capture.
+observed_mode is a REQUIRED grader argument: defaulting it let a mode-scoped
+selector be graded with no context, a guaranteed false DRIFT on every agentic
+capture. The signature now enforces it.
 
 Refs #404 #493 #313"
 ```
 
 ---
 
-### Task 2: Capture with sidecar
-
-**Files:**
-- Create: `scripts/probe/capture.py`
-- Test: `tests/scripts/test_capture.py`
-
-**Interfaces:**
-- Consumes: `registry.SURFACES`, `FlowApiClient`.
-- Produces: `detect_mode(page) -> UiMode`; `async capture(profile, surface_key) -> tuple[str, dict]`.
-
-- [ ] **Step 1: Write the failing sidecar test**
-
-```python
-# tests/scripts/test_capture.py
-from __future__ import annotations
-
-from gflow_cli.config import UiMode
-from scripts.probe.capture import build_sidecar
-
-
-def test_sidecar_records_the_context_the_grader_needs() -> None:
-    car = build_sidecar(mode=UiMode.AGENTIC, viewport=(1920, 1080),
-                        captured_at="2026-08-21T12:00:00Z", surface="editor")
-    assert car["mode"] == "agentic"
-    assert car["viewport"] == [1920, 1080]
-    assert car["surface"] == "editor"
-
-
-def test_sidecar_never_carries_identifiers() -> None:
-    """The sidecar may be published alongside a drift report; keep it to
-    context, never project ids, accounts or URLs."""
-    car = build_sidecar(mode=UiMode.CLASSIC, viewport=(1920, 1080),
-                        captured_at="2026-08-21T12:00:00Z", surface="editor")
-    assert set(car) == {"mode", "viewport", "captured_at", "surface"}
-```
-
-- [ ] **Step 2: Run it to confirm it fails**
-
-Run: `.venv/Scripts/python.exe -m pytest tests/scripts/test_capture.py -v`
-Expected: FAIL — `No module named 'scripts.probe.capture'`
-
-- [ ] **Step 3: Implement capture**
-
-```python
-# scripts/probe/capture.py
-"""Capture a Flow surface's DOM plus the context needed to grade it. $0.
-
-Creates its own project: a stale id renders an error shell (~441KB, 3 buttons,
-0 icons) indistinguishable from an auth wall, a confound that voided three
-spike runs before a positive control caught it.
-"""
-
-from __future__ import annotations
-
-import argparse
-import asyncio
-from datetime import UTC, datetime
-
-from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.transports.drivers import factory
-from gflow_cli.auth import profile_dir as resolve_profile
-from gflow_cli.config import UiMode
-from gflow_cli.flow_selectors import registry
-
-
-def build_sidecar(
-    mode: UiMode, viewport: tuple[int, int], captured_at: str, surface: str
-) -> dict[str, object]:
-    """Context the grader needs. Deliberately carries no identifiers."""
-    return {
-        "mode": mode.value,
-        "viewport": [viewport[0], viewport[1]],
-        "captured_at": captured_at,
-        "surface": surface,
-    }
-
-
-async def detect_mode(page: object) -> UiMode:
-    """Which arm is rendered. Uses the SAME probe the drivers use, so the
-    sidecar cannot disagree with production (factory.py:116)."""
-    return (
-        UiMode.CLASSIC
-        if await factory._any_present(page, factory._CLASSIC_CROP_SELECTORS)  # noqa: SLF001
-        else UiMode.AGENTIC
-    )
-
-
-async def capture(profile: str, surface_key: str) -> tuple[str, dict[str, object]]:
-    surface = registry.SURFACES[surface_key]
-    async with FlowApiClient(
-        profile_dir=resolve_profile(profile), headless=True
-    ) as client:
-        project = await client.create_project(title="selector-probe capture")
-        page = client._page or client._context.pages[0]  # noqa: SLF001
-        await page.set_viewport_size(
-            {"width": surface.viewport[0], "height": surface.viewport[1]}
-        )
-        await page.goto(
-            surface.url_template.format(locale="en", project_id=project.project_id),
-            wait_until="domcontentloaded",
-            timeout=90_000,
-        )
-        for _ in range(25):
-            if await page.locator("i.google-symbols").count():
-                break
-            await page.wait_for_timeout(1000)
-        else:
-            msg = "surface never hydrated — refusing to save an error shell"
-            raise SystemExit(msg)
-        mode = await detect_mode(page)
-        html = await page.content()
-
-    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return html, build_sidecar(mode, surface.viewport, stamp, surface_key)
-
-
-def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--profile", required=True)
-    p.add_argument("--surface", default="editor")
-    args = p.parse_args()
-    html, sidecar = asyncio.run(capture(args.profile, args.surface))
-    print(f"captured {len(html):,} bytes; context={sidecar}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-```
-
-- [ ] **Step 4: Verify `_any_present` and `_CLASSIC_CROP_SELECTORS` exist**
-
-Run: `grep -n "_any_present\|_CLASSIC_CROP_SELECTORS" src/gflow_cli/api/transports/drivers/factory.py`
-Expected: both present (seen at `factory.py:52,116`). If either is renamed, use the current name — do not reimplement mode detection, or the sidecar can disagree with production.
-
-- [ ] **Step 5: Run tests and commit**
-
-```bash
-.venv/Scripts/python.exe -m pytest tests/scripts/test_capture.py -v
-git add scripts/probe/capture.py tests/scripts/test_capture.py
-git commit -m "feat(probe): DOM capture with a mode sidecar at the pinned viewport
-
-Mode is detected with the drivers' own probe, so the sidecar cannot disagree
-with production. Inferring it at check time would be circular."
-```
-
----
-
-### Task 3: CI probe
+### Task 2: CI probe
 
 **Files:**
 - Create: `src/gflow_cli/flow_selectors/check.py`
@@ -581,8 +438,8 @@ from scripts.probe.run_probe import render_report
 
 
 def test_report_names_the_drifted_selector() -> None:
-    body = render_report([Outcome("editor.count_tabs", Grade.MISS, None)])
-    assert "editor.count_tabs" in body
+    body = render_report([Outcome("editor.composer.input", Grade.MISS, None)])
+    assert "editor.composer.input" in body
     assert "DRIFT" in body
 
 
@@ -598,11 +455,11 @@ def test_ambiguous_is_reported_as_a_failure() -> None:
     assert "1 need" in body
 
 
-def test_unknown_context_is_visible_but_not_a_failure() -> None:
-    """Silence here would hide that the probe could not judge a mode-scoped
-    entry at all."""
-    body = render_report([Outcome("editor.crop_control", Grade.UNKNOWN_CONTEXT, None)])
-    assert "UNKNOWN" in body
+def test_expected_absent_is_visible_but_not_a_failure() -> None:
+    """A mode-scoped entry absent on the other arm must still appear, or the
+    report silently shrinks and nobody notices coverage was skipped."""
+    body = render_report([Outcome("editor.crop_control", Grade.EXPECTED_ABSENT, None)])
+    assert "editor.crop_control" in body
     assert "0 need" in body
 ```
 
@@ -675,8 +532,10 @@ import asyncio
 import os
 import sys
 
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
+from gflow_cli.api.transports.drivers import factory
 from gflow_cli.config import UiMode
 from gflow_cli.flow_selectors import registry
 from gflow_cli.flow_selectors.check import check_html
@@ -689,7 +548,6 @@ _LABEL = {
     Grade.AMBIGUOUS: "AMBIGUOUS",
     Grade.MISS: "DRIFT",
     Grade.EXPECTED_ABSENT: "n/a",
-    Grade.UNKNOWN_CONTEXT: "UNKNOWN",
 }
 
 
@@ -716,10 +574,16 @@ async def run(token: str, project_id: str, surface_key: str) -> int:
                 "httpOnly": True, "secure": True, "sameSite": "Lax",
             }])
             page = await ctx.new_page()
-            await page.goto(
-                surface.url_template.format(locale="en", project_id=project_id),
-                wait_until="domcontentloaded", timeout=90_000,
-            )
+            try:
+                await page.goto(
+                    surface.url_template.format(locale="en", project_id=project_id),
+                    wait_until="domcontentloaded", timeout=90_000,
+                )
+            except PlaywrightError as exc:
+                # A raw traceback is neither exit 1 nor exit 2, and its message
+                # embeds the project id. Keep the contract intact.
+                print(f"::error::navigation failed: {type(exc).__name__}")
+                return 2
             for _ in range(25):
                 if await page.locator("i.google-symbols").count():
                     break
@@ -728,9 +592,12 @@ async def run(token: str, project_id: str, surface_key: str) -> int:
                 # Expired token or missing project — NOT drift. Never conflate them.
                 print("::error::surface never hydrated (expired token or missing project)")
                 return 2
+            # Production's OWN detector, over all six ratio variants. Checking
+            # candidates[0] alone misreads a 9:16 classic editor as agentic, and a
+            # drifted crop_control then grades EXPECTED_ABSENT — hidden forever.
             mode = (
                 UiMode.CLASSIC
-                if await page.locator(registry.by_key("editor.crop_control").candidates[0]).count()
+                if await factory._any_present(page, factory._CLASSIC_CROP_SELECTORS)  # noqa: SLF001
                 else UiMode.AGENTIC
             )
             html = await page.content()
@@ -806,7 +673,7 @@ code. Never use `pull_request_target`.
 .venv/Scripts/python.exe -m ruff format --check src tests
 .venv/Scripts/python.exe scripts/ci/check_repo_hygiene.py
 .venv/Scripts/python.exe -m pytest tests/flow_selectors tests/scripts -v
-git add src/gflow_cli/flow_selectors/check.py scripts/probe .github/workflows/selector-probe.yml tests/
+git add src/gflow_cli/flow_selectors/check.py scripts/probe/run_probe.py .github/workflows/selector-probe.yml tests/flow_selectors/test_report.py
 git commit -m "feat(probe): CI selector-drift probe on a single session cookie
 
 Exit 2 (infrastructure) stays distinct from exit 1 (drift): an expired token or
