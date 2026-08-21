@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Selector registry + nightly CI drift probe
+  ([#404](https://github.com/ffroliva/gflow-cli/issues/404),
+  [#493](https://github.com/ffroliva/gflow-cli/issues/493),
+  [#313](https://github.com/ffroliva/gflow-cli/issues/313)).** New
+  `gflow_cli.flow_selectors` package: a structured, enumerable inventory of the
+  Flow DOM selectors gflow depends on (`Surface`, `Selector`) plus a pure
+  grader (`HIT` / `FALLBACK` / `AMBIGUOUS` / `MISS` / `EXPECTED_ABSENT`), so
+  selector drift is *named* rather than inferred from a failing test. A $0
+  probe (`scripts/probe/run_probe.py`, driven by the `selector-probe` workflow
+  on `schedule` + `workflow_dispatch` only) walks the registry against a live
+  editor: navigate and read only, never generates. Exit 0 clean / 1 drift /
+  2 inconclusive — an expired token or dead project is never published as
+  drift.
+
 ## [0.59.0] — 2026-08-16
 
 ### Added

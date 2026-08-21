@@ -16,7 +16,7 @@ import sys
 from collections.abc import Sequence
 
 from playwright.async_api import Error as PlaywrightError
-from playwright.async_api import async_playwright
+from playwright.async_api import Page, async_playwright
 
 from gflow_cli.api.transports import mode_control
 from gflow_cli.api.transports.drivers import factory
@@ -77,7 +77,7 @@ _ALTERNATE_STATE_CANDIDATES: tuple[str, ...] = (
 _ALTERNATE_STATE_LABEL = "expanded chat sidebar / agent chat panel"
 
 
-async def alternate_state(page: object) -> str | None:
+async def alternate_state(page: Page) -> str | None:
     """Name the known alternate state the editor is in, if any.
 
     This is the difference between "the composer is gone because Google moved
@@ -86,12 +86,12 @@ async def alternate_state(page: object) -> str | None:
     absent in these states, so without this gate a cohort flap reads as drift.
     """
     for selector in _ALTERNATE_STATE_CANDIDATES:
-        if await page.locator(selector).count():  # type: ignore[attr-defined]
+        if await page.locator(selector).count():
             return _ALTERNATE_STATE_LABEL
     return None
 
 
-async def resolve(page: object, entries: Sequence[Selector], mode: UiMode) -> list[Outcome]:
+async def resolve(page: Page, entries: Sequence[Selector], mode: UiMode) -> list[Outcome]:
     """Resolve each entry against the LIVE page and grade it.
 
     Against the live page, not a re-parsed copy: set_content() drops external
@@ -103,7 +103,7 @@ async def resolve(page: object, entries: Sequence[Selector], mode: UiMode) -> li
         index: int | None = None
         count = 0
         for i, candidate in enumerate(entry.candidates):
-            count = await page.locator(candidate).count()  # type: ignore[attr-defined]
+            count = await page.locator(candidate).count()
             if count:
                 index = i
                 break
@@ -144,22 +144,35 @@ async def run(token: str, project_id: str, surface_key: str) -> int:
                 # embeds the project id. Keep the contract intact.
                 print(f"::error::navigation failed: {type(exc).__name__}")
                 return 2
+            # Base-state gate and arm detection in ONE poll, on production's own
+            # indicator families (all six crop ratio variants for classic — never
+            # candidates[0] alone, which misreads a 9:16 classic editor as agentic
+            # and hides a drifted crop_control as EXPECTED_ABSENT forever).
+            #
+            # Deliberately NOT a bare `i.google-symbols` count: spec §2.2's
+            # no-cookie arms (N1/N3) render 9 such icons, so a sign-in wall
+            # passes an icons-only gate and every selector then grades MISS —
+            # an expired token published as DRIFT, the exact conflation §2.3
+            # forbids. An editor is recognizable only by its arm. Polling also
+            # absorbs the ~1.25s indicator render lag factory.py documents,
+            # which a one-shot detection misreads as AGENTIC.
+            mode: UiMode | None = None
             for _ in range(25):
-                if await page.locator("i.google-symbols").count():
+                if await factory._any_present(page, factory._CLASSIC_CROP_SELECTORS):  # noqa: SLF001
+                    mode = UiMode.CLASSIC
+                    break
+                if await factory._any_present(page, factory.AGENTIC_INDICATOR_SELECTORS):  # noqa: SLF001
+                    mode = UiMode.AGENTIC
                     break
                 await page.wait_for_timeout(1000)
-            else:
-                # Expired token or missing project — NOT drift. Never conflate them.
-                print("::error::surface never hydrated (expired token or missing project)")
+            if mode is None:
+                # Expired token, missing project, or an unrecognizable page —
+                # NOT drift. Never conflate them.
+                print(
+                    "::error::surface never presented a recognizable editor arm "
+                    "(expired token, missing project, or unrecognized state)"
+                )
                 return 2
-            # Production's OWN detector, over all six ratio variants. Checking
-            # candidates[0] alone misreads a 9:16 classic editor as agentic, and a
-            # drifted crop_control then grades EXPECTED_ABSENT — hidden forever.
-            mode = (
-                UiMode.CLASSIC
-                if await factory._any_present(page, factory._CLASSIC_CROP_SELECTORS)  # noqa: SLF001
-                else UiMode.AGENTIC
-            )
             blocked = await alternate_state(page)
             if blocked is not None:
                 # NOT drift: a known cohort/load state hides the composer.
@@ -176,14 +189,21 @@ async def run(token: str, project_id: str, surface_key: str) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--surface", default="editor")
+    p.add_argument("--surface", default="editor", choices=sorted(registry.SURFACES))
     args = p.parse_args()
     token = os.environ.get("GFLOW_CI_SESSION_TOKEN", "")
     project = os.environ.get("GFLOW_CI_PROJECT_ID", "")
     if not token or not project:
         print("::error::GFLOW_CI_SESSION_TOKEN and GFLOW_CI_PROJECT_ID are required")
         return 2
-    return asyncio.run(run(token, project, args.surface))
+    try:
+        return asyncio.run(run(token, project, args.surface))
+    except PlaywrightError as exc:
+        # Launch/context/locator failures are infrastructure, not drift, and a
+        # raw traceback would exit 1 — the drift code. Message text can embed
+        # the target URL, so publish the class name only.
+        print(f"::error::playwright failure: {type(exc).__name__}")
+        return 2
 
 
 if __name__ == "__main__":

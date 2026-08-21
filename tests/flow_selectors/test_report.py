@@ -40,6 +40,15 @@ def test_alternate_state_gate_has_a_scoped_and_an_unscoped_candidate() -> None:
     assert any("edit_square" not in c for c in _ALTERNATE_STATE_CANDIDATES)
 
 
+def test_every_grade_has_a_report_label() -> None:
+    """A new Grade member must fail HERE, not as a KeyError inside the live
+    probe, where it would surface as infrastructure noise instead of a red
+    unit test."""
+    from scripts.probe.run_probe import _LABEL
+
+    assert set(_LABEL) == set(Grade)
+
+
 def test_expected_absent_is_visible_but_not_a_failure() -> None:
     """A mode-scoped entry absent on the other arm must still appear, or the
     report silently shrinks and nobody notices coverage was skipped."""
