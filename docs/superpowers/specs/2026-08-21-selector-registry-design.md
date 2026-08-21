@@ -1,6 +1,6 @@
 # Selector Registry + Drift Probe — Design
 
-**Status:** Draft, pending council review
+**Status:** Draft, council round 1 applied (5 dimensions, all YELLOW)
 **Date:** 2026-08-21
 **Related:** #502 (nightly canary, shipped), #404, #493, #174, #299, #313, #171
 
@@ -19,10 +19,8 @@ working. Every incident below is a selector that moved:
 | #174 | library UI A/B flip |
 | #313 | agent settings panel became sticky |
 
-Two structural problems make each one worse than it needs to be.
-
-**No inventory.** Selectors are scattered across four modules, some as inline literals,
-some as module-private constants ~2,900 lines into a 3,557-line file:
+**No inventory.** Selectors are scattered across four modules, some inline, some
+module-private ~2,900 lines into a 3,557-line file:
 
 ```
 mode_control.py:43,49,61,79        factory.py:52,58,60
@@ -35,11 +33,7 @@ Nobody — human or agent — can answer *"what parts of Flow's page does gflow 
 The nightly canary (#502) can therefore only report *"a test failed"*, never *"this
 selector moved"*.
 
-**No user recourse.** A selector is compiled in. When Google renames a control, every user
-is broken until a release ships. `notebooklm-py`'s users patch a drifted value with an env
-var and keep working; gflow's cannot.
-
-**Context is encoded in file paths.** `SIDEBAR_CLOSE_SELECTOR` and
+**Context lives in file paths, not data.** `SIDEBAR_CLOSE_SELECTOR` and
 `SIDEBAR_CLOSE_FALLBACK_SELECTOR` are related only by naming convention.
 `UiSelectorDriftError` carries "the probe label" as free text. None of it is queryable.
 
@@ -47,57 +41,91 @@ var and keep working; gflow's cannot.
 
 ## 2. Evidence
 
-Everything in §3 rests on measurements taken 2026-08-21, not assumptions. Two of these
-overturned conclusions this design previously held.
+Measurements taken 2026-08-21. Independently replicated during council review; the
+replication is recorded here because two claims changed as a result.
 
 ### 2.1 Offline selector checking works
 
 Playwright's `set_content()` plus its locator engines (`:has()`, `:text-is()`) resolve
-gflow's real selectors against static HTML — no network, no auth, no credits. Cohort
-variants correctly report MISS.
+gflow's real selectors against static HTML — no network, auth, or credits.
 
-### 2.2 CI can capture the live DOM — one cookie is sufficient
+### 2.2 One cookie is sufficient — *at mint time*
 
-Six-arm isolation matrix, positive control in the same run, one variable at a time:
+Six-arm matrix, positive control in-run, one variable at a time — **plus the negative
+control the first write-up lacked**. Reproduce with `scripts/probe/spike_auth_matrix.py`.
 
-| Arm | Browser | Cookies | composer | icons |
-|---|---|---|---|---|
-| CONTROL | real Chrome + full profile | profile (63) | 1 | 17 |
-| D | real Chrome, fresh ctx | labs.google (7) | 1 | 17 |
-| E | real Chrome, fresh ctx | all 63 | 1 | 17 |
-| F | bundled chromium, fresh ctx | all 63 | 1 | 17 |
-| G | bundled chromium, fresh ctx | labs.google (7) | 1 | 17 |
-| **H** | **bundled chromium, fresh ctx** | **session-token only (1)** | **1** | **17** |
+| Arm | Browser | Cookie | project | composer | icons | buttons |
+|---|---|---|---|---|---|---|
+| CONTROL | real Chrome + full profile | profile (63) | real | 1 | 17 | — |
+| D | real Chrome, fresh ctx | labs.google (7) | real | 1 | 17 | — |
+| E | real Chrome, fresh ctx | all 63 | real | 1 | 17 | — |
+| F | bundled chromium | all 63 | real | 1 | 17 | — |
+| G | bundled chromium | labs.google (7) | real | 1 | 17 | — |
+| **H** | **bundled chromium** | **session-token only** | real | **1** | 17 | — |
+| **N1** | bundled chromium | **none** | real | **0** | 9 | 67 |
+| **N3** | bundled chromium | **value replaced with `xxx…`** | real | **0** | 9 | 67 |
+| N2 | bundled chromium | valid | **bogus** | 0 | **0** | **3** |
 
-**All six identical.** `__Secure-next-auth.session-token` (1088 chars, **30-day** expiry,
-scoped to `labs.google`) is sufficient on its own. No profile, no real Chrome, no
-`.google.com` cookies, no master token, no OAuth bounce.
+`__Secure-next-auth.session-token` (1088 chars, scoped to `labs.google`) is sufficient
+alone. **N1/N3 are what make this falsifiable**: without the cookie, or with its value
+corrupted, the app does not render. The cookie's *value* does the work, not its presence.
+
+The discriminator is **`composer ≥ 1` and `icons ≫ 0`**, not the literal cell values —
+those drift run to run (icons 17→18, jar 63→65).
 
 This is decisive because the blocker assumed for CI auth — `__Secure-1PSIDTS` rotating
 every ~10 minutes — is a **Google** cookie. Flow does not authenticate on it.
 
+**Scope limit — the token under test was ~9 minutes old.** Its sibling
+`__Secure-next-auth.pkce.code_verifier` / `.state` cookies show a full OAuth bounce
+minutes before measurement. The matrix therefore establishes sufficiency **at mint
+time**, never for an aged token — which is precisely the CI condition. R1 must include
+a day-7 re-run before this is relied on.
+
 ### 2.3 The confound that voided three earlier runs
 
 Three runs reused a hard-coded project id. A stale/deleted project renders an error shell
-— **~441KB, 3 buttons, 0 icons** — which is indistinguishable from an auth wall by every
-metric being measured. Those runs produced the false conclusions *"CI-without-auth is
-dead"* and *"DOM auth and API auth are separate gates."* Both are retracted.
+— **~441KB, 3 buttons, 0 icons** — indistinguishable from an auth wall by every metric
+measured. Those runs produced the false conclusions *"CI-without-auth is dead"* and
+*"DOM auth and API auth are separate gates."* Both retracted.
+
+Replicated independently (arm N2: 431KB / 3 buttons / 0 icons, single variable). **Cause
+established, not merely plausible.**
 
 > **Binding consequence:** any probe navigating to a fixed project id can produce a
 > convincing false negative. Every DOM probe MUST carry a positive control in the same
-> run, and MUST create or verify its project rather than trust a stored id.
+> run and MUST create-or-verify its project. §2.2 shows the same rule applies in the
+> other direction: an all-HIT matrix without a falsifying arm proves nothing either.
 
-### 2.4 Other measurements
+### 2.4 Locale is account-driven
 
-- **Headless is not bot-blocked** from a residential IP; unauthenticated it serves a 552KB
-  marketing page with none of the app.
-- **Locale is account-driven, not URL-driven.** Passing `locale="en"` to
-  `project_editor_url()` still redirected to `/fx/pt/` and served Portuguese. Selectors
-  MUST stay locale-invariant (Material Symbols ligatures, never display text).
-- **`CROP_SELECTORS[0]` MISSes on the agentic arm.** It is the *classic-mode indicator*
-  (`factory.py:116`), and only 1 of its 6 ratio variants was probed. Without `mode` and
-  ordered `candidates`, that MISS is unattributable — the exact ambiguity this design exists
-  to remove.
+Passing `locale="en"` to `project_editor_url()` still served `/fx/pt/` in Portuguese.
+The *evidence* for account-attribution is the authed/unauthed contrast at identical
+`Accept-Language` and IP: **authed → `pt`, unauthed → `en`, cookie the only variable**
+(N0/N2 vs N1/N3).
+
+**Corollary worth its own ticket:** `client.py:416`'s `locale="en-US"` and
+`ui_automation.py:77`'s comment that *"`?hl=en` locks locale"* are both **ineffective**.
+Selectors MUST be locale-invariant (Material Symbols ligatures, never display text).
+
+### 2.5 Viewport is selector-affecting
+
+`ui_automation.py:117-124` pins `_VIEWPORT = {1920, 1080}` and states that smaller
+*"would cross the responsive breakpoint and **drift the selectors**"*. `FlowApiClient`
+uses 1280×720 and Playwright's default context is 1280×720 — **both below the
+breakpoint**. Any probe not pinning 1920×1080 reports false drift.
+
+### 2.6 Headless is not bot-blocked
+
+Confirmed on the **authenticated full app** (arm N0), from one residential IP. The
+earlier unauthenticated observation was of a marketing page and does not support the
+claim. Says nothing about datacenter IPs — see R1.
+
+### 2.7 The session token does not rotate on use
+
+`last_update_utc == creation_utc` to the microsecond across a 30-day-old token. A CI
+secret is therefore **stable until it hard-dies at day 30** — preferable to a silently
+rotating credential, but it fails abruptly rather than degrading.
 
 ---
 
@@ -108,130 +136,128 @@ dead"* and *"DOM auth and API auth are separate gates."* Both are retracted.
 ```python
 @dataclass(frozen=True)
 class Surface:
-    key: str                     # "editor", "editor.media_picker", "character_editor"
-    reach: Reach                 # URL builder | (parent surface + non-mutating action)
-    modes: tuple[UiMode, ...]    # which arms this surface can present
+    key: str                     # "editor"
+    url_template: str
+    viewport: tuple[int, int]    # (1920, 1080) — below the breakpoint drifts selectors (§2.5)
+    modes: tuple[UiMode, ...]
 
 @dataclass(frozen=True)
 class Selector:
     key: str                     # "editor.composer.input" — stable, public, in errors
     surface: str                 # → Surface.key
-    mode: UiMode | None          # None = every mode of that surface
-    min_plan: Plan | None        # None = every plan; gated controls are expected-absent below it
     candidates: tuple[str, ...]  # ORDERED: [0] preferred, then cohort variants / fallbacks
-    features: tuple[str, ...]    # ("image", "video") — dependent commands
-    required: bool               # True → drift is exit 23; False → degraded but survivable
+    mode: UiMode | None          # None = every mode of that surface
+    expect_unique: bool          # True = >1 match is AMBIGUOUS, not HIT (§3.4)
     note: str                    # why fallbacks exist; incident refs
 ```
 
-Every field is justified by §2 or by a listed incident. `min_plan` exists because #171
-(`UpscaleUnavailableError`, exit 22) is plan-gated — `errors.py:508` says 4K upscale
-"requires a Flow Ultra subscription". On a free CI account those controls are legitimately
-absent, and that must not read as drift.
+**Dropped after council review** (each verified to have zero consumers):
 
-> **New type required.** `Plan` (Free / Pro / Ultra) does **not** exist in the codebase and
-> must be introduced by this work. It is deliberately NOT named `Tier`: `api/video.py:35`
-> already defines `Tier` as a *video quality* enum, and reusing the name would collide.
+| Field | Why cut |
+|---|---|
+| `min_plan` / `Plan` enum | No plan-gated selector is in the initial registry. Add the day one is — 4 lines then. |
+| `features` | Nothing reads it; `surface` + `note` already carry the context. |
+| `required` | All entries defaulted `True`, and its `False` branch returned the same grade as the mode branch. Two encodings, one outcome. |
 
-**Keys are a public promise.** They surface in exit-23 messages, canary reports, and the
-env override. Renaming one is a breaking change — which is why the override ships last.
+**Keys are a public promise** — they appear in canary reports and any future override.
 
-**Deliberately excluded:** timeouts, retry counts, screenshot-on-miss. Those are behaviour
-and belong at the call site; including them would make this a config framework rather than
-an inventory.
-
-### 3.2 Capture / check split
+### 3.2 Capture / check split, and the mode sidecar
 
 ```
-CAPTURE   navigate to surface → page.content() → HTML     [browser + 1 cookie, $0]
-CHECK     (html, entries) → HIT | FALLBACK | MISS         [pure; needs a browser only
-                                                           for the selector engine]
+CAPTURE  navigate (viewport-pinned) → page.content() + observed context → HTML + JSON
+CHECK    (html, entries, observed) → HIT | FALLBACK | AMBIGUOUS | MISS | EXPECTED_ABSENT
 ```
 
-The check is a pure function, so the *same code* grades a fresh capture and a committed
-snapshot. The layers cannot disagree.
+**`observed_mode` must be a capture-time sidecar, not inferred at check time.** Inferring
+it from the DOM is circular: the mode detector *is* `factory.py:116`'s crop/ligature
+probe. Without the sidecar, `editor.crop_control` (`mode=CLASSIC`) grades MISS = drift on
+every agentic capture — the exact error this design exists to prevent. Capture writes
+`{"mode": "agentic", "viewport": [1920,1080], "captured_at": "..."}` beside the HTML.
 
-**Invariant:** reach steps MUST be non-mutating and credit-free. Opening a panel qualifies;
-clicking Generate does not. This is what makes "$0" true by construction rather than by
-hope, and it is reviewable.
+**Correction to an earlier claim.** This does *not* mean snapshot and live checks "cannot
+disagree". `set_content()` drops external CSS/JS and re-executes inline scripts, and
+`page.content()` omits shadow roots. Both layers assert **structural presence only**;
+neither asserts visible/enabled today.
+
+**Invariant:** reach steps MUST be non-mutating and credit-free.
 
 ### 3.3 Where each layer runs
 
 | Layer | Trigger | Credential | Detects |
 |---|---|---|---|
-| **CI probe** | schedule + label (cadence open, see R1/§5) | `GFLOW_CI_SESSION_TOKEN` + project id | Google changed the page |
-| **Nightly canary** | 03:00 local | maintainer profile | drift on the maintainer's cohort/tier/IP |
-| **Snapshot tests** | every PR, offline | none | *we* broke a selector |
+| **CI probe** | `schedule` + `workflow_dispatch` | `GFLOW_CI_SESSION_TOKEN` + project id | Google changed the page |
+| **Nightly canary** | 03:00 local | maintainer profile | drift on the maintainer's cohort and IP |
 
-The nightly canary keeps a distinct role even with CI probing: a different account sits on
-a different **A/B cohort** and a different **plan**, and runs from a residential IP.
-Divergence between CI and nightly is *data*, not a bug — `mode`/`min_plan` make it attributable.
+**Snapshot fixtures are cut.** With CI probing live, a frozen snapshot only ever detects
+*our* regressions, while costing a second capture path, a PII-scrubbing pipeline, and a
+committed authenticated DOM in a public repo. The AST guardrail (deferred, §4) covers the
+same regression class far more cheaply.
 
 ### 3.4 Grading
 
-- **HIT** — `candidates[0]` resolved.
-- **FALLBACK HELD** — `[0]` missed, a later candidate resolved. **Warning, not failure**;
-  this is #493's actual outcome and the difference between a canary that gets read and one
-  that gets ignored.
-- **MISS (required)** — no candidate resolved → drift → `UiSelectorDriftError` (exit 23)
-  carrying the key.
-- **MISS (expected)** — `mode` or `min_plan` says it should be absent → informational.
+- **HIT** — `candidates[0]` resolved (uniquely, when `expect_unique`).
+- **FALLBACK HELD** — `[0]` missed, a later candidate resolved. Warning, not failure; #493's actual outcome.
+- **AMBIGUOUS** — resolved, but matched **>1** element on an `expect_unique` selector.
+  Drivers call `.first`, so a second match means gflow clicks the wrong thing while a
+  count-based check reports success. `SIDEBAR_CLOSE_FALLBACK_SELECTOR` is deliberately
+  unscoped and is the standing candidate for this.
+- **MISS** — nothing resolved → drift → exit 23.
+- **EXPECTED_ABSENT** — the sidecar's `mode` says it should not be here.
 
-### 3.5 Error contract and override
+### 3.5 Error contract — BLOCKED, pending a scope decision
 
-`UiSelectorDriftError` gains a structured `selector_key` alongside its free-text detail. The
-key is publication-safe for a public issue (unlike a raw selector or a path).
+Adding `selector_key` to `UiSelectorDriftError` and shipping
+`GFLOW_CLI_SELECTOR_OVERRIDE` both require the **drivers** to read from the registry.
+Today all 7 `UiSelectorDriftError(` raise sites are in `ui_automation.py` (2) and
+`ui_automation_video.py` (5), and nothing in those modules consumes the registry — so
+`selector_key` would stay `None` in production and an override would change what is
+*checked*, never what is *clicked*.
 
-Env override, **last phase only**:
+That makes §6's non-goal *"not replacing the driver code"* incompatible with this section.
+Three independent findings say cut: no user has requested an override
+(`gh issue list --state all --search "selector override"` → none), it does not work as
+specified, and making it work means inverting imports across two 3,800-line modules.
 
-```
-GFLOW_CLI_SELECTOR_OVERRIDE='editor.count_tabs=<css>;editor.composer.input=<css>'
-```
-
-A user hit by a #404-class rename patches it and keeps working; the proper fix ships at its
-own pace.
+**Deferred, not deleted** — the scope call belongs to the maintainer.
 
 ---
 
 ## 4. Migration
 
-Incremental, no phase requiring the 3,800-line module split up front.
+1. **Registry + grader** — drift-prone families only (composer, submit, agent toggle,
+   sidebar close, crop control, **count tabs**). #404 must be registered; the first draft
+   tested `editor.count_tabs` nine times without ever defining it.
+2. **Capture** — viewport-pinned, creates its own project, writes the mode sidecar.
+3. **CI probe workflow** — `schedule` + `workflow_dispatch` only.
 
-1. **Registry + surfaces for the drift-prone families only** — composer, mode switch, count
-   tabs, sidebar close. These carry the incident history.
-2. **Snapshot fixtures + offline check** — commit scrubbed DOM per surface; CI grades every PR.
-3. **CI probe workflow** — live capture, grading, report.
-4. **AST guardrail** — selector literals forbidden outside the registry (pattern:
-   `test_rpc_method_ids_only_in_types.py`).
-5. **Remaining selectors**, then the env override once keys have proven stable.
-
-Steps 1–3 deliver value independently. The AST lint lands only after (5) is reachable,
-otherwise it blocks its own migration.
+**Deferred to a follow-up plan:** the AST guardrail (it flags **9 real offenders** today —
+`ui_automation_video.py:91-96,162`, `agentic.py:62`, `diagnostics.py:1738` — so it reds on
+arrival while its migration is still deferred), inverting the import direction, additional
+surfaces, and §3.5 if the maintainer keeps it.
 
 ---
 
-## 5. Risks and open questions
+## 5. Risks
 
 | # | Risk | Resolution |
 |---|---|---|
-| R1 | **Datacenter IP.** Every measurement was from a residential IP; Google may treat a GitHub runner differently. | Unresolvable locally. Put the secret in, run once, look. Cheap and definitive. |
-| R2 | **30-day secret rotation.** CI fails on day 31 with a confusing auth error. | Nightly canary reads cookie expiry locally and warns on the dashboard below 7 days. |
-| R3 | **Project validity** (§2.3). | CI creates or verifies its project per run; never trusts a stored id blindly. |
-| R4 | **Free-plan CI account** cannot render plan-gated controls. | `min_plan` field; expected-absent ≠ drift. Requires introducing a `Plan` enum. |
-| R5 | **Snapshots rot** into always-passing. | They only ever detect *our* regressions; the live probe is the drift authority. Re-record on every confirmed drift. |
-| R6 | **DOM snapshots carry PII** — project ids, asset URLs, possibly email. | Scrubbing required before commit, enforced by a guardrail test (pattern: `test_cassettes_clean.py`). |
-| R7 | Static snapshots lose CSS/JS, so **visibility/enabled state is unverifiable offline**. | Snapshot layer asserts structural presence only; live probe additionally asserts visible/enabled. |
-
-**Open question:** should CI probe on every PR, or on a schedule plus label? Every-PR gives
-the fastest signal but hammers one account; the answer likely depends on R1.
+| R1 | **Datacenter IP** — all measurements from a residential IP. | Unresolvable locally. `workflow_dispatch` once and read the result. Must also include a **day-7 token re-run** (§2.2 scope limit). |
+| R2 | **Token hard-dies at day 30** (§2.7 — no rotation, so no warning). | Nightly canary reports remaining life. It MUST pin the profile path — two `profile_denon82` trees exist on the maintainer's machine and the orphaned one reports "expired 38 days ago". |
+| R3 | **Project validity** (§2.3). | Probe creates-or-verifies per run. |
+| R4 | **State-gated selectors.** `SIDEBAR_CLOSE` exists only while the sidebar is expanded, so a URL-only surface grades it MISS. | Phase 1 registers only selectors present on a freshly-loaded editor. State-gated entries wait for `Reach`. |
+| R5 | **CI has no browser.** `ci.yml:165` runs plain pytest; no workflow installs Playwright. | Probe workflow installs chromium itself. No default-suite test may require a real browser. |
+| R6 | **Secrets in a public repo.** | Dedicated throwaway account, never the maintainer's. Reuse `src/gflow_cli/data/redaction.py` (already covers `Bearer`, `SAPISIDHASH`, `__Secure-next-auth.session-token`, signed queries) for any published output — do not write a fourth redactor. |
+| R7 | **Same-repo branch PRs would receive the secret** while checking out attacker-editable probe code. Fork PRs are safe (GitHub withholds secrets). | Never add `pull_request`; never `pull_request_target`. |
 
 ---
 
 ## 6. Non-goals
 
-- **Not** replacing the driver code. The registry owns data; clicking stays where it is.
-- **Not** a Page Object Model rewrite. POM hides selectors inside classes; enumerability is
-  the whole point here.
-- **Not** the master token. §2.2 makes it unnecessary — see `[[master-token-tier0-deferred]]`.
+- **Not** replacing the driver code *in this phase*. §3.5 is deferred precisely because it
+  would require that; the two cannot both hold.
+- **Not** a Page Object Model rewrite — POM hides selectors inside classes; enumerability
+  is the point.
+- **Not** the master token — §2.2 makes it unnecessary. See `[[master-token-tier0-deferred]]`.
 - **Not** generation testing. The probe never submits, never spends credits.
-- **Not** splitting `ui_automation*.py` in this work. Desirable, separately scoped.
+- **Not** committed DOM snapshots (§3.3).
+- **Not** splitting `ui_automation*.py`. Desirable, separately scoped.
