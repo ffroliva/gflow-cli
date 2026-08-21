@@ -58,6 +58,8 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | [docs/superpowers/plans/2026-07-19-live-verify/PLAN.md](superpowers/plans/2026-07-19-live-verify/PLAN.md) | Task-by-task implementation plan for `/gflow:live-verify` (skill file → AGENTS.md/check.md wiring → INDEX row) | Tracking task-by-task execution of the live-verify skill |
 | [docs/superpowers/plans/2026-07-27-tier-aware-credit-confirmations/SCENARIO.md](superpowers/plans/2026-07-27-tier-aware-credit-confirmations/SCENARIO.md) | Edge-case matrix for replacing fixed chain/movie credit estimates with truthful pending-operation guidance | Reviewing the financial-safety, resume, dry-run, and compatibility scenarios |
 | [docs/superpowers/plans/2026-07-27-tier-aware-credit-confirmations/PLAN.md](superpowers/plans/2026-07-27-tier-aware-credit-confirmations/PLAN.md) | TDD implementation plan for tier-aware chain/movie planning and confirmation output | Tracking the isolated runtime pricing-guidance bugfix |
+| [docs/superpowers/specs/2026-08-21-selector-registry-design.md](superpowers/specs/2026-08-21-selector-registry-design.md) | Selector registry + drift probe design spec: measured one-cookie auth evidence, data model, grading semantics, CI probe, risk register | Reviewing the registry/probe design or auditing its evidence |
+| [docs/superpowers/plans/2026-08-21-selector-registry.md](superpowers/plans/2026-08-21-selector-registry.md) | Task-by-task TDD plan for the selector registry + CI probe (executed — PR #563) | Auditing how the registry/probe was built |
 
 ## Agent commands
 
@@ -133,6 +135,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"How do I run e2e tests before a release?"** → [DEVELOPMENT § E2e gate](DEVELOPMENT.md#e2e-gate-before-merging-develop--main)
 **"What does each e2e marker cost? How do I run only the cheap tests?"** → [E2E_TESTING § Run commands](E2E_TESTING.md#run-commands)
 **"Has Flow drifted since the last release? What is the nightly canary telling me?"** → [E2E_TESTING § Nightly canary](E2E_TESTING.md#nightly-canary-502)
+**"Which Flow selector moved? What is the CI selector probe telling me (exit 0/1/2)?"** → [E2E_TESTING § Selector drift probe](E2E_TESTING.md#selector-drift-probe-563)
 **"When does the version get bumped?"** → [DEVELOPMENT § Version bump protocol](DEVELOPMENT.md#version-bump-protocol)
 **"How do I embed FlowApiClient in a long-lived worker / service?"** → [USER_GUIDE § Journey 14](USER_GUIDE.md#journey-14--embedding-flowapiclient-in-a-long-lived-worker)
 **"What's the standard way to import gflow errors in my code?"** → [USAGE § Programmatic use](USAGE.md#programmatic-use)
