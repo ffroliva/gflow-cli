@@ -27,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CI/CD supply-chain hardening
   ([#565](https://github.com/ffroliva/gflow-cli/issues/565)).** Every
-  `actions/checkout` step now sets `persist-credentials: false` (12 steps across
-  `ci.yml`, `deps-watch.yml`, `governance-advisory.yml`,
+  `actions/checkout` step now sets `persist-credentials: false` (12 existing
+  steps fixed across `ci.yml`, `deps-watch.yml`, `governance-advisory.yml`,
   `governance-benchmark.yml`, `main-base-guard.yml`, `pages.yml` and
   `release.yml`); the default leaves the job token in `.git/config` for the rest
   of the job. No workflow needed it — releases publish over PyPI Trusted

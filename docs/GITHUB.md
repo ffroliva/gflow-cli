@@ -190,7 +190,8 @@ Use this rule:
 The workflows are themselves a supply-chain surface: they hold a repository
 token, `release.yml` publishes to PyPI, and their inputs (branch names, PR
 titles, fork content) are attacker-controllable text. Two rules keep that
-surface honest, both mechanically enforced.
+surface honest, both mechanically enforced. A third gate was evaluated and
+declined; § 3 records that decision so it is not re-litigated.
 
 ### 1. No checkout persists the job token
 

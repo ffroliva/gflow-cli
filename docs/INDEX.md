@@ -23,7 +23,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | **[docs/DEVELOPMENT.md](DEVELOPMENT.md)** | Branching model, PR protocol, e2e gate, version bump protocol, AI-assisted workflow | Understanding the end-to-end dev process |
 | **[docs/E2E_TESTING.md](E2E_TESTING.md)** | Layer model, cost sub-markers, run commands, isolation patterns, roadmap to contract/replay layer | Running or extending e2e tests; cost control |
 | **[docs/AGENT_UI_E2E.md](AGENT_UI_E2E.md)** | Deterministic e2e runbook for the Agentic UI image path (force-agent trigger, validation ledger) | Live-verifying Agentic-UI features |
-| **[docs/GITHUB.md](GITHUB.md)** | Maintainer PR triage protocol, forked PR handling, SonarCloud scenarios | Reviewing or merging a GitHub PR |
+| **[docs/GITHUB.md](GITHUB.md)** | Maintainer PR triage protocol, forked PR handling, SonarCloud scenarios, workflow security gates | Reviewing or merging a GitHub PR; adding or changing a workflow |
 | [docs/sonar-cleanup-tracker.md](sonar-cleanup-tracker.md) | SonarCloud zero-smells cleanup tracker (`chore/sonar-zero-cleanup`) | Resuming or auditing the Sonar cleanup effort |
 | [docs/medium_tutorial.md](medium_tutorial.md) | Long-form tutorial article (Medium draft): Veo + Imagen from the terminal | Writing or updating outreach/tutorial content |
 | [.env.template](../.env.template) | All environment variables with defaults | Setting up a new shell or container |
