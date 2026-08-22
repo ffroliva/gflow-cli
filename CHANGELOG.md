@@ -23,6 +23,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2 inconclusive — an expired token or dead project is never published as
   drift.
 
+### Security
+
+- **CI/CD supply-chain hardening
+  ([#565](https://github.com/ffroliva/gflow-cli/issues/565)).** Every
+  `actions/checkout` step now sets `persist-credentials: false` (12 steps across
+  `ci.yml`, `deps-watch.yml`, `governance-advisory.yml`,
+  `governance-benchmark.yml`, `main-base-guard.yml`, `pages.yml` and
+  `release.yml`); the default leaves the job token in `.git/config` for the rest
+  of the job. No workflow needed it — releases publish over PyPI Trusted
+  Publishing (OIDC) and Pages deploys over `actions/deploy-pages`. A new
+  `workflow-audit` job runs [zizmor](https://github.com/zizmorcore/zizmor)
+  (pinned, `--offline`) over `.github/workflows/` on every push and PR, so the
+  class cannot come back. Its first run also caught two defects the manual pass
+  missed: `${{ github.base_ref }}` interpolated directly into a
+  `governance-advisory.yml` shell script (template injection — the value now
+  arrives through `env:`), and a shared uv cache restored by the publishing
+  release job (cache poisoning — caching is now off there). The
+  `pull_request_target` trigger in `external-pr-triage.yml` is suppressed inline
+  with its rationale, and a changelog-guard workflow was evaluated and declined
+  — both decisions recorded in
+  [docs/GITHUB.md § Workflow Security Gates](docs/GITHUB.md#workflow-security-gates).
+
 ## [0.59.0] — 2026-08-16
 
 ### Added

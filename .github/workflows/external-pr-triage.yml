@@ -1,7 +1,15 @@
 name: External PR Triage
 
+# `pull_request_target` is deliberate and is the reason this file is the
+# highest-risk surface in the repo: labelling a fork's PR needs a token forks
+# cannot be given, and `pull_request` does not have one. The trigger is only
+# unsafe when the workflow CHECKS OUT or EXECUTES the untrusted head — this one
+# never does: there is no `actions/checkout` step at all, every PR field is read
+# from `context.payload` inside github-script, and permissions are scoped to
+# `issues`/`pull-requests` write. Keep all three properties or drop the
+# suppression with them.
 on:
-  pull_request_target:
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
     types: [opened, reopened, synchronize, ready_for_review, edited]
 
 permissions:
