@@ -23,7 +23,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | **[docs/DEVELOPMENT.md](DEVELOPMENT.md)** | Branching model, PR protocol, e2e gate, version bump protocol, AI-assisted workflow | Understanding the end-to-end dev process |
 | **[docs/E2E_TESTING.md](E2E_TESTING.md)** | Layer model, cost sub-markers, run commands, isolation patterns, roadmap to contract/replay layer | Running or extending e2e tests; cost control |
 | **[docs/AGENT_UI_E2E.md](AGENT_UI_E2E.md)** | Deterministic e2e runbook for the Agentic UI image path (force-agent trigger, validation ledger) | Live-verifying Agentic-UI features |
-| **[docs/GITHUB.md](GITHUB.md)** | Maintainer PR triage protocol, forked PR handling, SonarCloud scenarios | Reviewing or merging a GitHub PR |
+| **[docs/GITHUB.md](GITHUB.md)** | Maintainer PR triage protocol, forked PR handling, SonarCloud scenarios, workflow security gates | Reviewing or merging a GitHub PR; adding or changing a workflow |
 | [docs/sonar-cleanup-tracker.md](sonar-cleanup-tracker.md) | SonarCloud zero-smells cleanup tracker (`chore/sonar-zero-cleanup`) | Resuming or auditing the Sonar cleanup effort |
 | [docs/medium_tutorial.md](medium_tutorial.md) | Long-form tutorial article (Medium draft): Veo + Imagen from the terminal | Writing or updating outreach/tutorial content |
 | [.env.template](../.env.template) | All environment variables with defaults | Setting up a new shell or container |
@@ -128,6 +128,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"What does Chrome actually use in RAM during a generation?"** → run `uv run python scripts/diag/memory_profile.py --profile NAME` (see [scripts/diag/README.md](../scripts/diag/README.md))
 **"How do I report a security issue?"** → [SECURITY § Reporting](SECURITY.md#reporting)
 **"What branch do I work on? How do I name it?"** → [DEVELOPMENT § Branching model](DEVELOPMENT.md#branching-model)
+**"What secures our GitHub Actions workflows?"** → [GITHUB § Workflow Security Gates](GITHUB.md#workflow-security-gates)
 **"How do I handle an external GitHub PR?"** → [GITHUB § Scenario Matrix](GITHUB.md#scenario-matrix)
 **"What automation runs on external PRs?"** → [GITHUB § Automated External PR Triage](GITHUB.md#automated-external-pr-triage)
 **"How do we use Copilot review on PRs?"** → [GITHUB § GitHub Copilot Code Review](GITHUB.md#github-copilot-code-review)

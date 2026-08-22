@@ -185,6 +185,86 @@ Use this rule:
 - Sonar findings are usually maintainability, reliability, security, or coverage
   signals; small findings may be cosmetic, but they still need classification
 
+## Workflow Security Gates
+
+The workflows are themselves a supply-chain surface: they hold a repository
+token, `release.yml` publishes to PyPI, and their inputs (branch names, PR
+titles, fork content) are attacker-controllable text. Two rules keep that
+surface honest, both mechanically enforced. A third gate was evaluated and
+declined; § 3 records that decision so it is not re-litigated.
+
+### 1. No checkout persists the job token
+
+Every `actions/checkout` step sets `persist-credentials: false`. The action's
+default is `true`, which writes the job token into `.git/config` in the runner
+workspace, where it stays for the rest of the job — and travels into any
+artifact built from that workspace.
+
+Nothing in this repo needs the persisted credential: no workflow runs `git
+push`. `release.yml` publishes through PyPI Trusted Publishing (OIDC) and
+`softprops/action-gh-release` (its own token input); `pages.yml` deploys through
+`actions/deploy-pages` (OIDC); `governance-advisory.yml`'s `git fetch` is an
+unauthenticated read of a public repository, and is redundant with its
+`fetch-depth: 0` checkout in the first place.
+
+### 2. `zizmor` audits every workflow on every PR
+
+The `workflow-audit` job in `ci.yml` runs
+[zizmor](https://github.com/zizmorcore/zizmor), a static analyser for GitHub
+Actions. Run it locally exactly as CI does:
+
+```bash
+uvx zizmor==1.29.0 --offline --min-severity low .github/workflows/
+```
+
+`--offline` keeps the gate deterministic and fork-safe (the online audits need a
+token and network); action pinning and freshness are already covered by
+Dependabot and Scorecard's Pinned-Dependencies check. The pin is asserted by
+`tests/scripts/test_workflow_hardening.py`, so the gate and the test cannot
+drift apart silently.
+
+Two findings are deliberately not fixed, and both are documented where they
+live:
+
+| Finding | Where | Why |
+|---|---|---|
+| `dangerous-triggers` | `external-pr-triage.yml` | `pull_request_target` is required to label a fork's PR. The trigger is only unsafe when the workflow checks out or executes the untrusted head; this one never does — no `actions/checkout` at all, PR fields read from `context.payload`, scoped permissions. Suppressed inline with that rationale. |
+| `superfluous-actions` (informational) | `release.yml` | zizmor suggests replacing `softprops/action-gh-release` with `gh release`. Rewriting the release publisher is not a hardening change; declined rather than risked. Informational findings do not gate (`--min-severity low`). |
+
+### 3. Changelog guard — declined (2026-08-22, [#565](https://github.com/ffroliva/gflow-cli/issues/565))
+
+A [changelog-guard workflow](https://github.com/mvanhorn/last30days-skill/blob/main/.github/workflows/changelog-guard.yml)
+was evaluated for adoption and **declined**. Its central rule — *non-release PRs
+must not edit `CHANGELOG.md`* — is the inverse of this project's convention:
+gflow-cli follows Keep a Changelog with a live `## [Unreleased]` section that
+ordinary feature PRs are expected to update. Adopting it would block almost
+every PR the repo merges.
+
+The rest of the reference workflow is either unneeded or already mechanical
+here:
+
+- **Changelog fragments** presuppose a towncrier-style fragment directory this
+  repo does not have. The `[Unreleased]` section already serves that purpose
+  without a second source of truth to reconcile at release time.
+- **`release` label exemption** — release-ness is keyed off the branch
+  (`chore/release-*`) and base (`main`), already enforced by
+  `main-base-guard.yml`. A label would be a third and weaker signal.
+- **Version lockstep across manifests** — already enforced by
+  `scripts/ci/check_release_artifacts.py` (pyproject ↔ `__version__` ↔
+  CHANGELOG section ↔ footer links ↔ `LIVE_VERIFICATION` doc) on every PR into
+  `main`, and re-checked against the tag by `release.yml` at publish time.
+
+**Recorded gap, deliberately left open:** nothing stops a non-release PR into
+`develop` from bumping a version string — the release-artifact guard only runs
+on `main`-targeting PRs. The minimal adaptation would be a `main-base-guard.yml`
+job failing a `develop`-targeting PR that changes `version =` in
+`pyproject.toml` or `__version__`, exempting `chore/release-*` and `hotfix/*`.
+It is not built here because the `main` → `develop` back-merge PR carries
+exactly that bump legitimately, so the exemption has to be verified against a
+real back-merge before the guard can block anything — and an unverified gate on
+the release path is worse than the convention it would replace. Open a
+follow-up issue if a stray bump ever actually lands.
+
 ## Merge Rule
 
 Merge to `develop` only after:
