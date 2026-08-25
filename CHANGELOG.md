@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.60.0] — 2026-08-25
+
 ### Added
 
 - **Selector registry + nightly CI drift probe
@@ -22,6 +24,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   editor: navigate and read only, never generates. Exit 0 clean / 1 drift /
   2 inconclusive — an expired token or dead project is never published as
   drift.
+
+- **Incident bundles record what was submitted
+  ([#528](https://github.com/ffroliva/gflow-cli/issues/528)).**
+  `network.json` gains a `generation_requests` array carrying a counts-only
+  summary of each outgoing generation submit (body size, reference-entity
+  count, reference-field count). The reference shape that triggers a policy 400
+  was previously visible only in the stderr stream, so bundles attached to an
+  issue could not be diagnosed. Counts and booleans only — no key names, field
+  values, or prompt text — matching the existing §5.3 retention boundary.
+
+### Changed
+
+- **All labs.google requests now carry `origin`/`referer`
+  ([#578](https://github.com/ffroliva/gflow-cli/pull/578)).** Header
+  construction moved into a single `_request_headers()` shared by
+  `_post_json`/`_patch_json`/`_get_json`, which previously assembled headers
+  inline three times and could diverge per verb. The labs lane now sends the
+  same `origin`/`referer` every other lane already sent. A live A/B against
+  `project.createProject` showed these headers are **not** required — an
+  origin-less mutation still returns 200 — so this is consistency and
+  defence-in-depth, not a fix for any observed failure.
 
 ### Fixed
 
@@ -43,17 +66,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`generate_images_batch` no longer reports a bare, remediation-free
   `GFlowError`** when every response failed — it classifies the first error the
   same way the single-prompt path does.
-
-### Added
-
-- **Incident bundles record what was submitted
-  ([#528](https://github.com/ffroliva/gflow-cli/issues/528)).**
-  `network.json` gains a `generation_requests` array carrying a counts-only
-  summary of each outgoing generation submit (body size, reference-entity
-  count, reference-field count). The reference shape that triggers a policy 400
-  was previously visible only in the stderr stream, so bundles attached to an
-  issue could not be diagnosed. Counts and booleans only — no key names, field
-  values, or prompt text — matching the existing §5.3 retention boundary.
 
 ### Security
 
@@ -3143,7 +3155,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.59.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.60.0...HEAD
+[0.60.0]: https://github.com/ffroliva/gflow-cli/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/ffroliva/gflow-cli/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/ffroliva/gflow-cli/compare/v0.57.1...v0.58.0
 [0.57.1]: https://github.com/ffroliva/gflow-cli/compare/v0.57.0...v0.57.1
