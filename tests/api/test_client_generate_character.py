@@ -176,20 +176,43 @@ class TestGenerateCharacterImage:
 
         assert transport.calls[0]["locale"] == "fr-FR"
 
-    async def test_default_locale_is_en_us(self, tmp_path: Path) -> None:
-        """When locale is omitted, it defaults to 'en-US'."""
+    async def test_omitted_locale_uses_the_resolved_account_locale(self, tmp_path: Path) -> None:
+        """Omitting locale must use the ACCOUNT's locale, not 'en-US' (#580).
+
+        This test previously asserted a default of ``en-US``. That default was the
+        bug: on a pt-BR account it routes the character editor to ``/fx/en/...``,
+        and Flow's correcting redirect lands *after* ``page.goto`` returns —
+        bouncing the page out from under the prompt submit. That is how #395
+        presented ("character-route bounce sent the prompt to the project
+        composer").
+        """
         transport = _FakeCharTransport()
         client = _client_with_transport(tmp_path, transport)
+        client._account_locale = "pt"
 
-        req = CharacterImageRequest(prompt="test")
         await client.generate_character_image(
             project_id=_PROJECT_ID,
             entity_id=_ENTITY_ID,
-            req=req,
+            req=CharacterImageRequest(prompt="test"),
             image_reference_index=0,
         )
 
-        assert transport.calls[0]["locale"] == "en-US"
+        assert transport.calls[0]["locale"] == "pt"
+
+    async def test_unresolved_account_locale_passes_none_not_en(self, tmp_path: Path) -> None:
+        """Unresolved locale => None => bare URL. Never a guessed 'en'."""
+        transport = _FakeCharTransport()
+        client = _client_with_transport(tmp_path, transport)
+        assert client._account_locale is None
+
+        await client.generate_character_image(
+            project_id=_PROJECT_ID,
+            entity_id=_ENTITY_ID,
+            req=CharacterImageRequest(prompt="test"),
+            image_reference_index=0,
+        )
+
+        assert transport.calls[0]["locale"] is None
 
 
 _SIGNED_FIFE_URL = (

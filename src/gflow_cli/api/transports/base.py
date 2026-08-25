@@ -53,6 +53,13 @@ class TransportSetup:
     """Cloud-storage target for video uploads. ``None`` keeps downloads local."""
     output_dir: Path | None = None
     """Local directory video downloads land in (``settings.output_dir``)."""
+    account_locale: str | None = None
+    """The ACCOUNT's locale segment, resolved from where Flow itself lands (#580).
+
+    Not a default, not the browser's locale — `navigator.language` reports the
+    value gflow sets when launching the context, so reading it returns the wrong
+    answer confidently. ``None`` means unresolved: build bare URLs and let Flow
+    normalise, rather than guessing ``en`` and eating a post-goto redirect."""
     record_generation_request: GenerationRequestRecorder | None = None
     """Sink for counts-only generation-request summaries (issue #528).
 
