@@ -19,6 +19,23 @@ if TYPE_CHECKING:
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
 
+class GenerationRequestRecorder(Protocol):
+    """Counts-only sink for outgoing generation-request summaries (issue #528).
+
+    Structural so the transports never import ``diagnostics`` (which must stay
+    leaf-level — ``FlowApiClient`` owns the ``IncidentRecorder``)."""
+
+    def __call__(
+        self,
+        *,
+        url: str,
+        body_bytes: int,
+        reference_entity_count: int,
+        reference_field_count: int,
+        mentions_reference_entities: bool,
+    ) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class TransportSetup:
     """Immutable output/storage wiring the client hands a transport.
@@ -36,6 +53,13 @@ class TransportSetup:
     """Cloud-storage target for video uploads. ``None`` keeps downloads local."""
     output_dir: Path | None = None
     """Local directory video downloads land in (``settings.output_dir``)."""
+    record_generation_request: GenerationRequestRecorder | None = None
+    """Sink for counts-only generation-request summaries (issue #528).
+
+    The incident recorder's context-level listeners cannot decode a request
+    body, so the transport — which already summarises it for the #170 submit
+    backstop — hands the counts back through this callback. ``None`` (the
+    default, and whenever incident capture is off) makes the call a no-op."""
 
 
 @runtime_checkable

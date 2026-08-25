@@ -20,10 +20,12 @@ from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
+    FlowApiError,
     NetworkError,
     RateLimitError,
     WafRejectionError,
     WireFormatError,
+    classify_content_safety,
 )
 
 # ---------------------------------------------------------------------------
@@ -123,6 +125,58 @@ def interpret_response(strategy_name: str, resp: Any) -> list[GeneratedImage]:
 
     msg = f"{strategy_name}: unexpected HTTP status {status}: {_redacted_snippet(text)}"
     raise WireFormatError(msg)
+
+
+GENERATION_POLICY_HINT: str = (
+    "Flow refused this generation (HTTP 400 on the generation route). This is "
+    "almost always a content-policy rejection, not a malformed request — on this "
+    "path Flow's own web app composes the request body. Most common causes, in "
+    "order: (a) more than ONE face-bearing reference in the same request — reduce "
+    "to a single --reference-entity OR a single portrait --ref and carry other "
+    "people in prose; (b) an age-explicit person descriptor in the prompt ('a "
+    "young woman in her early 20s', 'a man of about thirty') — use a relational "
+    "or role noun instead ('his adult granddaughter', 'an estate agent'); (c) a "
+    "real-person likeness or a frontal close-up face. Shortening the prompt does "
+    "NOT help."
+)
+
+
+def generation_error(*, status: int, route: str, body: object) -> FlowApiError:
+    """Classify a non-2xx status on a Flow **generation** route (issue #528).
+
+    Returns the exception rather than raising it: the single-prompt paths do
+    ``raise generation_error(...)``, while ``generate_images_batch`` needs the
+    object to hand back inside a per-prompt ``BatchSubmissionResult``.
+
+    Callers reach here only after 401/403/429 have been branched off, and only
+    when no image/media survived — so this decides between "Flow refused the
+    content" and "we genuinely do not understand this response".
+
+    * 400 → :class:`ContentPolicyError`. Named ``reason`` when Flow sent one,
+      but a bare 400 counts too: on the ``ui_automation`` path the generation
+      request body is composed by Flow's own web app, so a 400 there cannot be
+      our malformation. Before #528 these surfaced as ``WireFormatError``
+      telling operators to "retry with a simpler prompt text", which never works.
+    * any other status → :class:`WireFormatError`, unchanged.
+    """
+    if status == 400:
+        reason = classify_content_safety(body)
+        detail = f"HTTP 400 on {route or 'the generation route'}: Flow refused the request " + (
+            f"on content-safety grounds (reason={reason})"
+            if reason
+            else "— no reason field returned (see remediation for the usual causes)"
+        )
+        return ContentPolicyError(
+            detail=detail,
+            status=400,
+            route=route,
+            remediation_hint=GENERATION_POLICY_HINT,
+        )
+    return WireFormatError(
+        detail=f"generation route returned HTTP {status}",
+        status=status,
+        route=route,
+    )
 
 
 def _redacted_snippet(text: str) -> str:

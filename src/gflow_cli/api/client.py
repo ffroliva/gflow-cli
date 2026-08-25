@@ -85,6 +85,7 @@ from gflow_cli.errors import (
     UpscaleUnavailableError,
     WafRejectionError,
     WireFormatError,
+    classify_content_safety,
 )
 from gflow_cli.paths import adjust_key_extension, character_output_path, looks_like_video
 from gflow_cli.profile_lease import ProfileLease
@@ -819,10 +820,16 @@ class FlowApiClient:
 
     def _build_transport_setup(self) -> TransportSetup:
         """Assemble the immutable output/storage wiring handed to the transport."""
+        rec = self._recorder
         return TransportSetup(
             out_dir=self._out_dir,
             storage_uri=self.settings.storage_uri,
             output_dir=self.settings.output_dir,
+            # #528: the transport sees request bodies the context-level network
+            # listeners cannot decode. None when capture is off.
+            record_generation_request=(
+                rec.record_generation_request if rec is not None and rec.enabled else None
+            ),
         )
 
     def _apply_transport_setup(
@@ -2770,56 +2777,6 @@ def _is_png_or_jpeg(data: bytes) -> bool:
     return data[:8] == b"\x89PNG\r\n\x1a\n" or data[:3] == b"\xff\xd8\xff"
 
 
-_CONTENT_SAFETY_REASONS: frozenset[str] = frozenset(
-    {
-        "PUBLIC_ERROR_UNSAFE_GENERATION",
-        "PUBLIC_ERROR_UNSAFE_CONTENT",
-        "PUBLIC_ERROR_UNSAFE_FACE",
-        "PUBLIC_ERROR_UNSAFE_IDENTITY",
-    }
-)
-
-
-def _classify_content_safety(body_text: str) -> str | None:
-    """Parse a Flow error body for content-safety rejection reasons.
-
-    Returns the matching ``reason`` string (e.g.
-    ``PUBLIC_ERROR_UNSAFE_GENERATION``) if the body contains a known
-    content-safety reason, or ``None`` otherwise.
-
-    Flow's HTTP 400 error shape::
-
-        {
-          "error": {
-            "code": 400,
-            "message": "Request contains an invalid argument.",
-            "status": "INVALID_ARGUMENT",
-            "details": [
-              {"@type": "...ErrorInfo", "reason": "PUBLIC_ERROR_UNSAFE_GENERATION"}
-            ]
-          }
-        }
-    """
-    try:
-        parsed: object = json.loads(body_text)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    parsed_dict = cast("JsonObject", parsed)
-    error_obj = cast("JsonObject | None", parsed_dict.get("error"))
-    if not isinstance(error_obj, dict):
-        return None
-    details_obj = cast("list[JsonObject] | None", error_obj.get("details"))
-    if not isinstance(details_obj, list):
-        return None
-    for item in details_obj:
-        reason = cast("str", item.get("reason", ""))
-        if reason in _CONTENT_SAFETY_REASONS:
-            return reason
-    return None
-
-
 def _extract_provider_error_message(body_text: str) -> str | None:
     """Extract human-readable error message from provider JSON response body if present."""
     if not body_text or not body_text.strip():
@@ -2903,7 +2860,7 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
             route=route,
         )
     if resp.status == 400:
-        safety_reason = _classify_content_safety(body_text)
+        safety_reason = classify_content_safety(body_text)
         if safety_reason is not None:
             base_detail = (
                 f"HTTP 400: Flow refused the request on content-safety grounds "

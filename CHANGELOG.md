@@ -23,6 +23,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2 inconclusive — an expired token or dead project is never published as
   drift.
 
+### Fixed
+
+- **Content-policy 400s are no longer misclassified as `WireFormatError`
+  ([#528](https://github.com/ffroliva/gflow-cli/issues/528)).** An HTTP 400 from
+  `flowMedia:batchGenerateImages` or `batchAsyncGenerateVideo*` now raises
+  `ContentPolicyError` with remediation that names the levers that actually
+  work — reduce to a single face-bearing reference, replace age-explicit person
+  descriptors with relational or role nouns — and states outright that
+  shortening the prompt does not help. Previously these surfaced as "the
+  request was rejected as malformed… retry with a simpler prompt text", which
+  sends operators down a path that cannot succeed. Same defect shape as
+  [#379](https://github.com/ffroliva/gflow-cli/issues/379) (429), one status
+  over, and the self-documenting-errors goal of
+  [#380](https://github.com/ffroliva/gflow-cli/issues/380).
+- **Video generation gained the 429 branch the image path got in #379.** A
+  quota hit on `batchAsyncGenerateVideo*` raised `WireFormatError` instead of
+  `RateLimitError`, losing `Retry-After` and the retryable classification.
+- **`generate_images_batch` no longer reports a bare, remediation-free
+  `GFlowError`** when every response failed — it classifies the first error the
+  same way the single-prompt path does.
+
+### Added
+
+- **Incident bundles record what was submitted
+  ([#528](https://github.com/ffroliva/gflow-cli/issues/528)).**
+  `network.json` gains a `generation_requests` array carrying a counts-only
+  summary of each outgoing generation submit (body size, reference-entity
+  count, reference-field count). The reference shape that triggers a policy 400
+  was previously visible only in the stderr stream, so bundles attached to an
+  issue could not be diagnosed. Counts and booleans only — no key names, field
+  values, or prompt text — matching the existing §5.3 retention boundary.
+
 ### Security
 
 - **CI/CD supply-chain hardening
