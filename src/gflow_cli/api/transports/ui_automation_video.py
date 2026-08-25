@@ -26,7 +26,8 @@ from typing import TYPE_CHECKING, Any, cast
 import structlog
 
 from gflow_cli.api import routes
-from gflow_cli.api.transports._common import extract_project_id
+from gflow_cli.api._retry import parse_retry_after
+from gflow_cli.api.transports._common import extract_project_id, generation_error
 from gflow_cli.api.transports.drivers.factory import AGENTIC_INDICATOR_SELECTORS
 from gflow_cli.api.video import (
     I2V_DEFAULT_MODEL,
@@ -48,6 +49,7 @@ from gflow_cli.errors import (
     FlowAppError,
     MediaUploadRejectedError,
     ModelModeIncompatibilityError,
+    RateLimitError,
     ReferenceNotFoundError,
     TransportTimeoutError,
     UiSelectorDriftError,
@@ -3350,11 +3352,26 @@ class VideoGenerationMixin:
                 status=403,
                 route=route,
             )
-        if http_status != 200:
-            raise WireFormatError(
-                detail=f"batchAsyncGenerateVideo* returned HTTP {http_status}",
-                status=http_status if isinstance(http_status, int) else None,
+        if http_status == 429:
+            # #379 gave the image path a 429 branch; video never got one, so a
+            # quota hit surfaced as "unexpected response shape" (#528).
+            retry_after = parse_retry_after(generate_resp)
+            raise RateLimitError(
+                detail=(
+                    "batchAsyncGenerateVideo* returned HTTP 429 — rate limit hit."
+                    + (f" Retry after {retry_after:.0f}s." if retry_after is not None else "")
+                ),
+                status=429,
                 route=route,
+                retry_after=retry_after,
+            )
+        if http_status != 200:
+            # #528: same misclassification as the image path — a 400 here is a
+            # content-policy refusal, not a malformed request.
+            raise generation_error(
+                status=http_status if isinstance(http_status, int) else -1,
+                route=route,
+                body=generate_resp.get("body") or {},
             )
         # A video 200 ALWAYS carries media[0] (the asset slot — capture 02);
         # content rejection surfaces later as a FAILED *status*, not empty media.

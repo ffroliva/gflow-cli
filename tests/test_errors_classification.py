@@ -2,12 +2,13 @@ import json
 
 import pytest
 
-from gflow_cli.api.client import _classify_content_safety, _raise_for_non_retryable
+from gflow_cli.api.client import _raise_for_non_retryable
 from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
     WafRejectionError,
     WireFormatError,
+    classify_content_safety,
 )
 
 
@@ -81,7 +82,7 @@ def test_400_content_policy_error_carries_reason_in_remediation() -> None:
 
 
 def test_400_unknown_reason_still_maps_to_wire_format() -> None:
-    """A 400 with an unknown reason (not in _CONTENT_SAFETY_REASONS) falls
+    """A 400 with an unknown reason (not in CONTENT_SAFETY_REASONS) falls
     through to WireFormatError — the safety net still works."""
     body = _flow_400_body("SOME_OTHER_REASON")
     with pytest.raises(WireFormatError):
@@ -115,24 +116,24 @@ def test_400_empty_details_still_maps_to_wire_format() -> None:
 
 def test_classify_content_safety_returns_reason_for_valid_body() -> None:
     body = _flow_400_body("PUBLIC_ERROR_UNSAFE_GENERATION")
-    assert _classify_content_safety(body) == "PUBLIC_ERROR_UNSAFE_GENERATION"
+    assert classify_content_safety(body) == "PUBLIC_ERROR_UNSAFE_GENERATION"
 
 
 def test_classify_content_safety_returns_none_for_non_content_safety_reason() -> None:
     body = _flow_400_body("SOME_OTHER_REASON")
-    assert _classify_content_safety(body) is None
+    assert classify_content_safety(body) is None
 
 
 def test_classify_content_safety_returns_none_for_non_json() -> None:
-    assert _classify_content_safety("not json") is None
+    assert classify_content_safety("not json") is None
 
 
 def test_classify_content_safety_returns_none_for_empty_string() -> None:
-    assert _classify_content_safety("") is None
+    assert classify_content_safety("") is None
 
 
 def test_classify_content_safety_returns_none_for_array_body() -> None:
-    assert _classify_content_safety("[]") is None
+    assert classify_content_safety("[]") is None
 
 
 def test_classify_content_safety_handles_multiple_details() -> None:
@@ -154,4 +155,4 @@ def test_classify_content_safety_handles_multiple_details() -> None:
             }
         }
     )
-    assert _classify_content_safety(body) == "PUBLIC_ERROR_UNSAFE_GENERATION"
+    assert classify_content_safety(body) == "PUBLIC_ERROR_UNSAFE_GENERATION"
