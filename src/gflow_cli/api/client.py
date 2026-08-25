@@ -176,6 +176,15 @@ _APPLICATION_JSON = "application/json"
 # cookies alone, so the Bearer header is scoped to the aisandbox host only.
 _AISANDBOX_HOST = "aisandbox-pa.googleapis.com"
 _LABS_ORIGIN = "https://labs.google"
+# The labs.google BFF authenticates on cookies alone, but Google still rejects a
+# same-site tRPC MUTATION that arrives with no origin/referer as cross-site /
+# CSRF-shaped, answering 401. Every other lane in the tree already sent one or
+# both headers — the aisandbox lane, the agentic driver, the sapisidhash
+# transport, the httpx auth probe. The labs tRPC production lane was the only
+# one without, which is why `project create` failed while UI-automation
+# generation kept succeeding on the same profile and the same cookie jar.
+_LABS_REFERER = "https://labs.google/fx/tools/flow"
+_LABS_BFF_HEADERS = {"origin": _LABS_ORIGIN, "referer": _LABS_REFERER}
 _SESSION_API_URL = "https://labs.google/fx/api/auth/session"
 # issue #222: the NextAuth Flow session cookie + the URL used to seed it.
 _FLOW_SESSION_COOKIE = "__Secure-next-auth.session-token"
@@ -1201,6 +1210,39 @@ class FlowApiClient:
             "origin": _LABS_ORIGIN,
         }
 
+    async def _request_headers(
+        self,
+        *,
+        url: str,
+        content_type: str | None,
+        is_aisandbox: bool,
+    ) -> dict[str, str]:
+        """Build the outgoing header set for ONE ``page.request.*`` call.
+
+        Single source of truth for both hosts, so a header a lane needs cannot
+        go missing on only one verb — which is exactly how the labs tRPC lane
+        lost ``origin``/``referer``: the headers were assembled inline behind an
+        ``if is_aisandbox`` gate in each of ``_post_json``/``_patch_json``/
+        ``_get_json``, and labs.google is not aisandbox.
+
+        aisandbox-pa authenticates on a Bearer token (which already carries
+        ``origin``); the labs.google BFF authenticates on cookies alone but
+        still has to LOOK like the Flow SPA — see :data:`_LABS_BFF_HEADERS`.
+        """
+        headers: dict[str, str] = {}
+        if content_type is not None:
+            headers["content-type"] = content_type
+        if is_aisandbox:
+            headers.update(await self._aisandbox_auth_headers())
+        elif url.startswith(_LABS_ORIGIN):
+            # Keyed on the URL, not on `not is_aisandbox`. Google's auth checks are
+            # origin-bound: an Origin naming a host you are NOT calling fails them.
+            # routes.py defines only these two hosts today, so an `else` would be
+            # correct by coincidence — a third host added later would silently
+            # inherit a labs.google Origin.
+            headers.update(_LABS_BFF_HEADERS)
+        return headers
+
     async def _run_with_aisandbox_retry(
         self,
         attempt: Any,
@@ -1259,9 +1301,9 @@ class FlowApiClient:
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
-                headers = {"content-type": content_type}
-                if is_aisandbox:
-                    headers.update(await self._aisandbox_auth_headers())
+                headers = await self._request_headers(
+                    url=url, content_type=content_type, is_aisandbox=is_aisandbox
+                )
                 if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
                     logger.info(
                         "request_headers",
@@ -1301,9 +1343,9 @@ class FlowApiClient:
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
-                headers = {"content-type": _AISANDBOX_CONTENT_TYPE}
-                if is_aisandbox:
-                    headers.update(await self._aisandbox_auth_headers())
+                headers = await self._request_headers(
+                    url=url, content_type=_AISANDBOX_CONTENT_TYPE, is_aisandbox=is_aisandbox
+                )
                 if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
                     logger.info(
                         "request_headers",
@@ -1340,9 +1382,9 @@ class FlowApiClient:
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
-                headers: dict[str, str] = {}
-                if is_aisandbox:
-                    headers.update(await self._aisandbox_auth_headers())
+                headers = await self._request_headers(
+                    url=url, content_type=None, is_aisandbox=is_aisandbox
+                )
                 return await page.request.get(url, headers=headers, timeout=30_000)
             finally:
                 self._checkin_page(page)
