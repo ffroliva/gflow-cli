@@ -1307,7 +1307,13 @@ class TestGenerateImages:
             reference_entity_names=("Stacky",),  # fewer names than ids on purpose
         )
 
-        def _seeding_logger(page: Any, *, project_id: Any = None, sink: Any = None) -> Any:
+        def _seeding_logger(
+            page: Any,
+            *,
+            project_id: Any = None,
+            sink: Any = None,
+            record_generation_request: Any = None,
+        ) -> Any:
             # Feed the #170 submit backstop: pretend the captured submit
             # carried both staged entities (the real logger fills the sink
             # from outgoing batchGenerateImages bodies).
@@ -1593,7 +1599,13 @@ class TestImageEntityBackstop:
             reference_entity_names=("Stacky",),
         )
 
-        def _seeding_logger(page: Any, *, project_id: Any = None, sink: Any = None) -> Any:
+        def _seeding_logger(
+            page: Any,
+            *,
+            project_id: Any = None,
+            sink: Any = None,
+            record_generation_request: Any = None,
+        ) -> Any:
             if sink is not None:
                 sink.append({"entity_ids": {"ent-1"}})
             return lambda: None
@@ -3296,12 +3308,13 @@ def test_images_from_responses_preserves_workflow_display_name():
             "metadata": {"displayName": "Calm forest at dawn"},
         }
     ]
-    images, error_status, error_route = _images_from_responses(
+    images, error_status, error_route, error_body = _images_from_responses(
         [{"status": 200, "url": "flowMedia:batchGenerateImages", "body": body}]
     )
 
     assert error_status is None
     assert error_route == ""
+    assert error_body == {}
     assert len(images) == 1
     assert images[0].display_name == "Calm forest at dawn"
 

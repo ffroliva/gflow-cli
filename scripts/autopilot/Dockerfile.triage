@@ -2,6 +2,10 @@
 # docker ecosystem keeps the digest fresh.
 FROM node:26-slim@sha256:4ebb5ace66f15a24c14c492e01a8beeed4fddf970a856109f5126e703e5fe503
 
+# Scopes `docker image prune --filter label=app=gflow-triage` in
+# run_sandboxed_review.sh to our own orphaned builds on a shared host.
+LABEL app=gflow-triage
+
 # Install system dependencies: git, python3, curl, gnupg, etc.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \

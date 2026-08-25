@@ -50,6 +50,20 @@ DEFAULT_ENGINE = SUPPORTED_ENGINES[0]
 # 16 days with nothing reporting it.
 CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
+# Council memory directory (D5 reads this tree read-only inside the sandbox).
+#
+# Resolved per host, never hardcoded -- a machine-specific path in a cron line
+# is not portable and cannot be validated. XDG_DATA_HOME (not STATE or CACHE):
+# this is durable curated knowledge meant to be backed up, which is the data
+# slot in the XDG Base Directory Specification.
+MEMORY_DIR_ENV = "GFLOW_TRIAGE_MEMORY_DIR"
+MEMORY_XDG_SUBDIR = "gflow-cli/memory"
+
+# Read-only GitHub token handed to the review container (see
+# resolve_sandbox_token). Provisioned in hermes-ops SOPS, rendered into
+# /opt/hermes/.env, delivered by the cron line that sources it.
+SANDBOX_TOKEN_ENV = "GH_SANDBOX_TOKEN"
+
 
 def check_claude_auth() -> str | None:
     """Return an error string when Claude auth is unusable, else None.
@@ -159,13 +173,42 @@ def _gh_json(args: list[str], repo: str) -> any:
     return json.loads(proc.stdout)
 
 
-def post_gh_comment(pr_num: int, body: str, repo: str) -> None:
-    """Post comment back to PR using GitHub CLI."""
+def resolve_sandbox_token(write_token: str) -> str:
+    """Return the read-only token handed to the review container.
+
+    The container only reads the PR; the host posts the comment. Least
+    privilege: no write credential belongs in the container.
+
+    Falls back to the write token so a missing secret never takes the
+    pipeline down, but alerts rather than degrading silently.
+    """
+    sandbox_token = os.environ.get(SANDBOX_TOKEN_ENV)
+    if sandbox_token:
+        return sandbox_token
+    logger.warning(
+        "Sandbox token missing; falling back to the write-scoped token",
+        env_var=SANDBOX_TOKEN_ENV,
+    )
+    send_telegram_alert(
+        f"⚠️ {SANDBOX_TOKEN_ENV} is not set — the review sandbox is running with a "
+        "WRITE-scoped GitHub token. Restore the read-only token in hermes-ops SOPS."
+    )
+    return write_token
+
+
+def post_gh_comment(pr_num: int, body: str, repo: str, token: str | None = None) -> None:
+    """Post comment back to PR using GitHub CLI.
+
+    The token is passed explicitly rather than inherited from ambient env, so
+    the intended credential is always the one used.
+    """
+    env = {**os.environ, "GH_TOKEN": token} if token else None
     proc = subprocess.run(
         ["gh", "pr", "comment", str(pr_num), "--body", body, "--repo", repo],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"Failed to post comment to PR #{pr_num}: {proc.stderr.strip()}")
@@ -247,10 +290,24 @@ def fetch_and_checkout_pr(pr_num: int, repo_dir: Path) -> str:
     return head_sha
 
 
-def restore_repo_branch(repo_dir: Path) -> None:
-    """Restore host clone repository back to develop branch."""
+def restore_repo_branch(repo_dir: Path, pr_num: int | None = None) -> None:
+    """Restore the host clone to develop and drop the fetched PR branch.
+
+    Deleting matters: ``fetch_and_checkout_pr`` creates ``pr-<N>-review`` on
+    every review and nothing ever removed it, so the clone accumulated one
+    branch per PR forever (``pr-549-review`` was still present on the VPS
+    weeks later). Best-effort -- a run that failed before fetching has no
+    branch to drop, and cleanup must never mask the original error.
+    """
     logger.info("Restoring repository to develop branch")
     subprocess.run(["git", "checkout", "develop"], cwd=repo_dir, capture_output=True, check=True)
+    if pr_num is not None:
+        branch = f"pr-{pr_num}-review"
+        proc = subprocess.run(
+            ["git", "branch", "-D", branch], cwd=repo_dir, capture_output=True, check=False
+        )
+        if proc.returncode == 0:
+            logger.info("Deleted PR review branch", branch=branch)
 
 
 def run_docker_sandbox(pr_num: int, repo_dir: Path, memory_dir: Path, gh_token: str) -> str:
@@ -305,6 +362,34 @@ def resolve_engine() -> str:
     if engine not in SUPPORTED_ENGINES:
         raise SystemExit(f"Unsupported PR_TRIAGE_ENGINE={engine!r}; supported: {SUPPORTED_ENGINES}")
     return engine
+
+
+def resolve_memory_dir(cli_value: str | None = None) -> Path:
+    """Return the council memory directory for THIS host; refuse a missing one.
+
+    Precedence: ``--memory-dir`` > ``$GFLOW_TRIAGE_MEMORY_DIR`` > XDG default.
+    Checked on the HOST before the container starts, for the same reason
+    ``check_claude_auth`` is: an unresolvable path otherwise surfaces as an
+    opaque "Docker sandbox failed (exit 1)" from a ``cd`` deep inside the
+    wrapper script, after the lock is taken and a ledger failure is recorded.
+    """
+    if cli_value:
+        memory_dir, source = Path(cli_value), "--memory-dir"
+    elif os.environ.get(MEMORY_DIR_ENV):
+        memory_dir, source = Path(os.environ[MEMORY_DIR_ENV]), f"${MEMORY_DIR_ENV}"
+    else:
+        data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+        memory_dir, source = data_home / MEMORY_XDG_SUBDIR, "XDG default"
+
+    memory_dir = memory_dir.expanduser().resolve()
+    if not memory_dir.is_dir():
+        raise SystemExit(
+            f"Council memory directory does not exist: {memory_dir} (resolved from {source}).\n"
+            f"  Create it:            mkdir -p {memory_dir}\n"
+            f"  Or point elsewhere:   --memory-dir <path>  |  export {MEMORY_DIR_ENV}=<path>\n"
+            "An empty directory is valid — D5 then reports that no memory is available."
+        )
+    return memory_dir
 
 
 def run_review(
@@ -413,7 +498,7 @@ def run_triage_cycle(
                 f"Reason: {reasons_str}"
             )
             try:
-                post_gh_comment(pr_num, comment_body, repo)
+                post_gh_comment(pr_num, comment_body, repo, token=gh_token)
             except Exception as exc:
                 logger.error("Failed to post comment to flagged PR", pr=pr_num, error=str(exc))
 
@@ -467,7 +552,10 @@ def run_triage_cycle(
                 continue
 
             # Run Stage 1 Pre-eval & Full sandboxed review
-            output = run_review(engine, pr_num, repo_dir, memory_dir, gh_token)
+            # Read-only token into the sandbox; the write token stays on the host.
+            output = run_review(
+                engine, pr_num, repo_dir, memory_dir, resolve_sandbox_token(gh_token)
+            )
 
             # Parse verdict & MUST-FIX count
             parsed_verdict, must_fixes = parse_summary_verdict(output)
@@ -487,7 +575,7 @@ def run_triage_cycle(
                 f"{output}\n</details>"
             )
 
-            post_gh_comment(pr_num, comment_body, repo)
+            post_gh_comment(pr_num, comment_body, repo, token=gh_token)
 
             # Record completed in ledger
             append_ledger_entry(
@@ -556,14 +644,21 @@ def run_triage_cycle(
                 send_telegram_alert(f"⚠️ PR #{pr_num} review attempt {failures} failed: {exc}")
 
         finally:
-            restore_repo_branch(repo_dir)
+            restore_repo_branch(repo_dir, pr_num=pr_num)
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Main Host Orchestrator for PR-Triage Autopilot.")
     ap.add_argument("--repo", default="ffroliva/gflow-cli", help="owner/repo name")
     ap.add_argument("--repo-dir", required=True, help="path to local host clone")
-    ap.add_argument("--memory-dir", required=True, help="path to project-specific memory directory")
+    ap.add_argument(
+        "--memory-dir",
+        default=None,
+        help=(
+            f"council memory directory; defaults to ${MEMORY_DIR_ENV}, "
+            f"else $XDG_DATA_HOME/{MEMORY_XDG_SUBDIR}"
+        ),
+    )
     args = ap.parse_args(argv)
 
     # Validate required credentials
@@ -590,7 +685,7 @@ def main(argv: list[str] | None = None) -> int:
     engine = resolve_engine()
 
     repo_dir = Path(args.repo_dir).resolve()
-    memory_dir = Path(args.memory_dir).resolve()
+    memory_dir = resolve_memory_dir(args.memory_dir)
     ledger_path = repo_dir / LEDGER_FILE
 
     # Acquire lock

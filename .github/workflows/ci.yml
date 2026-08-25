@@ -26,6 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0  # full history so gitleaks can diff against base
 
       - name: Run gitleaks
@@ -39,8 +40,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Audit locked dependencies for known CVEs
         # Fails the build on any known advisory. Accept later via: pip-audit --ignore-vuln <GHSA-id>
         #
@@ -56,6 +59,42 @@ jobs:
           # pip-audit version pinned for a reproducible gate (uvx has no
           # dependabot ecosystem — bump by hand when it drifts).
           uvx pip-audit==2.10.1 -r requirements-audit.txt
+
+  # ── Security gate: static analysis of the workflows themselves ───────────
+  # Everything else in this file audits the Python we ship. Nothing audited the
+  # CI that ships it, and CI is a supply-chain surface in its own right: it
+  # holds a repository token, it publishes to PyPI, and its inputs (branch
+  # names, PR titles, fork content) are attacker-controllable text.
+  #
+  # zizmor is what turns that into a gate. It found real defects on its first
+  # run over this repo (#565): 12 checkouts persisting the job token into the
+  # workspace, and `${{ github.base_ref }}` interpolated straight into a
+  # governance-advisory shell script. Both are fixed; this job is what stops
+  # them coming back one copy-pasted step at a time.
+  workflow-audit:
+    name: Workflow audit (zizmor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Audit workflows (zizmor)
+        # --offline: the online audits need a GH token and reach the network, so
+        #   they would make this gate non-deterministic and unrunnable on fork
+        #   PRs. Action freshness/pinning is already covered by Dependabot plus
+        #   Scorecard's Pinned-Dependencies check.
+        # --min-severity low: informational findings are advisory, not defects.
+        #   The one open today is `superfluous-actions` on
+        #   softprops/action-gh-release; rewriting the release publisher is not
+        #   a hardening change and is deliberately declined (docs/GITHUB.md).
+        # Version pinned for a reproducible gate — uvx has no Dependabot
+        # ecosystem, so bump it by hand (the pin is asserted by
+        # tests/scripts/test_workflow_hardening.py, which fails if the two drift).
+        run: uvx zizmor==1.29.0 --offline --min-severity low .github/workflows/
 
   # ── Supply-chain gate: resolve WITHOUT the lockfile ───────────────────────
   # Every other job installs via `uv sync`, which honours uv.lock. That means CI
@@ -73,9 +112,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Set up Python
         run: uv python install 3.13
@@ -127,18 +168,24 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Set up Python
         run: uv python install ${{ matrix.python-version }}
 
+      # --frozen: install from the committed uv.lock without re-resolving it.
+      # Plain `uv sync` REWRITES uv.lock in place, which would silently repair
+      # the exact version drift the hygiene gate below exists to catch.
       - name: Install deps
-        run: uv sync --extra dev
+        run: uv sync --frozen --extra dev
 
-      - name: Repo hygiene (no artefacts, no hardcoded paths)
-        run: uv run python scripts/ci/check_repo_hygiene.py
+      # --no-sync for the same reason: `uv run` re-locks before running.
+      - name: Repo hygiene (no artefacts, no hardcoded paths, version lockstep)
+        run: uv run --no-sync python scripts/ci/check_repo_hygiene.py
 
       - name: Documentation links
         run: uv run python scripts/ci/check_doc_links.py
@@ -196,9 +243,11 @@ jobs:
         os: [windows-latest, macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Set up Python
         run: uv python install 3.13
@@ -237,6 +286,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0  # shallow clones break blame / new-code detection
 
       - name: Download coverage report

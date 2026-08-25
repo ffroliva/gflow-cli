@@ -149,6 +149,165 @@ See [DEVELOPMENT.md § E2e gate](DEVELOPMENT.md#e2e-gate-before-merging-develop-
 
 ---
 
+## Nightly canary (#502)
+
+Between releases the live tiers are invisible, so Flow-side drift (cohort flaps,
+selector renames, auth rot) surfaces ad-hoc during feature work instead of on a
+schedule. The canary closes that gap.
+
+It runs **locally, not in hosted CI** — the live tiers need a real authenticated
+Chrome profile, and Google bot-detection plus reCAPTCHA make hosted auth
+infeasible. Results are published to a single **rolling issue**; the canary never
+opens new ones (issue spam trains red-blindness) and **gates nothing** (a gate on
+a machine that might be off is self-DoS).
+
+### Four states
+
+| State | Meaning | Action |
+|---|---|---|
+| `GREEN` | every selected $0 tier passed | none |
+| `RED` | auth healthy, a $0 tier failed | **real drift or regression** — triage |
+| `AUTH-EXPIRED` | session rot (expected) | `gflow auth login` |
+| `DEFERRED` | nothing conclusive ran | fix the profile / config — says nothing about Flow |
+
+Splitting the last two out of `RED` is the point: `RED` must always mean "code or
+Flow drifted", never "please re-login" or "you had Chrome open". The classifier is
+a pure function with all four states covered in
+`tests/scripts/test_canary_classify.py`.
+
+**Rot vs. drift is decided by a second probe, not by error names.** When a tier
+fails for a reason other than a profile precondition, the canary re-runs
+`gflow auth status`. Session still valid ⇒ the failure is
+drift (`RED`); session now dead ⇒ genuine rot (`AUTH-EXPIRED`). The first live run
+proved why this matters: an `AuthExpiredError` on `project.createProject`
+*looked* exactly like session rot, but the session verified clean seconds later —
+so it was a real divergence between two auth surfaces, and a name-matching
+classifier would have buried it. The extra probe costs ~45s and only runs after a
+failure.
+
+> The route is `labs.google/fx/api/trpc/project.createProject` — the NextAuth
+> **cookie** surface — not the aisandbox Bearer path. #561 originally recorded it
+> as an `uploadImage` failure because the failing test is named for an upload;
+> the traceback dies one line earlier, on the project-creation call. Corrected
+> here so the next reader does not re-investigate the wrong host.
+
+`DEFERRED` covers every run that **exercised nothing**: a held `ProfileLease`, a
+`ProfileEngineDowngradeError` (profile written by a newer Chromium than the bundled
+engine), a refused `--pull`, or a run where every selected test skipped. All fail
+before reaching Flow, so none can evidence drift.
+
+Two subtleties, both found by council review and both regression-tested:
+
+- **A precondition is matched on the raised exception, never a substring.** Two
+  `e2e_auth` tests mention `ProfileLockedError` in ordinary source — one in an
+  assertion message, one in a comment — and pytest echoes the failing function's
+  source into its traceback. Substring matching therefore published a genuine
+  regression in those tests as `DEFERRED`, the one label that says "ignore me".
+- **A green run that executed nothing is not green.** pytest exits 0 when every
+  test skips, and every e2e test skips on a missing profile directory. `GREEN`
+  requires `passed > 0`.
+
+Because the issue carries a last-updated timestamp, a machine that was off is
+*visibly stale* — unlike a lingering green commit status, which lies.
+
+**A RED preserves its own evidence, logs included.** The run's JUnit is copied to
+`tmp/canary-red-<stamp>.xml` (the live one is overwritten nightly), and pytest runs
+with `-o junit_logging=all` so that copy carries the captured structlog output, not
+just a traceback. This is not optional detail: the canary's failures reproduce only
+unattended, so whatever the run does not record cannot be recovered afterwards. For
+an auth 401 the deciding line is `client.context_cookie_state` — the #222
+diagnostic, which reports whether the launched browser context actually loaded the
+Flow session cookie. That single boolean separates "the browser never got the
+cookie" from "the session was genuinely refused"; without it a 401 traceback is the
+same shape either way. The copy stays **local** — it carries raw tracebacks and
+profile paths, which the sanitization contract keeps off the public issue.
+
+### Scope
+
+`-m e2e_auth` only ($0, no reCAPTCHA); fast-follow adds `e2e_scene` ($0). Credit
+tiers (`e2e_image` / `e2e_video` / `smoke`) stay **strictly manual** via
+`/gflow:live-verify` — no unattended credit spend on a personal account.
+
+### Run it
+
+```bash
+# dry run — executes for real, prints the payload, touches nothing on GitHub
+uv run python scripts/canary/run_canary.py --profile <name> --dry-run
+```
+
+Credit-spending markers (`e2e_image`, `e2e_video`, `e2e_batch`, `e2e_character`,
+`smoke`) are **refused outright** — the canary never spends credits unattended.
+Run those manually via `/gflow:live-verify`.
+
+### Schedule it
+
+```powershell
+.\scripts\canary\register_task.ps1 -Profile <name> -Issue <n> `
+    -RepoRoot C:\path\to\dedicated\clone
+```
+
+Point `-RepoRoot` at a **dedicated clone**, never your working tree: the runner's
+`--pull` refuses a dirty checkout rather than resetting over uncommitted work, and
+reports that refusal as `DEFERRED` rather than exiting silently. `--pull` also
+re-syncs dependencies, so a lockfile bump on `develop` cannot masquerade as a
+`RED` import error.
+
+Publishing uses your already-authenticated local `gh` — **no new secrets or
+tokens**. Published content is sanitized for a public repo: SHA, pass/fail
+counts, duration, failure class, and failing test *names* only — never raw logs,
+profile paths, prompts, or signed URLs.
+
+## Selector drift probe (#563)
+
+The canary answers *"does gflow still work on the maintainer's cohort?"*; the
+probe answers *"which Flow DOM selector moved?"* — from hosted CI, with no
+maintainer machine involved. It walks the structured selector inventory in
+`gflow_cli.flow_selectors` (the incident families from #404/#493/#313) against
+a live editor at the pinned 1920×1080 viewport: navigate and read only, **$0**,
+never submits.
+
+Runs via `.github/workflows/selector-probe.yml` on `schedule` (05:00 UTC daily)
+plus `workflow_dispatch`. **Never add a `pull_request` trigger**: same-repo
+branch PRs receive repository secrets while running attacker-editable probe
+code (fork PRs are safe — GitHub withholds secrets — but the same-repo case is
+not).
+
+### Exit contract
+
+| Exit | Meaning | Action |
+|---|---|---|
+| `0` | every registered selector resolved (`ok` / `FALLBACK[n]` / `n/a`) | none |
+| `1` | **drift** — a selector graded MISS or AMBIGUOUS; the report names its key | re-derive that selector, ship a registry edit |
+| `2` | **inconclusive** — expired token, dead project, known alternate UI state, or no recognizable editor arm | fix the credential/project; says nothing about Flow |
+
+Keeping `1` and `2` apart is the whole design: an expired credential must never
+be published as "Google changed the page". The deciding gate is a poll on
+production's own arm indicators (the six `crop_*` variants ⇒ classic, the
+agentic ligatures ⇒ agentic); a page showing neither within 25 s — a sign-in
+wall renders neither — is inconclusive, not drift. Mode-scoped selectors absent
+on the observed arm grade `n/a` (`EXPECTED_ABSENT`), never drift — the probe's
+first two live runs landed on opposite arms (classic locally, agentic on the
+runner) and both graded clean.
+
+### Secrets and token care
+
+Two repository secrets, from a **dedicated throwaway Google account**, never
+the maintainer's: `GFLOW_CI_SESSION_TOKEN` (the
+`__Secure-next-auth.session-token` cookie) and `GFLOW_CI_PROJECT_ID` (any
+project that account owns — a deleted id renders an error shell the probe
+reports as exit 2).
+
+The token **re-issues on every profile open** (observed live 2026-08-21: three
+values in 15 minutes; the first CI dispatch failed exit 2 on a superseded
+snapshot). Harvest accordingly: open the throwaway profile once, read the
+cookie, close the browser, `gh secret set GFLOW_CI_SESSION_TOKEN` from stdin —
+and never reopen that profile without re-syncing the secret afterwards. The
+value also hard-dies at day 30 with no warning. Either way an aged token shows
+as a red exit-2 run, never as drift, and the nightly schedule itself is the
+aging test.
+
+---
+
 ## File map
 
 ```

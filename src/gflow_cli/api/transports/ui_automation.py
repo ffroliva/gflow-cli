@@ -29,7 +29,7 @@ from gflow_cli.api._retry import parse_retry_after
 from gflow_cli.api.character import CHARACTER_MODELS, CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
-from gflow_cli.api.transports._common import extract_project_id
+from gflow_cli.api.transports._common import extract_project_id, generation_error
 from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
@@ -57,7 +57,7 @@ if TYPE_CHECKING:
 
     from playwright.async_api import Locator, Page, ViewportSize
 
-    from gflow_cli.api.transports.base import TransportSetup
+    from gflow_cli.api.transports.base import GenerationRequestRecorder, TransportSetup
 
 # Lazy-imported at call time so ``import gflow_cli`` doesn't pay the
 # Playwright import cost when another transport is selected.
@@ -587,17 +587,22 @@ def _collect_images_from_body(body: dict[str, Any], images: list[GeneratedImage]
 
 def _images_from_responses(
     responses: list[dict[str, Any]],
-) -> tuple[list[GeneratedImage], int | None, str]:
+) -> tuple[list[GeneratedImage], int | None, str, dict[str, Any]]:
     """Process captured batchGenerateImages responses.
 
-    Returns ``(images, first_error_status, first_error_route)``. Raises
-    :class:`AuthExpiredError` on 401, :class:`WafRejectionError` on 403, and
-    :class:`RateLimitError` on 429, which the caller must surface — these are not
-    first-error candidates.
+    Returns ``(images, first_error_status, first_error_route, first_error_body)``.
+    Raises :class:`AuthExpiredError` on 401, :class:`WafRejectionError` on 403,
+    and :class:`RateLimitError` on 429, which the caller must surface — these are
+    not first-error candidates.
+
+    The error **body** rides out with the status (issue #528): the caller has to
+    tell a content-policy 400 apart from a genuinely unexpected response shape,
+    and dropping the body here left it no way to.
     """
     images: list[GeneratedImage] = []
     first_error_status: int | None = None
     first_error_route: str = ""
+    first_error_body: dict[str, Any] = {}
 
     for response in responses:
         status = response.get("status")
@@ -642,13 +647,24 @@ def _images_from_responses(
                 retry_after=retry_after,
             )
         if status != 200:
-            first_error_status = first_error_status or status
-            first_error_route = first_error_route or route_str
+            if status == 400:
+                # We still do not know Flow's real 400 shape on this route — every
+                # #528 incident bundle showed a bare `{"status": 400}`. Log it like
+                # the 403 branch above so the next occurrence settles it.
+                log.warning(
+                    "ui_automation.batch_400_body",
+                    body_prefix=str(body)[:200],
+                    route=route_str,
+                )
+            if first_error_status is None:
+                first_error_status = status
+                first_error_route = route_str
+                first_error_body = body
             continue
 
         _collect_images_from_body(body, images)
 
-    return images, first_error_status, first_error_route
+    return images, first_error_status, first_error_route, first_error_body
 
 
 _REF_VALUE_MAX_CHARS = 512
@@ -713,6 +729,29 @@ def _summarize_batch_request_body(post_data: str | None) -> dict[str, Any]:
     else:
         summary["top_keys"] = sorted(parsed_dict.keys())
     return summary
+
+
+def _reference_field_count(post_data: str | None) -> int:
+    """How many reference/entity-ish fields ride on ``requests[0]`` (issue #528).
+
+    A COUNT, never the key names: this feeds the incident bundle, which retains
+    counts and booleans only (§5.3, S02/S29). The deciding signal for a policy
+    400 is how many face-bearing references were attached, not what they were
+    called.
+    """
+    if not post_data:
+        return 0
+    try:
+        parsed: object = json.loads(post_data)
+    except (ValueError, TypeError):
+        return 0
+    if not isinstance(parsed, dict):
+        return 0
+    reqs = cast(_JsonObj, parsed).get("requests")
+    if not (isinstance(reqs, list) and reqs and isinstance(reqs[0], dict)):
+        return 0
+    first = cast(_JsonObj, reqs[0])
+    return sum(1 for k in first if "reference" in k.lower() or "entity" in k.lower())
 
 
 def _entity_ids_from_one_request(req: Any) -> set[str]:
@@ -808,6 +847,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # below are this transport's own derived state — the client no longer
         # writes them directly.
         self.setup_config: TransportSetup | None = None
+        # Counts-only incident sink for outgoing generation submits (#528).
+        # None until apply_setup runs, and whenever incident capture is off.
+        self._record_generation_request: GenerationRequestRecorder | None = None
         # Optional directory for debug screenshots — derived from the client's
         # `out_dir` constructor arg (#18). When None, the internal
         # _capture_debug_screenshot helper is a no-op.
@@ -836,6 +878,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             self._out_dir = config.out_dir
         self._storage_uri = config.storage_uri
         self._output_dir = config.output_dir
+        self._record_generation_request = config.record_generation_request
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -2175,6 +2218,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         *,
         project_id: str | None = None,
         sink: list[dict[str, Any]] | None = None,
+        record_generation_request: GenerationRequestRecorder | None = None,
     ) -> Callable[[], None]:
         """Register a ``page.on('request', ...)`` that logs a compact summary of
         each outgoing ``batchGenerateImages`` body.
@@ -2202,13 +2246,23 @@ class UiAutomationTransport(VideoGenerationMixin):
                 filter_project_id=project_id,
                 summary=_summarize_batch_request_body(post_data),
             )
+            entity_ids = _entity_ids_from_request_body(post_data)
             if sink is not None:
-                sink.append(
-                    {
-                        "url": request_obj.url,
-                        "entity_ids": _entity_ids_from_request_body(post_data),
-                    }
-                )
+                sink.append({"url": request_obj.url, "entity_ids": entity_ids})
+            # #528: persist a counts-only echo into the incident bundle. The
+            # stderr log above is richer but evaporates; the bundle is what a
+            # reporter actually attaches to an issue.
+            if record_generation_request is not None:
+                try:
+                    record_generation_request(
+                        url=request_obj.url,
+                        body_bytes=len(post_data or ""),
+                        reference_entity_count=len(entity_ids),
+                        reference_field_count=_reference_field_count(post_data),
+                        mentions_reference_entities="referenceEntit" in (post_data or ""),
+                    )
+                except Exception:  # noqa: BLE001, S110 — observation only, never break a submit
+                    pass
 
         page.on("request", on_request)
 
@@ -2527,7 +2581,10 @@ class UiAutomationTransport(VideoGenerationMixin):
             # it carries — the #170 submit backstop reads the sink after the run.
             request_bodies: list[dict[str, Any]] = []
             req_log_detach = self._attach_batch_request_logger(
-                page, project_id=nav_project_id, sink=request_bodies
+                page,
+                project_id=nav_project_id,
+                sink=request_bodies,
+                record_generation_request=self._record_generation_request,
             )
             # Record submit_time BEFORE the click so the post-submit-time filter
             # in _await_captured can distinguish this prompt's responses from any
@@ -2547,13 +2604,16 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         # Collect images from ALL captured responses (Flow makes one API call
         # per image when count > 1).
-        images, first_error_status, first_error_route = _images_from_responses(responses)
+        images, first_error_status, first_error_route, first_error_body = _images_from_responses(
+            responses
+        )
 
         if first_error_status is not None and not images:
-            raise WireFormatError(
-                detail=f"batchGenerateImages returned HTTP {first_error_status}",
+            # #528: a 400 here is a content-policy rejection, not a wire problem.
+            raise generation_error(
                 status=first_error_status,
                 route=first_error_route,
+                body=first_error_body,
             )
 
         if not images:
@@ -2766,11 +2826,24 @@ class UiAutomationTransport(VideoGenerationMixin):
                 err,
             )
 
-        images, first_error_status, _ = _images_from_responses(responses)
+        images, first_error_status, first_error_route, first_error_body = _images_from_responses(
+            responses
+        )
         if not images:
-            err = GFlowError(
-                detail=f"no parseable images (first_error_status={first_error_status})",
-                route="generate_images_batch",
+            # #528: classify rather than hand back a bare GFlowError with no
+            # remediation — a policy 400 here needs the same guidance the
+            # single-prompt path gets.
+            err = (
+                generation_error(
+                    status=first_error_status,
+                    route=first_error_route or "generate_images_batch",
+                    body=first_error_body,
+                )
+                if first_error_status is not None
+                else GFlowError(
+                    detail="no parseable images (every response was 200 with no media)",
+                    route="generate_images_batch",
+                )
             )
             return (
                 BatchSubmissionResult(
@@ -3336,13 +3409,16 @@ class UiAutomationTransport(VideoGenerationMixin):
         finally:
             detach()
 
-        images, first_error_status, first_error_route = _images_from_responses(responses)
+        images, first_error_status, first_error_route, first_error_body = _images_from_responses(
+            responses
+        )
 
         if first_error_status is not None and not images:
-            raise WireFormatError(
-                detail=f"batchGenerateImages returned HTTP {first_error_status}",
+            # #528: a 400 here is a content-policy rejection, not a wire problem.
+            raise generation_error(
                 status=first_error_status,
                 route=first_error_route,
+                body=first_error_body,
             )
 
         if not images:

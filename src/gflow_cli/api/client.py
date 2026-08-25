@@ -85,6 +85,7 @@ from gflow_cli.errors import (
     UpscaleUnavailableError,
     WafRejectionError,
     WireFormatError,
+    classify_content_safety,
 )
 from gflow_cli.paths import adjust_key_extension, character_output_path, looks_like_video
 from gflow_cli.profile_lease import ProfileLease
@@ -175,6 +176,15 @@ _APPLICATION_JSON = "application/json"
 # cookies alone, so the Bearer header is scoped to the aisandbox host only.
 _AISANDBOX_HOST = "aisandbox-pa.googleapis.com"
 _LABS_ORIGIN = "https://labs.google"
+# The labs.google BFF authenticates on cookies alone, but Google still rejects a
+# same-site tRPC MUTATION that arrives with no origin/referer as cross-site /
+# CSRF-shaped, answering 401. Every other lane in the tree already sent one or
+# both headers — the aisandbox lane, the agentic driver, the sapisidhash
+# transport, the httpx auth probe. The labs tRPC production lane was the only
+# one without, which is why `project create` failed while UI-automation
+# generation kept succeeding on the same profile and the same cookie jar.
+_LABS_REFERER = "https://labs.google/fx/tools/flow"
+_LABS_BFF_HEADERS = {"origin": _LABS_ORIGIN, "referer": _LABS_REFERER}
 _SESSION_API_URL = "https://labs.google/fx/api/auth/session"
 # issue #222: the NextAuth Flow session cookie + the URL used to seed it.
 _FLOW_SESSION_COOKIE = "__Secure-next-auth.session-token"
@@ -819,10 +829,16 @@ class FlowApiClient:
 
     def _build_transport_setup(self) -> TransportSetup:
         """Assemble the immutable output/storage wiring handed to the transport."""
+        rec = self._recorder
         return TransportSetup(
             out_dir=self._out_dir,
             storage_uri=self.settings.storage_uri,
             output_dir=self.settings.output_dir,
+            # #528: the transport sees request bodies the context-level network
+            # listeners cannot decode. None when capture is off.
+            record_generation_request=(
+                rec.record_generation_request if rec is not None and rec.enabled else None
+            ),
         )
 
     def _apply_transport_setup(
@@ -1194,6 +1210,39 @@ class FlowApiClient:
             "origin": _LABS_ORIGIN,
         }
 
+    async def _request_headers(
+        self,
+        *,
+        url: str,
+        content_type: str | None,
+        is_aisandbox: bool,
+    ) -> dict[str, str]:
+        """Build the outgoing header set for ONE ``page.request.*`` call.
+
+        Single source of truth for both hosts, so a header a lane needs cannot
+        go missing on only one verb — which is exactly how the labs tRPC lane
+        lost ``origin``/``referer``: the headers were assembled inline behind an
+        ``if is_aisandbox`` gate in each of ``_post_json``/``_patch_json``/
+        ``_get_json``, and labs.google is not aisandbox.
+
+        aisandbox-pa authenticates on a Bearer token (which already carries
+        ``origin``); the labs.google BFF authenticates on cookies alone but
+        still has to LOOK like the Flow SPA — see :data:`_LABS_BFF_HEADERS`.
+        """
+        headers: dict[str, str] = {}
+        if content_type is not None:
+            headers["content-type"] = content_type
+        if is_aisandbox:
+            headers.update(await self._aisandbox_auth_headers())
+        elif url.startswith(_LABS_ORIGIN):
+            # Keyed on the URL, not on `not is_aisandbox`. Google's auth checks are
+            # origin-bound: an Origin naming a host you are NOT calling fails them.
+            # routes.py defines only these two hosts today, so an `else` would be
+            # correct by coincidence — a third host added later would silently
+            # inherit a labs.google Origin.
+            headers.update(_LABS_BFF_HEADERS)
+        return headers
+
     async def _run_with_aisandbox_retry(
         self,
         attempt: Any,
@@ -1252,9 +1301,9 @@ class FlowApiClient:
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
-                headers = {"content-type": content_type}
-                if is_aisandbox:
-                    headers.update(await self._aisandbox_auth_headers())
+                headers = await self._request_headers(
+                    url=url, content_type=content_type, is_aisandbox=is_aisandbox
+                )
                 if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
                     logger.info(
                         "request_headers",
@@ -1294,9 +1343,9 @@ class FlowApiClient:
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
-                headers = {"content-type": _AISANDBOX_CONTENT_TYPE}
-                if is_aisandbox:
-                    headers.update(await self._aisandbox_auth_headers())
+                headers = await self._request_headers(
+                    url=url, content_type=_AISANDBOX_CONTENT_TYPE, is_aisandbox=is_aisandbox
+                )
                 if os.environ.get("GFLOW_CLI_LOG_REQUEST_HEADERS") == "1":
                     logger.info(
                         "request_headers",
@@ -1333,9 +1382,9 @@ class FlowApiClient:
         async def attempt() -> Any:
             page = await self._checkout_page()
             try:
-                headers: dict[str, str] = {}
-                if is_aisandbox:
-                    headers.update(await self._aisandbox_auth_headers())
+                headers = await self._request_headers(
+                    url=url, content_type=None, is_aisandbox=is_aisandbox
+                )
                 return await page.request.get(url, headers=headers, timeout=30_000)
             finally:
                 self._checkin_page(page)
@@ -2770,56 +2819,6 @@ def _is_png_or_jpeg(data: bytes) -> bool:
     return data[:8] == b"\x89PNG\r\n\x1a\n" or data[:3] == b"\xff\xd8\xff"
 
 
-_CONTENT_SAFETY_REASONS: frozenset[str] = frozenset(
-    {
-        "PUBLIC_ERROR_UNSAFE_GENERATION",
-        "PUBLIC_ERROR_UNSAFE_CONTENT",
-        "PUBLIC_ERROR_UNSAFE_FACE",
-        "PUBLIC_ERROR_UNSAFE_IDENTITY",
-    }
-)
-
-
-def _classify_content_safety(body_text: str) -> str | None:
-    """Parse a Flow error body for content-safety rejection reasons.
-
-    Returns the matching ``reason`` string (e.g.
-    ``PUBLIC_ERROR_UNSAFE_GENERATION``) if the body contains a known
-    content-safety reason, or ``None`` otherwise.
-
-    Flow's HTTP 400 error shape::
-
-        {
-          "error": {
-            "code": 400,
-            "message": "Request contains an invalid argument.",
-            "status": "INVALID_ARGUMENT",
-            "details": [
-              {"@type": "...ErrorInfo", "reason": "PUBLIC_ERROR_UNSAFE_GENERATION"}
-            ]
-          }
-        }
-    """
-    try:
-        parsed: object = json.loads(body_text)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    parsed_dict = cast("JsonObject", parsed)
-    error_obj = cast("JsonObject | None", parsed_dict.get("error"))
-    if not isinstance(error_obj, dict):
-        return None
-    details_obj = cast("list[JsonObject] | None", error_obj.get("details"))
-    if not isinstance(details_obj, list):
-        return None
-    for item in details_obj:
-        reason = cast("str", item.get("reason", ""))
-        if reason in _CONTENT_SAFETY_REASONS:
-            return reason
-    return None
-
-
 def _extract_provider_error_message(body_text: str) -> str | None:
     """Extract human-readable error message from provider JSON response body if present."""
     if not body_text or not body_text.strip():
@@ -2903,7 +2902,7 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
             route=route,
         )
     if resp.status == 400:
-        safety_reason = _classify_content_safety(body_text)
+        safety_reason = classify_content_safety(body_text)
         if safety_reason is not None:
             base_detail = (
                 f"HTTP 400: Flow refused the request on content-safety grounds "

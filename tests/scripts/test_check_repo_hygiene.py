@@ -97,11 +97,12 @@ def test_real_tree_passes_root_doc_check() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Version agreement (chore/ci-hardening): pyproject == __init__ == plugin.json
+# Version agreement (chore/ci-hardening):
+# pyproject == __init__ == plugin.json == uv.lock
 # ---------------------------------------------------------------------------
 
 
-def _version_tree(tmp_path, pyproject: str, init: str, plugin: str):
+def _version_tree(tmp_path, pyproject: str, init: str, plugin: str, lock: str | None = None):
     import json as _json
 
     (tmp_path / "pyproject.toml").write_text(
@@ -114,6 +115,19 @@ def _version_tree(tmp_path, pyproject: str, init: str, plugin: str):
     (tmp_path / ".codex-plugin").mkdir()
     (tmp_path / ".codex-plugin" / "plugin.json").write_text(
         _json.dumps({"version": plugin}), encoding="utf-8"
+    )
+    # Realistic uv.lock: the editable package block sits among other packages
+    # whose own `version = "..."` lines must not be picked up by the gate.
+    (tmp_path / "uv.lock").write_text(
+        "[[package]]\n"
+        'name = "click"\n'
+        'version = "8.9.9"\n'
+        "\n"
+        "[[package]]\n"
+        'name = "gflow-cli"\n'
+        f'version = "{pyproject if lock is None else lock}"\n'
+        'source = { editable = "." }\n',
+        encoding="utf-8",
     )
     return tmp_path
 
@@ -129,6 +143,36 @@ def test_version_agreement_fails_on_any_disagreement(tmp_path, monkeypatch) -> N
     assert len(errors) == 1
     assert "disagreement" in errors[0]
     assert "1.2.4" in errors[0]
+
+
+def test_version_agreement_fails_when_only_uv_lock_drifts(tmp_path, monkeypatch) -> None:
+    """A bump that forgets `uv lock` is the drift this gate was added for."""
+    monkeypatch.setattr(
+        hygiene, "ROOT", _version_tree(tmp_path, "1.2.3", "1.2.3", "1.2.3", lock="1.2.2")
+    )
+    errors = hygiene._check_version_agreement()
+    assert len(errors) == 1
+    assert "uv.lock=1.2.2" in errors[0]
+
+
+def test_version_agreement_ignores_other_packages_in_uv_lock(tmp_path, monkeypatch) -> None:
+    """The gate must anchor on gflow-cli, not the first `version =` it sees."""
+    root = _version_tree(tmp_path, "1.2.3", "1.2.3", "1.2.3")
+    assert '"8.9.9"' in (root / "uv.lock").read_text(encoding="utf-8")
+    monkeypatch.setattr(hygiene, "ROOT", root)
+    assert hygiene._check_version_agreement() == []
+
+
+def test_version_agreement_flags_uv_lock_without_own_package_block(tmp_path, monkeypatch) -> None:
+    """A uv.lock missing the editable entry must fail loudly, not pass silently."""
+    root = _version_tree(tmp_path, "1.2.3", "1.2.3", "1.2.3")
+    (root / "uv.lock").write_text(
+        '[[package]]\nname = "click"\nversion = "8.9.9"\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(hygiene, "ROOT", root)
+    errors = hygiene._check_version_agreement()
+    assert len(errors) == 1
+    assert "uv.lock" in errors[0]
 
 
 def test_version_agreement_reports_missing_source_gracefully(tmp_path, monkeypatch) -> None:

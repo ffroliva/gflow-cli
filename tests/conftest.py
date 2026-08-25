@@ -31,6 +31,26 @@ from tests.fixtures.doctor_env import healthy_doctor_env  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
+def _isolate_structlog_config() -> Iterator[None]:
+    """Give every test the structlog configuration it started with.
+
+    ``structlog.configure()`` mutates process-global state. ``install_log_capture``
+    (and the inline copies it replaced) called it and never put it back, so the
+    FIRST test to capture logs silently switched the whole rest of the session
+    from "render to stdout" to "collect into a list". Any later test asserting on
+    rendered log output then passed or failed purely on collection order — the
+    code under test behaving identically either way.
+
+    Same contract as :func:`_isolate_settings`: snapshot before, restore after, so
+    no test can inherit or leak logging configuration. A test that needs a
+    specific configuration must establish it itself.
+    """
+    saved = structlog.get_config().copy()
+    yield
+    structlog.configure(**saved)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Redirect GFLOW_CLI_HOME and GFLOW_CLI_DB_PATH to per-test tmp dirs.
 
@@ -66,7 +86,7 @@ def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
 
 
 @pytest.fixture
-def install_log_capture() -> structlog.testing.LogCapture:
+def install_log_capture() -> Iterator[structlog.testing.LogCapture]:
     """Install a fresh structlog ``LogCapture`` processor + ``merge_contextvars``.
 
     Use as a fixture argument::
@@ -87,4 +107,8 @@ def install_log_capture() -> structlog.testing.LogCapture:
         processors=[structlog.contextvars.merge_contextvars, cap],
         cache_logger_on_first_use=False,
     )
-    return cap
+    yield cap
+    # Explicit teardown even though _isolate_structlog_config already restores
+    # the snapshot: a fixture that mutates global state should undo it at its own
+    # boundary, not rely on a sibling fixture's ordering.
+    structlog.reset_defaults()

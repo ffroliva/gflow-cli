@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.60.0] — 2026-08-25
+
+### Added
+
+- **Selector registry + nightly CI drift probe
+  ([#404](https://github.com/ffroliva/gflow-cli/issues/404),
+  [#493](https://github.com/ffroliva/gflow-cli/issues/493),
+  [#313](https://github.com/ffroliva/gflow-cli/issues/313)).** New
+  `gflow_cli.flow_selectors` package: a structured, enumerable inventory of the
+  Flow DOM selectors gflow depends on (`Surface`, `Selector`) plus a pure
+  grader (`HIT` / `FALLBACK` / `AMBIGUOUS` / `MISS` / `EXPECTED_ABSENT`), so
+  selector drift is *named* rather than inferred from a failing test. A $0
+  probe (`scripts/probe/run_probe.py`, driven by the `selector-probe` workflow
+  on `schedule` + `workflow_dispatch` only) walks the registry against a live
+  editor: navigate and read only, never generates. Exit 0 clean / 1 drift /
+  2 inconclusive — an expired token or dead project is never published as
+  drift.
+
+- **Incident bundles record what was submitted
+  ([#528](https://github.com/ffroliva/gflow-cli/issues/528)).**
+  `network.json` gains a `generation_requests` array carrying a counts-only
+  summary of each outgoing generation submit (body size, reference-entity
+  count, reference-field count). The reference shape that triggers a policy 400
+  was previously visible only in the stderr stream, so bundles attached to an
+  issue could not be diagnosed. Counts and booleans only — no key names, field
+  values, or prompt text — matching the existing §5.3 retention boundary.
+
+### Changed
+
+- **All labs.google requests now carry `origin`/`referer`
+  ([#578](https://github.com/ffroliva/gflow-cli/pull/578)).** Header
+  construction moved into a single `_request_headers()` shared by
+  `_post_json`/`_patch_json`/`_get_json`, which previously assembled headers
+  inline three times and could diverge per verb. The labs lane now sends the
+  same `origin`/`referer` every other lane already sent. A live A/B against
+  `project.createProject` showed these headers are **not** required — an
+  origin-less mutation still returns 200 — so this is consistency and
+  defence-in-depth, not a fix for any observed failure.
+
+### Fixed
+
+- **Content-policy 400s are no longer misclassified as `WireFormatError`
+  ([#528](https://github.com/ffroliva/gflow-cli/issues/528)).** An HTTP 400 from
+  `flowMedia:batchGenerateImages` or `batchAsyncGenerateVideo*` now raises
+  `ContentPolicyError` with remediation that names the levers that actually
+  work — reduce to a single face-bearing reference, replace age-explicit person
+  descriptors with relational or role nouns — and states outright that
+  shortening the prompt does not help. Previously these surfaced as "the
+  request was rejected as malformed… retry with a simpler prompt text", which
+  sends operators down a path that cannot succeed. Same defect shape as
+  [#379](https://github.com/ffroliva/gflow-cli/issues/379) (429), one status
+  over, and the self-documenting-errors goal of
+  [#380](https://github.com/ffroliva/gflow-cli/issues/380).
+- **Video generation gained the 429 branch the image path got in #379.** A
+  quota hit on `batchAsyncGenerateVideo*` raised `WireFormatError` instead of
+  `RateLimitError`, losing `Retry-After` and the retryable classification.
+- **`generate_images_batch` no longer reports a bare, remediation-free
+  `GFlowError`** when every response failed — it classifies the first error the
+  same way the single-prompt path does.
+
+### Security
+
+- **CI/CD supply-chain hardening
+  ([#565](https://github.com/ffroliva/gflow-cli/issues/565)).** Every
+  `actions/checkout` step now sets `persist-credentials: false` (12 existing
+  steps fixed across `ci.yml`, `deps-watch.yml`, `governance-advisory.yml`,
+  `governance-benchmark.yml`, `main-base-guard.yml`, `pages.yml` and
+  `release.yml`); the default leaves the job token in `.git/config` for the rest
+  of the job. No workflow needed it — releases publish over PyPI Trusted
+  Publishing (OIDC) and Pages deploys over `actions/deploy-pages`. A new
+  `workflow-audit` job runs [zizmor](https://github.com/zizmorcore/zizmor)
+  (pinned, `--offline`) over `.github/workflows/` on every push and PR, so the
+  class cannot come back. Its first run also caught two defects the manual pass
+  missed: `${{ github.base_ref }}` interpolated directly into a
+  `governance-advisory.yml` shell script (template injection — the value now
+  arrives through `env:`), and a shared uv cache restored by the publishing
+  release job (cache poisoning — caching is now off there). The
+  `pull_request_target` trigger in `external-pr-triage.yml` is suppressed inline
+  with its rationale, and a changelog-guard workflow was evaluated and declined
+  — both decisions recorded in
+  [docs/GITHUB.md § Workflow Security Gates](docs/GITHUB.md#workflow-security-gates).
+
 ## [0.59.0] — 2026-08-16
 
 ### Added
@@ -3073,7 +3155,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.59.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.60.0...HEAD
+[0.60.0]: https://github.com/ffroliva/gflow-cli/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/ffroliva/gflow-cli/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/ffroliva/gflow-cli/compare/v0.57.1...v0.58.0
 [0.57.1]: https://github.com/ffroliva/gflow-cli/compare/v0.57.0...v0.57.1

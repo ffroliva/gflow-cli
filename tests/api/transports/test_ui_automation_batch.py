@@ -276,7 +276,7 @@ async def test_generate_images_batch_happy_path(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         uia_mod,
         "_images_from_responses",
-        lambda responses: ([fake_img] * len(responses), None, ""),
+        lambda responses: ([fake_img] * len(responses), None, "", {}),
     )
 
     # Mock _extract_project_id to return the URL-extracted UUID.
@@ -397,7 +397,7 @@ async def test_generate_images_batch_continue_on_error_send_fail(
         cap.append({"status": 200, "url": "https://x/batchGenerateImages", "body": {}})
 
     monkeypatch.setattr(
-        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
+        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "", {})
     )
     monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-X")
     monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
@@ -474,7 +474,7 @@ async def test_generate_images_batch_fail_fast_partial_salvage(
         cap.append({"status": 200, "url": "https://x/batchGenerateImages", "body": {}})
 
     monkeypatch.setattr(
-        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
+        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "", {})
     )
     monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-Y")
     monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
@@ -549,7 +549,7 @@ async def test_generate_images_batch_detach_invariant(
 
     fake_img = MagicMock()
     monkeypatch.setattr(
-        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
+        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "", {})
     )
     monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-Z")
     monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
@@ -640,7 +640,7 @@ async def test_settings_fail_after_attach_calls_detach_before_continue(
 
     fake_img = MagicMock()
     monkeypatch.setattr(
-        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
+        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "", {})
     )
     monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-DETACH")
     monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
@@ -721,7 +721,7 @@ async def test_await_captured_timeout_partial_list_gives_fail_result(
 
     fake_img = MagicMock()
     monkeypatch.setattr(
-        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
+        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "", {})
     )
     monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-TIMEOUT")
     monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
@@ -853,7 +853,7 @@ async def test_serial_pattern_await_captured_always_called(
 
     fake_img = MagicMock()
     monkeypatch.setattr(
-        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
+        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "", {})
     )
     monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "PROJ-SERIAL")
     monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())
@@ -920,7 +920,7 @@ async def test_generate_images_batch_project_id_identical_across_results(
 
     fake_img = MagicMock()
     monkeypatch.setattr(
-        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "")
+        uia_mod, "_images_from_responses", lambda r: ([fake_img] * len(r), None, "", {})
     )
     monkeypatch.setattr(uia_mod, "_extract_project_id", lambda url: "SHARED-UUID")
     monkeypatch.setattr(uia_mod.asyncio, "sleep", AsyncMock())

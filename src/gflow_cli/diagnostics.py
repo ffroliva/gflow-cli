@@ -34,6 +34,8 @@ from urllib.parse import urlsplit
 
 import structlog
 
+from gflow_cli.errors import CONTENT_SAFETY_REASONS
+
 if sys.platform == "win32":
     import msvcrt
 else:
@@ -243,16 +245,9 @@ def text_summary(text: str, category: str) -> TextSummary:
 _KNOWN_TOP_KEYS = frozenset({"error"})
 _KNOWN_ERROR_KEYS = frozenset({"code", "message", "status", "details"})
 _STATUS_ENUM_RE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
-# Mirrors api/client.py::_CONTENT_SAFETY_REASONS (client imports would cycle:
-# FlowApiClient owns the IncidentRecorder, so diagnostics must stay leaf-level).
-_CONTENT_SAFETY_REASONS = frozenset(
-    {
-        "PUBLIC_ERROR_UNSAFE_GENERATION",
-        "PUBLIC_ERROR_UNSAFE_CONTENT",
-        "PUBLIC_ERROR_UNSAFE_FACE",
-        "PUBLIC_ERROR_UNSAFE_IDENTITY",
-    }
-)
+# `errors` is the one module below diagnostics in the import graph (it pulls
+# IncidentRef under TYPE_CHECKING only), so CONTENT_SAFETY_REASONS is imported
+# rather than mirrored — the mirror had already drifted into a third copy by #528.
 
 
 def reduce_error_body(parsed: object) -> ErrorBodySummary:
@@ -299,7 +294,7 @@ def reduce_error_body(parsed: object) -> ErrorBodySummary:
                 if not isinstance(item, dict):
                     continue
                 reason = cast("dict[str, object]", item).get("reason")
-                if isinstance(reason, str) and reason in _CONTENT_SAFETY_REASONS:
+                if isinstance(reason, str) and reason in CONTENT_SAFETY_REASONS:
                     safety = True
                     break
     return ErrorBodySummary(
@@ -321,6 +316,7 @@ def reduce_error_body(parsed: object) -> ErrorBodySummary:
 # synchronously and never retain a Playwright Request/Response/ConsoleMessage.
 
 _NETWORK_RING_CAP = 100
+_GENERATION_REQUEST_RING_CAP = 50
 _CONSOLE_RING_CAP = 100
 _PAGE_ERROR_RING_CAP = 50
 
@@ -335,6 +331,26 @@ class NetworkRecord:
     resource_type: str
     status_or_failure: str
     duration_ms: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationRequestRecord:
+    """Counts-only shape of an outgoing generation request (issue #528).
+
+    Every #528 incident bundle carried `network.json` with `records: []`, so the
+    only proof of WHAT was submitted lived in the stderr stream — the reference
+    shape that actually triggered the policy 400 was invisible to anyone reading
+    the bundle. This record makes it visible while honouring the same §5.3
+    discipline as `reduce_error_body`: counts and booleans only, never key
+    names, field values, or prompt text (S02/S29).
+    """
+
+    ts_utc: str
+    route: str
+    body_bytes: int
+    reference_entity_count: int
+    reference_field_count: int
+    mentions_reference_entities: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,6 +374,7 @@ class PageErrorRecord:
 @dataclass(frozen=True, slots=True)
 class JournalSnapshot:
     network: tuple[NetworkRecord, ...]
+    generation_requests: tuple[GenerationRequestRecord, ...]
     console: tuple[ConsoleRecord, ...]
     page_errors: tuple[PageErrorRecord, ...]
 
@@ -367,10 +384,13 @@ class IncidentJournal:
     ``add_*`` afterwards is a no-op so late callbacks cannot mutate evidence
     mid-finalization (S17)."""
 
-    __slots__ = ("_console", "_frozen", "_network", "_page_errors")
+    __slots__ = ("_console", "_frozen", "_generation_requests", "_network", "_page_errors")
 
     def __init__(self) -> None:
         self._network: deque[NetworkRecord] = deque(maxlen=_NETWORK_RING_CAP)
+        self._generation_requests: deque[GenerationRequestRecord] = deque(
+            maxlen=_GENERATION_REQUEST_RING_CAP
+        )
         self._console: deque[ConsoleRecord] = deque(maxlen=_CONSOLE_RING_CAP)
         self._page_errors: deque[PageErrorRecord] = deque(maxlen=_PAGE_ERROR_RING_CAP)
         self._frozen = False
@@ -381,6 +401,10 @@ class IncidentJournal:
     def add_network(self, rec: NetworkRecord) -> None:
         if not self._frozen:
             self._network.append(rec)
+
+    def add_generation_request(self, rec: GenerationRequestRecord) -> None:
+        if not self._frozen:
+            self._generation_requests.append(rec)
 
     def add_console(self, rec: ConsoleRecord) -> None:
         if not self._frozen:
@@ -393,6 +417,7 @@ class IncidentJournal:
     def snapshot(self) -> JournalSnapshot:
         return JournalSnapshot(
             network=tuple(self._network),
+            generation_requests=tuple(self._generation_requests),
             console=tuple(self._console),
             page_errors=tuple(self._page_errors),
         )
@@ -1042,6 +1067,35 @@ class IncidentRecorder:
             )
         )
 
+    def record_generation_request(
+        self,
+        *,
+        url: str,
+        body_bytes: int,
+        reference_entity_count: int,
+        reference_field_count: int,
+        mentions_reference_entities: bool,
+    ) -> None:
+        """Journal a counts-only summary of an outgoing generation submit (#528).
+
+        Called by the ui_automation transports, which see the request body the
+        context-level listeners cannot decode. The caller passes primitives only
+        — this method never receives the body itself.
+        """
+        if self._frozen:
+            return
+        s = sanitize_url(url, self.hasher)
+        self.journal.add_generation_request(
+            GenerationRequestRecord(
+                ts_utc=datetime.now(UTC).isoformat(),
+                route=s.route,
+                body_bytes=body_bytes,
+                reference_entity_count=reference_entity_count,
+                reference_field_count=reference_field_count,
+                mentions_reference_entities=mentions_reference_entities,
+            )
+        )
+
     def record_request_failed(
         self,
         *,
@@ -1412,7 +1466,12 @@ class IncidentRecorder:
     ) -> None:
         snap = self.journal.snapshot()
         payloads = {
-            "network.json": {"records": [asdict(r) for r in snap.network]},
+            "network.json": {
+                "records": [asdict(r) for r in snap.network],
+                # #528: what was SUBMITTED, in counts only — the deciding signal
+                # for a policy 400 is "how many face-bearing references rode".
+                "generation_requests": [asdict(r) for r in snap.generation_requests],
+            },
             "browser.json": {
                 "console": [asdict(r) for r in snap.console],
                 "page_errors": [asdict(r) for r in snap.page_errors],

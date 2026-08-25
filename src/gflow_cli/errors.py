@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 if TYPE_CHECKING:
     from gflow_cli.diagnostics import IncidentRef
 
 __all__ = [
+    "CONTENT_SAFETY_REASONS",
     "EXIT_CODE_MAP",
     "RETRYABLE_ERRORS",
     "AisandboxAuthError",
@@ -49,6 +51,7 @@ __all__ = [
     "VideoModelSelectionError",
     "WafRejectionError",
     "WireFormatError",
+    "classify_content_safety",
     "is_retryable",
 ]
 
@@ -192,6 +195,59 @@ class AisandboxAuthError(AuthExpiredError):
         "SAPISID cookie missing, expired, or unreadable. "
         "Re-run `gflow auth login --profile <name>` and retry."
     )
+
+
+CONTENT_SAFETY_REASONS: frozenset[str] = frozenset(
+    {
+        "PUBLIC_ERROR_UNSAFE_GENERATION",
+        "PUBLIC_ERROR_UNSAFE_CONTENT",
+        "PUBLIC_ERROR_UNSAFE_FACE",
+        "PUBLIC_ERROR_UNSAFE_IDENTITY",
+    }
+)
+"""Flow's content-safety ``details[].reason`` values on an HTTP 400.
+
+Lives here, next to :class:`ContentPolicyError` whose docstring documents the
+wire shape, because ``errors`` is a leaf module: ``api.client``,
+``api.transports.*`` and ``diagnostics`` can all import it, and none of them can
+import each other (``client`` imports ``transports``; ``diagnostics`` must stay
+leaf-level because ``FlowApiClient`` owns the ``IncidentRecorder``). Before #528
+this set was maintained in three places and the transports had no copy at all.
+"""
+
+
+def classify_content_safety(body: object) -> str | None:
+    """Return Flow's content-safety ``reason``, or ``None`` if the body has none.
+
+    Accepts either the raw response text (what ``api.client`` holds) or an
+    already-parsed dict (what the ``ui_automation`` response listener stores),
+    so both callers share one implementation.
+
+    Flow's HTTP 400 error shape::
+
+        {"error": {"code": 400, "message": "...", "status": "INVALID_ARGUMENT",
+                   "details": [{"reason": "PUBLIC_ERROR_UNSAFE_GENERATION"}]}}
+    """
+    parsed: object = body
+    if isinstance(parsed, str):
+        try:
+            parsed = json.loads(parsed)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    error_obj = cast("dict[str, Any]", parsed).get("error")
+    if not isinstance(error_obj, dict):
+        return None
+    details = cast("dict[str, Any]", error_obj).get("details")
+    if not isinstance(details, list):
+        return None
+    for item in cast("list[Any]", details):
+        if isinstance(item, dict):
+            reason = cast("dict[str, Any]", item).get("reason", "")
+            if reason in CONTENT_SAFETY_REASONS:
+                return cast("str", reason)
+    return None
 
 
 class RateLimitError(FlowApiError):

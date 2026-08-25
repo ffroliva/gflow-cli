@@ -21,13 +21,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0 # full history so `git diff origin/<base>..HEAD` resolves
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Classify touched paths (advisory, never blocks)
+        # BASE_REF arrives through `env:`, never interpolated into the script
+        # body: a branch name is attacker-supplied text, and `${{ ... }}` is
+        # substituted before the shell ever sees it (zizmor: template-injection).
+        # The fetch is belt-and-braces — `fetch-depth: 0` above already brings
+        # the base branch down — and needs no credential on a public repo.
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch --no-tags origin "${{ github.base_ref }}" || true
+          git fetch --no-tags origin "$BASE_REF" || true
           uv run python scripts/ci/check_materiality.py \
-            --base "origin/${{ github.base_ref }}"
+            --base "origin/$BASE_REF"

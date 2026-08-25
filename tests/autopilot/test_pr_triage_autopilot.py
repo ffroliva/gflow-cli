@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -82,7 +83,12 @@ def test_run_triage_cycle_success(
     mock_post_comment,
     mock_telegram,
     tmp_path,
+    monkeypatch,
 ):
+    # The deployed shape: a dedicated read-only token exists, so the container
+    # must receive THAT, never the write-scoped token used to post comments.
+    monkeypatch.setenv("GH_SANDBOX_TOKEN", "ro-token")
+
     # Mock Open PRs
     mock_gh_json.return_value = [
         {
@@ -125,9 +131,12 @@ def test_run_triage_cycle_success(
 
     # Assertions
     mock_fetch.assert_called_once_with(101, repo_dir)
-    mock_sandbox.assert_called_once_with(101, repo_dir, memory_dir, "token-test")
+    # read-only token into the sandbox, NOT the write-scoped "token-test"
+    mock_sandbox.assert_called_once_with(101, repo_dir, memory_dir, "ro-token")
+    assert mock_post_comment.call_args.kwargs["token"] == "token-test"
     mock_post_comment.assert_called_once()
-    mock_restore.assert_called_once_with(repo_dir)
+    # pr_num is passed so the fetched pr-<N>-review branch is deleted, not left behind
+    mock_restore.assert_called_once_with(repo_dir, pr_num=101)
     mock_append_ledger.assert_called_once()
     mock_telegram.assert_called_once()
 
@@ -419,6 +428,156 @@ def test_present_token_passes(monkeypatch):
     assert pr_triage_autopilot.check_claude_auth() is None
 
 
+def test_sandbox_token_prefers_the_dedicated_readonly_token(monkeypatch):
+    monkeypatch.setenv("GH_SANDBOX_TOKEN", "github_pat_readonly")
+    with patch("pr_triage_autopilot.send_telegram_alert") as m_alert:
+        assert pr_triage_autopilot.resolve_sandbox_token("write-token") == "github_pat_readonly"
+    assert m_alert.call_count == 0
+
+
+def test_sandbox_token_falls_back_loudly_when_unset(monkeypatch):
+    """Absent secret must degrade noisily, never silently re-grant write access."""
+    monkeypatch.delenv("GH_SANDBOX_TOKEN", raising=False)
+    with patch("pr_triage_autopilot.send_telegram_alert") as m_alert:
+        assert pr_triage_autopilot.resolve_sandbox_token("write-token") == "write-token"
+    assert m_alert.call_count == 1
+    assert "GH_SANDBOX_TOKEN" in m_alert.call_args[0][0]
+
+
+def test_post_gh_comment_passes_the_write_token_explicitly():
+    """Must not rely on ambient GH_TOKEN — the host env carries several tokens."""
+    with patch("pr_triage_autopilot.subprocess.run") as m_run:
+        m_run.return_value.returncode = 0
+        pr_triage_autopilot.post_gh_comment(7, "body", "o/r", token="write-token")
+    assert m_run.call_args.kwargs["env"]["GH_TOKEN"] == "write-token"
+
+
+def _git(repo, *args):
+    import subprocess
+
+    subprocess.run(["git", *args], cwd=repo, capture_output=True, check=True)
+
+
+def _make_repo(tmp_path):
+    """A real repo on develop with a pr-999-review branch checked out."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "develop")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (repo / "f.txt").write_text("x")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "init")
+    _git(repo, "branch", "pr-999-review")
+    _git(repo, "checkout", "-q", "pr-999-review")
+    return repo
+
+
+def _branches(repo):
+    import subprocess
+
+    out = subprocess.run(
+        ["git", "branch", "--format=%(refname:short)"], cwd=repo, capture_output=True, text=True
+    )
+    return set(out.stdout.split())
+
+
+def test_restore_repo_branch_deletes_the_pr_branch(tmp_path):
+    """The fetched pr-<N>-review branch must not outlive the review."""
+    repo = _make_repo(tmp_path)
+    assert "pr-999-review" in _branches(repo)
+
+    pr_triage_autopilot.restore_repo_branch(repo, pr_num=999)
+
+    assert "pr-999-review" not in _branches(repo)
+    assert _branches(repo) == {"develop"}
+
+
+def test_restore_repo_branch_tolerates_absent_pr_branch(tmp_path):
+    """A run that failed before fetching leaves no branch; cleanup must not raise."""
+    repo = _make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "develop")
+    _git(repo, "branch", "-D", "pr-999-review")
+
+    pr_triage_autopilot.restore_repo_branch(repo, pr_num=999)
+
+    assert _branches(repo) == {"develop"}
+
+
+def test_restore_repo_branch_without_pr_num_still_restores_develop(tmp_path):
+    repo = _make_repo(tmp_path)
+    pr_triage_autopilot.restore_repo_branch(repo)
+    assert "pr-999-review" in _branches(repo)
+
+
+def test_memory_dir_cli_arg_wins_over_env(monkeypatch, tmp_path):
+    env_dir = tmp_path / "from-env"
+    cli_dir = tmp_path / "from-cli"
+    env_dir.mkdir()
+    cli_dir.mkdir()
+    monkeypatch.setenv(pr_triage_autopilot.MEMORY_DIR_ENV, str(env_dir))
+    assert pr_triage_autopilot.resolve_memory_dir(str(cli_dir)) == cli_dir.resolve()
+
+
+def test_memory_dir_falls_back_to_env(monkeypatch, tmp_path):
+    env_dir = tmp_path / "from-env"
+    env_dir.mkdir()
+    monkeypatch.setenv(pr_triage_autopilot.MEMORY_DIR_ENV, str(env_dir))
+    assert pr_triage_autopilot.resolve_memory_dir(None) == env_dir.resolve()
+
+
+def test_memory_dir_falls_back_to_xdg_data_home(monkeypatch, tmp_path):
+    monkeypatch.delenv(pr_triage_autopilot.MEMORY_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    expected = tmp_path / "gflow-cli" / "memory"
+    expected.mkdir(parents=True)
+    assert pr_triage_autopilot.resolve_memory_dir(None) == expected.resolve()
+
+
+def test_memory_dir_missing_exits_naming_the_path_and_overrides(monkeypatch, tmp_path):
+    monkeypatch.delenv(pr_triage_autopilot.MEMORY_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    with pytest.raises(SystemExit) as exc:
+        pr_triage_autopilot.resolve_memory_dir(None)
+    message = str(exc.value)
+    assert "gflow-cli" in message and "memory" in message
+    assert "mkdir -p" in message
+    assert pr_triage_autopilot.MEMORY_DIR_ENV in message
+
+
+def test_main_resolves_memory_from_environment_without_cli_flag(monkeypatch, tmp_path):
+    """main() must reach run_triage_cycle with the resolved dir when no flag is passed.
+
+    The cron line carries no --memory-dir, so this is the path production uses.
+    """
+    memory = tmp_path / "xdg" / "gflow-cli" / "memory"
+    memory.mkdir(parents=True)
+    monkeypatch.delenv(pr_triage_autopilot.MEMORY_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("GH_TOKEN", "tok")
+    monkeypatch.setenv(pr_triage_autopilot.CLAUDE_TOKEN_ENV, "sk-ant-oat01-xxx")
+
+    with patch("pr_triage_autopilot.run_triage_cycle") as m_cycle:
+        ret = pr_triage_autopilot.main(["--repo-dir", str(tmp_path)])
+
+    assert ret == 0
+    assert m_cycle.call_args[0][2] == memory.resolve()
+
+
+def test_main_exits_when_resolved_memory_dir_is_absent(monkeypatch, tmp_path):
+    """A missing memory dir must abort before the lock and the container."""
+    monkeypatch.delenv(pr_triage_autopilot.MEMORY_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "empty"))
+    monkeypatch.setenv("GH_TOKEN", "tok")
+    monkeypatch.setenv(pr_triage_autopilot.CLAUDE_TOKEN_ENV, "sk-ant-oat01-xxx")
+
+    with patch("pr_triage_autopilot.run_triage_cycle") as m_cycle:
+        with pytest.raises(SystemExit):
+            pr_triage_autopilot.main(["--repo-dir", str(tmp_path)])
+
+    assert m_cycle.call_count == 0
+
+
 def test_main_sends_telegram_alert_on_missing_token(monkeypatch, tmp_path):
     monkeypatch.delenv("GH_COMMENT_TOKEN", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
@@ -438,3 +597,186 @@ def test_main_sends_telegram_alert_on_auth_error(monkeypatch, tmp_path):
         assert ret == 1
         assert m_alert.call_count == 1
         assert "Claude authentication unusable" in m_alert.call_args[0][0]
+
+
+# --- council memory reaches the reviewer inside the sandbox -------------------
+# The mount target and the path SKILL.md tells reviewers to read are two halves
+# of one contract, held in two files that nothing linked. They disagreed: the
+# sandbox mounted /memory while D5 was instructed to inspect
+# ~/.claude/projects/<slug>/memory, which does not exist in the container. The
+# council therefore found no memory even once the host tree was populated.
+
+SANDBOX_SH = ROOT / "scripts" / "autopilot" / "run_sandboxed_review.sh"
+COUNCIL_SKILL = ROOT / "skills" / "pr-council-review" / "SKILL.md"
+CONTAINER_HOME = "/home/nonroot"
+
+
+def _skill_memory_path() -> str:
+    """The memory path SKILL.md § D5 instructs a reviewer to inspect."""
+    match = re.search(
+        r"Inspect `~(/\.claude/projects/[^`]+?)/?`", COUNCIL_SKILL.read_text(encoding="utf-8")
+    )
+    assert match, "SKILL.md no longer states a D5 memory path in the expected form"
+    return CONTAINER_HOME + match.group(1)
+
+
+def _sandbox_memory_dir() -> str:
+    """The container path run_sandboxed_review.sh mounts council memory at."""
+    match = re.search(r'COUNCIL_MEMORY_DIR="([^"]+)"', SANDBOX_SH.read_text(encoding="utf-8"))
+    assert match, "run_sandboxed_review.sh no longer declares COUNCIL_MEMORY_DIR"
+    return match.group(1)
+
+
+def test_sandbox_mounts_memory_where_the_skill_looks_for_it():
+    assert _sandbox_memory_dir() == _skill_memory_path(), (
+        "the sandbox mounts council memory somewhere the reviewer is not told to look; "
+        "D5 will report no memory no matter what the host tree contains"
+    )
+
+
+def test_sandbox_mounts_memory_read_only():
+    sh = SANDBOX_SH.read_text(encoding="utf-8")
+    assert '-v "$HOST_MEMORY:$COUNCIL_MEMORY_DIR:ro"' in sh, (
+        "council memory must be mounted read-only; the container only ever reads it"
+    )
+
+
+def test_sandbox_grants_the_agent_access_to_the_memory_dir():
+    """The mount is necessary but not sufficient.
+
+    The tree is outside the agent's /workspace cwd, so without --add-dir Claude
+    Code refuses to read it ("I don't have permission to read that file") and
+    the council silently reviews with no memory.
+    """
+    sh = SANDBOX_SH.read_text(encoding="utf-8")
+    assert '--add-dir "$COUNCIL_MEMORY_DIR"' in sh, (
+        "sandbox mounts council memory but never grants the agent access to it"
+    )
+
+
+def test_add_dir_follows_the_positional_prompt():
+    """--add-dir is variadic: placed before the prompt it consumes it.
+
+    Symptom is not a permission error but a hard start-up failure:
+    "Input must be provided either through stdin or as a prompt argument".
+    """
+    sh = SANDBOX_SH.read_text(encoding="utf-8")
+    prompt = re.search(r'claude -p "(?P<body>[^"]+)"', sh)
+    assert prompt, "could not locate the claude -p invocation"
+    # match the flag as used, not the word: the surrounding comment mentions it too
+    flag = sh.index('--add-dir "$COUNCIL_MEMORY_DIR"')
+    assert flag > prompt.end(), "--add-dir precedes the positional prompt and will swallow it"
+
+
+def test_firewall_resolves_only_ipv4_addresses():
+    """iptables is v4-only and errors out on an AAAA result.
+
+    api.anthropic.com publishes both an A and an AAAA record. Feeding the AAAA
+    to `iptables -d` fails, and under `set -e` that killed the run before
+    `docker run` was ever reached -- observed on the ops VPS 2026-08-18.
+    """
+    sh = SANDBOX_SH.read_text(encoding="utf-8")
+    assert "getent ahosts " not in sh, (
+        "firewall setup resolves AAAA records; iptables rejects them and set -e "
+        "aborts the review before the container starts. Use `getent ahostsv4`."
+    )
+    assert sh.count("getent ahostsv4 ") == 4, (
+        "expected all four host lookups (2 setup, 2 cleanup) to be IPv4-only"
+    )
+
+
+def _sandbox_code() -> str:
+    """The script with comment lines stripped, so prose cannot satisfy a check."""
+    return "\n".join(
+        line
+        for line in SANDBOX_SH.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
+def test_sandbox_grants_tools_without_disabling_the_permission_system():
+    """In -p mode a permission prompt is an auto-deny, so some grant is required.
+
+    It must stay scoped. --dangerously-skip-permissions would also unlock Write,
+    Edit and arbitrary Bash, and that gate is the only technical enforcement of
+    SKILL.md section 9's no-write-tools rule for an agent that reads
+    contributor-controlled PR content.
+    """
+    code = _sandbox_code()
+    assert '--allowedTools "$COUNCIL_TOOLS"' in code, (
+        "the sandboxed reviewer cannot run gh without a tool grant; it auto-denies and stalls"
+    )
+    assert "--dangerously-skip-permissions" not in code, (
+        "blanket bypass unlocks Write/Edit/Bash for an agent ingesting attacker-influenced "
+        "PR content; grant only the reads the protocol makes"
+    )
+
+
+def test_council_tool_grant_carries_no_write_capable_tools():
+    """A write tool in the allowlist would reintroduce exactly what it prevents."""
+    grant = re.search(r'COUNCIL_TOOLS="([^"]+)"', _sandbox_code())
+    assert grant, "run_sandboxed_review.sh no longer declares COUNCIL_TOOLS"
+
+    # split on the top level: "Bash(gh pr view:*)" is one entry despite its spaces
+    tools, depth, current = [], 0, ""
+    for ch in grant.group(1):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == " " and depth == 0:
+            if current:
+                tools.append(current)
+            current = ""
+        else:
+            current += ch
+    if current:
+        tools.append(current)
+
+    # exact names, so TodoWrite is not mistaken for Write
+    for forbidden in ("Write", "Edit", "NotebookEdit", "WebFetch", "Bash"):
+        assert forbidden not in tools, f"{forbidden} must not be granted to the reviewer"
+
+    bash_grants = [x for x in tools if x.startswith("Bash")]
+    assert bash_grants, "the reviewer needs at least the gh reads"
+    for g in bash_grants:
+        assert g.startswith("Bash(") and g.endswith(")"), (
+            f"{g} is not a scoped Bash grant; Bash must be granted per read-only subcommand"
+        )
+
+    # the mutating subcommands SKILL.md also mentions must never be granted:
+    # the host posts the review comment, the container only ever reads
+    granted = " ".join(bash_grants)
+    for mutation in (
+        "gh pr merge",
+        "gh pr review",
+        "gh pr ready",
+        "gh pr comment",
+        "gh pr close",
+        "gh auth login",
+        "git push",
+        "git stash",
+        "git tag",
+    ):
+        assert mutation not in granted, f"{mutation!r} mutates state and must stay denied"
+
+
+def test_council_tool_grant_covers_the_protocol_preflight():
+    """SKILL.md section 0 runs `gh auth status` before anything else.
+
+    Omitting it stalled a real run on the VPS: the reviewer stopped to ask for
+    approval of `gh auth status` and the council never started.
+    """
+    grant = re.search(r'COUNCIL_TOOLS="([^"]+)"', _sandbox_code())
+    assert grant, "run_sandboxed_review.sh no longer declares COUNCIL_TOOLS"
+    for required in ("gh auth status", "gh pr view", "gh pr diff", "gh pr checks", "git show"):
+        assert required in grant.group(1), f"protocol calls {required!r} but it is not granted"
+
+
+def test_entrypoint_has_no_dangling_memory_symlink():
+    """The old symlink pointed at /memory, which is no longer a mount target."""
+    ep = (ROOT / "scripts" / "autopilot" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "ln -sf /memory" not in ep, (
+        "entrypoint still links /memory, which nothing mounts since the memory tree "
+        "moved to the path SKILL.md reads"
+    )

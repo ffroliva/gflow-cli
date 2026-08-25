@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import structlog
 
 from gflow_cli._cli_helpers import _handle_gflow_error
 from gflow_cli.api.client import _raise_for_non_retryable
@@ -100,15 +101,43 @@ def test_json_error_payload_carries_remediation_hint() -> None:
     assert len(payload["error"]["remediation_hint"]) > 0
 
 
-def test_cli_rich_error_handler_renders_remediation(capsys: pytest.CaptureFixture[str]) -> None:
-    """Verify that _cli_helpers renders remediation hints to stdout/stderr."""
-    exc = WireFormatError(
+def _wire_format_exc() -> WireFormatError:
+    return WireFormatError(
         detail="Invalid parameter payload",
         remediation_hint="Check request payload parameters or retry with a simpler prompt text.",
     )
-    code = _handle_gflow_error(exc, cli_command="test")
+
+
+def test_cli_rich_error_handler_renders_remediation(capsys: pytest.CaptureFixture[str]) -> None:
+    """The rich CONSOLE channel renders title, detail and remediation.
+
+    Split from the log-event assertion below. These are two channels:
+    ``_handle_gflow_error`` prints the human-facing lines through the rich
+    console (always, unconditionally) AND emits a structured ``error_raised``
+    event through structlog (whose destination is process-global config). The
+    original single test scraped stdout for both, so the half that read the log
+    event passed or failed on test ORDER — the class name appears nowhere in the
+    console output.
+    """
+    code = _handle_gflow_error(_wire_format_exc(), cli_command="test")
     captured = capsys.readouterr()
 
     assert code == 7
-    assert "WireFormatError" in captured.out
+    assert "Unexpected response shape from Flow" in captured.out
+    assert "Invalid parameter payload" in captured.out
     assert "Check request payload parameters" in captured.out
+
+
+def test_cli_error_handler_emits_error_class_event(
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """The structured LOG channel carries the concrete error class.
+
+    Asserts on the captured event dict rather than scraping rendered stdout, so
+    the result cannot depend on how structlog happens to be configured.
+    """
+    _handle_gflow_error(_wire_format_exc(), cli_command="test")
+
+    events = [e for e in install_log_capture.entries if e["event"] == "error_raised"]
+    assert events, "expected an error_raised event"
+    assert events[0]["error_class"] == "WireFormatError"

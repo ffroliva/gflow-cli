@@ -1,0 +1,21 @@
+# logrotate config for the PR-Triage Autopilot log.
+#
+# Install on the VPS as root:
+#   install -m 644 /opt/gflow-cli/deploy/logrotate-pr-triage /etc/logrotate.d/pr-triage
+#   logrotate --debug /etc/logrotate.d/pr-triage   # dry-run to verify
+#
+# Scoped to pr_triage.log alone, not /var/log/hermes/*.log: the rest of that
+# directory belongs to hermes-ops, and two packages rotating the same glob is
+# how you get silently truncated logs.
+/var/log/hermes/pr_triage.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    # The hourly cron reopens the file on each tick, but copytruncate keeps
+    # rotation safe if the orchestrator is ever run as a long-lived process.
+    copytruncate
+    su hermes hermes
+}

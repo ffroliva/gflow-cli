@@ -3,6 +3,6 @@
   "private": true,
   "description": "Pinned npm deps for Dockerfile.triage — installed via `npm ci` from package-lock.json (Scorecard Pinned-Dependencies).",
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.232"
+    "@anthropic-ai/claude-code": "2.1.238"
   }
 }
