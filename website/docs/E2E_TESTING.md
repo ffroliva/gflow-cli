@@ -179,11 +179,17 @@ a pure function with all four states covered in
 fails for a reason other than a profile precondition, the canary re-runs
 `gflow auth status`. Session still valid ⇒ the failure is
 drift (`RED`); session now dead ⇒ genuine rot (`AUTH-EXPIRED`). The first live run
-proved why this matters: an `AuthExpiredError` from the aisandbox upload path
+proved why this matters: an `AuthExpiredError` on `project.createProject`
 *looked* exactly like session rot, but the session verified clean seconds later —
 so it was a real divergence between two auth surfaces, and a name-matching
 classifier would have buried it. The extra probe costs ~45s and only runs after a
 failure.
+
+> The route is `labs.google/fx/api/trpc/project.createProject` — the NextAuth
+> **cookie** surface — not the aisandbox Bearer path. #561 originally recorded it
+> as an `uploadImage` failure because the failing test is named for an upload;
+> the traceback dies one line earlier, on the project-creation call. Corrected
+> here so the next reader does not re-investigate the wrong host.
 
 `DEFERRED` covers every run that **exercised nothing**: a held `ProfileLease`, a
 `ProfileEngineDowngradeError` (profile written by a newer Chromium than the bundled
@@ -203,6 +209,18 @@ Two subtleties, both found by council review and both regression-tested:
 
 Because the issue carries a last-updated timestamp, a machine that was off is
 *visibly stale* — unlike a lingering green commit status, which lies.
+
+**A RED preserves its own evidence, logs included.** The run's JUnit is copied to
+`tmp/canary-red-<stamp>.xml` (the live one is overwritten nightly), and pytest runs
+with `-o junit_logging=all` so that copy carries the captured structlog output, not
+just a traceback. This is not optional detail: the canary's failures reproduce only
+unattended, so whatever the run does not record cannot be recovered afterwards. For
+an auth 401 the deciding line is `client.context_cookie_state` — the #222
+diagnostic, which reports whether the launched browser context actually loaded the
+Flow session cookie. That single boolean separates "the browser never got the
+cookie" from "the session was genuinely refused"; without it a 401 traceback is the
+same shape either way. The copy stays **local** — it carries raw tracebacks and
+profile paths, which the sanitization contract keeps off the public issue.
 
 ### Scope
 

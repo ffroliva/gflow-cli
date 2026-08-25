@@ -162,10 +162,19 @@ def run_tiers(profile: str, markers: str) -> tuple[int, str, float]:
     """Run the selected $0 tiers. Returns (returncode, combined_output, seconds)."""
     JUNIT_PATH.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
+    # junit_logging=all folds pytest's captured stdout/log into the JUnit, so a
+    # preserved RED carries the run's structlog output and not just a traceback.
+    # An auth 401's traceback cannot say WHICH cookie carrier failed; the
+    # `client.context_cookie_state` line (the #222 diagnostic) answers exactly
+    # that and is otherwise captured and discarded. The failure only reproduces
+    # unattended, so a red that drops it is untriageable by construction
+    # (#559/#561). The JUnit already stays local — it already carries raw
+    # tracebacks — so this exposes nothing the sanitization contract covers.
     argv = [
         sys.executable, "-m", "pytest",
         "-m", markers,
         "--junitxml", str(JUNIT_PATH),
+        "-o", "junit_logging=all",
         "-q", "--no-header",
     ]  # fmt: skip
     try:
