@@ -60,6 +60,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | [docs/superpowers/plans/2026-07-27-tier-aware-credit-confirmations/PLAN.md](superpowers/plans/2026-07-27-tier-aware-credit-confirmations/PLAN.md) | TDD implementation plan for tier-aware chain/movie planning and confirmation output | Tracking the isolated runtime pricing-guidance bugfix |
 | [docs/superpowers/specs/2026-08-21-selector-registry-design.md](superpowers/specs/2026-08-21-selector-registry-design.md) | Selector registry + drift probe design spec: measured one-cookie auth evidence, data model, grading semantics, CI probe, risk register | Reviewing the registry/probe design or auditing its evidence |
 | [docs/superpowers/plans/2026-08-21-selector-registry.md](superpowers/plans/2026-08-21-selector-registry.md) | Task-by-task TDD plan for the selector registry + CI probe (executed — PR #563) | Auditing how the registry/probe was built |
+| [docs/superpowers/plans/2026-08-25-workflow-hardening-gaps.md](superpowers/plans/2026-08-25-workflow-hardening-gaps.md) | Spec + decisions + TDD plan for #568 — why the pin is derived from `ci.yml`, why the injection ban stays blanket, why the property tests are kept | Bumping zizmor, or re-opening "should these tests exist" |
 
 ## Agent commands
 

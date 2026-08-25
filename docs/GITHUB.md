@@ -219,9 +219,16 @@ uvx zizmor==1.29.0 --offline --min-severity low .github/workflows/
 
 `--offline` keeps the gate deterministic and fork-safe (the online audits need a
 token and network); action pinning and freshness are already covered by
-Dependabot and Scorecard's Pinned-Dependencies check. The pin is asserted by
-`tests/scripts/test_workflow_hardening.py`, so the gate and the test cannot
-drift apart silently.
+Dependabot and Scorecard's Pinned-Dependencies check.
+
+`ci.yml` is the single source of truth for the pin.
+`tests/scripts/test_workflow_hardening.py` reads it from there and asserts that
+**the command quoted above matches** — so the gate, the test, and this
+documentation cannot drift apart silently. Bumping zizmor means editing exactly
+two places: the `run:` line in `ci.yml` and the command above. (Until #568 the
+test held its own hand-copied constant and never checked this doc, so this
+snippet could — and would — go stale while the sentence promising otherwise
+stayed put.)
 
 Two findings are deliberately not fixed, and both are documented where they
 live:
