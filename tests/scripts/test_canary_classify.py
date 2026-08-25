@@ -293,3 +293,34 @@ def test_sync_refuses_a_dirty_tree_and_reports_rather_than_dying(monkeypatch) ->
     reason = run_canary.sync_to_develop()
     assert reason is not None and "local modifications" in reason
     assert not any("checkout" in c for c in calls), "must not touch the tree it refused"
+
+
+def test_tier_run_captures_logs_into_the_junit(monkeypatch) -> None:
+    """The tier must run pytest with ``junit_logging=all`` (#559/#561).
+
+    A RED publishes only the failing test's NAME, and the preserved JUnit
+    carries only the traceback. But the traceback of an auth 401 cannot say
+    WHICH cookie carrier failed — and the answer is already logged, by
+    ``client.context_cookie_state`` (the #222 diagnostic), which pytest
+    captures and then discards. Without this flag every overnight RED is
+    untriageable by construction: the one line that decides it is thrown away
+    at the moment it is produced, and the failure only occurs unattended.
+    """
+    from scripts.canary import run_canary
+
+    calls: list[list[str]] = []
+
+    class _Proc:
+        def __init__(self) -> None:
+            self.stdout, self.stderr, self.returncode = "", "", 0
+
+    def fake_run(cmd, env=None, timeout=None):  # noqa: ANN001, ANN202
+        calls.append(cmd)
+        return _Proc()
+
+    monkeypatch.setattr(run_canary, "_run", fake_run)
+    run_canary.run_tiers("denon82", "e2e_auth")
+
+    argv = calls[0]
+    assert "-o" in argv, "no pytest -o override present"
+    assert argv[argv.index("-o") + 1] == "junit_logging=all"
