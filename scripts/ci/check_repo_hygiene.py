@@ -209,12 +209,17 @@ def _check_branch_name(branch: str | None) -> list[str]:
 
 
 def _check_version_agreement() -> list[str]:
-    """pyproject == __init__ == plugin.json — one version, three declarations.
+    """pyproject == __init__ == plugin.json == uv.lock — one version, four declarations.
 
-    pyproject is read with the same anchored-regex style the release gate
-    (check_release_artifacts.py) uses — deliberately NOT tomllib, which is
-    3.11+ and would silently disable this gate under an older pre-commit
-    interpreter.
+    pyproject and uv.lock are read with the same anchored-regex style the
+    release gate (check_release_artifacts.py) uses — deliberately NOT tomllib,
+    which is 3.11+ and would silently disable this gate under an older
+    pre-commit interpreter.
+
+    uv.lock carries the editable package's own version and is re-resolved on
+    every bump (/gflow:release step 9 stages it). It drifts silently when a
+    bump lands without `uv lock`, so it belongs in the same gate as the other
+    three rather than being discovered at release time.
     """
     import json
 
@@ -232,11 +237,20 @@ def _check_version_agreement() -> list[str]:
         versions["src/gflow_cli/__init__.py"] = match.group(1)
         plugin_raw = (ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
         versions[".codex-plugin/plugin.json"] = str(json.loads(plugin_raw)["version"])
+        lock_text = (ROOT / "uv.lock").read_text(encoding="utf-8")
+        # The editable package's own [[package]] block: `name` then `version`.
+        # Anchored on the name so the ~200 dependency versions can't match.
+        lock_match = re.search(
+            r'^name = "gflow-cli"\r?\nversion = "([^"]+)"', lock_text, re.MULTILINE
+        )
+        if lock_match is None:
+            return ['uv.lock: no [[package]] block for "gflow-cli" found']
+        versions["uv.lock"] = lock_match.group(1)
     except (OSError, KeyError, ValueError) as exc:
         return [f"version-agreement check could not read a source: {exc}"]
     if len(set(versions.values())) > 1:
         listing = ", ".join(f"{src}={ver}" for src, ver in versions.items())
-        return [f"version disagreement — {listing} (bump all three together)"]
+        return [f"version disagreement — {listing} (bump all four together)"]
     return []
 
 

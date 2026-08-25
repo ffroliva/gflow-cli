@@ -177,11 +177,15 @@ jobs:
       - name: Set up Python
         run: uv python install ${{ matrix.python-version }}
 
+      # --frozen: install from the committed uv.lock without re-resolving it.
+      # Plain `uv sync` REWRITES uv.lock in place, which would silently repair
+      # the exact version drift the hygiene gate below exists to catch.
       - name: Install deps
-        run: uv sync --extra dev
+        run: uv sync --frozen --extra dev
 
-      - name: Repo hygiene (no artefacts, no hardcoded paths)
-        run: uv run python scripts/ci/check_repo_hygiene.py
+      # --no-sync for the same reason: `uv run` re-locks before running.
+      - name: Repo hygiene (no artefacts, no hardcoded paths, version lockstep)
+        run: uv run --no-sync python scripts/ci/check_repo_hygiene.py
 
       - name: Documentation links
         run: uv run python scripts/ci/check_doc_links.py
