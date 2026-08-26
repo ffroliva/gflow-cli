@@ -31,6 +31,7 @@ from gflow_cli.api.image import GenerateImageRequest, _build_batch_generate_imag
 from gflow_cli.api.transports._common import (
     FLOW_URL,
     PER_CALL_TIMEOUT_S,
+    await_url_settled,
     interpret_response,
     mint_batch_id,
 )
@@ -225,6 +226,9 @@ class SapisidhashTransport:
                 try:
                     page = await ctx.new_page()
                     await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30_000)
+                    # #584: capture_fingerprint evaluates in the page; a redirect
+                    # mid-capture destroys the execution context.
+                    await await_url_settled(page)
                     fp = await capture_fingerprint(page)
                 finally:
                     await ctx.close()
