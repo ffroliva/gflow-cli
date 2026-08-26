@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Four more navigations settle before acting on the page
+  ([#584](https://github.com/ffroliva/gflow-cli/issues/584)).** #580 settled the
+  three sites it touched; an audit of every `page.goto` found four more with the
+  same defect. The worst is `evaluate_fetch.refresh_auth`, which re-navigates to
+  refresh page-context tokens and reported success while the page was still
+  moving. Two more (`evaluate_fetch` setup, `sapisidhash` fingerprint capture)
+  run `page.evaluate` immediately after navigating, where a mid-flight redirect
+  raises "Execution context was destroyed" rather than failing quietly. The
+  fourth (`_enter_editor`'s gallery return) ran `_bypass_onboarding` — real
+  button clicks — on a page about to navigate away. A new AST-based test pins
+  every `goto` to a following settle, so the audit does not have to be redone
+  by hand.
+
 - **The nightly canary now runs the version of itself that it just pulled
   ([#582](https://github.com/ffroliva/gflow-cli/issues/582)).** `run_canary.py
   --pull` fast-forwards the checkout and then keeps executing the copy Python

@@ -1259,6 +1259,12 @@ class UiAutomationTransport(VideoGenerationMixin):
             # readiness gate.
             log.info("ui_automation.navigating_to_gallery", restored_url=page.url)
             await page.goto(FLOW_URL, timeout=45_000)
+            # #584: FLOW_URL is the bare form, which Flow redirects to the
+            # account's locale AFTER goto returns. `_bypass_onboarding` clicks
+            # real buttons — running it mid-redirect clicks a page that is
+            # leaving. The wait_for_timeout below would absorb it, but it comes
+            # after this call, not before.
+            await await_url_settled(page)
             await self._bypass_onboarding(page)
 
         await page.wait_for_timeout(3000)
