@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A requested image model that cannot be selected no longer generates silently
+  on a different one ([#586](https://github.com/ffroliva/gflow-cli/issues/586)).**
+  `_select_image_model` swallowed every failure, logged a warning, and let the
+  generation proceed on whatever the project's picker already held. Observed
+  live: `--model imagen4` produced an image on `NARWHAL` and exited **0** —
+  confirmed three ways (log, catalog, and `imageModelName` in a HAR). Flow has
+  removed `Imagen 4` from its picker, and `has-text('Nano Banana 2')` had become
+  ambiguous with the newly-offered `Nano Banana 2 Lite`, so `.first` resolved by
+  DOM order. A missing or ambiguous selector now raises `UiSelectorDriftError`
+  (exit 23) naming what Flow actually offered, before anything is submitted.
+
+### Added
+
+- **Server-side model attribution
+  ([#586](https://github.com/ffroliva/gflow-cli/issues/586)).**
+  `parse_media_attribution` reads `modelNameType` / `seed` / `aspectRatio` from
+  the `flow.projectInitialData` listing gflow already fetches — the same payload
+  the sync path walks for `name` and discards the rest of. This matters most on
+  the **agentic** arm, where those fields were previously synthesised from our
+  own request because they live in a Web-Worker SSE stream Playwright cannot
+  observe; "not visible to the page" was never the same as "unknowable". Verified
+  live: an agentic run that requested `GEM_PIX_2` was attributed `NARWHAL` by the
+  server, with a real seed where the catalog held `0`.
+
 - **Four more navigations settle before acting on the page
   ([#584](https://github.com/ffroliva/gflow-cli/issues/584)).** #580 settled the
   three sites it touched; an audit of every `page.goto` found four more with the

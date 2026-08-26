@@ -182,6 +182,17 @@ async def await_url_settled(page: Any) -> str | None:
     Best-effort: never raises. Returns ``None`` on timeout (already-localised URLs
     match immediately, so a timeout means no locale form ever appeared).
     """
+    # Short-circuit: if the URL is ALREADY the localised shape there is nothing to
+    # wait for. Measured: without this, every project navigation on a
+    # resolved-locale account burned the full timeout, because wait_for_url does
+    # not reliably return early for an already-matching current URL.
+    try:
+        current = str(page.url)
+    except Exception:  # noqa: BLE001
+        current = ""
+    if current and FLOW_LOCALISED_URL_RE.match(current):
+        return current
+
     try:
         await page.wait_for_url(FLOW_LOCALISED_URL_RE, timeout=URL_SETTLE_TIMEOUT_MS)
         return str(page.url)
