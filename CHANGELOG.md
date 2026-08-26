@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Editor navigation no longer races a locale redirect on non-`en` accounts
+  ([#580](https://github.com/ffroliva/gflow-cli/issues/580)).** `_enter_editor`
+  built its URL from a hardcoded `locale="en-US"` that no caller ever overrode,
+  so every account was sent to `/fx/en/...`. On a pt-BR account Flow redirects
+  that to `/fx/pt/...` **after `page.goto` has already returned** — leaving
+  overlay dismissal and prompt submission running against a page about to be
+  navigated away. That is how [#395](https://github.com/ffroliva/gflow-cli/issues/395)'s
+  "character-route bounce" presented. The client now learns the account's real
+  locale from where Flow itself lands (the only trustworthy source: `auth/session`
+  carries no locale, and `navigator.language` reports the value gflow sets when
+  launching the context), hands it to the transport through the typed
+  `TransportSetup` seam, and an independent settle-wait tolerates any redirect we
+  did not predict. An unresolved locale omits the segment rather than guessing.
+  `gflow character create --locale` now defaults to the account's locale instead
+  of `en-US`; the previous hardcoded default meant the character editor — the
+  surface #395 was reported against — was still routed to `/fx/en/...` on every
+  account, and the character route never waited for a settle at all.
+
+  Live-verified on a pt-BR account with a control arm: the fix navigates
+  race-free while the pre-fix path still redirects. Accounts Flow does not
+  redirect (e.g. `en`) skip the wait entirely after a single bounded probe, so
+  they pay no per-navigation cost.
+
 ## [0.60.0] — 2026-08-25
 
 ### Added

@@ -15,6 +15,9 @@ import json
 import uuid
 from typing import Any
 
+import structlog
+
+from gflow_cli.api import routes
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import (
@@ -31,6 +34,8 @@ from gflow_cli.errors import (
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+log = structlog.get_logger(__name__)
 
 FLOW_URL: str = "https://labs.google/fx/tools/flow?hl=en"
 PER_CALL_TIMEOUT_S: int = 30
@@ -139,6 +144,59 @@ GENERATION_POLICY_HINT: str = (
     "real-person likeness or a frontal close-up face. Shortening the prompt does "
     "NOT help."
 )
+
+
+#: Bounded because this is paid on a path that often has nothing to wait for.
+#: Measured: when Flow does redirect, it lands well inside this window; when it
+#: does not (an `en` account is served the bare URL and never redirected), the
+#: full timeout is dead time. 8 s made `ffroliva` setup take 11.2 s.
+URL_SETTLE_TIMEOUT_MS: float = 4_000.0
+
+#: Flow's canonical settled editor shape. Reuses the routes matcher rather than
+#: restating it: `_resolve_account_locale` waits on THIS and then parses with
+#: `routes.locale_segment_from_url`, so two independent copies could drift apart
+#: and silently switch locale resolution off while both log lines looked healthy.
+FLOW_LOCALISED_URL_RE = routes.LOCALE_SEGMENT_RE
+
+
+async def await_url_settled(page: Any) -> str | None:
+    """Wait for Flow's locale redirect to land; return the settled URL or ``None``.
+
+    ``page.goto(wait_until="domcontentloaded")`` returns BEFORE the redirect —
+    measured at 591-797 ms with the redirect arriving after. Any DOM work started
+    in that window runs against a page about to be navigated away, which is how
+    the #395 "character-route bounce" presents.
+
+    **Waits for the destination SHAPE, not for stability.** An earlier version
+    polled for two consecutive identical samples 200 ms apart and returned
+    immediately — before the redirect had begun — reporting a URL that was merely
+    not-yet-changed as "settled". The e2e gate caught it; unit tests could not,
+    because the bug is purely about real-world timing.
+
+    Two callers with independent purposes share this primitive: the client settles
+    the bootstrap navigation to LEARN the account locale (preventing the redirect
+    thereafter), the transport settles each editor navigation to TOLERATE a
+    redirect it did not predict. Prevention and tolerance stay independent; only
+    the act of observing "settled" is shared.
+
+    Best-effort: never raises. Returns ``None`` on timeout (already-localised URLs
+    match immediately, so a timeout means no locale form ever appeared).
+    """
+    try:
+        await page.wait_for_url(FLOW_LOCALISED_URL_RE, timeout=URL_SETTLE_TIMEOUT_MS)
+        return str(page.url)
+    except Exception as exc:  # noqa: BLE001 — observation only, never break navigation
+        # Distinguish "no localised URL appeared" (expected on accounts Flow does
+        # not redirect) from "the wait itself is broken" (e.g. a renamed
+        # Playwright method). Collapsing both into a silent None would let a
+        # permanently broken settle read as healthy forever — the caller logs
+        # `url_stable_after_goto` on a None return.
+        log.info(
+            "transport.url_settle_gave_up",
+            exc_class=type(exc).__name__,
+            timeout_ms=URL_SETTLE_TIMEOUT_MS,
+        )
+        return None
 
 
 def generation_error(*, status: int, route: str, body: object) -> FlowApiError:

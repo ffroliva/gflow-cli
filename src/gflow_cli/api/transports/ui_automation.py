@@ -29,7 +29,11 @@ from gflow_cli.api._retry import parse_retry_after
 from gflow_cli.api.character import CHARACTER_MODELS, CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
-from gflow_cli.api.transports._common import extract_project_id, generation_error
+from gflow_cli.api.transports._common import (
+    await_url_settled,
+    extract_project_id,
+    generation_error,
+)
 from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
@@ -850,6 +854,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Counts-only incident sink for outgoing generation submits (#528).
         # None until apply_setup runs, and whenever incident capture is off.
         self._record_generation_request: GenerationRequestRecorder | None = None
+        # Account locale segment injected by the client (#580). None => bare URLs.
+        self._account_locale: str | None = None
         # Optional directory for debug screenshots — derived from the client's
         # `out_dir` constructor arg (#18). When None, the internal
         # _capture_debug_screenshot helper is a no-op.
@@ -879,6 +885,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         self._storage_uri = config.storage_uri
         self._output_dir = config.output_dir
         self._record_generation_request = config.record_generation_request
+        self._account_locale = config.account_locale
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -1194,7 +1201,6 @@ class UiAutomationTransport(VideoGenerationMixin):
         *,
         project_id: str | None = None,
         project_name: str | None = None,
-        locale: str = "en-US",
     ) -> None:
         """Create a fresh project OR navigate to an existing one.
 
@@ -1212,9 +1218,33 @@ class UiAutomationTransport(VideoGenerationMixin):
         from gflow_cli.api import routes
 
         if project_id:
-            url = routes.project_editor_url(locale, project_id)
+            # #580: the ACCOUNT's locale, resolved from where Flow landed at
+            # bootstrap — never a hardcoded default. None omits the segment.
+            url = routes.project_editor_url(self._account_locale, project_id)
             log.info("ui_automation.entering_existing_project", project_id=project_id, url=url)
             await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            # #580: settle BEFORE any DOM work. Logging the before/after pair is
+            # how a residual redirect stays visible in the field — and it is the
+            # signal the e2e gate asserts on.
+            # Only wait when this account is actually redirected. The bootstrap
+            # probe already settled that question: no resolved locale means Flow
+            # served the bare URL without redirecting, so there is nothing to wait
+            # for and the wait would be pure dead time on EVERY navigation.
+            before = page.url
+            settled = await await_url_settled(page) if self._account_locale else None
+            if settled and settled != before:
+                log.warning(
+                    "ui_automation.url_redirected_after_goto",
+                    requested=url,
+                    was=before,
+                    now=settled,
+                )
+            else:
+                log.info(
+                    "ui_automation.url_stable_after_goto",
+                    url=settled or before,
+                    settle_skipped=self._account_locale is None,
+                )
             await self._dismiss_blocking_overlays(page, out_dir)
             return
 
@@ -3179,6 +3209,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 break
             await page.wait_for_timeout(self._CHARACTER_ROUTE_BACKOFF_MS)
             await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            await await_url_settled(page)
             await self._dismiss_blocking_overlays(page, self._out_dir)
 
         shot = await _capture_debug_screenshot(
@@ -3199,7 +3230,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         *,
         project_id: str,
         entity_id: str,
-        locale: str,
+        locale: str | None,
     ) -> None:
         """Navigate to the Flow character editor for an existing entity.
 
@@ -3221,6 +3252,11 @@ class UiAutomationTransport(VideoGenerationMixin):
             entity_id=entity_id,
         )
         await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        # #580: settle BEFORE any DOM work — #395's "character-route bounce" is
+        # this exact race. `_settle_on_character_route` below only checks that
+        # `entity_id` is still in the URL, which a locale-only redirect PRESERVES,
+        # so it returns instantly and cannot substitute for this wait.
+        await await_url_settled(page)
         await self._dismiss_blocking_overlays(page, self._out_dir)
         await self._settle_on_character_route(page, entity_id=entity_id, url=url)
 
@@ -3304,7 +3340,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         entity_id: str,
         request: CharacterImageRequest,
         image_reference_index: int,
-        locale: str,
+        locale: str | None,
         format_prompt: bool = False,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
         """Navigate to the character editor and generate images via passive capture.
@@ -3346,7 +3382,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         entity_id: str,
         request: CharacterImageRequest,
         image_reference_index: int,
-        locale: str,
+        locale: str | None,
         format_prompt: bool = False,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
         """Serialized body of generate_character_images — called under _generate_lock."""

@@ -59,6 +59,7 @@ from gflow_cli.api.transports import (
     make_transport,
     resolve_transport_name,
 )
+from gflow_cli.api.transports._common import await_url_settled
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
     SupportsTransportSetup,
@@ -332,6 +333,8 @@ class FlowApiClient:
         self._access_token_exp: float = 0.0  # epoch seconds; 0 = unknown/expired
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
+        # Account locale segment, resolved once from the bootstrap navigation (#580).
+        self._account_locale: str | None = None
         # Cross-process profile lease (D3). Acquired in _enter_setup immediately
         # BEFORE the persistent context launches (so contention fails fast with
         # ProfileLockedError instead of racing two Chromes onto one profile dir)
@@ -721,10 +724,32 @@ class FlowApiClient:
             wait_until="domcontentloaded",
             timeout=60_000,
         )
+        # #580: the bootstrap navigation ITSELF races — measured 797 ms to return
+        # with the locale redirect landing afterwards. Settling it here fixes that
+        # race AND yields the account's locale segment for free, with no extra
+        # request. Best-effort: an unresolved locale degrades to bare URLs, which
+        # is never worse than the hardcoded "en-US" it replaces.
+        self._account_locale = await self._resolve_account_locale(self._page)
 
         # --- Step 2: Resolve and set up transport, passing the live Page so
         # S1 can share this context rather than opening its own.
         await self._setup_transport()
+
+    async def _resolve_account_locale(self, page: Any) -> str | None:
+        """Settle the bootstrap navigation and read the account's locale (#580).
+
+        Flow redirects the editor to the ACCOUNT's locale, but that redirect
+        lands after ``goto`` returns — settling is what makes it observable.
+        ``None`` means "build bare URLs", which is never worse than the
+        hardcoded ``en-US`` this replaces.
+        """
+        settled = await await_url_settled(page)
+        segment = routes.locale_segment_from_url(settled or "")
+        if segment is not None:
+            logger.info("client.account_locale_resolved", locale=segment, url=settled)
+        else:
+            logger.info("client.account_locale_unresolved", last_url=settled)
+        return segment
 
     async def _launch_persistent_context(self, kwargs: JsonObject) -> BrowserContext:
         """Launch the persistent context; translate a launch-time crash into ProfileLockedError."""
@@ -831,6 +856,7 @@ class FlowApiClient:
         """Assemble the immutable output/storage wiring handed to the transport."""
         rec = self._recorder
         return TransportSetup(
+            account_locale=self._account_locale,
             out_dir=self._out_dir,
             storage_uri=self.settings.storage_uri,
             output_dir=self.settings.output_dir,
@@ -2561,7 +2587,7 @@ class FlowApiClient:
         entity_id: str,
         req: CharacterImageRequest,
         image_reference_index: int = 0,
-        locale: str = "en-US",
+        locale: str | None = None,
         format_prompt: bool = False,
     ) -> tuple[str, str, AnyPath | None]:
         """Incident/typed-error boundary for the character generation path —
@@ -2586,7 +2612,7 @@ class FlowApiClient:
         entity_id: str,
         req: CharacterImageRequest,
         image_reference_index: int = 0,
-        locale: str = "en-US",
+        locale: str | None = None,
         format_prompt: bool = False,
     ) -> tuple[str, str, AnyPath | None]:
         """Generate a character reference image via the UI transport and return
@@ -2641,7 +2667,10 @@ class FlowApiClient:
             entity_id=entity_id,
             request=req,
             image_reference_index=image_reference_index,
-            locale=locale,
+            # #580: caller override wins; otherwise the ACCOUNT's own locale.
+            # Never "en-US" — a wrong segment bounces the character route, which
+            # is how #395 presented.
+            locale=locale if locale is not None else self._account_locale,
             format_prompt=format_prompt,
         )
         _images, workflows = cast(
