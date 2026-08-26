@@ -122,9 +122,19 @@ did not apply is this same bug class.
 - Numeric daily limits for any image model. Observable only on exhaustion.
 - Whether the daily quota is per-model or per-account.
 - Cost/quota of `Nano Banana 2 Lite`.
-- Whether `veo_3_1_lite_lower_priority` exists in the live picker (#539) — the
-  video picker uses a different trigger; two prior captures read an empty menu
-  **after it closed**, which is instrument failure, not absence.
+- ~~Whether `veo_3_1_lite_lower_priority` exists in the live picker (#539)~~ —
+  **answered 2026-08-26.** The picker rendered exactly `Omni Flash` /
+  `Veo 3.1 - Lite` / `Veo 3.1 - Fast` / `Veo 3.1 - Quality` for profile denon82.
+  The `[Lower Priority]` tier was **not offered to that account at that moment**,
+  which is not proof it does not exist — it may be cohort- or region-gated.
+  Recorded as a dated observation in `tests/fixtures/flow_model_inventory.json`.
+
+  The earlier "the video picker uses a different trigger" note is **FALSIFIED**:
+  `MODEL_PICKER_TRIGGER` and `IMAGE_MODEL_PICKER_TRIGGER` are byte-identical
+  strings. The empty captures were caused by the CAPTURE, not the product —
+  `_switch_to_video_mode` leaves the settings menu open by contract, and calling
+  `_open_gen_settings_panel` after it re-clicks the SAME button and toggles the
+  panel shut. Two prior captures blamed Flow for an instrument error.
 
 ---
 

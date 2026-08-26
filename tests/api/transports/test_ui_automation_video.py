@@ -227,12 +227,19 @@ def _cascade_page(visible: set[str]) -> MagicMock:
         else:
             loc.wait_for = AsyncMock(side_effect=Exception("not visible"))
         loc.click = AsyncMock()
+        # `_select_video_model` counts VISIBLE matches rather than resolving
+        # `.first`, so the fake has to model presence as well as visibility.
+        hit = sel in visible
+        loc.count = AsyncMock(return_value=1 if hit else 0)
+        loc.nth = MagicMock(return_value=loc)
+        loc.is_visible = AsyncMock(return_value=hit)
         return loc
 
     page.locator = MagicMock(side_effect=_locator)
     page.wait_for_timeout = AsyncMock()
     page.screenshot = AsyncMock()
     page.keyboard.press = AsyncMock()
+    page.evaluate = AsyncMock(return_value=[])
     return page
 
 
@@ -360,21 +367,35 @@ class TestSelectVideoModel:
         page.locator.assert_any_call(opt)
 
     @pytest.mark.asyncio
-    async def test_missing_trigger_is_non_fatal(self) -> None:
+    async def test_missing_trigger_is_now_fatal(self) -> None:
+        """Was `test_missing_trigger_is_non_fatal` — it encoded the bug.
+
+        A missing picker meant the run proceeded on Flow's current selection and
+        CHARGED CREDITS for that tier. We only reach here when a model was
+        explicitly requested, so there is nothing to legitimately fall back to.
+        """
         from gflow_cli.api.video import VideoModel
+        from gflow_cli.errors import VideoModelSelectionError
 
         page = _cascade_page(set())
-        # must not raise
-        await VideoGenerationMixin._select_video_model(page, VideoModel.OMNI_FLASH, out_dir=None)
+        with pytest.raises(VideoModelSelectionError):
+            await VideoGenerationMixin._select_video_model(
+                page, VideoModel.OMNI_FLASH, out_dir=None
+            )
 
     @pytest.mark.asyncio
-    async def test_missing_option_escapes_to_recover(self) -> None:
+    async def test_missing_option_escapes_to_recover_then_refuses(self) -> None:
         from gflow_cli.api.transports import ui_automation_video as mod
         from gflow_cli.api.video import VideoModel
+        from gflow_cli.errors import VideoModelSelectionError
 
-        # trigger visible but the option is not -> Escape closes the stray menu
+        # trigger visible but the option is not -> Escape closes the stray menu,
+        # and the run is refused rather than generating on the wrong tier.
         page = _cascade_page({mod.MODEL_PICKER_TRIGGER})
-        await VideoGenerationMixin._select_video_model(page, VideoModel.OMNI_FLASH, out_dir=None)
+        with pytest.raises(VideoModelSelectionError):
+            await VideoGenerationMixin._select_video_model(
+                page, VideoModel.OMNI_FLASH, out_dir=None
+            )
         page.keyboard.press.assert_any_call("Escape")
 
 
@@ -733,7 +754,8 @@ class TestGenerateVideoGuards:
 
         select_call = cast("Any", VideoGenerationMixin._select_video_model)
         select_call.assert_awaited()
-        assert select_call.await_args.kwargs.get("required") is True
+        # `required` is gone: every miss is fatal now, on i2v and t2v alike.
+        assert "required" not in select_call.await_args.kwargs
         assert select_call.await_args.args[1] is I2V_DEFAULT_MODEL
 
     @pytest.mark.asyncio
@@ -1100,47 +1122,70 @@ def _select_model_page(*, option_visible_on_attempt: int | None) -> MagicMock:
             if sel == trigger_sel:
                 state["clicks"] += 1
 
+        async def _count() -> int:
+            if sel == trigger_sel:
+                return 1
+            if sel == option_sel and option_visible_on_attempt is not None:
+                return 1 if state["clicks"] >= option_visible_on_attempt else 0
+            return 0
+
+        async def _is_visible(*_a: object, **_k: object) -> bool:
+            return await _count() > 0
+
         loc.wait_for = _wait_for
         loc.click = _click
+        loc.count = _count
+        loc.nth = MagicMock(return_value=loc)
+        loc.is_visible = _is_visible
         return loc
 
     page.locator = MagicMock(side_effect=_locator)
     page.wait_for_timeout = AsyncMock()
     page.keyboard.press = AsyncMock()
     page.screenshot = AsyncMock()
+    page.evaluate = AsyncMock(return_value=[])
     return page
 
 
 class TestSelectVideoModelRequired:
+    """Named for the old ``required=`` flag, which no longer exists: as of
+    2026-08-26 EVERY model miss is fatal, on i2v and t2v alike."""
+
     @pytest.mark.asyncio
     async def test_required_raises_when_option_never_found(self) -> None:
-        """Issue #125 Layer 1: with required=True (i2v), a model-option miss is
-        FATAL — raise rather than let Flow fall back to omni-flash -> T2V."""
+        """Issue #125 Layer 1: a model-option miss is FATAL — raise rather than
+        let Flow fall back to omni-flash -> T2V."""
         from gflow_cli.errors import VideoModelSelectionError
 
         page = _select_model_page(option_visible_on_attempt=None)
         with pytest.raises(VideoModelSelectionError, match="#125"):
             await VideoGenerationMixin._select_video_model(
-                page, VideoModel.VEO_3_1_LITE, out_dir=None, required=True
+                page, VideoModel.VEO_3_1_LITE, out_dir=None
             )
 
     @pytest.mark.asyncio
-    async def test_not_required_warns_and_returns_on_miss(self) -> None:
-        """required=False (t2v/r2v): a miss is non-fatal (Flow default applies)."""
+    async def test_t2v_miss_is_fatal_too(self) -> None:
+        """Was `test_not_required_warns_and_returns_on_miss`.
+
+        The old contract let t2v/r2v proceed on Flow's current model. Video is
+        the credit-bearing arm (veo-quality 100 against veo-lite's 10), and this
+        function is only reached when a model was explicitly requested, so a miss
+        has no defensible fallback. The `required` flag is gone entirely.
+        """
+        from gflow_cli.errors import VideoModelSelectionError
+
         page = _select_model_page(option_visible_on_attempt=None)
-        # Must NOT raise.
-        await VideoGenerationMixin._select_video_model(
-            page, VideoModel.VEO_3_1_LITE, out_dir=None, required=False
-        )
+        with pytest.raises(VideoModelSelectionError):
+            await VideoGenerationMixin._select_video_model(
+                page, VideoModel.VEO_3_1_LITE, out_dir=None
+            )
 
     @pytest.mark.asyncio
     async def test_retries_trigger_click_and_succeeds_second_attempt(self) -> None:
         """Reliability: the first trigger click may not open the menu; the
         second attempt finds the option and selects it (no raise)."""
         page = _select_model_page(option_visible_on_attempt=2)
-        await VideoGenerationMixin._select_video_model(
-            page, VideoModel.VEO_3_1_LITE, out_dir=None, required=True
-        )
+        await VideoGenerationMixin._select_video_model(page, VideoModel.VEO_3_1_LITE, out_dir=None)
 
 
 class TestI2vT2vRoutingBackstop:

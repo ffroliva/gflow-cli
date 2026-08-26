@@ -57,7 +57,9 @@ Governance is worthless if it records guesses as facts. Split explicitly:
 - Whether that limit is per-model or shared across models on an account.
 - Whether `Nano Banana 2 Lite` carries a different quota (it is a newly
   discovered tier we do not model).
-- Whether `veo_3_1_lite_lower_priority` is cheaper, free, or absent (#539).
+- Whether `veo_3_1_lite_lower_priority` is cheaper or free (#539). Its ABSENCE
+  from denon82's picker on 2026-08-26 is now recorded; its cost is still unknown
+  because it was never offered to select.
 
 ## Observability — and its hard limit
 
@@ -109,7 +111,10 @@ Scenario: a requested model is not offered by Flow
 ```
 
 **E2E.** The credit-line read per video model is credit-free and repeatable —
-that is the gate for the video half. The image half is asserted through the
+that is the gate for the video half. The video model *selection* guard is
+verified the same way, credit-free: selection happens in the settings panel
+entirely before submit, so `scripts/dev/live_verify_video_model_select.py` drives
+the real production function against the real DOM and never sends a prompt. The image half is asserted through the
 already-passing loud-failure path; deliberately exhausting a daily quota to
 observe a 429 is **not** a routine test, and the catalogue records the value
 opportunistically when a real 429 occurs.

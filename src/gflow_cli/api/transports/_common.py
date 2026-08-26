@@ -258,3 +258,70 @@ def _redacted_snippet(text: str) -> str:
     success path pays nothing.
     """
     return redact_error_detail(text)[:200]
+
+
+# ---------------------------------------------------------------------------
+# Model-picker primitives, shared by the image and video transports.
+#
+# Both arms drive a Radix `[role='menu']` of `[role='menuitem']` entries through
+# the SAME trigger selector, and both were bitten by the same two hazards:
+# `has-text` is a SUBSTRING match (so one label can be a prefix of another), and
+# a raw `count()` includes mounted-but-hidden nodes. Keeping one copy means a
+# fix on one arm cannot silently skip the other.
+# ---------------------------------------------------------------------------
+
+READ_MENU_ITEM_LABELS = r"""
+() => Array.from(document.querySelectorAll("[role='menuitem']"))
+    .map(e => (e.innerText || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+"""
+
+
+async def offered_menu_labels(page: Any) -> list[str]:
+    """What the picker is rendering RIGHT NOW — read while the menu is open.
+
+    Included in every failure message: a bare "model not found" is unactionable,
+    whereas the actual list tells an operator immediately whether Flow renamed an
+    entry, removed it, or added a near-duplicate. Best-effort — diagnostics must
+    never mask the error they describe.
+    """
+    try:
+        return list(await page.evaluate(READ_MENU_ITEM_LABELS))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+async def close_menu(page: Any) -> None:
+    """Leave no stray open UI behind after a refusal.
+
+    TWO Escapes, deliberately: the model menu and the generation-settings panel
+    beneath it. Raising out of a model select skips the caller's own panel-close,
+    so a single Escape leaves the panel open. In a batch that then toggles the
+    panel SHUT on the next prompt's open attempt, turning one drifted selector
+    into a whole-batch failure.
+    """
+    for _ in range(2):
+        try:
+            await page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001, S110 — cleanup only
+            return
+
+
+async def count_visible(page: Any, selector: str) -> tuple[int, Any]:
+    """Number of VISIBLE matches for *selector*, plus the first of them.
+
+    `count()` alone counts mounted-but-hidden nodes. Radix keeps menus mounted,
+    so a stale or offscreen menu inflates the count and either forces a false
+    AMBIGUOUS or resolves to a node that cannot be clicked.
+    """
+    loc = page.locator(selector)
+    total = await loc.count()
+    matches = 0
+    first: Any = None
+    for i in range(total):
+        nth = loc.nth(i)
+        if await nth.is_visible():
+            matches += 1
+            if first is None:
+                first = nth
+    return matches, first

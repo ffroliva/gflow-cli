@@ -141,11 +141,15 @@ class ClassicFlowUiDriver:
             effective_model = I2V_DEFAULT_MODEL
 
         if effective_model is not None:
+            # No `required` flag: EVERY miss is fatal now. We only get here when
+            # a model was explicitly requested (`--model` defaults to None on all
+            # video commands), so there is no case where falling back to Flow's
+            # current selection is what the caller asked for — and video spends
+            # credits, up to 100 for veo-quality against veo-lite's 10.
             await VideoGenerationMixin._select_video_model(  # type: ignore[reportPrivateUsage]
                 page,
                 effective_model,
                 out_dir=out_dir,
-                required=is_i2v_with_frames,
             )
         if request.mode is Mode.I2V:
             await VideoGenerationMixin._switch_video_sub_mode(  # type: ignore[reportPrivateUsage]
