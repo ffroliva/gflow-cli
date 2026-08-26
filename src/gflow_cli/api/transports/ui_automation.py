@@ -31,8 +31,11 @@ from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._common import (
     await_url_settled,
+    close_menu,
+    count_visible,
     extract_project_id,
     generation_error,
+    offered_menu_labels,
 )
 from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
@@ -98,43 +101,6 @@ _PROJECT_URL_FRAGMENT = "/project/"
 IMAGE_MODEL_PICKER_TRIGGER = (
     "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
 )
-_READ_OFFERED_MODELS = r"""
-() => Array.from(document.querySelectorAll("[role='menuitem']"))
-    .map(e => (e.innerText || '').replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-"""
-
-
-async def _offered_model_labels(page: Any) -> list[str]:
-    """What the picker is rendering RIGHT NOW — read while the menu is open.
-
-    Included in every failure message: a bare "model not found" is unactionable,
-    whereas the actual list tells an operator immediately whether Flow renamed an
-    entry, removed it, or added a near-duplicate. Best-effort — diagnostics must
-    never mask the error they describe.
-    """
-    try:
-        return list(await page.evaluate(_READ_OFFERED_MODELS))
-    except Exception:  # noqa: BLE001
-        return []
-
-
-async def _close_model_menu(page: Any) -> None:
-    """Leave no stray open UI behind after a refusal.
-
-    TWO Escapes, deliberately: the model menu and the generation-settings panel
-    beneath it. Raising out of `_select_image_model` skips the panel-close at the
-    end of `_configure_generation_settings`, so a single Escape leaves the panel
-    open. In a batch that then toggles the panel SHUT on the next prompt's open
-    attempt, turning one drifted selector into a whole-batch failure.
-    """
-    for _ in range(2):
-        try:
-            await page.keyboard.press("Escape")
-        except Exception:  # noqa: BLE001, S110 — cleanup only
-            return
-
-
 # Verified live 2026-08-26 (menu read WHILE OPEN, profile denon82):
 #   ['Nano Banana Pro', 'Nano Banana 2', 'Nano Banana 2 Lite']
 # `has-text` is a SUBSTRING match, so 'Nano Banana 2' also matches
@@ -1829,32 +1795,17 @@ class UiAutomationTransport(VideoGenerationMixin):
         await trigger.click()
         await page.wait_for_timeout(500)
 
-        offered = await _offered_model_labels(page)
+        offered = await offered_menu_labels(page)
         for sel in option_sels:
-            loc = page.locator(sel)
             try:
-                # Count VISIBLE matches only. `count()` alone counts mounted-but-
-                # hidden nodes — Radix keeps menus mounted, so a stale or offscreen
-                # menu inflates the count and either forces a false AMBIGUOUS or
-                # resolves to a node that cannot be clicked. The visibility gate
-                # was in the pre-2026-08-26 code and was dropped when ambiguity
-                # detection was added; this restores it.
-                total = await loc.count()
-                matches = 0
-                first_visible = None
-                for i in range(total):
-                    nth = loc.nth(i)
-                    if await nth.is_visible():
-                        matches += 1
-                        if first_visible is None:
-                            first_visible = nth
+                matches, first_visible = await count_visible(page, sel)
             except Exception as exc:  # noqa: BLE001
                 log.debug("ui_automation.image_model_selector_miss", sel=sel, error=str(exc)[:120])
                 continue
             if matches == 0:
                 continue
             if matches > 1:
-                await _close_model_menu(page)
+                await close_menu(page)
                 raise UiSelectorDriftError(
                     selector_drift_detail(
                         "image_model",
@@ -1873,7 +1824,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             log.info("ui_automation.image_model_selected", model=model.value, via=sel)
             return
 
-        await _close_model_menu(page)
+        await close_menu(page)
         raise UiSelectorDriftError(
             selector_drift_detail(
                 "image_model",

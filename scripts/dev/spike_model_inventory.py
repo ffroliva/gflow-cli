@@ -53,12 +53,24 @@ _READ_MENU = """
 """
 
 
-async def open_and_read(page: Any, label: str) -> dict[str, Any]:
-    """Click the model picker and read the menu WHILE IT IS OPEN."""
+async def open_and_read(page: Any, label: str, *, trigger_idx: int = 0) -> dict[str, Any]:
+    """Click the model picker and read the menu WHILE IT IS OPEN.
+
+    ``trigger_idx`` exists because the trigger selector is an `arrow_drop_down`
+    button, and the VIDEO settings panel renders several of them (model,
+    duration, aspect...). `.first` is therefore not necessarily the model picker
+    — the recorded "video picker uses a different trigger" note was a guess; the
+    two module constants are byte-identical strings.
+    """
+    n = await page.locator(IMAGE_MODEL_PICKER_TRIGGER).count()
     try:
-        await page.locator(IMAGE_MODEL_PICKER_TRIGGER).first.click(timeout=6000)
+        await page.locator(IMAGE_MODEL_PICKER_TRIGGER).nth(trigger_idx).click(timeout=6000)
     except Exception as exc:  # noqa: BLE001
-        return {"stage": label, "instrument_error": f"trigger: {type(exc).__name__}"}
+        return {
+            "stage": label,
+            "trigger_count": n,
+            "instrument_error": f"trigger: {type(exc).__name__}",
+        }
     await page.wait_for_timeout(1200)
     snap = await page.evaluate(_READ_MENU)
     snap["stage"] = label
@@ -66,6 +78,8 @@ async def open_and_read(page: Any, label: str) -> dict[str, Any]:
         # Never report this as "no models" — #539's earlier capture made exactly
         # that mistake and the conclusion was wrong.
         snap["instrument_error"] = "menu read empty — menu was not open; INCONCLUSIVE"
+    snap["trigger_count"] = n
+    snap["trigger_idx"] = trigger_idx
     return snap
 
 
@@ -95,9 +109,22 @@ async def main() -> int:
         await page.wait_for_timeout(400)
 
         # --- VIDEO ---
+        # `_switch_to_video_mode` leaves the settings menu OPEN by contract (its
+        # docstring: "The menu stays open afterward so the caller can also set
+        # aspect + count"), unlike `_switch_to_image_mode`, which closes it with
+        # Escape. So do NOT call `_open_gen_settings_panel` here: the panel and
+        # the mode dropdown are the SAME crop_* trigger button, and clicking it
+        # again TOGGLES the panel shut. The video tab probe then misses on all
+        # five selectors and the capture reads empty.
+        #
+        # That is the instrument failure #539 recorded as "the video picker uses
+        # a different trigger". Falsified 2026-08-26: MODEL_PICKER_TRIGGER and
+        # IMAGE_MODEL_PICKER_TRIGGER are byte-identical strings, and a DOM dump
+        # (spike_video_tab_dom.py) showed `-trigger-VIDEO` present and visible
+        # throughout. Re-entering the editor gives a known-closed starting state.
+        await t._enter_editor(page, None, project_id=args.project)
         try:
             await t._switch_to_video_mode(page, out_dir=None)
-            await t._open_gen_settings_panel(page)
             out["video"] = await open_and_read(page, "video")
             await page.keyboard.press("Escape")
         except Exception as exc:  # noqa: BLE001

@@ -33,6 +33,8 @@ import pytest
 
 from gflow_cli.api.image import Model
 from gflow_cli.api.transports.ui_automation import IMAGE_MODEL_OPTION_SELECTORS
+from gflow_cli.api.transports.ui_automation_video import VIDEO_MODEL_OPTION_SELECTORS
+from gflow_cli.api.video import VideoModel
 
 _FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "flow_model_inventory.json"
 
@@ -49,6 +51,20 @@ _NO_LONGER_OFFERED: dict[Model, str] = {
         "remapped, requesting it raises UiSelectorDriftError (exit 23) naming what "
         "Flow does offer, instead of silently generating on the default and billing "
         "for it. Follow-up: decide retire-vs-remap."
+    ),
+}
+
+#: Video models Flow does not offer. Same contract as `_NO_LONGER_OFFERED`:
+#: a named, dated decision — not a place to park failures.
+_VIDEO_NOT_OFFERED: dict[VideoModel, str] = {
+    VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: (
+        "'Veo 3.1 - Lite [Lower Priority]' was NOT offered to profile denon82 on "
+        "2026-08-26 (picker rendered exactly: Omni Flash / Veo 3.1 - Lite / Fast / "
+        "Quality). That is one account at one moment, NOT proof the tier does not "
+        "exist — it may be cohort- or region-gated, which is precisely what #539 is "
+        "open to establish. Requesting it now raises VideoModelSelectionError "
+        "(exit 18) naming what Flow does offer, instead of silently generating on "
+        "whatever model Flow had selected and CHARGING CREDITS for it."
     ),
 }
 
@@ -178,16 +194,57 @@ def test_every_offered_entry_is_modelled_or_waived() -> None:
     )
 
 
-def test_video_inventory_is_unknown_not_empty() -> None:
-    """`null` must mean UNKNOWN, never 'Flow offers nothing'.
+def test_every_video_model_has_a_picker_selector() -> None:
+    missing = [m.value for m in VideoModel if m not in VIDEO_MODEL_OPTION_SELECTORS]
+    assert not missing, f"video models with no picker selector: {missing}"
 
-    #539's earlier capture read an empty menu (taken after it closed) and the
-    emptiness was mistaken for absence. Encoding UNKNOWN distinctly is what stops
-    that error being repeated — and this test fails once the video inventory IS
-    captured, which is the prompt to assert on it properly.
+
+@pytest.mark.parametrize("model", list(VideoModel))
+def test_video_selector_matches_exactly_one_offered_entry(model: VideoModel) -> None:
+    """Same guard as the image arm — and this one is the CREDIT-BEARING arm.
+
+    An image miss burns a daily quota; a video miss burns credits (up to 100 for
+    veo-quality against 10 for veo-lite). The video registry also carries the
+    identical substring hazard the image arm was fixed for: `has-text('Veo 3.1 -
+    Lite')` is a prefix of `Veo 3.1 - Lite [Lower Priority]`, which is why that
+    selector needs its `:not(...)` guard to stay correct if the LP tier appears.
     """
-    inv = _inventory()
-    assert inv["video"] is None, (
-        "video inventory is now captured — replace this test with the same "
-        "exactly-one-match assertions used for image models (see #539)."
+    if model in _VIDEO_NOT_OFFERED:
+        pytest.skip(f"{model.value}: {_VIDEO_NOT_OFFERED[model]}")
+
+    offered = _inventory()["video"]
+    assert offered is not None, "video inventory not captured — cannot grade"
+    sel = VIDEO_MODEL_OPTION_SELECTORS[model]
+    hits = _matches(sel, offered)
+
+    assert hits, (
+        f"{model.value}: MISS — no offered entry matches {sel!r}.\n"
+        f"Flow offered: {offered}\n"
+        f"gflow would generate on Flow's current model and SPEND CREDITS on it."
     )
+    assert len(hits) == 1, (
+        f"{model.value}: AMBIGUOUS — {len(hits)} entries match: {hits}\n"
+        f"Resolving .first picks by DOM order and can charge a different tier."
+    )
+
+
+def test_every_offered_video_entry_is_modelled() -> None:
+    """A video tier Flow offers that we cannot select is a missed capability."""
+    offered = _inventory()["video"]
+    claimed = {
+        m for model in VideoModel for m in _matches(VIDEO_MODEL_OPTION_SELECTORS[model], offered)
+    }
+    unexplained = [o for o in offered if o not in claimed]
+    assert not unexplained, f"Flow offers video entries we do not model: {unexplained}"
+
+
+def test_lower_priority_absence_is_recorded_as_an_observation() -> None:
+    """#539's trap, encoded: absence-on-one-account is not absence.
+
+    The earlier capture read an empty menu and the emptiness was mistaken for
+    proof the tier was gone. This asserts the fixture states WHERE and WHEN the
+    tier was not offered, so the claim can never harden into "it does not exist".
+    """
+    note = _inventory()["_lower_priority_finding"]
+    assert "NOT proof" in note, "the LP finding must not be recorded as proof of absence"
+    assert "denon82" in note and "2026-08-26" in note, "must name the account and the date"
