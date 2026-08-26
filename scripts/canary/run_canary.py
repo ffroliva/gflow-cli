@@ -43,6 +43,7 @@ Windows event log with noise nobody reads.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -274,6 +275,57 @@ def publish(issue: int, state: str, body: str, stamp: str, dry_run: bool) -> Non
     print(f"published {state} to issue #{issue}")
 
 
+_REEXEC_GUARD = "GFLOW_CANARY_REEXECED"
+_SCRIPT_PATH = Path(__file__).resolve()
+
+
+def _script_digest(path: Path = _SCRIPT_PATH) -> str:
+    """SHA-256 of this script, or "" when it cannot be read.
+
+    Unreadable degrades to "unchanged" deliberately: updating one night late is a
+    nuisance, re-running forever is an outage.
+    """
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _maybe_rerun_after_pull(digest_before: str, digest_now: str | None = None) -> None:
+    """Re-run this script once if the pull just changed it.
+
+    `--pull` updates this file and then keeps executing the copy Python loaded at
+    startup, so a runner change only takes effect the FOLLOWING night. #572 added
+    `-o junit_logging=all` to make a RED carry the structlog line that decides
+    #561; the next run pulled it and still produced a log-less RED, because the
+    pre-pull copy was the one running. The failure is invisible — it reads as "the
+    fix did not work".
+
+    Uses `subprocess.run`, never `os.execv`: on Windows execv does not replace the
+    process image (the CRT spawns a new process and terminates this one), so the
+    PID changes and Task Scheduler can read the task as finished. A supervising
+    process keeps the scheduler's view intact and propagates the child's code.
+
+    Two independent loop guards — either is sufficient on its own:
+      1. `_REEXEC_GUARD` in the child's env, checked first here.
+      2. The digest comparison: no content change, no re-run.
+    """
+    if os.environ.get(_REEXEC_GUARD):
+        return
+    now = _script_digest() if digest_now is None else digest_now
+    if not now or not digest_before or now == digest_before:
+        return
+    print(f"canary.reexec_after_pull: {digest_before[:12]} -> {now[:12]}")
+    child_env = dict(os.environ)
+    child_env[_REEXEC_GUARD] = "1"
+    proc = subprocess.run(  # noqa: S603 - our own script, fixed interpreter
+        [sys.executable, str(_SCRIPT_PATH), *sys.argv[1:]],
+        env=child_env,
+        check=False,
+    )
+    raise SystemExit(proc.returncode)
+
+
 def sync_to_develop() -> str | None:
     """Fast-forward the checkout to ``origin/develop`` and refresh deps.
 
@@ -327,7 +379,12 @@ def main() -> int:
         raise SystemExit("--issue (or GFLOW_CANARY_ISSUE) is required; the canary never opens one")
 
     stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    digest_before = _script_digest() if args.pull else ""
     refused = sync_to_develop() if args.pull else None
+    if args.pull and refused is None:
+        # Only after a SUCCESSFUL pull — a refused sync changed nothing, and
+        # re-running on a refusal would just repeat the refusal.
+        _maybe_rerun_after_pull(digest_before)
     sha = _run(["git", "rev-parse", "--short", "HEAD"]).stdout.strip() or "unknown"
 
     if refused:

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The nightly canary now runs the version of itself that it just pulled
+  ([#582](https://github.com/ffroliva/gflow-cli/issues/582)).** `run_canary.py
+  --pull` fast-forwards the checkout and then keeps executing the copy Python
+  loaded at startup, so every runner change was silently one night late. This was
+  not theoretical: #572 added `-o junit_logging=all` so a preserved RED would
+  carry the structlog line that decides #561, and the next run pulled it and
+  still produced a RED with zero log output — three REDs untriageable, and the
+  failure reads as "the fix did not work". The runner now re-runs itself once
+  when a successful pull changed its own source, guarded by both an env var and
+  a content digest (either alone prevents a loop), via `subprocess.run` rather
+  than `os.execv` so Task Scheduler still sees one process and the real exit code.
+
 - **Editor navigation no longer races a locale redirect on non-`en` accounts
   ([#580](https://github.com/ffroliva/gflow-cli/issues/580)).** `_enter_editor`
   built its URL from a hardcoded `locale="en-US"` that no caller ever overrode,
