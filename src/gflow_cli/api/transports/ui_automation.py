@@ -98,8 +98,59 @@ _PROJECT_URL_FRAGMENT = "/project/"
 IMAGE_MODEL_PICKER_TRIGGER = (
     "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
 )
+_READ_OFFERED_MODELS = r"""
+() => Array.from(document.querySelectorAll("[role='menuitem']"))
+    .map(e => (e.innerText || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+"""
+
+
+async def _offered_model_labels(page: Any) -> list[str]:
+    """What the picker is rendering RIGHT NOW — read while the menu is open.
+
+    Included in every failure message: a bare "model not found" is unactionable,
+    whereas the actual list tells an operator immediately whether Flow renamed an
+    entry, removed it, or added a near-duplicate. Best-effort — diagnostics must
+    never mask the error they describe.
+    """
+    try:
+        return list(await page.evaluate(_READ_OFFERED_MODELS))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+async def _close_model_menu(page: Any) -> None:
+    """Leave no stray open UI behind after a refusal.
+
+    TWO Escapes, deliberately: the model menu and the generation-settings panel
+    beneath it. Raising out of `_select_image_model` skips the panel-close at the
+    end of `_configure_generation_settings`, so a single Escape leaves the panel
+    open. In a batch that then toggles the panel SHUT on the next prompt's open
+    attempt, turning one drifted selector into a whole-batch failure.
+    """
+    for _ in range(2):
+        try:
+            await page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001, S110 — cleanup only
+            return
+
+
+# Verified live 2026-08-26 (menu read WHILE OPEN, profile denon82):
+#   ['Nano Banana Pro', 'Nano Banana 2', 'Nano Banana 2 Lite']
+# `has-text` is a SUBSTRING match, so 'Nano Banana 2' also matches
+# 'Nano Banana 2 Lite' — text-is pins the exact label instead. The previous
+# comment claimed the three names were mutually unambiguous; that was true when
+# written and silently expired when Flow added the Lite tier.
+# `Imagen 4` is NO LONGER OFFERED. Its selector is kept so the governance test
+# reports an honest MISS (tests/flow_selectors/test_model_governance.py) rather
+# than the model quietly disappearing from the registry.
 IMAGE_MODEL_OPTION_SELECTORS: dict[Model, tuple[str, ...]] = {
-    Model.NARWHAL: ("[role='menuitem']:has-text('Nano Banana 2')",),
+    # `text-is` was tried first and REMOVED 2026-08-26: it never matched live.
+    # The recorded inventory stores whitespace-NORMALISED labels, but `text-is`
+    # matches raw innerText, which carries a newline between the emoji and the
+    # label. Keeping a selector that only matches in the fixture would make the
+    # governance test bless something that cannot work against Flow.
+    Model.NARWHAL: ("[role='menuitem']:has-text('Nano Banana 2'):not(:has-text('Lite'))",),
     Model.GEM_PIX_2: ("[role='menuitem']:has-text('Nano Banana Pro')",),
     Model.IMAGEN_3_5: ("[role='menuitem']:has-text('Imagen 4')",),
 }
@@ -1743,44 +1794,97 @@ class UiAutomationTransport(VideoGenerationMixin):
 
     @staticmethod
     async def _select_image_model(page: Page, model: Model) -> None:
-        """Click the image model picker and select `model` (Nano Banana 2 / Nano
-        Banana Pro / Imagen 4). Must run with the gen-settings panel open. Without
-        this the generation uses Flow's UI-default model and ``--model`` is a
-        no-op. Non-fatal on miss (logged at WARNING — the wrong model has a real
-        cost/quality impact, so a miss is a genuine signal)."""
+        """Click the image model picker and select *model*, or FAIL.
+
+        Must run with the gen-settings panel open.
+
+        Fails loudly by design (changed 2026-08-26). This previously swallowed
+        every failure, logged a WARNING, and let the generation proceed on Flow's
+        UI-default model — so a stale selector meant the user asked for one model,
+        silently received another, and was BILLED for it.
+
+        That was not hypothetical. Flow's picker on 2026-08-26 offers
+        ``Nano Banana Pro`` / ``Nano Banana 2`` / ``Nano Banana 2 Lite``;
+        ``Model.IMAGEN_3_5``'s ``has-text('Imagen 4')`` matches nothing, and
+        ``has-text('Nano Banana 2')`` matches TWO entries.
+
+        AMBIGUOUS is treated as a failure, not a ``.first`` guess: ``.first``
+        resolves by DOM order, so an ambiguous selector silently picks whichever
+        Flow renders first and changes behaviour with no code change on our side.
+
+        Raises before anything is submitted, so a failure costs nothing.
+        """
         option_sels = IMAGE_MODEL_OPTION_SELECTORS.get(model)
         if not option_sels:
-            log.warning("ui_automation.image_model_unknown", model=model.value)
-            return
-        try:
-            trigger = page.locator(IMAGE_MODEL_PICKER_TRIGGER).first
-            await trigger.wait_for(state="visible", timeout=4000)
-            await trigger.click()
-            await page.wait_for_timeout(500)
-            for sel in option_sels:
-                try:
-                    loc = page.locator(sel).first
-                    await loc.wait_for(state="visible", timeout=4000)
-                    await loc.click()
-                    await page.wait_for_timeout(500)
-                    log.info("ui_automation.image_model_selected", model=model.value, via=sel)
-                    return
-                except Exception as sel_err:
-                    log.debug(
-                        "ui_automation.image_model_selector_miss",
-                        sel=sel,
-                        error=str(sel_err)[:120],
-                    )
-                    continue
-            raise RuntimeError(f"no visible option matched for model {model.value!r}")
-        except Exception as e:
-            log.warning(
-                "ui_automation.image_model_not_set",
-                model=model.value,
-                error=str(e)[:80],
-                note="Flow default model applies",
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "image_model",
+                    f"no picker selector registered for model {model.value!r}.",
+                    None,
+                )
             )
-            await page.keyboard.press("Escape")  # close a stray model menu
+
+        trigger = page.locator(IMAGE_MODEL_PICKER_TRIGGER).first
+        await trigger.wait_for(state="visible", timeout=4000)
+        await trigger.click()
+        await page.wait_for_timeout(500)
+
+        offered = await _offered_model_labels(page)
+        for sel in option_sels:
+            loc = page.locator(sel)
+            try:
+                # Count VISIBLE matches only. `count()` alone counts mounted-but-
+                # hidden nodes — Radix keeps menus mounted, so a stale or offscreen
+                # menu inflates the count and either forces a false AMBIGUOUS or
+                # resolves to a node that cannot be clicked. The visibility gate
+                # was in the pre-2026-08-26 code and was dropped when ambiguity
+                # detection was added; this restores it.
+                total = await loc.count()
+                matches = 0
+                first_visible = None
+                for i in range(total):
+                    nth = loc.nth(i)
+                    if await nth.is_visible():
+                        matches += 1
+                        if first_visible is None:
+                            first_visible = nth
+            except Exception as exc:  # noqa: BLE001
+                log.debug("ui_automation.image_model_selector_miss", sel=sel, error=str(exc)[:120])
+                continue
+            if matches == 0:
+                continue
+            if matches > 1:
+                await _close_model_menu(page)
+                raise UiSelectorDriftError(
+                    selector_drift_detail(
+                        "image_model",
+                        (
+                            f"selector for {model.value!r} is AMBIGUOUS — {matches} entries "
+                            f"match {sel!r}. Selecting .first would pick by DOM order and "
+                            f"could bill a different model than requested. "
+                            f"Flow offered: {offered}."
+                        ),
+                        None,
+                    )
+                )
+            assert first_visible is not None  # matches > 0 implies one was found
+            await first_visible.click()
+            await page.wait_for_timeout(500)
+            log.info("ui_automation.image_model_selected", model=model.value, via=sel)
+            return
+
+        await _close_model_menu(page)
+        raise UiSelectorDriftError(
+            selector_drift_detail(
+                "image_model",
+                (
+                    f"model {model.value!r} is not selectable — no picker entry matched. "
+                    f"Flow offered: {offered}. Refusing to generate on a different model "
+                    f"than requested."
+                ),
+                None,
+            )
+        )
 
     @staticmethod
     async def _configure_generation_settings(
@@ -1816,6 +1920,28 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
 
         if not await UiAutomationTransport._open_gen_settings_panel(page):
+            # A requested MODEL cannot be honoured without this panel, and the
+            # submit will inherit whatever the project's picker holds — the
+            # silent wrong-model path (#586).
+            #
+            # This deliberately WARNS rather than raises. An earlier version
+            # raised here; the existing batch tests showed it turning one
+            # transient panel miss on prompt 0 into a whole-batch abort, because
+            # the transport cannot distinguish "user passed --model X" from
+            # "X is the default" — `request.model` is populated either way, so a
+            # raise punishes callers who never asked for a specific model.
+            #
+            # Detection moved to where it is arm-agnostic and costs nothing:
+            # `services.catalog_sync.parse_media_attribution` reads what the
+            # SERVER says generated each media. That catches this on the agentic
+            # arm too, where this code path never runs at all.
+            if model is not None:
+                log.warning(
+                    "ui_automation.image_model_not_applied",
+                    model=model.value,
+                    reason="generation-settings panel could not be opened",
+                    note="generation will use the project's current selection",
+                )
             log.warning("ui_automation.gen_settings_panel_not_found", skipping=True)
             return
 

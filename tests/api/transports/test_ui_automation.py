@@ -2668,51 +2668,68 @@ def _make_model_page_mock(
 
 
 class TestSelectImageModel:
-    """Unit tests for UiAutomationTransport._select_image_model cascade logic."""
+    """Contract for `_select_image_model` — REWRITTEN 2026-08-26.
+
+    This class previously pinned the old silent-fallback behaviour by name
+    (`test_all_selectors_fail_logs_warning_and_presses_escape`,
+    `test_unknown_model_logs_warning_and_returns`). That behaviour was the bug:
+    a stale selector meant the user asked for one model, silently received
+    another, and was BILLED for it. Flow removed `Imagen 4` from its picker at
+    some unknown point and nothing failed.
+
+    The tests are rewritten rather than deleted, and the reasoning recorded,
+    because silently inverting an assertion is how a real regression hides.
+
+    Detailed drift cases (MISS / AMBIGUOUS, with the live 2026-08-26 inventory)
+    live in tests/api/transports/test_model_selection_loud.py. This class keeps
+    the mechanism coverage: cascade order, and the working path.
+    """
+
+    @staticmethod
+    def _page(counts: dict[str, int]) -> MagicMock:
+        """Page whose option locators report `counts` matches; trigger resolves."""
+        page = MagicMock()
+        trigger = MagicMock()
+        trigger.first = trigger
+        trigger.wait_for = AsyncMock()
+        trigger.click = AsyncMock()
+
+        def _locator(sel: str) -> MagicMock:
+            if "arrow_drop_down" in sel:
+                return trigger
+            n = counts.get(sel, 0)
+            loc = MagicMock()
+            loc.first = loc
+            loc.count = AsyncMock(return_value=n)
+            loc.click = AsyncMock()
+            # The visibility gate counts VISIBLE matches via nth(i).is_visible(),
+            # because count() alone counts mounted-but-hidden Radix nodes.
+            loc.is_visible = AsyncMock(return_value=True)
+            loc.nth = MagicMock(side_effect=lambda _i: loc)
+            return loc
+
+        page.locator = MagicMock(side_effect=_locator)
+        page.wait_for_timeout = AsyncMock()
+        page.evaluate = AsyncMock(return_value=list(counts))
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock()
+        return page
 
     @pytest.mark.asyncio
-    async def test_happy_path_first_selector_wins(self) -> None:
-        """First selector succeeds → model selected, log.info emitted, no Escape."""
-        page = _make_model_page_mock(selector_side_effects=[[None]])
+    async def test_happy_path_selects_and_does_not_escape(self) -> None:
+        sel = IMAGE_MODEL_OPTION_SELECTORS[Model.GEM_PIX_2][0]
+        page = self._page({sel: 1})
         with patch("gflow_cli.api.transports.ui_automation.log") as mock_log:
-            await UiAutomationTransport._select_image_model(page, Model.NARWHAL)
-        mock_log.info.assert_called_once()
-        call_kwargs = mock_log.info.call_args[0][0]
-        assert call_kwargs == "ui_automation.image_model_selected"
+            await UiAutomationTransport._select_image_model(page, Model.GEM_PIX_2)
+        assert mock_log.info.call_args[0][0] == "ui_automation.image_model_selected"
         page.keyboard.press.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_cascade_fallthrough_second_selector_wins(self) -> None:
-        """First selector times out, second succeeds → second selector used."""
-        from gflow_cli.api.transports.ui_automation import IMAGE_MODEL_OPTION_SELECTORS
-
-        page = MagicMock()
-        trigger_loc = MagicMock()
-        trigger_loc.first = trigger_loc
-        trigger_loc.wait_for = AsyncMock()
-        trigger_loc.click = AsyncMock()
-
-        call_count = [0]
-
-        def _locator(sel: str) -> MagicMock:
-            loc = MagicMock()
-            loc.first = loc
-            n = call_count[0]
-            call_count[0] += 1
-            loc.wait_for = AsyncMock(side_effect=Exception("timeout") if n == 0 else None)
-            loc.click = AsyncMock()
-            return loc
-
-        page.locator = MagicMock(
-            side_effect=lambda sel: trigger_loc if "arrow_drop_down" in sel else _locator(sel)
-        )
-        page.wait_for_timeout = AsyncMock()
-        page.keyboard = MagicMock()
-        page.keyboard.press = AsyncMock()
-
-        # Patch a model to have two selectors so the fallthrough is exercised.
-        two_sel = ("[role='menuitem']:has-text('MISS')", "[role='menuitem']:has-text('Imagen 4')")
-        patched = {**IMAGE_MODEL_OPTION_SELECTORS, Model.IMAGEN_3_5: two_sel}
+    async def test_cascade_falls_through_to_the_second_selector(self) -> None:
+        """First candidate matches nothing, second does — the fallback chain holds."""
+        two = ("[role='menuitem']:has-text('MISS')", "[role='menuitem']:has-text('HIT')")
+        patched = {**IMAGE_MODEL_OPTION_SELECTORS, Model.IMAGEN_3_5: two}
+        page = self._page({two[1]: 1})
         with (
             patch(
                 "gflow_cli.api.transports.ui_automation.IMAGE_MODEL_OPTION_SELECTORS",
@@ -2721,36 +2738,31 @@ class TestSelectImageModel:
             patch("gflow_cli.api.transports.ui_automation.log") as mock_log,
         ):
             await UiAutomationTransport._select_image_model(page, Model.IMAGEN_3_5)
-
-        mock_log.debug.assert_called_once()
-        mock_log.info.assert_called_once()
-        page.keyboard.press.assert_not_called()
+        assert mock_log.info.call_args[1]["via"] == two[1]
 
     @pytest.mark.asyncio
-    async def test_all_selectors_fail_logs_warning_and_presses_escape(self) -> None:
-        """All selectors raise → RuntimeError caught, warning logged, Escape pressed."""
-        page = _make_model_page_mock(selector_side_effects=[[Exception("timeout")]])
-        with patch("gflow_cli.api.transports.ui_automation.log") as mock_log:
+    async def test_no_match_raises_instead_of_warning(self) -> None:
+        """WAS: logged a warning and generated on Flow's default, billing the user."""
+        page = self._page({})
+        with pytest.raises(UiSelectorDriftError):
             await UiAutomationTransport._select_image_model(page, Model.GEM_PIX_2)
-        mock_log.warning.assert_called()
-        warned_event = mock_log.warning.call_args[0][0]
-        assert warned_event == "ui_automation.image_model_not_set"
-        page.keyboard.press.assert_called_once_with("Escape")
+        # TWO Escapes: the model menu AND the generation-settings panel beneath
+        # it. Raising skips the panel-close at the end of
+        # _configure_generation_settings, and a single Escape would leave the
+        # panel open — which the next batch prompt then toggles SHUT, cascading
+        # one drifted selector into a whole-batch failure.
+        assert page.keyboard.press.call_count == 2
+        assert all(c[0] == ("Escape",) for c in page.keyboard.press.call_args_list)
 
     @pytest.mark.asyncio
-    async def test_unknown_model_logs_warning_and_returns(self) -> None:
-        """Model not in dict → early return with image_model_unknown warning."""
-        page = MagicMock()
-        page.wait_for_timeout = AsyncMock()
-        with patch("gflow_cli.api.transports.ui_automation.log") as mock_log:
-            with patch(
-                "gflow_cli.api.transports.ui_automation.IMAGE_MODEL_OPTION_SELECTORS",
-                {},
-            ):
-                await UiAutomationTransport._select_image_model(page, Model.NARWHAL)
-        mock_log.warning.assert_called_once()
-        assert mock_log.warning.call_args[0][0] == "ui_automation.image_model_unknown"
-        page.locator.assert_not_called()
+    async def test_unregistered_model_raises_instead_of_returning(self) -> None:
+        """WAS: warned and returned, so --model was a silent no-op."""
+        page = self._page({})
+        with (
+            patch("gflow_cli.api.transports.ui_automation.IMAGE_MODEL_OPTION_SELECTORS", {}),
+            pytest.raises(UiSelectorDriftError),
+        ):
+            await UiAutomationTransport._select_image_model(page, Model.NARWHAL)
 
 
 def _exit_agent_page(initial: dict) -> tuple[MagicMock, dict]:

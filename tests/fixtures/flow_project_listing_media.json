@@ -1,0 +1,54 @@
+{
+  "result": {
+    "data": {
+      "json": {
+        "projectContents": {
+          "media": [
+            {
+              "name": "67d7bf3a-79b3-4125-9ac7-a19cd1d0a598",
+              "projectId": "58ec10b9-87f6-4c72-9243-8581bdfc93e5",
+              "workflowId": "16c323b5-d0eb-40ed-85bd-ff26c3c78492",
+              "workflowStepId": "CAE",
+              "mediaMetadata": {
+                "createTime": "2026-07-27T10:05:17.670598Z",
+                "requestData": {
+                  "promptInputs": [
+                    {
+                      "textInput": "PR 389 E2E verification: a simple blue ceramic cup centered on a plain white table in a 1:1 aspect ratio.",
+                      "structuredPrompt": {
+                        "parts": [
+                          {
+                            "text": "PR 389 E2E verification: a simple blue ceramic cup centered on a plain white table in a 1:1 aspect ratio."
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "imageGenerationRequestData": {},
+                  "clientPlatform": "CLIENT_PLATFORM_WEB"
+                },
+                "visibility": "PRIVATE",
+                "mediaBlobSize": "443650"
+              },
+              "image": {
+                "generatedImage": {
+                  "seed": 308519,
+                  "mediaGenerationId": "CAMSJDU4ZWMxMGI5LTg3ZjYtNGM3Mi05MjQzLTg1ODFiZGZjOTNlNRokZGI2MTEwMTMtYTFhYy00MjVmLThkMWItM2RjOTBmYjc1OGI2IgNDQUUqJDY3ZDdiZjNhLTc5YjMtNDEyNS05YWM3LWExOWNkMWQwYTU5OA",
+                  "prompt": "PR 389 E2E verification: a simple blue ceramic cup centered on a plain white table in a 1:1 aspect ratio.",
+                  "modelNameType": "NARWHAL",
+                  "previousMediaGenerationId": "",
+                  "workflowId": "16c323b5-d0eb-40ed-85bd-ff26c3c78492",
+                  "aspectRatio": "IMAGE_ASPECT_RATIO_SQUARE"
+                },
+                "dimensions": {
+                  "width": 1024,
+                  "height": 1024
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

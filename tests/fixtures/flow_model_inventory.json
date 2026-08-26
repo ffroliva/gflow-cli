@@ -1,0 +1,16 @@
+{
+  "_provenance": {
+    "captured_utc": "2026-08-26T11:45:00Z",
+    "profile": "denon82",
+    "account_locale": "pt",
+    "method": "scripts/dev/spike_model_inventory.py — menu read WHILE OPEN",
+    "note": "An EMPTY read is instrument failure, never data. #539 recorded a previous capture taken after the menu closed and treated the emptiness as absence; that conclusion was wrong. Never write this file from an empty read."
+  },
+  "image": [
+    "🍌 Nano Banana Pro",
+    "🍌 Nano Banana 2",
+    "🍌 Nano Banana 2 Lite"
+  ],
+  "video": null,
+  "_video_note": "Not yet captured — the video picker uses a different trigger than the image one. null means UNKNOWN, which the governance test treats as 'cannot assert', NOT as 'empty'. #539 depends on this being captured."
+}
