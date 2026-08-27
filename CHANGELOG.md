@@ -21,26 +21,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The account-locale probe no longer costs 4 s on every command
+- **The account-locale probe no longer costs ~4 s on every command
   ([#587](https://github.com/ffroliva/gflow-cli/issues/587)).** The probe added in
   v0.61.0 settles the bootstrap navigation to learn where Flow lands. On an account
   Flow does *not* redirect there is nothing to settle, so `wait_for_url` ran to the
-  full timeout every single invocation. Measured live on 2026-08-27: **7.22 s ->
-  2.80 s** setup on the non-redirecting account. The outcome is now cached in the
-  profile dir (`.gflow_locale`, a sibling of the existing `.gflow_account`) in three
-  states, not two: never probed, redirected-to-`X`, and **not redirected** — that
-  last one is the account paying the cost, and recording it as "nothing" would
-  re-probe forever.
+  full `URL_SETTLE_TIMEOUT_MS` every single invocation. Measured live 2026-08-27,
+  best of 3 rounds per arm: **5.94 s -> 2.00 s** setup on the non-redirecting
+  account, against an unchanged 2.82 s -> 2.90 s on a redirecting one (the control).
+  The outcome is cached in the profile dir (`.gflow_locale`, a sibling of the
+  existing `.gflow_account`) in three states, not two: never probed,
+  redirected-to-`X`, and **not redirected** — that last one is the account paying
+  the cost, and recording it as "nothing" would re-probe forever. The same guard
+  now covers all four `await_url_settled` call sites; guarding only the editor
+  entry left three navigations still paying the timeout.
 
   The cache decides only *whether to wait*, never *where to navigate*. Sending the
-  browser to a cached `/fx/{seg}/...` was measured and rejected: Flow serves
-  whatever segment it is asked for, so a pt-BR account handed `/fx/de/` stayed
-  there and rendered `html lang=de` with no redirect — no correction signal, and a
-  wrong-language UI for as long as the stale value lived. That is #580's defect in
-  a new hat. The navigation therefore stays bare, which is what lets Flow state the
-  account's own answer: a redirecting account still settles (fast, and self-heals a
-  stale segment on the next run — verified live against a deliberately poisoned
-  cache), and only the "not redirected" state skips the wait.
+  browser to a cached `/fx/{seg}/...` was built, measured, and rejected: Flow
+  serves whatever segment it is asked for, so a pt-BR account handed `/fx/de/`
+  stayed there and rendered `html lang=de` with no redirect — no correction signal,
+  and a wrong-language UI for as long as the stale value lived. That is #580's
+  defect in a new hat. The navigation therefore stays bare, which is what lets Flow
+  state the account's own answer: a redirecting account still settles (and rewrites
+  the locale every run, so a changed locale needs no special handling), while a
+  cache that wrongly says "not redirected" — reachable by one transient probe
+  timeout — is healed from the landing URL at teardown. Reproducer:
+  `scripts/dev/spike_locale_poison.py`.
 
 ### Fixed
 

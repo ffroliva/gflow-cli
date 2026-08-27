@@ -23,7 +23,7 @@ import shutil
 import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from gflow_cli.auth import default_profile_root, profile_dir, status
 
@@ -34,6 +34,11 @@ CONFIG_FILENAME = "config.toml"
 PROFILE_DIR_PREFIX = "profile_"
 ACCOUNT_FILE = ".gflow_account"
 LOCALE_FILE = ".gflow_locale"
+
+# The cache's third state: "probed, and Flow does NOT redirect this account".
+# Distinct from None ("never probed") — folding the two together re-probes
+# forever on exactly the account the cache exists for.
+NOT_REDIRECTED: Final = ""
 
 # A locale SEGMENT as Flow serves it under /fx/{segment}/tools/flow — bare
 # lowercase ISO-639, never a full BCP-47 tag. Enforced on READ because this value
@@ -276,37 +281,30 @@ def _dump_config(data: dict[str, object]) -> str:
 def read_account_locale(profile_path: Path) -> str | None:
     """Cached account-locale segment for a profile dir (#587). THREE states.
 
-    ``None``  — never probed. The caller must run the live probe.
-    ``""``    — probed; Flow does not redirect this account. Skip the probe.
-    ``"pt"``  — probed; this is the account's locale segment.
+    ``None``               — never probed; the caller must run the live probe.
+    :data:`NOT_REDIRECTED` — probed; Flow does not redirect this account.
+    ``"pt"``               — probed; this is the account's locale segment.
 
-    The empty-string state is the point of the cache, not an edge case: an
-    account Flow does not redirect resolves to "no locale", and that is exactly
-    the account burning the full ``URL_SETTLE_TIMEOUT_MS`` on every command.
-    Storing it as "nothing written" would be indistinguishable from "never
-    asked" and would re-probe forever.
-
-    Anything that is not a bare segment reads as ``None`` so a corrupted file
-    self-heals on the next run.
+    Anything else reads as ``None`` so a corrupt file self-heals: the value is
+    interpolated into a URL path, and ``ValueError`` covers the undecodable-bytes
+    case that would otherwise crash every listing command.
     """
     try:
         raw = (profile_path / LOCALE_FILE).read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, ValueError):
         return None
     if not raw:
-        return ""
+        return NOT_REDIRECTED
     return raw if _LOCALE_SEGMENT_RE.match(raw) else None
 
 
 def write_account_locale(profile_path: Path, locale: str | None) -> None:
     """Persist a probe outcome; ``None`` records "this account is not redirected".
 
-    Best-effort by construction — a cache write that fails must never take down
-    a run that has already done its real work. The cost of not persisting is one
-    wasted probe on the next command.
+    Best-effort: a failed cache write costs one extra probe, never a run.
     """
     try:
-        (profile_path / LOCALE_FILE).write_text(locale or "", encoding="utf-8")
+        (profile_path / LOCALE_FILE).write_text(locale or NOT_REDIRECTED, encoding="utf-8")
     except OSError:
         return
 
@@ -315,10 +313,9 @@ def account_locale_for(profile_name: str) -> str | None:
     """Cached locale segment for a NAMED profile, or ``None`` when unknown (#587).
 
     The offline entry point: catalog listings know a profile name, not a dir, and
-    have no browser to ask. Collapses the cache's ``""`` (probed, not redirected)
-    and ``None`` (never probed) into a single ``None``, because a URL builder has
-    nothing to do differently with the two. A catalog row can outlive its profile
-    dir, so a missing dir is a normal ``None``, not an error.
+    have no browser to ask. Collapses :data:`NOT_REDIRECTED` into ``None`` — a URL
+    builder does nothing different with the two. A catalog row can outlive its
+    profile dir, so a missing dir is a normal ``None``.
     """
     return read_account_locale(profile_dir(profile_name)) or None
 

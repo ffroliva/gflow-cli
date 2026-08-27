@@ -168,9 +168,12 @@ LOCALE_SEGMENT_RE = re.compile(r"^https://labs\.google/fx/([a-z]{2,3})(?:-[A-Za-
 def locale_segment_from_url(url: str) -> str | None:
     """Extract the account's locale segment from a **settled** Flow URL (#580).
 
-    Flow serves the editor under ``/fx/{locale}/tools/flow`` and redirects any
-    other form to the account's own locale. That redirect is the ONLY trustworthy
-    source of the account locale:
+    Flow serves the editor under ``/fx/{locale}/tools/flow`` and redirects the
+    **bare** form to the account's own locale. It does NOT correct a wrong-but-
+    valid segment: measured 2026-08-27 (#587), a pt-BR account sent to
+    ``/fx/de/tools/flow`` stayed there and rendered ``html lang=de``. So only a
+    BARE navigation reveals the account locale — never navigate to a segment we
+    chose and read it back as an observation:
 
     * ``GET /fx/api/auth/session`` carries no locale field.
     * ``navigator.language`` reports the value **gflow itself sets** when it

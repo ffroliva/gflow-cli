@@ -1,22 +1,13 @@
 """The account locale is cached per profile — with THREE states, not two (#587).
 
-#580 resolves the account locale by settling the bootstrap navigation. That probe
-costs the full ``URL_SETTLE_TIMEOUT_MS`` (4 s, ``_common.py:153``) on any account
-Flow does **not** redirect, because ``wait_for_url`` never matches and the wait
-runs to timeout. Measured: 6.1 s setup on an ``en`` account vs 3.4 s on a
-redirecting ``pt`` one.
+    None                 -> never probed; the caller must run the live probe
+    NOT_REDIRECTED ("")  -> probed; Flow does not redirect this account
+    "pt"                 -> probed; this is the account's locale segment
 
-A two-state cache (value / no value) does not fix that account — "no locale" is
-exactly its answer, and storing it as "nothing" is indistinguishable from "never
-asked". So the cache encodes three states:
-
-    None  -> never probed; the caller MUST run the live probe
-    ""    -> probed; Flow does not redirect this account. Skip the probe.
-    "pt"  -> probed; this is the account's locale segment.
-
-Storage mirrors ``.gflow_account`` (``profile_store.py``, written at
-``internal_chromium.py:185``): a sibling dotfile in the profile dir. No schema
-migration, no config plumbing, and it is readable offline by ``project list``.
+The empty state is the point, not an edge case: an account Flow does not redirect
+resolves to "no locale", and that is exactly the account burning the settle
+timeout on every command. Storing it as "nothing written" is indistinguishable
+from "never asked". Storage mirrors the existing `.gflow_account` dotfile.
 """
 
 from __future__ import annotations
@@ -31,11 +22,6 @@ from gflow_cli.profile_store import LOCALE_FILE, read_account_locale, write_acco
 def test_never_probed_reads_as_none(tmp_path: Path) -> None:
     """No file at all means "ask Flow", not "no locale"."""
     assert read_account_locale(tmp_path) is None
-
-
-def test_a_resolved_segment_round_trips(tmp_path: Path) -> None:
-    write_account_locale(tmp_path, "pt")
-    assert read_account_locale(tmp_path) == "pt"
 
 
 def test_no_redirect_is_recorded_and_is_not_none(tmp_path: Path) -> None:
@@ -92,3 +78,16 @@ def test_write_never_raises_on_an_unwritable_dir(tmp_path: Path) -> None:
     missing = tmp_path / "does" / "not" / "exist"
     write_account_locale(missing, "pt")  # must not raise
     assert read_account_locale(missing) is None
+
+
+def test_undecodable_bytes_read_as_never_probed(tmp_path: Path) -> None:
+    """A corrupt file must self-heal, not crash every listing command.
+
+    Reproduced by the council: catching only `OSError` let `UnicodeDecodeError`
+    escape `read_account_locale`, killing `project list`, `project show`, the MCP
+    listing tool and every browser run — while the docstring promised the file
+    "self-heals".
+    """
+    (tmp_path / LOCALE_FILE).write_bytes(b"\xff\xfe\x00pt")
+
+    assert read_account_locale(tmp_path) is None

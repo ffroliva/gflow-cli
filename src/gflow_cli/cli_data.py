@@ -15,6 +15,7 @@ import click
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
+from rich.text import Text
 
 from gflow_cli import json_output, profile_store
 from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
@@ -105,13 +106,15 @@ def _emit_projects_table(rows: list[ProjectRow]) -> None:
     for col in ("PROJECT_ID", "TITLE", "PROFILE", "CREATED", "IMG", "VID"):
         tbl.add_column(col)
     for r in rows:
-        # #587: the id is rendered as a Rich hyperlink to the account-correct
-        # editor URL. Costs no column width and degrades to plain text on
-        # terminals that do not support OSC-8, so the table stays as it was for
-        # anyone piping or grepping it.
+        # #587: the id links to the account-correct editor URL. Costs no column
+        # width and degrades to plain text without OSC-8.
+        # Built as a Text with a link STYLE, never as "[link=...]" markup: a "]"
+        # anywhere in the URL closes the tag early, and escaping does not apply
+        # inside a tag attribute — so markup here raises MarkupError on ids the
+        # plain add_row it replaced rendered without complaint.
         url = routes.project_editor_url(profile_store.account_locale_for(r.profile), r.project_id)
         tbl.add_row(
-            f"[link={url}]{r.project_id}[/link]",
+            Text(r.project_id, style=f"link {url}"),
             _truncate(r.title),
             r.profile,
             r.created_at.strftime("%Y-%m-%d %H:%M"),

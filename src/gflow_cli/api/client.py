@@ -90,7 +90,7 @@ from gflow_cli.errors import (
 )
 from gflow_cli.paths import adjust_key_extension, character_output_path, looks_like_video
 from gflow_cli.profile_lease import ProfileLease
-from gflow_cli.profile_store import read_account_locale, write_account_locale
+from gflow_cli.profile_store import NOT_REDIRECTED, read_account_locale, write_account_locale
 from gflow_cli.redaction import redact_sensitive_text
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 from gflow_cli.winsec import ensure_profile_hardened
@@ -334,8 +334,13 @@ class FlowApiClient:
         self._access_token_exp: float = 0.0  # epoch seconds; 0 = unknown/expired
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
-        # Account locale segment, resolved once from the bootstrap navigation (#580).
+        # Account locale segment, resolved once from the bootstrap navigation (#580),
+        # then cached per profile (#587).
         self._account_locale: str | None = None
+        # Set when a CALLER-supplied locale drives a navigation on the shared page.
+        # From that moment the page URL reflects our choice, not Flow's answer, so
+        # it can no longer be used as evidence — see _persist_locale_correction.
+        self._caller_locale_navigated: bool = False
         # Cross-process profile lease (D3). Acquired in _enter_setup immediately
         # BEFORE the persistent context launches (so contention fails fast with
         # ProfileLockedError instead of racing two Chromes onto one profile dir)
@@ -731,10 +736,9 @@ class FlowApiClient:
 
         The probe (#580) costs the full ``URL_SETTLE_TIMEOUT_MS`` on any account
         Flow does **not** redirect: ``wait_for_url`` never matches, so it runs to
-        timeout. Measured 7.0 s setup on the ``en`` account vs a 3.5 s floor —
-        4 s of pure dead time, on every command, forever. That single case is
-        the entire cost, and the cache exists to answer exactly one question:
-        *does this account redirect?*
+        timeout, on every command, forever. That single case is the entire cost
+        (figures in the CHANGELOG), and the cache exists to answer exactly one
+        question: *does this account redirect?*
 
         The navigation itself stays **bare, always**. Sending the browser to a
         cached ``/fx/{seg}/...`` was measured on 2026-08-27 to be unsafe: Flow
@@ -757,7 +761,7 @@ class FlowApiClient:
             wait_until="domcontentloaded",
             timeout=60_000,
         )
-        if cached == "":
+        if cached == NOT_REDIRECTED:
             self._account_locale = None
             logger.info("client.account_locale_cached", locale=None, settle_skipped=True)
             return
@@ -768,31 +772,49 @@ class FlowApiClient:
         self._account_locale = await self._resolve_account_locale(self._page)
         write_account_locale(self.profile_dir, self._account_locale)
 
-    def _persist_locale_correction(self) -> None:
-        """Re-cache the locale if the browser demonstrably landed somewhere else (#587).
+    def _locale_for_navigation(self, caller_locale: str | None) -> str | None:
+        """Resolve the locale for a navigation, recording whether the CALLER chose it.
 
-        Covers the one case the bootstrap settle cannot: an account cached as
-        "not redirected" skips the settle, so if it ever *starts* redirecting
-        nothing upstream would notice. Because the bootstrap navigation is bare,
-        Flow gets to state its own answer, and by teardown the redirect has long
-        since landed — so this costs no waiting at all.
-
-        Only a positively-observed *different* segment overwrites. A URL with no
-        segment is left alone — it can be an auth page, an error page, or a route
-        Flow does not localise, and reading it as "this account stopped
-        redirecting" would discard a good value and bring the probe back.
+        A caller-supplied locale makes the resulting page URL our own choice rather
+        than Flow's answer, which disqualifies it as cache evidence (#587).
         """
+        if caller_locale is not None:
+            self._caller_locale_navigated = True
+            return caller_locale
+        return self._account_locale
+
+    def _persist_locale_correction(self) -> None:
+        """Heal a cache that wrongly says "this account is not redirected" (#587).
+
+        That is the one state nothing else can repair, and a **transient** probe
+        failure is the likely way to reach it: one slow network or Flow hiccup
+        makes the settle time out on an account that really does redirect,
+        ``NOT_REDIRECTED`` is written, and from then on the settle is skipped
+        forever — silently restoring #580's post-``goto`` redirect race with
+        nothing left to notice it. Reading the landing URL at teardown costs no
+        waiting and heals it on the next run.
+
+        Deliberately does nothing when a segment is already cached: the bootstrap
+        settle re-derives and rewrites the account locale on every such run, so a
+        changed locale is already handled there. Staying out of that case is also
+        what makes this safe — with no segment cached, every URL gflow builds is
+        bare, so a localised landing can only be Flow's own doing. Flow serves
+        whatever segment it is asked for (measured 2026-08-27), so a URL we chose
+        is never evidence; ``_caller_locale_navigated`` covers the remaining way a
+        caller can steer this page (``gflow character create --locale de``).
+
+        A URL with no segment is likewise not evidence of "stopped redirecting":
+        it can be an auth page, an error page, or a route Flow does not localise.
+        """
+        if self._page is None or self._account_locale is not None or self._caller_locale_navigated:
+            return
         try:
-            landed = routes.locale_segment_from_url(str(self._page.url))  # type: ignore[union-attr]
+            landed = routes.locale_segment_from_url(str(self._page.url))
         except Exception:  # noqa: BLE001 — teardown observation, never fatal
             return
-        if landed is None or landed == self._account_locale:
+        if landed is None:
             return
-        logger.info(
-            "client.account_locale_changed",
-            was=self._account_locale,
-            now=landed,
-        )
+        logger.info("client.account_locale_changed", was=self._account_locale, now=landed)
         write_account_locale(self.profile_dir, landed)
 
     async def _resolve_account_locale(self, page: Any) -> str | None:
@@ -2734,7 +2756,7 @@ class FlowApiClient:
             # #580: caller override wins; otherwise the ACCOUNT's own locale.
             # Never "en-US" — a wrong segment bounces the character route, which
             # is how #395 presented.
-            locale=locale if locale is not None else self._account_locale,
+            locale=self._locale_for_navigation(locale),
             format_prompt=format_prompt,
         )
         _images, workflows = cast(

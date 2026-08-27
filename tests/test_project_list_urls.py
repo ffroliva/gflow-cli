@@ -1,17 +1,9 @@
 """Offline listings render account-correct editor URLs (#587).
 
-`gflow project list` emitted no URLs at all. It is a local, network-free catalog
-read by contract, so it cannot resolve a locale itself — which is why it emitted
-nothing rather than something wrong.
-
-Once the locale is persisted per profile (the cache #587 adds for the probe),
-the value is readable offline and the listing can render the real link. The gap
-that started this thread was an `/fx/en/...` link handed to a pt-BR account
-owner: Flow redirects it, so it resolves, but it is the wrong shape and reads
-as broken.
-
-Unknown locale still yields the BARE url, never a guessed `en` — the same rule
-`project_editor_url` already enforces for navigation.
+`project list` / `project show` / MCP emitted no URL at all: they are
+network-free catalog reads, so they could not resolve a locale and correctly
+declined to guess one. With the locale cached per profile the value is readable
+offline. Unknown locale still yields the BARE url, never a guessed `en`.
 """
 
 from __future__ import annotations
@@ -108,11 +100,33 @@ def test_project_show_reports_the_same_url(home: Path) -> None:
     )
 
 
-def test_account_locale_for_reads_the_named_profile(home: Path) -> None:
-    profile_store.write_account_locale(_pdir(home), "de")
-    assert profile_store.account_locale_for("denon82") == "de"
-
-
 def test_account_locale_for_is_none_when_the_profile_dir_is_absent(home: Path) -> None:
     """A catalog row can outlive its profile dir; that must not raise."""
     assert profile_store.account_locale_for("deleted-profile") is None
+
+
+# --- MCP `gflow_list_projects` carries the same URL (had zero coverage) ------
+
+
+@pytest.mark.parametrize(
+    ("cached", "expected_segment"),
+    [("pt", "/fx/pt/"), (None, "/fx/tools/")],
+    ids=["segment", "no-redirect"],
+)
+def test_mcp_list_projects_emits_the_url(
+    home: Path, cached: str | None, expected_segment: str
+) -> None:
+    """The MCP listing inherits whatever `project list` does — pin it directly."""
+    import asyncio
+
+    from gflow_cli.mcp.tools import gflow_list_projects
+
+    profile_store.write_account_locale(_pdir(home), cached)
+
+    payload = asyncio.run(gflow_list_projects(profile="denon82", limit=10))
+
+    assert payload["status"] == "ok"
+    url = payload["projects"][0]["url"]
+    assert url.endswith(PID)
+    assert expected_segment in url
+    assert "/fx/en/" not in url
