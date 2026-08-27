@@ -246,14 +246,23 @@ class TestProbeRecoversFromALateModal:
     log at all — the detector had run before React hydration mounted the dialog.
     """
 
-    async def test_blocked_probe_dismisses_and_retries_once(self, monkeypatch) -> None:  # noqa: ANN001
-        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
-
+    @staticmethod
+    def _stub(monkeypatch, *, blocked: bool, announcement: bool) -> AsyncMock:  # noqa: ANN001
         dismiss = AsyncMock(return_value=True)
         monkeypatch.setattr(
-            UiAutomationTransport, "_overlay_blocks_page", AsyncMock(return_value=True)
+            UiAutomationTransport, "_overlay_blocks_page", AsyncMock(return_value=blocked)
+        )
+        monkeypatch.setattr(
+            UiAutomationTransport,
+            "_changelog_overlay_present",
+            AsyncMock(return_value=announcement),
         )
         monkeypatch.setattr(UiAutomationTransport, "_dismiss_blocking_overlays", dismiss)
+        return dismiss
+
+    async def test_blocked_probe_dismisses_and_retries_once(self, monkeypatch) -> None:  # noqa: ANN001
+        dismiss = self._stub(monkeypatch, blocked=True, announcement=True)
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
 
         found = await VideoGenerationMixin._probe_selector_cascade(  # type: ignore[attr-defined]
             _probe_page(fail_first=1), "image_mode_tab", ("i.google-symbols",), timeout_ms=1
@@ -262,15 +271,28 @@ class TestProbeRecoversFromALateModal:
         assert found is not None
         dismiss.assert_awaited_once()
 
-    async def test_unblocked_miss_is_still_a_miss(self, monkeypatch) -> None:  # noqa: ANN001
-        """No overlay → a genuine miss stays a miss; the control really is gone."""
+    async def test_flows_own_open_menu_is_never_dismissed(self, monkeypatch) -> None:  # noqa: ANN001
+        """Blocked body + no announcement = Flow's own menu. Do not touch it.
+
+        Several callers probe with the settings dropdown open, and a Radix popover
+        sets `pointer-events: none` on the body exactly like the announcement does.
+        Acting on "blocked" alone would close the panel the probe is working in —
+        the #395 failure shape, rediscovered through a different door.
+        """
+        dismiss = self._stub(monkeypatch, blocked=True, announcement=False)
         from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
 
-        dismiss = AsyncMock(return_value=True)
-        monkeypatch.setattr(
-            UiAutomationTransport, "_overlay_blocks_page", AsyncMock(return_value=False)
+        found = await VideoGenerationMixin._probe_selector_cascade(  # type: ignore[attr-defined]
+            _probe_page(fail_first=99), "duration_tab", ("i.google-symbols",), timeout_ms=1
         )
-        monkeypatch.setattr(UiAutomationTransport, "_dismiss_blocking_overlays", dismiss)
+
+        assert found is None
+        dismiss.assert_not_awaited()
+
+    async def test_unblocked_miss_is_still_a_miss(self, monkeypatch) -> None:  # noqa: ANN001
+        """No overlay → a genuine miss stays a miss; the control really is gone."""
+        dismiss = self._stub(monkeypatch, blocked=False, announcement=True)
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
 
         found = await VideoGenerationMixin._probe_selector_cascade(  # type: ignore[attr-defined]
             _probe_page(fail_first=99), "image_mode_tab", ("i.google-symbols",), timeout_ms=1
@@ -281,13 +303,8 @@ class TestProbeRecoversFromALateModal:
 
     async def test_retry_does_not_recurse(self, monkeypatch) -> None:  # noqa: ANN001
         """A still-covered control after dismissal returns None — one retry, not a loop."""
+        dismiss = self._stub(monkeypatch, blocked=True, announcement=True)
         from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
-
-        dismiss = AsyncMock(return_value=True)
-        monkeypatch.setattr(
-            UiAutomationTransport, "_overlay_blocks_page", AsyncMock(return_value=True)
-        )
-        monkeypatch.setattr(UiAutomationTransport, "_dismiss_blocking_overlays", dismiss)
 
         found = await VideoGenerationMixin._probe_selector_cascade(  # type: ignore[attr-defined]
             _probe_page(fail_first=99), "image_mode_tab", ("i.google-symbols",), timeout_ms=1
@@ -336,6 +353,29 @@ class TestPersistentBlockFailsLoudly:
         t = UiAutomationTransport()
 
         await t._require_unblocked(page, tmp_path, epoch="gallery")  # type: ignore[attr-defined]
+
+    async def test_late_modal_is_dismissed_rather_than_raised(self, tmp_path: Path) -> None:
+        """A modal that mounted after the boundary gets one more dismissal, not exit 23.
+
+        The boundary attempt can run before the dialog exists, in which case the
+        detector saw nothing and dismissal was a no-op. Raising there would fail a run
+        over a modal that a single retry clears.
+        """
+        page = _page_with_pointer_events("none", close_button_visible=True)
+        page.evaluate = AsyncMock(
+            side_effect=[
+                {"pointerEvents": "none", "dialogs": 1},  # first look: blocked
+                {"pointerEvents": "none", "dialogs": 1},  # after the settle: still blocked
+                {"pointerEvents": "none", "dialogs": 1},  # inside the retry dismissal
+                {"pointerEvents": "auto", "dialogs": 0},  # its verification: cleared
+                {"pointerEvents": "auto", "dialogs": 0},  # final check before raising
+            ]
+        )
+        t = UiAutomationTransport()
+
+        await t._require_unblocked(page, tmp_path, epoch="project editor")  # type: ignore[attr-defined]
+
+        page.screenshot.assert_not_called()
 
     async def test_clear_page_never_probes_twice(self, tmp_path: Path) -> None:
         """The happy path costs exactly one probe and no settle."""

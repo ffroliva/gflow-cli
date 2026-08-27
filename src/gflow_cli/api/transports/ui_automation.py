@@ -462,6 +462,13 @@ OVERLAY_CLOSE_BUTTON_SELECTORS: tuple[str, ...] = (
     "button[data-dismiss]",
 )
 
+# #593 split of the cascade above. The first entry requires a changelog link inside
+# the dialog, so it cannot match one of Flow's own surfaces and is safe to try on any
+# page. The rest are generic enough to match app chrome and only run once the page is
+# known to be blocked.
+_CHANGELOG_SCOPED_CLOSE: tuple[str, ...] = OVERLAY_CLOSE_BUTTON_SELECTORS[:1]
+_GENERIC_CLOSE: tuple[str, ...] = OVERLAY_CLOSE_BUTTON_SELECTORS[1:]
+
 # Detectors for the splash screen or welcome overlay (pure structural anchors).
 WELCOME_SCREEN_SELECTORS: tuple[str, ...] = (
     "[role='dialog']:has(a[href*='flow'])",
@@ -1136,6 +1143,27 @@ class UiAutomationTransport(VideoGenerationMixin):
         return bool(state and state.get("pointerEvents") == "none")
 
     @staticmethod
+    async def _changelog_overlay_present(page: Page) -> bool:
+        """True only for an *announcement* overlay — never for Flow's own surfaces.
+
+        Narrower than :meth:`_detect_overlay` on purpose. A blocked body says
+        something is covering the app, but Flow's own Radix menus and popovers set
+        ``pointer-events: none`` on the body exactly the same way while they are open.
+        Anything that acts on "blocked" alone would therefore fire mid-menu and close
+        the panel it was meant to work in — the #395 shape, rediscovered.
+
+        These two anchors cannot match a menu: both require a changelog link or the
+        gstatic changelog iframe.
+        """
+        for sel in (*CHANGELOG_IFRAME_SELECTORS, "[role='dialog']:has(a[href*='changelog'])"):
+            try:
+                if await page.locator(sel).first.is_visible():
+                    return True
+            except Exception:  # noqa: BLE001 — a probe must never break a run
+                continue
+        return False
+
+    @staticmethod
     async def _detect_overlay(page: Page) -> bool:
         """Return True if any changelog iframe, welcome screen, or top banner is visible."""
         for sel in CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS + TOP_BANNER_SELECTORS:
@@ -1148,9 +1176,16 @@ class UiAutomationTransport(VideoGenerationMixin):
         return False
 
     @staticmethod
-    async def _try_page_close_button(page: Page) -> bool:
-        """Try each OVERLAY_CLOSE_BUTTON_SELECTORS at page level. Returns True on success."""
-        for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
+    async def _try_page_close_button(
+        page: Page,
+        selectors: tuple[str, ...] = OVERLAY_CLOSE_BUTTON_SELECTORS,
+    ) -> bool:
+        """Try each close selector at page level. Returns True on success.
+
+        ``selectors`` is split by the caller (#593): the changelog-scoped anchor runs
+        unconditionally, the generic ones only once the page is known to be blocked.
+        """
+        for close_sel in selectors:
             try:
                 loc = page.locator(close_sel).first
                 if await loc.is_visible(timeout=500):
@@ -1209,6 +1244,13 @@ class UiAutomationTransport(VideoGenerationMixin):
         if not await self._overlay_blocks_page(page):
             return
         await page.wait_for_timeout(_jitter_ms(1000))
+        if not await self._overlay_blocks_page(page):
+            return
+        # One more dismissal before giving up. The boundary attempt can have run
+        # BEFORE the dialog existed — Flow hydrates late — in which case the detector
+        # saw nothing, dismissal was a no-op, and raising here would fail a run for a
+        # modal that a single retry clears.
+        await self._dismiss_blocking_overlays(page, out_dir)
         if not await self._overlay_blocks_page(page):
             return
         shot = await _capture_debug_screenshot(page, out_dir, "debug_overlay_still_blocking.png")
@@ -1280,13 +1322,27 @@ class UiAutomationTransport(VideoGenerationMixin):
         if not await cls._detect_overlay(page):
             return False
 
-        # #395 guard, structural rather than advisory. A bare `[role='dialog']`
-        # detector once matched Flow's OWN character composer, Escape closed it, and
-        # the generation went out without `entityContext` — billed, silently wrong.
+        # The changelog-scoped anchor is safe on ANY page: it cannot match a dialog
+        # that carries no changelog link, so it is tried before the block probe.
+        if await cls._try_page_close_button(page, _CHANGELOG_SCOPED_CLOSE):
+            return await cls._verify_overlay_cleared(page, method="close_button_page")
+
+        # #395 guard, structural rather than advisory. Everything below is generic
+        # enough to match Flow's own chrome: `button:has(i:text('close'))` fits the
+        # character composer's own close button, and Escape is what actually caused
+        # #395 — it closed the composer and the generation went out without
+        # `entityContext`, billed and silently wrong.
+        #
         # A page we can positively see is still clickable is not blocked by anything,
-        # so nothing here may touch it. Only a positive 'auto' reading disables the
-        # cascade: when the probe is unreadable we keep the pre-#593 behaviour rather
-        # than trading a known-good dismissal for a mystery timeout.
+        # so none of it may run there. Only a positive reading disables the cascade:
+        # when the probe is unreadable we keep the pre-#593 behaviour rather than
+        # trading a known-good dismissal for a mystery timeout.
+        #
+        # Deliberate trade-off: an overlay that covers a control WITHOUT blocking the
+        # body (a non-modal banner) is no longer auto-closed by the generic selectors.
+        # That is the price of making #395 impossible, and it is the right side of the
+        # trade — #395 spent real credits, whereas KNOWN_ISSUES rates the banner case
+        # Low and transient.
         state = await cls._probe_page_block(page)
         if state is not None and state.get("pointerEvents") != "none":
             log.info(
@@ -1297,7 +1353,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
             return False
 
-        if await cls._try_page_close_button(page):
+        if await cls._try_page_close_button(page, _GENERIC_CLOSE):
             return await cls._verify_overlay_cleared(page, method="close_button_page")
 
         if await cls._try_iframe_close_button(page):
@@ -1425,8 +1481,12 @@ class UiAutomationTransport(VideoGenerationMixin):
         # the wrong thing. Dismiss BEFORE `_bypass_onboarding`, which force-clicks and
         # would otherwise dispatch straight into the overlay.
         await self._dismiss_blocking_overlays(page, out_dir)
-        await self._require_unblocked(page, out_dir, epoch="gallery")
         await self._bypass_onboarding(page)
+        # AFTER onboarding, not before: consent/CMP dialogs block the body too, and
+        # `_bypass_onboarding` is what clears those. Gating first would abort a fresh
+        # profile with "dismiss the announcement" when the real blocker is a cookie
+        # banner that the very next line would have accepted.
+        await self._require_unblocked(page, out_dir, epoch="gallery")
         for selector in NEW_PROJECT_SELECTORS:
             try:
                 loc = page.locator(selector).first

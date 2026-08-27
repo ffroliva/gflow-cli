@@ -54,6 +54,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transport boundary and were unprotected; both now dismiss explicitly, and both stop
   hardcoding `"en"` in favour of the account's own locale (#587).
 
+  **One deliberate behaviour change.** The close-button cascade is now split: the
+  changelog-scoped anchor (`[role='dialog']:has(a[href*='changelog']) button`) runs on
+  any page because it cannot match one of Flow's own surfaces, while the generic
+  selectors (`button:has(i:text('close'))` and friends) and the Escape fallback run
+  only once the body is known to be blocked. The cost is that a non-modal banner —
+  one that covers a control without blocking the body — is no longer auto-closed by
+  the generic selectors. That is the right side of the trade: those same generic
+  selectors match the character composer's own close button, #395 spent real credits
+  through exactly that door, and `KNOWN_ISSUES` rates the banner case Low and
+  transient.
+
 ### Added
 
 - **`gflow project list` / `project show` and the MCP `gflow_list_projects` tool now

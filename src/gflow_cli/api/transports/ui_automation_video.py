@@ -1254,13 +1254,24 @@ class VideoGenerationMixin:
 
         if not await UiAutomationTransport._overlay_blocks_page(page):  # type: ignore[reportPrivateUsage]
             return None
+        # Blocked is NOT enough to act on here. Several callers probe with Flow's own
+        # settings dropdown open (`_switch_to_image_mode`, `_set_output_count`,
+        # `_select_video_duration`), and a Radix popover sets `pointer-events: none`
+        # on the body exactly like the announcement does. Acting on "blocked" alone
+        # would close the very panel the probe is working in — #395 all over again.
+        # Requiring the changelog anchor keeps this to real announcements.
+        if not await UiAutomationTransport._changelog_overlay_present(page):  # type: ignore[reportPrivateUsage]
+            log.debug("ui_automation_video.probe_miss_not_an_announcement", probe=label)
+            return None
         log.warning(
             "ui_automation_video.probe_blocked_by_overlay",
             probe=label,
             note="the control is covered, not missing — dismissing and re-probing once",
         )
-        if not await UiAutomationTransport._dismiss_blocking_overlays(page):  # type: ignore[reportPrivateUsage]
-            return None
+        # Re-probe regardless of the return value: it now means "dismissed AND
+        # verified cleared", and an unmount that has not settled yet would otherwise
+        # skip the retry and report drift for a control that just became reachable.
+        await UiAutomationTransport._dismiss_blocking_overlays(page)  # type: ignore[reportPrivateUsage]
         return await VideoGenerationMixin._probe_selector_cascade(
             page,
             label,
