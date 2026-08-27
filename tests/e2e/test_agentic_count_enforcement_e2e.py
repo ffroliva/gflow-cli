@@ -58,11 +58,16 @@ async def _set_mismatched_sticky_count(
     page = await client._checkout_page()  # noqa: SLF001
     try:
         await page.goto(
-            routes.project_editor_url("en", project_id),
+            # #587: the ACCOUNT's locale, never a hardcoded segment.
+            routes.project_editor_url(client._account_locale, project_id),  # noqa: SLF001
             wait_until="domcontentloaded",
             timeout=45_000,
         )
         await page.wait_for_timeout(4_000)
+        # #593: raw goto, so no transport boundary ran. Clear a blocking
+        # announcement before the panel work below, which would otherwise time out
+        # with no indication of why.
+        await client.transport._dismiss_blocking_overlays(page)  # noqa: SLF001
         await page.keyboard.press("Escape")
 
         # Flow's current cohort loads the editor in CLASSIC mode (media panel

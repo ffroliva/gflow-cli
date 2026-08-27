@@ -486,8 +486,10 @@ def _make_editor_page(
     else:
         loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
 
-    async def _click() -> None:
+    async def _click(**_kwargs: object) -> None:
         # Successful click simulates Flow navigating to /project/<uuid>.
+        # Accepts kwargs: the CTA click passes an explicit timeout (#593) so a
+        # covered-but-visible button fails in seconds instead of the 30 s default.
         if nav_succeeds:
             page.url = post_click_url
 
@@ -567,7 +569,7 @@ class TestEnterEditor:
             else:
                 loc.wait_for = AsyncMock()
 
-            async def _click() -> None:
+            async def _click(**_kwargs: object) -> None:
                 page.url = "https://labs.google/fx/tools/flow/project/xyz"
 
             loc.click = AsyncMock(side_effect=_click)

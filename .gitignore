@@ -66,6 +66,11 @@ test_assets/debug_*/
 # Phase-2 live-spike capture outputs — NEVER commit (may contain real API payloads)
 scripts/dev/_spike_out/
 
+# HAR captures (GFLOW_CLI_HAR_PATH) — full request/response bodies, headers and
+# auth cookies. The _spike_out rule only covers the default location; a HAR
+# written anywhere else must not be committable either.
+*.har
+
 # Agent session marker — machine/session-local handoff state, regenerated per run
 .continue-here.md
 

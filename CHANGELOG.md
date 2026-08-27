@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Flow announcement modal no longer wedges a run with an unexplained timeout
+  ([#593](https://github.com/ffroliva/gflow-cli/issues/593)).** When Google ships a
+  feature, Flow puts a full changelog dialog over the editor and sets
+  `body { pointer-events: none }` while leaving the app neither `aria-hidden` nor
+  `inert` — so every control reads visible and enabled yet never receives a click,
+  and Playwright's actionability wait runs to timeout with no message. Measured live
+  on two accounts (2026-08-27, pt and en), which is also how the four failure paths
+  below were found:
+  - The gallery "+ New project" sweep ran with **no overlay check at all** — the one
+    navigation epoch that had none. A modal there cost 18 selectors x Playwright's
+    30 s default click timeout and then reported `Could not find 'New project' CTA`,
+    which is the wrong error about the wrong thing. It now dismisses first and the
+    click carries an explicit 5 s timeout.
+  - Dismissal **verifies itself**. It previously returned success the moment a click
+    landed, so a dismissal that changed nothing still logged `overlay_dismissed` and
+    the run timed out somewhere unrelated — the success event lied. It now re-probes
+    and reports honestly, with a new `ui_automation.overlay_postmortem` warning.
+  - A persistent block now **aborts pre-submit at $0** with exit 23 and a screenshot
+    (probe `overlay_close_button`) instead of hanging. A transient is not enough to
+    trigger it: Flow's own menus set the same property while open, so the guard
+    re-probes after a settle.
+  - The destructive Escape fallback is now **gated on the page actually being
+    blocked**, which retires the [#395](https://github.com/ffroliva/gflow-cli/issues/395)
+    hazard structurally rather than by comment. That regression pressed Escape on the
+    character composer and sent a generation out without `entityContext` — billed,
+    silently wrong. A page we can positively see is clickable is never touched.
+
+  Two raw-`goto` e2e tests (`test_sidebar_recovery_e2e`, `e2e_auth` — the nightly
+  canary's default tier — and `test_agentic_count_enforcement_e2e`) bypass every
+  transport boundary and were unprotected; both now dismiss explicitly, and both stop
+  hardcoding `"en"` in favour of the account's own locale (#587).
+
 ### Added
 
 - **`gflow project list` / `project show` and the MCP `gflow_list_projects` tool now

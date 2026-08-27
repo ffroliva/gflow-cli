@@ -468,6 +468,18 @@ WELCOME_SCREEN_SELECTORS: tuple[str, ...] = (
     "[role='dialog']:has(a[href*='changelog'])",
 )
 
+# Selector-free block probe (#593). `pointer-events: none` on the body is what an
+# overlay does to the app behind it; it is not tied to any announcement's markup,
+# copy, or locale. Used three ways: as the gate that keeps the destructive Escape
+# fallback off working surfaces (#395), as the post-dismissal verification, and as
+# the post-mortem detail on a timeout.
+_BLOCK_PROBE_JS = """
+() => ({
+  pointerEvents: getComputedStyle(document.body).pointerEvents,
+  dialogs: document.querySelectorAll("[role='dialog'],[role='alertdialog'],dialog").length,
+})
+"""
+
 
 # Generation settings trigger — the SAME unified button as the mode-switch
 # dropdown: a ``button[aria-haspopup='menu']`` carrying the current ratio
@@ -1100,6 +1112,30 @@ class UiAutomationTransport(VideoGenerationMixin):
                 continue
 
     @staticmethod
+    async def _probe_page_block(page: Page) -> dict[str, Any] | None:
+        """Read whether the app behind any overlay is clickable. ``None`` = unreadable.
+
+        Measured live on 2026-08-27 (#593): while Flow's announcement modal is up the
+        body carries ``pointer-events: none`` and is neither ``aria-hidden`` nor
+        ``inert`` — so every control reads visible and enabled yet never receives a
+        click, and Playwright's actionability wait runs to timeout with no message.
+
+        This is the only overlay signal that needs no selector: it is a property of
+        being blocked, not of any particular announcement, so it holds for whatever
+        Flow ships next and in any locale.
+        """
+        try:
+            return await page.evaluate(_BLOCK_PROBE_JS)
+        except Exception:  # noqa: BLE001 — a diagnostic must never break a run
+            return None
+
+    @classmethod
+    async def _overlay_blocks_page(cls, page: Page) -> bool:
+        """True when the app behind is unclickable. False also covers 'unreadable'."""
+        state = await cls._probe_page_block(page)
+        return bool(state and state.get("pointerEvents") == "none")
+
+    @staticmethod
     async def _detect_overlay(page: Page) -> bool:
         """Return True if any changelog iframe, welcome screen, or top banner is visible."""
         for sel in CHANGELOG_IFRAME_SELECTORS + WELCOME_SCREEN_SELECTORS + TOP_BANNER_SELECTORS:
@@ -1151,6 +1187,71 @@ class UiAutomationTransport(VideoGenerationMixin):
                 continue
         return False
 
+    async def _require_unblocked(
+        self,
+        page: Page,
+        out_dir: Path | None,
+        *,
+        epoch: str,
+    ) -> None:
+        """Abort pre-submit, at $0, when an overlay still covers the app (#593).
+
+        The failure this replaces: every control reads visible and enabled, the click
+        is dispatched, and Playwright's actionability wait runs to timeout — a bare
+        ``TimeoutError`` naming nothing. A real ``gflow image t2i`` run died that way
+        three navigations deep before the modal was dismissed by hand.
+
+        Only a *persistent* block raises. Flow's own menus and dropdowns are Radix
+        surfaces that set the same property while open, so a single reading would
+        turn a transient into a hard failure; the re-probe after a settle is what
+        separates "a menu is open" from "the app is unreachable".
+        """
+        if not await self._overlay_blocks_page(page):
+            return
+        await page.wait_for_timeout(_jitter_ms(1000))
+        if not await self._overlay_blocks_page(page):
+            return
+        shot = await _capture_debug_screenshot(page, out_dir, "debug_overlay_still_blocking.png")
+        raise UiSelectorDriftError(
+            selector_drift_detail(
+                "overlay_close_button",
+                (
+                    f"A Flow overlay is still covering the app after dismissal ({epoch}). "
+                    "Controls below it read visible and enabled but cannot receive a "
+                    "click. Open the project once in Chrome, dismiss the announcement, "
+                    "then re-run — the dismissal persists on your account."
+                ),
+                shot,
+            )
+        )
+
+    @classmethod
+    async def _verify_overlay_cleared(cls, page: Page, *, method: str) -> bool:
+        """Confirm the dismissal actually unblocked the app; report honestly if not.
+
+        Before #593 this helper returned ``True`` the moment a click landed, so a
+        dismissal that changed nothing still logged ``overlay_dismissed`` and the run
+        then timed out somewhere unrelated — the success event lied, and two canary
+        REDs were read as the wrong failure because of it.
+
+        An unreadable probe counts as cleared: the pre-#593 optimism is the safer
+        default when we genuinely cannot tell, and the caller still has its own waits.
+        """
+        state = await cls._probe_page_block(page)
+        if state is None or state.get("pointerEvents") != "none":
+            return True
+        log.warning(
+            "ui_automation.overlay_postmortem",
+            method=method,
+            pointer_events=state.get("pointerEvents"),
+            dialogs=state.get("dialogs"),
+            note=(
+                "an overlay was dismissed but the app is still unclickable — the "
+                "control the next step wants is covered, not missing"
+            ),
+        )
+        return False
+
     async def _dismiss_blocking_overlays(
         self,
         page: Page,
@@ -1178,11 +1279,28 @@ class UiAutomationTransport(VideoGenerationMixin):
         if not await self._detect_overlay(page):
             return False
 
+        # #395 guard, structural rather than advisory. A bare `[role='dialog']`
+        # detector once matched Flow's OWN character composer, Escape closed it, and
+        # the generation went out without `entityContext` — billed, silently wrong.
+        # A page we can positively see is still clickable is not blocked by anything,
+        # so nothing here may touch it. Only a positive 'auto' reading disables the
+        # cascade: when the probe is unreadable we keep the pre-#593 behaviour rather
+        # than trading a known-good dismissal for a mystery timeout.
+        state = await self._probe_page_block(page)
+        if state is not None and state.get("pointerEvents") != "none":
+            log.info(
+                "ui_automation.overlay_skipped_page_clickable",
+                pointer_events=state.get("pointerEvents"),
+                dialogs=state.get("dialogs"),
+                note="detector matched but the app is reachable — not an overlay to clear",
+            )
+            return False
+
         if await self._try_page_close_button(page):
-            return True
+            return await self._verify_overlay_cleared(page, method="close_button_page")
 
         if await self._try_iframe_close_button(page):
-            return True
+            return await self._verify_overlay_cleared(page, method="close_button_frame")
 
         # Escape fallback (regression test case: iframe present, no close button).
         try:
@@ -1193,7 +1311,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 selector="<none>",
                 method="escape",
             )
-            return True
+            return await self._verify_overlay_cleared(page, method="escape")
         except Exception as exc:
             shot_path = await _capture_debug_screenshot(
                 page,
@@ -1276,6 +1394,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                     settle_skipped=self._account_locale is None,
                 )
             await self._dismiss_blocking_overlays(page, out_dir)
+            await self._require_unblocked(page, out_dir, epoch="project editor")
             return
 
         if _PROJECT_URL_FRAGMENT in page.url:
@@ -1298,13 +1417,25 @@ class UiAutomationTransport(VideoGenerationMixin):
             await self._bypass_onboarding(page)
 
         await page.wait_for_timeout(3000)
+        # #593: this branch reached the "+ New project" sweep with no overlay check at
+        # all — the one navigation epoch that had none. An announcement modal here
+        # costs 18 selectors x Playwright's 30 s default click timeout and then
+        # reports "Could not find 'New project' CTA", which is the wrong error about
+        # the wrong thing. Dismiss BEFORE `_bypass_onboarding`, which force-clicks and
+        # would otherwise dispatch straight into the overlay.
+        await self._dismiss_blocking_overlays(page, out_dir)
+        await self._require_unblocked(page, out_dir, epoch="gallery")
         await self._bypass_onboarding(page)
         for selector in NEW_PROJECT_SELECTORS:
             try:
                 loc = page.locator(selector).first
                 await loc.wait_for(state="visible", timeout=5000)
                 log.info("ui_automation.clicking_new_project", selector=selector)
-                await loc.click()
+                # Explicit timeout: a covered-but-visible CTA passes the wait above and
+                # then blocks on the default 30 s, inside `except: continue`. The
+                # element is already known visible, so 5 s is generous for a real click
+                # and bounds the sweep at seconds instead of minutes.
+                await loc.click(timeout=5000)
                 try:
                     await page.wait_for_url(
                         lambda url: _PROJECT_URL_FRAGMENT in url,

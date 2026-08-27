@@ -503,6 +503,14 @@ playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
 
 **Legacy workaround (no longer required):** open Flow in Chrome with the same profile once, click the `X` on the "What's new" popup, then close Chrome cleanly.
 
+**Update 2026-08-27 ([#593](https://github.com/ffroliva/gflow-cli/issues/593)) — the modal wedges more than the first run.** Captured live on two accounts (pt and en): the announcement sets `body { pointer-events: none }` while leaving the app neither `aria-hidden` nor `inert`, so controls read visible **and enabled** yet never receive a click. That is why the symptom is a bare `TimeoutError` naming nothing rather than the "intercepts pointer events" message above. Three gaps were closed:
+
+- The gallery "+ New project" sweep had no overlay check at all, so a modal there burned 18 selectors x Playwright's 30 s default click timeout before reporting the wrong error.
+- Dismissal reported success on click without verifying anything cleared — `overlay_dismissed` was logged on runs that then timed out elsewhere.
+- The Escape fallback is now gated on the page being provably blocked, which retires the [#395](https://github.com/ffroliva/gflow-cli/issues/395) hazard structurally.
+
+A block that survives dismissal now aborts pre-submit with exit 23 (probe `overlay_close_button`) and a screenshot, at zero credits, instead of hanging. Dismissal persists server-side — Flow records it as `videoFx.setLastAcknowledgedChangeLogId`, so one dismissal per announcement per account is the whole cost.
+
 ---
 
 ### No in-CLI quota visibility
