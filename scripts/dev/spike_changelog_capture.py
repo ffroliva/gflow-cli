@@ -1,9 +1,9 @@
 """Capture the changelog announcement modal as an offline-rehearsable fixture (#593).
 
-Companion to ``spike_changelog_modal.py``. That one *measures* and prints; this one
-*records* — full DOM, every frame, the dialog subtree, a screenshot, the actionability
-probe, and a HAR of the whole session — so the modal can be replayed offline after the
-one shot at dismissing it is spent.
+Measures *and* records: full DOM, every frame, the dialog subtree, a screenshot, the
+actionability probe, and a HAR of the whole session — so the modal can be replayed
+offline after the one shot at dismissing it is spent. (Supersedes the read-only
+``spike_changelog_modal.py``, which measured the same things without keeping them.)
 
 The dismissal persists server-side: once clicked, the announcement never comes back on
 that account. So the click is gated behind ``--dismiss`` and everything is captured on
@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from _spike_common import default_out_path, resolve_profile_dir  # noqa: E402, isort: skip
 
 # Probe: what is on the page, is the app behind it reachable, and does anything
-# text-independent already match it. Mirrors spike_changelog_modal.py's _PROBE.
+# text-independent already match it.
 _PROBE = """
 () => {
   const out = {dialogs: [], iframes: [], body: {}, blockers: []};
