@@ -215,6 +215,88 @@ class TestEscapeIsGated:
         page.keyboard.press.assert_called_once_with("Escape")
 
 
+def _probe_page(fail_first: int) -> MagicMock:
+    """Page whose selector wait_for fails *fail_first* times, then succeeds."""
+    page = MagicMock()
+    attempts = {"n": 0}
+
+    def _locator(_sel: str) -> MagicMock:
+        loc = MagicMock()
+
+        async def _wait_for(**_kwargs: object) -> None:
+            attempts["n"] += 1
+            if attempts["n"] <= fail_first:
+                raise RuntimeError("covered by an overlay")
+
+        loc.wait_for = AsyncMock(side_effect=_wait_for)
+        wrapper = MagicMock()
+        wrapper.first = loc
+        return wrapper
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page
+
+
+@pytest.mark.asyncio
+class TestProbeRecoversFromALateModal:
+    """A modal that mounts AFTER the navigation gate must not read as selector drift.
+
+    This is the live 2026-08-27 failure: `image_mode_tab` raised UiSelectorDriftError
+    with the 360p Omni announcement covering the app and no `overlay_detected` in the
+    log at all — the detector had run before React hydration mounted the dialog.
+    """
+
+    async def test_blocked_probe_dismisses_and_retries_once(self, monkeypatch) -> None:  # noqa: ANN001
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+
+        dismiss = AsyncMock(return_value=True)
+        monkeypatch.setattr(
+            UiAutomationTransport, "_overlay_blocks_page", AsyncMock(return_value=True)
+        )
+        monkeypatch.setattr(UiAutomationTransport, "_dismiss_blocking_overlays", dismiss)
+
+        found = await VideoGenerationMixin._probe_selector_cascade(  # type: ignore[attr-defined]
+            _probe_page(fail_first=1), "image_mode_tab", ("i.google-symbols",), timeout_ms=1
+        )
+
+        assert found is not None
+        dismiss.assert_awaited_once()
+
+    async def test_unblocked_miss_is_still_a_miss(self, monkeypatch) -> None:  # noqa: ANN001
+        """No overlay → a genuine miss stays a miss; the control really is gone."""
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+
+        dismiss = AsyncMock(return_value=True)
+        monkeypatch.setattr(
+            UiAutomationTransport, "_overlay_blocks_page", AsyncMock(return_value=False)
+        )
+        monkeypatch.setattr(UiAutomationTransport, "_dismiss_blocking_overlays", dismiss)
+
+        found = await VideoGenerationMixin._probe_selector_cascade(  # type: ignore[attr-defined]
+            _probe_page(fail_first=99), "image_mode_tab", ("i.google-symbols",), timeout_ms=1
+        )
+
+        assert found is None
+        dismiss.assert_not_awaited()
+
+    async def test_retry_does_not_recurse(self, monkeypatch) -> None:  # noqa: ANN001
+        """A still-covered control after dismissal returns None — one retry, not a loop."""
+        from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
+
+        dismiss = AsyncMock(return_value=True)
+        monkeypatch.setattr(
+            UiAutomationTransport, "_overlay_blocks_page", AsyncMock(return_value=True)
+        )
+        monkeypatch.setattr(UiAutomationTransport, "_dismiss_blocking_overlays", dismiss)
+
+        found = await VideoGenerationMixin._probe_selector_cascade(  # type: ignore[attr-defined]
+            _probe_page(fail_first=99), "image_mode_tab", ("i.google-symbols",), timeout_ms=1
+        )
+
+        assert found is None
+        dismiss.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 class TestPersistentBlockFailsLoudly:
     """A page that stays unclickable must abort pre-submit, not time out later."""

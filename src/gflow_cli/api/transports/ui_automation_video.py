@@ -888,8 +888,9 @@ class VideoGenerationMixin:
             prompt_text: str,
             out_dir: Path | None = None,
         ) -> None: ...
+        @classmethod
         async def _dismiss_blocking_overlays(
-            self,
+            cls,
             page: Page,
             out_dir: Path | None = None,
         ) -> bool: ...
@@ -1215,10 +1216,25 @@ class VideoGenerationMixin:
         candidates: tuple[str, ...],
         *,
         timeout_ms: int = 4000,
+        overlay_retry: bool = True,
     ) -> Locator | None:
         """Try each selector in order; return the first visible match or None.
         Logs every attempt so a failed probe is diagnosable from the structured
-        log alone."""
+        log alone.
+
+        A total miss is checked against the overlay state before it is believed
+        (#593). Flow mounts its announcement dialog on its own schedule — after
+        hydration, well past the ``domcontentloaded`` boundary where dismissal runs —
+        so a modal can appear *between* the navigation gate and this probe. It then
+        covers the control while leaving it visible and enabled, and this cascade
+        reports selector drift for an element that is present and perfectly fine.
+
+        Proven live 2026-08-27: ``image_mode_tab`` failed with the 360p Omni
+        announcement on screen and no ``overlay_detected`` anywhere in the log.
+
+        Every selector probe routes through here, so one recovery covers all ten call
+        sites instead of each caller re-deriving it.
+        """
         for selector in candidates:
             try:
                 loc = page.locator(selector).first
@@ -1228,7 +1244,30 @@ class VideoGenerationMixin:
             except Exception:
                 log.debug("ui_automation_video.selector_miss", probe=label, selector=selector)
         log.warning("ui_automation_video.selector_probe_failed", probe=label)
-        return None
+        if not overlay_retry:
+            return None
+        # Local import: ui_automation imports this module, so a top-level import would
+        # be circular. Only a failed probe pays for it.
+        from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415
+            UiAutomationTransport,
+        )
+
+        if not await UiAutomationTransport._overlay_blocks_page(page):  # type: ignore[reportPrivateUsage]
+            return None
+        log.warning(
+            "ui_automation_video.probe_blocked_by_overlay",
+            probe=label,
+            note="the control is covered, not missing — dismissing and re-probing once",
+        )
+        if not await UiAutomationTransport._dismiss_blocking_overlays(page):  # type: ignore[reportPrivateUsage]
+            return None
+        return await VideoGenerationMixin._probe_selector_cascade(
+            page,
+            label,
+            candidates,
+            timeout_ms=timeout_ms,
+            overlay_retry=False,
+        )
 
     @staticmethod
     async def _media_panel_present(page: Page) -> bool:

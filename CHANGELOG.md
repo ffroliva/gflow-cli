@@ -30,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (probe `overlay_close_button`) instead of hanging. A transient is not enough to
     trigger it: Flow's own menus set the same property while open, so the guard
     re-probes after a settle.
+  - **The modal can mount *after* the navigation gate**, which is how it kept winning.
+    Flow hydrates on its own schedule, well past `domcontentloaded`, so dismissal at
+    the navigation boundary can run before the dialog exists — then the dialog appears
+    and covers a control that is present and enabled, and the selector cascade reports
+    drift for an element that is perfectly fine. A failed probe now checks the overlay
+    state before believing itself, and dismisses and re-probes once. The guard lives in
+    the one cascade every probe routes through, so all ten call sites are covered.
+    Verified live on a third account (2026-08-27): before the fix, `image_mode_tab`
+    raised `UiSelectorDriftError` with the announcement on screen and **no
+    `overlay_detected` in the log at all**; after it, the same command on the same
+    account cleared the modal (`setLastAcknowledgedChangeLogId` → 200, 23 s in, i.e.
+    from the probe guard rather than the navigation gate) and left the editor
+    reachable.
   - The destructive Escape fallback is now **gated on the page actually being
     blocked**, which retires the [#395](https://github.com/ffroliva/gflow-cli/issues/395)
     hazard structurally rather than by comment. That regression pressed Escape on the

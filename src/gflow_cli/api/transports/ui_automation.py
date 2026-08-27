@@ -1252,8 +1252,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
         return False
 
+    @classmethod
     async def _dismiss_blocking_overlays(
-        self,
+        cls,
         page: Page,
         out_dir: Path | None = None,
     ) -> bool:
@@ -1276,7 +1277,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         Returns True if a dismissal action was taken, False if the page was
         clear (no overlay) or if dismissal could not be confirmed.
         """
-        if not await self._detect_overlay(page):
+        if not await cls._detect_overlay(page):
             return False
 
         # #395 guard, structural rather than advisory. A bare `[role='dialog']`
@@ -1286,7 +1287,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # so nothing here may touch it. Only a positive 'auto' reading disables the
         # cascade: when the probe is unreadable we keep the pre-#593 behaviour rather
         # than trading a known-good dismissal for a mystery timeout.
-        state = await self._probe_page_block(page)
+        state = await cls._probe_page_block(page)
         if state is not None and state.get("pointerEvents") != "none":
             log.info(
                 "ui_automation.overlay_skipped_page_clickable",
@@ -1296,11 +1297,11 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
             return False
 
-        if await self._try_page_close_button(page):
-            return await self._verify_overlay_cleared(page, method="close_button_page")
+        if await cls._try_page_close_button(page):
+            return await cls._verify_overlay_cleared(page, method="close_button_page")
 
-        if await self._try_iframe_close_button(page):
-            return await self._verify_overlay_cleared(page, method="close_button_frame")
+        if await cls._try_iframe_close_button(page):
+            return await cls._verify_overlay_cleared(page, method="close_button_frame")
 
         # Escape fallback (regression test case: iframe present, no close button).
         try:
@@ -1311,7 +1312,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 selector="<none>",
                 method="escape",
             )
-            return await self._verify_overlay_cleared(page, method="escape")
+            return await cls._verify_overlay_cleared(page, method="escape")
         except Exception as exc:
             shot_path = await _capture_debug_screenshot(
                 page,
