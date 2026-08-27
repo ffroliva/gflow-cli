@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A NULL `model` / `aspect` / `project_id` no longer reads back as the string
+  `"None"` in `gflow data list images|videos`.** All three columns are nullable in
+  the schema (`assets.model`, `assets.aspect_ratio`, `assets.flow_project_id`), but
+  both listing constructors wrapped them in a bare `str(...)`, so a NULL became the
+  four-character string `"None"` — emitted verbatim into `--json` and
+  indistinguishable from a real value. `_row_to_operation_error` in the same module
+  already guarded `model` correctly; the two listing paths never got the same
+  treatment. `ImageRow` / `VideoRow` now type these fields `str | None` and the JSON
+  output carries `null`.
+
 ## [0.61.0] — 2026-08-27
 
 ### Fixed
