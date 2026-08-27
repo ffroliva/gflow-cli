@@ -133,7 +133,10 @@ def show_subcommand(project_id: str, profile: str | None, as_json: bool) -> None
         if record.created_at:
             console.print(f"[bold]Created:[/bold] {record.created_at}")
         if url:
-            console.print(f"[bold]URL:[/bold] {url}")
+            # soft_wrap: without it Rich folds the URL at the terminal width,
+            # leaving a dangling "URL:" label and a link broken for copy-paste
+            # and for `| grep URL`.
+            console.print(f"[bold]URL:[/bold] {url}", soft_wrap=True)
 
 
 async def _run_create_project(

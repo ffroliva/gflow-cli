@@ -13,7 +13,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.profile_store import read_account_locale, write_account_locale
+from gflow_cli.profile_store import (
+    NOT_REDIRECTED,
+    PROVISIONAL,
+    read_account_locale,
+    write_account_locale,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -54,82 +59,68 @@ class _FakePage:
         self.url = self._redirects_to
 
 
-def _client(tmp_path: Path) -> FlowApiClient:
-    return FlowApiClient(tmp_path)
+async def _bootstrap(tmp_path: Path, page: _FakePage) -> FlowApiClient:
+    client = FlowApiClient(tmp_path)
+    client._page = page  # type: ignore[assignment]
+    await client._bootstrap_and_resolve_locale()
+    return client
+
+
+# --- the probe outcome is cached ---------------------------------------------
 
 
 async def test_first_run_probes_and_persists_the_segment(tmp_path: Path) -> None:
-    client = _client(tmp_path)
     page = _FakePage("https://labs.google/fx/pt/tools/flow")
-    client._page = page  # type: ignore[assignment]
 
-    await client._bootstrap_and_resolve_locale()
+    client = await _bootstrap(tmp_path, page)
 
     assert page.probed is True
     assert client._account_locale == "pt"
     assert read_account_locale(tmp_path) == "pt"
 
 
-async def test_first_run_persists_the_no_redirect_outcome(tmp_path: Path) -> None:
-    """The account that pays the 4 s must record *that* answer, not nothing."""
-    client = _client(tmp_path)
-    page = _FakePage(None)  # Flow never redirects this account
-    client._page = page  # type: ignore[assignment]
-
-    await client._bootstrap_and_resolve_locale()
-
-    assert client._account_locale is None
-    assert read_account_locale(tmp_path) == ""
-
-
 async def test_a_cached_segment_still_settles(tmp_path: Path) -> None:
     """A redirecting account keeps asking Flow — the redirect is fast AND true.
 
-    Skipping it here would buy ~3 s at the price of never being able to notice a
-    changed locale, because a bare navigation is the only thing that makes Flow
-    state the account's own answer.
+    Asserting the OUTCOME alone is vacuous: mutation testing showed it passed
+    against a build where every cache hit skipped the settle.
     """
     write_account_locale(tmp_path, "pt")
-    client = _client(tmp_path)
     page = _FakePage("https://labs.google/fx/pt/tools/flow")
-    client._page = page  # type: ignore[assignment]
 
-    await client._bootstrap_and_resolve_locale()
+    client = await _bootstrap(tmp_path, page)
 
-    # Asserting the OUTCOME alone is vacuous — mutation testing showed it passed
-    # against a build where every cache hit skipped the settle. That the settle
-    # RAN is the behaviour under test.
     assert page.probed is True
     assert client._account_locale == "pt"
 
 
 async def test_a_stale_segment_self_heals_on_the_next_run(tmp_path: Path) -> None:
-    """The poisoned-cache case, which the live run proved a localised bootstrap could not fix."""
+    """The poisoned-cache case, which a localised bootstrap could not fix."""
     write_account_locale(tmp_path, "de")
-    client = _client(tmp_path)
     page = _FakePage("https://labs.google/fx/pt/tools/flow")
-    client._page = page  # type: ignore[assignment]
 
-    await client._bootstrap_and_resolve_locale()
+    client = await _bootstrap(tmp_path, page)
 
     assert client._account_locale == "pt"
     assert read_account_locale(tmp_path) == "pt"
 
 
 async def test_cached_no_redirect_skips_the_probe_entirely(tmp_path: Path) -> None:
-    """This is the 4 s the issue is about. It must not be spent twice."""
-    write_account_locale(tmp_path, None)
-    client = _client(tmp_path)
+    """This is the timeout the issue is about. It must not be spent twice."""
+    write_account_locale(tmp_path, NOT_REDIRECTED)
     page = _FakePage()
-    client._page = page  # type: ignore[assignment]
 
-    await client._bootstrap_and_resolve_locale()
+    client = await _bootstrap(tmp_path, page)
 
-    assert client._account_locale is None
     assert page.probed is False
+    assert client._account_locale is None
 
 
-@pytest.mark.parametrize("cached", ["pt", "", None], ids=["segment", "no-redirect", "unprobed"])
+@pytest.mark.parametrize(
+    "cached",
+    ["pt", NOT_REDIRECTED, PROVISIONAL, None],
+    ids=["segment", "no-redirect", "provisional", "unprobed"],
+)
 async def test_the_bootstrap_navigation_is_always_bare(tmp_path: Path, cached: str | None) -> None:
     """Never send the browser to a locale we chose. Flow would simply obey.
 
@@ -137,128 +128,77 @@ async def test_the_bootstrap_navigation_is_always_bare(tmp_path: Path, cached: s
     redirected — the cached value becomes both unverifiable and actively wrong.
     """
     if cached is not None:
-        write_account_locale(tmp_path, cached or None)
-    client = _client(tmp_path)
+        write_account_locale(tmp_path, cached)
     page = _FakePage("https://labs.google/fx/pt/tools/flow")
-    client._page = page  # type: ignore[assignment]
 
-    await client._bootstrap_and_resolve_locale()
+    await _bootstrap(tmp_path, page)
 
     (url,), _ = page.goto.call_args
     assert url == "https://labs.google/fx/tools/flow?hl=en"
 
 
-# --- staleness: correct only on positive evidence ---------------------------
+# --- one transient timeout must not disable the settle forever ---------------
 
 
-async def test_a_cached_segment_is_left_to_the_bootstrap_settle(tmp_path: Path) -> None:
-    """With a segment cached, the correction must stand down.
+async def test_a_first_no_redirect_is_only_provisional(tmp_path: Path) -> None:
+    """``await_url_settled`` returns None for BOTH "no redirect" and "timed out".
 
-    That run probes anyway and rewrites the account locale unconditionally, so the
-    correction adds nothing — and reading a URL that gflow itself may have chosen
-    adds risk. The committed poison spike caught exactly that: a direct `page.goto`
-    to `/fx/de/` made teardown log `account_locale_changed now=de was=pt`.
+    Committing to NOT_REDIRECTED on the first observation is what let one slow
+    network permanently restore #580's race. Every guard the old teardown
+    self-heal carried existed to repair that after the fact; two agreeing
+    observations make the bad state unreachable instead.
     """
-    write_account_locale(tmp_path, "pt")
-    client = _client(tmp_path)
-    client._account_locale = "pt"
-    client._bootstrap_landed = True
-    client._page = _FakePage(url="https://labs.google/fx/de/tools/flow/project/x")  # type: ignore[assignment]
+    page = _FakePage(None)  # the settle finds nothing
 
-    client._persist_locale_correction()
+    client = await _bootstrap(tmp_path, page)
 
-    assert read_account_locale(tmp_path) == "pt"
+    assert client._account_locale is None
+    assert read_account_locale(tmp_path) == PROVISIONAL
 
 
-async def test_a_bare_url_is_not_read_as_stopped_redirecting(tmp_path: Path) -> None:
-    """Absence of evidence is not evidence of absence.
+async def test_a_provisional_cache_still_probes(tmp_path: Path) -> None:
+    write_account_locale(tmp_path, PROVISIONAL)
+    page = _FakePage(None)
 
-    A segment-less last URL can be an auth page, an error page, or a route Flow
-    does not localise.
-    """
-    write_account_locale(tmp_path, None)
-    client = _client(tmp_path)
-    client._account_locale = None
-    client._bootstrap_landed = True
-    client._page = _FakePage(url="https://labs.google/fx/tools/flow")  # type: ignore[assignment]
+    await _bootstrap(tmp_path, page)
 
-    client._persist_locale_correction()
-
-    assert read_account_locale(tmp_path) == ""
+    assert page.probed is True
 
 
-async def test_correction_never_raises_on_a_dead_page(tmp_path: Path) -> None:
-    """Teardown runs while the browser is closing; `.url` can throw."""
+async def test_two_agreeing_no_redirects_commit(tmp_path: Path) -> None:
+    """Only the SECOND agreeing observation earns the skip."""
+    write_account_locale(tmp_path, PROVISIONAL)
+    page = _FakePage(None)
 
-    class _Dead:
-        @property
-        def url(self) -> str:
-            raise RuntimeError("target closed")
+    client = await _bootstrap(tmp_path, page)
 
-    client = _client(tmp_path)
-    # MUST be None with the bootstrap landed, or the guards return before `.url`
-    # is ever read and the try/except under test is unreachable — mutation showed
-    # deleting it left the suite green.
-    client._account_locale = None
-    client._bootstrap_landed = True
-    client._page = _Dead()  # type: ignore[assignment]
-
-    client._persist_locale_correction()  # must not raise
+    assert client._account_locale is None
+    assert read_account_locale(tmp_path) == NOT_REDIRECTED
 
 
-# --- regressions the council reproduced ------------------------------------
-
-
-async def test_a_caller_supplied_locale_never_becomes_the_account_locale(
+async def test_a_transient_timeout_on_a_redirecting_account_does_not_commit(
     tmp_path: Path,
 ) -> None:
-    """`gflow character create --locale de` must not cache `de` as the account locale.
+    """THE regression this design exists for.
 
-    Reproduced by the council against real code: the character editor navigates
-    the SHARED client page to a caller-chosen `/fx/de/...`, and teardown then read
-    that URL as if Flow had chosen it. `project list` afterwards emitted
-    `/fx/de/...` — exactly the guessed segment this PR exists to remove.
+    A cached segment plus one failed settle must not become "not redirected":
+    that state skips the settle forever, and nothing downstream can tell it from
+    a genuine answer. It falls back to PROVISIONAL, so the next run re-probes.
     """
-    write_account_locale(tmp_path, None)  # account is NOT redirected
-    client = _client(tmp_path)
-    client._account_locale = None
+    write_account_locale(tmp_path, "pt")
+    page = _FakePage(None)  # slow network, Flow hiccup — the settle times out
 
-    # what `generate_character_image` does when the caller passes --locale
-    client._caller_locale_navigated = True
-    client._bootstrap_landed = True
-    client._page = _FakePage(url="https://labs.google/fx/de/tools/flow/project/x")  # type: ignore[assignment]
-    client._persist_locale_correction()
+    await _bootstrap(tmp_path, page)
 
-    assert read_account_locale(tmp_path) == "", "a caller's locale was cached as the account's"
+    assert read_account_locale(tmp_path) == PROVISIONAL
+    assert read_account_locale(tmp_path) != NOT_REDIRECTED
 
 
-async def test_correction_is_wired_into_teardown(tmp_path: Path) -> None:
-    """Cover the CALL, not just the method — deleting the call site broke no test."""
-    client = _client(tmp_path)
-    client._account_locale = None
-    client._bootstrap_landed = True
-    client._page = _FakePage(url="https://labs.google/fx/pt/tools/flow/project/x")  # type: ignore[assignment]
+async def test_a_segment_after_a_provisional_is_taken_at_face_value(tmp_path: Path) -> None:
+    """Flow stating a locale is not ambiguous the way silence is."""
+    write_account_locale(tmp_path, PROVISIONAL)
+    page = _FakePage("https://labs.google/fx/pt/tools/flow")
 
-    await client._close_browser_resources()
+    await _bootstrap(tmp_path, page)
 
     assert read_account_locale(tmp_path) == "pt"
-
-
-async def test_a_pwa_restored_url_is_not_read_as_the_account_locale(tmp_path: Path) -> None:
-    """A failed bootstrap leaves Chrome's RESTORED url on the page — not evidence.
-
-    `_page` is assigned before `_bootstrap_and_resolve_locale` runs, and
-    `__aenter__`'s failure guard tears down through `_close_browser_resources`.
-    Chrome's PWA restores the last-visited project URL, so a PREVIOUS
-    `gflow character create --locale de` run leaves `/fx/de/...` sitting there for
-    a fresh process to mistake for Flow's answer.
-    """
-    write_account_locale(tmp_path, None)
-    client = _client(tmp_path)
-    client._account_locale = None
-    client._bootstrap_landed = False  # the goto never completed
-    client._page = _FakePage(url="https://labs.google/fx/de/tools/flow/project/x")  # type: ignore[assignment]
-
-    client._persist_locale_correction()
-
-    assert read_account_locale(tmp_path) == "", "a restored URL was cached as the account locale"

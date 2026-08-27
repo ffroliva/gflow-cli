@@ -1,13 +1,14 @@
-"""The account locale is cached per profile — with THREE states, not two (#587).
+"""The account locale is cached per profile — FOUR states, not two (#587).
 
-    None                 -> never probed; the caller must run the live probe
-    NOT_REDIRECTED ("")  -> probed; Flow does not redirect this account
-    "pt"                 -> probed; this is the account's locale segment
+    None                 -> never probed
+    PROVISIONAL ("?")    -> ONE no-redirect observation; probe again
+    NOT_REDIRECTED ("")  -> two agreed; skip the settle
+    "pt"                 -> the account's locale segment
 
-The empty state is the point, not an edge case: an account Flow does not redirect
-resolves to "no locale", and that is exactly the account burning the settle
-timeout on every command. Storing it as "nothing written" is indistinguishable
-from "never asked". Storage mirrors the existing `.gflow_account` dotfile.
+`await_url_settled` returns None for both "Flow does not redirect this account"
+and "the settle timed out this once", so a single observation cannot be trusted
+to disable the settle permanently. Storage mirrors the existing `.gflow_account`
+dotfile.
 """
 
 from __future__ import annotations
@@ -16,7 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from gflow_cli.profile_store import LOCALE_FILE, read_account_locale, write_account_locale
+from gflow_cli.profile_store import (
+    LOCALE_FILE,
+    NOT_REDIRECTED,
+    PROVISIONAL,
+    next_locale_state,
+    read_account_locale,
+    write_account_locale,
+)
 
 
 def test_never_probed_reads_as_none(tmp_path: Path) -> None:
@@ -91,3 +99,54 @@ def test_undecodable_bytes_read_as_never_probed(tmp_path: Path) -> None:
     (tmp_path / LOCALE_FILE).write_bytes(b"\xff\xfe\x00pt")
 
     assert read_account_locale(tmp_path) is None
+
+
+# --- the state machine that makes the poisoned state unreachable ------------
+
+
+@pytest.mark.parametrize(
+    ("cached", "observed", "expected"),
+    [
+        (None, None, PROVISIONAL),
+        (PROVISIONAL, None, NOT_REDIRECTED),
+        (NOT_REDIRECTED, None, NOT_REDIRECTED),
+        ("pt", None, PROVISIONAL),
+        (None, "pt", "pt"),
+        (PROVISIONAL, "pt", "pt"),
+        (NOT_REDIRECTED, "pt", "pt"),
+        ("de", "pt", "pt"),
+    ],
+    ids=[
+        "first-silence-is-provisional",
+        "second-silence-commits",
+        "committed-stays",
+        "segment-then-silence-falls-back",
+        "first-segment",
+        "segment-clears-provisional",
+        "segment-overrides-committed",
+        "segment-replaces-segment",
+    ],
+)
+def test_next_locale_state(cached: str | None, observed: str | None, expected: str) -> None:
+    """Silence needs corroboration; a stated segment never does.
+
+    The `("pt", None) -> PROVISIONAL` row is the whole point: one transient
+    timeout on a redirecting account must not reach NOT_REDIRECTED, because that
+    state skips the settle forever and looks identical to a real answer.
+    """
+    assert next_locale_state(cached, observed) == expected
+
+
+def test_provisional_round_trips(tmp_path: Path) -> None:
+    write_account_locale(tmp_path, PROVISIONAL)
+    assert read_account_locale(tmp_path) == PROVISIONAL
+
+
+def test_provisional_is_never_offered_as_a_locale(tmp_path: Path, monkeypatch) -> None:
+    """PROVISIONAL is truthy — a `or None` collapse would leak "?" into a URL."""
+    import gflow_cli.profile_store as ps
+
+    monkeypatch.setattr(ps, "profile_dir", lambda _name: tmp_path)
+    write_account_locale(tmp_path, PROVISIONAL)
+
+    assert ps.account_locale_for("whoever") is None

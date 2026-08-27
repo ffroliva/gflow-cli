@@ -106,8 +106,9 @@ established, not merely plausible.**
 > `project_editor_url()` still served `/fx/pt/` in Portuguese"* — is the **inverse** of
 > what `scripts/dev/spike_locale_poison.py` measures: Flow serves whatever segment it
 > is asked for and never corrects a wrong-but-valid one. The original observation was
-> almost certainly the ineffective `locale="en-US"` noted in the corollary below never
-> reaching the URL at all. §2.4's *conclusion* (account-driven) stands on the
+> almost certainly the ineffective launch-context `locale="en-US"` noted in the
+> corollary below — a Chrome kwarg, never a URL segment — rather than the URL
+> builder, which does reduce `en-US` to `/fx/en/`. §2.4's *conclusion* (account-driven) stands on the
 > authed/unauthed contrast; the mechanism sentence does not. Do not use it to argue
 > that navigating to a cached segment is safe — that design was built and rejected.
 

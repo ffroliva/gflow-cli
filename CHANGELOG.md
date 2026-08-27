@@ -26,16 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v0.61.0 settles the bootstrap navigation to learn where Flow lands. On an account
   Flow does *not* redirect there is nothing to settle, so `wait_for_url` ran to the
   full `URL_SETTLE_TIMEOUT_MS` every single invocation. Measured live 2026-08-27,
-  best of 3 rounds per arm: **5.94 s -> 2.00 s** setup on the non-redirecting
-  account, against an unchanged 2.82 s -> 2.90 s on a redirecting one (the control).
+  best-of-N per arm: **~6.2 s -> ~2.0 s** setup on the non-redirecting account,
+  against an unchanged ~2.8 s -> ~2.9 s on a redirecting one (the control, which
+  shows the cold-then-warm ordering is worth nothing on its own). Run-to-run
+  variance is over a second, so read the delta as "the 4 s settle timeout", not to
+  two decimals.
   The outcome is cached in the profile dir (`.gflow_locale`, a sibling of the
-  existing `.gflow_account`) in three states, not two: never probed,
-  redirected-to-`X`, and **not redirected** — that last one is the account paying
-  the cost, and recording it as "nothing" would re-probe forever. The same guard
-  now covers all four `await_url_settled` call sites **in the UI transport**;
-  guarding only the editor entry left three navigations still paying the timeout.
-  (The three sites in the experimental REST transports have no resolved locale to
-  gate on and are unchanged.)
+  existing `.gflow_account`). The same guard covers all four `await_url_settled`
+  call sites **in the UI transport**; guarding only the editor entry left three
+  navigations still paying the timeout. (The three sites in the experimental REST
+  transports have no resolved locale to gate on and are unchanged.)
 
   The cache decides only *whether to wait*, never *where to navigate*. Sending the
   browser to a cached `/fx/{seg}/...` was built, measured, and rejected: Flow
@@ -43,11 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stayed there and rendered `html lang=de` with no redirect — no correction signal,
   and a wrong-language UI for as long as the stale value lived. That is #580's
   defect in a new hat. The navigation therefore stays bare, which is what lets Flow
-  state the account's own answer: a redirecting account still settles (and rewrites
-  the locale every run, so a changed locale needs no special handling), while a
-  cache that wrongly says "not redirected" — reachable by one transient probe
-  timeout — is healed from the landing URL at teardown. Reproducer:
-  `scripts/dev/spike_locale_poison.py`.
+  state the account's own answer. Reproducer: `scripts/dev/spike_locale_poison.py`.
+
+  The cache holds **four** states, and the fourth is what keeps it honest.
+  `await_url_settled` returns `None` for both "Flow does not redirect this account"
+  and "the settle timed out this once", so one slow network could otherwise commit
+  to "not redirected" permanently and silently restore #580's post-`goto` race. A
+  no-redirect observation is therefore **provisional** until a second run agrees;
+  a transient timeout costs one extra probe instead of a lasting defect.
 
 ### Fixed
 

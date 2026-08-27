@@ -11,6 +11,10 @@ arm differs from the cold one in exactly one way: when the cached answer is
 profile) warm and cold are expected to be identical, and that row is the control:
 it shows what the cold-then-warm ordering is worth on its own.
 
+**Why the warm arm primes first.** A no-redirect observation is PROVISIONAL until
+a second run agrees, so the run right after a cold one still probes. The warm arm
+therefore primes to a terminal cache state before timing anything.
+
 **Why it repeats.** A single cold/warm pair measures the fix plus whatever
 browser/OS warm-up the first run paid. The first version of this script reported
 a 4.42 s delta against a 4.0 s mechanism ceiling — an excess that can only be
@@ -36,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from gflow_cli.api.client import FlowApiClient  # noqa: E402
 from gflow_cli.profile_store import (  # noqa: E402
     LOCALE_FILE,
+    PROVISIONAL,
     read_account_locale,
 )
 
@@ -51,6 +56,19 @@ async def _setup_once(profile_dir: Path, *, cold: bool) -> tuple[float, str | No
         return elapsed, client._account_locale  # noqa: SLF001 — dev instrument
 
 
+async def _prime(profile_dir: Path) -> None:
+    """Run until the cache reaches a terminal state, so "warm" really is warm.
+
+    A no-redirect observation is only PROVISIONAL until a second run agrees
+    (#587), so on such an account the second run still probes. Measuring it as
+    the warm arm would report no improvement at all — the instrument, not the fix.
+    """
+    for _ in range(3):
+        if read_account_locale(profile_dir) not in (None, PROVISIONAL):
+            return
+        await _setup_once(profile_dir, cold=False)
+
+
 async def _main(profiles: list[str], rounds: int) -> int:
     # Resolve every profile BEFORE launching anything: a typo must not create and
     # ACL-harden a junk profile dir halfway through a run.
@@ -63,6 +81,8 @@ async def _main(profiles: list[str], rounds: int) -> int:
         best: dict[str, float] = {}
         locales: dict[str, str | None] = {}
         for arm, cold in (("cold", True), ("warm", False)):
+            if arm == "warm":
+                await _prime(pdir)
             samples: list[float] = []
             for _ in range(rounds):
                 elapsed, locale = await _setup_once(pdir, cold=cold)

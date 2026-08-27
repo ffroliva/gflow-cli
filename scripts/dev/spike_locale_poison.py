@@ -27,11 +27,9 @@ signal ever arrives, and the UI renders in a language the account never chose â€
 for as long as the stale value lives. Hence the shipped design: the cache decides
 whether to WAIT, never where to GO, and only a bare navigation is evidence.
 
-The second half asserts the two shipped recoveries: a cache poisoned with a
-SEGMENT heals via the bootstrap settle, and one wrongly reading NOT_REDIRECTED --
-the state a single transient timeout produces -- heals from the landing URL at
-teardown. The latter is best-effort: it needs the session to outlive Flow's
-redirect, which any real command does.
+The second half asserts the shipped recovery: a cache poisoned with a SEGMENT
+heals on the very next ordinary run, because that run navigates bare and rewrites
+the locale from what Flow answers.
 
 Restores the profile's original cache value on the way out.
 """
@@ -49,7 +47,6 @@ from gflow_cli.api import routes  # noqa: E402
 from gflow_cli.api.client import FlowApiClient  # noqa: E402
 from gflow_cli.profile_store import (  # noqa: E402
     LOCALE_FILE,
-    NOT_REDIRECTED,
     read_account_locale,
     write_account_locale,
 )
@@ -85,6 +82,13 @@ async def _run(profile: str, segment: str, settle_ms: int) -> bool:
         landed_bad, lang_bad = await _land_on(pdir, poisoned, settle_ms)
         print(_ROW.format("poison", poisoned, landed_bad, lang_bad))
 
+        if routes.locale_segment_from_url(landed_bare) == segment:
+            print(
+                f"\n!! --segment {segment!r} IS this account's real locale; the poison"
+                " arm would prove nothing. Re-run with a different --segment."
+            )
+            return False
+
         corrected = routes.locale_segment_from_url(landed_bad) != segment
         print(
             f"\nFlow corrected the wrong segment: {corrected}"
@@ -99,27 +103,7 @@ async def _run(profile: str, segment: str, settle_ms: int) -> bool:
         healed_a = read_account_locale(pdir)
         print(f"cache={segment!r} (segment) -> run used {used!r} -> cache now {healed_a!r}")
 
-        # Recovery B -- a cache wrongly reading NOT_REDIRECTED, the state ONE
-        # transient settle timeout produces. Nothing upstream repairs it: the
-        # settle is skipped, so only `_persist_locale_correction` can, and this is
-        # the only arm that reaches its write branch. Recovery A does NOT exercise
-        # it (a cached segment makes the correction stand down by design).
-        write_account_locale(pdir, None)
-        async with FlowApiClient(profile_dir=pdir) as client:
-            used_b = client._account_locale  # noqa: SLF001
-            # The bare bootstrap redirect lands AFTER goto returns, and this arm
-            # skips the settle by design (that is the 4 s it saves). A real command
-            # then does seconds of work, so the redirect has long landed by the
-            # time teardown reads page.url. An open-and-close has not -- without
-            # this wait the arm measures the harness, not the fix.
-            await client._page.wait_for_timeout(settle_ms)  # noqa: SLF001
-        healed_b = read_account_locale(pdir)
-        print(
-            f"cache={NOT_REDIRECTED!r} (transient-timeout state) -> run used {used_b!r} "
-            f"-> cache now {healed_b!r}"
-        )
-
-        return not corrected and healed_a != segment and healed_b != NOT_REDIRECTED
+        return not corrected and healed_a != segment
     finally:
         # `write_account_locale(pdir, original or None)` would turn a NEVER-PROBED
         # cache (None) into NOT_REDIRECTED (""), leaving a real profile marked
@@ -132,6 +116,10 @@ async def _run(profile: str, segment: str, settle_ms: int) -> bool:
 
 
 async def _main(profiles: list[str], segment: str, settle_ms: int) -> int:
+    # Resolve every profile up front: `resolve_profile_dir` exits(2) on a typo, and
+    # resolving inside the loop would run profile 1 and then die with no RESULT.
+    for name in profiles:
+        resolve_profile_dir(name)
     results = [await _run(p, segment, settle_ms) for p in profiles]
     ok = all(results)
     print("\nRESULT:", "as expected" if ok else "UNEXPECTED â€” re-read the rows above")

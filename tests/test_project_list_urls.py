@@ -20,7 +20,6 @@ from gflow_cli.data.models import ProjectRecord
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 
-TAB, LF, ESC, BEL = chr(9), chr(10), chr(27), chr(7)
 PID = "2ddc3a33-97db-41a0-a0d3-7f9488b0d5a9"
 
 
@@ -138,24 +137,19 @@ def test_mcp_list_projects_emits_the_url(
 
 @pytest.mark.parametrize(
     "pid",
-    [
-        "550e8400-e29b-41d4-a716-446655440000",
-        "ab]cd",
-        "ab[bold red]cd",
-        "ab[/link]XX",
-        "ab link https://evil.example",
-        "ab conceal",
-        "",
-    ],
-    ids=["uuid", "bracket", "markup", "close-tag", "link-hijack", "style-token", "empty"],
+    ["550e8400-e29b-41d4-a716-446655440000", "ab link https://evil.example"],
+    ids=["links", "rejected"],
 )
-def test_projects_table_survives_a_hostile_id(pid: str) -> None:
-    """Rendering must never raise, and never link somewhere we did not choose.
+def test_projects_table_survives_a_hostile_id(home: Path, pid: str) -> None:
+    """Rendering must never raise, and any link emitted must be a Flow URL.
 
     Two parsers were tried and both were wrong: `[link=...]` markup ends at the
-    first `]` in the URL (MarkupError), and a `f"link {url}"` style STRING ends at
-    the first space, letting the rest of an id become style tokens -- an id like
-    `x https://evil` rendered this project's name pointing elsewhere.
+    first `]` in the URL (MarkupError), and a `f"link {url}"` style STRING ends
+    at the first space, letting the rest of an id become style tokens.
+
+    The "rejected" case pins the choice: with the allowlist refusing that id the
+    URL is None, and a style STRING renders `link None` as a literal link target
+    "None" — mutation-verified. The allowlist itself is pinned separately below.
     """
     import io
     import re
@@ -186,7 +180,7 @@ def test_projects_table_survives_a_hostile_id(pid: str) -> None:
     finally:
         cli_data.Console = original  # type: ignore[assignment]
 
-    osc8 = re.compile(ESC + r"\]8;[^;]*;([^" + ESC + r"\x07]*)")
+    osc8 = re.compile(r"\x1b\]8;[^;]*;([^\x1b\a]*)")
     for target in osc8.findall(buf.getvalue()):
         assert target == "" or target.startswith("https://labs.google/fx/"), target
 
@@ -200,9 +194,9 @@ def test_projects_table_survives_a_hostile_id(pid: str) -> None:
         "ab link https://evil.example",
         "../../etc/passwd",
         "a b",
-        "x" + TAB + "y",
-        "x" + LF + "y",
-        ESC + "]0;pwned" + BEL,
+        "x\ty",
+        "x\ny",
+        "\x1b]0;pwned\a",
         "",
         "a" * 200,
     ],
