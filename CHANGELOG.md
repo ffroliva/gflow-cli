@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.61.0] — 2026-08-27
+
 ### Fixed
 
 - **A requested image model that cannot be selected no longer generates silently
@@ -20,18 +22,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DOM order. A missing or ambiguous selector now raises `UiSelectorDriftError`
   (exit 23) naming what Flow actually offered, before anything is submitted.
 
-### Added
-
-- **Server-side model attribution
-  ([#586](https://github.com/ffroliva/gflow-cli/issues/586)).**
-  `parse_media_attribution` reads `modelNameType` / `seed` / `aspectRatio` from
-  the `flow.projectInitialData` listing gflow already fetches — the same payload
-  the sync path walks for `name` and discards the rest of. This matters most on
-  the **agentic** arm, where those fields were previously synthesised from our
-  own request because they live in a Web-Worker SSE stream Playwright cannot
-  observe; "not visible to the page" was never the same as "unknowable". Verified
-  live: an agentic run that requested `GEM_PIX_2` was attributed `NARWHAL` by the
-  server, with a real seed where the catalog held `0`.
+- **A requested video model that cannot be selected no longer generates on a
+  different one — and charges for it
+  ([#539](https://github.com/ffroliva/gflow-cli/issues/539)).** `_select_video_model`
+  refused only on i2v-with-frames; a plain `t2v`/`r2v` miss logged "Flow default
+  model applies" and returned, so the run generated on whatever the picker already
+  held and spent that tier's credits — veo-quality costs 100 against veo-lite's 10.
+  Read live, Flow's picker offers exactly `Omni Flash` / `Veo 3.1 - Lite` / `Fast` /
+  `Quality`, so `--model veo-lite-lp` matched nothing and was a reachable,
+  credit-spending wrong-model path. Every miss is now fatal (exit 18) naming what
+  Flow offered, and an **ambiguous** selector is refused rather than resolved with
+  `.first`, which picks by DOM order across tiers that differ 10x in cost. Unlike
+  the image arm, refusing is unambiguous here: `--model` defaults to `None` on
+  every video command, so reaching the picker means a model was explicitly asked
+  for. Verified with a zero-credit A/B against live Flow — the pre-fix code
+  returned success for a model Flow does not offer; the new code refuses.
 
 - **Four more navigations settle before acting on the page
   ([#584](https://github.com/ffroliva/gflow-cli/issues/584)).** #580 settled the
@@ -80,6 +85,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   race-free while the pre-fix path still redirects. Accounts Flow does not
   redirect (e.g. `en`) skip the wait entirely after a single bounded probe, so
   they pay no per-navigation cost.
+
+### Added
+
+- **Server-side model attribution
+  ([#586](https://github.com/ffroliva/gflow-cli/issues/586)).**
+  `parse_media_attribution` reads `modelNameType` / `seed` / `aspectRatio` from
+  the `flow.projectInitialData` listing gflow already fetches — the same payload
+  the sync path walks for `name` and discards the rest of. This matters most on
+  the **agentic** arm, where those fields were previously synthesised from our
+  own request because they live in a Web-Worker SSE stream Playwright cannot
+  observe; "not visible to the page" was never the same as "unknowable". Verified
+  live: an agentic run that requested `GEM_PIX_2` was attributed `NARWHAL` by the
+  server, with a real seed where the catalog held `0`.
 
 ## [0.60.0] — 2026-08-25
 
@@ -3229,7 +3247,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.60.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.61.0...HEAD
+[0.61.0]: https://github.com/ffroliva/gflow-cli/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/ffroliva/gflow-cli/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/ffroliva/gflow-cli/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/ffroliva/gflow-cli/compare/v0.57.1...v0.58.0
