@@ -1,0 +1,118 @@
+"""Offline listings render account-correct editor URLs (#587).
+
+`gflow project list` emitted no URLs at all. It is a local, network-free catalog
+read by contract, so it cannot resolve a locale itself — which is why it emitted
+nothing rather than something wrong.
+
+Once the locale is persisted per profile (the cache #587 adds for the probe),
+the value is readable offline and the listing can render the real link. The gap
+that started this thread was an `/fx/en/...` link handed to a pt-BR account
+owner: Flow redirects it, so it resolves, but it is the wrong shape and reads
+as broken.
+
+Unknown locale still yields the BARE url, never a guessed `en` — the same rule
+`project_editor_url` already enforces for navigation.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from gflow_cli import profile_store
+from gflow_cli.cli import main
+from gflow_cli.data.models import ProjectRecord
+from gflow_cli.data.repository import DataRepository
+from gflow_cli.data.store import DataStore
+
+PID = "2ddc3a33-97db-41a0-a0d3-7f9488b0d5a9"
+
+
+@pytest.fixture
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    monkeypatch.delenv("GFLOW_CLI_PROFILE", raising=False)
+    reset_settings()
+    db = tmp_path / "gflow.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    reset_settings()
+    with DataStore.open(db) as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("denon82", tmp_path / "profile_denon82")
+        repo.upsert_project(
+            ProjectRecord(
+                id="rec-1",
+                profile_name="denon82",
+                flow_project_id=PID,
+                title="A project",
+                source="gflow-cli",
+            )
+        )
+    yield tmp_path
+    reset_settings()
+
+
+def _pdir(home: Path) -> Path:
+    d = home / "profile_denon82"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _list_json(runner: CliRunner) -> dict:
+    res = runner.invoke(main, ["project", "list", "--json"])
+    assert res.exit_code == 0, res.output
+    return json.loads(res.output)
+
+
+def test_cached_locale_produces_an_account_correct_url(home: Path) -> None:
+    profile_store.write_account_locale(_pdir(home), "pt")
+
+    payload = _list_json(CliRunner())
+
+    assert payload["projects"][0]["url"] == (f"https://labs.google/fx/pt/tools/flow/project/{PID}")
+
+
+def test_unknown_locale_yields_a_bare_url_not_a_guessed_en(home: Path) -> None:
+    """No cache entry => no segment. A guessed `en` is the original defect."""
+    _pdir(home)
+
+    payload = _list_json(CliRunner())
+
+    url = payload["projects"][0]["url"]
+    assert url == f"https://labs.google/fx/tools/flow/project/{PID}"
+    assert "/fx/en/" not in url
+
+
+def test_no_redirect_account_also_yields_a_bare_url(home: Path) -> None:
+    """`""` means "probed, Flow does not redirect" — still no segment to add."""
+    profile_store.write_account_locale(_pdir(home), None)
+
+    payload = _list_json(CliRunner())
+
+    assert payload["projects"][0]["url"] == (f"https://labs.google/fx/tools/flow/project/{PID}")
+
+
+def test_project_show_reports_the_same_url(home: Path) -> None:
+    profile_store.write_account_locale(_pdir(home), "pt")
+
+    res = CliRunner().invoke(main, ["project", "show", PID, "--json"])
+
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.output)["project"]["url"] == (
+        f"https://labs.google/fx/pt/tools/flow/project/{PID}"
+    )
+
+
+def test_account_locale_for_reads_the_named_profile(home: Path) -> None:
+    profile_store.write_account_locale(_pdir(home), "de")
+    assert profile_store.account_locale_for("denon82") == "de"
+
+
+def test_account_locale_for_is_none_when_the_profile_dir_is_absent(home: Path) -> None:
+    """A catalog row can outlive its profile dir; that must not raise."""
+    assert profile_store.account_locale_for("deleted-profile") is None

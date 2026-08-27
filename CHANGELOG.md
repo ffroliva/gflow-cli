@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow project list` / `project show` and the MCP `gflow_list_projects` tool now
+  emit an account-correct editor URL
+  ([#587](https://github.com/ffroliva/gflow-cli/issues/587)).** They previously
+  emitted no URL at all: they are network-free catalog reads, so they had no way to
+  resolve a locale and correctly declined to guess one. With the locale now cached
+  per profile the link is readable offline. An unknown locale still yields the bare
+  URL — never a guessed `/fx/en/...`, which is the shape that started this thread by
+  being handed to a pt-BR account owner. In the terminal the project id renders as a
+  hyperlink, costing no column width.
+
+### Changed
+
+- **The account-locale probe no longer costs 4 s on every command
+  ([#587](https://github.com/ffroliva/gflow-cli/issues/587)).** The probe added in
+  v0.61.0 settles the bootstrap navigation to learn where Flow lands. On an account
+  Flow does *not* redirect there is nothing to settle, so `wait_for_url` ran to the
+  full timeout every single invocation. Measured live on 2026-08-27: **7.22 s ->
+  2.80 s** setup on the non-redirecting account. The outcome is now cached in the
+  profile dir (`.gflow_locale`, a sibling of the existing `.gflow_account`) in three
+  states, not two: never probed, redirected-to-`X`, and **not redirected** — that
+  last one is the account paying the cost, and recording it as "nothing" would
+  re-probe forever.
+
+  The cache decides only *whether to wait*, never *where to navigate*. Sending the
+  browser to a cached `/fx/{seg}/...` was measured and rejected: Flow serves
+  whatever segment it is asked for, so a pt-BR account handed `/fx/de/` stayed
+  there and rendered `html lang=de` with no redirect — no correction signal, and a
+  wrong-language UI for as long as the stale value lived. That is #580's defect in
+  a new hat. The navigation therefore stays bare, which is what lets Flow state the
+  account's own answer: a redirecting account still settles (fast, and self-heals a
+  stale segment on the next run — verified live against a deliberately poisoned
+  cache), and only the "not redirected" state skips the wait.
+
 ### Fixed
 
 - **A NULL `model` / `aspect` / `project_id` no longer reads back as the string
