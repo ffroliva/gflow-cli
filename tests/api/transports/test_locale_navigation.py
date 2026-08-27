@@ -146,3 +146,49 @@ async def test_settle_wait_returns_the_settled_url() -> None:
             return None
 
     assert await await_url_settled(_Settling()) == "https://labs.google/fx/pt/tools/flow/project/x"
+
+
+# --- #587: the settle must be skipped on accounts Flow does not redirect ----
+
+
+class _CountingPage:
+    """Counts settle waits so "was it skipped?" is observable.
+
+    Deliberately NOT a `_FakePage` subclass: that fake assigns `wait_for_url` as
+    an *instance* attribute, which shadows any subclass method — the counter
+    stayed 0 forever and the skip assertion passed vacuously.
+    """
+
+    def __init__(self) -> None:
+        self.url = "https://labs.google/fx/tools/flow"
+        self.goto = AsyncMock()
+        self.waits = 0
+
+    async def wait_for_url(self, *_a: Any, **_k: Any) -> None:
+        self.waits += 1
+        raise TimeoutError("a bare URL never becomes localised")
+
+
+@pytest.mark.asyncio
+async def test_settle_is_skipped_when_the_account_is_not_redirected() -> None:
+    """No resolved locale => nothing to wait for => no 4 s timeout.
+
+    Guarding only `_enter_editor` left three other `await_url_settled` calls
+    burning the full `URL_SETTLE_TIMEOUT_MS` on every navigation — the very cost
+    #587 exists to remove.
+    """
+    t = _transport(None)
+    page = _CountingPage()
+
+    assert await t._settle_if_redirecting(page) is None
+    assert page.waits == 0
+
+
+@pytest.mark.asyncio
+async def test_settle_still_runs_when_the_account_is_redirected() -> None:
+    t = _transport("pt")
+    page = _CountingPage()
+
+    await t._settle_if_redirecting(page)
+
+    assert page.waits == 1

@@ -1211,6 +1211,19 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
             return False
 
+    async def _settle_if_redirecting(self, page: Any) -> str | None:
+        """Settle a navigation only on an account Flow actually redirects (#587).
+
+        No resolved locale means the bootstrap probe saw Flow serve the bare URL
+        without redirecting, so there is nothing to wait for and
+        :func:`await_url_settled` would burn its full timeout on EVERY navigation.
+        Four call sites need this; guarding only the editor entry left the others
+        paying 4 s each.
+        """
+        if self._account_locale is None:
+            return None
+        return await await_url_settled(page)
+
     async def _enter_editor(
         self,
         page: Page,
@@ -1248,7 +1261,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             # served the bare URL without redirecting, so there is nothing to wait
             # for and the wait would be pure dead time on EVERY navigation.
             before = page.url
-            settled = await await_url_settled(page) if self._account_locale else None
+            settled = await self._settle_if_redirecting(page)
             if settled and settled != before:
                 log.warning(
                     "ui_automation.url_redirected_after_goto",
@@ -1281,7 +1294,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             # real buttons — running it mid-redirect clicks a page that is
             # leaving. The wait_for_timeout below would absorb it, but it comes
             # after this call, not before.
-            await await_url_settled(page)
+            await self._settle_if_redirecting(page)
             await self._bypass_onboarding(page)
 
         await page.wait_for_timeout(3000)
@@ -3292,7 +3305,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 break
             await page.wait_for_timeout(self._CHARACTER_ROUTE_BACKOFF_MS)
             await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-            await await_url_settled(page)
+            await self._settle_if_redirecting(page)
             await self._dismiss_blocking_overlays(page, self._out_dir)
 
         shot = await _capture_debug_screenshot(
@@ -3339,7 +3352,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # this exact race. `_settle_on_character_route` below only checks that
         # `entity_id` is still in the URL, which a locale-only redirect PRESERVES,
         # so it returns instantly and cannot substitute for this wait.
-        await await_url_settled(page)
+        await self._settle_if_redirecting(page)
         await self._dismiss_blocking_overlays(page, self._out_dir)
         await self._settle_on_character_route(page, entity_id=entity_id, url=url)
 

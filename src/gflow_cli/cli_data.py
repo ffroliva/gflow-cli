@@ -14,10 +14,13 @@ from typing import Any
 import click
 from rich.console import Console
 from rich.markup import escape
+from rich.style import Style
 from rich.table import Table
+from rich.text import Text
 
 from gflow_cli import json_output, profile_store
 from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
+from gflow_cli.api import routes
 from gflow_cli.config import get_settings
 from gflow_cli.data.models import AssetLookup
 from gflow_cli.data.queries import (
@@ -104,8 +107,18 @@ def _emit_projects_table(rows: list[ProjectRow]) -> None:
     for col in ("PROJECT_ID", "TITLE", "PROFILE", "CREATED", "IMG", "VID"):
         tbl.add_column(col)
     for r in rows:
+        # #587: the id links to the account-correct editor URL. Costs no column
+        # width and degrades to plain text without OSC-8.
+        # `Style(link=url)`, never markup and never a style STRING. Both are
+        # parsed: "[link=...]" ends at the first "]" in the URL (MarkupError), and
+        # "link {url}" ends at the first space, letting the rest of an id become
+        # style tokens — an id like "x https://evil" then renders this project's
+        # name pointing somewhere else entirely. A Style object parses nothing.
+        url = routes.project_editor_url_or_none(
+            profile_store.account_locale_for(r.profile), r.project_id
+        )
         tbl.add_row(
-            r.project_id,
+            Text(r.project_id, style=Style(link=url) if url else ""),
             _truncate(r.title),
             r.profile,
             r.created_at.strftime("%Y-%m-%d %H:%M"),

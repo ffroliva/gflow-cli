@@ -14,9 +14,12 @@ dropdown that must be opened first). Calling the real methods cannot be wrong
 about its own preconditions.
 
 Flow routes locale by URL PATH SEGMENT, so ONE account can be served every
-locale — this does not need 14 Google accounts. Note `/fx/en/` is Flow's
-"default", which redirects to the account locale; en is therefore only testable
-on an en account.
+locale — this does not need 14 Google accounts.
+
+Note only the BARE URL redirects to the account locale — Flow serves whatever
+segment it is asked for and never corrects a wrong-but-valid one
+(scripts/dev/spike_locale_poison.py, #587). So `/fx/en/` is served as asked on
+any account, and en is only meaningfully testable on an en account.
 
 Navigation and menu interaction only. Never submits a prompt, never generates,
 spends no credits.

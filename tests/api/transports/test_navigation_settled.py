@@ -50,15 +50,24 @@ def _goto_calls(path: Path) -> list[tuple[int, str]]:
     return out
 
 
+_SETTLE_CALLS = frozenset({"await_url_settled", "_settle_if_redirecting"})
+
+
 def _settle_lines(path: Path) -> set[int]:
     """Line numbers of every `await_url_settled(...)` call."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     return {
         n.lineno
         for n in ast.walk(tree)
+        # `await_url_settled(page)` directly, or the `_settle_if_redirecting`
+        # wrapper that gates it on "does this account actually redirect?" (#587).
+        # The ratchet must know BOTH names: renaming the call site is exactly how
+        # a settle silently disappears from under this test.
         if isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Name)
-        and n.func.id == "await_url_settled"
+        and (
+            (isinstance(n.func, ast.Name) and n.func.id in _SETTLE_CALLS)
+            or (isinstance(n.func, ast.Attribute) and n.func.attr in _SETTLE_CALLS)
+        )
     }
 
 

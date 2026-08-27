@@ -32,6 +32,7 @@ import structlog
 
 from gflow_cli import auth as auth_mod
 from gflow_cli._cli_helpers import _FLOW_ID_RE
+from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.video import is_media_uuid
@@ -44,7 +45,12 @@ from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError, is_retryable
 from gflow_cli.mcp.server import server
-from gflow_cli.profile_store import NoDefaultProfileError, NoProfilesError, resolve_profile
+from gflow_cli.profile_store import (
+    NoDefaultProfileError,
+    NoProfilesError,
+    account_locale_for,
+    resolve_profile,
+)
 from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
@@ -1199,6 +1205,11 @@ async def gflow_list_projects(
                 "created_at": r.created_at.isoformat(),
                 "image_count": r.image_count,
                 "video_count": r.video_count,
+                # #587: account-correct editor link from the locale cached per
+                # profile. Bare URL when unknown — never a guessed `en`.
+                "url": routes.project_editor_url_or_none(
+                    account_locale_for(r.profile), r.project_id
+                ),
             }
             for r in rows
         ],
