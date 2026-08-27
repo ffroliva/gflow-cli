@@ -32,8 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing `.gflow_account`) in three states, not two: never probed,
   redirected-to-`X`, and **not redirected** — that last one is the account paying
   the cost, and recording it as "nothing" would re-probe forever. The same guard
-  now covers all four `await_url_settled` call sites; guarding only the editor
-  entry left three navigations still paying the timeout.
+  now covers all four `await_url_settled` call sites **in the UI transport**;
+  guarding only the editor entry left three navigations still paying the timeout.
+  (The three sites in the experimental REST transports have no resolved locale to
+  gate on and are unchanged.)
 
   The cache decides only *whether to wait*, never *where to navigate*. Sending the
   browser to a cached `/fx/{seg}/...` was built, measured, and rejected: Flow

@@ -68,7 +68,7 @@ def list_subcommand(profile: str | None, limit: int, as_json: bool) -> None:
                         # #587: account-correct, from the locale cached per
                         # profile. Unknown locale => bare URL, never a guessed
                         # `en` — that guess was the original defect (#580).
-                        "url": routes.project_editor_url(
+                        "url": routes.project_editor_url_or_none(
                             account_locale_for(r.profile), r.project_id
                         ),
                     }
@@ -107,7 +107,9 @@ def show_subcommand(project_id: str, profile: str | None, as_json: bool) -> None
         console.print(f"[yellow]Project not found:[/yellow] {project_id}")
         raise SystemExit(1)
 
-    url = routes.project_editor_url(account_locale_for(record.profile_name), record.flow_project_id)
+    url = routes.project_editor_url_or_none(
+        account_locale_for(record.profile_name), record.flow_project_id
+    )
     if as_json:
         json_output.emit(
             {
@@ -130,7 +132,8 @@ def show_subcommand(project_id: str, profile: str | None, as_json: bool) -> None
         console.print(f"[bold]Source:[/bold] {record.source}")
         if record.created_at:
             console.print(f"[bold]Created:[/bold] {record.created_at}")
-        console.print(f"[bold]URL:[/bold] {url}")
+        if url:
+            console.print(f"[bold]URL:[/bold] {url}")
 
 
 async def _run_create_project(

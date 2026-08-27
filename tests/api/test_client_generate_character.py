@@ -175,6 +175,25 @@ class TestGenerateCharacterImage:
         )
 
         assert transport.calls[0]["locale"] == "fr-FR"
+        # #587: a caller-chosen locale steers the shared page, so its URL stops
+        # being evidence of the ACCOUNT's locale. Without this latch the teardown
+        # correction cached "fr" as the account locale — reproduced by the
+        # council against real code.
+        assert client._caller_locale_navigated is True
+
+    async def test_omitted_locale_does_not_latch_the_caller_flag(self, tmp_path: Path) -> None:
+        """No caller locale => the page stays usable as evidence."""
+        transport = _FakeCharTransport()
+        client = _client_with_transport(tmp_path, transport)
+
+        await client.generate_character_image(
+            project_id=_PROJECT_ID,
+            entity_id=_ENTITY_ID,
+            req=CharacterImageRequest(prompt="test"),
+            image_reference_index=0,
+        )
+
+        assert client._caller_locale_navigated is False
 
     async def test_omitted_locale_uses_the_resolved_account_locale(self, tmp_path: Path) -> None:
         """Omitting locale must use the ACCOUNT's locale, not 'en-US' (#580).

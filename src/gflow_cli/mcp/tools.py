@@ -1207,7 +1207,9 @@ async def gflow_list_projects(
                 "video_count": r.video_count,
                 # #587: account-correct editor link from the locale cached per
                 # profile. Bare URL when unknown — never a guessed `en`.
-                "url": routes.project_editor_url(account_locale_for(r.profile), r.project_id),
+                "url": routes.project_editor_url_or_none(
+                    account_locale_for(r.profile), r.project_id
+                ),
             }
             for r in rows
         ],

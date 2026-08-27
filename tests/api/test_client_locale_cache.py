@@ -1,11 +1,8 @@
 """The locale probe runs once per profile, not once per command (#587).
 
-Two properties, both load-bearing:
-
-1. A cache hit must not probe — including the "not redirected" outcome, which is
-   the account that pays the 4 s ``URL_SETTLE_TIMEOUT_MS``.
-2. The cache decides whether to WAIT, never where to GO. Flow serves whatever
-   segment it is asked for, so only a BARE navigation is evidence. See CHANGELOG.
+Two properties: a cache hit must not probe (including the "not redirected"
+outcome, which is the account that pays the timeout), and the cache decides
+whether to WAIT, never where to GO. See the CHANGELOG entry for #587.
 """
 
 from __future__ import annotations
@@ -165,6 +162,7 @@ async def test_a_cached_segment_is_left_to_the_bootstrap_settle(tmp_path: Path) 
     write_account_locale(tmp_path, "pt")
     client = _client(tmp_path)
     client._account_locale = "pt"
+    client._bootstrap_landed = True
     client._page = _FakePage(url="https://labs.google/fx/de/tools/flow/project/x")  # type: ignore[assignment]
 
     client._persist_locale_correction()
@@ -181,6 +179,7 @@ async def test_a_bare_url_is_not_read_as_stopped_redirecting(tmp_path: Path) -> 
     write_account_locale(tmp_path, None)
     client = _client(tmp_path)
     client._account_locale = None
+    client._bootstrap_landed = True
     client._page = _FakePage(url="https://labs.google/fx/tools/flow")  # type: ignore[assignment]
 
     client._persist_locale_correction()
@@ -197,7 +196,11 @@ async def test_correction_never_raises_on_a_dead_page(tmp_path: Path) -> None:
             raise RuntimeError("target closed")
 
     client = _client(tmp_path)
-    client._account_locale = "pt"
+    # MUST be None with the bootstrap landed, or the guards return before `.url`
+    # is ever read and the try/except under test is unreachable — mutation showed
+    # deleting it left the suite green.
+    client._account_locale = None
+    client._bootstrap_landed = True
     client._page = _Dead()  # type: ignore[assignment]
 
     client._persist_locale_correction()  # must not raise
@@ -220,31 +223,42 @@ async def test_a_caller_supplied_locale_never_becomes_the_account_locale(
     client = _client(tmp_path)
     client._account_locale = None
 
-    assert client._locale_for_navigation("de") == "de"  # caller override wins
+    # what `generate_character_image` does when the caller passes --locale
+    client._caller_locale_navigated = True
+    client._bootstrap_landed = True
     client._page = _FakePage(url="https://labs.google/fx/de/tools/flow/project/x")  # type: ignore[assignment]
     client._persist_locale_correction()
 
     assert read_account_locale(tmp_path) == "", "a caller's locale was cached as the account's"
 
 
-async def test_correction_still_heals_when_no_caller_locale_was_used(tmp_path: Path) -> None:
-    """The suppression must not disable the transient-timeout self-heal."""
-    write_account_locale(tmp_path, None)
-    client = _client(tmp_path)
-    client._account_locale = None
-    client._page = _FakePage(url="https://labs.google/fx/pt/tools/flow/project/x")  # type: ignore[assignment]
-
-    client._persist_locale_correction()
-
-    assert read_account_locale(tmp_path) == "pt"
-
-
 async def test_correction_is_wired_into_teardown(tmp_path: Path) -> None:
     """Cover the CALL, not just the method — deleting the call site broke no test."""
     client = _client(tmp_path)
     client._account_locale = None
+    client._bootstrap_landed = True
     client._page = _FakePage(url="https://labs.google/fx/pt/tools/flow/project/x")  # type: ignore[assignment]
 
     await client._close_browser_resources()
 
     assert read_account_locale(tmp_path) == "pt"
+
+
+async def test_a_pwa_restored_url_is_not_read_as_the_account_locale(tmp_path: Path) -> None:
+    """A failed bootstrap leaves Chrome's RESTORED url on the page — not evidence.
+
+    `_page` is assigned before `_bootstrap_and_resolve_locale` runs, and
+    `__aenter__`'s failure guard tears down through `_close_browser_resources`.
+    Chrome's PWA restores the last-visited project URL, so a PREVIOUS
+    `gflow character create --locale de` run leaves `/fx/de/...` sitting there for
+    a fresh process to mistake for Flow's answer.
+    """
+    write_account_locale(tmp_path, None)
+    client = _client(tmp_path)
+    client._account_locale = None
+    client._bootstrap_landed = False  # the goto never completed
+    client._page = _FakePage(url="https://labs.google/fx/de/tools/flow/project/x")  # type: ignore[assignment]
+
+    client._persist_locale_correction()
+
+    assert read_account_locale(tmp_path) == "", "a restored URL was cached as the account locale"

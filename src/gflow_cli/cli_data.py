@@ -14,6 +14,7 @@ from typing import Any
 import click
 from rich.console import Console
 from rich.markup import escape
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
@@ -108,13 +109,16 @@ def _emit_projects_table(rows: list[ProjectRow]) -> None:
     for r in rows:
         # #587: the id links to the account-correct editor URL. Costs no column
         # width and degrades to plain text without OSC-8.
-        # Built as a Text with a link STYLE, never as "[link=...]" markup: a "]"
-        # anywhere in the URL closes the tag early, and escaping does not apply
-        # inside a tag attribute — so markup here raises MarkupError on ids the
-        # plain add_row it replaced rendered without complaint.
-        url = routes.project_editor_url(profile_store.account_locale_for(r.profile), r.project_id)
+        # `Style(link=url)`, never markup and never a style STRING. Both are
+        # parsed: "[link=...]" ends at the first "]" in the URL (MarkupError), and
+        # "link {url}" ends at the first space, letting the rest of an id become
+        # style tokens — an id like "x https://evil" then renders this project's
+        # name pointing somewhere else entirely. A Style object parses nothing.
+        url = routes.project_editor_url_or_none(
+            profile_store.account_locale_for(r.profile), r.project_id
+        )
         tbl.add_row(
-            Text(r.project_id, style=f"link {url}"),
+            Text(r.project_id, style=Style(link=url) if url else ""),
             _truncate(r.title),
             r.profile,
             r.created_at.strftime("%Y-%m-%d %H:%M"),

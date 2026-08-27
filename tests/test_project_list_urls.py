@@ -20,6 +20,7 @@ from gflow_cli.data.models import ProjectRecord
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 
+TAB, LF, ESC, BEL = chr(9), chr(10), chr(27), chr(7)
 PID = "2ddc3a33-97db-41a0-a0d3-7f9488b0d5a9"
 
 
@@ -130,3 +131,104 @@ def test_mcp_list_projects_emits_the_url(
     assert url.endswith(PID)
     assert expected_segment in url
     assert "/fx/en/" not in url
+
+
+# --- the table render must survive a hostile project id ---------------------
+
+
+@pytest.mark.parametrize(
+    "pid",
+    [
+        "550e8400-e29b-41d4-a716-446655440000",
+        "ab]cd",
+        "ab[bold red]cd",
+        "ab[/link]XX",
+        "ab link https://evil.example",
+        "ab conceal",
+        "",
+    ],
+    ids=["uuid", "bracket", "markup", "close-tag", "link-hijack", "style-token", "empty"],
+)
+def test_projects_table_survives_a_hostile_id(pid: str) -> None:
+    """Rendering must never raise, and never link somewhere we did not choose.
+
+    Two parsers were tried and both were wrong: `[link=...]` markup ends at the
+    first `]` in the URL (MarkupError), and a `f"link {url}"` style STRING ends at
+    the first space, letting the rest of an id become style tokens -- an id like
+    `x https://evil` rendered this project's name pointing elsewhere.
+    """
+    import io
+    import re
+    from datetime import UTC, datetime
+
+    from rich.console import Console
+
+    from gflow_cli import cli_data
+    from gflow_cli.data.queries import ProjectRow
+
+    buf = io.StringIO()
+    fake = Console(file=buf, force_terminal=True, width=250, legacy_windows=False)
+    original = cli_data.Console
+    cli_data.Console = lambda *a, **k: fake  # type: ignore[assignment,misc]
+    try:
+        cli_data._emit_projects_table(
+            [
+                ProjectRow(
+                    project_id=pid,
+                    profile="denon82",
+                    created_at=datetime.now(UTC),
+                    image_count=0,
+                    video_count=0,
+                    title="T",
+                )
+            ]
+        )
+    finally:
+        cli_data.Console = original  # type: ignore[assignment]
+
+    osc8 = re.compile(ESC + r"\]8;[^;]*;([^" + ESC + r"\x07]*)")
+    for target in osc8.findall(buf.getvalue()):
+        assert target == "" or target.startswith("https://labs.google/fx/"), target
+
+
+# --- the id allowlist is a security control; pin it directly ----------------
+
+
+@pytest.mark.parametrize(
+    "pid",
+    [
+        "ab link https://evil.example",
+        "../../etc/passwd",
+        "a b",
+        "x" + TAB + "y",
+        "x" + LF + "y",
+        ESC + "]0;pwned" + BEL,
+        "",
+        "a" * 200,
+    ],
+    ids=["space-hijack", "traversal", "space", "tab", "newline", "ansi", "empty", "too-long"],
+)
+def test_editor_url_refuses_a_malformed_project_id(pid: str) -> None:
+    """`Style(link=...)` neutralises the hijack; this is the layer beneath it.
+
+    Mutation testing found the allowlist could be deleted with the whole suite
+    still green -- defence in depth that nothing pinned. The strict builder feeds
+    navigation, so it refuses; the tolerant one feeds listings, so it degrades.
+    """
+    from gflow_cli.api import routes
+
+    with pytest.raises(ValueError, match="Invalid project_id"):
+        routes.project_editor_url("pt", pid)
+
+    assert routes.project_editor_url_or_none("pt", pid) is None
+
+
+def test_editor_url_accepts_a_real_flow_id() -> None:
+    from gflow_cli.api import routes
+
+    assert routes.project_editor_url("pt", PID) == (
+        f"https://labs.google/fx/pt/tools/flow/project/{PID}"
+    )
+    assert routes.project_editor_url_or_none(None, PID) == (
+        f"https://labs.google/fx/tools/flow/project/{PID}"
+    )
