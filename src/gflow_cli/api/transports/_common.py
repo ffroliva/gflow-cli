@@ -15,6 +15,9 @@ import json
 import uuid
 from typing import Any
 
+import structlog
+
+from gflow_cli.api import routes
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import (
@@ -31,6 +34,8 @@ from gflow_cli.errors import (
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+log = structlog.get_logger(__name__)
 
 FLOW_URL: str = "https://labs.google/fx/tools/flow?hl=en"
 PER_CALL_TIMEOUT_S: int = 30
@@ -141,6 +146,70 @@ GENERATION_POLICY_HINT: str = (
 )
 
 
+#: Bounded because this is paid on a path that often has nothing to wait for.
+#: Measured: when Flow does redirect, it lands well inside this window; when it
+#: does not (an `en` account is served the bare URL and never redirected), the
+#: full timeout is dead time. 8 s made `ffroliva` setup take 11.2 s.
+URL_SETTLE_TIMEOUT_MS: float = 4_000.0
+
+#: Flow's canonical settled editor shape. Reuses the routes matcher rather than
+#: restating it: `_resolve_account_locale` waits on THIS and then parses with
+#: `routes.locale_segment_from_url`, so two independent copies could drift apart
+#: and silently switch locale resolution off while both log lines looked healthy.
+FLOW_LOCALISED_URL_RE = routes.LOCALE_SEGMENT_RE
+
+
+async def await_url_settled(page: Any) -> str | None:
+    """Wait for Flow's locale redirect to land; return the settled URL or ``None``.
+
+    ``page.goto(wait_until="domcontentloaded")`` returns BEFORE the redirect —
+    measured at 591-797 ms with the redirect arriving after. Any DOM work started
+    in that window runs against a page about to be navigated away, which is how
+    the #395 "character-route bounce" presents.
+
+    **Waits for the destination SHAPE, not for stability.** An earlier version
+    polled for two consecutive identical samples 200 ms apart and returned
+    immediately — before the redirect had begun — reporting a URL that was merely
+    not-yet-changed as "settled". The e2e gate caught it; unit tests could not,
+    because the bug is purely about real-world timing.
+
+    Two callers with independent purposes share this primitive: the client settles
+    the bootstrap navigation to LEARN the account locale (preventing the redirect
+    thereafter), the transport settles each editor navigation to TOLERATE a
+    redirect it did not predict. Prevention and tolerance stay independent; only
+    the act of observing "settled" is shared.
+
+    Best-effort: never raises. Returns ``None`` on timeout (already-localised URLs
+    match immediately, so a timeout means no locale form ever appeared).
+    """
+    # Short-circuit: if the URL is ALREADY the localised shape there is nothing to
+    # wait for. Measured: without this, every project navigation on a
+    # resolved-locale account burned the full timeout, because wait_for_url does
+    # not reliably return early for an already-matching current URL.
+    try:
+        current = str(page.url)
+    except Exception:  # noqa: BLE001
+        current = ""
+    if current and FLOW_LOCALISED_URL_RE.match(current):
+        return current
+
+    try:
+        await page.wait_for_url(FLOW_LOCALISED_URL_RE, timeout=URL_SETTLE_TIMEOUT_MS)
+        return str(page.url)
+    except Exception as exc:  # noqa: BLE001 — observation only, never break navigation
+        # Distinguish "no localised URL appeared" (expected on accounts Flow does
+        # not redirect) from "the wait itself is broken" (e.g. a renamed
+        # Playwright method). Collapsing both into a silent None would let a
+        # permanently broken settle read as healthy forever — the caller logs
+        # `url_stable_after_goto` on a None return.
+        log.info(
+            "transport.url_settle_gave_up",
+            exc_class=type(exc).__name__,
+            timeout_ms=URL_SETTLE_TIMEOUT_MS,
+        )
+        return None
+
+
 def generation_error(*, status: int, route: str, body: object) -> FlowApiError:
     """Classify a non-2xx status on a Flow **generation** route (issue #528).
 
@@ -189,3 +258,70 @@ def _redacted_snippet(text: str) -> str:
     success path pays nothing.
     """
     return redact_error_detail(text)[:200]
+
+
+# ---------------------------------------------------------------------------
+# Model-picker primitives, shared by the image and video transports.
+#
+# Both arms drive a Radix `[role='menu']` of `[role='menuitem']` entries through
+# the SAME trigger selector, and both were bitten by the same two hazards:
+# `has-text` is a SUBSTRING match (so one label can be a prefix of another), and
+# a raw `count()` includes mounted-but-hidden nodes. Keeping one copy means a
+# fix on one arm cannot silently skip the other.
+# ---------------------------------------------------------------------------
+
+READ_MENU_ITEM_LABELS = r"""
+() => Array.from(document.querySelectorAll("[role='menuitem']"))
+    .map(e => (e.innerText || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+"""
+
+
+async def offered_menu_labels(page: Any) -> list[str]:
+    """What the picker is rendering RIGHT NOW — read while the menu is open.
+
+    Included in every failure message: a bare "model not found" is unactionable,
+    whereas the actual list tells an operator immediately whether Flow renamed an
+    entry, removed it, or added a near-duplicate. Best-effort — diagnostics must
+    never mask the error they describe.
+    """
+    try:
+        return list(await page.evaluate(READ_MENU_ITEM_LABELS))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+async def close_menu(page: Any) -> None:
+    """Leave no stray open UI behind after a refusal.
+
+    TWO Escapes, deliberately: the model menu and the generation-settings panel
+    beneath it. Raising out of a model select skips the caller's own panel-close,
+    so a single Escape leaves the panel open. In a batch that then toggles the
+    panel SHUT on the next prompt's open attempt, turning one drifted selector
+    into a whole-batch failure.
+    """
+    for _ in range(2):
+        try:
+            await page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001, S110 — cleanup only
+            return
+
+
+async def count_visible(page: Any, selector: str) -> tuple[int, Any]:
+    """Number of VISIBLE matches for *selector*, plus the first of them.
+
+    `count()` alone counts mounted-but-hidden nodes. Radix keeps menus mounted,
+    so a stale or offscreen menu inflates the count and either forces a false
+    AMBIGUOUS or resolves to a node that cannot be clicked.
+    """
+    loc = page.locator(selector)
+    total = await loc.count()
+    matches = 0
+    first: Any = None
+    for i in range(total):
+        nth = loc.nth(i)
+        if await nth.is_visible():
+            matches += 1
+            if first is None:
+                first = nth
+    return matches, first

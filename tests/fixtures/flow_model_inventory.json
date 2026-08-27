@@ -1,0 +1,23 @@
+{
+  "_provenance": {
+    "captured_utc": "2026-08-26T23:05:00Z",
+    "profile": "denon82",
+    "account_locale": "pt",
+    "method": "scripts/dev/spike_model_inventory.py — menu read WHILE OPEN",
+    "note": "An EMPTY read is instrument failure, never data. #539 recorded a previous capture taken after the menu closed and treated the emptiness as absence; that conclusion was wrong. Never write this file from an empty read."
+  },
+  "image": [
+    "🍌 Nano Banana Pro",
+    "🍌 Nano Banana 2",
+    "🍌 Nano Banana 2 Lite"
+  ],
+  "video": [
+    "volume_up Omni Flash",
+    "volume_up Veo 3.1 - Lite",
+    "volume_up Veo 3.1 - Fast",
+    "volume_up Veo 3.1 - Quality"
+  ],
+  "_video_note": "Captured 2026-08-26 after fixing the CAPTURE, not the product. The earlier empty read was caused by calling _open_gen_settings_panel after _switch_to_video_mode: both click the SAME crop_* trigger, so the second click toggled the panel shut and the video-tab probe missed on all five selectors. #539's note that 'the video picker uses a different trigger' is FALSIFIED — MODEL_PICKER_TRIGGER and IMAGE_MODEL_PICKER_TRIGGER are byte-identical strings.",
+  "_video_credit_line": "10 (the live cost line with Veo 3.1 - Lite selected; matches the documented veo-lite cost). Per-model cost was NOT swept in this capture.",
+  "_lower_priority_finding": "'Veo 3.1 - Lite [Lower Priority]' was NOT offered to profile denon82 on 2026-08-26 (picker rendered exactly: Omni Flash / Veo 3.1 - Lite / Fast / Quality). That is one account at one moment, NOT proof the tier does not exist — it may be cohort-gated or region-gated, which is what #539 is open to establish. Recorded as an observation with a date, per docs/superpowers/specs/2026-08-26-model-cost-quota-catalog.md."
+}

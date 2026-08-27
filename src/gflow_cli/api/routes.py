@@ -69,6 +69,13 @@ def batch_generate_images_url(project_id: str) -> str:
 
 # Bootstrap URL — the Flow editor page. The persistent context navigates here
 # once before making API calls so Google's cookies + reCAPTCHA JS are loaded.
+#
+# NOTE (#580): `?hl=en` does NOT pin the rendered locale, despite what this
+# comment used to claim. Measured on a pt-BR account: the document still renders
+# `lang=pt` and Flow still redirects the path to `/fx/pt/...`. Selector stability
+# rests entirely on the locale-invariant selector tiers (icon ligatures, ARIA
+# roles) — not on this parameter. Do not rely on it for locale control.
+# That redirect is also what the client reads to learn the ACCOUNT's locale.
 EDITOR_BOOTSTRAP_URL = "https://labs.google/fx/tools/flow?hl=en"
 
 # Character entities (tRPC + aisandbox Bearer REST) ------------------------
@@ -130,7 +137,7 @@ def flow_workflow_url(workflow_id: str) -> str:
     return f"{ARCHIVE_WORKFLOW_BASE}/{workflow_id}"
 
 
-def character_editor_url(locale: str, project_id: str, entity_id: str) -> str:
+def character_editor_url(locale: str | None, project_id: str, entity_id: str) -> str:
     """Build the user-facing Flow character editor URL for a given entity.
 
     Returns the browser-navigable page URL (not an API endpoint) at which the
@@ -143,16 +150,72 @@ def character_editor_url(locale: str, project_id: str, entity_id: str) -> str:
     (``"en-US" -> "en"``, ``"pt-BR" -> "pt"``); already-short inputs pass
     through unchanged.
 
+    ``None`` omits the segment entirely (#580) rather than guessing ``en``: a
+    wrong segment costs a redirect that lands AFTER ``page.goto`` returns, which
+    is how the #395 "character-route bounce" presents.
+
     Pattern: ``https://labs.google/fx/{seg}/tools/flow/project/{project_id}/character/{entity_id}``
     """
-    segment = locale.strip().split("-", 1)[0].lower() or "en"
+    segment = _segment_or_none(locale)
+    if segment is None:
+        return f"{LABS_FX_BASE}/tools/flow/project/{project_id}/character/{entity_id}"
     return f"{LABS_FX_BASE}/{segment}/tools/flow/project/{project_id}/character/{entity_id}"
 
 
-def project_editor_url(locale: str, project_id: str) -> str:
+LOCALE_SEGMENT_RE = re.compile(r"^https://labs\.google/fx/([a-z]{2,3})(?:-[A-Za-z]{2})?/tools/flow")
+
+
+def locale_segment_from_url(url: str) -> str | None:
+    """Extract the account's locale segment from a **settled** Flow URL (#580).
+
+    Flow serves the editor under ``/fx/{locale}/tools/flow`` and redirects any
+    other form to the account's own locale. That redirect is the ONLY trustworthy
+    source of the account locale:
+
+    * ``GET /fx/api/auth/session`` carries no locale field.
+    * ``navigator.language`` reports the value **gflow itself sets** when it
+      launches the context, so reading it returns the wrong answer confidently.
+    * ``?hl=en`` does not pin the rendered locale — the document is still
+      ``lang=pt`` on a pt-BR account.
+
+    Returns ``None`` when no trustworthy segment is present. ``None`` means "build
+    the bare URL", which is never worse than today's behaviour — guessing ``en``
+    is precisely the defect this exists to remove.
+
+    ``tools`` is explicitly not treated as a locale: the pattern requires the
+    ``/tools/flow`` tail *after* the segment, so a bare ``/fx/tools/flow`` cannot
+    match its own path component as a locale.
+    """
+    if not url:
+        return None
+    match = LOCALE_SEGMENT_RE.match(url)
+    if match is None:
+        return None
+    return match.group(1).lower()
+
+
+def project_editor_url(locale: str | None, project_id: str) -> str:
     """Build the user-facing Flow editor URL for an existing project.
 
-    Pattern: ``https://labs.google/fx/{seg}/tools/flow/project/{project_id}``
+    Pattern: ``https://labs.google/fx/{seg}/tools/flow/project/{project_id}``,
+    or the bare ``.../tools/flow/project/{project_id}`` when *locale* is unknown.
+
+    *locale* must be the ACCOUNT's locale, resolved from where Flow itself lands
+    (see :func:`locale_segment_from_url`) — not a default and not the browser's.
+    A wrong segment costs a redirect that arrives AFTER ``page.goto`` returns,
+    which moves the page out from under the caller's next DOM action (#580).
+    ``None`` omits the segment and lets Flow normalise, which still redirects but
+    never sends the caller somewhere it has to be bounced back from.
     """
-    segment = locale.strip().split("-", 1)[0].lower() or "en"
+    segment = _segment_or_none(locale)
+    if segment is None:
+        return f"{LABS_FX_BASE}/tools/flow/project/{project_id}"
     return f"{LABS_FX_BASE}/{segment}/tools/flow/project/{project_id}"
+
+
+def _segment_or_none(locale: str | None) -> str | None:
+    """Reduce a BCP-47 tag to the primary subtag Flow serves, or ``None``."""
+    if not locale:
+        return None
+    primary = locale.strip().split("-", 1)[0].lower()
+    return primary or None

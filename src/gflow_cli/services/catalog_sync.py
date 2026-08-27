@@ -129,21 +129,94 @@ def _has_pagination_marker(node: Any, depth: int = 0) -> bool:
     return False
 
 
+@dataclass(frozen=True, slots=True)
+class MediaAttribution:
+    """What the SERVER says produced a media — observed, never inferred.
+
+    gflow records attribution from two sources today: the classic
+    ``batchGenerateImages`` response (observed) and, on the agentic arm, the
+    request we sent (assumed — ``agentic.py`` synthesises ``model_name_type``,
+    ``seed``, ``aspect_ratio`` and more because they live in a Web-Worker SSE
+    stream Playwright cannot observe). Both land in the same catalog column.
+
+    Observed 2026-08-26: an agentic run requested ``GEM_PIX_2`` and Flow
+    generated with ``NARWHAL``; the CLI exited 0 and recorded the request.
+
+    ``flow.projectInitialData`` carries the truth for BOTH arms, keyed by the
+    media UUID the agentic scraper already extracts — so "unobservable from the
+    DOM" was never the same as "unknowable".
+    """
+
+    model_name_type: str | None
+    seed: int | None
+    aspect_ratio: str | None
+
+
+def parse_media_attribution(payload: dict[str, Any]) -> dict[str, MediaAttribution]:
+    """Map media UUID -> server-side attribution from a project listing.
+
+    Rows without ``image.generatedImage`` are OMITTED rather than defaulted: a
+    placeholder would be indistinguishable from an observation, which is the
+    defect this function exists to detect.
+
+    Raises ``ValueError`` on an unrecognised envelope, matching
+    :func:`parse_project_listing` — returning ``{}`` would read as "the server
+    attributes nothing", which a caller would take as agreement.
+    """
+    contents = _project_contents(payload)
+    out: dict[str, MediaAttribution] = {}
+    for item in cast("list[Any]", contents.get("media") or []):
+        if not isinstance(item, dict):
+            continue
+        entry = cast("dict[str, Any]", item)
+        name = entry.get("name")
+        if not isinstance(name, str) or not is_media_uuid(name):
+            continue
+        image = entry.get("image")
+        if not isinstance(image, dict):
+            continue
+        gen = cast("dict[str, Any]", image).get("generatedImage")
+        if not isinstance(gen, dict):
+            continue
+        g = cast("dict[str, Any]", gen)
+        raw_seed = g.get("seed")
+        seed: int | None
+        try:
+            # The wire sends seed as a STRING; the catalog column is an int, so
+            # a raw passthrough would compare unequal to every recorded row.
+            seed = int(raw_seed) if raw_seed is not None else None
+        except (TypeError, ValueError):
+            seed = None
+        model = g.get("modelNameType")
+        aspect = g.get("aspectRatio")
+        out[name] = MediaAttribution(
+            model_name_type=model if isinstance(model, str) else None,
+            seed=seed,
+            aspect_ratio=aspect if isinstance(aspect, str) else None,
+        )
+    return out
+
+
+def _project_contents(payload: dict[str, Any]) -> dict[str, Any]:
+    """Shared envelope unwrap — one definition, so the two parsers cannot drift."""
+    try:
+        raw: Any = payload["result"]["data"]["json"]["projectContents"]
+    except (KeyError, TypeError) as exc:
+        msg = "payload has no result.data.json.projectContents"
+        raise ValueError(msg) from exc
+    if not isinstance(raw, dict):
+        msg = "projectContents is not an object"
+        raise ValueError(msg)
+    return cast("dict[str, Any]", raw)
+
+
 def parse_project_listing(payload: dict[str, Any]) -> ListingParse:
     """Extract names + presence from a ``flow.projectInitialData`` envelope.
 
     Raises ``ValueError`` when ``result.data.json.projectContents`` is absent
     — an unrecognized envelope must fail loudly, not sync an empty project.
     """
-    try:
-        raw_contents: Any = payload["result"]["data"]["json"]["projectContents"]
-    except (KeyError, TypeError) as exc:
-        msg = "payload has no result.data.json.projectContents"
-        raise ValueError(msg) from exc
-    if not isinstance(raw_contents, dict):
-        msg = "projectContents is not an object"
-        raise ValueError(msg)
-    contents = cast("dict[str, Any]", raw_contents)
+    contents = _project_contents(payload)
 
     dropped = 0
 

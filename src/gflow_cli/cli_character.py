@@ -105,7 +105,13 @@ def character() -> None:
     ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
-@click.option("--locale", default="en-US", show_default=True, help="BCP-47 locale.")
+@click.option(
+    "--locale",
+    default=None,
+    help="BCP-47 locale for the character editor URL. Defaults to the ACCOUNT's own "
+    "locale, resolved live from Flow (#580) — a hardcoded default sends non-en "
+    "accounts to the wrong route and Flow bounces them back mid-prompt.",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
 def create(
     project_id: str,
@@ -117,7 +123,7 @@ def create(
     model: str,
     format_prompt: bool,
     profile: str | None,
-    locale: str,
+    locale: str | None,
     as_json: bool,
 ) -> None:
     """Create a new Character entity in a project.
@@ -165,7 +171,7 @@ async def _run_create(
     personality: str | None,
     model: str,
     format_prompt: bool,
-    locale: str,
+    locale: str | None,
     as_json: bool,
     settings: object,
 ) -> None:

@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.61.0] — 2026-08-27
+
+### Fixed
+
+- **A requested image model that cannot be selected no longer generates silently
+  on a different one ([#586](https://github.com/ffroliva/gflow-cli/issues/586)).**
+  `_select_image_model` swallowed every failure, logged a warning, and let the
+  generation proceed on whatever the project's picker already held. Observed
+  live: `--model imagen4` produced an image on `NARWHAL` and exited **0** —
+  confirmed three ways (log, catalog, and `imageModelName` in a HAR). Flow has
+  removed `Imagen 4` from its picker, and `has-text('Nano Banana 2')` had become
+  ambiguous with the newly-offered `Nano Banana 2 Lite`, so `.first` resolved by
+  DOM order. A missing or ambiguous selector now raises `UiSelectorDriftError`
+  (exit 23) naming what Flow actually offered, before anything is submitted.
+
+- **A requested video model that cannot be selected no longer generates on a
+  different one — and charges for it
+  ([#539](https://github.com/ffroliva/gflow-cli/issues/539)).** `_select_video_model`
+  refused only on i2v-with-frames; a plain `t2v`/`r2v` miss logged "Flow default
+  model applies" and returned, so the run generated on whatever the picker already
+  held and spent that tier's credits — veo-quality costs 100 against veo-lite's 10.
+  Read live, Flow's picker offers exactly `Omni Flash` / `Veo 3.1 - Lite` / `Fast` /
+  `Quality`, so `--model veo-lite-lp` matched nothing and was a reachable,
+  credit-spending wrong-model path. Every miss is now fatal (exit 18) naming what
+  Flow offered, and an **ambiguous** selector is refused rather than resolved with
+  `.first`, which picks by DOM order across tiers that differ 10x in cost. Unlike
+  the image arm, refusing is unambiguous here: `--model` defaults to `None` on
+  every video command, so reaching the picker means a model was explicitly asked
+  for. Verified with a zero-credit A/B against live Flow — the pre-fix code
+  returned success for a model Flow does not offer; the new code refuses.
+
+- **Four more navigations settle before acting on the page
+  ([#584](https://github.com/ffroliva/gflow-cli/issues/584)).** #580 settled the
+  three sites it touched; an audit of every `page.goto` found four more with the
+  same defect. The worst is `evaluate_fetch.refresh_auth`, which re-navigates to
+  refresh page-context tokens and reported success while the page was still
+  moving. Two more (`evaluate_fetch` setup, `sapisidhash` fingerprint capture)
+  run `page.evaluate` immediately after navigating, where a mid-flight redirect
+  raises "Execution context was destroyed" rather than failing quietly. The
+  fourth (`_enter_editor`'s gallery return) ran `_bypass_onboarding` — real
+  button clicks — on a page about to navigate away. A new AST-based test pins
+  every `goto` to a following settle, so the audit does not have to be redone
+  by hand.
+
+- **The nightly canary now runs the version of itself that it just pulled
+  ([#582](https://github.com/ffroliva/gflow-cli/issues/582)).** `run_canary.py
+  --pull` fast-forwards the checkout and then keeps executing the copy Python
+  loaded at startup, so every runner change was silently one night late. This was
+  not theoretical: #572 added `-o junit_logging=all` so a preserved RED would
+  carry the structlog line that decides #561, and the next run pulled it and
+  still produced a RED with zero log output — three REDs untriageable, and the
+  failure reads as "the fix did not work". The runner now re-runs itself once
+  when a successful pull changed its own source, guarded by both an env var and
+  a content digest (either alone prevents a loop), via `subprocess.run` rather
+  than `os.execv` so Task Scheduler still sees one process and the real exit code.
+
+- **Editor navigation no longer races a locale redirect on non-`en` accounts
+  ([#580](https://github.com/ffroliva/gflow-cli/issues/580)).** `_enter_editor`
+  built its URL from a hardcoded `locale="en-US"` that no caller ever overrode,
+  so every account was sent to `/fx/en/...`. On a pt-BR account Flow redirects
+  that to `/fx/pt/...` **after `page.goto` has already returned** — leaving
+  overlay dismissal and prompt submission running against a page about to be
+  navigated away. That is how [#395](https://github.com/ffroliva/gflow-cli/issues/395)'s
+  "character-route bounce" presented. The client now learns the account's real
+  locale from where Flow itself lands (the only trustworthy source: `auth/session`
+  carries no locale, and `navigator.language` reports the value gflow sets when
+  launching the context), hands it to the transport through the typed
+  `TransportSetup` seam, and an independent settle-wait tolerates any redirect we
+  did not predict. An unresolved locale omits the segment rather than guessing.
+  `gflow character create --locale` now defaults to the account's locale instead
+  of `en-US`; the previous hardcoded default meant the character editor — the
+  surface #395 was reported against — was still routed to `/fx/en/...` on every
+  account, and the character route never waited for a settle at all.
+
+  Live-verified on a pt-BR account with a control arm: the fix navigates
+  race-free while the pre-fix path still redirects. Accounts Flow does not
+  redirect (e.g. `en`) skip the wait entirely after a single bounded probe, so
+  they pay no per-navigation cost.
+
+### Added
+
+- **Server-side model attribution
+  ([#586](https://github.com/ffroliva/gflow-cli/issues/586)).**
+  `parse_media_attribution` reads `modelNameType` / `seed` / `aspectRatio` from
+  the `flow.projectInitialData` listing gflow already fetches — the same payload
+  the sync path walks for `name` and discards the rest of. This matters most on
+  the **agentic** arm, where those fields were previously synthesised from our
+  own request because they live in a Web-Worker SSE stream Playwright cannot
+  observe; "not visible to the page" was never the same as "unknowable". Verified
+  live: an agentic run that requested `GEM_PIX_2` was attributed `NARWHAL` by the
+  server, with a real seed where the catalog held `0`.
+
 ## [0.60.0] — 2026-08-25
 
 ### Added
@@ -3155,7 +3247,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.60.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.61.0...HEAD
+[0.61.0]: https://github.com/ffroliva/gflow-cli/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/ffroliva/gflow-cli/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/ffroliva/gflow-cli/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/ffroliva/gflow-cli/compare/v0.57.1...v0.58.0

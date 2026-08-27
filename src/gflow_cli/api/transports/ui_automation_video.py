@@ -27,7 +27,13 @@ import structlog
 
 from gflow_cli.api import routes
 from gflow_cli.api._retry import parse_retry_after
-from gflow_cli.api.transports._common import extract_project_id, generation_error
+from gflow_cli.api.transports._common import (
+    close_menu,
+    count_visible,
+    extract_project_id,
+    generation_error,
+    offered_menu_labels,
+)
 from gflow_cli.api.transports.drivers.factory import AGENTIC_INDICATOR_SELECTORS
 from gflow_cli.api.video import (
     I2V_DEFAULT_MODEL,
@@ -875,7 +881,6 @@ class VideoGenerationMixin:
             *,
             project_id: str | None = None,
             project_name: str | None = None,
-            locale: str = "en-US",
         ) -> None: ...
         async def _send_prompt(
             self,
@@ -1514,67 +1519,82 @@ class VideoGenerationMixin:
         model: VideoModel,
         *,
         out_dir: Path | None,
-        required: bool = False,
     ) -> None:
-        """Open the model picker and select `model`.
+        """Open the model picker and select *model*, or FAIL before spending.
 
-        On miss the default behaviour is non-fatal (Flow's default model
-        applies) but logged at WARNING — picking the wrong model changes credit
-        cost. When ``required=True`` (i2v: see issue #125), a miss is FATAL and
-        raises ``VideoModelSelectionError`` BEFORE any frame attach or submit:
-        an i2v run on an unverified model breaks the request contract (cost
-        tier, duration cap, end-frame capability — first+last is Veo-3.1-only).
-        Failing here spends nothing.
+        Every miss is FATAL (changed 2026-08-26). This previously refused only
+        when ``required=True`` (i2v with frames, issue #125); a plain t2v miss
+        logged "Flow default model applies" and returned, so the run generated on
+        whatever model Flow last had selected and CHARGED FOR THAT TIER. Video is
+        the credit-bearing arm — veo-quality costs 100 against veo-lite's 10.
+
+        Refusing is unambiguously correct here, unlike the image panel-miss,
+        which stayed a warning. ``configure_video_settings`` calls this **only**
+        when ``effective_model is not None``, and ``--model`` defaults to
+        ``None`` on every video command, so reaching this function means a model
+        was EXPLICITLY requested. There is no "default or asked-for?" ambiguity.
+
+        AMBIGUOUS is a failure, not a ``.first`` guess: ``.first`` resolves by
+        DOM order, so an ambiguous selector silently picks whichever Flow renders
+        first and changes behaviour with no code change on our side.
+        ``has-text`` is a SUBSTRING match and ``Veo 3.1 - Lite`` is a prefix of
+        ``Veo 3.1 - Lite [Lower Priority]``, so this is a live hazard, not a
+        theoretical one.
 
         Reliability (issue #125): the trigger click occasionally does not open
-        the menu (the option probe then times out and Flow keeps its default).
-        We click the trigger and probe the option up to two times, pressing
+        the menu. We click the trigger and probe up to two times, pressing
         Escape between attempts to reset the dropdown state.
+
+        Runs before frame attach and submit, so a refusal spends nothing.
         """
         option_sel = VIDEO_MODEL_OPTION_SELECTORS.get(model)
         if option_sel is None:
-            log.warning("ui_automation_video.model_unknown", model=model.value)
-            if required:
-                # Consistent with the other required-misses below: a typed
-                # exit-18 error, not a bare RuntimeError (exit 1). Unreachable
-                # for the 5 registered models, but keeps the i2v contract intact.
-                msg = f"no model-picker selector registered for {model.value!r}"
-                raise VideoModelSelectionError(detail=msg, route="model_option")
-            return
+            # Unreachable for the registered models — the governance test pins
+            # that every VideoModel has a selector — but keeps the contract if
+            # one is added without one.
+            raise VideoModelSelectionError(
+                detail=f"no model-picker selector registered for {model.value!r}",
+                route="model_option",
+            )
         trigger = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "model_picker_trigger",
             (MODEL_PICKER_TRIGGER,),
         )
         if trigger is None:
-            log.warning(
-                "ui_automation_video.model_picker_not_found",
-                model=model.value,
-                note="Flow default model applies",
-            )
-            if required:
-                shot = await _capture_debug_screenshot(page, out_dir, "debug_no_model_picker.png")
-                msg = (
-                    f"model picker trigger not found; cannot select {model.value!r} "
-                    f"for i2v. Refusing to proceed — an i2v run on an unverified "
-                    f"model breaks the request contract (refs #125)."
+            shot = await _capture_debug_screenshot(page, out_dir, "debug_no_model_picker.png")
+            raise VideoModelSelectionError(
+                detail=(
+                    f"model picker trigger not found; cannot select {model.value!r}. "
+                    f"Refusing to proceed — generating on whatever model Flow last "
+                    f"had selected would spend credits on a tier that was not "
+                    f"requested (refs #125). No credits were spent."
                     f"{screenshot_clause(shot)}"
-                )
-                raise VideoModelSelectionError(detail=msg, route="model_picker_trigger")
-            return
+                ),
+                route="model_picker_trigger",
+            )
 
+        offered: list[str] = []
         for attempt in (1, 2):
             await trigger.click()
             await page.wait_for_timeout(600)
-            option = await VideoGenerationMixin._probe_selector_cascade(
-                page,
-                "model_option",
-                (option_sel,),
-            )
-            if option is not None:
-                await option.click()
+            offered = await offered_menu_labels(page)
+            matches, first_visible = await count_visible(page, option_sel)
+            if matches > 1:
+                await close_menu(page)
+                raise VideoModelSelectionError(
+                    detail=(
+                        f"selector for {model.value!r} is AMBIGUOUS — {matches} entries "
+                        f"match {option_sel!r}. Selecting .first would pick by DOM order "
+                        f"and could charge a different credit tier than requested. "
+                        f"Flow offered: {offered}. No credits were spent."
+                    ),
+                    route="model_option",
+                )
+            if matches == 1:
+                await first_visible.click()
                 await page.wait_for_timeout(800)
-                log.info("ui_automation_video.model_selected", model=model.value)
+                log.info("ui_automation_video.model_selected", model=model.value, via=option_sel)
                 return
             # The menu may not have opened (trigger click raced) or rendered the
             # option late. Escape closes only the dropdown (the settings popover
@@ -1583,27 +1603,29 @@ class VideoGenerationMixin:
                 "ui_automation_video.model_option_retry",
                 model=model.value,
                 attempt=attempt,
+                offered=offered,
             )
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(200)
 
         log.warning(
-            "ui_automation_video.model_option_not_found",
-            model=model.value,
-            note="Flow default model applies" if not required else "i2v — refusing T2V fallback",
+            "ui_automation_video.model_option_not_found", model=model.value, offered=offered
         )
-        if required:
-            shot = await _capture_debug_screenshot(
-                page, out_dir, "debug_model_option_not_found.png"
-            )
-            msg = (
-                f"could not select video model {model.value!r} for i2v after 2 "
-                f"attempts. Refusing to proceed — an i2v run on whatever model "
-                f"Flow last had selected breaks the request contract (cost "
-                f"tier, duration cap, end-frame capability — refs #125)."
+        # Screenshot BEFORE closing: the whole point of this capture is what the
+        # menu was rendering, and `close_menu` dismisses it.
+        shot = await _capture_debug_screenshot(page, out_dir, "debug_model_option_not_found.png")
+        await close_menu(page)
+        raise VideoModelSelectionError(
+            detail=(
+                f"video model {model.value!r} is not selectable — no picker entry "
+                f"matched after 2 attempts. Flow offered: {offered}. Refusing to "
+                f"generate on a different model than requested: the wrong tier "
+                f"costs different credits, caps duration differently, and only "
+                f"Veo 3.1 supports an end frame (refs #125). No credits were spent."
                 f"{screenshot_clause(shot)}"
-            )
-            raise VideoModelSelectionError(detail=msg, route="model_option")
+            ),
+            route="model_option",
+        )
 
     @staticmethod
     async def _select_video_duration(page: Page, seconds: int, *, out_dir: Path | None) -> None:

@@ -39,6 +39,7 @@ from gflow_cli.api.image import (
 from gflow_cli.api.transports._common import (
     FLOW_URL,
     PER_CALL_TIMEOUT_S,
+    await_url_settled,
     interpret_response,
     mint_batch_id,
 )
@@ -177,6 +178,10 @@ class EvaluateFetchTransport:
             new_page = await ctx.new_page()
             self._page = new_page
             await new_page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30_000)
+            # #584: this transport's whole job is `page.evaluate` fetch calls.
+            # A locale redirect landing mid-evaluate raises "Execution context
+            # was destroyed", intermittently and unattributably.
+            await await_url_settled(new_page)
             self._setup_done = True
             log.info("evaluate_fetch.setup_done", profile=str(profile_dir))
         except BaseException:
@@ -196,6 +201,9 @@ class EvaluateFetchTransport:
             raise AuthExpiredError(msg)
         try:
             await self._page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=30_000)
+            # #584: do not report auth as refreshed while the page is still
+            # moving — the caller acts on that signal immediately.
+            await await_url_settled(self._page)
             log.info("evaluate_fetch.refresh_auth_done")
         except Exception as exc:
             msg = f"evaluate_fetch: refresh navigation failed: {exc}"

@@ -35,7 +35,19 @@ def test_character_editor_url_lowercases_segment():
     assert "/fx/en/tools/flow/" in routes.character_editor_url("EN-us", "p", "e")
 
 
-def test_character_editor_url_empty_locale_falls_back_to_en():
-    # A degenerate/empty tag must not produce a double-slash URL (/fx//...).
-    assert "/fx/en/tools/flow/" in routes.character_editor_url("", "p", "e")
-    assert "/fx/en/tools/flow/" in routes.character_editor_url("-US", "p", "e")
+def test_character_editor_url_unknown_locale_omits_the_segment():
+    """An unknown locale must omit the segment, NOT guess ``en`` (#580).
+
+    This test previously asserted a fallback to ``/fx/en/``. That fallback WAS
+    the defect: on a pt-BR account it sends the browser to the wrong locale, and
+    Flow's correcting redirect lands *after* ``page.goto`` returns — moving the
+    page out from under the caller's next DOM action. Omitting the segment lets
+    Flow serve the account's own locale directly.
+
+    The original intent — never emit a double-slash ``/fx//`` — still holds.
+    """
+    for degenerate in ("", "-US", None):
+        url = routes.character_editor_url(degenerate, "p", "e")
+        assert "/fx/tools/flow/" in url
+        assert "/fx//" not in url
+        assert "/fx/en/" not in url

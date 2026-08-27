@@ -29,7 +29,14 @@ from gflow_cli.api._retry import parse_retry_after
 from gflow_cli.api.character import CHARACTER_MODELS, CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
-from gflow_cli.api.transports._common import extract_project_id, generation_error
+from gflow_cli.api.transports._common import (
+    await_url_settled,
+    close_menu,
+    count_visible,
+    extract_project_id,
+    generation_error,
+    offered_menu_labels,
+)
 from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
@@ -94,8 +101,22 @@ _PROJECT_URL_FRAGMENT = "/project/"
 IMAGE_MODEL_PICKER_TRIGGER = (
     "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
 )
+# Verified live 2026-08-26 (menu read WHILE OPEN, profile denon82):
+#   ['Nano Banana Pro', 'Nano Banana 2', 'Nano Banana 2 Lite']
+# `has-text` is a SUBSTRING match, so 'Nano Banana 2' also matches
+# 'Nano Banana 2 Lite' — text-is pins the exact label instead. The previous
+# comment claimed the three names were mutually unambiguous; that was true when
+# written and silently expired when Flow added the Lite tier.
+# `Imagen 4` is NO LONGER OFFERED. Its selector is kept so the governance test
+# reports an honest MISS (tests/flow_selectors/test_model_governance.py) rather
+# than the model quietly disappearing from the registry.
 IMAGE_MODEL_OPTION_SELECTORS: dict[Model, tuple[str, ...]] = {
-    Model.NARWHAL: ("[role='menuitem']:has-text('Nano Banana 2')",),
+    # `text-is` was tried first and REMOVED 2026-08-26: it never matched live.
+    # The recorded inventory stores whitespace-NORMALISED labels, but `text-is`
+    # matches raw innerText, which carries a newline between the emoji and the
+    # label. Keeping a selector that only matches in the fixture would make the
+    # governance test bless something that cannot work against Flow.
+    Model.NARWHAL: ("[role='menuitem']:has-text('Nano Banana 2'):not(:has-text('Lite'))",),
     Model.GEM_PIX_2: ("[role='menuitem']:has-text('Nano Banana Pro')",),
     Model.IMAGEN_3_5: ("[role='menuitem']:has-text('Imagen 4')",),
 }
@@ -850,6 +871,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         # Counts-only incident sink for outgoing generation submits (#528).
         # None until apply_setup runs, and whenever incident capture is off.
         self._record_generation_request: GenerationRequestRecorder | None = None
+        # Account locale segment injected by the client (#580). None => bare URLs.
+        self._account_locale: str | None = None
         # Optional directory for debug screenshots — derived from the client's
         # `out_dir` constructor arg (#18). When None, the internal
         # _capture_debug_screenshot helper is a no-op.
@@ -879,6 +902,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         self._storage_uri = config.storage_uri
         self._output_dir = config.output_dir
         self._record_generation_request = config.record_generation_request
+        self._account_locale = config.account_locale
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -1194,7 +1218,6 @@ class UiAutomationTransport(VideoGenerationMixin):
         *,
         project_id: str | None = None,
         project_name: str | None = None,
-        locale: str = "en-US",
     ) -> None:
         """Create a fresh project OR navigate to an existing one.
 
@@ -1212,9 +1235,33 @@ class UiAutomationTransport(VideoGenerationMixin):
         from gflow_cli.api import routes
 
         if project_id:
-            url = routes.project_editor_url(locale, project_id)
+            # #580: the ACCOUNT's locale, resolved from where Flow landed at
+            # bootstrap — never a hardcoded default. None omits the segment.
+            url = routes.project_editor_url(self._account_locale, project_id)
             log.info("ui_automation.entering_existing_project", project_id=project_id, url=url)
             await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            # #580: settle BEFORE any DOM work. Logging the before/after pair is
+            # how a residual redirect stays visible in the field — and it is the
+            # signal the e2e gate asserts on.
+            # Only wait when this account is actually redirected. The bootstrap
+            # probe already settled that question: no resolved locale means Flow
+            # served the bare URL without redirecting, so there is nothing to wait
+            # for and the wait would be pure dead time on EVERY navigation.
+            before = page.url
+            settled = await await_url_settled(page) if self._account_locale else None
+            if settled and settled != before:
+                log.warning(
+                    "ui_automation.url_redirected_after_goto",
+                    requested=url,
+                    was=before,
+                    now=settled,
+                )
+            else:
+                log.info(
+                    "ui_automation.url_stable_after_goto",
+                    url=settled or before,
+                    settle_skipped=self._account_locale is None,
+                )
             await self._dismiss_blocking_overlays(page, out_dir)
             return
 
@@ -1229,6 +1276,12 @@ class UiAutomationTransport(VideoGenerationMixin):
             # readiness gate.
             log.info("ui_automation.navigating_to_gallery", restored_url=page.url)
             await page.goto(FLOW_URL, timeout=45_000)
+            # #584: FLOW_URL is the bare form, which Flow redirects to the
+            # account's locale AFTER goto returns. `_bypass_onboarding` clicks
+            # real buttons — running it mid-redirect clicks a page that is
+            # leaving. The wait_for_timeout below would absorb it, but it comes
+            # after this call, not before.
+            await await_url_settled(page)
             await self._bypass_onboarding(page)
 
         await page.wait_for_timeout(3000)
@@ -1707,44 +1760,82 @@ class UiAutomationTransport(VideoGenerationMixin):
 
     @staticmethod
     async def _select_image_model(page: Page, model: Model) -> None:
-        """Click the image model picker and select `model` (Nano Banana 2 / Nano
-        Banana Pro / Imagen 4). Must run with the gen-settings panel open. Without
-        this the generation uses Flow's UI-default model and ``--model`` is a
-        no-op. Non-fatal on miss (logged at WARNING — the wrong model has a real
-        cost/quality impact, so a miss is a genuine signal)."""
+        """Click the image model picker and select *model*, or FAIL.
+
+        Must run with the gen-settings panel open.
+
+        Fails loudly by design (changed 2026-08-26). This previously swallowed
+        every failure, logged a WARNING, and let the generation proceed on Flow's
+        UI-default model — so a stale selector meant the user asked for one model,
+        silently received another, and was BILLED for it.
+
+        That was not hypothetical. Flow's picker on 2026-08-26 offers
+        ``Nano Banana Pro`` / ``Nano Banana 2`` / ``Nano Banana 2 Lite``;
+        ``Model.IMAGEN_3_5``'s ``has-text('Imagen 4')`` matches nothing, and
+        ``has-text('Nano Banana 2')`` matches TWO entries.
+
+        AMBIGUOUS is treated as a failure, not a ``.first`` guess: ``.first``
+        resolves by DOM order, so an ambiguous selector silently picks whichever
+        Flow renders first and changes behaviour with no code change on our side.
+
+        Raises before anything is submitted, so a failure costs nothing.
+        """
         option_sels = IMAGE_MODEL_OPTION_SELECTORS.get(model)
         if not option_sels:
-            log.warning("ui_automation.image_model_unknown", model=model.value)
-            return
-        try:
-            trigger = page.locator(IMAGE_MODEL_PICKER_TRIGGER).first
-            await trigger.wait_for(state="visible", timeout=4000)
-            await trigger.click()
-            await page.wait_for_timeout(500)
-            for sel in option_sels:
-                try:
-                    loc = page.locator(sel).first
-                    await loc.wait_for(state="visible", timeout=4000)
-                    await loc.click()
-                    await page.wait_for_timeout(500)
-                    log.info("ui_automation.image_model_selected", model=model.value, via=sel)
-                    return
-                except Exception as sel_err:
-                    log.debug(
-                        "ui_automation.image_model_selector_miss",
-                        sel=sel,
-                        error=str(sel_err)[:120],
-                    )
-                    continue
-            raise RuntimeError(f"no visible option matched for model {model.value!r}")
-        except Exception as e:
-            log.warning(
-                "ui_automation.image_model_not_set",
-                model=model.value,
-                error=str(e)[:80],
-                note="Flow default model applies",
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "image_model",
+                    f"no picker selector registered for model {model.value!r}.",
+                    None,
+                )
             )
-            await page.keyboard.press("Escape")  # close a stray model menu
+
+        trigger = page.locator(IMAGE_MODEL_PICKER_TRIGGER).first
+        await trigger.wait_for(state="visible", timeout=4000)
+        await trigger.click()
+        await page.wait_for_timeout(500)
+
+        offered = await offered_menu_labels(page)
+        for sel in option_sels:
+            try:
+                matches, first_visible = await count_visible(page, sel)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("ui_automation.image_model_selector_miss", sel=sel, error=str(exc)[:120])
+                continue
+            if matches == 0:
+                continue
+            if matches > 1:
+                await close_menu(page)
+                raise UiSelectorDriftError(
+                    selector_drift_detail(
+                        "image_model",
+                        (
+                            f"selector for {model.value!r} is AMBIGUOUS — {matches} entries "
+                            f"match {sel!r}. Selecting .first would pick by DOM order and "
+                            f"could bill a different model than requested. "
+                            f"Flow offered: {offered}."
+                        ),
+                        None,
+                    )
+                )
+            assert first_visible is not None  # matches > 0 implies one was found
+            await first_visible.click()
+            await page.wait_for_timeout(500)
+            log.info("ui_automation.image_model_selected", model=model.value, via=sel)
+            return
+
+        await close_menu(page)
+        raise UiSelectorDriftError(
+            selector_drift_detail(
+                "image_model",
+                (
+                    f"model {model.value!r} is not selectable — no picker entry matched. "
+                    f"Flow offered: {offered}. Refusing to generate on a different model "
+                    f"than requested."
+                ),
+                None,
+            )
+        )
 
     @staticmethod
     async def _configure_generation_settings(
@@ -1780,6 +1871,28 @@ class UiAutomationTransport(VideoGenerationMixin):
         )
 
         if not await UiAutomationTransport._open_gen_settings_panel(page):
+            # A requested MODEL cannot be honoured without this panel, and the
+            # submit will inherit whatever the project's picker holds — the
+            # silent wrong-model path (#586).
+            #
+            # This deliberately WARNS rather than raises. An earlier version
+            # raised here; the existing batch tests showed it turning one
+            # transient panel miss on prompt 0 into a whole-batch abort, because
+            # the transport cannot distinguish "user passed --model X" from
+            # "X is the default" — `request.model` is populated either way, so a
+            # raise punishes callers who never asked for a specific model.
+            #
+            # Detection moved to where it is arm-agnostic and costs nothing:
+            # `services.catalog_sync.parse_media_attribution` reads what the
+            # SERVER says generated each media. That catches this on the agentic
+            # arm too, where this code path never runs at all.
+            if model is not None:
+                log.warning(
+                    "ui_automation.image_model_not_applied",
+                    model=model.value,
+                    reason="generation-settings panel could not be opened",
+                    note="generation will use the project's current selection",
+                )
             log.warning("ui_automation.gen_settings_panel_not_found", skipping=True)
             return
 
@@ -3179,6 +3292,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 break
             await page.wait_for_timeout(self._CHARACTER_ROUTE_BACKOFF_MS)
             await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            await await_url_settled(page)
             await self._dismiss_blocking_overlays(page, self._out_dir)
 
         shot = await _capture_debug_screenshot(
@@ -3199,7 +3313,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         *,
         project_id: str,
         entity_id: str,
-        locale: str,
+        locale: str | None,
     ) -> None:
         """Navigate to the Flow character editor for an existing entity.
 
@@ -3221,6 +3335,11 @@ class UiAutomationTransport(VideoGenerationMixin):
             entity_id=entity_id,
         )
         await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        # #580: settle BEFORE any DOM work — #395's "character-route bounce" is
+        # this exact race. `_settle_on_character_route` below only checks that
+        # `entity_id` is still in the URL, which a locale-only redirect PRESERVES,
+        # so it returns instantly and cannot substitute for this wait.
+        await await_url_settled(page)
         await self._dismiss_blocking_overlays(page, self._out_dir)
         await self._settle_on_character_route(page, entity_id=entity_id, url=url)
 
@@ -3304,7 +3423,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         entity_id: str,
         request: CharacterImageRequest,
         image_reference_index: int,
-        locale: str,
+        locale: str | None,
         format_prompt: bool = False,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
         """Navigate to the character editor and generate images via passive capture.
@@ -3346,7 +3465,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         entity_id: str,
         request: CharacterImageRequest,
         image_reference_index: int,
-        locale: str,
+        locale: str | None,
         format_prompt: bool = False,
     ) -> tuple[list[GeneratedImage], list[dict[str, Any]]]:
         """Serialized body of generate_character_images — called under _generate_lock."""

@@ -51,7 +51,7 @@ async def character_create(
     body: CharacterImageRequest | None = None,
     voice: str | None = None,
     personality: str | None = None,
-    locale: str = "en-US",
+    locale: str | None = None,
     format_prompt: bool = False,
 ) -> CharacterCreateResult:
     """Orchestrate the persist-before-spend character creation saga.
@@ -80,7 +80,10 @@ async def character_create(
     personality:
         Optional personality notes (may be redacted by the recorder).
     locale:
-        BCP-47 locale forwarded to ``generate_character_image``.
+        BCP-47 locale forwarded to ``generate_character_image``. ``None``
+        (the default) means "use the ACCOUNT's own locale", resolved live
+        from Flow — see #580. A hardcoded default silently routed every
+        non-``en`` account to the wrong editor URL.
     format_prompt:
         Whether to click Flow's prompt-format button before submitting, which
         rewrites the prompt into Flow's character prompt-engineering shape.
