@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An announcement modal that mounts *during* a batch generation no longer
+  silently changes the next prompt's settings**
+  ([#593](https://github.com/ffroliva/gflow-cli/issues/593) follow-up). #593 left a
+  stated gap: call sites that neither route through `_probe_selector_cascade` nor
+  sit behind a navigation gate were still unguarded, and the set had not been
+  enumerated. Auditing all 73 click/fill/press sites in the UI transports found
+  exactly one that survives the "can a modal actually land here?" test — the image
+  **batch** loop's per-prompt boundary. A batch dismisses overlays once, during
+  setup; from prompt 2 on, the settings clicks are the first act after a
+  multi-second generation wait on a page that never navigates. This one is worse
+  than a timeout: `_open_gen_settings_panel` returns `False` when no selector
+  matches and the caller falls back to Flow's current defaults, so a modal that
+  mounted during prompt 1 did not fail prompt 2 — it generated it at the wrong
+  aspect/count. The boundary now runs the same `_require_unblocked` check the
+  navigation epochs use (one probe on the happy path), so the run aborts with
+  exit 23 and a screenshot instead of producing a quietly wrong image.
+
 - **A Flow announcement modal no longer wedges a run with an unexplained timeout
   ([#593](https://github.com/ffroliva/gflow-cli/issues/593)).** When Google ships a
   feature, Flow puts a full changelog dialog over the editor and sets
