@@ -345,7 +345,7 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 
 **What:** Which Flow UI arm to use for generation. Flow serves a **classic** composer (hard crop/aspect controls) or an **agentic** chat cohort, server-assigned and flapping per page load ([#299](https://github.com/ffroliva/gflow-cli/issues/299)).
 **Values:**
-- `auto` (default) — bind whatever the composer renders.
+- `auto` (default) — no arm was asked for, so gflow **requires `classic`** ([#595](https://github.com/ffroliva/gflow-cli/issues/595)): classic is the arm that can satisfy a generation request, and it is recovered first, so this only aborts when the arm is genuinely pinned. Before v0.62.0 `auto` bound whatever rendered, which put an account in Flow's agentic cohort on a driver that cannot produce an image — failing mid-run as `image_mode_tab` selector drift or a `WireFormatError` about video bytes. Agentic is still reachable, but only by name (`--ui-mode agentic`) or by need (`-i`).
 - `classic` — require the classic composer (hard aspect controls). gflow switches to it, re-probes to verify, and if the arm is still agentic **aborts before submitting** with `UiModeUnavailableError` (**exit 28**) — no credits spent.
 - `agentic` — require the agentic chat surface (needed for `-i` agent instructions). gflow switches to it, verifies, and aborts (exit 28) if it can't be reached.
 **Default:** `auto`

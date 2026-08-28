@@ -1707,8 +1707,10 @@ class FlowApiClient:
                 detail=(
                     "image download returned video content (ISO-BMFF/WebM magic "
                     "bytes) — the agentic conversational agent likely produced a "
-                    "video instead of an image. Use a Classic UI profile "
-                    "(GFLOW_CLI_PREFER_CLASSIC=1) or rephrase the prompt."
+                    "video instead of an image. The agentic arm is only bound "
+                    "when asked for by name or by -i instructions, so drop "
+                    "--ui-mode agentic / GFLOW_CLI_UI_MODE=agentic / -i "
+                    "(auto resolves to classic), or rephrase the prompt."
                 ),
                 route=route,
             )
