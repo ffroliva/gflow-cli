@@ -3063,7 +3063,18 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
 
         # Step 1 — configure settings (aspect + count) for this prompt.
+        #
+        # #593 gap audit: this is an overlay epoch, and it was the last unguarded
+        # one. A batch dismisses overlays ONCE during setup; from prompt 2 on,
+        # these settings clicks are the first act after `_await_captured` — a
+        # multi-second generation wait on a page that never navigates, so neither
+        # the navigation gate nor `_probe_selector_cascade` covers them. And the
+        # failure here is silent, not loud: `_open_gen_settings_panel` returns
+        # False when nothing matches and the caller falls back to Flow's current
+        # defaults, so a modal that mounted during prompt 1 does not fail prompt 2
+        # — it generates it at the wrong aspect/count. One probe on the happy path.
         try:
+            await self._require_unblocked(page, out_dir, epoch=f"batch prompt {idx}")
             await ui_driver.configure_image_settings(
                 page,
                 req,

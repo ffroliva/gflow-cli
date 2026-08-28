@@ -405,3 +405,67 @@ class TestDismissalIsVerified:
         result = await t._dismiss_blocking_overlays(page)  # type: ignore[attr-defined]
 
         assert result is False
+
+
+@pytest.mark.asyncio
+class TestBatchInterPromptBoundary:
+    """#593 gap audit: the batch loop's per-prompt boundary is an overlay epoch.
+
+    A batch dismisses overlays ONCE, during setup. Prompts 2..N then open the
+    settings panel as their first act after ``_await_captured`` — a real
+    multi-second generation wait, on a page that never navigates. Neither
+    existing guard applies: not behind a navigation gate, and the image settings
+    clicks do not route through ``_probe_selector_cascade``.
+
+    What makes it worth guarding rather than leaving self-reporting:
+    ``_open_gen_settings_panel`` returns **False** when no selector matches, and
+    its caller falls back to Flow's current defaults. A modal that mounts during
+    prompt 1's generation therefore does not fail prompt 2 — it silently
+    generates it at the wrong aspect/count. A quiet wrong result, not a timeout.
+    """
+
+    async def test_blocked_page_aborts_before_configuring(self, tmp_path: Path) -> None:
+        from gflow_cli.api.image import GenerateImageRequest
+        from gflow_cli.errors import UiSelectorDriftError
+
+        page = _page_with_pointer_events("none")
+        ui_driver = MagicMock()
+        ui_driver.configure_image_settings = AsyncMock()
+
+        t = UiAutomationTransport()
+        result, fatal = await t._run_one_prompt_in_batch(  # type: ignore[attr-defined]
+            page=page,
+            idx=1,
+            req=GenerateImageRequest(prompt="a red apple"),
+            project_id="11111111-2222-3333-4444-555555555555",
+            out_dir=tmp_path,
+            ui_driver=ui_driver,
+        )
+
+        # The point of the guard: never click into a page that cannot receive
+        # clicks, so the settings silently kept from the previous prompt can
+        # never reach the wire.
+        ui_driver.configure_image_settings.assert_not_awaited()
+        assert result.status == "fail"
+        assert isinstance(fatal, UiSelectorDriftError)
+
+    async def test_clear_page_configures_as_before(self, tmp_path: Path) -> None:
+        """No overlay → the guard is one probe and the cycle proceeds."""
+        from gflow_cli.api.image import GenerateImageRequest
+
+        page = _page_with_pointer_events("auto")
+        ui_driver = MagicMock()
+        ui_driver.configure_image_settings = AsyncMock(side_effect=RuntimeError("stop here"))
+
+        t = UiAutomationTransport()
+        result, _fatal = await t._run_one_prompt_in_batch(  # type: ignore[attr-defined]
+            page=page,
+            idx=1,
+            req=GenerateImageRequest(prompt="a red apple"),
+            project_id="11111111-2222-3333-4444-555555555555",
+            out_dir=tmp_path,
+            ui_driver=ui_driver,
+        )
+
+        ui_driver.configure_image_settings.assert_awaited_once()
+        assert result.status == "fail"  # the sentinel, not the guard
