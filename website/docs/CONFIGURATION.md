@@ -247,6 +247,7 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 **Default:** `0.5-1.5` — deliberately small so runs don't waste wall-clock. **Widen (e.g. `10-30`) when runs start hitting WAF 403s**, then dial back once the score decays.
 **CLI override:** `--jitter` on `image t2i` and `image batch` (flag beats env).
 **Why:** Flow's WAF reacts to cumulative submission cadence — see [DEBUGGING § WAF cadence](DEBUGGING.md#waf-cadence).
+**Not the only pacing:** this is the pause *between prompt submissions*. Separately, every individual interaction (clicks, panel waits, typing) is randomised by ±25% around its base delay to break deterministic automation timing — that one is always on and not configurable. Both, plus everything else that affects account risk, are explained in [ACCOUNT_SAFETY.md](ACCOUNT_SAFETY.md).
 
 ### `GFLOW_CLI_LOG_LEVEL`
 
