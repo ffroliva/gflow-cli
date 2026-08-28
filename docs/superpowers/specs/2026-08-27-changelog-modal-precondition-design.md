@@ -212,9 +212,38 @@ not sufficient*, and the detector's behaviour on a populated composer is unmeasu
 > **Fail** — detector `True` on a healthy composer → the 9 hand-placed boundaries are
 > load-bearing; abort A, B and C.
 
+### Maintainer decision, 2026-08-27 — B is REJECTED, not deferred
+
+The council deferred option B pending the #561 diagnosis. The maintainer went
+further and rejected it outright:
+
+> All the points raised point to this being a bad design. Trying to guess how
+> Google will approach the next changelog note is guessing, and we are not in
+> for that.
+
+**The governing principle, recorded so it survives this issue:** treat a blocking
+overlay as a *precondition of acting*, never as something to predict. We do not
+model what the next announcement looks like, when it mounts, or which endpoint
+records it. We detect the one property that is true whenever the app is unusable
+— `body { pointer-events: none }` — and check it where it matters.
+
+"Check on every request" is the intent; a probe on literally every call is not
+the cheapest way to honour it. An action that is blocked **will** fail its
+selector probe, so checking at that failure gives the same coverage for ~0 cost
+on the happy path, and the latency is paid only on the path that was already
+failing. Navigation epochs gate up front as well, because that is where the modal
+usually appears.
+
+**Known gap, stated rather than hidden:** call sites that neither route through
+the probe cascade nor sit behind a navigation gate remain unguarded. One was
+found and fixed (the gallery "+ New project" sweep); the set has not been
+enumerated. A bare `TimeoutError` with no `overlay_detected` is the signal, and
+the remedy is to route that call site through the same check — never to add a
+second mechanism.
+
 ### Deferred / out of scope
 
-- **B** is deferred behind the canary-401 diagnosis. If it ever ships: `page.evaluate`
+- **B** is rejected (above); the measurements are kept only as the wire record. If it ever ships: `page.evaluate`
   fetch (never `page.request`/`_get_json` — a labs-lane 401 there hits
   `_raise_for_non_retryable` and aborts bootstrap with a false "session expired"), single
   attempt, no tenacity, no token refresh, POST gated strictly on the ids differing, and
