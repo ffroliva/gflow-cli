@@ -196,7 +196,9 @@ Options:
   --ui-mode [auto|classic|agentic]
                             Require a Flow UI arm: classic (hard aspect
                             controls) / agentic (chat surface; forced by -i) /
-                            auto (default). Aborts exit 28 if unreachable.
+                            auto (default) — auto resolves to classic, the only
+                            arm that can satisfy an image request (#595).
+                            Aborts exit 28 if unreachable.
                             Single-prompt only; batch uses GFLOW_CLI_UI_MODE.
   --profile NAME            Profile name (overrides default).
 ```

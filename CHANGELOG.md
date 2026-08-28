@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`--ui-mode auto` (the default) now requires the *classic* Flow arm for image
+  generation ([#595](https://github.com/ffroliva/gflow-cli/issues/595)).** `auto`
+  used to bind whatever the composer rendered, so an account that Flow moved into
+  its **agentic** cohort — observed live on two accounts on 2026-08-27 — took a
+  path that cannot satisfy an image request and failed with either
+  `image_mode_tab` selector drift (exit 23) or a `WireFormatError` about video
+  bytes. Neither error named the cause, and the workaround
+  (`GFLOW_CLI_PREFER_CLASSIC=1`) had to be discovered from an error message.
+  `auto` now means "no arm was asked for" and resolves to `classic`, matching the
+  rule video has followed since [#299](https://github.com/ffroliva/gflow-cli/issues/299).
+  The bind still attempts classic recovery first and the cohort flaps per page
+  load, so a run only aborts (`UiModeUnavailableError`, **exit 28**, pre-submit,
+  zero credits) when the arm is genuinely pinned — and that abort is retryable.
+  The agentic arm stays reachable, but only when asked for by name
+  (`--ui-mode agentic` / `GFLOW_CLI_UI_MODE=agentic`) or by need (`-i` agent
+  instructions, which are agentic-only and still force it). The image **batch**
+  path carried its own inline mode resolution and so kept binding `auto`; it now
+  routes through the same policy as the single-prompt path.
+
 ### Fixed
 
 - **A Flow announcement modal no longer wedges a run with an unexplained timeout

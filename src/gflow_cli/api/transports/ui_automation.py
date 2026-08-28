@@ -3242,15 +3242,18 @@ class UiAutomationTransport(VideoGenerationMixin):
         # cohort flaps per page load; bind once per batch (the editor stays
         # mounted so the cohort is stable for this batch's lifetime).
         # Classic driver requires a transport reference for send_prompt.
-        # No instruction inference here: the image-batch manifest carries no
-        # per-item -i instructions (single-prompt only), so the required arm is
-        # just the resolved --ui-mode / env. Route through infer_required_ui_mode
-        # if batch ever gains instruction support.
-        from gflow_cli.config import resolve_ui_mode
+        # The image-batch manifest carries no per-item -i instructions
+        # (single-prompt only), so ``has_instructions`` is fixed False — but the
+        # call still routes through infer_required_ui_mode so batch inherits the
+        # same policy as the single path (#595: auto ≡ classic). It had its own
+        # inline resolve_ui_mode and so kept binding AUTO after the single path
+        # stopped. Pass instructions through here if batch ever gains them.
+        from gflow_cli.config import infer_required_ui_mode, resolve_ui_mode
 
+        required_mode = infer_required_ui_mode(resolve_ui_mode(None), has_instructions=False)
         # Inject ``self`` into the classic driver at construction (via the
         # factory) — never mutate ``_transport`` onto the driver after the fact.
-        ui_driver = await get_ui_driver(page, ui_mode=resolve_ui_mode(None), transport=self)
+        ui_driver = await get_ui_driver(page, ui_mode=required_mode, transport=self)
 
         try:
             await ui_driver.switch_to_image_mode(page, out_dir=out_dir)
