@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **[`docs/ACCOUNT_SAFETY.md`](docs/ACCOUNT_SAFETY.md) — one honest page answering
+  "will this get my account flagged?"
+  ([#602](https://github.com/ffroliva/gflow-cli/issues/602)).** Two Reddit
+  commenters asked the same question from opposite directions on the same day, and
+  the answer existed only as fragments across README, `DISCLAIMER.md`,
+  `DEBUGGING § WAF cadence`, `KNOWN_ISSUES` and `CONFIGURATION` — findable if you
+  already knew where to look, invisible to someone deciding whether to install.
+  The page separates the three things people conflate (a quota limit, a per-profile
+  WAF block, an account ban — only the first two have ever been observed here),
+  states what the tool does to stay unremarkable (headed real Chrome because
+  headless is an instant 403, ±25% randomisation on every interaction, 0.5–1.5 s
+  submission pacing, one project per multi-prompt run, isolated per-account
+  profiles, refuse-don't-retry), what it deliberately does **not** do (no proxy
+  rotation, no fingerprint spoofing beyond the opt-in patched engine, no headless
+  unlock, no pretence that it isn't automation), the knobs worth turning, the
+  [#241](https://github.com/ffroliva/gflow-cli/issues/241) field data on what
+  actually triggered a 403, and what cannot be promised. Linked from the README
+  banner, `docs/INDEX.md`, and back-linked from all three deep sources; published
+  to the docs site under Getting started.
+
+- Clarified in [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_jitter_range) that
+  `GFLOW_CLI_JITTER_RANGE` paces *submissions between prompts* and is a different
+  mechanism from the always-on ±25% per-interaction randomisation — the two were
+  easy to read as one knob.
+
 ## [0.62.0] — 2026-08-28
 
 ### Changed

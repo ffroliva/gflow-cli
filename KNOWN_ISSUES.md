@@ -644,6 +644,12 @@ batch — so it is not a global incompatibility but a per-profile WAF state.
    or `GFLOW_CLI_JITTER_RANGE` (#241); cadence guidance in
    [DEBUGGING § WAF cadence](docs/DEBUGGING.md#waf-cadence).
 
+> **What this means for your account:** a 403 is a *per-profile* WAF score, not an
+> account ban — the same account on a different profile has succeeded the same day.
+> The full picture (what the tool does to stay unremarkable, what it deliberately
+> does not do, and what we cannot promise) is in
+> [docs/ACCOUNT_SAFETY.md](docs/ACCOUNT_SAFETY.md).
+
 **Tracked separately from** the architectural ["first-attempt listener-miss
 flake"](https://github.com/ffroliva/gflow-cli/pull/40) — that one was caused
 by editor mode confusion and is resolved by PR #40. WAF 403 is a fresh, distinct
