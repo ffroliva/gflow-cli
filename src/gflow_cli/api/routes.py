@@ -168,9 +168,12 @@ LOCALE_SEGMENT_RE = re.compile(r"^https://labs\.google/fx/([a-z]{2,3})(?:-[A-Za-
 def locale_segment_from_url(url: str) -> str | None:
     """Extract the account's locale segment from a **settled** Flow URL (#580).
 
-    Flow serves the editor under ``/fx/{locale}/tools/flow`` and redirects any
-    other form to the account's own locale. That redirect is the ONLY trustworthy
-    source of the account locale:
+    Flow serves the editor under ``/fx/{locale}/tools/flow`` and redirects the
+    **bare** form to the account's own locale. It does NOT correct a wrong-but-
+    valid segment: measured 2026-08-27 (#587), a pt-BR account sent to
+    ``/fx/de/tools/flow`` stayed there and rendered ``html lang=de``. So only a
+    BARE navigation reveals the account locale — never navigate to a segment we
+    chose and read it back as an observation:
 
     * ``GET /fx/api/auth/session`` carries no locale field.
     * ``navigator.language`` reports the value **gflow itself sets** when it
@@ -207,10 +210,29 @@ def project_editor_url(locale: str | None, project_id: str) -> str:
     ``None`` omits the segment and lets Flow normalise, which still redirects but
     never sends the caller somewhere it has to be bounced back from.
     """
+    # Same allowlist as the sibling builders (batch_generate_images_url, scenes_url):
+    # this URL is now rendered into terminal OSC-8 sequences and JSON, so an id
+    # carrying control characters or spaces must not reach them (#587).
+    if not _PROJECT_ID_RE.fullmatch(project_id):
+        msg = f"Invalid project_id: {project_id!r}"
+        raise ValueError(msg)
     segment = _segment_or_none(locale)
     if segment is None:
         return f"{LABS_FX_BASE}/tools/flow/project/{project_id}"
     return f"{LABS_FX_BASE}/{segment}/tools/flow/project/{project_id}"
+
+
+def project_editor_url_or_none(locale: str | None, project_id: str) -> str | None:
+    """Display-safe :func:`project_editor_url`: ``None`` instead of raising (#587).
+
+    Navigation must refuse a malformed id; a LISTING must not. A catalog row with
+    an odd id should still print — dropping its link is the right degradation,
+    crashing `project list` over one row is not.
+    """
+    try:
+        return project_editor_url(locale, project_id)
+    except ValueError:
+        return None
 
 
 def _segment_or_none(locale: str | None) -> str | None:

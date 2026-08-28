@@ -39,9 +39,11 @@ Fixed, tested invocation recipes. Do not improvise a command for a listed tool �
 ### Antigravity (`agy`)
 
 - **What it is:** Google's Antigravity harness, invoked via `agy`. It supplies the `high`-tier's second, different-model-family opinion.
-- **Best-known recipe:** `agy --agent <gsd-agent-name> --new-project --add-dir <absolute-repo-dir> -p "<prompt>"` (run `agy agents` to list available agent names, e.g. `gsd-plan-checker` for reviewing a plan).
-- **Probe:** `agy --version` first regardless — a fast binary-health check.
-- **If it's missing or fails:** Antigravity is a newer harness and has failed non-interactively in testing (an interactive workspace prompt even with `--add-dir`; a bare unexplained termination error even with `--agent`/`--new-project`) — plausibly account-quota exhaustion, unconfirmed. Don't silently retry past its probe. When `agy` isn't installed or won't run non-interactively, **suggest installing it (or substituting another external CLI coding agent — e.g. a codex-only `medium` run)** and continue best-effort with whatever did return; never block the whole round on it.
+- **Working recipe (verified 2026-08-27):** `agy --model <model> --mode plan --dangerously-skip-permissions --add-dir <absolute-repo-dir> --print-timeout 15m -p "<prompt>"`. `--mode plan` is what makes the permission flag acceptable: the agent gets reads, not writes. Verify the worktree is unmodified afterwards (`git status`) — on the run that produced this note, it was.
+- **Do NOT use `--agent <gsd-*> --new-project`.** That was the previous recipe and it terminates with a bare `Error: Agent execution terminated due to error.` — this was misdiagnosed here as quota exhaustion for months.
+- **Probe:** `agy models` — **not** `agy --version`. The version check only proves the binary exists; `agy models` exercises auth and returns the model list (Gemini 3.x Pro/Flash, Claude, GPT-OSS), which is what you actually need to know.
+- **The failure mode is permissions, not quota.** Headless mode cannot prompt, so tool requests are auto-denied and the run returns *no output at all*: `a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied`. Three separate runs failed three different ways before this surfaced; each error named the next problem, so read the actual message rather than assuming quota.
+- **If it's genuinely unavailable:** don't silently retry past its probe. **Suggest installing it, or substitute another external CLI coding agent**, and continue best-effort with whatever did return; never block the whole round on it. Note that the `gemini` CLI is *not* a valid substitute for individual accounts — it now returns `IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals`, and it fails that way **after** passing a `--version` probe.
 
 ## Dispatch Flow
 

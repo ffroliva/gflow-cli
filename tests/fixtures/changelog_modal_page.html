@@ -1,0 +1,102 @@
+<!doctype html>
+<!--
+  Flow's changelog announcement modal, captured live from ffroliva on 2026-08-27
+  (announcement id 08-26-26_omni_439461c7-439a-4e04-8f2e-8fc288897eb6, #593).
+
+  The dialog markup is verbatim from the capture; only the iframe src host is kept
+  (its body is remote and irrelevant to selector resolution). The two properties
+  that make this the real failure state are reproduced exactly:
+
+    * body carries inline `pointer-events: none`  -> the app behind is unclickable
+    * body is NOT aria-hidden and NOT inert       -> the a11y tree says it is fine
+
+  That combination is why Playwright's actionability check hangs: #app-control below
+  reads visible and enabled, yet hit-testing lands on the dialog overlay.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Flow — changelog modal fixture</title>
+    <style>
+      /* Radix's overlay: covers the viewport, sits above the app. */
+      #overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        background: rgba(0, 0, 0, 0.6);
+      }
+      [role="dialog"] {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 51;
+        width: 39.75rem;
+        pointer-events: auto;
+      }
+      #app-control {
+        position: fixed;
+        top: 1rem;
+        left: 1rem;
+      }
+    </style>
+  </head>
+  <body style="pointer-events: none">
+    <!-- The app behind the modal. Visible + enabled, but never clickable. -->
+    <main id="app">
+      <button id="app-control" aria-haspopup="menu" type="button">
+        <i class="google-symbols">crop_landscape</i>
+      </button>
+    </main>
+
+    <div id="overlay" data-state="open"></div>
+
+    <div
+      role="dialog"
+      id="radix-:r4e:"
+      aria-describedby="radix-:r4g:"
+      aria-labelledby="radix-:r4f:"
+      data-state="open"
+      class="sc-181bed44-1 ixFWrf"
+      tabindex="-1"
+      style="pointer-events: auto"
+    >
+      <div class="sc-181bed44-3 cjbZRH">
+        <span
+          style="
+            position: absolute;
+            border: 0px;
+            width: 1px;
+            height: 1px;
+            padding: 0px;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0px, 0px, 0px, 0px);
+            white-space: nowrap;
+            overflow-wrap: normal;
+          "
+          ><h2 id="radix-:r4f:">Latest Flow Update</h2></span
+        ><iframe
+          src="https://www.gstatic.com/aitestkitchen/website/flow/changelogs/08-26-26_omni_439461c7-439a-4e04-8f2e-8fc288897eb6.html"
+          class="sc-181bed44-4 gbsLxc"
+        ></iframe>
+      </div>
+      <a class="sc-181bed44-5 hAzUkQ" href="/fx/tools/flow/changelogs">View all changelogs</a
+      ><button type="button" class="sc-16c4830a-1 hxJPrd sc-181bed44-2 cqJnVC">
+        Get started
+        <div data-type="button-overlay" class="sc-16c4830a-0 cZvLor"></div>
+      </button>
+    </div>
+
+    <script>
+      // Flow's own dismissal, reduced to its observable effect: the dialog
+      // unmounts and the body becomes clickable again. Lets a test assert that
+      // the production selector actually drives the real markup to a cleared state.
+      document.querySelector("[role='dialog'] button").addEventListener("click", () => {
+        document.querySelector("[role='dialog']").remove();
+        document.getElementById("overlay").remove();
+        document.body.style.pointerEvents = "auto";
+      });
+    </script>
+  </body>
+</html>

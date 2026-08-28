@@ -23,7 +23,7 @@ import shutil
 import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from gflow_cli.auth import default_profile_root, profile_dir, status
 
@@ -33,6 +33,23 @@ if TYPE_CHECKING:
 CONFIG_FILENAME = "config.toml"
 PROFILE_DIR_PREFIX = "profile_"
 ACCOUNT_FILE = ".gflow_account"
+LOCALE_FILE = ".gflow_locale"
+
+# The probe cannot tell "Flow does not redirect this account" from "the settle
+# timed out this once" — `await_url_settled` returns None for both. Committing
+# straight to NOT_REDIRECTED on the first no-redirect observation therefore lets a
+# single slow network permanently disable the settle, silently restoring #580's
+# post-goto race. So a no-redirect observation is PROVISIONAL until a second run
+# agrees; the poisoned state cannot arise, and the cost of a false timeout is one
+# extra probe rather than a permanent defect.
+PROVISIONAL: Final = "?"
+NOT_REDIRECTED: Final = ""
+
+# A locale SEGMENT as Flow serves it under /fx/{segment}/tools/flow — bare
+# lowercase ISO-639, never a full BCP-47 tag. Enforced on READ because this value
+# is interpolated into a URL path: a hand-edited or corrupted file must degrade
+# to "probe again", not build https://labs.google/fx/../../etc/passwd/tools/flow.
+_LOCALE_SEGMENT_RE = re.compile(r"^[a-z]{2,3}$")
 
 # Mirrors gflow_cli.paths._SAFE_ID_RE — alphanumerics, hyphens, underscores, ≤128 chars.
 _SAFE_PROFILE_NAME_RE = re.compile(r"^[\w\-]{1,128}$")
@@ -264,6 +281,71 @@ def _dump_config(data: dict[str, object]) -> str:
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')
         lines.append(f'{key} = "{escaped}"')
     return "\n".join(lines) + "\n"
+
+
+def read_account_locale(profile_path: Path) -> str | None:
+    """Cached account-locale probe outcome for a profile dir (#587). FOUR states.
+
+    ``None``               — never probed; probe, then record the outcome.
+    :data:`PROVISIONAL`    — ONE no-redirect observation; probe again to confirm.
+    :data:`NOT_REDIRECTED` — two agreed; skip the settle, there is nothing to wait for.
+    ``"pt"``               — the account's locale segment.
+
+    Anything else reads as ``None`` so a corrupt file self-heals: the value is
+    interpolated into a URL path, and ``ValueError`` covers the undecodable-bytes
+    case that would otherwise crash every listing command.
+    """
+    try:
+        raw = (profile_path / LOCALE_FILE).read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        return None
+    if not raw:
+        return NOT_REDIRECTED
+    if raw == PROVISIONAL:
+        return PROVISIONAL
+    return raw if _LOCALE_SEGMENT_RE.match(raw) else None
+
+
+def write_account_locale(profile_path: Path, value: str | None) -> None:
+    """Persist a probe outcome verbatim; ``None`` means :data:`NOT_REDIRECTED`.
+
+    Best-effort: a failed cache write costs one extra probe, never a run.
+    """
+    try:
+        (profile_path / LOCALE_FILE).write_text(value or NOT_REDIRECTED, encoding="utf-8")
+    except OSError:
+        return
+
+
+def next_locale_state(cached: str | None, observed: str | None) -> str:
+    """Fold a fresh probe outcome into the cached one (#587).
+
+    A no-redirect observation only reaches :data:`NOT_REDIRECTED` by agreeing with
+    a previous one, which is what makes a single transient settle timeout cost an
+    extra probe instead of permanently disabling the settle. A segment is always
+    taken at face value — Flow stating a locale is not ambiguous the way silence is.
+    """
+    if observed is not None:
+        return observed
+    # Silence corroborates an earlier silence; it never demotes a committed state
+    # (unreachable from the client, which returns early on NOT_REDIRECTED, but the
+    # function must be right on its own terms).
+    return NOT_REDIRECTED if cached in (PROVISIONAL, NOT_REDIRECTED) else PROVISIONAL
+
+
+def account_locale_for(profile_name: str) -> str | None:
+    """Cached locale SEGMENT for a named profile, or ``None`` when unknown (#587).
+
+    The offline entry point: catalog listings know a profile name, not a dir, and
+    have no browser to ask. Only a real segment is a locale — the bookkeeping
+    states must never leak into a URL, and :data:`PROVISIONAL` is truthy, so this
+    checks the shape rather than truthiness. A catalog row can outlive its profile
+    dir, so a missing dir is a normal ``None``.
+    """
+    cached = read_account_locale(profile_dir(profile_name))
+    if cached is None or not _LOCALE_SEGMENT_RE.match(cached):
+        return None
+    return cached
 
 
 def _read_account_file(profile_path: Path) -> str | None:

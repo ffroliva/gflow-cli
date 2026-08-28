@@ -7,6 +7,161 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.62.0] — 2026-08-28
+
+### Changed
+
+- **`--ui-mode auto` (the default) now requires the *classic* Flow arm for image
+  generation ([#595](https://github.com/ffroliva/gflow-cli/issues/595)).** `auto`
+  used to bind whatever the composer rendered, so an account that Flow moved into
+  its **agentic** cohort — observed live on two accounts on 2026-08-27 — took a
+  path that cannot satisfy an image request and failed with either
+  `image_mode_tab` selector drift (exit 23) or a `WireFormatError` about video
+  bytes. Neither error named the cause, and the workaround
+  (`GFLOW_CLI_PREFER_CLASSIC=1`) had to be discovered from an error message.
+  `auto` now means "no arm was asked for" and resolves to `classic`, matching the
+  rule video has followed since [#299](https://github.com/ffroliva/gflow-cli/issues/299).
+  The bind still attempts classic recovery first and the cohort flaps per page
+  load, so a run only aborts (`UiModeUnavailableError`, **exit 28**, pre-submit,
+  zero credits) when the arm is genuinely pinned — and that abort is retryable.
+  The agentic arm stays reachable, but only when asked for by name
+  (`--ui-mode agentic` / `GFLOW_CLI_UI_MODE=agentic`) or by need (`-i` agent
+  instructions, which are agentic-only and still force it). The image **batch**
+  path carried its own inline mode resolution and so kept binding `auto`; it now
+  routes through the same policy as the single-prompt path.
+
+### Fixed
+
+- **An announcement modal that mounts *during* a batch generation no longer
+  silently changes the next prompt's settings**
+  ([#593](https://github.com/ffroliva/gflow-cli/issues/593) follow-up). #593 left a
+  stated gap: call sites that neither route through `_probe_selector_cascade` nor
+  sit behind a navigation gate were still unguarded, and the set had not been
+  enumerated. Auditing all 73 click/fill/press sites in the UI transports found
+  exactly one that survives the "can a modal actually land here?" test — the image
+  **batch** loop's per-prompt boundary. A batch dismisses overlays once, during
+  setup; from prompt 2 on, the settings clicks are the first act after a
+  multi-second generation wait on a page that never navigates. This one is worse
+  than a timeout: `_open_gen_settings_panel` returns `False` when no selector
+  matches and the caller falls back to Flow's current defaults, so a modal that
+  mounted during prompt 1 did not fail prompt 2 — it generated it at the wrong
+  aspect/count. The boundary now runs the same `_require_unblocked` check the
+  navigation epochs use (one probe on the happy path), so the run aborts with
+  exit 23 and a screenshot instead of producing a quietly wrong image.
+
+- **A Flow announcement modal no longer wedges a run with an unexplained timeout
+  ([#593](https://github.com/ffroliva/gflow-cli/issues/593)).** When Google ships a
+  feature, Flow puts a full changelog dialog over the editor and sets
+  `body { pointer-events: none }` while leaving the app neither `aria-hidden` nor
+  `inert` — so every control reads visible and enabled yet never receives a click,
+  and Playwright's actionability wait runs to timeout with no message. Measured live
+  on two accounts (2026-08-27, pt and en), which is also how the four failure paths
+  below were found:
+  - The gallery "+ New project" sweep ran with **no overlay check at all** — the one
+    navigation epoch that had none. A modal there cost 18 selectors x Playwright's
+    30 s default click timeout and then reported `Could not find 'New project' CTA`,
+    which is the wrong error about the wrong thing. It now dismisses first and the
+    click carries an explicit 5 s timeout.
+  - Dismissal **verifies itself**. It previously returned success the moment a click
+    landed, so a dismissal that changed nothing still logged `overlay_dismissed` and
+    the run timed out somewhere unrelated — the success event lied. It now re-probes
+    and reports honestly, with a new `ui_automation.overlay_postmortem` warning.
+  - A persistent block now **aborts pre-submit at $0** with exit 23 and a screenshot
+    (probe `overlay_close_button`) instead of hanging. A transient is not enough to
+    trigger it: Flow's own menus set the same property while open, so the guard
+    re-probes after a settle.
+  - **The modal can mount *after* the navigation gate**, which is how it kept winning.
+    Flow hydrates on its own schedule, well past `domcontentloaded`, so dismissal at
+    the navigation boundary can run before the dialog exists — then the dialog appears
+    and covers a control that is present and enabled, and the selector cascade reports
+    drift for an element that is perfectly fine. A failed probe now checks the overlay
+    state before believing itself, and dismisses and re-probes once. The guard lives in
+    the one cascade every probe routes through, so all ten call sites are covered.
+    Verified live on a third account (2026-08-27): before the fix, `image_mode_tab`
+    raised `UiSelectorDriftError` with the announcement on screen and **no
+    `overlay_detected` in the log at all**; after it, the same command on the same
+    account cleared the modal (`setLastAcknowledgedChangeLogId` → 200, 23 s in, i.e.
+    from the probe guard rather than the navigation gate) and left the editor
+    reachable.
+  - The destructive Escape fallback is now **gated on the page actually being
+    blocked**, which retires the [#395](https://github.com/ffroliva/gflow-cli/issues/395)
+    hazard structurally rather than by comment. That regression pressed Escape on the
+    character composer and sent a generation out without `entityContext` — billed,
+    silently wrong. A page we can positively see is clickable is never touched.
+
+  Two raw-`goto` e2e tests (`test_sidebar_recovery_e2e`, `e2e_auth` — the nightly
+  canary's default tier — and `test_agentic_count_enforcement_e2e`) bypass every
+  transport boundary and were unprotected; both now dismiss explicitly, and both stop
+  hardcoding `"en"` in favour of the account's own locale (#587).
+
+  **One deliberate behaviour change.** The close-button cascade is now split: the
+  changelog-scoped anchor (`[role='dialog']:has(a[href*='changelog']) button`) runs on
+  any page because it cannot match one of Flow's own surfaces, while the generic
+  selectors (`button:has(i:text('close'))` and friends) and the Escape fallback run
+  only once the body is known to be blocked. The cost is that a non-modal banner —
+  one that covers a control without blocking the body — is no longer auto-closed by
+  the generic selectors. That is the right side of the trade: those same generic
+  selectors match the character composer's own close button, #395 spent real credits
+  through exactly that door, and `KNOWN_ISSUES` rates the banner case Low and
+  transient.
+
+### Added
+
+- **`gflow project list` / `project show` and the MCP `gflow_list_projects` tool now
+  emit an account-correct editor URL
+  ([#587](https://github.com/ffroliva/gflow-cli/issues/587)).** They previously
+  emitted no URL at all: they are network-free catalog reads, so they had no way to
+  resolve a locale and correctly declined to guess one. With the locale now cached
+  per profile the link is readable offline. An unknown locale still yields the bare
+  URL — never a guessed `/fx/en/...`, which is the shape that started this thread by
+  being handed to a pt-BR account owner. In the terminal the project id renders as a
+  hyperlink, costing no column width.
+
+### Changed
+
+- **The account-locale probe no longer costs ~4 s on every command
+  ([#587](https://github.com/ffroliva/gflow-cli/issues/587)).** The probe added in
+  v0.61.0 settles the bootstrap navigation to learn where Flow lands. On an account
+  Flow does *not* redirect there is nothing to settle, so `wait_for_url` ran to the
+  full `URL_SETTLE_TIMEOUT_MS` every single invocation. Measured live 2026-08-27,
+  best-of-N per arm: **~6.2 s -> ~2.0 s** setup on the non-redirecting account,
+  against an unchanged ~2.8 s -> ~2.9 s on a redirecting one (the control, which
+  shows the cold-then-warm ordering is worth nothing on its own). Run-to-run
+  variance is over a second, so read the delta as "the 4 s settle timeout", not to
+  two decimals.
+  The outcome is cached in the profile dir (`.gflow_locale`, a sibling of the
+  existing `.gflow_account`). The same guard covers all four `await_url_settled`
+  call sites **in the UI transport**; guarding only the editor entry left three
+  navigations still paying the timeout. (The three sites in the experimental REST
+  transports have no resolved locale to gate on and are unchanged.)
+
+  The cache decides only *whether to wait*, never *where to navigate*. Sending the
+  browser to a cached `/fx/{seg}/...` was built, measured, and rejected: Flow
+  serves whatever segment it is asked for, so a pt-BR account handed `/fx/de/`
+  stayed there and rendered `html lang=de` with no redirect — no correction signal,
+  and a wrong-language UI for as long as the stale value lived. That is #580's
+  defect in a new hat. The navigation therefore stays bare, which is what lets Flow
+  state the account's own answer. Reproducer: `scripts/dev/spike_locale_poison.py`.
+
+  The cache holds **four** states, and the fourth is what keeps it honest.
+  `await_url_settled` returns `None` for both "Flow does not redirect this account"
+  and "the settle timed out this once", so one slow network could otherwise commit
+  to "not redirected" permanently and silently restore #580's post-`goto` race. A
+  no-redirect observation is therefore **provisional** until a second run agrees;
+  a transient timeout costs one extra probe instead of a lasting defect.
+
+### Fixed
+
+- **A NULL `model` / `aspect` / `project_id` no longer reads back as the string
+  `"None"` in `gflow data list images|videos`.** All three columns are nullable in
+  the schema (`assets.model`, `assets.aspect_ratio`, `assets.flow_project_id`), but
+  both listing constructors wrapped them in a bare `str(...)`, so a NULL became the
+  four-character string `"None"` — emitted verbatim into `--json` and
+  indistinguishable from a real value. `_row_to_operation_error` in the same module
+  already guarded `model` correctly; the two listing paths never got the same
+  treatment. `ImageRow` / `VideoRow` now type these fields `str | None` and the JSON
+  output carries `null`.
+
 ## [0.61.0] — 2026-08-27
 
 ### Fixed
@@ -3247,7 +3402,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.61.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.62.0...HEAD
+[0.62.0]: https://github.com/ffroliva/gflow-cli/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/ffroliva/gflow-cli/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/ffroliva/gflow-cli/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/ffroliva/gflow-cli/compare/v0.58.0...v0.59.0

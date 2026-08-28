@@ -90,6 +90,12 @@ from gflow_cli.errors import (
 )
 from gflow_cli.paths import adjust_key_extension, character_output_path, looks_like_video
 from gflow_cli.profile_lease import ProfileLease
+from gflow_cli.profile_store import (
+    NOT_REDIRECTED,
+    next_locale_state,
+    read_account_locale,
+    write_account_locale,
+)
 from gflow_cli.redaction import redact_sensitive_text
 from gflow_cli.storage import AnyPath, storage_path, write_asset_async
 from gflow_cli.winsec import ensure_profile_hardened
@@ -333,7 +339,8 @@ class FlowApiClient:
         self._access_token_exp: float = 0.0  # epoch seconds; 0 = unknown/expired
         self._pw: Playwright | None = None
         self._context: BrowserContext | None = None
-        # Account locale segment, resolved once from the bootstrap navigation (#580).
+        # Account locale segment, resolved once from the bootstrap navigation (#580),
+        # then cached per profile (#587).
         self._account_locale: str | None = None
         # Cross-process profile lease (D3). Acquired in _enter_setup immediately
         # BEFORE the persistent context launches (so contention fails fast with
@@ -719,21 +726,45 @@ class FlowApiClient:
         # (Phase 3 deferred ``_new_session_id`` flake is addressed in T3 by
         # re-minting reCAPTCHA inside each retry loop on the worker's own
         # Page; no session-id work happens in T2.)
+        await self._bootstrap_and_resolve_locale()
+
+        # --- Step 2: Resolve and set up transport, passing the live Page so
+        # S1 can share this context rather than opening its own.
+        await self._setup_transport()
+
+    async def _bootstrap_and_resolve_locale(self) -> None:
+        """Navigate the bootstrap page and settle the account locale (#580, #587).
+
+        The probe (#580) costs the full ``URL_SETTLE_TIMEOUT_MS`` on any account
+        Flow does **not** redirect: ``wait_for_url`` never matches, so it runs to
+        timeout on every command. That single case is the entire cost, and the
+        cache answers exactly one question: *does this account redirect?*
+
+        The navigation stays **bare, always** — never to a cached segment. Flow
+        serves whatever segment it is asked for, so only a bare navigation makes
+        it state the account's own answer; see the CHANGELOG entry for #587 and
+        ``scripts/dev/spike_locale_poison.py``.
+
+        The settle is skipped only on :data:`NOT_REDIRECTED`, which
+        :func:`next_locale_state` reaches only after two runs agree — so a single
+        transient timeout cannot disable it.
+        """
+        assert self._page is not None
+        cached = read_account_locale(self.profile_dir)
         await self._page.goto(
             routes.EDITOR_BOOTSTRAP_URL,
             wait_until="domcontentloaded",
             timeout=60_000,
         )
-        # #580: the bootstrap navigation ITSELF races — measured 797 ms to return
-        # with the locale redirect landing afterwards. Settling it here fixes that
-        # race AND yields the account's locale segment for free, with no extra
-        # request. Best-effort: an unresolved locale degrades to bare URLs, which
-        # is never worse than the hardcoded "en-US" it replaces.
+        if cached == NOT_REDIRECTED:
+            self._account_locale = None
+            logger.info("client.account_locale_cached", locale=None, settle_skipped=True)
+            return
         self._account_locale = await self._resolve_account_locale(self._page)
-
-        # --- Step 2: Resolve and set up transport, passing the live Page so
-        # S1 can share this context rather than opening its own.
-        await self._setup_transport()
+        state = next_locale_state(cached, self._account_locale)
+        if state != cached:
+            logger.info("client.account_locale_state", was=cached, now=state)
+        write_account_locale(self.profile_dir, state)
 
     async def _resolve_account_locale(self, page: Any) -> str | None:
         """Settle the bootstrap navigation and read the account's locale (#580).
@@ -1676,8 +1707,10 @@ class FlowApiClient:
                 detail=(
                     "image download returned video content (ISO-BMFF/WebM magic "
                     "bytes) — the agentic conversational agent likely produced a "
-                    "video instead of an image. Use a Classic UI profile "
-                    "(GFLOW_CLI_PREFER_CLASSIC=1) or rephrase the prompt."
+                    "video instead of an image. The agentic arm is only bound "
+                    "when asked for by name or by -i instructions, so drop "
+                    "--ui-mode agentic / GFLOW_CLI_UI_MODE=agentic / -i "
+                    "(auto resolves to classic), or rephrase the prompt."
                 ),
                 route=route,
             )

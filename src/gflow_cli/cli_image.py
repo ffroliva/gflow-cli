@@ -785,9 +785,10 @@ _ui_mode_option = click.option(
     default=None,
     help=(
         "Which Flow UI arm to require: 'classic' (hard aspect controls), "
-        "'agentic' (chat surface; needed for -i), or 'auto' (bind whatever "
-        "renders). gflow switches to it and aborts (exit 28, retryable) if it "
-        "can't be reached. Overrides GFLOW_CLI_UI_MODE. Single-prompt only."
+        "'agentic' (chat surface; needed for -i), or 'auto' (default) — which "
+        "resolves to classic, the only arm that can satisfy an image request. "
+        "gflow switches to it and aborts (exit 28, retryable) if it can't be "
+        "reached. Overrides GFLOW_CLI_UI_MODE. Single-prompt only."
     ),
 )
 

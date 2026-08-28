@@ -16,12 +16,14 @@ from gflow_cli._cli_helpers import (
     _validate_project_id,
     run_with_handlers,
 )
+from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.cli_data import _db_path, _emit_projects_table
 from gflow_cli.data.models import ProjectRecord
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
+from gflow_cli.profile_store import account_locale_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -63,6 +65,12 @@ def list_subcommand(profile: str | None, limit: int, as_json: bool) -> None:
                         "created_at": r.created_at.isoformat(),
                         "image_count": r.image_count,
                         "video_count": r.video_count,
+                        # #587: account-correct, from the locale cached per
+                        # profile. Unknown locale => bare URL, never a guessed
+                        # `en` — that guess was the original defect (#580).
+                        "url": routes.project_editor_url_or_none(
+                            account_locale_for(r.profile), r.project_id
+                        ),
                     }
                     for r in rows
                 ],
@@ -99,6 +107,9 @@ def show_subcommand(project_id: str, profile: str | None, as_json: bool) -> None
         console.print(f"[yellow]Project not found:[/yellow] {project_id}")
         raise SystemExit(1)
 
+    url = routes.project_editor_url_or_none(
+        account_locale_for(record.profile_name), record.flow_project_id
+    )
     if as_json:
         json_output.emit(
             {
@@ -110,6 +121,7 @@ def show_subcommand(project_id: str, profile: str | None, as_json: bool) -> None
                     "profile": record.profile_name,
                     "source": record.source,
                     "created_at": record.created_at,
+                    "url": url,
                 },
             }
         )
@@ -120,6 +132,11 @@ def show_subcommand(project_id: str, profile: str | None, as_json: bool) -> None
         console.print(f"[bold]Source:[/bold] {record.source}")
         if record.created_at:
             console.print(f"[bold]Created:[/bold] {record.created_at}")
+        if url:
+            # soft_wrap: without it Rich folds the URL at the terminal width,
+            # leaving a dangling "URL:" label and a link broken for copy-paste
+            # and for `| grep URL`.
+            console.print(f"[bold]URL:[/bold] {url}", soft_wrap=True)
 
 
 async def _run_create_project(

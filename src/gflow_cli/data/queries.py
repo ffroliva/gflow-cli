@@ -121,10 +121,10 @@ def list_projects(
 class ImageRow:
     media_id: str
     profile: str
-    project_id: str
+    project_id: str | None
     prompt: str | None
-    aspect: str
-    model: str
+    aspect: str | None
+    model: str | None
     created_at: datetime
     local_path: str | None
     copy_count: int = 1
@@ -258,10 +258,10 @@ def list_images(
         ImageRow(
             media_id=str(r["media_id"]),
             profile=str(r["profile"]),
-            project_id=str(r["project_id"]),
+            project_id=str(r["project_id"]) if r["project_id"] is not None else None,
             prompt=str(r["prompt"]) if r["prompt"] is not None else None,
-            aspect=str(r["aspect"]),
-            model=str(r["model"]),
+            aspect=str(r["aspect"]) if r["aspect"] is not None else None,
+            model=str(r["model"]) if r["model"] is not None else None,
             created_at=datetime.fromisoformat(str(r["created_at"])),
             local_path=str(r["local_path"]) if r["local_path"] is not None else None,
             copy_count=int(r["copy_count"]),
@@ -277,10 +277,10 @@ def list_images(
 class VideoRow:
     media_id: str
     profile: str
-    project_id: str
+    project_id: str | None
     prompt: str | None
-    aspect: str
-    model: str
+    aspect: str | None
+    model: str | None
     duration: float | None
     created_at: datetime
     local_path: str | None
@@ -379,10 +379,10 @@ def list_videos(
         VideoRow(
             media_id=str(r["media_id"]),
             profile=str(r["profile"]),
-            project_id=str(r["project_id"]),
+            project_id=str(r["project_id"]) if r["project_id"] is not None else None,
             prompt=str(r["prompt"]) if r["prompt"] is not None else None,
-            aspect=str(r["aspect"]),
-            model=str(r["model"]),
+            aspect=str(r["aspect"]) if r["aspect"] is not None else None,
+            model=str(r["model"]) if r["model"] is not None else None,
             duration=float(r["duration"]) if r["duration"] is not None else None,
             created_at=datetime.fromisoformat(str(r["created_at"])),
             local_path=str(r["local_path"]) if r["local_path"] is not None else None,

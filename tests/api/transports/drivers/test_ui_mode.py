@@ -101,9 +101,15 @@ def test_explicit_ui_mode_beats_deprecated(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_infer_passthrough_without_instructions() -> None:
-    assert infer_required_ui_mode(UiMode.AUTO, has_instructions=False) is UiMode.AUTO
     assert infer_required_ui_mode(UiMode.CLASSIC, has_instructions=False) is UiMode.CLASSIC
     assert infer_required_ui_mode(UiMode.AGENTIC, has_instructions=False) is UiMode.AGENTIC
+
+
+def test_infer_auto_requires_classic() -> None:
+    """#595: ``auto`` means "no arm was asked for", and classic is the arm that
+    can satisfy an image request. An account in Flow's agentic cohort otherwise
+    binds a driver that cannot produce an image and fails mid-run."""
+    assert infer_required_ui_mode(UiMode.AUTO, has_instructions=False) is UiMode.CLASSIC
 
 
 def test_infer_instructions_force_agentic_from_auto() -> None:

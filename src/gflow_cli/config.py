@@ -267,10 +267,21 @@ def infer_required_ui_mode(base: UiMode, *, has_instructions: bool) -> UiMode:
     agentic when the caller didn't already ask for a specific arm. Explicitly
     demanding ``classic`` *and* passing instructions is contradictory (classic
     cannot apply cards) — a hard :class:`ConfigurationError` instead of a silent
-    drop. Without instructions, ``base`` passes through unchanged.
+    drop.
+
+    Without instructions, ``auto`` resolves to ``classic`` (#595): ``auto``
+    means "no arm was asked for", and classic is the arm that can satisfy a
+    media request. Binding whatever rendered put an account in Flow's agentic
+    cohort on a driver that cannot — failing mid-run as ``image_mode_tab``
+    selector drift or a ``WireFormatError`` about video bytes, neither of which
+    names the cause. The bind's classic recovery still runs first, and the
+    cohort flaps per load, so this only aborts (exit 28, pre-submit, $0) when
+    the arm is genuinely pinned. Agentic stays reachable by name
+    (``--ui-mode agentic``) or by needing it (``-i``). An explicit ``classic``
+    or ``agentic`` passes through unchanged.
     """
     if not has_instructions:
-        return base
+        return UiMode.CLASSIC if base is UiMode.AUTO else base
     if base is UiMode.CLASSIC:
         from gflow_cli.errors import ConfigurationError
 

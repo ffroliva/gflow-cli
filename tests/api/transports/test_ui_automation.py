@@ -486,8 +486,10 @@ def _make_editor_page(
     else:
         loc.wait_for = AsyncMock(side_effect=RuntimeError("not visible"))
 
-    async def _click() -> None:
+    async def _click(**_kwargs: object) -> None:
         # Successful click simulates Flow navigating to /project/<uuid>.
+        # Accepts kwargs: the CTA click passes an explicit timeout (#593) so a
+        # covered-but-visible button fails in seconds instead of the 30 s default.
         if nav_succeeds:
             page.url = post_click_url
 
@@ -567,7 +569,7 @@ class TestEnterEditor:
             else:
                 loc.wait_for = AsyncMock()
 
-            async def _click() -> None:
+            async def _click(**_kwargs: object) -> None:
                 page.url = "https://labs.google/fx/tools/flow/project/xyz"
 
             loc.click = AsyncMock(side_effect=_click)
@@ -3180,11 +3182,12 @@ async def test_instructions_infer_agentic_required_mode(
 
 
 @pytest.mark.asyncio
-async def test_no_instructions_defaults_to_auto_ui_mode(
+async def test_no_instructions_requires_classic_ui_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No instructions and no explicit mode → the transport requires nothing
-    (ui_mode=AUTO): bind whatever renders."""
+    """#595: no instructions and no explicit mode → the transport REQUIRES
+    classic. Binding "whatever renders" put an agentic-cohort account on a
+    driver that cannot satisfy an image request."""
     from gflow_cli.api.transports.drivers import factory as _factory
     from gflow_cli.config import UiMode, reset_settings
 
@@ -3209,7 +3212,43 @@ async def test_no_instructions_defaults_to_auto_ui_mode(
     with pytest.raises(_StopFlowError):
         await t._generate_images_locked(req)  # noqa: SLF001
 
-    assert get_driver.await_args.kwargs["ui_mode"] is UiMode.AUTO
+    assert get_driver.await_args.kwargs["ui_mode"] is UiMode.CLASSIC
+
+
+@pytest.mark.asyncio
+async def test_batch_requires_classic_ui_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#595: the batch path binds through the same policy as the single path.
+    It had its own inline ``resolve_ui_mode(None)`` and so kept binding AUTO."""
+    from gflow_cli.api.transports.drivers import factory as _factory
+    from gflow_cli.config import UiMode, reset_settings
+
+    for var in ("GFLOW_CLI_UI_MODE", "GFLOW_CLI_PREFER_CLASSIC", "GFLOW_CLI_FORCE_AGENT_UI"):
+        monkeypatch.delenv(var, raising=False)
+    reset_settings()
+
+    t = UiAutomationTransport()
+    t._page = MagicMock()  # noqa: SLF001
+    t._page.url = "https://labs.google/fx/tools/flow/project/11111111-2222-3333-4444-555555555555"
+    t._out_dir = None  # noqa: SLF001
+    monkeypatch.setattr(t, "_enter_editor", AsyncMock())
+    monkeypatch.setattr(t, "_dismiss_blocking_overlays", AsyncMock())
+
+    classic_driver = MagicMock()
+    classic_driver.name = "classic"
+    classic_driver.switch_to_image_mode = AsyncMock(side_effect=_StopFlowError)
+    get_driver = AsyncMock(return_value=classic_driver)
+    monkeypatch.setattr(_factory, "get_ui_driver", get_driver)
+
+    with pytest.raises(_StopFlowError):
+        await t._generate_images_batch_locked(  # noqa: SLF001
+            prompts=[GenerateImageRequest(prompt="a red apple")],
+            jitter_range=(0.0, 0.0),
+            continue_on_error=False,
+        )
+
+    assert get_driver.await_args.kwargs["ui_mode"] is UiMode.CLASSIC
 
 
 class TestReferenceEntitiesInterception:
