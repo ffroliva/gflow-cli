@@ -511,6 +511,8 @@ playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
 
 A block that survives dismissal now aborts pre-submit with exit 23 (probe `overlay_close_button`) and a screenshot, at zero credits, instead of hanging. Dismissal persists server-side — Flow records it as `videoFx.setLastAcknowledgedChangeLogId`, so one dismissal per announcement per account is the whole cost.
 
+**Follow-up 2026-08-28 — the one remaining epoch, found by audit.** #593 left a stated gap: call sites that neither route through `_probe_selector_cascade` nor sit behind a navigation gate. All 73 click/fill/press sites in the UI transports were then enumerated and classified, and exactly one survives the "can a modal actually land here?" test: the **image batch** loop's per-prompt boundary. A batch dismisses overlays once during setup, so from prompt 2 on the settings clicks are the first act after a multi-second generation wait on a page that never navigates. That one failed *silently* rather than loudly — `_open_gen_settings_panel` returns `False` when nothing matches and the caller falls back to Flow's current defaults, so a modal that mounted during prompt 1 generated prompt 2 at the wrong aspect/count. It now runs the same `_require_unblocked` check the navigation epochs use. Every other unguarded site fails loudly (exit 23 with a probe name and a screenshot, or an `overlay_postmortem` warning), which is why they are deliberately left unguarded rather than pre-guarded on a hunch.
+
 ---
 
 ### No in-CLI quota visibility
@@ -908,6 +910,15 @@ retryable) instead of burning selector timeouts mid-flow, and the error text
 names the pinning case. Retrying *immediately* during a pin is futile — wait a
 while or switch `--profile`. Recorded as the #299 PR-B predict-gate evidence:
 retry loops must never key off the pinned signature.
+
+**Update 2026-08-28 ([#595](https://github.com/ffroliva/gflow-cli/issues/595)) — images
+now reach this fail-fast by default.** Two accounts flipped agentic on 2026-08-27 and a
+plain `gflow image t2i` failed on both, because `auto` bound whatever rendered and the
+agentic driver cannot satisfy an image request (either `image_mode_tab` selector drift or
+a `WireFormatError` about video bytes — neither naming the cause). `auto` now resolves to
+`classic` for images too, so a pinned account gets the exit-28 abort described above
+instead of a mid-run failure, and `GFLOW_CLI_PREFER_CLASSIC=1` is no longer the
+workaround anyone needs to discover.
 
 ### Auth verification depends on Google's NextAuth session endpoint
 
