@@ -205,6 +205,16 @@ jobs:
       - name: Type check
         run: uv run pyright src
 
+      # The overlay-precondition tests (#593) drive the captured changelog markup in
+      # a real headless Chromium — a mock cannot tell you whether
+      # `[role='dialog']:has(a[href*='changelog']) button` resolves against Flow's
+      # actual DOM, only a real CSS engine can. They skip cleanly when the browser is
+      # absent, which would make them silently decorative in CI, so one job in the
+      # matrix installs it. No account, no network, no credits.
+      - name: Install Chromium (real-DOM fixture tests)
+        if: matrix.python-version == '3.13'
+        run: uv run playwright install chromium --with-deps
+
       - name: Test (smoke only) + coverage
         # e2e/live tests require a logged-in Chromium profile and may spend
         # Flow credits. pyproject.toml excludes both markers by default; CI

@@ -88,10 +88,18 @@ async def _open_editor(client: Any, project_id: str) -> Any:
     assert ctx is not None
     page = ctx.pages[0] if ctx.pages else await ctx.new_page()
     await page.goto(
-        routes.project_editor_url("en", project_id),
+        # #587: the ACCOUNT's locale, never a hardcoded segment — Flow serves
+        # whatever it is asked for, so "en" quietly tests the wrong thing on a
+        # redirected account.
+        routes.project_editor_url(client._account_locale, project_id),  # noqa: SLF001
         wait_until="domcontentloaded",
         timeout=60_000,
     )
+    # #593: this test drives a raw page off the client, so it passes through none of
+    # the transport's dismissal boundaries. An announcement modal here blocks every
+    # control below with a bare TimeoutError — and this test is `e2e_auth`, the
+    # nightly canary's default tier.
+    await client.transport._dismiss_blocking_overlays(page)  # noqa: SLF001
     for _ in range(30):
         if await page.locator("button").count() > 8:
             break
