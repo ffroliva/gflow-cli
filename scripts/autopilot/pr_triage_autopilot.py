@@ -263,30 +263,54 @@ def check_daily_review_count(entries: list[dict]) -> int:
     return count
 
 
+def _git(repo_dir: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """Run a git command pinned to ``repo_dir``.
+
+    ``--git-dir``/``--work-tree`` bypass git's *upward* repository discovery.
+    Without them a ``repo_dir`` that is not a repository -- a mistyped
+    ``--repo-dir``, or a checkout whose ``.git`` has gone missing -- resolves to
+    whatever clone happens to enclose it, so ``git checkout develop`` silently
+    rewrites someone else's working tree. That is issue #605: a local test run
+    under ``--basetemp=tmp/pytest`` moved the developer's own clone off its
+    branch. Pinned, the same call fails loudly instead.
+
+    Raises the module's ``RuntimeError`` idiom rather than letting ``check=True``
+    produce a ``CalledProcessError``: that renders only "returned non-zero exit
+    status 128" and keeps git's own "fatal: not a git repository: ..." in an
+    unread ``.stderr``. Callers log ``str(exc)``, so the diagnostic this pinning
+    exists to produce would never reach the operator. Matches ``_gh_json`` and
+    ``post_gh_comment``.
+
+    ``repo_dir`` is resolved first because ``--git-dir``/``--work-tree`` are
+    interpreted relative to ``cwd`` -- which is ``repo_dir`` -- so a relative path
+    would double-nest into ``<repo_dir>/<repo_dir>/.git``.
+    """
+    repo_dir = repo_dir.resolve()
+    proc = subprocess.run(
+        ["git", f"--git-dir={repo_dir / '.git'}", f"--work-tree={repo_dir}", *args],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if check and proc.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} failed in {repo_dir}: {proc.stderr.strip()}")
+    return proc
+
+
 def fetch_and_checkout_pr(pr_num: int, repo_dir: Path) -> str:
     """Fetch the PR branch, checkout, and return the head SHA."""
     # Fetch
     ref = f"pull/{pr_num}/head:pr-{pr_num}-review"
     logger.info("Fetching PR branch", pr=pr_num, ref=ref)
-    subprocess.run(
-        ["git", "fetch", "-f", "origin", ref], cwd=repo_dir, capture_output=True, check=True
-    )
+    _git(repo_dir, "fetch", "-f", "origin", ref)
 
     # Get head SHA
-    sha_proc = subprocess.run(
-        ["git", "rev-parse", f"pr-{pr_num}-review"],
-        cwd=repo_dir,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    head_sha = sha_proc.stdout.strip()
+    head_sha = _git(repo_dir, "rev-parse", f"pr-{pr_num}-review").stdout.strip()
 
     # Checkout
     logger.info("Checking out PR branch", sha=head_sha)
-    subprocess.run(
-        ["git", "checkout", f"pr-{pr_num}-review"], cwd=repo_dir, capture_output=True, check=True
-    )
+    _git(repo_dir, "checkout", f"pr-{pr_num}-review")
     return head_sha
 
 
@@ -300,12 +324,10 @@ def restore_repo_branch(repo_dir: Path, pr_num: int | None = None) -> None:
     branch to drop, and cleanup must never mask the original error.
     """
     logger.info("Restoring repository to develop branch")
-    subprocess.run(["git", "checkout", "develop"], cwd=repo_dir, capture_output=True, check=True)
+    _git(repo_dir, "checkout", "develop")
     if pr_num is not None:
         branch = f"pr-{pr_num}-review"
-        proc = subprocess.run(
-            ["git", "branch", "-D", branch], cwd=repo_dir, capture_output=True, check=False
-        )
+        proc = _git(repo_dir, "branch", "-D", branch, check=False)
         if proc.returncode == 0:
             logger.info("Deleted PR review branch", branch=branch)
 
