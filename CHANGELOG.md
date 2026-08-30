@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Windows-only, intermittent). Two independent guards now close it:
   `scripts/autopilot/pr_triage_autopilot.py` pins every git call with
   `--git-dir`/`--work-tree`, so a `repo_dir` that is not a repository fails loudly
-  with exit 128 instead of retargeting whatever clone encloses it (this also
+  — git's exit 128 when the path exists but is not a repo — instead of
+  retargeting whatever clone encloses it (this also
   hardens the VPS triage path against a mistyped `--repo-dir`), and
   `tests/conftest.py` sets `GIT_CEILING_DIRECTORIES` to pytest's basetemp so no
   test can walk out of its temp dir into this repo. What removed the temp `.git`

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import os
 import re
 import subprocess
 import sys
@@ -514,7 +515,7 @@ def _head(repo):
     return out.stdout.strip()
 
 
-def test_restore_repo_branch_refuses_to_escape_into_the_enclosing_repo(tmp_path, monkeypatch):
+def test_restore_repo_branch_refuses_to_escape_into_the_enclosing_repo(tmp_path):
     """#605: a missing .git must fail loudly, never retarget the enclosing clone.
 
     git's repository discovery walks *up* from ``cwd``. When ``repo_dir`` is not a
@@ -522,10 +523,12 @@ def test_restore_repo_branch_refuses_to_escape_into_the_enclosing_repo(tmp_path,
     ``.git`` vanished mid-run -- the bare ``git checkout develop`` resolved against
     whatever clone enclosed it and silently rewrote that working tree.
 
-    The ceiling guard in ``tests/conftest.py`` would mask the escape, so this test
-    drops it deliberately: it asserts the *production* pinning, not the guard.
+    This isolates the *production* pinning even with the suite-wide ceiling guard
+    left on: ``outer`` is a real repository *below* the ceiling, so unpinned
+    discovery finds it one level up and never walks far enough to be stopped.
+    Disabling the guard here would not sharpen the test -- it would only strip the
+    net from ``_make_repo``'s own unpinned, mutating git calls.
     """
-    monkeypatch.delenv("GIT_CEILING_DIRECTORIES", raising=False)
     outer = _make_repo(tmp_path)  # a real repo, checked out on pr-999-review
     inner = outer / "inner"  # nested, deliberately not a repository
     inner.mkdir()
@@ -537,13 +540,22 @@ def test_restore_repo_branch_refuses_to_escape_into_the_enclosing_repo(tmp_path,
     assert "pr-999-review" in _branches(outer), "escaped and deleted a branch in the parent repo"
 
 
-def test_git_cannot_escape_the_pytest_basetemp(tmp_path):
+def test_git_cannot_escape_the_pytest_basetemp(tmp_path, tmp_path_factory):
     """#605: ``--basetemp=tmp/pytest`` puts every tmp dir *inside* this clone.
 
     Any test that shells out to git in a tmp dir with no ``.git`` would otherwise
     resolve against the real repository. ``tests/conftest.py`` pins
-    ``GIT_CEILING_DIRECTORIES`` to stop the upward search at the basetemp.
+    ``GIT_CEILING_DIRECTORIES`` to stop the upward search above the basetemp.
+
+    Asserts the mechanism *and* the symptom: pointing ``--basetemp`` outside the
+    tree would make the behavioral half pass for free, so the env check is what
+    keeps this test honest if ``pytest_configure`` ever resolves the wrong dir.
     """
+    expected = str(tmp_path_factory.getbasetemp().resolve().parent)
+    assert os.environ.get("GIT_CEILING_DIRECTORIES", "").split(os.pathsep)[0] == expected, (
+        "conftest ceiling guard not installed; git would resolve tmp dirs against the real repo"
+    )
+
     proc = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=tmp_path, capture_output=True, text=True
     )

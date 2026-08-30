@@ -40,11 +40,18 @@ def pytest_configure(config: pytest.Config) -> None:
     out to git in a tmp dir without a ``.git`` has its command resolved against the
     enclosing gflow-cli clone. That is how a full offline run checked out ``develop``
     over the developer's own branch. ``GIT_CEILING_DIRECTORIES`` stops git's upward
-    search at the basetemp, turning the escape into a plain "not a git repository".
+    search above the basetemp, turning the escape into a plain "not a git repository".
+
+    The ceiling is the basetemp's *parent*, not the basetemp: git stops when it
+    reaches a ceiling directory but still searches the one it started in, so
+    pinning the basetemp itself would leave a test whose cwd IS the basetemp
+    (``tmp_path_factory.getbasetemp()``) free to walk out. Any ceiling the
+    developer already set is preserved after ours.
     """
     basetemp = config.getoption("basetemp", None)
     if basetemp:
-        os.environ["GIT_CEILING_DIRECTORIES"] = str(Path(basetemp).resolve())
+        ceilings = [str(Path(basetemp).resolve().parent), os.environ.get("GIT_CEILING_DIRECTORIES")]
+        os.environ["GIT_CEILING_DIRECTORIES"] = os.pathsep.join(c for c in ceilings if c)
 
 
 @pytest.fixture(autouse=True)
