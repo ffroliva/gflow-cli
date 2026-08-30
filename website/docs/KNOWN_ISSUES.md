@@ -670,6 +670,34 @@ issue and not blocked by any code change in this repo.
   Playwright kwarg (persists across all in-session navigations). Full resolution
   gate: live e2e with `gflow image t2i` (each model) on a non-EN Chrome profile.
 
+  **2026-08-30 correction — locale-stable is not version-stable.** The claim
+  above that branded product names are safe anchors holds for *translation* and
+  nothing else. Flow renamed the video tier `Omni Flash` to `Omni 1.1 Flash`,
+  and because Playwright's `has-text` is a CONTIGUOUS substring match, a version
+  number inserted mid-label dropped `has-text('Omni Flash')` to zero matches.
+  Every explicit `--model omni-flash` run then failed loud with
+  `VideoModelSelectionError` (exit 18, no credits spent) — the fail-loud gate
+  worked exactly as designed, but the model was unusable until the selector was
+  fixed. `VIDEO_MODEL_OPTION_SELECTORS[OMNI_FLASH]` now uses two ANDed
+  `has-text` clauses (`'Omni'` + `'Flash'`) that span the version segment, plus
+  the `:not(:has-text('[Lower Priority]'))` exclusion its `VEO_3_1_LITE` sibling
+  already carries — without it an 'Omni 1.1 Flash [Lower Priority]' tier would
+  match two menuitems and put the model straight back at exit 18.
+  `tests/flow_selectors/test_model_governance.py` grades it against BOTH labels
+  Flow has shipped plus a no-collision check against the four `Veo 3.1 - *`
+  tiers. The rule this generalises to is NOT a blanket "always match tokens" —
+  it depends on whether gflow's own identifier pins the version. `omni_flash`
+  carries no version, so the `1.1` in Flow's label is noise and the anchor must
+  span it. The four `Veo 3.1 - *` selectors deliberately keep the contiguous
+  version, because `VEO_3_1_FAST = "veo_3_1_fast"` makes `3.1` part of the
+  model's identity there: if Flow replaces that tier with a `Veo 3.2`, a loud
+  MISS is the CORRECT outcome, and widening those anchors to
+  `has-text('Veo'):has-text('Fast')`-style token pairs would silently bind
+  `--model veo-fast` to a different tier at a different credit price. Ask which
+  of the two shapes you have before widening. The CLI alias (`--model omni-flash`) and the enum value
+  (`omni_flash`) are gflow's own identifiers and deliberately did NOT change —
+  they are a stable contract for chain files, resume state, and JSON output.
+
   **2026-06-12 correction (issue #170):** the "all selector groups" claim above
   had two stragglers — `PICKER_INCLUDE_BUTTON` and `PICKER_CONTEXT_INCLUDE`
   hardcoded the pt-BR caption "Incluir no comando", breaking
