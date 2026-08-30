@@ -19,6 +19,11 @@ Live evidence, profile denon82, 2026-08-26 — the picker rendered exactly:
 
     Omni Flash / Veo 3.1 - Lite / Veo 3.1 - Fast / Veo 3.1 - Quality
 
+That snapshot is HISTORICAL and deliberately not refreshed: it is the menu that
+made the bug below reachable. Flow has since renamed the first entry to
+'Omni 1.1 Flash' (#604). For what the picker renders today, read
+`tests/fixtures/flow_model_inventory.json`, never this file.
+
 `VideoModel.VEO_3_1_LITE_LOWER_PRIORITY`'s ``has-text('[Lower Priority]')``
 matches none of them. So `gflow video t2v --model veo-lite-lp` was a live,
 reachable, credit-spending wrong-model path.

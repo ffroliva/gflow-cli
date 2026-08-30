@@ -215,13 +215,14 @@ async def recon(
             # to 'Omni 1.1 Flash' (2026-08-30) and versions the name in place,
             # so a contiguous-substring probe reports the model MISSING and the
             # recon silently skips A3/A4 instead of answering them.
-            def _is_omni(text: str) -> bool:
-                return "Omni" in text and "Flash" in text
-
-            omni_listed = any(_is_omni(m["text"]) for m in items)
-            omni_disabled = any(
-                _is_omni(m["text"]) and m["disabled"] not in (None, "false") for m in items
-            )
+            # Lowercased because `:has-text` is case-INSENSITIVE: a case-exact
+            # probe would report the model missing on an 'OMNI 1.1 FLASH' render
+            # that the transport selects fine.
+            omni = [
+                m for m in items if "omni" in m["text"].lower() and "flash" in m["text"].lower()
+            ]
+            omni_listed = bool(omni)
+            omni_disabled = any(m["disabled"] not in (None, "false") for m in omni)
             evidence["omni_listed_in_frames_menu"] = omni_listed
             evidence["omni_disabled_in_frames_menu"] = omni_disabled
             print(

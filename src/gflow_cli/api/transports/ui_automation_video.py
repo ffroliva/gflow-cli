@@ -248,8 +248,14 @@ VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, str] = {
     # unique against the four 'Veo 3.1 - *' entries. If Flow ever offers two
     # concurrent Omni tiers, this goes AMBIGUOUS and the transport refuses
     # before spending credits — which is the correct failure, not a silent
-    # `.first` guess.
-    VideoModel.OMNI_FLASH: "[role='menuitem']:has-text('Omni'):has-text('Flash')",
+    # `.first` guess. The trailing `:not` mirrors the VEO_3_1_LITE sibling
+    # below: Flow already ships a '[Lower Priority]' variant of a tier, so an
+    # 'Omni 1.1 Flash [Lower Priority]' entry would make the two ANDed clauses
+    # match two menuitems and put omni-flash back at exit 18 — the same outage,
+    # from the same class of drift.
+    VideoModel.OMNI_FLASH: (
+        "[role='menuitem']:has-text('Omni'):has-text('Flash'):not(:has-text('[Lower Priority]'))"
+    ),
     # The Veo entries deliberately KEEP the contiguous '3.1'. Do NOT "fix" them
     # the way OMNI_FLASH was fixed above: the discriminator is whether gflow's
     # own identifier pins the version. `omni_flash` carries none, so '1.1' in

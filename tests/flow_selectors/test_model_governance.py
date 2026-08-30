@@ -273,21 +273,44 @@ def test_omni_selector_survives_the_version_number_rename(label: str) -> None:
     )
 
 
-def test_omni_selector_does_not_collide_with_the_veo_tiers() -> None:
-    """Widening 'Omni Flash' to 'Omni' + 'Flash' must not catch a Veo entry.
+def test_omni_selector_matches_the_omni_entry_and_nothing_else() -> None:
+    """The widened 'Omni' + 'Flash' selector must stay unique in a fuller menu.
 
-    The Veo tiers cost up to 10x omni-flash, so a collision here is a
-    credit-tier mix-up, and the widened selector is only safe while it stays
-    unique against every other label Flow renders.
+    The Veo tiers cost up to 10x omni-flash, so a collision is a credit-tier
+    mix-up. Graded POSITIVELY as well as negatively on purpose: `_matches`
+    returns `[]` for a selector it cannot parse, so an excludes-everything
+    assertion on its own would bless a registry entry that matches nothing at
+    all. The menu below adds the two `[Lower Priority]` variants Flow has been
+    seen to ship, which the fixture does not carry.
     """
     sel = VIDEO_MODEL_OPTION_SELECTORS[VideoModel.OMNI_FLASH]
-    veo_labels = [
+    menu = [
+        "volume_up Omni 1.1 Flash",
+        "volume_up Omni 1.1 Flash [Lower Priority]",
         "volume_up Veo 3.1 - Lite",
         "volume_up Veo 3.1 - Fast",
         "volume_up Veo 3.1 - Quality",
         "volume_up Veo 3.1 - Lite [Lower Priority]",
     ]
-    assert _matches(sel, veo_labels) == [], f"omni selector {sel!r} also matches Veo entries"
+    assert _matches(sel, menu) == ["volume_up Omni 1.1 Flash"], (
+        f"omni selector {sel!r} must match the Omni entry and nothing else"
+    )
+
+
+def test_the_live_omni_label_is_recorded_in_the_seen_list() -> None:
+    """A fixture refresh must not drop the live label out of the history guard.
+
+    `_OMNI_LABELS_SEEN` is hand-maintained beside the probe-written fixture.
+    Left unpinned, the next rename gets refreshed into the fixture while the
+    parametrized guard above keeps grading labels nobody ships any more — it
+    degrades to decoration exactly as its own docstring warns.
+    """
+    live = [m for m in _inventory()["video"] if "omni" in m.lower()]
+    assert len(live) == 1, f"expected exactly one Omni entry in the fixture, got {live}"
+    assert live[0] in _OMNI_LABELS_SEEN, (
+        f"fixture ships {live[0]!r} but _OMNI_LABELS_SEEN does not list it — "
+        f"append it (oldest first) whenever you refresh the fixture."
+    )
 
 
 def test_lower_priority_absence_is_recorded_as_an_observation() -> None:
