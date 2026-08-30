@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import datetime
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -452,9 +454,7 @@ def test_post_gh_comment_passes_the_write_token_explicitly():
     assert m_run.call_args.kwargs["env"]["GH_TOKEN"] == "write-token"
 
 
-def _git(repo, *args):
-    import subprocess
-
+def _raw_git(repo, *args):
     subprocess.run(["git", *args], cwd=repo, capture_output=True, check=True)
 
 
@@ -462,20 +462,18 @@ def _make_repo(tmp_path):
     """A real repo on develop with a pr-999-review branch checked out."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    _git(repo, "init", "-q", "-b", "develop")
-    _git(repo, "config", "user.email", "t@t")
-    _git(repo, "config", "user.name", "t")
+    _raw_git(repo, "init", "-q", "-b", "develop")
+    _raw_git(repo, "config", "user.email", "t@t")
+    _raw_git(repo, "config", "user.name", "t")
     (repo / "f.txt").write_text("x")
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", "init")
-    _git(repo, "branch", "pr-999-review")
-    _git(repo, "checkout", "-q", "pr-999-review")
+    _raw_git(repo, "add", ".")
+    _raw_git(repo, "commit", "-qm", "init")
+    _raw_git(repo, "branch", "pr-999-review")
+    _raw_git(repo, "checkout", "-q", "pr-999-review")
     return repo
 
 
 def _branches(repo):
-    import subprocess
-
     out = subprocess.run(
         ["git", "branch", "--format=%(refname:short)"], cwd=repo, capture_output=True, text=True
     )
@@ -496,8 +494,8 @@ def test_restore_repo_branch_deletes_the_pr_branch(tmp_path):
 def test_restore_repo_branch_tolerates_absent_pr_branch(tmp_path):
     """A run that failed before fetching leaves no branch; cleanup must not raise."""
     repo = _make_repo(tmp_path)
-    _git(repo, "checkout", "-q", "develop")
-    _git(repo, "branch", "-D", "pr-999-review")
+    _raw_git(repo, "checkout", "-q", "develop")
+    _raw_git(repo, "branch", "-D", "pr-999-review")
 
     pr_triage_autopilot.restore_repo_branch(repo, pr_num=999)
 
@@ -508,6 +506,60 @@ def test_restore_repo_branch_without_pr_num_still_restores_develop(tmp_path):
     repo = _make_repo(tmp_path)
     pr_triage_autopilot.restore_repo_branch(repo)
     assert "pr-999-review" in _branches(repo)
+
+
+def _head(repo):
+    out = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo, capture_output=True, text=True
+    )
+    return out.stdout.strip()
+
+
+def test_restore_repo_branch_refuses_to_escape_into_the_enclosing_repo(tmp_path):
+    """#605: a missing .git must fail loudly, never retarget the enclosing clone.
+
+    git's repository discovery walks *up* from ``cwd``. When ``repo_dir`` is not a
+    repository -- a mistyped ``--repo-dir`` on the VPS, or a temp repo whose
+    ``.git`` vanished mid-run -- the bare ``git checkout develop`` resolved against
+    whatever clone enclosed it and silently rewrote that working tree.
+
+    This isolates the *production* pinning even with the suite-wide ceiling guard
+    left on: ``outer`` is a real repository *below* the ceiling, so unpinned
+    discovery finds it one level up and never walks far enough to be stopped.
+    Disabling the guard here would not sharpen the test -- it would only strip the
+    net from ``_make_repo``'s own unpinned, mutating git calls.
+    """
+    outer = _make_repo(tmp_path)  # a real repo, checked out on pr-999-review
+    inner = outer / "inner"  # nested, deliberately not a repository
+    inner.mkdir()
+
+    with pytest.raises(RuntimeError, match="not a git repository"):
+        pr_triage_autopilot.restore_repo_branch(inner, pr_num=999)
+
+    assert _head(outer) == "pr-999-review", "escaped and checked out develop in the parent repo"
+    assert "pr-999-review" in _branches(outer), "escaped and deleted a branch in the parent repo"
+
+
+def test_git_cannot_escape_the_pytest_basetemp(tmp_path, tmp_path_factory):
+    """#605: ``--basetemp=tmp/pytest`` puts every tmp dir *inside* this clone.
+
+    Any test that shells out to git in a tmp dir with no ``.git`` would otherwise
+    resolve against the real repository. ``tests/conftest.py`` pins
+    ``GIT_CEILING_DIRECTORIES`` to stop the upward search above the basetemp.
+
+    Asserts the mechanism *and* the symptom: pointing ``--basetemp`` outside the
+    tree would make the behavioral half pass for free, so the env check is what
+    keeps this test honest if ``pytest_configure`` ever resolves the wrong dir.
+    """
+    expected = str(tmp_path_factory.getbasetemp().resolve().parent)
+    assert os.environ.get("GIT_CEILING_DIRECTORIES", "").split(os.pathsep)[0] == expected, (
+        "conftest ceiling guard not installed; git would resolve tmp dirs against the real repo"
+    )
+
+    proc = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=tmp_path, capture_output=True, text=True
+    )
+    assert proc.returncode != 0, f"git escaped the temp dir and found {proc.stdout.strip()!r}"
 
 
 def test_memory_dir_cli_arg_wins_over_env(monkeypatch, tmp_path):

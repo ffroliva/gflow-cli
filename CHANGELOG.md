@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The offline test suite could `git checkout develop` in the developer's own
+  clone ([#605](https://github.com/ffroliva/gflow-cli/issues/605)).** git's
+  repository discovery walks *up* from `cwd`, and `--basetemp=tmp/pytest` puts
+  every `tmp_path` inside this repository, so an autopilot test whose temp `.git`
+  went missing had its `git checkout develop` silently resolved against the real
+  working tree — moving the developer off their branch mid-run (reflog-confirmed,
+  Windows-only, intermittent). Two independent guards now close it:
+  `scripts/autopilot/pr_triage_autopilot.py` pins every git call with
+  `--git-dir`/`--work-tree`, so a `repo_dir` that is not a repository fails loudly,
+  raising with git's own `fatal: not a git repository` text rather than
+  retargeting whatever clone encloses it (this also
+  hardens the VPS triage path against a mistyped `--repo-dir`), and
+  `tests/conftest.py` sets `GIT_CEILING_DIRECTORIES` to pytest's basetemp so no
+  test can walk out of its temp dir into this repo. What removed the temp `.git`
+  is still unexplained — it now surfaces as a plain "not a git repository" rather
+  than a silent branch switch.
+
 ## [0.62.1] — 2026-08-30
 
 ### Fixed
