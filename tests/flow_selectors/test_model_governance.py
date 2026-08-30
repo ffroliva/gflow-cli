@@ -238,6 +238,56 @@ def test_every_offered_video_entry_is_modelled() -> None:
     assert not unexplained, f"Flow offers video entries we do not model: {unexplained}"
 
 
+#: Every label Flow has been observed rendering for the Omni tier, oldest first.
+#: Flow renamed 'Omni Flash' -> 'Omni 1.1 Flash' (reported 2026-08-30). A version
+#: number injected mid-label is the drift shape a contiguous substring selector
+#: cannot survive, and it is invisible to the inventory grade above the moment
+#: the fixture is refreshed: the new label alone grades clean against a selector
+#: that only handles the new label, and the next bump breaks it again.
+_OMNI_LABELS_SEEN = (
+    "volume_up Omni Flash",
+    "volume_up Omni 1.1 Flash",
+)
+
+
+@pytest.mark.parametrize("label", _OMNI_LABELS_SEEN)
+def test_omni_selector_survives_the_version_number_rename(label: str) -> None:
+    """The omni selector must match every label Flow has shipped for that tier.
+
+    'Omni Flash' -> 'Omni 1.1 Flash' broke `has-text('Omni Flash')` outright:
+    `has-text` is a CONTIGUOUS substring match, so the inserted '1.1' dropped the
+    match count to zero and `_select_video_model` refused every explicit
+    `--model omni-flash` run with VideoModelSelectionError (exit 18). Two ANDed
+    `has-text` clauses ('Omni' and 'Flash') span the version number.
+
+    This grades against recorded labels rather than the live fixture on purpose:
+    the fixture holds only the CURRENT menu, so it cannot pin that the selector
+    still handles the naming Flow used yesterday, or the shape of the next bump.
+    """
+    sel = VIDEO_MODEL_OPTION_SELECTORS[VideoModel.OMNI_FLASH]
+    assert _matches(sel, [label]) == [label], (
+        f"omni selector {sel!r} does not match a label Flow has shipped: {label!r}.\n"
+        f"A miss here is exit 18 on every `--model omni-flash` run."
+    )
+
+
+def test_omni_selector_does_not_collide_with_the_veo_tiers() -> None:
+    """Widening 'Omni Flash' to 'Omni' + 'Flash' must not catch a Veo entry.
+
+    The Veo tiers cost up to 10x omni-flash, so a collision here is a
+    credit-tier mix-up, and the widened selector is only safe while it stays
+    unique against every other label Flow renders.
+    """
+    sel = VIDEO_MODEL_OPTION_SELECTORS[VideoModel.OMNI_FLASH]
+    veo_labels = [
+        "volume_up Veo 3.1 - Lite",
+        "volume_up Veo 3.1 - Fast",
+        "volume_up Veo 3.1 - Quality",
+        "volume_up Veo 3.1 - Lite [Lower Priority]",
+    ]
+    assert _matches(sel, veo_labels) == [], f"omni selector {sel!r} also matches Veo entries"
+
+
 def test_lower_priority_absence_is_recorded_as_an_observation() -> None:
     """#539's trap, encoded: absence-on-one-account is not absence.
 

@@ -670,6 +670,24 @@ issue and not blocked by any code change in this repo.
   Playwright kwarg (persists across all in-session navigations). Full resolution
   gate: live e2e with `gflow image t2i` (each model) on a non-EN Chrome profile.
 
+  **2026-08-30 correction — locale-stable is not version-stable.** The claim
+  above that branded product names are safe anchors holds for *translation* and
+  nothing else. Flow renamed the video tier `Omni Flash` to `Omni 1.1 Flash`,
+  and because Playwright's `has-text` is a CONTIGUOUS substring match, a version
+  number inserted mid-label dropped `has-text('Omni Flash')` to zero matches.
+  Every explicit `--model omni-flash` run then failed loud with
+  `VideoModelSelectionError` (exit 18, no credits spent) — the fail-loud gate
+  worked exactly as designed, but the model was unusable until the selector was
+  fixed. `VIDEO_MODEL_OPTION_SELECTORS[OMNI_FLASH]` now uses two ANDed
+  `has-text` clauses (`'Omni'` + `'Flash'`) that span the version segment, and
+  `tests/flow_selectors/test_model_governance.py` grades it against BOTH labels
+  Flow has shipped plus a no-collision check against the four `Veo 3.1 - *`
+  tiers. The general lesson for any future text anchor: match the stable TOKENS
+  of a product name, not the whole string, because Google versions these names
+  in place. The CLI alias (`--model omni-flash`) and the enum value
+  (`omni_flash`) are gflow's own identifiers and deliberately did NOT change —
+  they are a stable contract for chain files, resume state, and JSON output.
+
   **2026-06-12 correction (issue #170):** the "all selector groups" claim above
   had two stragglers — `PICKER_INCLUDE_BUTTON` and `PICKER_CONTEXT_INCLUDE`
   hardcoded the pt-BR caption "Incluir no comando", breaking
