@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--model omni-flash` was unselectable after Flow renamed the picker entry
+  `Omni Flash` -> `Omni 1.1 Flash`
+  ([#604](https://github.com/ffroliva/gflow-cli/pull/604)).** Playwright's
+  `has-text` is a CONTIGUOUS substring match, so a version number injected into
+  the middle of the label dropped `has-text('Omni Flash')` to zero matches and
+  every explicit `--model omni-flash` run failed with `VideoModelSelectionError`
+  (exit 18). The fail-loud gate behaved exactly as designed — no credits were
+  spent and nothing was billed to the wrong tier — but the model could not be
+  chosen. `VIDEO_MODEL_OPTION_SELECTORS[OMNI_FLASH]` now uses two ANDed
+  `has-text` clauses (`'Omni'` + `'Flash'`) that span the version segment; both
+  must hold on the same menuitem, so it matches the old label, the current one,
+  and the next bump, while staying unique against the four `Veo 3.1 - *` tiers.
+  Two concurrent Omni tiers would resolve AMBIGUOUS, which `_select_video_model`
+  already refuses before submit rather than guessing with `.first`. The CLI
+  alias (`--model omni-flash`) and the enum value (`omni_flash`) are gflow's own
+  identifiers and deliberately did not change — they are a stable contract for
+  chain files, resume state, and JSON output. The same hardcoded literal is
+  fixed in `scripts/dev/spike_omni_flash_i2v_ui_recon.py`, where it would have
+  reported the model missing and silently skipped the spike's A3/A4 questions.
+
 ### Added
 
 - **[`docs/ACCOUNT_SAFETY.md`](docs/ACCOUNT_SAFETY.md) — one honest page answering

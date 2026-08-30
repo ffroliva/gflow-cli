@@ -682,9 +682,16 @@ issue and not blocked by any code change in this repo.
   `has-text` clauses (`'Omni'` + `'Flash'`) that span the version segment, and
   `tests/flow_selectors/test_model_governance.py` grades it against BOTH labels
   Flow has shipped plus a no-collision check against the four `Veo 3.1 - *`
-  tiers. The general lesson for any future text anchor: match the stable TOKENS
-  of a product name, not the whole string, because Google versions these names
-  in place. The CLI alias (`--model omni-flash`) and the enum value
+  tiers. The rule this generalises to is NOT a blanket "always match tokens" —
+  it depends on whether gflow's own identifier pins the version. `omni_flash`
+  carries no version, so the `1.1` in Flow's label is noise and the anchor must
+  span it. The four `Veo 3.1 - *` selectors deliberately keep the contiguous
+  version, because `VEO_3_1_FAST = "veo_3_1_fast"` makes `3.1` part of the
+  model's identity there: if Flow replaces that tier with a `Veo 3.2`, a loud
+  MISS is the CORRECT outcome, and widening those anchors to
+  `has-text('Veo'):has-text('Flash')`-style token pairs would silently bind
+  `--model veo-fast` to a different tier at a different credit price. Ask which
+  of the two shapes you have before widening. The CLI alias (`--model omni-flash`) and the enum value
   (`omni_flash`) are gflow's own identifiers and deliberately did NOT change —
   they are a stable contract for chain files, resume state, and JSON output.
 

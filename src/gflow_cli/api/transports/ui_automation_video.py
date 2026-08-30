@@ -250,6 +250,13 @@ VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, str] = {
     # before spending credits — which is the correct failure, not a silent
     # `.first` guess.
     VideoModel.OMNI_FLASH: "[role='menuitem']:has-text('Omni'):has-text('Flash')",
+    # The Veo entries deliberately KEEP the contiguous '3.1'. Do NOT "fix" them
+    # the way OMNI_FLASH was fixed above: the discriminator is whether gflow's
+    # own identifier pins the version. `omni_flash` carries none, so '1.1' in
+    # Flow's label is noise the anchor must span. `VEO_3_1_FAST` makes 3.1 part
+    # of the model's identity, so if Flow swaps this tier for a 'Veo 3.2' a loud
+    # MISS is the CORRECT outcome — widening to 'Veo' + 'Fast' would silently
+    # bind `--model veo-fast` to a different tier at a different credit price.
     VideoModel.VEO_3_1_FAST: "[role='menuitem']:has-text('Veo 3.1 - Fast')",
     VideoModel.VEO_3_1_QUALITY: "[role='menuitem']:has-text('Veo 3.1 - Quality')",
     # Substring `:has-text` (NOT `:text-is`) so it matches regardless of the

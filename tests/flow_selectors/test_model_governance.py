@@ -58,13 +58,15 @@ _NO_LONGER_OFFERED: dict[Model, str] = {
 #: a named, dated decision — not a place to park failures.
 _VIDEO_NOT_OFFERED: dict[VideoModel, str] = {
     VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: (
-        "'Veo 3.1 - Lite [Lower Priority]' was NOT offered to profile denon82 on "
-        "2026-08-26 (picker rendered exactly: Omni Flash / Veo 3.1 - Lite / Fast / "
-        "Quality). That is one account at one moment, NOT proof the tier does not "
-        "exist — it may be cohort- or region-gated, which is precisely what #539 is "
-        "open to establish. Requesting it now raises VideoModelSelectionError "
-        "(exit 18) naming what Flow does offer, instead of silently generating on "
-        "whatever model Flow had selected and CHARGING CREDITS for it."
+        "'Veo 3.1 - Lite [Lower Priority]' was NOT offered on denon82 (2026-08-26, "
+        "pt: Omni Flash / Veo 3.1 - Lite / Fast / Quality) and was NOT offered on "
+        "ffroliva (2026-08-30, en: Omni 1.1 Flash / Veo 3.1 - Lite / Fast / "
+        "Quality). Two accounts, two locales, two dates — stronger than the single "
+        "observation #539 opened on, but still NOT proof the tier does not exist: "
+        "it may be cohort- or region-gated, which is precisely what #539 is open "
+        "to establish. Requesting it now raises VideoModelSelectionError (exit 18) "
+        "naming what Flow does offer, instead of silently generating on whatever "
+        "model Flow had selected and CHARGING CREDITS for it."
     ),
 }
 
@@ -239,7 +241,7 @@ def test_every_offered_video_entry_is_modelled() -> None:
 
 
 #: Every label Flow has been observed rendering for the Omni tier, oldest first.
-#: Flow renamed 'Omni Flash' -> 'Omni 1.1 Flash' (reported 2026-08-30). A version
+#: Flow renamed 'Omni Flash' -> 'Omni 1.1 Flash' (probe-confirmed 2026-08-30). A version
 #: number injected mid-label is the drift shape a contiguous substring selector
 #: cannot survive, and it is invisible to the inventory grade above the moment
 #: the fixture is refreshed: the new label alone grades clean against a selector

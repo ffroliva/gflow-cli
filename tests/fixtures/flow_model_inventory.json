@@ -1,8 +1,8 @@
 {
   "_provenance": {
-    "captured_utc": "2026-08-26T23:05:00Z",
-    "profile": "denon82",
-    "account_locale": "pt",
+    "captured_utc": "2026-08-30T11:17:00Z",
+    "profile": "ffroliva",
+    "account_locale": "en (html_lang=en; no locale segment forced)",
     "method": "scripts/dev/spike_model_inventory.py — menu read WHILE OPEN",
     "note": "An EMPTY read is instrument failure, never data. #539 recorded a previous capture taken after the menu closed and treated the emptiness as absence; that conclusion was wrong. Never write this file from an empty read."
   },
@@ -17,8 +17,8 @@
     "volume_up Veo 3.1 - Fast",
     "volume_up Veo 3.1 - Quality"
   ],
-  "_video_note": "Captured 2026-08-26 after fixing the CAPTURE, not the product. The earlier empty read was caused by calling _open_gen_settings_panel after _switch_to_video_mode: both click the SAME crop_* trigger, so the second click toggled the panel shut and the video-tab probe missed on all five selectors. #539's note that 'the video picker uses a different trigger' is FALSIFIED — MODEL_PICKER_TRIGGER and IMAGE_MODEL_PICKER_TRIGGER are byte-identical strings.",
-  "_video_credit_line": "10 (the live cost line with Veo 3.1 - Lite selected; matches the documented veo-lite cost). Per-model cost was NOT swept in this capture.",
-  "_lower_priority_finding": "'Veo 3.1 - Lite [Lower Priority]' was NOT offered to profile denon82 on 2026-08-26 (picker rendered exactly: Omni Flash / Veo 3.1 - Lite / Fast / Quality). That is one account at one moment, NOT proof the tier does not exist — it may be cohort-gated or region-gated, which is what #539 is open to establish. Recorded as an observation with a date, per docs/superpowers/specs/2026-08-26-model-cost-quota-catalog.md.",
-  "_video_rename_2026_08_30": "AMENDED 2026-08-30, and NOT from a probe run: 'Omni Flash' was reported renamed to 'Omni 1.1 Flash' by the maintainer observing the live picker. The rest of this file is still the 2026-08-26 spike_model_inventory.py capture described in _provenance. This one line is a user report, which is weaker evidence than a probe read: the exact casing and spacing are not byte-verified, and whether the four Veo labels also moved was not checked. Re-run `python scripts/dev/spike_model_inventory.py` (navigation and menu clicks only, zero credits) and overwrite this whole file from the read, then delete this note. The selector fix does not depend on this line: it spans the version number with two ANDed has-text clauses and is graded against BOTH labels in test_omni_selector_survives_the_version_number_rename."
+  "_video_note": "The 2026-08-26 capture fixed the CAPTURE, not the product. The earlier empty read was caused by calling _open_gen_settings_panel after _switch_to_video_mode: both click the SAME crop_* trigger, so the second click toggled the panel shut and the video-tab probe missed on all five selectors. #539's note that 'the video picker uses a different trigger' is FALSIFIED — MODEL_PICKER_TRIGGER and IMAGE_MODEL_PICKER_TRIGGER are byte-identical strings.",
+  "_video_credit_line": "15 on this read. NOT comparable to the 10 recorded on 2026-08-26: this capture did not record which model was selected when the line was read, and the 2026-08-26 figure was taken with Veo 3.1 - Lite selected. Do not read a price change into this. Per-model cost has still never been swept.",
+  "_omni_rename_confirmed": "PROBE-CONFIRMED 2026-08-30 on profile ffroliva: the Omni tier renders as 'volume_up Omni 1.1 Flash'. Flow renamed it in place from 'Omni Flash', which broke the contiguous has-text('Omni Flash') selector (see KNOWN_ISSUES 2026-08-30 correction). The same read confirms the four Veo labels did NOT move — still 'Veo 3.1 - Lite / Fast / Quality'. Both facts are byte-verified from the menu read, superseding the maintainer observation this line originally recorded.",
+  "_lower_priority_finding": "'Veo 3.1 - Lite [Lower Priority]' was NOT offered on denon82 (2026-08-26, pt) and was NOT offered on ffroliva (2026-08-30, en). Two accounts at two moments in two locales, which is stronger than the single observation #539 opened on — but still NOT proof the tier does not exist: it may be cohort- or region-gated, which is what #539 remains open to establish. Recorded as observations with dates, per docs/superpowers/specs/2026-08-26-model-cost-quota-catalog.md."
 }
