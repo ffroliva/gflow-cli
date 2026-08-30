@@ -39,6 +39,12 @@ Allowed autonomously:
 - ✅ Post one issue comment (status / reply to reporter).
 - ✅ Open a **draft** PR (push a `bugfix/`-prefixed branch off `develop`).
 - ✅ Run **browser-free / credit-free** verification (unit, lint, type, recording-verif, Gemini tool-path).
+- ✅ Run the council review (`/gflow:pr-council-review` / `/gflow:branch-review`), `/gflow:check`,
+  `/gflow:sonar`, `/gflow:doc-review` — **without asking.** These are mandated steps, not
+  offers. A general "don't spawn subagents unless the user requested it" rule does **not**
+  gate them: the user requested them by invoking this workflow. Stopping to ask makes the
+  maintainer re-authorize the same step every issue, and it stalls the pipeline at exactly
+  the point review is worth most.
 
 Never (these require a human, regardless of pressure):
 - ❌ Spend Veo credits (no live video generation to "verify").
@@ -84,8 +90,10 @@ locally (full `pytest --cov` OOMs — memory `full-test-suite-ooms`); trust CI.
 `gh pr create --draft --base develop`. Body is a **plain string** (never a
 heredoc — CLAUDE.md MCP rule). Include a **Verification status** section with
 checked/unchecked boxes; use `Refs #N` when a human must still verify,
-`Closes #N` only when fully verified here. Then `/gflow:pr-council-review`
-(or `/gflow:branch-review` pre-push). **STOP** — a human promotes and merges.
+`Closes #N` only when fully verified here. Then run `/gflow:pr-council-review`
+(or `/gflow:branch-review` pre-push) — baseline D1–D5 **plus D14 over-engineering /
+YAGNI**, which is the lens correctness and quality reviews do not apply. Apply the
+findings (or record why you declined each), then **STOP** — a human promotes and merges.
 
 ---
 
@@ -107,6 +115,9 @@ checked/unchecked boxes; use `Refs #N` when a human must still verify,
 ## Common mistakes
 
 - Working on `develop` instead of a `bugfix/` branch off it (memory: `develop-divergence-recovery`).
+- Treating step 6's council as optional, or asking permission to run it. It is neither
+  (memory: `council-review-is-standing-authorized`). Ask before merging, marking a PR
+  ready, or spending credits — never before reviewing.
 ### Pipeline Continuation (Next Step Handoff)
 
 Upon completing Issue Resolution:
