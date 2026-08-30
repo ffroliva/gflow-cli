@@ -272,15 +272,30 @@ def _git(repo_dir: Path, *args: str, check: bool = True) -> subprocess.Completed
     whatever clone happens to enclose it, so ``git checkout develop`` silently
     rewrites someone else's working tree. That is issue #605: a local test run
     under ``--basetemp=tmp/pytest`` moved the developer's own clone off its
-    branch. Pinned, the same call fails loudly with git's exit 128.
+    branch. Pinned, the same call fails loudly instead.
+
+    Raises the module's ``RuntimeError`` idiom rather than letting ``check=True``
+    produce a ``CalledProcessError``: that renders only "returned non-zero exit
+    status 128" and keeps git's own "fatal: not a git repository: ..." in an
+    unread ``.stderr``. Callers log ``str(exc)``, so the diagnostic this pinning
+    exists to produce would never reach the operator. Matches ``_gh_json`` and
+    ``post_gh_comment``.
+
+    ``repo_dir`` is resolved first because ``--git-dir``/``--work-tree`` are
+    interpreted relative to ``cwd`` -- which is ``repo_dir`` -- so a relative path
+    would double-nest into ``<repo_dir>/<repo_dir>/.git``.
     """
-    return subprocess.run(
+    repo_dir = repo_dir.resolve()
+    proc = subprocess.run(
         ["git", f"--git-dir={repo_dir / '.git'}", f"--work-tree={repo_dir}", *args],
         cwd=repo_dir,
         capture_output=True,
         text=True,
-        check=check,
+        check=False,
     )
+    if check and proc.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} failed in {repo_dir}: {proc.stderr.strip()}")
+    return proc
 
 
 def fetch_and_checkout_pr(pr_num: int, repo_dir: Path) -> str:

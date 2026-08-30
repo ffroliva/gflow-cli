@@ -454,7 +454,7 @@ def test_post_gh_comment_passes_the_write_token_explicitly():
     assert m_run.call_args.kwargs["env"]["GH_TOKEN"] == "write-token"
 
 
-def _git(repo, *args):
+def _raw_git(repo, *args):
     subprocess.run(["git", *args], cwd=repo, capture_output=True, check=True)
 
 
@@ -462,14 +462,14 @@ def _make_repo(tmp_path):
     """A real repo on develop with a pr-999-review branch checked out."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    _git(repo, "init", "-q", "-b", "develop")
-    _git(repo, "config", "user.email", "t@t")
-    _git(repo, "config", "user.name", "t")
+    _raw_git(repo, "init", "-q", "-b", "develop")
+    _raw_git(repo, "config", "user.email", "t@t")
+    _raw_git(repo, "config", "user.name", "t")
     (repo / "f.txt").write_text("x")
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", "init")
-    _git(repo, "branch", "pr-999-review")
-    _git(repo, "checkout", "-q", "pr-999-review")
+    _raw_git(repo, "add", ".")
+    _raw_git(repo, "commit", "-qm", "init")
+    _raw_git(repo, "branch", "pr-999-review")
+    _raw_git(repo, "checkout", "-q", "pr-999-review")
     return repo
 
 
@@ -494,8 +494,8 @@ def test_restore_repo_branch_deletes_the_pr_branch(tmp_path):
 def test_restore_repo_branch_tolerates_absent_pr_branch(tmp_path):
     """A run that failed before fetching leaves no branch; cleanup must not raise."""
     repo = _make_repo(tmp_path)
-    _git(repo, "checkout", "-q", "develop")
-    _git(repo, "branch", "-D", "pr-999-review")
+    _raw_git(repo, "checkout", "-q", "develop")
+    _raw_git(repo, "branch", "-D", "pr-999-review")
 
     pr_triage_autopilot.restore_repo_branch(repo, pr_num=999)
 
@@ -533,7 +533,7 @@ def test_restore_repo_branch_refuses_to_escape_into_the_enclosing_repo(tmp_path)
     inner = outer / "inner"  # nested, deliberately not a repository
     inner.mkdir()
 
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(RuntimeError, match="not a git repository"):
         pr_triage_autopilot.restore_repo_branch(inner, pr_num=999)
 
     assert _head(outer) == "pr-999-review", "escaped and checked out develop in the parent repo"

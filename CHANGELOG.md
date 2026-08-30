@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   working tree — moving the developer off their branch mid-run (reflog-confirmed,
   Windows-only, intermittent). Two independent guards now close it:
   `scripts/autopilot/pr_triage_autopilot.py` pins every git call with
-  `--git-dir`/`--work-tree`, so a `repo_dir` that is not a repository fails loudly
-  — git's exit 128 when the path exists but is not a repo — instead of
+  `--git-dir`/`--work-tree`, so a `repo_dir` that is not a repository fails loudly,
+  raising with git's own `fatal: not a git repository` text rather than
   retargeting whatever clone encloses it (this also
   hardens the VPS triage path against a mistyped `--repo-dir`), and
   `tests/conftest.py` sets `GIT_CEILING_DIRECTORIES` to pytest's basetemp so no
