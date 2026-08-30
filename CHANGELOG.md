@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.62.1] — 2026-08-30
+
 ### Fixed
 
 - **`--model omni-flash` was unselectable after Flow renamed the picker entry
@@ -3446,7 +3448,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.62.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.62.1...HEAD
+[0.62.1]: https://github.com/ffroliva/gflow-cli/compare/v0.62.0...v0.62.1
 [0.62.0]: https://github.com/ffroliva/gflow-cli/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/ffroliva/gflow-cli/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/ffroliva/gflow-cli/compare/v0.59.0...v0.60.0
