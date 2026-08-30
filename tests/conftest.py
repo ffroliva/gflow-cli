@@ -18,6 +18,7 @@ before and after every test. Without this, any test that calls
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -28,6 +29,22 @@ import structlog
 # tests/fixtures/doctor_env.py; re-exported here so pytest registers it for
 # both tests/services/test_doctor.py and tests/cli/test_cli_doctor.py.
 from tests.fixtures.doctor_env import healthy_doctor_env  # noqa: F401
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Stop git from escaping pytest's basetemp into the real clone (#605).
+
+    ``addopts`` pins ``--basetemp=tmp/pytest`` *inside* the working tree (so msys2's
+    ``TMPDIR=$PWD`` cannot scatter ``pytest-of-*/`` dirs around). The cost is that
+    every ``tmp_path`` is a directory nested in a git repository: a test that shells
+    out to git in a tmp dir without a ``.git`` has its command resolved against the
+    enclosing gflow-cli clone. That is how a full offline run checked out ``develop``
+    over the developer's own branch. ``GIT_CEILING_DIRECTORIES`` stops git's upward
+    search at the basetemp, turning the escape into a plain "not a git repository".
+    """
+    basetemp = config.getoption("basetemp", None)
+    if basetemp:
+        os.environ["GIT_CEILING_DIRECTORIES"] = str(Path(basetemp).resolve())
 
 
 @pytest.fixture(autouse=True)
