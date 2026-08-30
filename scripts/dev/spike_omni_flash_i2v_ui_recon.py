@@ -210,10 +210,19 @@ async def recon(
         if await _open_model_menu(page):
             items = await _dump_menuitems(page, evidence, "frames_submode")
             await page.screenshot(path=str(out_dir / "03-model-menu-frames-submode.png"))
-            omni_listed = any("Omni Flash" in m["text"] for m in items)
-            omni_disabled = any(
-                "Omni Flash" in m["text"] and m["disabled"] not in (None, "false") for m in items
-            )
+
+            # Token match, not the literal 'Omni Flash': Flow renamed the tier
+            # to 'Omni 1.1 Flash' (2026-08-30) and versions the name in place,
+            # so a contiguous-substring probe reports the model MISSING and the
+            # recon silently skips A3/A4 instead of answering them.
+            # Lowercased because `:has-text` is case-INSENSITIVE: a case-exact
+            # probe would report the model missing on an 'OMNI 1.1 FLASH' render
+            # that the transport selects fine.
+            omni = [
+                m for m in items if "omni" in m["text"].lower() and "flash" in m["text"].lower()
+            ]
+            omni_listed = bool(omni)
+            omni_disabled = any(m["disabled"] not in (None, "false") for m in omni)
             evidence["omni_listed_in_frames_menu"] = omni_listed
             evidence["omni_disabled_in_frames_menu"] = omni_disabled
             print(

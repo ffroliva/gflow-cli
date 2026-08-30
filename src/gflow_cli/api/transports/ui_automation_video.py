@@ -238,7 +238,31 @@ MODEL_PICKER_TRIGGER = (
     "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
 )
 VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, str] = {
-    VideoModel.OMNI_FLASH: "[role='menuitem']:has-text('Omni Flash')",
+    # Two ANDed `has-text` substrings, NOT one contiguous 'Omni Flash': Flow
+    # renamed the entry to 'Omni 1.1 Flash', and a version number injected in the
+    # MIDDLE of the label breaks a contiguous substring match. The old selector
+    # matched zero entries, so `_select_video_model` refused every explicit
+    # `--model omni-flash` run with VideoModelSelectionError (exit 18). Both
+    # clauses must hold on the SAME menuitem, which matches 'Omni Flash',
+    # 'Omni 1.1 Flash', and whatever version Flow bumps to next, while staying
+    # unique against the four 'Veo 3.1 - *' entries. If Flow ever offers two
+    # concurrent Omni tiers, this goes AMBIGUOUS and the transport refuses
+    # before spending credits — which is the correct failure, not a silent
+    # `.first` guess. The trailing `:not` mirrors the VEO_3_1_LITE sibling
+    # below: Flow already ships a '[Lower Priority]' variant of a tier, so an
+    # 'Omni 1.1 Flash [Lower Priority]' entry would make the two ANDed clauses
+    # match two menuitems and put omni-flash back at exit 18 — the same outage,
+    # from the same class of drift.
+    VideoModel.OMNI_FLASH: (
+        "[role='menuitem']:has-text('Omni'):has-text('Flash'):not(:has-text('[Lower Priority]'))"
+    ),
+    # The Veo entries deliberately KEEP the contiguous '3.1'. Do NOT "fix" them
+    # the way OMNI_FLASH was fixed above: the discriminator is whether gflow's
+    # own identifier pins the version. `omni_flash` carries none, so '1.1' in
+    # Flow's label is noise the anchor must span. `VEO_3_1_FAST` makes 3.1 part
+    # of the model's identity, so if Flow swaps this tier for a 'Veo 3.2' a loud
+    # MISS is the CORRECT outcome — widening to 'Veo' + 'Fast' would silently
+    # bind `--model veo-fast` to a different tier at a different credit price.
     VideoModel.VEO_3_1_FAST: "[role='menuitem']:has-text('Veo 3.1 - Fast')",
     VideoModel.VEO_3_1_QUALITY: "[role='menuitem']:has-text('Veo 3.1 - Quality')",
     # Substring `:has-text` (NOT `:text-is`) so it matches regardless of the

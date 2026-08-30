@@ -58,13 +58,15 @@ _NO_LONGER_OFFERED: dict[Model, str] = {
 #: a named, dated decision — not a place to park failures.
 _VIDEO_NOT_OFFERED: dict[VideoModel, str] = {
     VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: (
-        "'Veo 3.1 - Lite [Lower Priority]' was NOT offered to profile denon82 on "
-        "2026-08-26 (picker rendered exactly: Omni Flash / Veo 3.1 - Lite / Fast / "
-        "Quality). That is one account at one moment, NOT proof the tier does not "
-        "exist — it may be cohort- or region-gated, which is precisely what #539 is "
-        "open to establish. Requesting it now raises VideoModelSelectionError "
-        "(exit 18) naming what Flow does offer, instead of silently generating on "
-        "whatever model Flow had selected and CHARGING CREDITS for it."
+        "'Veo 3.1 - Lite [Lower Priority]' was NOT offered on denon82 (2026-08-26, "
+        "pt: Omni Flash / Veo 3.1 - Lite / Fast / Quality) and was NOT offered on "
+        "ffroliva (2026-08-30, en: Omni 1.1 Flash / Veo 3.1 - Lite / Fast / "
+        "Quality). Two accounts, two locales, two dates — stronger than the single "
+        "observation #539 opened on, but still NOT proof the tier does not exist: "
+        "it may be cohort- or region-gated, which is precisely what #539 is open "
+        "to establish. Requesting it now raises VideoModelSelectionError (exit 18) "
+        "naming what Flow does offer, instead of silently generating on whatever "
+        "model Flow had selected and CHARGING CREDITS for it."
     ),
 }
 
@@ -236,6 +238,79 @@ def test_every_offered_video_entry_is_modelled() -> None:
     }
     unexplained = [o for o in offered if o not in claimed]
     assert not unexplained, f"Flow offers video entries we do not model: {unexplained}"
+
+
+#: Every label Flow has been observed rendering for the Omni tier, oldest first.
+#: Flow renamed 'Omni Flash' -> 'Omni 1.1 Flash' (probe-confirmed 2026-08-30). A version
+#: number injected mid-label is the drift shape a contiguous substring selector
+#: cannot survive, and it is invisible to the inventory grade above the moment
+#: the fixture is refreshed: the new label alone grades clean against a selector
+#: that only handles the new label, and the next bump breaks it again.
+_OMNI_LABELS_SEEN = (
+    "volume_up Omni Flash",
+    "volume_up Omni 1.1 Flash",
+)
+
+
+@pytest.mark.parametrize("label", _OMNI_LABELS_SEEN)
+def test_omni_selector_survives_the_version_number_rename(label: str) -> None:
+    """The omni selector must match every label Flow has shipped for that tier.
+
+    'Omni Flash' -> 'Omni 1.1 Flash' broke `has-text('Omni Flash')` outright:
+    `has-text` is a CONTIGUOUS substring match, so the inserted '1.1' dropped the
+    match count to zero and `_select_video_model` refused every explicit
+    `--model omni-flash` run with VideoModelSelectionError (exit 18). Two ANDed
+    `has-text` clauses ('Omni' and 'Flash') span the version number.
+
+    This grades against recorded labels rather than the live fixture on purpose:
+    the fixture holds only the CURRENT menu, so it cannot pin that the selector
+    still handles the naming Flow used yesterday, or the shape of the next bump.
+    """
+    sel = VIDEO_MODEL_OPTION_SELECTORS[VideoModel.OMNI_FLASH]
+    assert _matches(sel, [label]) == [label], (
+        f"omni selector {sel!r} does not match a label Flow has shipped: {label!r}.\n"
+        f"A miss here is exit 18 on every `--model omni-flash` run."
+    )
+
+
+def test_omni_selector_matches_the_omni_entry_and_nothing_else() -> None:
+    """The widened 'Omni' + 'Flash' selector must stay unique in a fuller menu.
+
+    The Veo tiers cost up to 10x omni-flash, so a collision is a credit-tier
+    mix-up. Graded POSITIVELY as well as negatively on purpose: `_matches`
+    returns `[]` for a selector it cannot parse, so an excludes-everything
+    assertion on its own would bless a registry entry that matches nothing at
+    all. The menu below adds the two `[Lower Priority]` variants Flow has been
+    seen to ship, which the fixture does not carry.
+    """
+    sel = VIDEO_MODEL_OPTION_SELECTORS[VideoModel.OMNI_FLASH]
+    menu = [
+        "volume_up Omni 1.1 Flash",
+        "volume_up Omni 1.1 Flash [Lower Priority]",
+        "volume_up Veo 3.1 - Lite",
+        "volume_up Veo 3.1 - Fast",
+        "volume_up Veo 3.1 - Quality",
+        "volume_up Veo 3.1 - Lite [Lower Priority]",
+    ]
+    assert _matches(sel, menu) == ["volume_up Omni 1.1 Flash"], (
+        f"omni selector {sel!r} must match the Omni entry and nothing else"
+    )
+
+
+def test_the_live_omni_label_is_recorded_in_the_seen_list() -> None:
+    """A fixture refresh must not drop the live label out of the history guard.
+
+    `_OMNI_LABELS_SEEN` is hand-maintained beside the probe-written fixture.
+    Left unpinned, the next rename gets refreshed into the fixture while the
+    parametrized guard above keeps grading labels nobody ships any more — it
+    degrades to decoration exactly as its own docstring warns.
+    """
+    live = [m for m in _inventory()["video"] if "omni" in m.lower()]
+    assert len(live) == 1, f"expected exactly one Omni entry in the fixture, got {live}"
+    assert live[0] in _OMNI_LABELS_SEEN, (
+        f"fixture ships {live[0]!r} but _OMNI_LABELS_SEEN does not list it — "
+        f"append it (oldest first) whenever you refresh the fixture."
+    )
 
 
 def test_lower_priority_absence_is_recorded_as_an_observation() -> None:

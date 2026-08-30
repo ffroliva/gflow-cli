@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.62.1] — 2026-08-30
+
+### Fixed
+
+- **`--model omni-flash` was unselectable after Flow renamed the picker entry
+  `Omni Flash` -> `Omni 1.1 Flash`
+  ([#604](https://github.com/ffroliva/gflow-cli/pull/604)).** Every explicit
+  `--model omni-flash` run failed with `VideoModelSelectionError` (exit 18) — the
+  fail-loud gate worked, so no credits were spent and nothing was billed to the
+  wrong tier, but the model could not be chosen. The selector now spans the
+  injected version segment, so it matches the old label, the current one, and the
+  next bump, while staying unique against the four `Veo 3.1 - *` tiers and
+  excluding any future `[Lower Priority]` Omni variant. The same
+  literal is fixed in `scripts/dev/spike_omni_flash_i2v_ui_recon.py`. The CLI
+  alias (`--model omni-flash`) and the enum value (`omni_flash`) deliberately did
+  not change — they are gflow's own contract for chain files, resume state, and
+  JSON output. Why `has-text` broke, and when *not* to widen a selector this way:
+  [KNOWN_ISSUES.md](KNOWN_ISSUES.md), 2026-08-30 correction.
+
+### Added
+
+- **[`docs/ACCOUNT_SAFETY.md`](docs/ACCOUNT_SAFETY.md) — one honest page answering
+  "will this get my account flagged?"
+  ([#602](https://github.com/ffroliva/gflow-cli/issues/602)).** Two Reddit
+  commenters asked the same question from opposite directions on the same day, and
+  the answer existed only as fragments across README, `DISCLAIMER.md`,
+  `DEBUGGING § WAF cadence`, `KNOWN_ISSUES` and `CONFIGURATION` — findable if you
+  already knew where to look, invisible to someone deciding whether to install.
+  The page separates the three things people conflate (a quota limit, a per-profile
+  WAF block, an account ban — only the first two have ever been observed here),
+  states what the tool does to stay unremarkable (headed real Chrome because
+  headless is an instant 403, ±25% randomisation on every interaction, 0.5–1.5 s
+  submission pacing, one project per multi-prompt run, isolated per-account
+  profiles, refuse-don't-retry), what it deliberately does **not** do (no proxy
+  rotation, no fingerprint spoofing beyond the opt-in patched engine, no headless
+  unlock, no pretence that it isn't automation), the knobs worth turning, the
+  [#241](https://github.com/ffroliva/gflow-cli/issues/241) field data on what
+  actually triggered a 403, and what cannot be promised. Linked from the README
+  banner, `docs/INDEX.md`, and back-linked from all three deep sources; published
+  to the docs site under Getting started.
+
+- Clarified in [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_jitter_range) that
+  `GFLOW_CLI_JITTER_RANGE` paces *submissions between prompts* and is a different
+  mechanism from the always-on ±25% per-interaction randomisation — the two were
+  easy to read as one knob.
+
 ## [0.62.0] — 2026-08-28
 
 ### Changed
@@ -3402,7 +3448,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.62.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.62.1...HEAD
+[0.62.1]: https://github.com/ffroliva/gflow-cli/compare/v0.62.0...v0.62.1
 [0.62.0]: https://github.com/ffroliva/gflow-cli/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/ffroliva/gflow-cli/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/ffroliva/gflow-cli/compare/v0.59.0...v0.60.0

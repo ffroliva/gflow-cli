@@ -270,6 +270,11 @@ Bash users on Git Bash / WSL inherit a UTF-8 locale and don't need this.
 
 ## WAF cadence
 
+> Operating guidance for account risk as a whole — what the tool does to stay
+> unremarkable, what it does not do, and what a 403 does and does not mean — is in
+> [ACCOUNT_SAFETY.md](ACCOUNT_SAFETY.md). This section is the cadence evidence
+> behind it.
+
 Flow's WAF reacts to **cumulative submission cadence**, not individual
 requests. Field data (issue [#241](https://github.com/ffroliva/gflow-cli/issues/241),
 2026-07-05, real account):
