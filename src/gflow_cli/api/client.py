@@ -1866,13 +1866,12 @@ class FlowApiClient:
         """
         listing = await self.capability_listing(project_id)
         service_tier = video_extend.account_service_tier(listing)
-        model_key = video_extend.resolve_extend_model(
+        model_key, unit_cost = video_extend.resolve_extend_model(
             listing, service_tier=service_tier, aspect=aspect
         )
         # When Flow moves the extend family again — it has moved once already —
         # this single line is the diagnosis. The raw creditMapping table is NOT
         # logged; only the decision and the inputs that produced it.
-        unit_cost = video_extend.model_unit_cost(listing, model_key, service_tier)
         logger.info(
             "extend_model_resolved",
             model_key=model_key,
@@ -1904,13 +1903,11 @@ class FlowApiClient:
         workflow_id = ""
         if isinstance(workflows, list) and workflows and isinstance(workflows[0], dict):
             workflow_id = str(cast("JsonObject", workflows[0]).get("name") or "")
-        remaining = data.get("remainingCredits")
         return ExtendStarted(
             media_id=media_name_from_generate_response(data),
             workflow_id=workflow_id,
             model_key=model_key,
             unit_cost=unit_cost,
-            remaining_credits=remaining if isinstance(remaining, int) else None,
         )
 
     async def poll_video_status(

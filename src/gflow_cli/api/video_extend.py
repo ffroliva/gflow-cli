@@ -27,20 +27,19 @@ all, so a label is never a key.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, cast
 
 from gflow_cli.errors import ExtendUnavailableError
 
 __all__ = [
-    "DEFAULT_FRAME_RANGE",
+    "FRAME_WINDOW_END",
+    "FRAME_WINDOW_START",
     "ExtendVideoRequest",
     "ExtendStarted",
-    "FrameRange",
     "account_credits",
     "account_service_tier",
     "extract_video_models",
-    "model_unit_cost",
     "resolve_extend_model",
     "workflow_id_for_media",
 ]
@@ -73,28 +72,14 @@ _ASPECT_CAPABILITY = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class FrameRange:
-    """The window of the source clip the extension is seeded from.
-
-    Captured value is ``1..24``. The source renders at 24 fps, so that is exactly
-    **1.0 second** — not the whole 8s (192-frame) clip. Whether index 1 is counted
-    from the head or the tail is not yet established, so we send what Flow sends
-    and do not expose this as a knob: an uncomprehended wire integer promoted to a
-    CLI flag would be frozen into the public surface (and, per the MCP schema
-    symmetry rule, into a tool schema as well).
-    """
-
-    start: int = 1
-    end: int = 24
-
-    def __post_init__(self) -> None:
-        if self.start < 1 or self.end < self.start:
-            msg = f"invalid frame range {self.start}..{self.end}"
-            raise ValueError(msg)
-
-
-DEFAULT_FRAME_RANGE = FrameRange()
+# The window of the source clip an extension is seeded from. Captured value is
+# 1..24; the source renders at 24 fps, so that is exactly 1.0 second — not the
+# whole 8s (192-frame) clip. Whether index 1 counts from the head or the tail is
+# not established, so we send what Flow sends. Deliberately not a CLI flag: an
+# uncomprehended wire integer promoted to the public surface would be frozen
+# there, and per the MCP schema-symmetry rule into a tool schema as well.
+FRAME_WINDOW_START = 1
+FRAME_WINDOW_END = 24
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,24 +95,17 @@ class ExtendStarted:
     workflow_id: str
     model_key: str
     unit_cost: int | None = None
-    remaining_credits: int | None = None
 
 
 def _inner(listing: object) -> dict[str, Any]:
-    """Return the payload dict, accepting the tRPC envelope or its unwrapped inner.
-
-    ``fetch_project_listing`` hands back ``{"result": {"data": {"json": {...}}}}``
-    verbatim, but callers that already unwrapped shouldn't have to re-wrap.
-    """
-    if not isinstance(listing, dict):
-        return {}
-    node = cast("dict[str, Any]", listing)
+    """Unwrap the tRPC envelope ``result.data.json`` that `fetch_project_listing`
+    returns verbatim. Guards stay: Flow reshapes without notice."""
+    node: Any = listing
     for key in ("result", "data", "json"):
-        nxt = node.get(key)
-        if not isinstance(nxt, dict):
-            return node
-        node = cast("dict[str, Any]", nxt)
-    return node
+        if not isinstance(node, dict):
+            return {}
+        node = cast("dict[str, Any]", node).get(key)
+    return cast("dict[str, Any]", node) if isinstance(node, dict) else {}
 
 
 def extract_video_models(listing: object) -> list[dict[str, Any]]:
@@ -198,25 +176,9 @@ def account_credits(listing: object) -> int | None:
     return credits if isinstance(credits, int) and not isinstance(credits, bool) else None
 
 
-def model_unit_cost(listing: object, model_key: str, service_tier: str) -> int | None:
-    """Credits one submission of *model_key* costs on *service_tier*.
-
-    Feeds both the pre-flight cost estimate and the `extend_model_resolved` log
-    line. Returns ``None`` when the key is absent or unorderable on that tier,
-    so a caller shows "unknown" rather than a fabricated 0.
-    """
-    for entry in extract_video_models(listing):
-        if entry.get("key") != model_key:
-            continue
-        mapping = cast("dict[str, Any]", entry.get("creditMapping") or {})
-        tier_entry = cast("dict[str, Any]", mapping.get(service_tier) or {})
-        cost = tier_entry.get("cost")
-        if isinstance(cost, int) and not isinstance(cost, bool):
-            return cost
-    return None
-
-
-def resolve_extend_model(listing: object, *, service_tier: str, aspect: str) -> str:
+def resolve_extend_model(
+    listing: object, *, service_tier: str, aspect: str
+) -> tuple[str, int]:
     """Pick the extend model key this account may actually order.
 
     Mirrors Flow's own choice: among models that (a) declare
@@ -227,6 +189,9 @@ def resolve_extend_model(listing: object, *, service_tier: str, aspect: str) -> 
     they trade queue position for price, Flow's own UI does not select them, and
     an unbounded wait is a poor default for a chained run. A `--priority` flag can
     surface them later if anyone asks.
+
+    Returns ``(key, unit_cost)``: the cost is found while selecting, so handing it
+    back saves the caller re-walking ~100 models for a number already in hand.
 
     Raises :class:`ExtendUnavailableError` rather than falling back to a pinned
     key — a key the account cannot order 403s on every attempt.
@@ -276,7 +241,7 @@ def resolve_extend_model(listing: object, *, service_tier: str, aspect: str) -> 
             f"({len(models)} models offered)"
         )
         raise ExtendUnavailableError(msg)
-    return best_key
+    return best_key, best_cost or 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,7 +261,6 @@ class ExtendVideoRequest:
     model_key: str
     aspect: str
     seed: int | None = None
-    frame_range: FrameRange = field(default=DEFAULT_FRAME_RANGE)
 
     def __post_init__(self) -> None:
         for label, value in (
@@ -327,8 +291,8 @@ class ExtendVideoRequest:
             "metadata": {"sceneId": self.scene_id},
             "videoInput": {
                 "mediaId": self.media_id,
-                "startFrameIndex": self.frame_range.start,
-                "endFrameIndex": self.frame_range.end,
+                "startFrameIndex": FRAME_WINDOW_START,
+                "endFrameIndex": FRAME_WINDOW_END,
             },
         }
         if self.seed is not None:

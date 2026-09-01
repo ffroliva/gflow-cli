@@ -19,9 +19,9 @@ from pathlib import Path
 import pytest
 
 from gflow_cli.api.video_extend import (
-    DEFAULT_FRAME_RANGE,
+    FRAME_WINDOW_END,
+    FRAME_WINDOW_START,
     ExtendVideoRequest,
-    FrameRange,
     account_credits,
     account_service_tier,
     extract_video_models,
@@ -50,7 +50,7 @@ def models(listing: dict) -> list[dict]:
 def test_resolves_the_key_flow_itself_sends(listing: dict) -> None:
     """INTERMEDIATE + landscape must yield exactly what Flow's own UI sent."""
     assert (
-        resolve_extend_model(listing, service_tier="SERVICE_TIER_INTERMEDIATE", aspect="16:9")
+        resolve_extend_model(listing, service_tier="SERVICE_TIER_INTERMEDIATE", aspect="16:9")[0]
         == "veo_3_1_extension_lite"
     )
 
@@ -59,21 +59,23 @@ def test_resolves_for_portrait_too(listing: dict) -> None:
     """`veo_3_1_extension_lite` is the only aspect-agnostic entry; portrait is
     the parable pipeline's primary case (`--aspect 9:16`)."""
     assert (
-        resolve_extend_model(listing, service_tier="SERVICE_TIER_INTERMEDIATE", aspect="9:16")
+        resolve_extend_model(listing, service_tier="SERVICE_TIER_INTERMEDIATE", aspect="9:16")[0]
         == "veo_3_1_extension_lite"
     )
 
 
 def test_never_returns_an_ultra_key_on_intermediate(listing: dict) -> None:
     """The exact bug in the third-party map: `_ultra` is ADVANCED-only."""
-    key = resolve_extend_model(listing, service_tier="SERVICE_TIER_INTERMEDIATE", aspect="16:9")
+    key, _cost = resolve_extend_model(
+        listing, service_tier="SERVICE_TIER_INTERMEDIATE", aspect="16:9"
+    )
     assert not key.endswith("_ultra")
 
 
 def test_skips_unavailable_costs(listing: dict, models: list[dict]) -> None:
     """A `cost: "UNAVAILABLE"` entry must never be selected on that tier."""
     for tier in ("SERVICE_TIER_INTERMEDIATE", "SERVICE_TIER_ENTRY", "SERVICE_TIER_ADVANCED"):
-        key = resolve_extend_model(listing, service_tier=tier, aspect="16:9")
+        key, _cost = resolve_extend_model(listing, service_tier=tier, aspect="16:9")
         entry = next(m for m in models if m["key"] == key)
         assert isinstance(entry["creditMapping"][tier]["cost"], int)
 
@@ -81,14 +83,16 @@ def test_skips_unavailable_costs(listing: dict, models: list[dict]) -> None:
 def test_advanced_prefers_standard_over_low_priority(listing: dict) -> None:
     """`_low_priority` costs 0 on ADVANCED but trades away queue position, and
     Flow's own UI does not pick it. Cheapest must not mean free-but-unbounded."""
-    key = resolve_extend_model(listing, service_tier="SERVICE_TIER_ADVANCED", aspect="16:9")
+    key, _cost = resolve_extend_model(listing, service_tier="SERVICE_TIER_ADVANCED", aspect="16:9")
     assert key == "veo_3_1_extension_lite"
 
 
 def test_requires_the_extension_capability(listing: dict, models: list[dict]) -> None:
     """Control models in the fixture lack VIDEO_REQUIREMENT_EXTENSION and must
     never be returned, however cheap they are."""
-    key = resolve_extend_model(listing, service_tier="SERVICE_TIER_INTERMEDIATE", aspect="16:9")
+    key, _cost = resolve_extend_model(
+        listing, service_tier="SERVICE_TIER_INTERMEDIATE", aspect="16:9"
+    )
     entry = next(m for m in models if m["key"] == key)
     assert any("VIDEO_REQUIREMENT_EXTENSION" in reqs for reqs in entry["requirements"])
 
@@ -109,7 +113,7 @@ def test_rejects_square_aspect(listing: dict) -> None:
 def test_picks_lowest_cost_among_orderable(listing: dict, models: list[dict]) -> None:
     """extension_lite (10) must win over extend_fast_* (20) and extend_* (100)."""
     tier = "SERVICE_TIER_INTERMEDIATE"
-    key = resolve_extend_model(listing, service_tier=tier, aspect="16:9")
+    key, _cost = resolve_extend_model(listing, service_tier=tier, aspect="16:9")
     chosen = next(m for m in models if m["key"] == key)
     orderable = [
         m
@@ -125,10 +129,10 @@ def test_picks_lowest_cost_among_orderable(listing: dict, models: list[dict]) ->
 # ---------------------------------------------------------------- body
 
 
-def test_frame_range_default_is_one_second_at_24fps() -> None:
+def test_frame_window_is_one_second_at_24fps() -> None:
     """Captured value. The source clip is 24fps, so 1..24 is exactly 1.0s —
     not the whole 8s (192 frame) clip."""
-    assert DEFAULT_FRAME_RANGE == FrameRange(start=1, end=24)
+    assert (FRAME_WINDOW_START, FRAME_WINDOW_END) == (1, 24)
 
 
 def test_to_wire_reproduces_the_captured_body() -> None:
@@ -247,14 +251,6 @@ def test_extract_tolerates_a_missing_envelope() -> None:
     assert extract_video_models(None) == []
 
 
-def test_accepts_already_unwrapped_inner(listing: dict) -> None:
-    """`fetch_project_listing` returns the envelope verbatim, but a caller that
-    already unwrapped shouldn't have to re-wrap it."""
-    inner = listing["result"]["data"]["json"]
-    assert extract_video_models(inner) == extract_video_models(listing)
-    assert account_service_tier(inner) == "SERVICE_TIER_INTERMEDIATE"
-
-
 def test_reads_tier_and_credits(listing: dict) -> None:
     """Both feed the pre-flight cost gate: the tier picks the model, the balance
     decides whether the run can finish."""
@@ -281,3 +277,13 @@ def test_maps_media_to_its_workflow(listing: dict) -> None:
 def test_unknown_media_has_no_workflow(listing: dict) -> None:
     assert workflow_id_for_media(listing, "00000000-0000-0000-0000-000000000000") is None
     assert workflow_id_for_media({}, "b9458021-fc2d-4d95-ab53-cf844c6f1079") is None
+
+
+def test_resolver_returns_the_cost_it_already_found(listing: dict) -> None:
+    """The cost is discovered while selecting, so it comes back with the key —
+    re-walking ~100 models for a number already in hand is pure waste."""
+    key, cost = resolve_extend_model(
+        listing, service_tier="SERVICE_TIER_INTERMEDIATE", aspect="16:9"
+    )
+    assert key == "veo_3_1_extension_lite"
+    assert cost == 10

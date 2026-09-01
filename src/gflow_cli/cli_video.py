@@ -1779,23 +1779,28 @@ async def _run_extend(  # noqa: PLR0913
     async with FlowApiClient(profile_dir=profile_dir) as client:
         listing = await client.capability_listing(project_id)
         tier = video_extend.account_service_tier(listing)
-        model_key = video_extend.resolve_extend_model(listing, service_tier=tier, aspect=aspect)
-        unit = video_extend.model_unit_cost(listing, model_key, tier)
+        model_key, unit = video_extend.resolve_extend_model(
+            listing, service_tier=tier, aspect=aspect
+        )
         balance = video_extend.account_credits(listing)
 
         # Pre-flight balance check for the WHOLE run. `chain` never knew prices
         # so it could not do this; stopping here beats stopping at segment 6
         # holding a half-length video and a spent balance.
-        if unit is not None and balance is not None and balance < unit * segments:
+        total_cost = unit * segments
+        # `balance` is the only unknown here — the resolver cannot return a model
+        # without also returning its cost.
+        if balance is not None and balance < total_cost:
             msg = (
-                f"insufficient credits: {segments} segment(s) cost {unit * segments}, "
+                f"insufficient credits: {segments} segment(s) cost {total_cost}, "
                 f"balance is {balance}. Nothing was submitted."
             )
             raise ConfigurationError(msg)
         if not as_json:
-            cost = "unknown" if unit is None else str(unit * segments)
             have = "unknown" if balance is None else str(balance)
-            console.print(f"  model       : {model_key} ({cost} credits total, balance {have})")
+            console.print(
+                f"  model       : {model_key} ({total_cost} credits total, balance {have})"
+            )
 
         # Resuming: read the scene back so the run appends after the clips that
         # are already there, seeding from the real tail rather than the original.

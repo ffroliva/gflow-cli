@@ -52,7 +52,6 @@ class _FakeClient:
             workflow_id=f"wf-{self._n}",
             model_key="veo_3_1_extension_lite",
             unit_cost=10,
-            remaining_credits=1000 - 10 * self._n,
         )
 
     async def poll_video_status(self, media_id: str, **_k: Any) -> Any:

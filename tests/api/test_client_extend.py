@@ -70,7 +70,6 @@ async def test_happy_path_returns_new_media(tmp_path: Path) -> None:
     )
     assert started.media_id == NEW_MEDIA
     assert started.model_key == "veo_3_1_extension_lite"
-    assert started.remaining_credits == 1015
 
 
 @pytest.mark.asyncio

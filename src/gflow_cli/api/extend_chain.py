@@ -76,8 +76,12 @@ class ExtendChainResult:
     scene_id: str
     completed_media_ids: list[str] = field(default_factory=lambda: [])
     credits_spent: int = 0
-    aborted: bool = False
     error: Exception | None = None
+
+    @property
+    def aborted(self) -> bool:
+        """A run ended early exactly when something refused it."""
+        return self.error is not None
 
 
 async def run_extend_chain(  # noqa: PLR0913
@@ -153,7 +157,6 @@ async def run_extend_chain(  # noqa: PLR0913
                 scene_id=scene_id,
                 completed_media_ids=completed,
                 credits_spent=spent,
-                aborted=True,
                 error=exc,
             )
 
