@@ -209,7 +209,9 @@ sequenceDiagram
 > bounds: (1) gflow's `generate_image` clicks "new project" + omits `entityContext` → workflow lands in the
 > wrong project (`flowWorkflows` PATCH 404'd); (2) a self-assembled direct POST with our own minted reCAPTCHA
 > token → **HTTP 403** (the reCAPTCHA wall — [[rest-path-capability-matrix]]; body shape matched the real HAR,
-> only the token differed). **Decision (§11): drive generation through the character editor UI** (existing
+> only the token differed). **Scope note (2026-08-31): this 403 is specific to `batchGenerateImages`, not to
+> generation in general** — see §"the wall is route-specific" below. **Decision (§11): drive generation
+> through the character editor UI** (existing
 > project → Personagens → new character → generate) so Flow's JS sets `entityContext` + passes the WAF, and
 > gflow passive-captures `media[]`/`workflows[]`. The structural ops below stay direct-REST.
 
@@ -377,9 +379,27 @@ convenience later.
   self-assembled `batchGenerateImages` POST returned **HTTP 403** (createEntity ✅, reCAPTCHA mint ✅). Our
   request body shape matched the real successful HAR exactly; the only difference is the reCAPTCHA token —
   a `TokenMinter` token scores too low / wrong-context vs Flow's native page-JS token. This confirms
-  [[rest-path-capability-matrix]]: **generation is never browser-free; Bearer fixed the 401, not the reCAPTCHA
-  wall.** No credit spent (403 before generation). **A retry won't help** — the token can't be made WAF-valid
-  outside Flow's own JS.
+  [[rest-path-capability-matrix]]: ~~**generation is never browser-free**~~ — see the scope correction below;
+  **Bearer fixed the 401, not the reCAPTCHA wall.** No credit spent (403 before generation). **A retry won't
+  help** — for *this route*, the token can't be made WAF-valid outside Flow's own JS.
+
+> #### ⚠️ Scope correction (2026-08-31) — the wall is route-specific, not universal
+>
+> "Generation is never browser-free" was generalised from a single 403 on `batchGenerateImages`. It is not
+> true of every generative route, and reading it as a blanket rule has already cost real time — during the
+> Veo-extend predict council it was cited as a blocking precedent against a path that then worked on the
+> first try.
+>
+> | Route | Self-assembled POST + our minted token | Date |
+> |---|---|---|
+> | `batchGenerateImages` | **403** | 2026-06-02 |
+> | `upsampleImage` | **200** (shipped, live) | — |
+> | `batchAsyncGenerateVideoExtendVideo` | **200** | 2026-08-31 |
+>
+> Two of three generative routes accept a `TokenMinter` token. Treat the wall as a **per-route measurement**,
+> never an inherited assumption — and re-measure before citing it. The `batchGenerateImages` 403 has not been
+> re-tested since 2026-06-02 and may itself be stale.
+> Evidence: [superpowers/spikes/2026-08-31-veo-extend-route-recon.md](superpowers/spikes/2026-08-31-veo-extend-route-recon.md).
 - **✅ Decision = Option B (UI-driven generation; structural ops stay REST).** Generation (character image
   create AND video reuse) **must** ride Flow's native UI so Flow's JS issues the WAF-valid request, which
   gflow passive-captures — identical mechanism to the existing `generate_image`/`generate_video`. Revised

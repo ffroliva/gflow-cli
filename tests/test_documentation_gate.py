@@ -43,6 +43,11 @@ def test_pull_request_template_requires_documentation_review() -> None:
 CURRENT_OPERATOR_DOCS: tuple[str, ...] = (
     "README.md",
     "AGENTS.md",
+    # llms.txt is ingested verbatim by LLMs, which makes a stale claim in it more
+    # costly than in any prose doc — yet it sat outside this gate for 22 releases
+    # while still advertising `gflow video batch` as "queued for Phase B". Found
+    # by the v0.63.0 doc-review council; the one file the gate most needed.
+    "llms.txt",
     "docs/USAGE.md",
     "docs/USER_GUIDE.md",
     "docs/CONFIGURATION.md",

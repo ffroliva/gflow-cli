@@ -675,6 +675,105 @@ videos won't appear together in your Flow gallery. The same pattern works
 for `gflow video i2v <image> "<prompt>"` and
 `gflow video r2v "<prompt>" --ref <img>`.
 
+## Making a video longer than 8 seconds — which command?
+
+A single Veo generation caps at **8 seconds**. Four commands can get you past
+that and they are not interchangeable:
+
+| You have / want | Use | Costs |
+|---|---|---|
+| Clips you already generated, want one file | `gflow scene create --output` | **Free** — server-side concat |
+| One clip, want *more of the same shot* | `gflow video extend` | Credits per 8s segment |
+| Several *distinct shots* with visual continuity | `gflow video chain` | Credits per link |
+| A scripted multi-scene piece | `gflow movie` | Credits per clip |
+
+The distinction that matters most: **`extend` continues a shot, `chain` cuts to
+a new one.** Extend is seeded server-side from the source clip, so motion and
+audio carry across the join; chain extracts the last frame locally and restarts
+from a still, which is why it carries a fade-to-black guard. Use extend when a
+cut would break the effect (a drone move, an establishing shot, footage timed to
+a narration beat); use chain when a cut is what you want.
+
+If you only need the clips joined and already have them, `scene` costs nothing —
+reach for it before spending anything.
+
+## `gflow video extend`
+
+> **Where the two ids come from.** `MEDIA_ID` is the clip you want to continue —
+> list yours with `gflow data list videos` (the `media_id` column). The project id is
+> the project that owns it: `gflow data list projects`, or copy it out of the Flow URL
+> (`/project/<project-id>`). `--project` is required here, unlike on the other generate
+> commands, because extend has to find the workflow that owns `MEDIA_ID` before it can
+> create the scene to extend into.
+
+Continue an existing clip by another 8 seconds, then optionally render the whole
+thing to one file.
+
+```bash
+# one continuation
+gflow video extend <media-id> "the wave recedes back into the ocean" --project <id>
+
+# four continuations, different beats, rendered to a single mp4
+gflow video extend <media-id>   "the camera drifts upward"   "the coastline opens out below"   -n 4 -o long.mp4 --project <id>
+```
+
+`MEDIA_ID` is the clip to continue; each `PROMPT` describes one 8-second
+segment. With `--segments/-n` greater than the number of prompts, the last
+prompt is reused — so `-n 4` with one prompt continues the same idea four times.
+
+**Overshooting is safe.** Generate more than you need and trim the tail; that
+costs credits but never quality.
+
+> ⚠️ **A segment carries ~7 seconds of real content, not 8.** Flow advertises 8s
+> and bills for 8s, but the returned media measures 7.000s. When several segments
+> are concatenated, each internal seam is preceded by ~1 second of **frozen frame
+> and silence** as the shorter clip is padded into its 8s slot. A single-segment
+> extend is unaffected. See
+> [KNOWN_ISSUES](../KNOWN_ISSUES.md#a-veo-extend-segment-is-7-seconds-not-the-8-flow-advertises--so-concat-pads-a-frozen-second)
+> — render without `-o` and trim in post if the seam matters.
+
+### What it produces
+
+A Flow **Scene** containing the original clip plus each continuation — not a
+single file. Pass `-o/--output` to render it to one mp4 through Flow's
+server-side concat, which is credit-free. Without `-o`, render later with
+`gflow scene create --output <path>`.
+
+### Cost and safety
+
+- The exact credit cost is **shown before anything is submitted**, and a
+  pre-flight balance check refuses a run your balance cannot finish.
+- `--dry-run` prints the plan without opening a browser or spending.
+- Segments submit **one at a time**, with a random pause between them
+  (`--jitter`, defaulting to [`GFLOW_CLI_JITTER_RANGE`](CONFIGURATION.md#gflow_cli_jitter_range)).
+  Generation itself takes ~2 minutes per segment, so a chained run is naturally
+  paced — see [ACCOUNT_SAFETY](ACCOUNT_SAFETY.md).
+- A refusal **aborts and keeps** the segments already generated; nothing is
+  auto-retried. Re-running into a block only raises the profile's score.
+- Ctrl+C reports what was spent and the scene to resume from.
+
+### Flags
+
+| Flag | Meaning |
+|---|---|
+| `-n`, `--segments N` | How many 8s continuations (1–30). Default: one per prompt |
+| `-o`, `--output PATH` | Render the finished scene to one mp4 (free) |
+| `--aspect 9:16\|16:9` | Portrait or landscape. **No square** — Flow has no square extend model |
+| `--project ID` | Required — the project owning `MEDIA_ID` |
+| `--scene ID` | Extend inside an existing scene instead of creating one |
+| `--resume-from ID` | Continue an interrupted run's scene — appends after the clips already there |
+| `--seed N` | Fixed seed, for a reproducible run |
+| `--jitter S` | Max seconds of pause between submissions |
+| `--dry-run` / `--yes` | Print the plan and stop / skip the confirmation |
+
+### Model selection
+
+You do not pick the model. Flow's extend family is **tier-gated** — the `_ultra`
+variants are Advanced-only and unavailable elsewhere — so `gflow` reads your
+account's capability listing and picks the cheapest model it can actually order,
+which is what Flow's own UI does. The chosen key is recorded in the
+`extend_model_resolved` log event.
+
 ## `gflow video chain`
 
 Render a JSONL manifest of *links* into one continuous last-frame I2V chain.
@@ -814,7 +913,7 @@ or use this group standalone. Full reference: [TOOLS.md](TOOLS.md) · [PROMPT_EX
 
 ```text
 gflow tools list [--json]
-gflow tools show NAME [--json]
+gflow tools show NAME
 gflow tools run NAME "INPUT" [--style MODE] [--json]
 ```
 
@@ -1522,6 +1621,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `32` | `ReferenceNotFoundError` | A referenced media NAME is not in this project's picker. Flow indexes a short auto-caption, not the generation prompt, so a prompt used as a reference name never matches | Reference the asset by its media UUID, pass a local file with `--ref`, or check what exists with `gflow data list images` |
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
+| `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

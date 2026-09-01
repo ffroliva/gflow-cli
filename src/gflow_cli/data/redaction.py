@@ -60,7 +60,11 @@ def redact_metadata(value: Any) -> Any:
         d = cast("dict[str, Any]", value)
         for key, item in d.items():
             lowered: str = key.lower()
-            if lowered in {"token", "recaptchatoken"}:
+            # `sessionid` joined this set with the extend route (2026-09-01):
+            # its clientContext carries one, and while it is not a credential it
+            # is account-correlatable and would otherwise survive verbatim into
+            # any logged body or diagnostics bundle.
+            if lowered in {"token", "recaptchatoken", "sessionid", "session_id"}:
                 out[key] = "<redacted:token>"
             elif lowered in {"authorization", "cookie", "set-cookie"}:
                 out[key] = "<redacted:secret>"

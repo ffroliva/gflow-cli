@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="gflow-cli — an unofficial, alpha CLI and MCP server that drives Google Flow (Veo + Imagen) from the terminal, or lets your AI assistant drive it.">
+<meta name="description" content="gflow-cli — an unofficial, alpha CLI and MCP server that drives Google Flow (Veo + Imagen) from the terminal, or lets your AI assistant drive it. Batch generation with recurring characters, and runs that fail loudly instead of burning credits.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E">
 <title>gflow-cli — drive Google Flow from your terminal</title>
 <style>
@@ -183,6 +183,13 @@
       <a class="btn primary" href="docs/">Get started →</a>
       <a class="btn line" href="https://www.youtube.com/shorts/SyJb2jfLMrw">▶ Watch the demo</a>
     </div>
+
+    <p style="margin-top:22px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <a href="https://pypi.org/project/gflow-cli/"><img alt="Latest version on PyPI" src="https://img.shields.io/pypi/v/gflow-cli?label=pypi&amp;color=ffb03a&amp;labelColor=1c212a" height="20"></a>
+      <a href="https://github.com/ffroliva/gflow-cli/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/ffroliva/gflow-cli?label=stars&amp;color=ffb03a&amp;labelColor=1c212a" height="20"></a>
+      <a href="https://github.com/ffroliva/gflow-cli/commits/develop"><img alt="Last commit" src="https://img.shields.io/github/last-commit/ffroliva/gflow-cli/develop?label=last%20commit&amp;color=ffb03a&amp;labelColor=1c212a" height="20"></a>
+      <a href="https://github.com/ffroliva/gflow-cli/blob/develop/LICENSE"><img alt="MIT licensed" src="https://img.shields.io/badge/license-MIT-ffb03a?labelColor=1c212a" height="20"></a>
+    </p>
   </div>
 
   <section id="drive">
@@ -193,7 +200,7 @@
           <h2>You describe it. The agent runs it.</h2>
           <p>gflow-cli ships an MCP server, so an AI assistant connects to it natively — no pasting docs, no copying commands back and forth. CLI-to-MCP parity is enforced in CI: anything the terminal can do, your assistant can do.</p>
           <ol class="steps">
-            <li><span class="n">01</span><div><b>gflow mcp run</b><br><span>Claude / Cursor / Copilot connects over MCP.</span></div></li>
+            <li><span class="n">01</span><div><b>gflow mcp setup</b><br><span>One command writes the server entry into Claude Desktop, Cursor, or VS Code.</span></div></li>
             <li><span class="n">02</span><div><b>Ask in plain language</b><br><span>The agent picks the Veo/Imagen model, aspect, and prompt tooling.</span></div></li>
             <li><span class="n">03</span><div><b>Get files back</b><br><span>It runs the generation on your own Flow session and hands you the output.</span></div></li>
           </ol>
@@ -223,7 +230,9 @@
         <div class="cell"><code>--tool creative-director</code><h3>Prompt-crafting, built in</h3><p>Rewrites a terse line with Google's 5-component formula before a single credit is spent.</p></div>
         <div class="cell"><code>gflow instructions</code><h3>Instruction cards</h3><p>Persistent, credit-free brief cards that steer look and tone across every generation.</p></div>
         <div class="cell"><code>reuse by UUID</code><h3>Reference an asset, don't re-upload</h3><p>Chain a still into a video by its id — no duplicate uploads, no shuffling files.</p></div>
-        <div class="cell"><code>--ui-mode</code><h3>Fail fast, before credits</h3><p>Aborts up front when Flow's UI cohort isn't what the command needs — instead of burning a generation.</p></div>
+        <div class="cell"><code>gflow character create</code><h3>The same face, shot after shot</h3><p>Mint a Flow Character once and the same person carries across every generation — instead of re-rolling until the face matches.</p></div>
+        <div class="cell"><code>exit 23</code><h3>A broken run costs a message, not credits</h3><p>Every batch item is recorded locally <em>before</em> it is submitted, and a drifting UI aborts with a distinct exit code instead of resubmitting into a stale state. Nothing generated, nothing spent.</p></div>
+        <div class="cell"><code>nightly drift probe</code><h3>It notices when Flow moves</h3><p>A selector registry plus a nightly CI probe against the live UI, so breakage is caught by a scheduled run rather than by your batch job.</p></div>
         <div class="cell"><code>GFLOW_CLI_JITTER_RANGE</code><h3>Configurable batch pacing</h3><p>Tunable jitter between submissions so multi-prompt runs stop tripping rate limits.</p></div>
         <div class="cell"><code>movie.toml</code><h3>Multi-scene pipeline</h3><p>Direct a whole sequence from one manifest — chain clips, compose scenes, render.</p></div>
       </div>
