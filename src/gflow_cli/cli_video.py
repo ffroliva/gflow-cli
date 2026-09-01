@@ -1718,13 +1718,18 @@ def _print_extend_plan(*, media_id: str, prompt: str, aspect: str, segments: int
     comes from the (free) capability listing once the run starts; the balance
     check that uses it aborts before the first submit.
     """
-    total = segments * _EXTEND_SEGMENT_SECONDS
+    # Report CONTENT seconds, not billed seconds. This is the last screen before
+    # the confirm prompt, so quoting Flow's advertised 8s here would contradict
+    # --help, USAGE and KNOWN_ISSUES on the one line a user cannot skip.
+    footage = segments * _EXTEND_CONTENT_SECONDS
+    billed = segments * _EXTEND_SEGMENT_SECONDS
     console.print("[bold]Extend plan[/bold]")
     console.print(f"  source clip : {media_id}")
     console.print(f"  prompt      : {prompt}")
     console.print(f"  aspect      : {aspect}")
     console.print(
-        f"  segments    : {segments} x {_EXTEND_SEGMENT_SECONDS}s = {total}s of new footage"
+        f"  segments    : {segments} x ~{_EXTEND_CONTENT_SECONDS}s = ~{footage}s of new "
+        f"footage (Flow bills {billed}s)"
     )
     console.print("  cost        : spends credits — exact amount is shown before submitting")
 
@@ -1993,8 +1998,11 @@ async def _extend_session(  # noqa: PLR0913
         "`gflow scene create --output`.\n\n"
         "\b\n"
         "Examples:\n"
-        '  gflow video extend <media-id> "the wave recedes back into the ocean"\n'
-        '  gflow video extend <media-id> "the camera drifts upward" --aspect 16:9\n\n'
+        '  gflow video extend <media-id> "the wave recedes" --project <project-id>\n'
+        '  gflow video extend <media-id> "drifts upward" --project <project-id> --aspect 16:9\n\n'
+        "--project is REQUIRED here: extend must know which project owns MEDIA_ID. "
+        "The shared --project help calls it optional because it is — for every "
+        "other generate command.\n\n"
         "Each segment spends credits — the exact cost depends on your plan and is "
         "shown for confirmation before anything is submitted.\n\n"
         "Note: a segment carries ~7s of content though Flow bills 8s, so a "
