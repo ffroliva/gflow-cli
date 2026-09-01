@@ -1,368 +1,2458 @@
 {
-  "_comment": "Sanitised slice of flow.projectInitialData captured 2026-08-31 (SERVICE_TIER_INTERMEDIATE). Extend/extension family in full plus three non-extend models so the VIDEO_REQUIREMENT_EXTENSION filter is exercised.",
-  "videoModels": [
-    {
-      "key": "veo_3_1_extension_lite",
-      "maxImageInputs": 0,
-      "outputsAudio": true,
-      "generationTimeSeconds": 110,
-      "videoLengthSeconds": 8,
-      "supportedResolutions": [
-        "VIDEO_RESOLUTION_720P"
-      ],
-      "supportedInputResolutions": null,
-      "inputSpec": {
-        "maxAudioReferences": null,
-        "maxCharacters": null,
-        "maxInputV2vVideoDuration": 8
-      },
-      "supportedAspectRatios": [
-        "LANDSCAPE",
-        "PORTRAIT"
-      ],
-      "requirements": [
-        [
-          "VIDEO_REQUIREMENT_TEXT",
-          "VIDEO_REQUIREMENT_EXTENSION"
-        ]
-      ],
-      "creditMapping": {
-        "SERVICE_TIER_ADVANCED": {
-          "cost": 5
+  "_comment": "Trimmed but SHAPE-FAITHFUL slice of flow.projectInitialData captured 2026-08-31 (SERVICE_TIER_INTERMEDIATE, 1025 credits). Keeps the real nesting result.data.json.modelConfig.videoModelFamilies[].usages[] so the resolver's navigation is exercised, not a flattened shape invented by the test.",
+  "result": {
+    "data": {
+      "json": {
+        "projectId": "7d3d6bd9-0000-0000-0000-000000000000",
+        "modelConfig": {
+          "videoModelFamilies": [
+            {
+              "displayName": "Omni 1.1 Flash",
+              "id": "abra",
+              "enableUpselling": true,
+              "usages": [
+                {
+                  "key": "abra_t2v_4s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 120,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 7
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 7
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 7
+                    }
+                  }
+                },
+                {
+                  "key": "abra_t2v_6s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 120,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 10
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "displayName": "Veo 3.1 - Lite",
+              "id": "veo_3_1_lite",
+              "enableUpselling": true,
+              "usages": [
+                {
+                  "key": "veo_3_1_t2v_lite",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 5
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 10
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_lite",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 5
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 10
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_r2v_lite",
+                  "maxImageInputs": 3,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": 1,
+                    "maxCharacters": 3,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE",
+                      "VIDEO_REQUIREMENT_CHARACTERS"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 5
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 10
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_interpolation_lite",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 5
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 10
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_extension_lite",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": 8
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_EXTENSION"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 5
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 10
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v_lite_4s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 5
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_lite_4s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 5
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_lite_4s_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 5
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v_lite_6s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 5
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_lite_6s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 5
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_lite_6s_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 5
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "displayName": "Veo 3.1 - Fast",
+              "id": "veo_3_1_fast",
+              "enableUpselling": true,
+              "usages": [
+                {
+                  "key": "veo_3_1_t2v_fast",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 100,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 20
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 20
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v_fast_ultra",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 100,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v_fast_portrait",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 100,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 20
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 20
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v_fast_portrait_ultra",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 100,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_r2v_fast_landscape",
+                  "maxImageInputs": 3,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 100,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": 1,
+                    "maxCharacters": 3,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE",
+                      "VIDEO_REQUIREMENT_CHARACTERS"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 20
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 20
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_r2v_fast_landscape_ultra",
+                  "maxImageInputs": 3,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 100,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": 1,
+                    "maxCharacters": 3,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE",
+                      "VIDEO_REQUIREMENT_CHARACTERS"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_r2v_fast_portrait",
+                  "maxImageInputs": 3,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 100,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": 1,
+                    "maxCharacters": 3,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE",
+                      "VIDEO_REQUIREMENT_CHARACTERS"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 20
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 20
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_r2v_fast_portrait_ultra",
+                  "maxImageInputs": 3,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 100,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": 1,
+                    "maxCharacters": 3,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE",
+                      "VIDEO_REQUIREMENT_CHARACTERS"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 180,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 20
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 20
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast_ultra",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 180,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast_portrait",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 180,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 20
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 20
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast_portrait_ultra",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 180,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 180,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 20
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 20
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast_ultra_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 180,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast_portrait_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 180,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 20
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 20
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast_portrait_ultra_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 180,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_extend_fast_landscape",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 330,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": 8
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_EXTENSION"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 20
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 20
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_extend_fast_landscape_ultra",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 330,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": 8
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_EXTENSION"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_extend_fast_portrait",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 330,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": 8
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_EXTENSION"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 20
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 20
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_extend_fast_portrait_ultra",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 330,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": 8
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_EXTENSION"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v_fast_4s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast_4s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast_4s_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v_fast_6s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 160,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast_6s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 160,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fast_6s_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 160,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 10
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "displayName": "Veo 3.1 - Quality",
+              "id": "veo_3_1_quality",
+              "enableUpselling": true,
+              "usages": [
+                {
+                  "key": "veo_3_1_t2v_portrait",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 120,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 100
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 120,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 100
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_portrait",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 120,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 100
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 120,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 100
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 120,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 100
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_portrait_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 120,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 100
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_extend_landscape",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 270,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": 8
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_EXTENSION"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 100
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_extend_portrait",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 270,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": 8
+                  },
+                  "supportedAspectRatios": [
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_EXTENSION"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": 100
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v_quality_4s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 210,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_quality_4s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 210,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_quality_4s_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 210,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v_quality_6s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 260,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_quality_6s",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 260,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_quality_6s_fl",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 260,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 100
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "displayName": "Veo 3.1 - Lite [Lower Priority]",
+              "id": "veo_3_1_lite_low_priority",
+              "enableUpselling": false,
+              "usages": [
+                {
+                  "key": "veo_3_1_t2v_lite_low_priority",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 0
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_lite_low_priority",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 0
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_r2v_lite_low_priority",
+                  "maxImageInputs": 3,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": 1,
+                    "maxCharacters": 3,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE",
+                      "VIDEO_REQUIREMENT_CHARACTERS"
+                    ],
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_REFERENCES",
+                      "VIDEO_REQUIREMENT_AUDIO_REFERENCE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 0
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_interpolation_lite_low_priority",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 0
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_extension_lite_low_priority",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 8,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": 8
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_EXTENSION"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 0
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v_lite_4s_low_priority",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 0
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_lite_4s_low_priority",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 0
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_lite_4s_fl_low_priority",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 4,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 0
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_t2v_lite_6s_low_priority",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 0
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_lite_6s_low_priority",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 0
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                },
+                {
+                  "key": "veo_3_1_i2v_s_lite_6s_fl_low_priority",
+                  "maxImageInputs": 0,
+                  "outputsAudio": true,
+                  "generationTimeSeconds": 110,
+                  "videoLengthSeconds": 6,
+                  "supportedResolutions": [
+                    "VIDEO_RESOLUTION_720P"
+                  ],
+                  "supportedInputResolutions": null,
+                  "inputSpec": {
+                    "maxAudioReferences": null,
+                    "maxCharacters": null,
+                    "maxInputV2vVideoDuration": null
+                  },
+                  "supportedAspectRatios": [
+                    "LANDSCAPE",
+                    "PORTRAIT"
+                  ],
+                  "requirements": [
+                    [
+                      "VIDEO_REQUIREMENT_TEXT",
+                      "VIDEO_REQUIREMENT_START_IMAGE",
+                      "VIDEO_REQUIREMENT_END_IMAGE"
+                    ]
+                  ],
+                  "creditMapping": {
+                    "SERVICE_TIER_ADVANCED": {
+                      "cost": 0
+                    },
+                    "SERVICE_TIER_INTERMEDIATE": {
+                      "cost": "UNAVAILABLE"
+                    },
+                    "SERVICE_TIER_ENTRY": {
+                      "cost": "UNAVAILABLE"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
         },
-        "SERVICE_TIER_INTERMEDIATE": {
-          "cost": 10
-        },
-        "SERVICE_TIER_ENTRY": {
-          "cost": 10
-        }
-      }
-    },
-    {
-      "key": "veo_3_1_extend_fast_landscape",
-      "maxImageInputs": 0,
-      "outputsAudio": true,
-      "generationTimeSeconds": 330,
-      "videoLengthSeconds": 8,
-      "supportedResolutions": [
-        "VIDEO_RESOLUTION_720P"
-      ],
-      "supportedInputResolutions": null,
-      "inputSpec": {
-        "maxAudioReferences": null,
-        "maxCharacters": null,
-        "maxInputV2vVideoDuration": 8
-      },
-      "supportedAspectRatios": [
-        "LANDSCAPE"
-      ],
-      "requirements": [
-        [
-          "VIDEO_REQUIREMENT_TEXT",
-          "VIDEO_REQUIREMENT_EXTENSION"
-        ]
-      ],
-      "creditMapping": {
-        "SERVICE_TIER_ADVANCED": {
-          "cost": "UNAVAILABLE"
-        },
-        "SERVICE_TIER_INTERMEDIATE": {
-          "cost": 20
-        },
-        "SERVICE_TIER_ENTRY": {
-          "cost": 20
-        }
-      }
-    },
-    {
-      "key": "veo_3_1_extend_fast_landscape_ultra",
-      "maxImageInputs": 0,
-      "outputsAudio": true,
-      "generationTimeSeconds": 330,
-      "videoLengthSeconds": 8,
-      "supportedResolutions": [
-        "VIDEO_RESOLUTION_720P"
-      ],
-      "supportedInputResolutions": null,
-      "inputSpec": {
-        "maxAudioReferences": null,
-        "maxCharacters": null,
-        "maxInputV2vVideoDuration": 8
-      },
-      "supportedAspectRatios": [
-        "LANDSCAPE"
-      ],
-      "requirements": [
-        [
-          "VIDEO_REQUIREMENT_TEXT",
-          "VIDEO_REQUIREMENT_EXTENSION"
-        ]
-      ],
-      "creditMapping": {
-        "SERVICE_TIER_ADVANCED": {
-          "cost": 10
-        },
-        "SERVICE_TIER_INTERMEDIATE": {
-          "cost": "UNAVAILABLE"
-        },
-        "SERVICE_TIER_ENTRY": {
-          "cost": "UNAVAILABLE"
-        }
-      }
-    },
-    {
-      "key": "veo_3_1_extend_fast_portrait",
-      "maxImageInputs": 0,
-      "outputsAudio": true,
-      "generationTimeSeconds": 330,
-      "videoLengthSeconds": 8,
-      "supportedResolutions": [
-        "VIDEO_RESOLUTION_720P"
-      ],
-      "supportedInputResolutions": null,
-      "inputSpec": {
-        "maxAudioReferences": null,
-        "maxCharacters": null,
-        "maxInputV2vVideoDuration": 8
-      },
-      "supportedAspectRatios": [
-        "PORTRAIT"
-      ],
-      "requirements": [
-        [
-          "VIDEO_REQUIREMENT_TEXT",
-          "VIDEO_REQUIREMENT_EXTENSION"
-        ]
-      ],
-      "creditMapping": {
-        "SERVICE_TIER_ADVANCED": {
-          "cost": "UNAVAILABLE"
-        },
-        "SERVICE_TIER_INTERMEDIATE": {
-          "cost": 20
-        },
-        "SERVICE_TIER_ENTRY": {
-          "cost": 20
-        }
-      }
-    },
-    {
-      "key": "veo_3_1_extend_fast_portrait_ultra",
-      "maxImageInputs": 0,
-      "outputsAudio": true,
-      "generationTimeSeconds": 330,
-      "videoLengthSeconds": 8,
-      "supportedResolutions": [
-        "VIDEO_RESOLUTION_720P"
-      ],
-      "supportedInputResolutions": null,
-      "inputSpec": {
-        "maxAudioReferences": null,
-        "maxCharacters": null,
-        "maxInputV2vVideoDuration": 8
-      },
-      "supportedAspectRatios": [
-        "PORTRAIT"
-      ],
-      "requirements": [
-        [
-          "VIDEO_REQUIREMENT_TEXT",
-          "VIDEO_REQUIREMENT_EXTENSION"
-        ]
-      ],
-      "creditMapping": {
-        "SERVICE_TIER_ADVANCED": {
-          "cost": 10
-        },
-        "SERVICE_TIER_INTERMEDIATE": {
-          "cost": "UNAVAILABLE"
-        },
-        "SERVICE_TIER_ENTRY": {
-          "cost": "UNAVAILABLE"
-        }
-      }
-    },
-    {
-      "key": "veo_3_1_extend_landscape",
-      "maxImageInputs": 0,
-      "outputsAudio": true,
-      "generationTimeSeconds": 270,
-      "videoLengthSeconds": 8,
-      "supportedResolutions": [
-        "VIDEO_RESOLUTION_720P"
-      ],
-      "supportedInputResolutions": null,
-      "inputSpec": {
-        "maxAudioReferences": null,
-        "maxCharacters": null,
-        "maxInputV2vVideoDuration": 8
-      },
-      "supportedAspectRatios": [
-        "LANDSCAPE"
-      ],
-      "requirements": [
-        [
-          "VIDEO_REQUIREMENT_TEXT",
-          "VIDEO_REQUIREMENT_EXTENSION"
-        ]
-      ],
-      "creditMapping": {
-        "SERVICE_TIER_ADVANCED": {
-          "cost": 100
-        },
-        "SERVICE_TIER_INTERMEDIATE": {
-          "cost": 100
-        },
-        "SERVICE_TIER_ENTRY": {
-          "cost": 100
-        }
-      }
-    },
-    {
-      "key": "veo_3_1_extend_portrait",
-      "maxImageInputs": 0,
-      "outputsAudio": true,
-      "generationTimeSeconds": 270,
-      "videoLengthSeconds": 8,
-      "supportedResolutions": [
-        "VIDEO_RESOLUTION_720P"
-      ],
-      "supportedInputResolutions": null,
-      "inputSpec": {
-        "maxAudioReferences": null,
-        "maxCharacters": null,
-        "maxInputV2vVideoDuration": 8
-      },
-      "supportedAspectRatios": [
-        "PORTRAIT"
-      ],
-      "requirements": [
-        [
-          "VIDEO_REQUIREMENT_TEXT",
-          "VIDEO_REQUIREMENT_EXTENSION"
-        ]
-      ],
-      "creditMapping": {
-        "SERVICE_TIER_ADVANCED": {
-          "cost": 100
-        },
-        "SERVICE_TIER_INTERMEDIATE": {
-          "cost": 100
-        },
-        "SERVICE_TIER_ENTRY": {
-          "cost": 100
-        }
-      }
-    },
-    {
-      "key": "veo_3_1_extension_lite_low_priority",
-      "maxImageInputs": 0,
-      "outputsAudio": true,
-      "generationTimeSeconds": 110,
-      "videoLengthSeconds": 8,
-      "supportedResolutions": [
-        "VIDEO_RESOLUTION_720P"
-      ],
-      "supportedInputResolutions": null,
-      "inputSpec": {
-        "maxAudioReferences": null,
-        "maxCharacters": null,
-        "maxInputV2vVideoDuration": 8
-      },
-      "supportedAspectRatios": [
-        "LANDSCAPE",
-        "PORTRAIT"
-      ],
-      "requirements": [
-        [
-          "VIDEO_REQUIREMENT_TEXT",
-          "VIDEO_REQUIREMENT_EXTENSION"
-        ]
-      ],
-      "creditMapping": {
-        "SERVICE_TIER_ADVANCED": {
-          "cost": 0
-        },
-        "SERVICE_TIER_INTERMEDIATE": {
-          "cost": "UNAVAILABLE"
-        },
-        "SERVICE_TIER_ENTRY": {
-          "cost": "UNAVAILABLE"
-        }
-      }
-    },
-    {
-      "key": "veo_3_1_t2v_fast",
-      "maxImageInputs": 0,
-      "outputsAudio": true,
-      "generationTimeSeconds": 100,
-      "videoLengthSeconds": 8,
-      "supportedResolutions": [
-        "VIDEO_RESOLUTION_720P"
-      ],
-      "supportedInputResolutions": null,
-      "inputSpec": {
-        "maxAudioReferences": null,
-        "maxCharacters": null,
-        "maxInputV2vVideoDuration": null
-      },
-      "supportedAspectRatios": [
-        "LANDSCAPE"
-      ],
-      "requirements": [
-        [
-          "VIDEO_REQUIREMENT_TEXT"
-        ]
-      ],
-      "creditMapping": {
-        "SERVICE_TIER_ADVANCED": {
-          "cost": "UNAVAILABLE"
-        },
-        "SERVICE_TIER_INTERMEDIATE": {
-          "cost": 20
-        },
-        "SERVICE_TIER_ENTRY": {
-          "cost": 20
-        }
-      }
-    },
-    {
-      "key": "veo_3_1_upsampler_4k",
-      "maxImageInputs": 0,
-      "outputsAudio": true,
-      "generationTimeSeconds": 330,
-      "videoLengthSeconds": 60,
-      "supportedResolutions": [
-        "VIDEO_RESOLUTION_4K"
-      ],
-      "supportedInputResolutions": [
-        "VIDEO_RESOLUTION_720P"
-      ],
-      "inputSpec": {
-        "maxAudioReferences": null,
-        "maxCharacters": null,
-        "maxInputV2vVideoDuration": null
-      },
-      "supportedAspectRatios": [
-        "LANDSCAPE",
-        "PORTRAIT"
-      ],
-      "requirements": [
-        [
-          "VIDEO_REQUIREMENT_UPSAMPLE4K"
-        ]
-      ],
-      "creditMapping": {
-        "SERVICE_TIER_ADVANCED": {
-          "cost": 50
-        },
-        "SERVICE_TIER_INTERMEDIATE": {
-          "cost": "UNAVAILABLE"
-        },
-        "SERVICE_TIER_ENTRY": {
-          "cost": "UNAVAILABLE"
+        "userData": {
+          "credits": 1025,
+          "serviceTier": "SERVICE_TIER_INTERMEDIATE",
+          "paygateTier": "PAYGATE_TIER_ONE"
         }
       }
     }
-  ]
+  }
 }

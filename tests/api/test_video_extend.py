@@ -22,6 +22,9 @@ from gflow_cli.api.video_extend import (
     DEFAULT_FRAME_RANGE,
     ExtendVideoRequest,
     FrameRange,
+    account_credits,
+    account_service_tier,
+    extract_video_models,
     resolve_extend_model,
 )
 from gflow_cli.errors import ExtendUnavailableError
@@ -31,7 +34,13 @@ _FIXTURE = Path(__file__).parent / "fixtures" / "project_initial_data_extend_mod
 
 @pytest.fixture
 def listing() -> dict:
+    """The real tRPC envelope, nesting intact."""
     return json.loads(_FIXTURE.read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def models(listing: dict) -> list[dict]:
+    return extract_video_models(listing)
 
 
 # ---------------------------------------------------------------- resolver
@@ -60,11 +69,11 @@ def test_never_returns_an_ultra_key_on_intermediate(listing: dict) -> None:
     assert not key.endswith("_ultra")
 
 
-def test_skips_unavailable_costs(listing: dict) -> None:
+def test_skips_unavailable_costs(listing: dict, models: list[dict]) -> None:
     """A `cost: "UNAVAILABLE"` entry must never be selected on that tier."""
     for tier in ("SERVICE_TIER_INTERMEDIATE", "SERVICE_TIER_ENTRY", "SERVICE_TIER_ADVANCED"):
         key = resolve_extend_model(listing, service_tier=tier, aspect="16:9")
-        entry = next(m for m in listing["videoModels"] if m["key"] == key)
+        entry = next(m for m in models if m["key"] == key)
         assert isinstance(entry["creditMapping"][tier]["cost"], int)
 
 
@@ -75,11 +84,11 @@ def test_advanced_prefers_standard_over_low_priority(listing: dict) -> None:
     assert key == "veo_3_1_extension_lite"
 
 
-def test_requires_the_extension_capability(listing: dict) -> None:
+def test_requires_the_extension_capability(listing: dict, models: list[dict]) -> None:
     """Control models in the fixture lack VIDEO_REQUIREMENT_EXTENSION and must
     never be returned, however cheap they are."""
     key = resolve_extend_model(listing, service_tier="SERVICE_TIER_INTERMEDIATE", aspect="16:9")
-    entry = next(m for m in listing["videoModels"] if m["key"] == key)
+    entry = next(m for m in models if m["key"] == key)
     assert any("VIDEO_REQUIREMENT_EXTENSION" in reqs for reqs in entry["requirements"])
 
 
@@ -96,14 +105,14 @@ def test_rejects_square_aspect(listing: dict) -> None:
         resolve_extend_model(listing, service_tier="SERVICE_TIER_INTERMEDIATE", aspect="1:1")
 
 
-def test_picks_lowest_cost_among_orderable(listing: dict) -> None:
+def test_picks_lowest_cost_among_orderable(listing: dict, models: list[dict]) -> None:
     """extension_lite (10) must win over extend_fast_* (20) and extend_* (100)."""
     tier = "SERVICE_TIER_INTERMEDIATE"
     key = resolve_extend_model(listing, service_tier=tier, aspect="16:9")
-    chosen = next(m for m in listing["videoModels"] if m["key"] == key)
+    chosen = next(m for m in models if m["key"] == key)
     orderable = [
         m
-        for m in listing["videoModels"]
+        for m in models
         if isinstance((m.get("creditMapping") or {}).get(tier, {}).get("cost"), int)
         and any("VIDEO_REQUIREMENT_EXTENSION" in r for r in m.get("requirements") or [])
     ]
@@ -209,3 +218,50 @@ def test_request_rejects_empty_prompt() -> None:
             model_key="veo_3_1_extension_lite",
             aspect="16:9",
         )
+
+
+# ------------------------------------------------- envelope navigation
+
+
+def test_extract_walks_families_to_usages(listing: dict, models: list[dict]) -> None:
+    """Regression guard on the shape itself.
+
+    An earlier draft of this module assumed a flat ``videoModels`` list, which
+    does not exist. Models live at
+    ``result.data.json.modelConfig.videoModelFamilies[].usages[]`` — grouped by
+    family, and it is the FAMILY that carries the displayName the editor shows
+    ("Extend (Veo 3.1 - Lite)"). Flattening is therefore mandatory, and a test
+    that fed a hand-made flat dict would have passed while production failed.
+    """
+    assert len(models) > 40
+    assert "veo_3_1_extension_lite" in {m["key"] for m in models}
+    families = listing["result"]["data"]["json"]["modelConfig"]["videoModelFamilies"]
+    assert sum(len(f["usages"]) for f in families) == len(models)
+
+
+def test_extract_tolerates_a_missing_envelope() -> None:
+    """Flow reshapes without notice; a shape miss must degrade, not explode."""
+    assert extract_video_models({}) == []
+    assert extract_video_models({"result": {"data": {"json": {}}}}) == []
+    assert extract_video_models(None) == []
+
+
+def test_accepts_already_unwrapped_inner(listing: dict) -> None:
+    """`fetch_project_listing` returns the envelope verbatim, but a caller that
+    already unwrapped shouldn't have to re-wrap it."""
+    inner = listing["result"]["data"]["json"]
+    assert extract_video_models(inner) == extract_video_models(listing)
+    assert account_service_tier(inner) == "SERVICE_TIER_INTERMEDIATE"
+
+
+def test_reads_tier_and_credits(listing: dict) -> None:
+    """Both feed the pre-flight cost gate: the tier picks the model, the balance
+    decides whether the run can finish."""
+    assert account_service_tier(listing) == "SERVICE_TIER_INTERMEDIATE"
+    assert account_credits(listing) == 1025
+
+
+def test_tier_and_credits_degrade_on_missing_userdata() -> None:
+    assert account_service_tier({}) == ""
+    assert account_credits({}) is None
+    assert account_credits({"result": {"data": {"json": {"userData": {"credits": True}}}}}) is None

@@ -36,6 +36,9 @@ __all__ = [
     "DEFAULT_FRAME_RANGE",
     "ExtendVideoRequest",
     "FrameRange",
+    "account_credits",
+    "account_service_tier",
+    "extract_video_models",
     "resolve_extend_model",
 ]
 
@@ -91,6 +94,64 @@ class FrameRange:
 DEFAULT_FRAME_RANGE = FrameRange()
 
 
+def _inner(listing: object) -> dict[str, Any]:
+    """Return the payload dict, accepting the tRPC envelope or its unwrapped inner.
+
+    ``fetch_project_listing`` hands back ``{"result": {"data": {"json": {...}}}}``
+    verbatim, but callers that already unwrapped shouldn't have to re-wrap.
+    """
+    if not isinstance(listing, dict):
+        return {}
+    node = cast("dict[str, Any]", listing)
+    for key in ("result", "data", "json"):
+        nxt = node.get(key)
+        if not isinstance(nxt, dict):
+            return node
+        node = cast("dict[str, Any]", nxt)
+    return node
+
+
+def extract_video_models(listing: object) -> list[dict[str, Any]]:
+    """Flatten ``modelConfig.videoModelFamilies[].usages[]`` into model entries.
+
+    Flow groups models by *family* (``veo_3_1_lite``, ``veo_3_1_fast``, …) and the
+    orderable entries live in each family's ``usages``. The family carries the
+    ``displayName`` — which is why the editor's menu reads "Extend (Veo 3.1 -
+    Lite)" while no model key has that label at all.
+    """
+    config = _inner(listing).get("modelConfig")
+    if not isinstance(config, dict):
+        return []
+    families = cast("dict[str, Any]", config).get("videoModelFamilies")
+    if not isinstance(families, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for fam in cast("list[Any]", families):
+        if not isinstance(fam, dict):
+            continue
+        usages = cast("dict[str, Any]", fam).get("usages")
+        if not isinstance(usages, list):
+            continue
+        out.extend(
+            cast("dict[str, Any]", u) for u in cast("list[Any]", usages) if isinstance(u, dict)
+        )
+    return out
+
+
+def account_service_tier(listing: object) -> str:
+    """Read ``userData.serviceTier`` — the tier that gates every ``creditMapping``."""
+    user = _inner(listing).get("userData")
+    tier = cast("dict[str, Any]", user).get("serviceTier") if isinstance(user, dict) else None
+    return tier if isinstance(tier, str) else ""
+
+
+def account_credits(listing: object) -> int | None:
+    """Read ``userData.credits`` — the balance a pre-flight check compares against."""
+    user = _inner(listing).get("userData")
+    credits = cast("dict[str, Any]", user).get("credits") if isinstance(user, dict) else None
+    return credits if isinstance(credits, int) and not isinstance(credits, bool) else None
+
+
 def resolve_extend_model(listing: object, *, service_tier: str, aspect: str) -> str:
     """Pick the extend model key this account may actually order.
 
@@ -114,21 +175,15 @@ def resolve_extend_model(listing: object, *, service_tier: str, aspect: str) -> 
         )
         raise ExtendUnavailableError(msg)
 
-    # `listing` is the raw tRPC envelope — untrusted JSON, narrowed not assumed.
-    raw_models = (
-        cast("dict[str, Any]", listing).get("videoModels") if isinstance(listing, dict) else None
-    )
-    if not isinstance(raw_models, list):
-        msg = "projectInitialData carried no videoModels list; cannot resolve an extend model"
+    # `listing` is the raw tRPC envelope — untrusted JSON, navigated not assumed.
+    models = extract_video_models(listing)
+    if not models:
+        msg = "projectInitialData carried no video models; cannot resolve an extend model"
         raise ExtendUnavailableError(msg)
-    models = cast("list[Any]", raw_models)
 
     best_key = ""
     best_cost: int | None = None
-    for raw_entry in models:
-        if not isinstance(raw_entry, dict):
-            continue
-        entry = cast("dict[str, Any]", raw_entry)
+    for entry in models:
         key = entry.get("key")
         if not isinstance(key, str) or key.endswith("_low_priority"):
             continue
