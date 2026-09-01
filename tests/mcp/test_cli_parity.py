@@ -74,7 +74,10 @@ _MCP_EXEMPT: dict[str, str] = {
     #     MCP equivalent; an agent could not give informed consent on the user's
     #     behalf.
     # Revisit once extend is enqueued through the worker like the generate tools.
-    "video extend": "long-running billed chain; not worker-enqueued, and cost consent has no MCP equivalent (#481)",
+    "video extend": (
+        "long-running billed chain; not worker-enqueued, and its cost "
+        "confirmation has no MCP equivalent (#481)"
+    ),
     "auth": "interactive session management — needs a human browser login flow",
     "auth list": "interactive session management",
     "auth login": "interactive session management",

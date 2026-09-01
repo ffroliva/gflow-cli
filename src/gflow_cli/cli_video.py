@@ -1770,7 +1770,9 @@ async def _run_extend(  # noqa: PLR0913
     recorder: OperationRecorder | None = None
     try:
         store = DataStore.open(get_settings().resolved_db_path())
-        recorder = OperationRecorder(DataRepository(store), prompt_mode=get_settings().history_prompts)
+        recorder = OperationRecorder(
+            DataRepository(store), prompt_mode=get_settings().history_prompts
+        )
     except DataStoreError as exc:  # catalog is a convenience, never a gate
         logger.warning("extend_recorder_unavailable", error_class=type(exc).__name__)
 
