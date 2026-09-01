@@ -176,9 +176,7 @@ def account_credits(listing: object) -> int | None:
     return credits if isinstance(credits, int) and not isinstance(credits, bool) else None
 
 
-def resolve_extend_model(
-    listing: object, *, service_tier: str, aspect: str
-) -> tuple[str, int]:
+def resolve_extend_model(listing: object, *, service_tier: str, aspect: str) -> tuple[str, int]:
     """Pick the extend model key this account may actually order.
 
     Mirrors Flow's own choice: among models that (a) declare

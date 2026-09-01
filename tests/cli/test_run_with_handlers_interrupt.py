@@ -39,6 +39,7 @@ def test_interrupt_still_exits_130(capsys: pytest.CaptureFixture[str]) -> None:
 def test_interrupt_reports_spend_and_resume(capsys: pytest.CaptureFixture[str]) -> None:
     """The two facts a user needs at 3am: what did that cost, and how do I
     pick it back up."""
+
     # Set INSIDE the coroutine, mirroring production: `_on_submitted` publishes
     # progress per segment while the run is in flight. run_with_handlers clears
     # stale context on entry, so a value seeded before the call is (correctly)
