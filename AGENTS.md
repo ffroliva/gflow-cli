@@ -4,6 +4,41 @@
 
 Supported tools that auto-discover this file: Cursor, Codex, Aider, Antigravity (`agy`), Jules, Devin, Windsurf, Zed, Warp, opencode, RooCode, Amp, Junie, Phoenix, GitHub Copilot, VS Code, Factory, Augment, Semgrep, Kilo Code, UiPath. Claude Code reads [CLAUDE.md](CLAUDE.md), which cross-references this file.
 
+## Skill Routing — the default workflow, not a menu
+
+**The `/gflow:` skills ARE this project's development lifecycle.** They are not
+optional tooling you may reach for; they are how work is done here. If a row below
+matches your situation, load that skill **before acting** — before exploring the
+codebase, before answering, before editing. A skill loaded after the work is a skill
+that did not run.
+
+| If you are about to… | Load first | Non-negotiable because |
+|---|---|---|
+| Touch a GitHub issue | `/gflow:issue-assessment <N>` | Read-only triage precedes any fix; classification changes what "fixing" means |
+| Propose a transport, auth, selector, or schema change | `/gflow:predict <proposal>` | Five adversarial personas return GO / CAUTION / STOP before code exists |
+| Start a feature | `/gflow:scenario` → `/gflow:plan` | Edge cases before tasks; tasks before code |
+| Resume work / ask "where are we?" | `/gflow:status` | The current plan's next unchecked task is the answer, not your guess |
+| Commit **anything** | `/gflow:check` | It is the exact CI gate; skipping it is how a format failure shipped past an 8-agent council (PR #269) |
+| Open or review a PR | `/gflow:pr-council-review <N>` (or `/gflow:branch-review`) | Standing-authorized. Run it — do not ask permission first |
+| Claim a generation feature works | `/gflow:live-verify` | Offline-green is never done-done on a generation path |
+| Cut a release | `/gflow:release` | It hard-gates on changelog → check → live-verify → doc-review; each is a STOP |
+| Audit docs before shipping | `/gflow:doc-review` | Catches same-release errors a read-through cannot |
+| See a red SonarCloud check | `/gflow:sonar <N>` | The gate measures *new* code; the fix is rarely where you would look |
+| Touch auth or reCAPTCHA | `/gflow:known-issues` | Known-broken surfaces have documented workarounds; rediscovering them costs days |
+
+**Canonical bodies live in `skills/<name>/SKILL.md`** — plain Markdown, agent-agnostic
+by construction, so Codex / Cursor / Aider / `agy` read exactly what Claude Code reads.
+`.claude/commands/gflow/*.md` are thin Claude-Code wrappers that point at them.
+
+> **This table exists because routing by memory failed.** On 2026-09-01 an agent worked
+> a full session — recovering two interrupted sessions, merging five PRs — without ever
+> loading this file, because `CLAUDE.md` only *asked* it to. It reached step 10 of a
+> release before meeting the pipeline's own doc-review gate, and the required
+> `LIVE_VERIFICATION_v0.63.0.md` had not been written despite the feature having been
+> live-verified. `CLAUDE.md` now `@`-imports this file, so it is always in context. The
+> table is the other half: being loaded is useless if the mapping from situation to skill
+> is left to recall.
+
 ## Project at a glance
 
 - Unofficial Python CLI for [Google Flow](https://labs.google/fx/tools/flow) — drives Veo (image-to-video, text-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at `aisandbox-pa.googleapis.com`.
@@ -97,7 +132,7 @@ All AI agents and harnesses working on `gflow-cli` follow this standard 10-phase
 | 7. Pre-Commit Quality | `/gflow:check` | The Impeccable Routine (hygiene, ruff, pyright, pytest) | All green local checks |
 | 8. Live Verification | `/gflow:live-verify` | 5-layer proof against real Flow transport | `docs/LIVE_VERIFICATION_vX.Y.Z.md` |
 | 9. PR & Issue Close | `/gflow:issue-resolve <N>` | PR, SonarCloud 0-issue gate, merge to develop | Closed GitHub issue |
-| 10. Release Pipeline | `/gflow:release` | Version bump, signed tag (`git tag -s`), PyPI publish | Shipped release & back-merge |
+| 10. Release Pipeline | `/gflow:release` | Version bump, signed tag (`git tag -s`), PyPI publish. **Internally gates on `/gflow:changelog` → `/gflow:check` → `/gflow:live-verify` → `/gflow:doc-review`; a failure at any of them is a STOP, not a warning.** | Shipped release & back-merge |
 
 ### Pipeline Continuation Mandate
 
