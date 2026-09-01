@@ -88,6 +88,14 @@ VIDEO_GENERATE_ROUTES = (
 # The pure text-to-video route. An i2v request that lands here had its frame
 # refs silently dropped (issue #125) — used by the Layer-2 post-submit backstop.
 _T2V_GENERATE_ROUTE = "batchAsyncGenerateVideoText"
+
+# Matcher for the referenceEntity guard's request interception (#615).
+#
+# Substring, not a path glob, because the real endpoints carry a namespaced final
+# segment: `.../flowMedia:batchGenerateImages`. A `**/batchGenerateImages` glob
+# requires that segment to be exactly `batchGenerateImages` and so never matched —
+# the guard was a silent no-op on every image and video generation.
+_GENERATION_ROUTE_RE = re.compile(r"(batchGenerateImages|batchAsyncGenerateVideo)")
 # Status-poll route — Flow's SPA polls this itself while a generation runs.
 VIDEO_STATUS_ROUTE = "batchCheckAsyncVideoGenerationStatus"
 
@@ -934,10 +942,10 @@ class VideoGenerationMixin:
         from unittest.mock import AsyncMock, Mock
 
         if isinstance(page, Mock):
-            if not isinstance(getattr(page, "route", None), AsyncMock):
-                page.route = AsyncMock()
-            if not isinstance(getattr(page, "unroute", None), AsyncMock):
-                page.unroute = AsyncMock()
+            if not isinstance(getattr(page.context, "route", None), AsyncMock):
+                page.context.route = AsyncMock()
+            if not isinstance(getattr(page.context, "unroute", None), AsyncMock):
+                page.context.unroute = AsyncMock()
 
         async def intercept_generation_request(route: Any) -> None:
             req_obj = route.request
@@ -990,15 +998,27 @@ class VideoGenerationMixin:
                 )
                 await route.continue_()
 
-        # Register rules for both image and video endpoints
-        await page.route("**/batchGenerateImages", intercept_generation_request)
-        await page.route("**/batchAsyncGenerateVideo*", intercept_generation_request)
+        # Registered on the CONTEXT, not the page, and with a substring matcher.
+        #
+        # Two independent reasons the previous `page.route("**/batchGenerateImages")`
+        # never fired (#615):
+        #
+        #   1. The real endpoint's last path segment is namespaced —
+        #      `.../flowMedia:batchGenerateImages` (see routes.batch_generate_images_url).
+        #      A `**/batchGenerateImages` glob requires the final segment to equal
+        #      `batchGenerateImages` exactly, so it never matched.
+        #   2. These requests are Web-Worker-delegated in the current Flow cohort, so
+        #      `page.route` cannot see them at all; `BrowserContext.route` can.
+        #
+        # The guard therefore failed OPEN and silently: the response listener kept
+        # working (it does a substring test), so nothing downstream ever looked wrong.
+        # `_GENERATION_ROUTE_RE` matches the way that listener does.
+        await page.context.route(_GENERATION_ROUTE_RE, intercept_generation_request)
         try:
             yield
         finally:
             try:
-                await page.unroute("**/batchGenerateImages")
-                await page.unroute("**/batchAsyncGenerateVideo*")
+                await page.context.unroute(_GENERATION_ROUTE_RE, intercept_generation_request)
             except Exception:
                 pass
 

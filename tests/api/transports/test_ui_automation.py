@@ -3256,6 +3256,34 @@ class TestReferenceEntitiesInterception:
     filter/strip referenceEntities from outgoing HTTP request bodies.
     """
 
+    def test_matcher_fires_against_the_real_endpoint_urls(self) -> None:
+        """#615 regression: the guard is only real if its matcher matches reality.
+
+        The previous test asserted a pattern *string* had been registered and then
+        invoked the handler by hand, so it stayed green for months while the guard
+        never fired once. Assert against URLs the code actually builds.
+        """
+        from gflow_cli.api import routes
+        from gflow_cli.api.transports.ui_automation_video import _GENERATION_ROUTE_RE
+
+        image_url = routes.batch_generate_images_url("abc123")
+        assert _GENERATION_ROUTE_RE.search(image_url), image_url
+
+        for video_url in (routes.GENERATE_VIDEO,):
+            assert _GENERATION_ROUTE_RE.search(video_url), video_url
+
+    def test_the_old_glob_could_never_have_matched(self) -> None:
+        """Documents the defect so it cannot quietly return.
+
+        `page.route("**/batchGenerateImages")` requires the final path segment to
+        equal `batchGenerateImages`. The real segment is namespaced, so it never did.
+        """
+        from gflow_cli.api import routes
+
+        last_segment = routes.batch_generate_images_url("abc123").rsplit("/", 1)[-1]
+        assert last_segment == "flowMedia:batchGenerateImages"
+        assert last_segment != "batchGenerateImages"
+
     @pytest.mark.asyncio
     async def test_intercept_reference_entities_strips_unrequested(self) -> None:
         transport = UiAutomationTransport()
@@ -3266,16 +3294,15 @@ class TestReferenceEntitiesInterception:
         expected = {"requested-character-id"}
 
         async with transport._intercept_reference_entities(mock_page, expected):  # noqa: SLF001
-            # Verify routes were registered
-            mock_page.route.assert_any_call("**/batchGenerateImages", ANY)
-            mock_page.route.assert_any_call("**/batchAsyncGenerateVideo*", ANY)
+            # Registered on the CONTEXT, not the page: these requests are
+            # Web-Worker-delegated and page-level routing cannot see them (#615).
+            mock_page.context.route.assert_any_call(ANY, ANY)
+            assert not mock_page.route.called, "must not register at page level (#615)"
 
-        # Verify unroute was called
-        mock_page.unroute.assert_any_call("**/batchGenerateImages")
-        mock_page.unroute.assert_any_call("**/batchAsyncGenerateVideo*")
+        mock_page.context.unroute.assert_called()
 
         # Now test the route handler logic
-        intercept_handler = mock_page.route.call_args_list[0][0][1]
+        intercept_handler = mock_page.context.route.call_args_list[0][0][1]
 
         # Case 1: unrequested entity (should be stripped)
         mock_route = MagicMock()
