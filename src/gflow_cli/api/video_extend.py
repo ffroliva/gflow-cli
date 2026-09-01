@@ -35,11 +35,14 @@ from gflow_cli.errors import ExtendUnavailableError
 __all__ = [
     "DEFAULT_FRAME_RANGE",
     "ExtendVideoRequest",
+    "ExtendStarted",
     "FrameRange",
     "account_credits",
     "account_service_tier",
     "extract_video_models",
+    "model_unit_cost",
     "resolve_extend_model",
+    "workflow_id_for_media",
 ]
 
 # Wire constants — not settings. They belong beside the request they serve, in the
@@ -94,6 +97,22 @@ class FrameRange:
 DEFAULT_FRAME_RANGE = FrameRange()
 
 
+@dataclass(frozen=True, slots=True)
+class ExtendStarted:
+    """An accepted extend submission, before the generation finishes.
+
+    Returned as soon as Flow schedules the job so a caller can record a STARTED
+    row: the segment is billed at submit, not at download, and a run interrupted
+    between the two must not look like it never happened.
+    """
+
+    media_id: str
+    workflow_id: str
+    model_key: str
+    unit_cost: int | None = None
+    remaining_credits: int | None = None
+
+
 def _inner(listing: object) -> dict[str, Any]:
     """Return the payload dict, accepting the tRPC envelope or its unwrapped inner.
 
@@ -138,6 +157,33 @@ def extract_video_models(listing: object) -> list[dict[str, Any]]:
     return out
 
 
+def workflow_id_for_media(listing: object, media_id: str) -> str | None:
+    """The workflow owning *media_id*, or ``None`` if the listing doesn't know it.
+
+    Extend anchors to a scene and a scene is composed from workflow ids, but
+    callers hold a media id. ``projectContents.workflows[].metadata.primaryMediaId``
+    carries the mapping in the same free ``projectInitialData`` response we
+    already fetch to resolve the model, so this costs no extra request.
+    """
+    contents = _inner(listing).get("projectContents")
+    if not isinstance(contents, dict):
+        return None
+    workflows = cast("dict[str, Any]", contents).get("workflows")
+    if not isinstance(workflows, list):
+        return None
+    for raw in cast("list[Any]", workflows):
+        if not isinstance(raw, dict):
+            continue
+        wf = cast("dict[str, Any]", raw)
+        meta = wf.get("metadata")
+        if not isinstance(meta, dict):
+            continue
+        if cast("dict[str, Any]", meta).get("primaryMediaId") == media_id:
+            name = wf.get("name")
+            return name if isinstance(name, str) else None
+    return None
+
+
 def account_service_tier(listing: object) -> str:
     """Read ``userData.serviceTier`` — the tier that gates every ``creditMapping``."""
     user = _inner(listing).get("userData")
@@ -150,6 +196,24 @@ def account_credits(listing: object) -> int | None:
     user = _inner(listing).get("userData")
     credits = cast("dict[str, Any]", user).get("credits") if isinstance(user, dict) else None
     return credits if isinstance(credits, int) and not isinstance(credits, bool) else None
+
+
+def model_unit_cost(listing: object, model_key: str, service_tier: str) -> int | None:
+    """Credits one submission of *model_key* costs on *service_tier*.
+
+    Feeds both the pre-flight cost estimate and the `extend_model_resolved` log
+    line. Returns ``None`` when the key is absent or unorderable on that tier,
+    so a caller shows "unknown" rather than a fabricated 0.
+    """
+    for entry in extract_video_models(listing):
+        if entry.get("key") != model_key:
+            continue
+        mapping = cast("dict[str, Any]", entry.get("creditMapping") or {})
+        tier_entry = cast("dict[str, Any]", mapping.get(service_tier) or {})
+        cost = tier_entry.get("cost")
+        if isinstance(cost, int) and not isinstance(cost, bool):
+            return cost
+    return None
 
 
 def resolve_extend_model(listing: object, *, service_tier: str, aspect: str) -> str:

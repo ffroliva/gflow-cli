@@ -2451,6 +2451,19 @@
           "credits": 1025,
           "serviceTier": "SERVICE_TIER_INTERMEDIATE",
           "paygateTier": "PAYGATE_TIER_ONE"
+        },
+        "projectContents": {
+          "workflows": [
+            {
+              "name": "91637ac2-5037-4a0f-b91a-3be1311d948a",
+              "metadata": {
+                "displayName": "Ocean wave rolling onto beach",
+                "primaryMediaId": "b9458021-fc2d-4d95-ab53-cf844c6f1079"
+              },
+              "projectId": "7d3d6bd9-0000-0000-0000-000000000000"
+            }
+          ],
+          "media": []
         }
       }
     }

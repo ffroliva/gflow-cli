@@ -24,6 +24,7 @@ from gflow_cli._cli_helpers import (
     slugify_project_name,
     tool_option,
 )
+from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import VideoModel, is_media_uuid, reference_cap_for
 from gflow_cli.config import UiMode, get_settings
@@ -31,7 +32,7 @@ from gflow_cli.data.models import AssetKind, OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataStoreError
+from gflow_cli.errors import ConfigurationError, DataStoreError
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
@@ -1690,5 +1691,194 @@ def chain(
             tool_specs=tool_specs,
         ),
         cli_command="video chain",
+        as_json=as_json,
+    )
+
+
+# --------------------------------------------------------------------------
+# video extend
+# --------------------------------------------------------------------------
+
+# One extend segment is always 8s — the model's videoLengthSeconds, not a
+# request parameter. inputSpec.maxInputV2vVideoDuration is also 8, which is why
+# a long video is a chain of 8s continuations rather than one growing clip.
+_EXTEND_SEGMENT_SECONDS = 8
+
+
+def _print_extend_plan(*, media_id: str, prompt: str, aspect: str, segments: int) -> None:
+    """Show what will be submitted BEFORE a client exists.
+
+    Deliberately printed without opening a browser: `--dry-run` must be instant
+    and must not be able to spend. The exact credit cost is tier-dependent and
+    comes from the (free) capability listing once the run starts; the balance
+    check that uses it aborts before the first submit.
+    """
+    total = segments * _EXTEND_SEGMENT_SECONDS
+    console.print("[bold]Extend plan[/bold]")
+    console.print(f"  source clip : {media_id}")
+    console.print(f"  prompt      : {prompt}")
+    console.print(f"  aspect      : {aspect}")
+    console.print(
+        f"  segments    : {segments} x {_EXTEND_SEGMENT_SECONDS}s = {total}s of new footage"
+    )
+    console.print("  cost        : spends credits — exact amount is shown before submitting")
+
+
+async def _run_extend(
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    media_id: str,
+    prompt: str,
+    aspect: str,
+    project_id: str | None,
+    scene_id: str | None,
+    seed: int | None,
+    as_json: bool,
+) -> None:
+    """Submit one extend and wait for it."""
+    if not project_id:
+        msg = "--project is required: extend must know which project owns MEDIA_ID"
+        raise ConfigurationError(msg)
+
+    async with FlowApiClient(profile_dir=profile_dir) as client:
+        listing = await client.capability_listing(project_id)
+        tier = video_extend.account_service_tier(listing)
+        model_key = video_extend.resolve_extend_model(listing, service_tier=tier, aspect=aspect)
+        unit = video_extend.model_unit_cost(listing, model_key, tier)
+        balance = video_extend.account_credits(listing)
+
+        # Pre-flight balance check. `chain` never had prices so it could not do
+        # this; extend can, and stopping here beats stopping mid-run holding a
+        # half-length video and a spent balance.
+        if unit is not None and balance is not None and balance < unit:
+            msg = (
+                f"insufficient credits: this extend costs {unit}, balance is {balance}. "
+                "Nothing was submitted."
+            )
+            raise ConfigurationError(msg)
+        if not as_json:
+            cost = "unknown" if unit is None else str(unit)
+            have = "unknown" if balance is None else str(balance)
+            console.print(f"  model       : {model_key} ({cost} credits, balance {have})")
+
+        target_scene = scene_id
+        if not target_scene:
+            workflow_id = video_extend.workflow_id_for_media(listing, media_id)
+            if not workflow_id:
+                msg = (
+                    f"media {media_id} is not in project {project_id} "
+                    "(no workflow owns it) — check --project"
+                )
+                raise ConfigurationError(msg)
+            scene = await client.create_scene(project_id=project_id, workflow_ids=[workflow_id])
+            target_scene = scene.scene_id
+
+        started = await client.extend_video(
+            media_id=media_id,
+            project_id=project_id,
+            scene_id=target_scene,
+            position=1,
+            prompt=prompt,
+            aspect=aspect,
+            seed=seed,
+        )
+        if not as_json:
+            console.print(f"  submitted   : {started.media_id} — waiting (~2 min)")
+        await client.poll_video_status(started.media_id, project_id=project_id)
+
+        if as_json:
+            json_output.emit(
+                {
+                    "media_id": started.media_id,
+                    "scene_id": target_scene,
+                    "project_id": project_id,
+                    "model": started.model_key,
+                    "remaining_credits": started.remaining_credits,
+                    "seconds_added": _EXTEND_SEGMENT_SECONDS,
+                    "profile": profile_name,
+                }
+            )
+        else:
+            console.print(f"[bold green]Extended[/bold green] — scene {target_scene}")
+            console.print("  render one file: gflow scene create --output <path>")
+
+
+@video.command(
+    "extend",
+    short_help="Continue an existing clip by another 8 seconds (costs credits).",
+    help=(
+        "Continue an existing video by generating another 8-second segment that "
+        "carries its motion and audio forward.\n\n"
+        "MEDIA_ID is the clip to continue; PROMPT says what happens next.\n\n"
+        "Unlike `video chain`, which restarts from an extracted still, extend is "
+        "seeded server-side from the source clip, so the join is continuous. "
+        "The result lands as a Scene; render it to one file with "
+        "`gflow scene create --output`.\n\n"
+        "\b\n"
+        "Examples:\n"
+        '  gflow video extend <media-id> "the wave recedes back into the ocean"\n'
+        '  gflow video extend <media-id> "the camera drifts upward" --aspect 16:9\n\n'
+        "Each segment is 8 seconds and spends credits — the exact cost depends on "
+        "your plan and is shown for confirmation before anything is submitted."
+    ),
+)
+@click.argument("media_id")
+@click.argument("prompt")
+@click.option(
+    "--aspect",
+    default="9:16",
+    show_default=True,
+    # Flow publishes no SQUARE extend model in either family, so 1:1 is refused
+    # here rather than surfacing as a late, paid-for failure.
+    type=click.Choice(["9:16", "16:9"]),
+    help="Aspect of the extension (portrait 9:16 or landscape 16:9). No square variant exists.",
+)
+@_project_option
+@click.option("--scene", "scene_id", default=None, help="Existing scene to extend within.")
+@click.option("--seed", default=None, type=int, help="Fixed seed, for a reproducible run.")
+@click.option("--yes", is_flag=True, help="Skip the cost confirmation.")
+@click.option("--dry-run", is_flag=True, help="Show the plan and cost, submit nothing.")
+@click.option("--profile", default=None, help="Auth profile to use.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def extend(  # noqa: PLR0913
+    media_id: str,
+    prompt: str,
+    aspect: str,
+    project_id: str | None,
+    scene_id: str | None,
+    seed: int | None,
+    yes: bool,
+    dry_run: bool,
+    profile: str | None,
+    as_json: bool,
+) -> None:
+    """Continue MEDIA_ID by another 8 seconds, described by PROMPT."""
+    if not is_media_uuid(media_id):
+        msg = f"MEDIA_ID must be a media UUID, got {media_id!r}"
+        raise click.BadParameter(msg)
+    # The cost gate runs before a client exists, so --dry-run cannot spend and
+    # cannot even open a browser.
+    _print_extend_plan(media_id=media_id, prompt=prompt, aspect=aspect, segments=1)
+    if dry_run:
+        return
+    if not yes:
+        click.confirm("Submit this extend?", abort=True)
+
+    profile_name = _resolve_profile(profile)
+    provider_dir = _make_provider_dir(profile_name)
+    run_with_handlers(
+        lambda: _run_extend(
+            profile_name=profile_name,
+            profile_dir=provider_dir,
+            media_id=media_id,
+            prompt=prompt,
+            aspect=aspect,
+            project_id=project_id,
+            scene_id=scene_id,
+            seed=seed,
+            as_json=as_json,
+        ),
+        cli_command="video extend",
         as_json=as_json,
     )

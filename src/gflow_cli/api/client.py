@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from dataclasses import replace as _dataclass_replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, NoReturn, Self, TypeVar, cast
@@ -27,7 +28,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 import structlog
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
-from gflow_cli.api import routes
+from gflow_cli.api import routes, video_extend
 from gflow_cli.api._engine import (
     CONTEXT_TEARDOWN_TIMEOUT_S,
     DRIVER_STOP_TIMEOUT_S,
@@ -66,7 +67,13 @@ from gflow_cli.api.transports.base import (
     TransportSetup,
     VideoCapableTransport,
 )
-from gflow_cli.api.video import VideoStatus, is_media_uuid, parse_video_status
+from gflow_cli.api.video import (
+    VideoStatus,
+    is_media_uuid,
+    media_name_from_generate_response,
+    parse_video_status,
+)
+from gflow_cli.api.video_extend import ExtendStarted
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_incidents_root
@@ -376,6 +383,8 @@ class FlowApiClient:
         # decrypt the on-disk cookie store (macOS Keychain vs basic-store
         # mismatch). Populated by _preread_flow_session_cookies().
         self._preread_flow_cookies: dict[str, str] = {}
+        # projectInitialData per project — see capability_listing.
+        self._extend_listing_cache: dict[str, JsonObject] = {}
 
     # --- lifecycle --------------------------------------------------------
 
@@ -1819,6 +1828,88 @@ class FlowApiClient:
             routes.scene_workflows_url(scene_id, project_id), route_name="getSceneWorkflows"
         )
         return Scene.from_get_response(data, scene_id=scene_id, project_id=project_id)
+
+    async def capability_listing(self, project_id: str) -> JsonObject:
+        """`projectInitialData` for *project_id*, fetched once per client session.
+
+        The model catalogue and the account's tier cannot change mid-run, so a
+        chained extend must not re-fetch per segment: at N=15 that is 15 extra
+        requests to a WAF-scored host for a constant.
+        """
+        cached = self._extend_listing_cache.get(project_id)
+        if cached is None:
+            cached = await self.fetch_project_listing(project_id)
+            self._extend_listing_cache[project_id] = cached
+        return cached
+
+    async def extend_video(
+        self,
+        *,
+        media_id: str,
+        project_id: str,
+        scene_id: str,
+        position: int,
+        prompt: str,
+        aspect: str = "16:9",
+        seed: int | None = None,
+        recaptcha_action: str = "VIDEO_GENERATION",
+    ) -> ExtendStarted:
+        """Continue an existing clip by another 8 seconds. Costs credits.
+
+        Direct-wire ``POST /v1/video:batchAsyncGenerateVideoExtendVideo``, verified
+        live 2026-08-31. Unlike T2V/I2V — which ride ``ui_automation_video`` and
+        passively capture Flow's own request — this composes the body itself, so
+        it also owns its polling (see :meth:`poll_video_status`).
+
+        Returns as soon as Flow schedules the job. Poll the returned ``media_id``
+        for the result.
+        """
+        listing = await self.capability_listing(project_id)
+        service_tier = video_extend.account_service_tier(listing)
+        model_key = video_extend.resolve_extend_model(
+            listing, service_tier=service_tier, aspect=aspect
+        )
+        # When Flow moves the extend family again — it has moved once already —
+        # this single line is the diagnosis. The raw creditMapping table is NOT
+        # logged; only the decision and the inputs that produced it.
+        logger.info(
+            "extend_model_resolved",
+            model_key=model_key,
+            service_tier=service_tier,
+            unit_cost=video_extend.model_unit_cost(listing, model_key, service_tier),
+            candidate_count=len(video_extend.extract_video_models(listing)),
+        )
+        req = video_extend.ExtendVideoRequest(
+            media_id=media_id,
+            project_id=project_id,
+            scene_id=scene_id,
+            position=position,
+            prompt=prompt,
+            model_key=model_key,
+            aspect=aspect,
+            seed=seed,
+        )
+        token = await self._mint_recaptcha_token(recaptcha_action)
+        body = req.to_wire(
+            session_id=f";{int(time.time() * 1000)}",
+            token=token,
+            batch_id=str(uuid.uuid4()),
+        )
+        resp = await self._post_json(
+            routes.EXTEND_VIDEO, body, route_name="batchAsyncGenerateVideoExtendVideo"
+        )
+        data = cast("JsonObject", resp) if isinstance(resp, dict) else {}
+        workflows = data.get("workflows")
+        workflow_id = ""
+        if isinstance(workflows, list) and workflows and isinstance(workflows[0], dict):
+            workflow_id = str(cast("JsonObject", workflows[0]).get("name") or "")
+        remaining = data.get("remainingCredits")
+        return ExtendStarted(
+            media_id=media_name_from_generate_response(data),
+            workflow_id=workflow_id,
+            model_key=model_key,
+            remaining_credits=remaining if isinstance(remaining, int) else None,
+        )
 
     async def poll_video_status(
         self,

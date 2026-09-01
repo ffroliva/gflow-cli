@@ -26,6 +26,7 @@ from gflow_cli.api.video_extend import (
     account_service_tier,
     extract_video_models,
     resolve_extend_model,
+    workflow_id_for_media,
 )
 from gflow_cli.errors import ExtendUnavailableError
 
@@ -265,3 +266,18 @@ def test_tier_and_credits_degrade_on_missing_userdata() -> None:
     assert account_service_tier({}) == ""
     assert account_credits({}) is None
     assert account_credits({"result": {"data": {"json": {"userData": {"credits": True}}}}}) is None
+
+
+def test_maps_media_to_its_workflow(listing: dict) -> None:
+    """Extend anchors to a scene, and a scene is built from workflow ids — but
+    callers hold a media id. The same free listing already carries the mapping
+    at projectContents.workflows[].metadata.primaryMediaId, so no extra call."""
+    assert (
+        workflow_id_for_media(listing, "b9458021-fc2d-4d95-ab53-cf844c6f1079")
+        == "91637ac2-5037-4a0f-b91a-3be1311d948a"
+    )
+
+
+def test_unknown_media_has_no_workflow(listing: dict) -> None:
+    assert workflow_id_for_media(listing, "00000000-0000-0000-0000-000000000000") is None
+    assert workflow_id_for_media({}, "b9458021-fc2d-4d95-ab53-cf844c6f1079") is None
