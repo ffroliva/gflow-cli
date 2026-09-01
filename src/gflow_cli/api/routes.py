@@ -33,8 +33,23 @@ UPLOAD_IMAGE = f"{FLOW_API_BASE}/flow/uploadImage"
 UPSAMPLE_IMAGE = f"{FLOW_API_BASE}/flow/upsampleImage"
 
 # Video generation (reCAPTCHA-required for GENERATE_VIDEO)
+#
+# ⚠️ Both constants currently have ZERO consumers in src/ — production T2V/I2V
+# rides `ui_automation_video.py`, which drives Flow's UI and passively captures
+# the request Flow itself emits. PLAN.md ADR-14 retired the direct-wire callers
+# as "401-dead". Two independent readers have since mistaken these live-looking
+# constants for a working REST path, so state it plainly rather than deleting
+# them (CHECK_VIDEO_STATUS is needed by the extend poller):
+#   - GENERATE_VIDEO      — retired 2026-05-19, NOT re-tested since. Unknown, not proven dead.
+#   - CHECK_VIDEO_STATUS  — no outbound poller exists anywhere in src/; the
+#                           production video poller scans Flow's OWN captured
+#                           status traffic and assumes the SPA is on-screen.
+# A direct-wire submit (e.g. the extend route, verified 200 on 2026-08-31) gives
+# Flow's UI no reason to poll our media id, so it must bring its own poller —
+# shape it after `client._poll_concat_until_done`.
 GENERATE_VIDEO = f"{FLOW_API_BASE}/video:batchAsyncGenerateVideoText"
 CHECK_VIDEO_STATUS = f"{FLOW_API_BASE}/video:batchCheckAsyncVideoGenerationStatus"
+EXTEND_VIDEO = f"{FLOW_API_BASE}/video:batchAsyncGenerateVideoExtendVideo"
 
 # Workflow management
 ARCHIVE_WORKFLOW_BASE = f"{FLOW_API_BASE}/flowWorkflows"  # + /{workflow_id}

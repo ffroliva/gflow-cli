@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow video extend` — continue a clip past Flow's 8-second ceiling.** Veo's
+  extend route generates a new 8s segment seeded server-side from the source
+  clip, so motion and audio carry across the join instead of restarting from a
+  still (which is what `video chain` does, and why it needs a fade guard). Pass
+  one prompt per segment, or `--segments N` to reuse the last one:
+
+  ```bash
+  gflow video extend <media-id> "the wave recedes" --project <id>
+  gflow video extend <media-id> "drifts out to sea" -n 4 -o long.mp4
+  ```
+
+  The result is a Flow Scene; `-o` renders it to a single mp4 through the
+  existing credit-free server-side concat.
+
+  > Known limitation, found in live verification: a segment carries ~7s of real
+  > content though Flow advertises and bills 8s, so each internal seam of a
+  > multi-segment render is preceded by ~1s of frozen frame and silence. Single
+  > segments are unaffected. Details and the open questions are in
+  > [KNOWN_ISSUES](KNOWN_ISSUES.md).
+
+  - **The model key is resolved per run, never hardcoded.** Flow's extend family
+    is tier-gated — `_ultra` variants are Advanced-only and read `UNAVAILABLE`
+    elsewhere — so the key comes from the account's own capability listing,
+    picking the cheapest orderable model exactly as Flow's own UI does. A pinned
+    key would 403 forever on the wrong tier.
+  - **Costs are shown before anything is submitted**, and a pre-flight balance
+    check refuses a run the balance cannot finish. `--dry-run` prints the plan
+    without opening a browser.
+  - **Serial by construction, and paced.** Segments submit one at a time with a
+    non-zero default jitter (`GFLOW_CLI_JITTER_RANGE`). A refusal aborts with
+    completed segments preserved and is never auto-retried.
+  - `1:1` is refused up front — Flow publishes no square extend model.
+
+### Fixed
+
+- **Ctrl+C during a billed run said nothing.** `run_with_handlers` exited 130
+  silently, so a user who interrupted a multi-segment run could not tell whether
+  anything had been charged or how to resume. It now reports credits spent,
+  segments completed and the resume handle. Fixed at the shared boundary, so
+  `video chain` and `movie run` gain it too.
+- **`sessionId` was not redacted.** `redact_metadata` covered `token` and
+  `recaptchaToken` but not `sessionId`, which the extend request carries. Not a
+  credential, but account-correlatable, and it would otherwise reach any logged
+  request body or diagnostics bundle verbatim.
+
 ### Fixed
 
 - **The offline test suite could `git checkout develop` in the developer's own

@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from dataclasses import replace as _dataclass_replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, NoReturn, Self, TypeVar, cast
@@ -27,7 +28,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 import structlog
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
-from gflow_cli.api import routes
+from gflow_cli.api import routes, video_extend
 from gflow_cli.api._engine import (
     CONTEXT_TEARDOWN_TIMEOUT_S,
     DRIVER_STOP_TIMEOUT_S,
@@ -66,11 +67,18 @@ from gflow_cli.api.transports.base import (
     TransportSetup,
     VideoCapableTransport,
 )
-from gflow_cli.api.video import is_media_uuid
+from gflow_cli.api.video import (
+    VideoStatus,
+    is_media_uuid,
+    media_name_from_generate_response,
+    parse_video_status,
+)
+from gflow_cli.api.video_extend import ExtendStarted
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_incidents_root
 from gflow_cli.errors import (
+    CONTENT_SAFETY_REASONS,
     AisandboxAuthError,
     AuthExpiredError,
     AuthMissingError,
@@ -118,6 +126,10 @@ if TYPE_CHECKING:
 # bodies, launch kwargs, etc.). A single definition avoids the duplicated-literal
 # smell (SonarCloud S1192) from repeating the bare mapping type across the module.
 JsonObject = dict[str, Any]
+
+# Floor for the outbound video status poll. The cheapest extend model takes ~110s,
+# so a short interval buys nothing and spends requests against a WAF-scored host.
+_MIN_VIDEO_POLL_INTERVAL_S = 5.0
 
 _DataclassT = TypeVar("_DataclassT", bound="DataclassInstance")
 
@@ -371,6 +383,8 @@ class FlowApiClient:
         # decrypt the on-disk cookie store (macOS Keychain vs basic-store
         # mismatch). Populated by _preread_flow_session_cookies().
         self._preread_flow_cookies: dict[str, str] = {}
+        # projectInitialData per project — see capability_listing.
+        self._extend_listing_cache: dict[str, JsonObject] = {}
 
     # --- lifecycle --------------------------------------------------------
 
@@ -1814,6 +1828,158 @@ class FlowApiClient:
             routes.scene_workflows_url(scene_id, project_id), route_name="getSceneWorkflows"
         )
         return Scene.from_get_response(data, scene_id=scene_id, project_id=project_id)
+
+    async def capability_listing(self, project_id: str) -> JsonObject:
+        """`projectInitialData` for *project_id*, fetched once per client session.
+
+        The model catalogue and the account's tier cannot change mid-run, so a
+        chained extend must not re-fetch per segment: at N=15 that is 15 extra
+        requests to a WAF-scored host for a constant.
+        """
+        cached = self._extend_listing_cache.get(project_id)
+        if cached is None:
+            cached = await self.fetch_project_listing(project_id)
+            self._extend_listing_cache[project_id] = cached
+        return cached
+
+    async def extend_video(
+        self,
+        *,
+        media_id: str,
+        project_id: str,
+        scene_id: str,
+        position: int,
+        prompt: str,
+        aspect: str = "16:9",
+        seed: int | None = None,
+        recaptcha_action: str = "VIDEO_GENERATION",
+    ) -> ExtendStarted:
+        """Continue an existing clip by another 8 seconds. Costs credits.
+
+        Direct-wire ``POST /v1/video:batchAsyncGenerateVideoExtendVideo``, verified
+        live 2026-08-31. Unlike T2V/I2V — which ride ``ui_automation_video`` and
+        passively capture Flow's own request — this composes the body itself, so
+        it also owns its polling (see :meth:`poll_video_status`).
+
+        Returns as soon as Flow schedules the job. Poll the returned ``media_id``
+        for the result.
+        """
+        listing = await self.capability_listing(project_id)
+        service_tier = video_extend.account_service_tier(listing)
+        model_key, unit_cost = video_extend.resolve_extend_model(
+            listing, service_tier=service_tier, aspect=aspect
+        )
+        # When Flow moves the extend family again — it has moved once already —
+        # this single line is the diagnosis. The raw creditMapping table is NOT
+        # logged; only the decision and the inputs that produced it.
+        logger.info(
+            "extend_model_resolved",
+            model_key=model_key,
+            service_tier=service_tier,
+            unit_cost=unit_cost,
+            candidate_count=len(video_extend.extract_video_models(listing)),
+        )
+        req = video_extend.ExtendVideoRequest(
+            media_id=media_id,
+            project_id=project_id,
+            scene_id=scene_id,
+            position=position,
+            prompt=prompt,
+            model_key=model_key,
+            aspect=aspect,
+            seed=seed,
+        )
+        token = await self._mint_recaptcha_token(recaptcha_action)
+        body = req.to_wire(
+            session_id=f";{int(time.time() * 1000)}",
+            token=token,
+            batch_id=str(uuid.uuid4()),
+        )
+        resp = await self._post_json(
+            routes.EXTEND_VIDEO, body, route_name="batchAsyncGenerateVideoExtendVideo"
+        )
+        data = cast("JsonObject", resp) if isinstance(resp, dict) else {}
+        workflows = data.get("workflows")
+        workflow_id = ""
+        if isinstance(workflows, list) and workflows and isinstance(workflows[0], dict):
+            workflow_id = str(cast("JsonObject", workflows[0]).get("name") or "")
+        return ExtendStarted(
+            media_id=media_name_from_generate_response(data),
+            workflow_id=workflow_id,
+            model_key=model_key,
+            unit_cost=unit_cost,
+        )
+
+    async def poll_video_status(
+        self,
+        media_id: str,
+        *,
+        project_id: str,
+        initial_delay_s: float = 90.0,
+        poll_interval: float = 10.0,
+        timeout_s: float = 900.0,
+    ) -> VideoStatus:
+        """Poll ``batchCheckAsyncVideoGenerationStatus`` until *media_id* is terminal.
+
+        The **only** outbound video poller in the codebase. Production T2V/I2V
+        does not poll: ``ui_automation_video`` passively scans Flow's own captured
+        status traffic, which works because the SPA is on-screen polling for its
+        own generation. A direct-wire submit (the extend route) gives Flow's UI no
+        reason to poll our media id, so that mechanism sees nothing and would sit
+        until its deadline. Hence this.
+
+        Shaped after :meth:`_poll_concat_until_done`: every poll is its own
+        ``_post_json``, so the Page is checked back in before each sleep. Holding
+        a checked-out Page across a sleep self-deadlocks at the default
+        ``concurrency=1``.
+
+        ``initial_delay_s`` exists because the cheapest extend model takes ~110s;
+        polling immediately spends requests against a WAF-scored host on a job
+        that cannot possibly be done. ``poll_interval`` is floored at 5s for the
+        same reason — at 2s a 15-segment run would fire ~825 status requests
+        instead of ~75.
+
+        Returns the terminal :class:`VideoStatus` on success. Raises
+        :class:`ContentPolicyError` when the failure is a safety rejection,
+        :class:`FlowApiError` on any other terminal failure, and
+        :class:`TransportTimeoutError` on deadline breach. A failed segment has
+        still been billed, so it is never returned as a success-shaped object.
+        """
+        interval = max(poll_interval, _MIN_VIDEO_POLL_INTERVAL_S)
+        deadline = time.monotonic() + timeout_s
+        if initial_delay_s > 0:
+            await asyncio.sleep(initial_delay_s)
+
+        while True:
+            resp = await self._post_json(
+                routes.CHECK_VIDEO_STATUS,
+                {"media": [{"name": media_id, "projectId": project_id}]},
+                route_name="batchCheckAsyncVideoGenerationStatus",
+            )
+            status = parse_video_status(
+                cast("JsonObject", resp) if isinstance(resp, dict) else {}, media_id=media_id
+            )
+            if status.succeeded:
+                return status
+            if status.is_terminal:
+                reasons = ", ".join(status.failure_reasons) or "no reason given"
+                detail = f"video generation failed: {reasons}"
+                if status.error_message:
+                    detail = f"{detail} ({status.error_message})"
+                logger.warning(
+                    "video.generation_failed",
+                    media_id=media_id,
+                    failure_reasons=list(status.failure_reasons),
+                )
+                if any(r in CONTENT_SAFETY_REASONS for r in status.failure_reasons):
+                    raise ContentPolicyError(detail, route="batchCheckAsyncVideoGenerationStatus")
+                raise FlowApiError(detail, route="batchCheckAsyncVideoGenerationStatus")
+            if time.monotonic() >= deadline:
+                raise TransportTimeoutError(
+                    f"video {media_id} did not finish within {timeout_s:.0f}s "
+                    f"(last status: {status.status})"
+                )
+            await asyncio.sleep(interval)
 
     async def _poll_concat_until_done(
         self,

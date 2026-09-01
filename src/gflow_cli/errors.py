@@ -26,6 +26,7 @@ __all__ = [
     "DataIntegrityError",
     "DataMigrationError",
     "DataStoreError",
+    "ExtendUnavailableError",
     "FlowAgentUiError",
     "FlowApiError",
     "FlowAppError",
@@ -567,6 +568,39 @@ class UpscaleUnavailableError(GFlowError):
     )
 
 
+class ExtendUnavailableError(GFlowError):
+    """Raised when no Veo *extend* model is orderable for this account/aspect.
+
+    Flow's extend family is tier-gated: `veo_3_1_extend_*_ultra` is
+    ``SERVICE_TIER_ADVANCED``-only, the un-suffixed variants serve
+    INTERMEDIATE/ENTRY, and every entry carries a per-tier ``creditMapping`` whose
+    cost reads ``"UNAVAILABLE"`` where the account cannot order it. There is also
+    no SQUARE key in either family. So "which model?" has no static answer — it is
+    resolved per run from ``flow.projectInitialData``.
+
+    This error means that resolution found nothing: an unsupported aspect, a
+    cohort without the extend capability, or a tier whose every candidate reads
+    ``UNAVAILABLE``. Raising beats falling back to a hardcoded key — a pinned key
+    that the account cannot order produces a 403 on every attempt, which is the
+    exact failure mode of the third-party CLI that prompted this feature.
+
+    Distinct exit code 35 (not WAF's 10) for the same reason
+    :class:`UpscaleUnavailableError` has 22: both are tier gates that look like a
+    WAF 403 on the wire, and a caller told "you were blocked, cool down 30 minutes"
+    would wait for a condition that never changes. The caller MUST NOT auto-retry.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/extend-unavailable"
+    title = "Video extend unavailable for this account"
+    _default_remediation = (
+        "No extend model is available for this account and aspect ratio. Extend "
+        "supports 16:9 and 9:16 only (there is no square variant). If you are on a "
+        "lower tier, the faster extend models may be gated — check `gflow models`. "
+        "If you just upgraded, re-run `gflow auth login --profile <name>` to refresh "
+        "the session."
+    )
+
+
 class UiSelectorDriftError(GFlowError):
     """Raised when a UI-automation selector cascade finds no matching element.
 
@@ -1098,6 +1132,7 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # from WafRejectionError's 10 even though both are HTTP 403. Direct GFlowError
     # subclass, so unconstrained by the ordering invariant.
     UpscaleUnavailableError: 22,
+    ExtendUnavailableError: 35,
     # UiSelectorDriftError (issue #183): Flow UI changed, selector probe failed.
     # Direct GFlowError subclass; exit 23 lets scripts distinguish "UI drifted"
     # from generic error (1) without parsing stderr.
