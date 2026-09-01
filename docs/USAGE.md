@@ -717,6 +717,14 @@ prompt is reused — so `-n 4` with one prompt continues the same idea four time
 **Overshooting is safe.** Generate more than you need and trim the tail; that
 costs credits but never quality.
 
+> ⚠️ **A segment carries ~7 seconds of real content, not 8.** Flow advertises 8s
+> and bills for 8s, but the returned media measures 7.000s. When several segments
+> are concatenated, each internal seam is preceded by ~1 second of **frozen frame
+> and silence** as the shorter clip is padded into its 8s slot. A single-segment
+> extend is unaffected. See
+> [KNOWN_ISSUES](../KNOWN_ISSUES.md#a-veo-extend-segment-is-7-seconds-not-the-8-flow-advertises--so-concat-pads-a-frozen-second)
+> — render without `-o` and trim in post if the seam matters.
+
 ### What it produces
 
 A Flow **Scene** containing the original clip plus each continuation — not a

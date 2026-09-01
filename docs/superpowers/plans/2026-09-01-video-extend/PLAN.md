@@ -69,7 +69,7 @@ no dropout. Evidence:
 | 7 · auto-concat on `-o` | ✅ reuses `concatenate_scene` |
 | 8 · Ctrl+C reporting | ✅ fixed in `run_with_handlers`, 3 tests |
 | 9 · docs + CHANGELOG | ✅ USAGE decision table + extend section |
-| **DoD · live verification** | ⏳ **outstanding — needs ~20 credits** |
+| **DoD · live verification** | ✅ **run 2026-09-01, 20 credits — passed, and found a defect** |
 
 **Deviation from the plan, recorded deliberately.** The plan called for
 disambiguating a tier-403 into `ExtendUnavailableError`. The resolver made that
@@ -86,17 +86,29 @@ fixture had been *derived from the implementation* rather than the capture. Fixe
 by rebuilding the fixture shape-faithfully from the raw response and asserting the
 nesting itself. A fixture that agrees with the code proves only self-consistency.
 
-**Remaining gate.** Offline tests prove our code does what we think; they cannot
-prove Flow still behaves as captured on 2026-08-31. Before this ships:
+**Live verification — run, passed, and worth every credit.**
 
-```bash
-gflow video extend <media-id> "..." -n 2 -o out.mp4 --project <id>
-ffprobe -show_entries format=duration out.mp4   # expect ~24s
+```
+gflow video extend <media> "..." "..." -n 2 --aspect 16:9 -o live_extend.mp4
+  -> model veo_3_1_extension_lite resolved from the live listing (unit 10, 99 candidates)
+  -> segment 1: source = original clip        -> 0c9364f3   (~90s)
+  -> segment 2: source = SEGMENT 1's media    -> 648f9291   (~90s)   [tail-only chaining, live]
+  -> concat 3 clips -> 23.02s / 1280x720 / 24fps / h264+aac
+  -> "Extended — 2/2 segment(s), 20 credits"
 ```
 
-Then eyeball the seam. Note the seam was verified once already (2026-08-31, ocean
-ambience) — but **narration or music across a seam is untested**, and that is the
-parable pipeline's actual case.
+Everything the unit tests asserted held on the wire, including tail-only
+chaining (segment 2 seeded from segment 1, not the original).
+
+**And it found a defect the offline suite structurally could not.** An extend
+segment is **7.000s of real content**, not the 8 Flow advertises and bills, so
+the concat pads each internal seam with ~1s of **frozen frame and silence**.
+Reproduced on a second, independently-generated render. Filed with full
+measurements and three explicitly-unresolved questions in
+[KNOWN_ISSUES](../../../../KNOWN_ISSUES.md); `USAGE.md` and `CHANGELOG.md` now
+state 7s rather than 8. Deliberately **not** patched by clamping to a hardcoded
+7.0 — one clip is an observation, not a distribution, and a guess dressed as a
+fix is what this project's diagnosis rules exist to prevent.
 
 ---
 

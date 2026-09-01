@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The result is a Flow Scene; `-o` renders it to a single mp4 through the
   existing credit-free server-side concat.
 
+  > Known limitation, found in live verification: a segment carries ~7s of real
+  > content though Flow advertises and bills 8s, so each internal seam of a
+  > multi-segment render is preceded by ~1s of frozen frame and silence. Single
+  > segments are unaffected. Details and the open questions are in
+  > [KNOWN_ISSUES](KNOWN_ISSUES.md).
+
   - **The model key is resolved per run, never hardcoded.** Flow's extend family
     is tier-gated — `_ultra` variants are Advanced-only and read `UNAVAILABLE`
     elsewhere — so the key comes from the account's own capability listing,
