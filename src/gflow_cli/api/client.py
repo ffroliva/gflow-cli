@@ -66,11 +66,12 @@ from gflow_cli.api.transports.base import (
     TransportSetup,
     VideoCapableTransport,
 )
-from gflow_cli.api.video import is_media_uuid
+from gflow_cli.api.video import VideoStatus, is_media_uuid, parse_video_status
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_incidents_root
 from gflow_cli.errors import (
+    CONTENT_SAFETY_REASONS,
     AisandboxAuthError,
     AuthExpiredError,
     AuthMissingError,
@@ -118,6 +119,10 @@ if TYPE_CHECKING:
 # bodies, launch kwargs, etc.). A single definition avoids the duplicated-literal
 # smell (SonarCloud S1192) from repeating the bare mapping type across the module.
 JsonObject = dict[str, Any]
+
+# Floor for the outbound video status poll. The cheapest extend model takes ~110s,
+# so a short interval buys nothing and spends requests against a WAF-scored host.
+_MIN_VIDEO_POLL_INTERVAL_S = 5.0
 
 _DataclassT = TypeVar("_DataclassT", bound="DataclassInstance")
 
@@ -1814,6 +1819,77 @@ class FlowApiClient:
             routes.scene_workflows_url(scene_id, project_id), route_name="getSceneWorkflows"
         )
         return Scene.from_get_response(data, scene_id=scene_id, project_id=project_id)
+
+    async def poll_video_status(
+        self,
+        media_id: str,
+        *,
+        project_id: str,
+        initial_delay_s: float = 90.0,
+        poll_interval: float = 10.0,
+        timeout_s: float = 900.0,
+    ) -> VideoStatus:
+        """Poll ``batchCheckAsyncVideoGenerationStatus`` until *media_id* is terminal.
+
+        The **only** outbound video poller in the codebase. Production T2V/I2V
+        does not poll: ``ui_automation_video`` passively scans Flow's own captured
+        status traffic, which works because the SPA is on-screen polling for its
+        own generation. A direct-wire submit (the extend route) gives Flow's UI no
+        reason to poll our media id, so that mechanism sees nothing and would sit
+        until its deadline. Hence this.
+
+        Shaped after :meth:`_poll_concat_until_done`: every poll is its own
+        ``_post_json``, so the Page is checked back in before each sleep. Holding
+        a checked-out Page across a sleep self-deadlocks at the default
+        ``concurrency=1``.
+
+        ``initial_delay_s`` exists because the cheapest extend model takes ~110s;
+        polling immediately spends requests against a WAF-scored host on a job
+        that cannot possibly be done. ``poll_interval`` is floored at 5s for the
+        same reason — at 2s a 15-segment run would fire ~825 status requests
+        instead of ~75.
+
+        Returns the terminal :class:`VideoStatus` on success. Raises
+        :class:`ContentPolicyError` when the failure is a safety rejection,
+        :class:`FlowApiError` on any other terminal failure, and
+        :class:`TransportTimeoutError` on deadline breach. A failed segment has
+        still been billed, so it is never returned as a success-shaped object.
+        """
+        interval = max(poll_interval, _MIN_VIDEO_POLL_INTERVAL_S)
+        deadline = time.monotonic() + timeout_s
+        if initial_delay_s > 0:
+            await asyncio.sleep(initial_delay_s)
+
+        while True:
+            resp = await self._post_json(
+                routes.CHECK_VIDEO_STATUS,
+                {"media": [{"name": media_id, "projectId": project_id}]},
+                route_name="batchCheckAsyncVideoGenerationStatus",
+            )
+            status = parse_video_status(
+                cast("JsonObject", resp) if isinstance(resp, dict) else {}, media_id=media_id
+            )
+            if status.succeeded:
+                return status
+            if status.is_terminal:
+                reasons = ", ".join(status.failure_reasons) or "no reason given"
+                detail = f"video generation failed: {reasons}"
+                if status.error_message:
+                    detail = f"{detail} ({status.error_message})"
+                logger.warning(
+                    "video.generation_failed",
+                    media_id=media_id,
+                    failure_reasons=list(status.failure_reasons),
+                )
+                if any(r in CONTENT_SAFETY_REASONS for r in status.failure_reasons):
+                    raise ContentPolicyError(detail, route="batchCheckAsyncVideoGenerationStatus")
+                raise FlowApiError(detail, route="batchCheckAsyncVideoGenerationStatus")
+            if time.monotonic() >= deadline:
+                raise TransportTimeoutError(
+                    f"video {media_id} did not finish within {timeout_s:.0f}s "
+                    f"(last status: {status.status})"
+                )
+            await asyncio.sleep(interval)
 
     async def _poll_concat_until_done(
         self,
