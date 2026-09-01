@@ -1943,8 +1943,11 @@ async def _run_extend(  # noqa: PLR0913
         "Examples:\n"
         '  gflow video extend <media-id> "the wave recedes back into the ocean"\n'
         '  gflow video extend <media-id> "the camera drifts upward" --aspect 16:9\n\n'
-        "Each segment is 8 seconds and spends credits — the exact cost depends on "
-        "your plan and is shown for confirmation before anything is submitted."
+        "Each segment spends credits — the exact cost depends on your plan and is "
+        "shown for confirmation before anything is submitted.\n\n"
+        "Note: a segment carries ~7s of content though Flow bills 8s, so a "
+        "multi-segment render holds a frozen, silent second at each internal "
+        "seam. See KNOWN_ISSUES."
     ),
 )
 @click.argument("media_id")
