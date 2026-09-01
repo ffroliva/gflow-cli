@@ -1848,7 +1848,6 @@ async def _run_extend(  # noqa: PLR0913
                         profile_name=profile_name,
                         profile_dir=profile_dir,
                         project_id=project_id,
-                        prompt=prompts[0],
                         aspect=aspect,
                         started=started,
                     )

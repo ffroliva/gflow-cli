@@ -946,7 +946,6 @@ def test_record_started_extend_persists_a_pending_video(tmp_path: Path) -> None:
             profile_name="p",
             profile_dir=tmp_path,
             project_id="7d3d6bd9-a39f-4c2d-b772-146e73e539cf",
-            prompt="the wave recedes",
             aspect="16:9",
             started=ExtendStarted(
                 media_id="37930141-ee54-4fe2-9f60-9eb959ca11ff",
@@ -960,3 +959,28 @@ def test_record_started_extend_persists_a_pending_video(tmp_path: Path) -> None:
     assert row[0] == "37930141-ee54-4fe2-9f60-9eb959ca11ff"
     assert row[1] == "pending"
     assert row[2] == "veo_3_1_extension_lite"
+
+
+def test_record_started_extend_does_not_persist_the_prompt(tmp_path: Path) -> None:
+    """A user who set history_prompts=redacted asked for prompts NOT to be
+    stored. Asset metadata is not where prompts live on any other path either —
+    every sibling write is redact_metadata(...) or {} — so the extend row keeps
+    the cost and nothing else."""
+    from gflow_cli.api.video_extend import ExtendStarted
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="redacted")
+        recorder.record_started_extend(
+            profile_name="p",
+            profile_dir=tmp_path,
+            project_id="7d3d6bd9-a39f-4c2d-b772-146e73e539cf",
+            aspect="16:9",
+            started=ExtendStarted(
+                media_id="37930141-ee54-4fe2-9f60-9eb959ca11ff",
+                workflow_id="wf",
+                model_key="veo_3_1_extension_lite",
+                unit_cost=10,
+            ),
+        )
+        raw = store.conn.execute("SELECT metadata_json FROM assets").fetchone()[0]
+    assert "prompt" not in (raw or "")

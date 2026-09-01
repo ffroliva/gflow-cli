@@ -712,7 +712,6 @@ class OperationRecorder:
         profile_name: str,
         profile_dir: Path,
         project_id: str,
-        prompt: str,
         aspect: str,
         started: ExtendStarted,
     ) -> None:
@@ -756,7 +755,11 @@ class OperationRecorder:
                 height=None,
                 duration_seconds=None,
                 seed=None,
-                metadata_json={"unit_cost": started.unit_cost, "prompt": prompt},
+                # Cost only. The prompt is deliberately NOT stored here: a user
+                # on history_prompts=redacted asked for prompts not to be kept,
+                # and no other asset row carries one — every sibling write is
+                # redact_metadata(...) or {}.
+                metadata_json={"unit_cost": started.unit_cost},
             ),
         )
 
