@@ -62,6 +62,19 @@ CLI_TO_MCP: dict[str, str] = {
 # entries are backlog, not policy — moving one to CLI_TO_MCP is the upgrade
 # path. Everything else is a considered exclusion.
 _MCP_EXEMPT: dict[str, str] = {
+    # Deliberately deferred, not overlooked (2026-09-01). Three reasons, any one
+    # of which would be enough on its own:
+    #  1. A chained run is minutes long and is not wired to FlowWorker, so it
+    #     would block an MCP client's tool call past its timeout — the exact
+    #     hazard issue #481 exists to address.
+    #  2. The feature has an open defect (a 7s segment padded into an 8s slot
+    #     produces a frozen, silent second at each internal seam — KNOWN_ISSUES).
+    #     Widening the surface before that is settled multiplies the blast radius.
+    #  3. It spends credits per segment behind a confirmation prompt that has no
+    #     MCP equivalent; an agent could not give informed consent on the user's
+    #     behalf.
+    # Revisit once extend is enqueued through the worker like the generate tools.
+    "video extend": "long-running billed chain; not worker-enqueued, and cost consent has no MCP equivalent (#481)",
     "auth": "interactive session management — needs a human browser login flow",
     "auth list": "interactive session management",
     "auth login": "interactive session management",

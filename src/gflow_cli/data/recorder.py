@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.scene import Scene
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
+    from gflow_cli.api.video_extend import ExtendStarted
     from gflow_cli.config import Settings
     from gflow_cli.errors import DataIntegrityError
     from gflow_cli.storage import CloudStorageInfo
@@ -704,6 +705,60 @@ class OperationRecorder:
     # Note: Task 7 will introduce a proper "started video" DTO; for now
     # we accept primitive kwargs. Task 8 will wire this through callers.
     # ------------------------------------------------------------------
+
+    def record_started_extend(
+        self,
+        *,
+        profile_name: str,
+        profile_dir: Path,
+        project_id: str,
+        prompt: str,
+        aspect: str,
+        started: ExtendStarted,
+    ) -> None:
+        """Persist an extend segment at SUBMIT time.
+
+        Deliberately not routed through :meth:`record_started_video`: that takes a
+        ``GenerateVideoRequest`` whose ``model`` is a ``VideoModel`` enum, while an
+        extend key is resolved from the account's capability listing at runtime and
+        is a plain string. Coercing one into the other would put a value in the
+        catalog that the enum says cannot exist.
+
+        Called before the ~2 minute poll because Flow bills on acceptance. A row
+        written only after download would leave an interrupted run's paid media
+        invisible to ``gflow data`` — and ``data sync`` cannot recover it, since
+        sync reconciles rows that already exist rather than creating them.
+        """
+        repo = self.repository
+        repo.upsert_profile(profile_name, profile_dir)
+        repo.upsert_project(
+            ProjectRecord(
+                id=_new_id(),
+                profile_name=profile_name,
+                flow_project_id=project_id,
+                title="gflow-cli video",
+                source="generated",
+            ),
+        )
+        repo.upsert_asset(
+            AssetRecord(
+                id=_new_id(),
+                profile_name=profile_name,
+                flow_project_id=project_id,
+                flow_media_id=started.media_id,
+                flow_workflow_id=started.workflow_id or None,
+                flow_media_generation_id=None,
+                kind=AssetKind.VIDEO,
+                status="pending",
+                model=started.model_key,
+                aspect_ratio=aspect,
+                width=None,
+                height=None,
+                duration_seconds=None,
+                seed=None,
+                metadata_json={"unit_cost": started.unit_cost, "prompt": prompt},
+            ),
+        )
 
     def record_started_video(
         self,

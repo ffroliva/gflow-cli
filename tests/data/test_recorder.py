@@ -931,3 +931,32 @@ def test_factory_owned_store_is_closed(tmp_path: Path) -> None:
     recorder.close()
     with pytest.raises(sqlite3.ProgrammingError):
         owned.conn.execute("SELECT 1")
+
+
+def test_record_started_extend_persists_a_pending_video(tmp_path: Path) -> None:
+    """An extend segment is billed the moment Flow accepts it, so it must land
+    in the catalog before the ~2 min poll — otherwise an interrupted run leaves
+    paid media invisible to `gflow data`. `data sync` cannot rescue it: sync
+    reconciles rows that already exist, it does not create them."""
+    from gflow_cli.api.video_extend import ExtendStarted
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        recorder.record_started_extend(
+            profile_name="p",
+            profile_dir=tmp_path,
+            project_id="7d3d6bd9-a39f-4c2d-b772-146e73e539cf",
+            prompt="the wave recedes",
+            aspect="16:9",
+            started=ExtendStarted(
+                media_id="37930141-ee54-4fe2-9f60-9eb959ca11ff",
+                workflow_id="c83c6aa6-be52-4b67-8eed-dd753f381854",
+                model_key="veo_3_1_extension_lite",
+                unit_cost=10,
+            ),
+        )
+        row = store.conn.execute("SELECT flow_media_id, status, model FROM assets").fetchone()
+    assert row is not None
+    assert row[0] == "37930141-ee54-4fe2-9f60-9eb959ca11ff"
+    assert row[1] == "pending"
+    assert row[2] == "veo_3_1_extension_lite"

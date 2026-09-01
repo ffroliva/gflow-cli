@@ -1767,6 +1767,13 @@ async def _run_extend(  # noqa: PLR0913
     # range instead; an explicit --jitter 0 still disables it.
     effective_jitter = jitter if jitter is not None else _configured_jitter_max()
 
+    recorder: OperationRecorder | None = None
+    try:
+        store = DataStore.open(get_settings().resolved_db_path())
+        recorder = OperationRecorder(DataRepository(store), prompt_mode=get_settings().history_prompts)
+    except DataStoreError as exc:  # catalog is a convenience, never a gate
+        logger.warning("extend_recorder_unavailable", error_class=type(exc).__name__)
+
     async with FlowApiClient(profile_dir=profile_dir) as client:
         listing = await client.capability_listing(project_id)
         tier = video_extend.account_service_tier(listing)
@@ -1788,7 +1795,24 @@ async def _run_extend(  # noqa: PLR0913
             have = "unknown" if balance is None else str(balance)
             console.print(f"  model       : {model_key} ({cost} credits total, balance {have})")
 
+        # Resuming: read the scene back so the run appends after the clips that
+        # are already there, seeding from the real tail rather than the original.
         target_scene = scene_id
+        start_position = 1
+        source_media = media_id
+        if target_scene:
+            existing = await client.get_scene_workflows(target_scene, project_id=project_id)
+            clips = sorted(existing.workflows, key=lambda w: w.metadata.position)
+            if clips:
+                start_position = len(clips)
+                tail = clips[-1]
+                if tail.media_id:
+                    source_media = tail.media_id
+                if not as_json:
+                    console.print(
+                        f"  resuming    : scene has {len(clips)} clip(s), "
+                        f"continuing from {source_media}"
+                    )
         if not target_scene:
             workflow_id = video_extend.workflow_id_for_media(listing, media_id)
             if not workflow_id:
@@ -1807,10 +1831,27 @@ async def _run_extend(  # noqa: PLR0913
         def _on_submitted(started: Any) -> None:
             if not as_json:
                 console.print(f"  submitted   : {started.media_id} ({started.model_key})")
+            # Persist at SUBMIT: Flow bills on acceptance, so a row written only
+            # after the ~2 min poll would leave an interrupted run's paid media
+            # invisible to `gflow data`. Never fatal — a catalog write must not
+            # sink a generation the user has already paid for.
+            if recorder is not None:
+                try:
+                    recorder.record_started_extend(
+                        profile_name=profile_name,
+                        profile_dir=profile_dir,
+                        project_id=project_id,
+                        prompt=prompts[0],
+                        aspect=aspect,
+                        started=started,
+                    )
+                except DataStoreError as exc:
+                    logger.warning("extend_record_failed", error_class=type(exc).__name__)
 
         result = await run_extend_chain(
             client,
-            media_id=media_id,
+            media_id=source_media,
+            start_position=start_position,
             project_id=project_id,
             scene_id=target_scene,
             prompts=prompts,
@@ -1941,6 +1982,15 @@ async def _run_extend(  # noqa: PLR0913
 )
 @_project_option
 @click.option("--scene", "scene_id", default=None, help="Existing scene to extend within.")
+@click.option(
+    "--resume-from",
+    "resume_from",
+    default=None,
+    help=(
+        "Scene id from an interrupted or partial run. Continues appending to that "
+        "scene instead of creating a new one, so already-billed segments are kept."
+    ),
+)
 @click.option("--seed", default=None, type=int, help="Fixed seed, for a reproducible run.")
 @click.option("--yes", is_flag=True, help="Skip the cost confirmation.")
 @click.option("--dry-run", is_flag=True, help="Show the plan and cost, submit nothing.")
@@ -1955,6 +2005,7 @@ def extend(  # noqa: PLR0913
     output_file: Path | None,
     project_id: str | None,
     scene_id: str | None,
+    resume_from: str | None,
     seed: int | None,
     yes: bool,
     dry_run: bool,
@@ -1962,6 +2013,12 @@ def extend(  # noqa: PLR0913
     as_json: bool,
 ) -> None:
     """Continue MEDIA_ID, one PROMPT per 8-second segment."""
+    # --resume-from and --scene are the same knob wearing two names; resume is
+    # the one the interrupt banner advertises, so it wins.
+    scene_id = resume_from or scene_id
+    if scene_id is not None and not is_media_uuid(scene_id):
+        msg = f"scene id must be a UUID, got {scene_id!r}"
+        raise click.BadParameter(msg)
     if not is_media_uuid(media_id):
         msg = f"MEDIA_ID must be a media UUID, got {media_id!r}"
         raise click.BadParameter(msg)

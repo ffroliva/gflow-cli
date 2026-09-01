@@ -156,3 +156,20 @@ async def test_paces_between_segments() -> None:
     # One pause between segments, none before the first or after the last.
     assert len(slept) == 2
     assert all(0.0 <= s <= 10.0 for s in slept)
+
+
+@pytest.mark.asyncio
+async def test_resume_continues_at_the_given_position() -> None:
+    """Resuming a scene that already holds N clips must append at N, not
+    overwrite position 1 — those earlier clips are billed and real."""
+    c = _FakeClient()
+    await run_extend_chain(
+        c,
+        media_id="tail-media",
+        project_id=PROJECT,
+        scene_id=SCENE,
+        prompts=["a", "b"],
+        start_position=3,
+    )
+    assert [s["position"] for s in c.submits] == [3, 4]
+    assert c.submits[0]["media_id"] == "tail-media"

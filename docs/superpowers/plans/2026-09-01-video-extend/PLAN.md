@@ -69,7 +69,21 @@ no dropout. Evidence:
 | 7 · auto-concat on `-o` | ✅ reuses `concatenate_scene` |
 | 8 · Ctrl+C reporting | ✅ fixed in `run_with_handlers`, 3 tests |
 | 9 · docs + CHANGELOG | ✅ USAGE decision table + extend section |
+| 6b · `--resume-from` | ✅ appends at the scene's real tail, 3 tests |
+| 6c · record at submit | ✅ `record_started_extend`, never fatal |
+| MCP parity | ✅ reasoned exemption, enforced by the parity contract |
+| **`--extend N` on t2v/i2v** | ⛔ **deferred — see below** |
 | **DoD · live verification** | ✅ **run 2026-09-01, 20 credits — passed, and found a defect** |
+
+**`--extend N` on t2v/i2v is deferred, not forgotten.** The plan called for
+folding length into the generate commands. The primitive ships; the convenience
+does not, for one reason that outweighs the ergonomics: with the 7-second
+segment defect open, `t2v --extend 4` would emit a video containing **three
+frozen, silent seconds** by default, in one command, for a user who asked only
+for a longer clip. A convenience wrapper whose default output is defective is
+worse than no wrapper. It also straddles two transports (t2v rides UI
+automation, extend is direct-wire), so it wants its own design pass. Revisit
+once the padding question is answered.
 
 **Deviation from the plan, recorded deliberately.** The plan called for
 disambiguating a tier-403 into `ExtendUnavailableError`. The resolver made that

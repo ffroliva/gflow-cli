@@ -91,6 +91,7 @@ async def run_extend_chain(  # noqa: PLR0913
     aspect: str = "9:16",
     seed: int | None = None,
     jitter: float = 0.0,
+    start_position: int = 1,
     on_submitted: Callable[[ExtendStarted], None] | None = None,
     sleep: Callable[[float], Coroutine[Any, Any, None]] | None = None,
 ) -> ExtendChainResult:
@@ -99,6 +100,10 @@ async def run_extend_chain(  # noqa: PLR0913
     ``prompts`` describes each segment; when there are fewer prompts than
     ``segments`` the last one is reused, so `--extend 4` with a single prompt
     continues the same idea four times.
+
+    ``start_position`` is where in the scene the first new segment lands. A
+    resumed run passes the count of clips already there, so previously billed
+    segments are appended to rather than overwritten.
 
     ``on_submitted`` fires the moment Flow accepts a segment — before its poll —
     so a recorder can persist a billed segment that an interrupt would otherwise
@@ -130,7 +135,7 @@ async def run_extend_chain(  # noqa: PLR0913
                 media_id=source,
                 project_id=project_id,
                 scene_id=scene_id,
-                position=index + 1,
+                position=start_position + index,
                 prompt=prompt,
                 aspect=aspect,
                 seed=seed,

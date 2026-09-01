@@ -79,3 +79,32 @@ def test_help_names_the_cost_and_the_ceiling(runner: CliRunner) -> None:
     low = result.output.lower()
     assert "credit" in low
     assert "8" in result.output
+
+
+def test_resume_flag_exists_if_the_banner_promises_it(runner: CliRunner) -> None:
+    """The interrupt banner tells the user to re-run with `--resume-from <id>`.
+    A flag that is advertised but absent is worse than saying nothing, so the
+    two must not drift apart."""
+    result = runner.invoke(cli, ["video", "extend", "--help"])
+    assert result.exit_code == 0
+    assert "--resume-from" in result.output
+
+
+def test_resume_requires_a_scene(runner: CliRunner) -> None:
+    """Resuming means continuing an existing scene, so the id it takes is a
+    scene id — the same one the banner prints."""
+    result = runner.invoke(
+        cli,
+        [
+            "video",
+            "extend",
+            MEDIA,
+            "onwards",
+            "--project",
+            PROJECT,
+            "--resume-from",
+            "not-a-uuid",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code != 0
