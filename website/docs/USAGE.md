@@ -699,6 +699,13 @@ reach for it before spending anything.
 
 ## `gflow video extend`
 
+> **Where the two ids come from.** `MEDIA_ID` is the clip you want to continue —
+> list yours with `gflow data list videos` (the `media_id` column). The project id is
+> the project that owns it: `gflow data list projects`, or copy it out of the Flow URL
+> (`/project/<project-id>`). `--project` is required here, unlike on the other generate
+> commands, because extend has to find the workflow that owns `MEDIA_ID` before it can
+> create the scene to extend into.
+
 Continue an existing clip by another 8 seconds, then optionally render the whole
 thing to one file.
 
@@ -906,7 +913,7 @@ or use this group standalone. Full reference: [TOOLS.md](TOOLS.md) · [PROMPT_EX
 
 ```text
 gflow tools list [--json]
-gflow tools show NAME [--json]
+gflow tools show NAME
 gflow tools run NAME "INPUT" [--style MODE] [--json]
 ```
 

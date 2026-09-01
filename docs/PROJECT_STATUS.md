@@ -4,26 +4,41 @@
 
 ## Current release
 
-**v0.59.0 — alpha.** **Catalog freshness becomes a first-class concern: `gflow doctor` (#542), `gflow data sync --names` (#543), and rename self-healing (#546).**
-`gflow doctor` is a read-only pre-flight diagnostic — 10 checks over the
-catalog, DB integrity, stuck work, and environment via a provably
-non-migrating `mode=ro` connection (byte-identical-DB test), severities
-pass/info/warn/fail, exit 33 = findings-present, experimental `--json`,
-per-profile attribution, redaction-safe output. `gflow data sync --names`
-reconciles catalog display names against Flow's `projectInitialData` listing
-by direct authenticated GET (~0.5 s/project, zero credits): write-by-default
-with `--dry-run` preview, atomic `json_set` provenance stamps, ghost
-tombstones gated on provably-complete non-empty listings (mass-tombstone
-guard), un-ghosting on reappearance, WAF/auth fail-fast, retryable exit 34,
-redacted-history refusal. Refresh-on-miss makes a stale cached name self-heal
-mid-generation: one listing fetch on a picker miss, retry-once, write-through
-(`sync.source="refresh"`). Live-verified end to end: the sync e2e (zero
-credits), a real-catalog backfill (117 projects, 398 nameless rows → 338
-named / 57 tombstoned, zero failures), and a stale-name heal e2e (~2 Imagen
-credits). Two live-caught bugs (sqlite cross-thread store open; a pagination
-depth-ceiling failing toward the destructive branch) fixed with red-first
-regression tests. See
-[LIVE_VERIFICATION_v0.59.0.md](LIVE_VERIFICATION_v0.59.0.md).
+**v0.63.0 — alpha.** **`gflow video extend` — continue a clip past Flow's 8-second ceiling.**
+Veo caps a single generation at 8 seconds. `extend` chains server-side
+continuations: each segment is seeded from the *previous segment's* media rather
+than an extracted still, so the join is continuous rather than a cut. The run
+lands as a Flow Scene, and `-o/--output` renders it to one file through the
+existing credit-free server-side concat.
+
+The model key is resolved from the account's live capability listing rather than
+hardcoded (`extend_model_resolved` logs `candidate_count`, `service_tier`,
+`unit_cost`), which *prevents* a tier-403 instead of classifying one after the
+fact. A whole-run balance pre-flight aborts before the first submit rather than
+at segment 6 holding a half-length video, submissions are paced by the shared
+jitter resolver, and an interrupted run publishes its resume handle before the
+first submit so Ctrl+C reports real credits spent and `--resume-from` appends
+after the scene's true tail.
+
+**Live-verified at 20 credits, and the run found a defect the offline suite
+structurally could not:** an extend segment carries **7.000s** of content while
+Flow advertises and bills 8, so server-side concat pads every internal seam with
+a frozen frame and digital silence. That is filed in
+[KNOWN_ISSUES.md](../KNOWN_ISSUES.md) with the three questions that must be
+answered before any clamp, and it is why `--extend N` on `t2v`/`i2v` was
+deliberately **not** shipped — a convenience wrapper whose default output is
+defective is worse than no wrapper. See
+[LIVE_VERIFICATION_v0.63.0.md](LIVE_VERIFICATION_v0.63.0.md).
+
+Also in this release: `CLAUDE.md` now `@`-imports `AGENTS.md` so the project's
+agent rules load rather than being politely requested, and `AGENTS.md` opens with
+a Skill Routing table making the `/gflow:` lifecycle the default workflow.
+
+> **Releases v0.60.0 – v0.62.1 are not expanded below.** This file drifted for
+> five releases; rather than reconstruct their summaries after the fact, they are
+> recorded accurately in [CHANGELOG.md](../CHANGELOG.md) and in their own
+> `LIVE_VERIFICATION_v*.md` evidence files. The gap is named here rather than
+> hidden, so the next release does not inherit a silent hole.
 
 <details><summary>v0.58.0 — catalog-name picker contract (#529) + r2v named-reference fixes</summary>
 
@@ -382,6 +397,7 @@ reporter-verified e2e on macOS).
 | `gflow character` — reusable Flow Character entities (`create`/`list`/`show`/`voices`), persist-before-spend saga (#145) | ✅ done (v0.12.0) |
 | `gflow scene` — Add Clip / Scenes compose + credit-free server-side extended video (`runVideoFxConcatenation`) | ✅ done (v0.12.0) |
 | `gflow video chain` — last-frame I2V chaining from a JSONL manifest (`--dry-run`/`--max-links`/`--resume-from`) | ✅ done (v0.12.0) |
+| `gflow video extend` — chained server-side Veo continuations past the 8s ceiling (tier-resolved model, whole-run balance pre-flight, resumable) | ✅ done (v0.63.0) |
 | Create-project generation works under Flow's Agent docked chat panel | ✅ done (v0.12.0) |
 | Video status poll raises `AuthExpiredError` (exit 3) on mid-workflow 401 (#156) + Docker `/dev/shm` hardening | ✅ done (v0.15.1) |
 | Locale-free resource-picker include selectors — entity attach works on every account language (#170) | ✅ done (v0.16.0) |

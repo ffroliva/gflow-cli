@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.0] — 2026-09-01
+
 ### Added
 
 - **`gflow video extend` — continue a clip past Flow's 8-second ceiling.** Veo's
@@ -17,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   ```bash
   gflow video extend <media-id> "the wave recedes" --project <id>
-  gflow video extend <media-id> "drifts out to sea" -n 4 -o long.mp4
+  gflow video extend <media-id> "drifts out to sea" --project <id> -n 4 -o long.mp4
   ```
 
   The result is a Flow Scene; `-o` renders it to a single mp4 through the
@@ -54,7 +56,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential, but account-correlatable, and it would otherwise reach any logged
   request body or diagnostics bundle verbatim.
 
-### Fixed
 
 - **The offline test suite could `git checkout develop` in the developer's own
   clone ([#605](https://github.com/ffroliva/gflow-cli/issues/605)).** git's
@@ -3514,7 +3515,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.62.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.63.0...HEAD
+[0.63.0]: https://github.com/ffroliva/gflow-cli/compare/v0.62.1...v0.63.0
 [0.62.1]: https://github.com/ffroliva/gflow-cli/compare/v0.62.0...v0.62.1
 [0.62.0]: https://github.com/ffroliva/gflow-cli/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/ffroliva/gflow-cli/compare/v0.60.0...v0.61.0
