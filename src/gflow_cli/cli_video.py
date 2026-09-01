@@ -21,13 +21,16 @@ from gflow_cli._cli_helpers import (
     _validate_project_id,
     apply_tool_option,
     run_with_handlers,
+    set_interrupt_context,
     slugify_project_name,
     tool_option,
 )
 from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.extend_chain import run_extend_chain
+from gflow_cli.api.scene import ConcatInput
 from gflow_cli.api.video import VideoModel, is_media_uuid, reference_cap_for
-from gflow_cli.config import UiMode, get_settings
+from gflow_cli.config import UiMode, get_settings, parse_jitter_range
 from gflow_cli.data.models import AssetKind, OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
 from gflow_cli.data.repository import DataRepository, verified_local_path
@@ -1705,6 +1708,21 @@ def chain(
 _EXTEND_SEGMENT_SECONDS = 8
 
 
+def _configured_jitter_max() -> float:
+    """Upper bound of GFLOW_CLI_JITTER_RANGE, or a safe default.
+
+    Never 0 by default: an unpaced chain submits on a machine-perfect cadence,
+    which is a cleaner bot signature than the rate itself.
+    """
+    spec = get_settings().jitter_range
+    if not spec:
+        return 15.0
+    try:
+        return float(parse_jitter_range(spec)[1])
+    except (ValueError, TypeError):
+        return 15.0
+
+
 def _print_extend_plan(*, media_id: str, prompt: str, aspect: str, segments: int) -> None:
     """Show what will be submitted BEFORE a client exists.
 
@@ -1724,22 +1742,30 @@ def _print_extend_plan(*, media_id: str, prompt: str, aspect: str, segments: int
     console.print("  cost        : spends credits — exact amount is shown before submitting")
 
 
-async def _run_extend(
+async def _run_extend(  # noqa: PLR0913
     *,
     profile_name: str,
     profile_dir: Path,
     media_id: str,
-    prompt: str,
+    prompts: tuple[str, ...],
+    segments: int,
     aspect: str,
+    jitter: float | None,
+    output_file: Path | None,
     project_id: str | None,
     scene_id: str | None,
     seed: int | None,
     as_json: bool,
 ) -> None:
-    """Submit one extend and wait for it."""
+    """Submit N chained extends, then optionally render them to one file."""
     if not project_id:
         msg = "--project is required: extend must know which project owns MEDIA_ID"
         raise ConfigurationError(msg)
+
+    # `chain` defaults jitter to 0.0, which ships unpaced runs and contradicts
+    # ACCOUNT_SAFETY's "submissions are paced". Extend inherits the configured
+    # range instead; an explicit --jitter 0 still disables it.
+    effective_jitter = jitter if jitter is not None else _configured_jitter_max()
 
     async with FlowApiClient(profile_dir=profile_dir) as client:
         listing = await client.capability_listing(project_id)
@@ -1748,19 +1774,19 @@ async def _run_extend(
         unit = video_extend.model_unit_cost(listing, model_key, tier)
         balance = video_extend.account_credits(listing)
 
-        # Pre-flight balance check. `chain` never had prices so it could not do
-        # this; extend can, and stopping here beats stopping mid-run holding a
-        # half-length video and a spent balance.
-        if unit is not None and balance is not None and balance < unit:
+        # Pre-flight balance check for the WHOLE run. `chain` never knew prices
+        # so it could not do this; stopping here beats stopping at segment 6
+        # holding a half-length video and a spent balance.
+        if unit is not None and balance is not None and balance < unit * segments:
             msg = (
-                f"insufficient credits: this extend costs {unit}, balance is {balance}. "
-                "Nothing was submitted."
+                f"insufficient credits: {segments} segment(s) cost {unit * segments}, "
+                f"balance is {balance}. Nothing was submitted."
             )
             raise ConfigurationError(msg)
         if not as_json:
-            cost = "unknown" if unit is None else str(unit)
+            cost = "unknown" if unit is None else str(unit * segments)
             have = "unknown" if balance is None else str(balance)
-            console.print(f"  model       : {model_key} ({cost} credits, balance {have})")
+            console.print(f"  model       : {model_key} ({cost} credits total, balance {have})")
 
         target_scene = scene_id
         if not target_scene:
@@ -1774,34 +1800,85 @@ async def _run_extend(
             scene = await client.create_scene(project_id=project_id, workflow_ids=[workflow_id])
             target_scene = scene.scene_id
 
-        started = await client.extend_video(
+        # Publish the resume handle BEFORE the first submit, so an interrupt at
+        # any point has something to report rather than only on a clean failure.
+        set_interrupt_context(credits_spent=0, resume_id=target_scene, segments_done=0)
+
+        def _on_submitted(started: Any) -> None:
+            if not as_json:
+                console.print(f"  submitted   : {started.media_id} ({started.model_key})")
+
+        result = await run_extend_chain(
+            client,
             media_id=media_id,
             project_id=project_id,
             scene_id=target_scene,
-            position=1,
-            prompt=prompt,
+            prompts=prompts,
+            segments=segments,
             aspect=aspect,
             seed=seed,
+            jitter=effective_jitter,
+            on_submitted=_on_submitted,
         )
-        if not as_json:
-            console.print(f"  submitted   : {started.media_id} — waiting (~2 min)")
-        await client.poll_video_status(started.media_id, project_id=project_id)
+        set_interrupt_context(
+            credits_spent=result.credits_spent,
+            resume_id=target_scene,
+            segments_done=len(result.completed_media_ids),
+        )
 
+        rendered: str | None = None
+        # Render even a partial chain: those segments are generated and billed,
+        # and discarding them because the run did not finish wastes real money.
+        if output_file is not None and result.completed_media_ids:
+            scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
+            inputs = [
+                ConcatInput(
+                    media_id=w.media_id,
+                    length=w.metadata.total_duration,
+                    start=w.metadata.start_time,
+                    end=w.metadata.end_time,
+                )
+                for w in sorted(scene_state.workflows, key=lambda x: x.metadata.position)
+                if w.media_id
+            ]
+            if not as_json:
+                console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
+            await client.concatenate_scene(inputs, out_path=output_file)
+            rendered = str(output_file)
+
+        payload = {
+            "scene_id": target_scene,
+            "project_id": project_id,
+            "model": model_key,
+            "segments_requested": segments,
+            "segments_completed": len(result.completed_media_ids),
+            "media_ids": result.completed_media_ids,
+            "credits_spent": result.credits_spent,
+            "seconds_added": len(result.completed_media_ids) * _EXTEND_SEGMENT_SECONDS,
+            "output": rendered,
+            "aborted": result.aborted,
+            "profile": profile_name,
+        }
         if as_json:
-            json_output.emit(
-                {
-                    "media_id": started.media_id,
-                    "scene_id": target_scene,
-                    "project_id": project_id,
-                    "model": started.model_key,
-                    "remaining_credits": started.remaining_credits,
-                    "seconds_added": _EXTEND_SEGMENT_SECONDS,
-                    "profile": profile_name,
-                }
-            )
+            json_output.emit(payload)
         else:
-            console.print(f"[bold green]Extended[/bold green] — scene {target_scene}")
-            console.print("  render one file: gflow scene create --output <path>")
+            state = (
+                "[yellow]Partial[/yellow]"
+                if result.aborted
+                else "[bold green]Extended[/bold green]"
+            )
+            console.print(
+                f"{state} — {len(result.completed_media_ids)}/{segments} segment(s), "
+                f"{result.credits_spent} credits, scene {target_scene}"
+            )
+            if rendered:
+                console.print(f"  wrote: {rendered}")
+            elif result.completed_media_ids:
+                console.print("  render one file: gflow scene create --output <path>")
+
+        # A chain that abandoned paid work must not exit 0 and look complete.
+        if result.aborted and result.error is not None:
+            raise result.error
 
 
 @video.command(
@@ -1824,7 +1901,7 @@ async def _run_extend(
     ),
 )
 @click.argument("media_id")
-@click.argument("prompt")
+@click.argument("prompts", nargs=-1, required=True)
 @click.option(
     "--aspect",
     default="9:16",
@@ -1833,6 +1910,34 @@ async def _run_extend(
     # here rather than surfacing as a late, paid-for failure.
     type=click.Choice(["9:16", "16:9"]),
     help="Aspect of the extension (portrait 9:16 or landscape 16:9). No square variant exists.",
+)
+@click.option(
+    "--segments",
+    "-n",
+    default=None,
+    type=click.IntRange(1, 30),
+    help=(
+        "How many 8s continuations to chain (default: one per PROMPT). Capped at "
+        "30 — beyond that the credit cost and per-profile load exceed anything "
+        "this tool has measured as safe."
+    ),
+)
+@click.option(
+    "--jitter",
+    default=None,
+    type=float,
+    help=(
+        "Max seconds of random pause between submissions. Defaults to the "
+        "GFLOW_CLI_JITTER_RANGE setting; 0 disables pacing (not advised)."
+    ),
+)
+@click.option(
+    "-o",
+    "--output",
+    "output_file",
+    default=None,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Render the finished scene to ONE mp4 here (server-side concat, credit-free).",
 )
 @_project_option
 @click.option("--scene", "scene_id", default=None, help="Existing scene to extend within.")
@@ -1843,8 +1948,11 @@ async def _run_extend(
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 def extend(  # noqa: PLR0913
     media_id: str,
-    prompt: str,
+    prompts: tuple[str, ...],
     aspect: str,
+    segments: int | None,
+    jitter: float | None,
+    output_file: Path | None,
     project_id: str | None,
     scene_id: str | None,
     seed: int | None,
@@ -1853,17 +1961,18 @@ def extend(  # noqa: PLR0913
     profile: str | None,
     as_json: bool,
 ) -> None:
-    """Continue MEDIA_ID by another 8 seconds, described by PROMPT."""
+    """Continue MEDIA_ID, one PROMPT per 8-second segment."""
     if not is_media_uuid(media_id):
         msg = f"MEDIA_ID must be a media UUID, got {media_id!r}"
         raise click.BadParameter(msg)
+    count = segments if segments is not None else len(prompts)
     # The cost gate runs before a client exists, so --dry-run cannot spend and
     # cannot even open a browser.
-    _print_extend_plan(media_id=media_id, prompt=prompt, aspect=aspect, segments=1)
+    _print_extend_plan(media_id=media_id, prompt=prompts[0], aspect=aspect, segments=count)
     if dry_run:
         return
     if not yes:
-        click.confirm("Submit this extend?", abort=True)
+        click.confirm(f"Submit {count} extend segment(s)?", abort=True)
 
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
@@ -1872,8 +1981,11 @@ def extend(  # noqa: PLR0913
             profile_name=profile_name,
             profile_dir=provider_dir,
             media_id=media_id,
-            prompt=prompt,
+            prompts=tuple(prompts),
+            segments=count,
             aspect=aspect,
+            jitter=jitter,
+            output_file=output_file,
             project_id=project_id,
             scene_id=scene_id,
             seed=seed,

@@ -1872,11 +1872,12 @@ class FlowApiClient:
         # When Flow moves the extend family again — it has moved once already —
         # this single line is the diagnosis. The raw creditMapping table is NOT
         # logged; only the decision and the inputs that produced it.
+        unit_cost = video_extend.model_unit_cost(listing, model_key, service_tier)
         logger.info(
             "extend_model_resolved",
             model_key=model_key,
             service_tier=service_tier,
-            unit_cost=video_extend.model_unit_cost(listing, model_key, service_tier),
+            unit_cost=unit_cost,
             candidate_count=len(video_extend.extract_video_models(listing)),
         )
         req = video_extend.ExtendVideoRequest(
@@ -1908,6 +1909,7 @@ class FlowApiClient:
             media_id=media_name_from_generate_response(data),
             workflow_id=workflow_id,
             model_key=model_key,
+            unit_cost=unit_cost,
             remaining_credits=remaining if isinstance(remaining, int) else None,
         )
 

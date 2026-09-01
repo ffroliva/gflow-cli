@@ -187,3 +187,15 @@ async def test_never_logs_the_recaptcha_token(tmp_path: Path) -> None:
             media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, position=1, prompt="p"
         )
     assert "tok-abc" not in json.dumps(logs)
+
+
+@pytest.mark.asyncio
+async def test_reports_the_unit_cost(tmp_path: Path) -> None:
+    """The chain tallies spend from this. If it were left None the running
+    total would silently read 0 and the interrupt banner would understate what
+    the user had already paid."""
+    c = _client(tmp_path)
+    started = await c.extend_video(
+        media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, position=1, prompt="p"
+    )
+    assert started.unit_cost == 10

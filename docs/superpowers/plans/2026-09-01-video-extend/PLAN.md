@@ -55,6 +55,51 @@ no dropout. Evidence:
 
 ---
 
+## Status — 2026-09-01
+
+**Tasks 1–9 implemented; one gate remains.**
+
+| Task | State |
+|---|---|
+| 1–2 · resolver + request DTO | ✅ `api/video_extend.py`, 21 tests |
+| 3 · outbound status poller | ✅ `client.poll_video_status`, 8 tests |
+| 4 · `client.extend_video()` | ✅ 10 tests |
+| 5 · `gflow video extend` | ✅ 4 CLI tests |
+| 6 · chaining + pacing + abort | ✅ `api/extend_chain.py`, 6 tests |
+| 7 · auto-concat on `-o` | ✅ reuses `concatenate_scene` |
+| 8 · Ctrl+C reporting | ✅ fixed in `run_with_handlers`, 3 tests |
+| 9 · docs + CHANGELOG | ✅ USAGE decision table + extend section |
+| **DoD · live verification** | ⏳ **outstanding — needs ~20 credits** |
+
+**Deviation from the plan, recorded deliberately.** The plan called for
+disambiguating a tier-403 into `ExtendUnavailableError`. The resolver made that
+largely moot: it only ever sends a key the account's own capability listing says
+is orderable, so it *prevents* the tier-403 rather than classifying it after the
+fact. `ExtendUnavailableError` is therefore raised at resolution time, before any
+mint or POST, and a genuine 403 at submit stays a `WafRejectionError`. Preventing
+beat classifying; the mitigation is stronger than specified, not weaker.
+
+**A bug this plan's own process caught.** The first cut of the resolver read a
+flat `videoModels` list that does not exist — Flow nests models under
+`modelConfig.videoModelFamilies[].usages[]`. It passed 14 tests because the
+fixture had been *derived from the implementation* rather than the capture. Fixed
+by rebuilding the fixture shape-faithfully from the raw response and asserting the
+nesting itself. A fixture that agrees with the code proves only self-consistency.
+
+**Remaining gate.** Offline tests prove our code does what we think; they cannot
+prove Flow still behaves as captured on 2026-08-31. Before this ships:
+
+```bash
+gflow video extend <media-id> "..." -n 2 -o out.mp4 --project <id>
+ffprobe -show_entries format=duration out.mp4   # expect ~24s
+```
+
+Then eyeball the seam. Note the seam was verified once already (2026-08-31, ocean
+ambience) — but **narration or music across a seam is untested**, and that is the
+parable pipeline's actual case.
+
+---
+
 ## File structure
 
 ### New files

@@ -391,6 +391,7 @@ def run_with_handlers(
             sys.exit(_exit_code_for(e))
         sys.exit(_handle_gflow_error(e, cli_command=cli_command))
     except (KeyboardInterrupt, click.Abort):
+        _report_interrupt()
         sys.exit(130)
     except SystemExit:
         # A coroutine that has already taken responsibility for its own exit
@@ -457,3 +458,50 @@ def _make_provider_dir(profile_name: str) -> Path:
         )
         sys.exit(2)
     return pdir
+
+
+# ---------------------------------------------------------------------------
+# Interrupt context
+# ---------------------------------------------------------------------------
+# A long, billed run (chained extends, `video chain`, `movie run`) can be Ctrl+C'd
+# mid-flight. Exiting 130 silently leaves the user unable to tell whether anything
+# was charged or how to resume, which for a paid run is a data-loss-shaped bug.
+# Commands publish their progress here; the boundary handler reads it on the way
+# out. Module-level rather than threaded through every signature because the
+# handler is shared and the alternative is changing every command's plumbing.
+_INTERRUPT_CONTEXT: dict[str, object] = {}
+
+
+def set_interrupt_context(
+    *, credits_spent: int | None = None, resume_id: str | None = None, segments_done: int = 0
+) -> None:
+    """Publish what an interrupt would be abandoning. Call it as progress is made."""
+    if credits_spent is not None:
+        _INTERRUPT_CONTEXT["credits_spent"] = credits_spent
+    if resume_id is not None:
+        _INTERRUPT_CONTEXT["resume_id"] = resume_id
+    _INTERRUPT_CONTEXT["segments_done"] = segments_done
+
+
+def clear_interrupt_context() -> None:
+    _INTERRUPT_CONTEXT.clear()
+
+
+def _report_interrupt() -> None:
+    """Print what was spent and how to resume. Silent when nothing was spent, so
+    one-shot commands do not grow a spurious banner."""
+    if not _INTERRUPT_CONTEXT:
+        return
+    spent = _INTERRUPT_CONTEXT.get("credits_spent")
+    resume_id = _INTERRUPT_CONTEXT.get("resume_id")
+    done = _INTERRUPT_CONTEXT.get("segments_done") or 0
+    if not spent and not resume_id:
+        return
+    _console.print("")
+    _console.print("[yellow]Interrupted.[/yellow]")
+    if done:
+        _console.print(f"  completed   : {done} segment(s), already generated and billed")
+    if spent:
+        _console.print(f"  credits spent: {spent}")
+    if resume_id:
+        _console.print(f"  resume with : --resume-from {resume_id}")
