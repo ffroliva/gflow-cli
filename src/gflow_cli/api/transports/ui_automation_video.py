@@ -89,13 +89,10 @@ VIDEO_GENERATE_ROUTES = (
 # refs silently dropped (issue #125) — used by the Layer-2 post-submit backstop.
 _T2V_GENERATE_ROUTE = "batchAsyncGenerateVideoText"
 
-# Matcher for the referenceEntity guard's request interception (#615).
-#
-# Substring, not a path glob, because the real endpoints carry a namespaced final
-# segment: `.../flowMedia:batchGenerateImages`. A `**/batchGenerateImages` glob
-# requires that segment to be exactly `batchGenerateImages` and so never matched —
-# the guard was a silent no-op on every image and video generation.
-_GENERATION_ROUTE_RE = re.compile(r"(batchGenerateImages|batchAsyncGenerateVideo)")
+# Substring, not a path glob: the real endpoints carry a namespaced final segment
+# (`.../flowMedia:batchGenerateImages`), which `**/batchGenerateImages` can never
+# match. See `_intercept_reference_entities` for why it is registered on the context.
+_GENERATION_ROUTE_RE = re.compile(r"batchGenerateImages|batchAsyncGenerateVideo")
 # Status-poll route — Flow's SPA polls this itself while a generation runs.
 VIDEO_STATUS_ROUTE = "batchCheckAsyncVideoGenerationStatus"
 
@@ -987,7 +984,9 @@ class VideoGenerationMixin:
                         reason="stripped unrequested referenceEntities",
                         expected_entities=list(expected_entities),
                     )
-                    await route.continue_(post_data=json.dumps(body))
+                    await route.continue_(
+                        post_data=json.dumps(body, separators=(",", ":"), ensure_ascii=False)
+                    )
                 else:
                     await route.continue_()
             except Exception as exc:
@@ -998,21 +997,20 @@ class VideoGenerationMixin:
                 )
                 await route.continue_()
 
-        # Registered on the CONTEXT, not the page, and with a substring matcher.
+        # CONTEXT, not page: these requests are Web-Worker-delegated in the current
+        # Flow cohort, so `page.route` cannot see them at all (#615). The capture path
+        # already recorded this — see ui_automation.py "page-level network capture is
+        # dead in this cohort".
         #
-        # Two independent reasons the previous `page.route("**/batchGenerateImages")`
-        # never fired (#615):
-        #
-        #   1. The real endpoint's last path segment is namespaced —
-        #      `.../flowMedia:batchGenerateImages` (see routes.batch_generate_images_url).
-        #      A `**/batchGenerateImages` glob requires the final segment to equal
-        #      `batchGenerateImages` exactly, so it never matched.
-        #   2. These requests are Web-Worker-delegated in the current Flow cohort, so
-        #      `page.route` cannot see them at all; `BrowserContext.route` can.
-        #
-        # The guard therefore failed OPEN and silently: the response listener kept
-        # working (it does a substring test), so nothing downstream ever looked wrong.
-        # `_GENERATION_ROUTE_RE` matches the way that listener does.
+        # ponytail: context-wide routing is only safe because every generation entry
+        # point runs under `self._generate_lock`, so exactly one handler is registered
+        # at a time. Playwright dispatches to the newest matching handler and this one
+        # never calls `route.fallback()`, so if generation is ever parallelised across
+        # the page pool (`Settings.concurrency` accepts up to 16), one run would filter
+        # another run's request against the wrong `expected_entities` — stripping
+        # legitimate references. Scope the handler per-page before parallelising; note
+        # `route.request` has no owning page for Worker-delegated requests, so that
+        # scoping needs a different key.
         await page.context.route(_GENERATION_ROUTE_RE, intercept_generation_request)
         try:
             yield

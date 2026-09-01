@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The `referenceEntity` guard never ran, on any image or video generation
+  ([#615](https://github.com/ffroliva/gflow-cli/issues/615)).** `_intercept_reference_entities`
+  strips unrequested character entities from outgoing generation requests, so a
+  "poisoned" entity left in the composer cannot smuggle itself into an unrelated run.
+  It had never fired once. Two independent causes: the route glob
+  `**/batchGenerateImages` requires the final path segment to equal
+  `batchGenerateImages`, but the real endpoint is `.../flowMedia:batchGenerateImages`,
+  so it could not match; and the requests are Web-Worker-delegated in the current Flow
+  cohort, which page-level routing cannot observe at all. The failure was invisible
+  because the response listener does a substring test and kept working normally — the
+  guard failed *open*, silently. It is now registered on the browser context with a
+  substring matcher. Reported by [@DioServis](https://github.com/DioServis), who
+  separated both causes in the report. Note the guard covers browser-driven generation
+  only: direct-wire routes issued through Playwright's `APIRequestContext` are not
+  routable at all, tracked in
+  [#619](https://github.com/ffroliva/gflow-cli/issues/619).
+
 - **The offline test suite could `git checkout develop` in the developer's own
   clone ([#605](https://github.com/ffroliva/gflow-cli/issues/605)).** git's
   repository discovery walks *up* from `cwd`, and `--basetemp=tmp/pytest` puts

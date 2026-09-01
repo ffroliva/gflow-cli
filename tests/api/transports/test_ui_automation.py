@@ -3264,13 +3264,13 @@ class TestReferenceEntitiesInterception:
         never fired once. Assert against URLs the code actually builds.
         """
         from gflow_cli.api import routes
-        from gflow_cli.api.transports.ui_automation_video import _GENERATION_ROUTE_RE
+        from gflow_cli.api.transports import ui_automation_video as uav
 
         image_url = routes.batch_generate_images_url("abc123")
-        assert _GENERATION_ROUTE_RE.search(image_url), image_url
+        assert uav._GENERATION_ROUTE_RE.search(image_url), image_url  # noqa: SLF001
 
-        for video_url in (routes.GENERATE_VIDEO,):
-            assert _GENERATION_ROUTE_RE.search(video_url), video_url
+        for route_name in uav.VIDEO_GENERATE_ROUTES:
+            assert uav._GENERATION_ROUTE_RE.search(route_name), route_name  # noqa: SLF001
 
     def test_the_old_glob_could_never_have_matched(self) -> None:
         """Documents the defect so it cannot quietly return.
@@ -3286,20 +3286,21 @@ class TestReferenceEntitiesInterception:
 
     @pytest.mark.asyncio
     async def test_intercept_reference_entities_strips_unrequested(self) -> None:
+        from gflow_cli.api.transports.ui_automation_video import _GENERATION_ROUTE_RE
+
         transport = UiAutomationTransport()
         mock_page = MagicMock()
         mock_page.route = AsyncMock()
-        mock_page.unroute = AsyncMock()
 
         expected = {"requested-character-id"}
 
         async with transport._intercept_reference_entities(mock_page, expected):  # noqa: SLF001
             # Registered on the CONTEXT, not the page: these requests are
             # Web-Worker-delegated and page-level routing cannot see them (#615).
-            mock_page.context.route.assert_any_call(ANY, ANY)
+            mock_page.context.route.assert_any_call(_GENERATION_ROUTE_RE, ANY)
             assert not mock_page.route.called, "must not register at page level (#615)"
 
-        mock_page.context.unroute.assert_called()
+        mock_page.context.unroute.assert_called_once_with(_GENERATION_ROUTE_RE, ANY)
 
         # Now test the route handler logic
         intercept_handler = mock_page.context.route.call_args_list[0][0][1]
