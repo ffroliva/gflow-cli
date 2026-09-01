@@ -28,14 +28,14 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.extend_chain import run_extend_chain
-from gflow_cli.api.scene import ConcatInput
 from gflow_cli.api.video import VideoModel, is_media_uuid, reference_cap_for
-from gflow_cli.config import UiMode, get_settings, parse_jitter_range
+from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.models import AssetKind, OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import ConfigurationError, DataStoreError
+from gflow_cli.errors import ConfigurationError, DataStoreError, GFlowError
+from gflow_cli.image_batch import resolve_jitter_range
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
@@ -1706,21 +1706,8 @@ def chain(
 # request parameter. inputSpec.maxInputV2vVideoDuration is also 8, which is why
 # a long video is a chain of 8s continuations rather than one growing clip.
 _EXTEND_SEGMENT_SECONDS = 8
-
-
-def _configured_jitter_max() -> float:
-    """Upper bound of GFLOW_CLI_JITTER_RANGE, or a safe default.
-
-    Never 0 by default: an unpaced chain submits on a machine-perfect cadence,
-    which is a cleaner bot signature than the rate itself.
-    """
-    spec = get_settings().jitter_range
-    if not spec:
-        return 15.0
-    try:
-        return float(parse_jitter_range(spec)[1])
-    except (ValueError, TypeError):
-        return 15.0
+# Measured: returned media is 7.000s while Flow bills 8. See KNOWN_ISSUES.
+_EXTEND_CONTENT_SECONDS = 7
 
 
 def _print_extend_plan(*, media_id: str, prompt: str, aspect: str, segments: int) -> None:
@@ -1750,7 +1737,7 @@ async def _run_extend(  # noqa: PLR0913
     prompts: tuple[str, ...],
     segments: int,
     aspect: str,
-    jitter: float | None,
+    jitter: str | None,
     output_file: Path | None,
     project_id: str | None,
     scene_id: str | None,
@@ -1763,11 +1750,13 @@ async def _run_extend(  # noqa: PLR0913
         raise ConfigurationError(msg)
 
     # `chain` defaults jitter to 0.0, which ships unpaced runs and contradicts
-    # ACCOUNT_SAFETY's "submissions are paced". Extend inherits the configured
-    # range instead; an explicit --jitter 0 still disables it.
-    effective_jitter = jitter if jitter is not None else _configured_jitter_max()
+    # ACCOUNT_SAFETY's "submissions are paced". Reuse image_batch's resolver so
+    # a configured MIN is honoured (keeping only the max would let a 45-120
+    # setting sleep 0.4s) and a malformed spec is surfaced, not swallowed.
+    jitter_range = resolve_jitter_range(jitter)
 
     recorder: OperationRecorder | None = None
+    store: DataStore | None = None
     try:
         store = DataStore.open(get_settings().resolved_db_path())
         recorder = OperationRecorder(
@@ -1776,6 +1765,47 @@ async def _run_extend(  # noqa: PLR0913
     except DataStoreError as exc:  # catalog is a convenience, never a gate
         logger.warning("extend_recorder_unavailable", error_class=type(exc).__name__)
 
+    try:
+        await _extend_session(
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            media_id=media_id,
+            prompts=prompts,
+            segments=segments,
+            aspect=aspect,
+            jitter_range=jitter_range,
+            output_file=output_file,
+            project_id=project_id,
+            scene_id=scene_id,
+            seed=seed,
+            as_json=as_json,
+            recorder=recorder,
+        )
+    finally:
+        # Leaks on every exit path otherwise, and on Windows a stray handle
+        # blocks a later `gflow data` call in the same process.
+        if store is not None:
+            store.close()
+
+
+async def _extend_session(  # noqa: PLR0913
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    media_id: str,
+    prompts: tuple[str, ...],
+    segments: int,
+    aspect: str,
+    jitter_range: tuple[float, float],
+    output_file: Path | None,
+    project_id: str,
+    scene_id: str | None,
+    seed: int | None,
+    as_json: bool,
+    recorder: OperationRecorder | None,
+) -> None:
+    """The browser-bound half of `_run_extend`, split out so the caller can own
+    the DataStore lifetime with a plain try/finally."""
     async with FlowApiClient(profile_dir=profile_dir) as client:
         listing = await client.capability_listing(project_id)
         tier = video_extend.account_service_tier(listing)
@@ -1811,7 +1841,9 @@ async def _run_extend(  # noqa: PLR0913
             existing = await client.get_scene_workflows(target_scene, project_id=project_id)
             clips = sorted(existing.workflows, key=lambda w: w.metadata.position)
             if clips:
-                start_position = len(clips)
+                # Positions go non-contiguous when clips are deleted in Flow's
+                # UI; len(clips) would collide with an occupied slot.
+                start_position = clips[-1].metadata.position + 1
                 tail = clips[-1]
                 if tail.media_id:
                     source_media = tail.media_id
@@ -1835,7 +1867,20 @@ async def _run_extend(  # noqa: PLR0913
         # any point has something to report rather than only on a clean failure.
         set_interrupt_context(credits_spent=0, resume_id=target_scene, segments_done=0)
 
+        submitted_count = 0
+        spent_so_far = 0
+
         def _on_submitted(started: Any) -> None:
+            # Update BEFORE the ~2 min poll: a Ctrl+C during that wait must
+            # report what is already billed, not the pre-run zeroes.
+            nonlocal submitted_count, spent_so_far
+            submitted_count += 1
+            spent_so_far += started.unit_cost or 0
+            set_interrupt_context(
+                credits_spent=spent_so_far,
+                resume_id=target_scene,
+                segments_done=submitted_count,
+            )
             if not as_json:
                 console.print(f"  submitted   : {started.media_id} ({started.model_key})")
             # Persist at SUBMIT: Flow bills on acceptance, so a row written only
@@ -1864,7 +1909,7 @@ async def _run_extend(  # noqa: PLR0913
             segments=segments,
             aspect=aspect,
             seed=seed,
-            jitter=effective_jitter,
+            jitter_range=jitter_range,
             on_submitted=_on_submitted,
         )
         set_interrupt_context(
@@ -1878,16 +1923,11 @@ async def _run_extend(  # noqa: PLR0913
         # and discarding them because the run did not finish wastes real money.
         if output_file is not None and result.completed_media_ids:
             scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
-            inputs = [
-                ConcatInput(
-                    media_id=w.media_id,
-                    length=w.metadata.total_duration,
-                    start=w.metadata.start_time,
-                    end=w.metadata.end_time,
-                )
-                for w in sorted(scene_state.workflows, key=lambda x: x.metadata.position)
-                if w.media_id
-            ]
+            # Scene.to_concat_inputs owns the end_time>0 fallback (an omitted
+            # endTime parses to 0s and would render a zero-length clip) and
+            # raises on a missing media_id instead of silently dropping a paid
+            # segment. cli_scene.py uses it for the identical job.
+            inputs = list(scene_state.to_concat_inputs())
             if not as_json:
                 console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
             await client.concatenate_scene(inputs, out_path=output_file)
@@ -1901,7 +1941,8 @@ async def _run_extend(  # noqa: PLR0913
             "segments_completed": len(result.completed_media_ids),
             "media_ids": result.completed_media_ids,
             "credits_spent": result.credits_spent,
-            "seconds_added": len(result.completed_media_ids) * _EXTEND_SEGMENT_SECONDS,
+            "seconds_added": len(result.completed_media_ids) * _EXTEND_CONTENT_SECONDS,
+            "seconds_billed": len(result.completed_media_ids) * _EXTEND_SEGMENT_SECONDS,
             "output": rendered,
             "aborted": result.aborted,
             "profile": profile_name,
@@ -1924,7 +1965,18 @@ async def _run_extend(  # noqa: PLR0913
                 console.print("  render one file: gflow scene create --output <path>")
 
         # A chain that abandoned paid work must not exit 0 and look complete.
-        if result.aborted and result.error is not None:
+        if result.error is not None:
+            if as_json:
+                # The payload above is already on stdout. Re-raising would let
+                # run_with_handlers print a SECOND JSON document, and
+                # `json.loads(stdout)` would fail with "Extra data" — the same
+                # trap its own `except SystemExit` branch documents.
+                code = (
+                    json_output.exit_code_for(result.error)
+                    if isinstance(result.error, GFlowError)
+                    else 1
+                )
+                raise SystemExit(code)
             raise result.error
 
 
@@ -1975,7 +2027,7 @@ async def _run_extend(  # noqa: PLR0913
 @click.option(
     "--jitter",
     default=None,
-    type=float,
+    type=str,
     help=(
         "Max seconds of random pause between submissions. Defaults to the "
         "GFLOW_CLI_JITTER_RANGE setting; 0 disables pacing (not advised)."
@@ -2010,7 +2062,7 @@ def extend(  # noqa: PLR0913
     prompts: tuple[str, ...],
     aspect: str,
     segments: int | None,
-    jitter: float | None,
+    jitter: str | None,
     output_file: Path | None,
     project_id: str | None,
     scene_id: str | None,

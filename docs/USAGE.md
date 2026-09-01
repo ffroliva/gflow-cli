@@ -754,6 +754,7 @@ server-side concat, which is credit-free. Without `-o`, render later with
 | `--aspect 9:16\|16:9` | Portrait or landscape. **No square** — Flow has no square extend model |
 | `--project ID` | Required — the project owning `MEDIA_ID` |
 | `--scene ID` | Extend inside an existing scene instead of creating one |
+| `--resume-from ID` | Continue an interrupted run's scene — appends after the clips already there |
 | `--seed N` | Fixed seed, for a reproducible run |
 | `--jitter S` | Max seconds of pause between submissions |
 | `--dry-run` / `--yes` | Print the plan and stop / skip the confirmation |
@@ -1613,6 +1614,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `32` | `ReferenceNotFoundError` | A referenced media NAME is not in this project's picker. Flow indexes a short auto-caption, not the generation prompt, so a prompt used as a reference name never matches | Reference the asset by its media UUID, pass a local file with `--ref`, or check what exists with `gflow data list images` |
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
+| `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

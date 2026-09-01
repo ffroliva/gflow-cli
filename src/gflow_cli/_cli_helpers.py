@@ -382,6 +382,10 @@ def run_with_handlers(
     # manifest's `command`, log correlation) can read it from contextvars —
     # the CLI boundary is the one place that knows it.
     structlog.contextvars.bind_contextvars(cli_command=cli_command)
+    # Long-lived processes (MCP server, `gflow serve`, the worker, a test
+    # session) run many commands. Without this, a finished `video extend`
+    # leaves its resume id behind and an unrelated Ctrl+C later prints it.
+    clear_interrupt_context()
     try:
         asyncio.run(coro_factory())
     except GFlowError as e:

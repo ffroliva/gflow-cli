@@ -75,6 +75,37 @@ no dropout. Evidence:
 | **`--extend N` on t2v/i2v** | ⛔ **deferred — see below** |
 | **DoD · live verification** | ✅ **run 2026-09-01, 20 credits — passed, and found a defect** |
 
+## Code review — 15 findings, 11 fixed, 4 deferred with reasons
+
+An xhigh `/code-review` pass found 15 issues. It caught two things my own
+ponytail pass missed, both of the same kind: **reinvented helpers that already
+existed** — `Scene.to_concat_inputs()` (whose `end_time > 0` fallback I dropped,
+so an omitted `endTime` would have rendered a paid segment as a zero-length
+clip) and `image_batch.resolve_jitter_range()` (I kept only the MAX bound, so a
+configured `45-120` could sleep 0.4s — silently discarding the floor the user
+asked for). Lesson worth keeping: a complexity review looks for what to delete,
+not for what already exists; those are different searches.
+
+**Fixed:** double-JSON on an aborted `--json` run; `ValueError` from a shape
+drift escaping the partial-preservation path *after* a billed submit; the
+interrupt banner reporting 0 credits because context was published once before
+the chain instead of per segment; a leaked `DataStore` handle; resume computing
+position from `len(clips)` instead of the real tail (collides when Flow's UI
+left a gap); `_INTERRUPT_CONTEXT` never cleared, so a finished run's resume id
+leaked into an unrelated command's Ctrl+C; `seconds_added` reporting billed
+seconds rather than the measured 7s of content; the prompt persisted in asset
+metadata against `history_prompts=redacted`; exit code 35 and `--resume-from`
+missing from the docs; the `3–31` exit-code range in AGENTS.md.
+
+**Deferred, deliberately:**
+
+| Finding | Why it waits |
+|---|---|
+| `--aspect` not validated against the source clip's real aspect | Real — I hit it myself in live verification (landscape source, 9:16 default). The fix needs the source's aspect, which means either a media probe or a listing field we have not confirmed exists. Guessing here is how the 7s defect got shipped upstream. Needs its own recon. |
+| No `OperationRecord`, so `OperationKind.EXTEND` is dead | Asset rows land; only the operation row is missing. Wiring it wants the prompt/model/aspect on the operation, which reopens the redaction question just closed. Better as one focused change than bolted on here. |
+| `concatenate_scene` defaults (180s, ~350MB) vs `-n 30` | Correct, and the failure is expensive — every credit spent, then the render fails. But the right ceiling depends on the 7s padding question, since content length drives both. Same blocker. |
+| `candidate_count` re-walks ~100 models per submit | Cosmetic at N≤30. Noted rather than churned. |
+
 **`--extend N` on t2v/i2v is deferred, not forgotten.** The plan called for
 folding length into the generate commands. The primitive ships; the convenience
 does not, for one reason that outweighs the ergonomics: with the 7-second

@@ -149,12 +149,12 @@ async def test_paces_between_segments() -> None:
         project_id=PROJECT,
         scene_id=SCENE,
         prompts=["a", "b", "c"],
-        jitter=10.0,
+        jitter_range=(2.0, 10.0),
         sleep=_sleep,
     )
     # One pause between segments, none before the first or after the last.
     assert len(slept) == 2
-    assert all(0.0 <= s <= 10.0 for s in slept)
+    assert all(2.0 <= s <= 10.0 for s in slept)
 
 
 @pytest.mark.asyncio

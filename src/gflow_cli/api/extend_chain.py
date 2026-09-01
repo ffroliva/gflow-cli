@@ -94,7 +94,7 @@ async def run_extend_chain(  # noqa: PLR0913
     segments: int | None = None,
     aspect: str = "9:16",
     seed: int | None = None,
-    jitter: float = 0.0,
+    jitter_range: tuple[float, float] = (0.0, 0.0),
     start_position: int = 1,
     on_submitted: Callable[[ExtendStarted], None] | None = None,
     sleep: Callable[[float], Coroutine[Any, Any, None]] | None = None,
@@ -131,8 +131,8 @@ async def run_extend_chain(  # noqa: PLR0913
 
         # Pacing sits BETWEEN submissions, never before the first (which would
         # just be dead time) nor after the last.
-        if index > 0 and jitter > 0:
-            await _sleep(random.uniform(0.0, jitter))  # noqa: S311 — cadence, not crypto
+        if index > 0 and jitter_range[1] > 0:
+            await _sleep(random.uniform(*jitter_range))  # noqa: S311 — cadence, not crypto
 
         try:
             started = await client.extend_video(
@@ -144,7 +144,12 @@ async def run_extend_chain(  # noqa: PLR0913
                 aspect=aspect,
                 seed=seed,
             )
-        except GFlowError as exc:
+        except (GFlowError, ValueError) as exc:
+            # ValueError is in here on purpose: media_name_from_generate_response
+            # and parse_video_status raise it bare on a shape drift, and by then
+            # the segment is already billed. Letting it escape would skip the
+            # partial-preservation path entirely — the exact "paid for, invisible"
+            # outcome this module's docstring says it prevents.
             # No retry, by design. Hand back everything already paid for.
             logger.warning(
                 "extend_chain_aborted",
@@ -173,7 +178,19 @@ async def run_extend_chain(  # noqa: PLR0913
             model_key=started.model_key,
         )
 
-        await client.poll_video_status(started.media_id, project_id=project_id)
+        try:
+            await client.poll_video_status(started.media_id, project_id=project_id)
+        except (GFlowError, ValueError) as exc:
+            logger.warning(
+                "extend_chain_aborted",
+                segment=index + 1,
+                of=total,
+                completed=len(completed),
+                error_class=type(exc).__name__,
+            )
+            return ExtendChainResult(
+                scene_id=scene_id, completed_media_ids=completed, credits_spent=spent, error=exc
+            )
         completed.append(started.media_id)
         logger.info("extend_segment_completed", segment=index + 1, of=total)
 
