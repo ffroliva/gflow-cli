@@ -4,6 +4,49 @@
 
 ## Current release
 
+**v0.65.0 — alpha.** **A safety net that had never once fired, and two crashes that spent
+your credits before failing.**
+
+The `referenceEntity` guard strips character entities the caller did not request, so a
+"poisoned" entity left in the Flow composer cannot smuggle itself into an unrelated
+generation. It had never run on any released version
+([#615](https://github.com/ffroliva/gflow-cli/issues/615), reported by
+[@DioServis](https://github.com/DioServis)). The route glob could not match Flow's
+namespaced endpoint — and the *video* guard was dead for the same reason, which the report
+did not mention. It failed **open**, silently, because the guard logged only when it
+stripped something: "never ran" and "ran, nothing to strip" were identical silence.
+
+That silence is why it hid for months, and fixing it is what made the fix provable. The
+guard now announces every intercepted request, so **absence of the event is evidence**
+([#620](https://github.com/ffroliva/gflow-cli/issues/620)). The result is A/B-verified
+live at zero credits: without the fix the guard never fired and the e2e failed; with it,
+it fired and passed — same account, same prompt, one variable. That also settled the
+question that had held the fix for two days (Flow delegates to a **dedicated Web Worker**,
+so `context.route` suffices) and proved the request rewrite does not corrupt the body.
+
+Separately, `gflow video chain` and `gflow movie run` died **mid-spend** on
+`duration` × `model` ([#634](https://github.com/ffroliva/gflow-cli/issues/634)) — after
+earlier links or scenes had already rendered and billed. For chains it was a guaranteed
+crash: no model a chain can use has a duration control, so *every* manifest `duration` was
+unsatisfiable — including the one shipped as the documented example, which a test pinned as
+valid ([#635](https://github.com/ffroliva/gflow-cli/issues/635)). Both surfaces now refuse
+before the first submit, and `--dry-run` refuses what the real run refuses. The same defect
+on single-clip i2v ([#630](https://github.com/ffroliva/gflow-cli/issues/630)) now exits 2
+naming the model instead of exit 1 `"Unexpected error"`.
+
+**Breaking:** a `movie.toml` scene pairing a Veo model with a `duration` now fails at parse
+(exit 11). That combination could never have rendered; it previously failed later and more
+expensively. Scene `duration` requires `model = "omni-flash"`.
+
+**Known limitation:** the guard covers browser-driven generation only. Direct-wire routes
+issued through Playwright's `APIRequestContext` are not routable at all and bypass it
+regardless of matcher — [#619](https://github.com/ffroliva/gflow-cli/issues/619).
+
+Verification:
+[LIVE_VERIFICATION_reference_entity_guard](LIVE_VERIFICATION_reference_entity_guard.md).
+
+<details><summary>v0.64.0 — <code>i2v --end-frame</code> on Omni 1.1 Flash</summary>
+
 **v0.64.0 — alpha.** **`gflow video i2v --model omni-flash --end-frame` — first+last
 interpolation on Omni 1.1 Flash ([#626](https://github.com/ffroliva/gflow-cli/issues/626)).**
 Google shipped first-and-last-frame generation for Omni 1.1 Flash, so the guard that
@@ -44,6 +87,9 @@ phase.** This very change drifted — `mcp/tools.py` and `docs/MCP.md` went on t
 now owns a slice (`scenario` D13, `plan` task 6, `pr-council-review` D15, `check` step 1b,
 `doc-review` blocking on a *false* MCP claim); automating the mechanically checkable part is
 tracked in [#628](https://github.com/ffroliva/gflow-cli/issues/628).
+
+
+</details>
 
 <details><summary>v0.63.0 — <code>gflow video extend</code>, past Flow's 8-second ceiling</summary>
 
