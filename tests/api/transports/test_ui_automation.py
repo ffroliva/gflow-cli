@@ -3349,7 +3349,11 @@ class TestReferenceEntitiesInterception:
 
         await handler(mock_route)
 
-        events = [e for e in install_log_capture.entries if e["event"].endswith("_intercepted")]
+        events = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation.batch_request_intercepted"
+        ]
         assert events, (
             "handler ran but emitted no batch_request_intercepted event — "
             "'never fired' and 'fired, nothing to strip' are indistinguishable again"
@@ -3360,10 +3364,16 @@ class TestReferenceEntitiesInterception:
         mock_route.continue_.assert_awaited_once_with()
 
     @pytest.mark.asyncio
-    async def test_intercept_signal_reports_when_it_did_strip(
+    async def test_intercept_signal_survives_a_handler_exception(
         self, install_log_capture: structlog.testing.LogCapture
     ) -> None:
-        """The same event distinguishes the third state: ran AND stripped."""
+        """The ran-at-all signal must fire even when the handler THROWS (#620).
+
+        Emitted from the happy path only, it would stay silent exactly when the
+        guard ran but failed to parse — and the e2e would then report "the guard
+        never ran", sending a reader hunting a route-matching problem that is not
+        there. Emitting from ``finally`` is what makes "absence is evidence" sound.
+        """
         transport = UiAutomationTransport()
         mock_page = MagicMock()
         mock_page.route = AsyncMock()
@@ -3373,20 +3383,21 @@ class TestReferenceEntitiesInterception:
             handler = mock_page.route.call_args_list[0][0][1]
 
         mock_route = MagicMock()
-        mock_route.request.url = (
-            "https://aisandbox-pa.googleapis.com/v1/projects/p1/flowMedia:batchGenerateImages"
-        )
-        mock_route.request.post_data = json.dumps(
-            {"requests": [{"prompt": "p", "referenceEntities": [{"entityId": "poisoned"}]}]}
-        )
+        mock_route.request.url = "https://x/v1/projects/p1/flowMedia:batchGenerateImages"
+        mock_route.request.post_data = "{not valid json"
         mock_route.continue_ = AsyncMock()
 
         await handler(mock_route)
 
-        events = [e for e in install_log_capture.entries if e["event"].endswith("_intercepted")]
-        assert events, "no ran-at-all signal on the stripping path"
-        assert events[0]["had_reference_entities"] is True
-        assert events[0]["modified"] is True
+        events = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation.batch_request_intercepted"
+        ]
+        assert events, "handler threw and went silent — 'absence is evidence' would lie"
+        assert events[0]["outcome"].startswith("error:")
+        # And it must still forward the request rather than hanging the generation.
+        mock_route.continue_.assert_awaited_once_with()
 
 
 def test_images_from_responses_raises_ratelimiterror_on_429():

@@ -31,6 +31,9 @@ log events (`structlog` JSON lines):
 | `ui_automation.batch_response_dropped_project_id_mismatch` | URL contained `batchGenerateImages` but project-id filter rejected it | `url`, `filter_project_id` |
 | `ui_automation.batch_response_captured` | Response passed all filters AND parsed cleanly | `url`, `status` |
 | `ui_automation.batch_response_parse_failed` | Listener fired but `response.json()` raised | `url`, `error` |
+| `ui_automation.batch_request_intercepted` | EVERY generation request the referenceEntity guard observes, on every exit including a parse error. **Its ABSENCE means no route handler saw the submit at all** — a dead route matcher, or worker delegation the registered level cannot observe (#615, #620) | `url`, `had_reference_entities`, `modified`, `outcome`, `expected_entities` |
+| `ui_automation.batch_request_modified` | The guard actually STRIPPED an unrequested `referenceEntities` entry | `url`, `reason`, `expected_entities` |
+| `ui_automation.batch_request_modify_failed` | The guard ran but raised (e.g. a body it could not decode); the request is forwarded unchanged | `url`, `error` |
 | `ui_automation.batch_403_body` | A `batchGenerateImages` response returned HTTP 403; body prefix logged for WAF / reCAPTCHA diagnosis (subsequently raises `WafRejectionError`) | `body_prefix`, `route` |
 
 If `prompt_submitted` is followed by NO `batch_response_seen` log within the

@@ -91,7 +91,7 @@ path is default-in-scope; skipping this gate requires a named reason, not silenc
      user first.
    - **Anything that generates real media is costed**, even on an otherwise-free command
      family — e.g. `gflow character create --face-prompt` generates real face/body images
-     and costs Imagen credits despite being "character CRUD" in name; `i2v` and other
+     and drives real image generation despite being "character CRUD" in name (zero credits, daily-capped); `i2v` and other
      video-generation paths are always costed. Always get explicit operator go-ahead before
      running a costed variation. Batch the ask: name what will run and why, once, not one
      confirm per call.

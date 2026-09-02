@@ -14,7 +14,7 @@ contract these tests pin:
    that asset's file, the transport uploads it instead of failing the run.
 
 Scenario 1 costs no credits (it aborts before submission). Scenario 2 costs
-2 Imagen credits (a seed image plus the referencing generation).
+2 image generations, zero credits (a seed image plus the referencing generation).
 
 Opt in with::
 
@@ -153,7 +153,7 @@ def test_e2e_same_project_uuid_ref_selected_in_picker(
     duplicate upload, no grid scrolling, no UUID-fragment searches. The
     ``image_ref_selected_existing`` event (``resolved_by=display_name``) is the
     contract; the upload fallback firing instead means the picker path
-    regressed. Costs 2 Imagen credits: one seed image, one referencing
+    regressed. Runs 2 image generations (zero credits): one seed image, one referencing
     generation.
     """
     # `e2e_env` already created this and pointed GFLOW_CLI_OUTPUT_DIR at it.
@@ -229,7 +229,7 @@ def test_e2e_cross_project_uuid_ref_falls_back_to_upload(
     whole run died (verified live: exit 9). With the catalog's recorded file
     attached to the ref, the transport uploads those exact bytes instead.
 
-    Costs 2 Imagen credits: one seed image, one referencing generation.
+    Runs 2 image generations (zero credits): one seed image, one referencing generation.
     """
     # `e2e_env` already created this and pointed GFLOW_CLI_OUTPUT_DIR at it.
     out = tmp_path / "out"

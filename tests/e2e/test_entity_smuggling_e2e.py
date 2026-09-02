@@ -64,16 +64,10 @@ async def test_e2e_entity_smuggling_interception(
     assert image.media_name, "Image generation failed"
     assert image.fife_url.startswith("https://")
 
-    # 4. Prove the guard RAN. (#620)
-    #
-    # Both assertion blocks here used to be wrapped in `if bodies:` / `if modified:`,
-    # so the test passed identically whether the guard fired or never fired — and the
-    # second block only *printed*. It asserted nothing, ever. That is the same defect
-    # class as the bug it was supposed to catch (#615), which it sat through silently.
-    #
-    # `batch_request_intercepted` is emitted by the handler itself on EVERY intercepted
-    # request, so its ABSENCE is the discriminating evidence: it means no route handler
-    # observed the generation submit at all.
+    # 4. Prove the guard RAN (#620). Both checks below were previously wrapped in
+    # `if bodies:` / `if modified:`, so this test passed whether the guard fired or
+    # never fired. `batch_request_intercepted` comes from the handler itself, so its
+    # absence is the discriminating evidence.
     intercepted = [
         e
         for e in install_log_capture.entries
@@ -91,7 +85,16 @@ async def test_e2e_entity_smuggling_interception(
 
     # The guard ran. Now it must not have leaked an unrequested entity: this run
     # requested NO reference entities, so nothing may reach the wire.
-    leaked = [e for e in intercepted if e.get("had_reference_entities") and not e.get("modified")]
+    # Scoped to runs that requested NO entities: `had and not modified` is also
+    # true for a legitimately requested entity that survives filtering, so the
+    # unscoped form would false-positive the moment this test grew a --ref case.
+    leaked = [
+        e
+        for e in intercepted
+        if e.get("had_reference_entities")
+        and not e.get("modified")
+        and not e.get("expected_entities")
+    ]
     assert not leaked, (
         f"referenceEntities reached the server unstripped on a run that requested "
         f"none — the guard observed the request but did not filter it: {leaked}"

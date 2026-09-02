@@ -112,7 +112,7 @@ uv run pytest -m "not e2e and not smoke and not live" -q --cov=gflow_cli
 ```bash
 export GFLOW_CLI_E2E_PROFILE=<profile-name>
 
-# All smoke tests (includes the 1-credit golden-path image test)
+# All smoke tests (includes the golden-path image test — zero credits)
 uv run pytest -m smoke -v
 
 # Zero-credit only — account persistence check, no generation
@@ -242,8 +242,10 @@ tiers (`e2e_image` / `e2e_video` / `smoke`) stay **strictly manual** via
 uv run python scripts/canary/run_canary.py --profile <name> --dry-run
 ```
 
-Credit-spending markers (`e2e_image`, `e2e_video`, `e2e_batch`, `e2e_character`,
-`smoke`) are **refused outright** — the canary never spends credits unattended.
+Generation markers (`e2e_image`, `e2e_video`, `e2e_batch`, `e2e_character`,
+`smoke`) are **refused outright** — the canary never drives a real generation
+unattended. (Only `e2e_video` spends credits; the image tiers are refused because
+they drive a live browser and draw on the daily image cap, not because they bill.)
 Run those manually via `/gflow:live-verify`.
 
 ### Schedule it

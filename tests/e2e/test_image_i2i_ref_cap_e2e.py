@@ -5,7 +5,7 @@ boundary against the real Flow API — Flow silently keeps only the first
 N refs when more are attached, so a "wrong cap" bug shows up as: the
 generate call succeeds but ``ui_automation_video.reference_attached``
 fires fewer than the requested N times. Asserting on the structured
-event closes that false-positive class. Costs 1 Imagen credit.
+event closes that false-positive class. Runs 1 image generation (zero credits).
 
 Skipped by default; opt in with::
 

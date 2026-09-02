@@ -943,24 +943,18 @@ class VideoGenerationMixin:
 
         async def intercept_generation_request(route: Any) -> None:
             req_obj = route.request
+            # Ran-at-all signal (#620): absence of the `finally` emission below
+            # means no handler observed the submit.
+            had_reference_entities = False
+            modified = False
+            outcome = "forwarded"
             try:
                 post_data = req_obj.post_data
+                body: dict[str, Any] = (
+                    cast(dict[str, Any], json.loads(post_data)) if post_data else {}
+                )
                 if not post_data:
-                    # Still an observation that the handler RAN — see the
-                    # batch_request_intercepted note below.
-                    log.info(
-                        "ui_automation.batch_request_intercepted",
-                        url=req_obj.url,
-                        had_reference_entities=False,
-                        modified=False,
-                        reason="empty post_data",
-                    )
-                    await route.continue_()
-                    return
-
-                body = cast(dict[str, Any], json.loads(post_data))
-                modified = False
-                had_reference_entities = False
+                    outcome = "empty_post_data"
 
                 if "requests" in body and isinstance(body["requests"], list):
                     requests_list = cast(list[dict[str, Any]], body["requests"])
@@ -985,21 +979,11 @@ class VideoGenerationMixin:
                                     item.pop("referenceEntities", None)
                                     modified = True
 
-                # Ran-at-all signal (#620). Emitted on EVERY intercepted request,
-                # including the no-op. Before this the handler was silent unless it
-                # stripped something, which made "the route never matched" and "the
-                # route matched, nothing to strip" produce identical logs — exactly
-                # why #615 stayed invisible for months and why no test could tell
-                # the two apart. Absence of this event is now itself evidence.
-                log.info(
-                    "ui_automation.batch_request_intercepted",
-                    url=req_obj.url,
-                    had_reference_entities=had_reference_entities,
-                    modified=modified,
-                    expected_entities=list(expected_entities),
-                )
-
                 if modified:
+                    # Kept alongside batch_request_intercepted, though strictly
+                    # subsumed by it: the #615 thread publicly told the reporter to
+                    # grep their logs for THIS event name. Removing it would break
+                    # instructions already given to an outside contributor.
                     log.info(
                         "ui_automation.batch_request_modified",
                         url=req_obj.url,
@@ -1010,12 +994,24 @@ class VideoGenerationMixin:
                 else:
                     await route.continue_()
             except Exception as exc:
+                outcome = f"error: {type(exc).__name__}"
                 log.warning(
                     "ui_automation.batch_request_modify_failed",
                     url=req_obj.url,
                     error=str(exc),
                 )
                 await route.continue_()
+            finally:
+                # `finally`, not the happy path: an emission the decode-error
+                # branch skips would make absence ambiguous again.
+                log.info(
+                    "ui_automation.batch_request_intercepted",
+                    url=req_obj.url,
+                    had_reference_entities=had_reference_entities,
+                    modified=modified,
+                    outcome=outcome,
+                    expected_entities=list(expected_entities),
+                )
 
         # Register rules for both image and video endpoints
         await page.route("**/batchGenerateImages", intercept_generation_request)
