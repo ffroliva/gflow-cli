@@ -158,9 +158,16 @@ Full milestone history lives in [CHANGELOG.md](CHANGELOG.md). Where the project 
 
 ### Star history
 
+<!-- DO NOT strip `sealed_token` from the URLs below. GitHub restricted the public
+     /stargazers endpoint (2026-06-30), so star-history can only build this chart from a
+     token-authenticated request. Its per-repo cache expires in <3 days, so a tokenless
+     URL renders a "GitHub restricted access to star data" placard — served as HTTP 200,
+     which is why nothing catches it. `.github/workflows/star-history-watch.yml` probes
+     for exactly that. The token is sealed with star-history's key and grants metadata
+     read on a public repo; it is safe in a public README, and they recommend it. -->
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ffroliva/gflow-cli&type=date&theme=dark&legend=top-left" />
-  <img alt="Star history chart for ffroliva/gflow-cli" src="https://api.star-history.com/chart?repos=ffroliva/gflow-cli&type=date&legend=top-left" />
+  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ffroliva/gflow-cli&type=date&theme=dark&legend=top-left&sealed_token=7kTiE_HExjjY2aT7O-_hMxY_Mf6n-ET17mi_RXcRjCSS5rHSBDMd7xFYCzT_yaXhAXrgF8AGTQc6mny_qfuJc7473KGqb-5U41Dpu-tpZIS1IYl-xVQR9ziGJtL0KWQVyWZU1IoUmLWwo43PhgVTo4MJfmWOvluFJq2zlGxE_iLl9wMRgpwQaiC4ufOK" />
+  <img alt="Star history chart for ffroliva/gflow-cli" src="https://api.star-history.com/chart?repos=ffroliva/gflow-cli&type=date&legend=top-left&sealed_token=7kTiE_HExjjY2aT7O-_hMxY_Mf6n-ET17mi_RXcRjCSS5rHSBDMd7xFYCzT_yaXhAXrgF8AGTQc6mny_qfuJc7473KGqb-5U41Dpu-tpZIS1IYl-xVQR9ziGJtL0KWQVyWZU1IoUmLWwo43PhgVTo4MJfmWOvluFJq2zlGxE_iLl9wMRgpwQaiC4ufOK" />
 </picture>
 
 If `gflow-cli` saves you time, please ⭐ the repo. It is the cheapest way to support the project.
