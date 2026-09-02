@@ -1,0 +1,15 @@
+### transport tests ###
+........................................................................ [ 75%]
+...............................................                          [100%]
+191 passed in 7.87s
+### ruff ###
+All checks passed!
+### format ###
+414 files already formatted
+### hygiene ###
+✅  860 tracked files checked — no violations.
+### doclinks ###
+1 broken link(s)
+### mirror ###
+website/docs mirror in sync (20 files), nav complete.
+### G618DONE ###
