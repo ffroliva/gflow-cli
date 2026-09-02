@@ -489,18 +489,22 @@ class ModelModeIncompatibilityError(ConfigurationError):
     """Raised when the chosen video model is incompatible with the requested
     generation mode (issue #125).
 
-    Canonical cases today: ``omni-flash`` with an i2v END frame (first+last
-    interpolation is "coming soon" for it per Flow's support matrix, with no
-    wire-level proof of the StartAndEndImage route), and ``omni-flash`` for
-    chains (single-clip start-frame i2v was wire-verified 2026-08-03; N
+    One case remains: ``omni-flash`` for **chains**. Single-clip start-frame
+    i2v was wire-verified 2026-08-03 and the end frame on 2026-09-02, but N
     seeded links back-to-back has not been, so chains stay on the Veo 3.1
-    family). History: omni-flash was excluded from i2v entirely after a
-    2026-05-30 capture showed Flow silently dropping the frame refs at
-    submit and billing the run as text-to-video; the start-frame path has
-    since been re-verified on the wire and re-enabled. This error is raised
-    pre-submit by both the CLI and the transport (defense-in-depth for
-    direct ``FlowApiClient`` callers that bypass the CLI), so it never
-    spends a credit.
+    family.
+
+    History: omni-flash was excluded from i2v entirely after a 2026-05-30
+    capture showed Flow silently dropping the frame refs at submit and billing
+    the run as text-to-video. The start-frame path was re-verified on the wire
+    and re-enabled (#125); the END frame followed once Flow shipped first+last
+    for Omni 1.1 Flash and two accounts reproduced the
+    ``StartAndEndImage`` route at zero credits (#626). What guards the i2v path
+    now is a post-submit route check in the transport, not this error — it
+    validates the route Flow actually used rather than a static capability
+    table that can go stale in either direction.
+
+    Raised pre-submit at the CLI boundary, so it never spends a credit.
 
     Distinct exit code 17 (not Click's exit 2, not generic exit 1) so
     scripted callers can branch on "I picked an incompatible
@@ -511,9 +515,10 @@ class ModelModeIncompatibilityError(ConfigurationError):
     title = "Model is incompatible with the requested generation mode"
     _default_remediation = (
         "The selected video model does not support this generation mode. "
-        "omni-flash supports start-frame i2v only: drop --end-frame, or use "
-        "a Veo 3.1 model (veo-lite / veo-fast / veo-quality / veo-lite-lp) "
-        "for first+last interpolation and for chains. See issue #125."
+        "omni-flash is not accepted for `gflow video chain`: chains stay on a "
+        "Veo 3.1 model (veo-lite / veo-fast / veo-quality / veo-lite-lp). "
+        "Single-clip i2v — including --end-frame — is unaffected. "
+        "See issues #125 and #626."
     )
 
 

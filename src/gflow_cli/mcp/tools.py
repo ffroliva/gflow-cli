@@ -981,9 +981,10 @@ async def gflow_generate_video(  # NOSONAR
         model: Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality',
             'omni_flash' (aliases accepted, mirrors the CLI ``--model``). When
             omitted, Flow's UI default applies EXCEPT for i2v with frames,
-            where the transport defaults to veo-lite. Note: 'omni_flash'
-            supports start-frame i2v (wire-verified 2026-08-03, refs #125) but
-            NOT an end frame — i2v with 'end_frame' requires a Veo 3.1 model.
+            where the transport defaults to veo-lite. Every model supports i2v
+            with a start frame and with an end frame; 'omni_flash' was the last
+            exception and its end-frame route was wire-verified 2026-09-02
+            (refs #125, #626).
         duration: Optional clip length in seconds (mirrors the CLI ``--duration``).
             When omitted, Flow's per-model default applies.
         count: Number of videos to generate (mirrors the CLI ``--count``; default 1).

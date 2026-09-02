@@ -316,7 +316,9 @@ async def run_chain(
 
     Raises:
         ModelModeIncompatibilityError: ``model`` is not accepted for chains
-            (``omni_flash`` — single-clip start-frame i2v only, refs #125).
+            (``omni_flash`` — wire-verified for SINGLE-clip i2v only, start
+            frame and end frame alike; chain scale is what remains unproven.
+            Refs #125, #626).
         ChainPartialError: A link failed with a ``WireFormatError`` (i2v routed
             to the t2v backstop) or ``WafRejectionError`` (403). Carries the
             ``Path`` of every link completed before the failure.
@@ -324,9 +326,10 @@ async def run_chain(
     if model is VideoModel.OMNI_FLASH:
         msg = (
             f"model {model.value!r} is not supported for chains: a chain "
-            f"renders N seeded i2v links back-to-back, and omni_flash "
-            f"start-frame i2v is wire-verified for single generations only "
-            f"(2026-08-03, refs #125). Use a Veo 3.1 model."
+            f"renders N seeded i2v links back-to-back, and omni_flash i2v is "
+            f"wire-verified for single generations only (start frame "
+            f"2026-08-03, end frame 2026-09-02; refs #125, #626). Use a Veo "
+            f"3.1 model."
         )
         raise ModelModeIncompatibilityError(msg)
 
