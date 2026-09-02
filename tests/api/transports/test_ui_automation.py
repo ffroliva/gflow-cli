@@ -3257,6 +3257,21 @@ class TestReferenceEntitiesInterception:
     filter/strip referenceEntities from outgoing HTTP request bodies.
     """
 
+    @staticmethod
+    def _captured_handler(mock_page: Any) -> Any:
+        """Return the registered handler, whichever LEVEL it was registered on.
+
+        #618 moves registration from ``page.route`` to ``page.context.route``.
+        Reaching into ``mock_page.route`` directly pins the level and breaks the
+        moment that lands — which it did, silently, when both branches were
+        stacked. Ask for the handler, not for where it was hung.
+        """
+        for mock in (mock_page.route, mock_page.context.route):
+            calls = getattr(mock, "call_args_list", [])
+            if calls:
+                return calls[0][0][1]
+        raise AssertionError("no route handler registered at page or context level")
+
     @pytest.mark.asyncio
     async def test_intercept_reference_entities_strips_unrequested(self) -> None:
         transport = UiAutomationTransport()
@@ -3335,9 +3350,11 @@ class TestReferenceEntitiesInterception:
         mock_page = MagicMock()
         mock_page.route = AsyncMock()
         mock_page.unroute = AsyncMock()
+        mock_page.context.route = AsyncMock()
+        mock_page.context.unroute = AsyncMock()
 
         async with transport._intercept_reference_entities(mock_page, set()):  # noqa: SLF001
-            handler = mock_page.route.call_args_list[0][0][1]
+            handler = self._captured_handler(mock_page)
 
         # A perfectly clean request: no referenceEntities at all, nothing to strip.
         mock_route = MagicMock()
@@ -3378,9 +3395,11 @@ class TestReferenceEntitiesInterception:
         mock_page = MagicMock()
         mock_page.route = AsyncMock()
         mock_page.unroute = AsyncMock()
+        mock_page.context.route = AsyncMock()
+        mock_page.context.unroute = AsyncMock()
 
         async with transport._intercept_reference_entities(mock_page, set()):  # noqa: SLF001
-            handler = mock_page.route.call_args_list[0][0][1]
+            handler = self._captured_handler(mock_page)
 
         mock_route = MagicMock()
         mock_route.request.url = "https://x/v1/projects/p1/flowMedia:batchGenerateImages"
