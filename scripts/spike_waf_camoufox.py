@@ -228,7 +228,7 @@ def _confirm_spend(args: argparse.Namespace) -> bool:
     prompt = (
         f"\nThis will attempt {args.count} real image generation(s) on profile "
         f"'{args.profile_name}' via the '{args.engine}' engine — roughly "
-        f"{args.count} Imagen credit(s) of real spend. Proceed? [y/N] "
+        f"{args.count} real image generation(s) (zero credits; daily cap). Proceed? [y/N] "
     )
     try:
         return input(prompt).strip().lower() in ("y", "yes")
@@ -308,7 +308,7 @@ def main() -> int:
         f"engine={args.engine} profile={args.profile_name} n={args.count} "
         f"model={args.model} aspect={args.aspect} headless={args.headless}",
     )
-    step("plan", f"estimated spend ≈ {args.count} Imagen credit(s)")
+    step("plan", f"planned {args.count} image generation(s) — zero credits, daily cap")
 
     if args.dry_run:
         step("dry-run", "setup valid; no client built, no credits spent. Drop --dry-run to run.")

@@ -12,7 +12,7 @@ test proves the full chain live:
 3. Generate an R2V video in the SAME project with ``ref_names=(display_name,)``
    and assert the ``remote_reference_attached`` event fired for it.
 
-Costs 1 Imagen credit (seed) + one veo-lite generation.
+Costs 1 image generation (zero credit) (seed) + one veo-lite generation.
 
 Opt in with::
 

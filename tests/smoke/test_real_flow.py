@@ -1,7 +1,7 @@
 """Golden-path smoke test for :class:`UiAutomationTransport`.
 
 Opts in via ``GFLOW_CLI_E2E_PROFILE`` (the same env var as the full e2e suite)
-and the ``smoke`` marker. Costs ~1 Imagen credit per run.
+and the ``smoke`` marker. Runs 1 image generation per run (zero credits; daily-capped).
 
 Required environment variable:
   GFLOW_CLI_E2E_PROFILE — name of a Playwright user-data-dir already signed in

@@ -22,11 +22,11 @@ Doc:  ``docs/DATA_LAYER.md``
 
   - ``GFLOW_CLI_E2E_PROFILE``    master gate; Chrome-strategy profile name
   - ``GFLOW_CLI_E2E_RUN_VIDEO``  default "0"; set to "1" to run the Veo step
-                                  (only spends an Imagen credit then)
+                                  (only runs an image generation then)
 
 # Spending
 
-  - t2i: ~1 Imagen credit
+  - t2i: 1 image generation (zero credits)
   - t2v: 1 Veo credit (omni-flash, 4s, count=1 — cheapest configuration)
 
 Per the project's 5-layer verification ledger ([[verification-ledger-5-layer]])
@@ -114,7 +114,7 @@ def _is_mp4(path: Path) -> bool:
 @pytest.mark.e2e_image
 @pytest.mark.e2e_data
 def test_t2i_records_full_provenance(e2e_env: dict[str, str]) -> None:
-    """Live t2i: ~1 Imagen credit. Asserts file lands AND DB carries the full
+    """Live t2i: 1 image generation (zero credits). Asserts file lands AND DB carries the full
     profile→project→asset→operation→operation_assets→local_files chain."""
     profile = e2e_env["GFLOW_CLI_PROFILE"]
     out_dir = Path(e2e_env["GFLOW_CLI_OUTPUT_DIR"])

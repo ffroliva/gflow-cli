@@ -22,12 +22,12 @@ call (no reCAPTCHA, no credit) — so the only spend here is the image generatio
 
   - ``GFLOW_CLI_E2E_PROFILE``            master gate; Chrome-strategy profile name
   - ``GFLOW_CLI_E2E_RUN_ENTITY_PROV``   default "0"; set to "1" to run (spends
-                                         Imagen credits)
+                                         image generations (zero credits))
 
 # Spending
 
-  - t2i + entity:  ~1 Imagen credit
-  - i2i + entity:  ~2 Imagen credits (one seed t2i, then the i2i itself)
+  - t2i + entity:  1 image generation (zero credits)
+  - i2i + entity:  2 image generations, zero credits (one seed t2i, then the i2i itself)
   - bad entity id: 0 credits expected — the attach is refused before submit
 
 Doc: ``docs/DATA_LAYER.md`` §"Operation ``metadata_json`` provenance"
@@ -70,7 +70,8 @@ def _require_entity_prov_optin() -> None:
     if os.environ.get(_RUN_ENTITY_PROV_ENV, "0").strip() != "1":
         pytest.skip(
             f"{_RUN_ENTITY_PROV_ENV} != 1 — entity-provenance e2e is opt-in "
-            "because it spends Imagen credits. Set it to 1 to run the live "
+            "because it drives a real browser image generation (zero credits; "
+            "daily-capped). Set it to 1 to run the live "
             "verification gate for #402."
         )
 
@@ -155,7 +156,7 @@ def _fresh_project_and_entity() -> tuple[str, str]:
 @pytest.mark.e2e_image
 @pytest.mark.e2e_data
 def test_t2i_entity_attach_records_provenance(e2e_env: dict[str, str]) -> None:
-    """Live t2i with an attached entity: ~1 Imagen credit.
+    """Live t2i with an attached entity: 1 image generation (zero credits).
 
     The gate for #402: after a generation Flow actually accepted, the catalog
     must be able to answer "which character produced this?".
@@ -209,7 +210,7 @@ def test_t2i_entity_attach_records_provenance(e2e_env: dict[str, str]) -> None:
 @pytest.mark.e2e_image
 @pytest.mark.e2e_data
 def test_i2i_entity_attach_records_provenance(e2e_env: dict[str, str]) -> None:
-    """Live i2i with an attached entity: ~2 Imagen credits (seed t2i + i2i).
+    """Live i2i with an attached entity: 2 image generations, zero credits (seed t2i + i2i).
 
     i2i is the surface the issue measured at 0/333 coverage, so it gets its own
     gate rather than riding on the t2i result.

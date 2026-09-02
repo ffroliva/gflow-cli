@@ -950,19 +950,24 @@ class VideoGenerationMixin:
 
         async def intercept_generation_request(route: Any) -> None:
             req_obj = route.request
+            # Ran-at-all signal (#620): absence of the `finally` emission below
+            # means no handler observed the submit.
+            had_reference_entities = False
+            modified = False
+            outcome = "forwarded"
             try:
                 post_data = req_obj.post_data
+                body: dict[str, Any] = (
+                    cast(dict[str, Any], json.loads(post_data)) if post_data else {}
+                )
                 if not post_data:
-                    await route.continue_()
-                    return
-
-                body = cast(dict[str, Any], json.loads(post_data))
-                modified = False
+                    outcome = "empty_post_data"
 
                 if "requests" in body and isinstance(body["requests"], list):
                     requests_list = cast(list[dict[str, Any]], body["requests"])
                     for item in requests_list:
                         if "referenceEntities" in item:
+                            had_reference_entities = True
                             refs = item["referenceEntities"]
                             if isinstance(refs, list):
                                 refs_list = cast(list[dict[str, Any]], refs)
@@ -982,6 +987,10 @@ class VideoGenerationMixin:
                                     modified = True
 
                 if modified:
+                    # Kept alongside batch_request_intercepted, though strictly
+                    # subsumed by it: the #615 thread publicly told the reporter to
+                    # grep their logs for THIS event name. Removing it would break
+                    # instructions already given to an outside contributor.
                     log.info(
                         "ui_automation.batch_request_modified",
                         url=req_obj.url,
@@ -994,12 +1003,24 @@ class VideoGenerationMixin:
                 else:
                     await route.continue_()
             except Exception as exc:
+                outcome = f"error: {type(exc).__name__}"
                 log.warning(
                     "ui_automation.batch_request_modify_failed",
                     url=req_obj.url,
                     error=str(exc),
                 )
                 await route.continue_()
+            finally:
+                # `finally`, not the happy path: an emission the decode-error
+                # branch skips would make absence ambiguous again.
+                log.info(
+                    "ui_automation.batch_request_intercepted",
+                    url=req_obj.url,
+                    had_reference_entities=had_reference_entities,
+                    modified=modified,
+                    outcome=outcome,
+                    expected_entities=list(expected_entities),
+                )
 
         # CONTEXT, not page: these requests are Web-Worker-delegated in the current
         # Flow cohort, so `page.route` cannot see them at all (#615). The capture path

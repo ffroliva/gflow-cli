@@ -403,7 +403,7 @@ Only the **Python import path** changed (`flow_cli` → `gflow_cli`). The PyPI d
 
 ## Journey 10 — Budgeting credits before a batch run
 
-Your Google plan includes a finite Veo / Imagen credit allowance — these journeys spend real money. Before kicking off a 200-prompt run, get a rough cost estimate.
+Your Google plan includes a finite Veo credit allowance — the video journeys spend real money. Before kicking off a 200-prompt run, get a rough cost estimate.
 
 ### 10.1 Check the balance
 
