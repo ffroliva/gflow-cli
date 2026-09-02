@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the failure. The migrated origin is now classified as `flow_app`, with the same
   identifier reduction applied.
 
+Live-verified 2026-09-03 at zero credits against the **real** migrated frontend, on an
+account inside the rollout: `flow_host_kind: "migrated"`, `_check_logged_in: true` (it was
+`false` before the fix), and `_mode_switch_error` returning `FlowHostMigratedError` / exit 36 /
+`retryable: true` — while a credit-free `image t2i` minutes earlier landed on the old host and
+completed exit 0, proving no regression. See
+[docs/LIVE_VERIFICATION_v0.66.0.md](docs/LIVE_VERIFICATION_v0.66.0.md).
+
 ## [0.65.0] — 2026-09-02
 
 ### Fixed

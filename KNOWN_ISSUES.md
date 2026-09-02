@@ -18,6 +18,7 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 - **Status:** Open · **Severity:** High (every generation command fails on a migrated page load) · **Affected:** all `gflow image` / `gflow video` generation, CLI and MCP alike, on accounts the rollout has reached
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
+- **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
 
 Google is moving Flow off Labs onto its own origin. On a migrated page load,
 `https://labs.google/fx/tools/flow/project/<id>` redirects to
@@ -34,6 +35,10 @@ apart, with no client change. Measured on one account ~35 minutes apart:
 old host       labs.google/fx/<locale>/tools/flow/...   i=55  i.google-symbols=49  crop_* present   -> exit 0
 migrated host  flow.google.com/project/...              i=0   i.google-symbols=0   crop_* absent    -> exit 36
 ```
+
+Note the migrated URL **drops `/fx/tools/flow` entirely** — it is `/project/<id>`, not
+`/fx/<locale>/tools/flow/project/<id>`. Any host gate written as a substring test on
+`labs.google` could never have matched it.
 
 This is **not** selector rot, not [#493](https://github.com/ffroliva/gflow-cli/issues/493),
 and not the agentic cohort — the agentic indicators are absent too. It is a
