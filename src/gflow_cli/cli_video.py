@@ -192,32 +192,25 @@ def _reject_duration_without_control(
     if duration is None:
         return
     if model is None:
-        if default_model is None or default_model.supports_duration():
+        resolved = default_model
+    else:
+        try:
+            resolved = VideoModel.from_cli(model)
+        except ValueError:
+            # Unknown alias: Click's Choice already rejects it on the CLI path, and
+            # a programmatic caller deserves that error, not this guard's. Let the
+            # real validation report it rather than dying as "Unexpected error."
             return
-        msg = (
-            f"--duration is not supported by this command's default model "
-            f"({default_model.value}) — Flow renders no duration control for it "
-            f"(verified live; refs #451/#288). Only omni-flash exposes a duration "
-            f"(4/6/8/10s). Drop --duration to accept Flow's default length, or pass "
-            f"--model omni-flash."
-        )
-        raise click.UsageError(msg)
-    try:
-        resolved = VideoModel.from_cli(model)
-    except ValueError:
-        # Unknown alias: Click's Choice already rejects it on the CLI path, and
-        # a programmatic caller deserves that error, not this guard's. Let the
-        # real validation report it rather than dying as "Unexpected error."
+    if resolved is None or resolved.supports_duration():
         return
-    # from_cli returns None only for a None argument, which we returned on above.
-    if resolved is not None and not resolved.supports_duration():
-        msg = (
-            f"--duration is not supported by --model {model} — Flow renders no duration "
-            f"control for it (verified live; refs #451/#288). Only omni-flash exposes a "
-            f"duration (4/6/8/10s). Drop --duration to accept Flow's default length, or "
-            f"use --model omni-flash."
-        )
-        raise click.UsageError(msg)
+    named = f"--model {model}" if model is not None else f"the default model {resolved.value}"
+    msg = (
+        f"--duration is not supported by {named} — Flow renders no duration "
+        f"control for it (verified live; refs #451/#288). Only omni-flash exposes a "
+        f"duration (4/6/8/10s). Drop --duration to accept Flow's default length, or "
+        f"use --model omni-flash."
+    )
+    raise click.UsageError(msg)
 
 
 def _relocate_single_video(item: Any, target: Path) -> Any:

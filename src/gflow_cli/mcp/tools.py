@@ -1039,11 +1039,11 @@ async def gflow_generate_video(  # NOSONAR
                 "or 'auto'.",
             )
 
+    from gflow_cli.api.video import I2V_DEFAULT_MODEL, VideoModel
+
     # Validate the model alias up front (mirrors the CLI's pre-spend check) so an
     # unknown model fails fast with a 400 instead of dying deep in the worker.
     if model is not None:
-        from gflow_cli.api.video import VideoModel
-
         try:
             VideoModel.from_cli(model)
         except ValueError as exc:
@@ -1057,8 +1057,6 @@ async def gflow_generate_video(  # NOSONAR
     # omitted, so "no model" is not "no opinion" there. t2v/r2v inherit Flow's
     # sticky UI default, which is unknowable here, so they stay unguarded.
     if duration is not None:
-        from gflow_cli.api.video import I2V_DEFAULT_MODEL, VideoModel
-
         effective = VideoModel.from_cli(model) if model is not None else None
         if effective is None and mode == "i2v" and (initial_frame or end_frame):
             effective = I2V_DEFAULT_MODEL
