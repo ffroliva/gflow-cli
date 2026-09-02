@@ -507,6 +507,12 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > with a message naming the model, before any browser work; it used to burn ~30 s
 > of selector timeouts and die with exit 23 as if Flow's UI had drifted. Omit
 > `--duration` to accept Flow's default length for those models.
+> On `i2v` this applies **even with no `--model`** (#630): omitting the flag binds
+> the `veo-lite` default, which has no duration control, so that combination is
+> rejected with exit 2 naming the default rather than dying as "Unexpected error".
+> `t2v`/`r2v` with no `--model` inherit Flow's sticky UI default, which gflow
+> cannot know, so they are not pre-checked. The MCP `gflow_generate_video` tool
+> applies the same rule and answers with a 400 envelope.
 > `--count` is enforced **fail-closed**: if Flow's count control cannot be
 > located (selector drift), the run refuses with exit 23 *before* submitting
 > instead of proceeding on Flow's sticky default (typically x2) and silently

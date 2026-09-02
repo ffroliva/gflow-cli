@@ -1637,6 +1637,39 @@ class TestDurationCapabilityGuard:
         assert "no duration control" in result.output
         assert model in result.output
 
+    def test_duration_on_i2v_without_model_exits_2_not_unexpected_error(
+        self, tmp_path: Path
+    ) -> None:
+        """#630: omitting ``--model`` on i2v must not lose the explanation.
+
+        For i2v an omitted ``--model`` is not "no model" — it binds
+        ``I2V_DEFAULT_MODEL`` (veo-lite), which renders no duration control. The
+        CLI guard used to return early on ``model is None``, so this most
+        natural way to try the flag fell through to the DTO's bare ``ValueError``
+        and surfaced as "Unexpected error. … file a bug" (exit 1) — telling the
+        user to report a plain usage error whose text already existed.
+        """
+        ref = tmp_path / "ref.png"
+        ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+        result = CliRunner().invoke(
+            video, ["i2v", "a prompt", "--initial-frame", str(ref), "--duration", "8"]
+        )
+        assert result.exit_code == 2, result.output
+        assert "no duration control" in result.output
+        assert "Unexpected error" not in result.output
+
+    def test_duration_on_t2v_without_model_is_left_alone(self, tmp_path: Path) -> None:
+        """Negative control: t2v with no ``--model`` must NOT be rejected here.
+
+        t2v inherits Flow's sticky UI default, which gflow cannot know, so the
+        effective model is genuinely unresolvable — guarding it would reject a
+        run that may be perfectly valid. Only i2v has a gflow-side default to
+        resolve. Without this, "resolve the default" could quietly grow into
+        "assume veo-lite everywhere".
+        """
+        result = CliRunner().invoke(video, ["t2v", "a prompt", "--duration", "8", "--dry-run"])
+        assert "no duration control" not in result.output
+
     def test_duration_on_omni_flash_passes_the_guard(self, tmp_path: Path) -> None:
         """Negative control: the guard must not over-reject the one model that
         DOES render a duration row. It should get past the guard and fail later
