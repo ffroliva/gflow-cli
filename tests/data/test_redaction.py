@@ -36,3 +36,23 @@ def test_redact_metadata_masks_snake_case_fife_url() -> None:
     only covered the camelCase spelling, so the stored value leaked (#542)."""
     raw = {"fife_url": "https://lh3.googleusercontent.com/fife/abc"}
     assert redact_metadata(raw)["fife_url"] == "<redacted:url>"
+
+
+def test_session_id_is_redacted() -> None:
+    """The extend request body carries `clientContext.sessionId`. It is not a
+    credential, but it is account-correlatable and appears in any body we log
+    or persist, so it must not survive into a diagnostics bundle."""
+    body = {
+        "clientContext": {
+            "projectId": "7d3d6bd9-a39f-4c2d-b772-146e73e539cf",
+            "sessionId": ";1788200574949",
+            "recaptchaContext": {"token": "03AFcW"},
+        }
+    }
+    out = redact_metadata(body)
+    ctx = out["clientContext"]
+    assert ctx["sessionId"] == "<redacted:token>"
+    assert ctx["recaptchaContext"]["token"] == "<redacted:token>"
+    # The project id is a plain resource identifier and stays readable — it is
+    # what makes a bundle diagnosable at all.
+    assert ctx["projectId"] == "7d3d6bd9-a39f-4c2d-b772-146e73e539cf"

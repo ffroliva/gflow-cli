@@ -2,7 +2,7 @@
 name: scenario
 description: >
   Pre-implementation edge-case and scenario explorer for gflow-cli.
-  Decomposes a proposed feature or change across 12 structured dimensions
+  Decomposes a proposed feature or change across 13 structured dimensions
   specific to gflow-cli's failure surfaces (WAF/reCAPTCHA, Playwright selectors,
   auth token lifecycle, batch resume, data layer safety, cross-platform paths).
   Produces a severity-ranked scenario table to feed into the PLAN spec and
@@ -12,7 +12,7 @@ description: >
 # `scenario` — Edge Case & Scenario Explorer
 
 Systematic pre-implementation scenario analysis. For a given feature or change,
-produces a severity-ranked table of test scenarios across 12 dimensions tuned
+produces a severity-ranked table of test scenarios across 13 dimensions tuned
 to gflow-cli's known failure surfaces. Feed the output into PLAN.md tasks and
 `tests/features/` BDD scenarios before entering EXECUTE mode.
 
@@ -46,7 +46,7 @@ Skip for: pure doc changes, CHANGELOG/version bumps, `scripts/` tooling with no 
 
 ---
 
-## The 12 dimensions
+## The 13 dimensions
 
 For each dimension, enumerate scenarios that are **non-obvious** — do not list
 things that a basic happy-path test already covers. Focus on things that break
@@ -142,6 +142,17 @@ A new `structlog` event is emitted — is its key name stable and documented in
 `remediation_hint`)? `correlation_id` is bound at the process boundary — does
 it propagate into the new code path or is it missing from the event?
 
+### D13 — MCP surface parity
+gflow ships the same capability twice: as a CLI command and as an MCP tool. Every
+edge case above therefore has an MCP twin — enumerate it, because the paths are not
+the same code. The MCP tool can run **direct** or **queued through
+`worker/codec.py`**, so a param that works via the CLI can be accepted and silently
+dropped on the queued path. Ask: what does this feature look like invoked as an MCP
+tool? Which errors reach the agent as a Problem Details envelope rather than an exit
+code? Does the tool's docstring still describe the behaviour truthfully? The six
+mirror axes are enumerated once, in `skills/check/SKILL.md` step 1b — do not restate
+them here, scenario's job is only to name the MCP cases that need scenarios.
+
 ---
 
 ## Artifact location
@@ -157,7 +168,7 @@ locale-selectors (#170) cycles — do not leave the analysis only in conversatio
 # Scenario: <feature short title>
 
 ## Coverage map
-<Which of the 12 dimensions are relevant for this feature? List active dimensions and why skipped dimensions are skipped.>
+<Which of the 13 dimensions are relevant for this feature? List active dimensions and why skipped dimensions are skipped.>
 
 ## Scenario table
 
@@ -204,4 +215,4 @@ Feature: <feature name>
 ## Provenance
 
 Adapted from `vc-scenario` in [vibecode-pro-max-kit](https://github.com/withkynam/vibecode-pro-max-kit) (assessment 2026-05-28).
-12 dimensions re-scoped to gflow-cli's specific failure surfaces: Google WAF/reCAPTCHA, Playwright selector drift, auth token lifecycle, batch resume idempotency, SQLite data layer, RFC 9457 error propagation, cross-platform Windows/macOS/Linux paths.
+13 dimensions re-scoped to gflow-cli's specific failure surfaces: Google WAF/reCAPTCHA, Playwright selector drift, auth token lifecycle, batch resume idempotency, SQLite data layer, RFC 9457 error propagation, cross-platform Windows/macOS/Linux paths.

@@ -6,7 +6,9 @@ Enforces (for the version in pyproject.toml):
   3. CHANGELOG footer links: ``[<version>]: …compare/…v<version>`` and
      ``[Unreleased]: …compare/v<version>...HEAD``,
   4. ``docs/LIVE_VERIFICATION_v<version>.md`` exists (the step-4b gate),
-  5. ``docs/INDEX.md`` references that live-verification doc.
+  5. ``docs/INDEX.md`` references that live-verification doc,
+  6. ``docs/PROJECT_STATUS.md``'s "## Current release" section names this
+     version (added 2026-09-02 — see ``_project_status_violations``).
 
 Run by the main-base guard workflow on PRs targeting ``main`` (release PRs).
 Born 2026-07-17: v0.38.1 was initially cut WITHOUT /gflow:release — the missing
@@ -59,7 +61,41 @@ def find_violations(root: Path) -> list[str]:
     ):
         violations.append(f"docs/INDEX.md: no reference to LIVE_VERIFICATION_v{version}.md")
 
+    violations.extend(_project_status_violations(root, version))
     return violations
+
+
+def _project_status_violations(root: Path, version: str) -> list[str]:
+    """``docs/PROJECT_STATUS.md``'s "Current release" must name this version.
+
+    That file's own header promises it is "Updated on every signed tag", and
+    nothing enforced it: v0.64.0 was cut with the section still announcing
+    v0.63.0 as current, caught only because a human doc-review council read the
+    file. Shipping a release that announces the wrong version as current is a
+    documentation defect users see, so it belongs in the mechanical gate.
+
+    Scoped to the "## Current release" section deliberately. Every past release
+    is still named further down the file, so a whole-file substring search
+    would pass on a completely stale header — the exact drift being caught.
+    """
+    status = root / "docs" / "PROJECT_STATUS.md"
+    if not status.exists():
+        return ["docs/PROJECT_STATUS.md missing (step 9 of /gflow:release)"]
+
+    text = status.read_text(encoding="utf-8")
+    m = re.search(r"^## Current release\s*$", text, re.M)
+    if not m:
+        return ['docs/PROJECT_STATUS.md: no "## Current release" section found']
+
+    rest = text[m.end() :]
+    next_heading = re.search(r"^(?:## |<details>)", rest, re.M)
+    section = rest[: next_heading.start()] if next_heading else rest
+    if f"v{version}" not in section:
+        return [
+            f'docs/PROJECT_STATUS.md: "## Current release" does not mention v{version} '
+            "— update it to describe the release being cut (step 9 of /gflow:release)"
+        ]
+    return []
 
 
 def main() -> int:

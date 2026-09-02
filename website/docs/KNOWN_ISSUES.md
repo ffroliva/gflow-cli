@@ -14,6 +14,58 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### A Veo extend segment is 7 seconds, not the 8 Flow advertises — so concat pads a frozen second
+
+- **Status:** Open · **Severity:** Medium (audible/visible on every internal seam of a chained extend) · **Affected:** `gflow video extend -n >1` with `-o`, and any scene mixing extend segments
+- **Discovered:** 2026-09-01, by live verification of the extend feature. Offline tests could not have found it.
+
+**What happens.** `gflow video extend ... -n 2 -o out.mp4` produces a file whose
+audio drops to digital silence (−91 dB) for exactly one second before each
+internal seam, over a **frozen video frame**. The seam itself is clean; the dead
+second sits immediately before it.
+
+**Measured.** In a 3-clip render (original + 2 extensions), per-second mean volume:
+
+```
+ 7s -28.8   8s -26.4      <- original -> extension seam: continuous
+14s -29.1  15s -75.1  16s -33.9   <- extension -> extension seam: 1s dropout
+```
+
+Finer slices put the silence at 15.00–15.99s exactly. Reproduced independently on
+a second render made days earlier from different prompts (14s −22.4, **15s −70.1**,
+16s −23.9), so it is systematic, not a one-off.
+
+**Root cause.** The extension media is **7.000000 seconds** — both video and audio
+streams, confirmed by `ffprobe` on the downloaded clip. But:
+
+- the capability listing advertises `videoLengthSeconds: 8` for
+  `veo_3_1_extension_lite`, and
+- `getSceneWorkflows` reports `total_duration=8.0`, `end=8.0` for that clip.
+
+`ConcatInput` passes those metadata values through verbatim, so Flow's
+server-side concat stretches a 7s clip into an 8s slot by holding the last frame
+and muting. The final segment escapes it only because the render ends before its
+padding (23.02s for 3 clips, not 24s).
+
+**Why it matters more than it looks.** A freeze-hold is the specific failure the
+Compiled Growth parable runbook forbids — *"NEVER pad by freeze-holding a frame —
+reads as 'video stuck'"* — and that pipeline is the named consumer for extend.
+An N-segment chain has N−1 of these.
+
+**Not yet established** (do not fix on a guess):
+
+- whether 7.0s is constant across extend models, aspects and tiers, or specific
+  to `veo_3_1_extension_lite`;
+- whether Flow's own UI renders the same padding (i.e. whether this is our
+  concat inputs or Flow's behaviour end-to-end);
+- whether any API field reports the real media duration, which is what a clean
+  fix needs — clamping `ConcatInput.end` to a hardcoded 7.0 would be a guess
+  dressed as a fix.
+
+**Workaround today.** Render without `-o` and trim in post, or accept the
+freeze-hold. Single-segment extends are unaffected.
+
+
 ### An out-of-range Playwright silently wedges video generation
 
 - **Status:** Mitigated (v0.49.0 — upper-bounded dependency + fail-fast watchdog)

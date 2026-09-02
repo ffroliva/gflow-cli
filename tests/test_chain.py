@@ -293,6 +293,102 @@ async def test_rejects_non_interpolation_model_up_front(tmp_path: Path) -> None:
     client.generate_video.assert_not_awaited()
 
 
+async def test_rejects_per_link_duration_up_front(tmp_path: Path) -> None:
+    """#634: a per-link ``duration`` is rejected BEFORE any spend.
+
+    No model a chain can use renders a duration control: ``supports_duration()``
+    is True for ``OMNI_FLASH`` only, and chains reject ``OMNI_FLASH`` outright.
+    So any manifest ``duration`` is unsatisfiable by construction. Before this
+    guard the DTO's bare ValueError escaped mid-chain — AFTER earlier links had
+    rendered and billed — as exit 1 "Unexpected error".
+    """
+    # Link 0 is given a WORKING result on purpose: without the guard it renders
+    # and bills before link 1 dies, which is precisely the mid-spend failure.
+    client = _make_client([_ok_result("m0", tmp_path / "link0.mp4")])
+    links = [
+        ChainLinkSpec(prompt="a cat wakes up"),
+        ChainLinkSpec(prompt="the cat stretches", duration=4),
+    ]
+
+    with pytest.raises(ModelModeIncompatibilityError) as excinfo:
+        await run_chain(
+            client=client,
+            links=links,
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            extractor=_fake_extractor([tmp_path / "link0_lastframe.jpg"]),
+        )
+
+    msg = str(excinfo.value)
+    assert "duration" in msg.lower()
+    assert "links[1]" in msg, "names the offending link index"
+    client.generate_video.assert_not_awaited()
+
+
+async def test_rejects_per_link_omni_flash_override_up_front(tmp_path: Path) -> None:
+    """#634: a per-LINK ``model`` override of omni_flash is rejected too.
+
+    ``run_chain`` only ever tested the chain-level ``model``, but
+    ``_build_link_request`` prefers ``spec.model`` when set — so a manifest line
+    carrying ``"model": "omni-flash"`` walked straight past the up-front
+    rejection and into a generation the chain invariant forbids.
+    """
+    # Link 0 is given a WORKING result on purpose: without the guard it renders
+    # and bills before link 1 dies, which is precisely the mid-spend failure.
+    client = _make_client([_ok_result("m0", tmp_path / "link0.mp4")])
+    links = [
+        ChainLinkSpec(prompt="a cat wakes up"),
+        ChainLinkSpec(prompt="the cat stretches", model=VideoModel.OMNI_FLASH),
+    ]
+
+    with pytest.raises(ModelModeIncompatibilityError) as excinfo:
+        await run_chain(
+            client=client,
+            links=links,
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            extractor=_fake_extractor([tmp_path / "link0_lastframe.jpg"]),
+        )
+
+    assert "omni" in str(excinfo.value).lower()
+    client.generate_video.assert_not_awaited()
+
+
+async def test_per_link_veo_model_override_still_allowed(tmp_path: Path) -> None:
+    """Negative control for the two guards above: a per-link override of a
+    NON-omni model with no duration is still accepted and still generates.
+
+    Without this, "reject per-link overrides" could quietly grow into "reject
+    all per-link models" and no test would notice.
+    """
+    results = [
+        _ok_result("m0", tmp_path / "link0.mp4"),
+        _ok_result("m1", tmp_path / "link1.mp4"),
+    ]
+    client = _make_client(results)
+    links = [
+        ChainLinkSpec(prompt="a cat wakes up"),
+        ChainLinkSpec(prompt="the cat stretches", model=VideoModel.VEO_3_1_FAST),
+    ]
+
+    out = await run_chain(
+        client=client,
+        links=links,
+        out_dir=tmp_path,
+        model=VideoModel.VEO_3_1_LITE,
+        extractor=_fake_extractor([tmp_path / "link0_lastframe.jpg"]),
+    )
+
+    assert len(out) == 2
+    assert client.generate_video.await_count == 2
+    # The override must actually REACH the request. Asserting only the await
+    # count would pass an implementation that silently dropped spec.model.
+    link1_req = client.generate_video.await_args_list[1].kwargs["req"]
+    assert link1_req.model is VideoModel.VEO_3_1_FAST
+    link0_req = client.generate_video.await_args_list[0].kwargs["req"]
+    assert link0_req.model is VideoModel.VEO_3_1_LITE, "link 0 inherits the chain default"
+
+
 async def test_per_link_recording_hooks_threaded_with_own_request(tmp_path: Path) -> None:
     """run_chain forwards the per-link ``on_started`` into generate_video and
     calls ``on_link_completed`` once per link — each with that link's OWN request

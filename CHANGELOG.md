@@ -10,21 +10,140 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The `referenceEntity` guard never ran, on any image or video generation
-  ([#615](https://github.com/ffroliva/gflow-cli/issues/615)).** `_intercept_reference_entities`
-  strips unrequested character entities from outgoing generation requests, so a
-  "poisoned" entity left in the composer cannot smuggle itself into an unrelated run.
-  It had never fired once. Two independent causes: the route glob
-  `**/batchGenerateImages` requires the final path segment to equal
-  `batchGenerateImages`, but the real endpoint is `.../flowMedia:batchGenerateImages`,
-  so it could not match; and the requests are Web-Worker-delegated in the current Flow
-  cohort, which page-level routing cannot observe at all. The failure was invisible
-  because the response listener does a substring test and kept working normally — the
-  guard failed *open*, silently. It is now registered on the browser context with a
-  substring matcher. Reported by [@DioServis](https://github.com/DioServis), who
-  separated both causes in the report. Note the guard covers browser-driven generation
-  only: direct-wire routes issued through Playwright's `APIRequestContext` are not
-  routable at all, tracked in
+  ([#615](https://github.com/ffroliva/gflow-cli/issues/615)).**
+  `_intercept_reference_entities` strips character entities the caller did not
+  request, so a "poisoned" entity left in the Flow composer cannot smuggle itself
+  into an unrelated generation. It had never fired once, on any released version.
+
+  The route glob `**/batchGenerateImages` requires the final path segment to equal
+  `batchGenerateImages`, but the real endpoint is `.../flowMedia:batchGenerateImages`
+  — so it could never match. The **video** guard was dead for the same reason
+  (`.../video:batchAsyncGenerateVideoText`), which the original report does not
+  mention. Registration also moved from the page to the browser context, which
+  covers worker-delegated requests the page level cannot observe.
+
+  The failure was invisible because the response listener does a substring test and
+  kept working normally, and because the guard logged only when it *stripped*
+  something — so "never ran" and "ran, nothing to strip" were identical silence. It
+  failed **open**, quietly. Reported by
+  [@DioServis](https://github.com/DioServis), who separated both causes.
+
+  **Verified live**, A/B-controlled at zero credits: with the fix absent the guard
+  never fired and the test failed; with it present the guard fired and the test
+  passed — same account, same prompt, one variable. That also settles whether Flow
+  delegates to a dedicated Web Worker (it does; `context.route` suffices) and
+  confirms the request rewrite does not corrupt the body. See
+  [docs/LIVE_VERIFICATION_reference_entity_guard.md](docs/LIVE_VERIFICATION_reference_entity_guard.md).
+
+  **Coverage is partial by construction:** direct-wire routes issued through
+  Playwright's `APIRequestContext` are not routable at all and bypass the guard
+  regardless of matcher — tracked in
   [#619](https://github.com/ffroliva/gflow-cli/issues/619).
+
+## [0.64.0] — 2026-09-02
+
+### Added
+
+- **`gflow video i2v --model omni-flash --end-frame` now works** ([#626](https://github.com/ffroliva/gflow-cli/issues/626)).
+  Google shipped first-and-last-frame generation for Omni 1.1 Flash, so the
+  guard that rejected that combination with exit 17 is gone:
+
+  ```bash
+  gflow video i2v ./start.png "she turns toward the window" \
+      --model omni-flash --end-frame ./end.png --duration 10
+  ```
+
+  omni-flash is the only model that also exposes `--duration`, so this is the
+  one route to a 10-second first+last interpolation.
+
+### Changed
+
+- **i2v end-frame safety moved from a static table to a post-submit route
+  check.** gflow used to decide which models could carry an end frame from a
+  hardcoded capability list, which silently went stale when Google shipped the
+  feature. It now verifies the route Flow *actually* used: a run that carried an
+  end frame but came back on `batchAsyncGenerateVideoStartImage` — Flow dropping
+  the frame at submit and billing a clip that was never interpolated — fails
+  with `WireFormatError` instead of being reported as a success. This also
+  catches a partial or staged rollback on any account, which the old table
+  could not.
+
+  **Breaking for scripts** that branched on exit 17 for `omni-flash` +
+  `--end-frame`: that combination now succeeds. Exit 17 is unchanged for
+  `gflow video chain --model omni-flash`, which is still rejected (chain-scale
+  seeded i2v remains unverified).
+
+- **MCP↔CLI parity is now a duty of every pipeline phase** (contributor-facing).
+  `tests/mcp/test_cli_parity.py` is command-level: it fires when a new CLI *leaf*
+  lacks a mapped MCP tool, and stays green while an option goes unmirrored, a
+  queued-payload key goes unread, or a tool docstring asserts a restriction the
+  CLI no longer has. #626 shipped exactly that third case — `mcp/tools.py` and
+  `docs/MCP.md` kept telling agents `omni_flash` was rejected for i2v-with-frames
+  through a fully green pipeline. Each skill now owns a slice: `issue-assessment`
+  names affected surfaces, `predict` scopes the MCP blast radius, `scenario` adds
+  **D13**, `plan` makes the MCP mirror **task 6** (not optional when task 5
+  exists), `pr-council-review` adds **D15**, `check` adds **step 1b** (the
+  canonical six mirror axes), `live-verify` treats the MCP queued path as
+  separate code, and `doc-review` grades a *false* MCP claim as release-blocking.
+  Automating the mechanically checkable part is tracked in
+  [#628](https://github.com/ffroliva/gflow-cli/issues/628).
+
+### Fixed
+
+- **`AGENTS.md`'s Impeccable Routine was missing `generate_website_docs.py --check`**,
+  which `skills/check` already ran. Following the shorter list produced a green
+  local run against a stale `website/docs/` mirror and a red CI. The two lists now
+  agree.
+
+## [0.63.0] — 2026-09-01
+
+### Added
+
+- **`gflow video extend` — continue a clip past Flow's 8-second ceiling.** Veo's
+  extend route generates a new 8s segment seeded server-side from the source
+  clip, so motion and audio carry across the join instead of restarting from a
+  still (which is what `video chain` does, and why it needs a fade guard). Pass
+  one prompt per segment, or `--segments N` to reuse the last one:
+
+  ```bash
+  gflow video extend <media-id> "the wave recedes" --project <id>
+  gflow video extend <media-id> "drifts out to sea" --project <id> -n 4 -o long.mp4
+  ```
+
+  The result is a Flow Scene; `-o` renders it to a single mp4 through the
+  existing credit-free server-side concat.
+
+  > Known limitation, found in live verification: a segment carries ~7s of real
+  > content though Flow advertises and bills 8s, so each internal seam of a
+  > multi-segment render is preceded by ~1s of frozen frame and silence. Single
+  > segments are unaffected. Details and the open questions are in
+  > [KNOWN_ISSUES](KNOWN_ISSUES.md).
+
+  - **The model key is resolved per run, never hardcoded.** Flow's extend family
+    is tier-gated — `_ultra` variants are Advanced-only and read `UNAVAILABLE`
+    elsewhere — so the key comes from the account's own capability listing,
+    picking the cheapest orderable model exactly as Flow's own UI does. A pinned
+    key would 403 forever on the wrong tier.
+  - **Costs are shown before anything is submitted**, and a pre-flight balance
+    check refuses a run the balance cannot finish. `--dry-run` prints the plan
+    without opening a browser.
+  - **Serial by construction, and paced.** Segments submit one at a time with a
+    non-zero default jitter (`GFLOW_CLI_JITTER_RANGE`). A refusal aborts with
+    completed segments preserved and is never auto-retried.
+  - `1:1` is refused up front — Flow publishes no square extend model.
+
+### Fixed
+
+- **Ctrl+C during a billed run said nothing.** `run_with_handlers` exited 130
+  silently, so a user who interrupted a multi-segment run could not tell whether
+  anything had been charged or how to resume. It now reports credits spent,
+  segments completed and the resume handle. Fixed at the shared boundary, so
+  `video chain` and `movie run` gain it too.
+- **`sessionId` was not redacted.** `redact_metadata` covered `token` and
+  `recaptchaToken` but not `sessionId`, which the extend request carries. Not a
+  credential, but account-correlatable, and it would otherwise reach any logged
+  request body or diagnostics bundle verbatim.
+
 
 - **The offline test suite could `git checkout develop` in the developer's own
   clone ([#605](https://github.com/ffroliva/gflow-cli/issues/605)).** git's
@@ -3484,7 +3603,9 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.62.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.64.0...HEAD
+[0.64.0]: https://github.com/ffroliva/gflow-cli/compare/v0.63.0...v0.64.0
+[0.63.0]: https://github.com/ffroliva/gflow-cli/compare/v0.62.1...v0.63.0
 [0.62.1]: https://github.com/ffroliva/gflow-cli/compare/v0.62.0...v0.62.1
 [0.62.0]: https://github.com/ffroliva/gflow-cli/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/ffroliva/gflow-cli/compare/v0.60.0...v0.61.0

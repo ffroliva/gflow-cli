@@ -513,22 +513,29 @@ def test_i2v_model_choice_includes_omni_flash() -> None:
     assert "omni-flash" in list(t2v_model.type.choices)
 
 
-def test_i2v_rejects_omni_flash_end_frame_via_cli(tmp_path: Path) -> None:
-    """--model omni-flash with --end-frame exits 17 pre-spend: first+last is
-    'coming soon' for Omni Flash per Flow's support matrix (refs #125)."""
+def test_i2v_accepts_omni_flash_end_frame_via_cli(tmp_path: Path) -> None:
+    """`--model omni-flash --end-frame` runs through the real Click surface (#626).
+
+    The unit-level test above drives `_run_i2v` directly; this one goes through
+    argument parsing so a Click `Choice` or option-level guard reintroducing the
+    rejection is caught too.
+    """
+    from gflow_cli.api.video import VideoModel
+
     start = tmp_path / "start.png"
     end = tmp_path / "end.png"
     start.write_bytes(b"\x89PNG\r\n\x1a\n")
     end.write_bytes(b"\x89PNG\r\n\x1a\n")
     runner = CliRunner()
+    captured: dict[str, object] = {}
 
-    async def _should_not_run(*_a: object, **_k: object) -> None:
-        raise AssertionError("_generate_and_report must not be reached")
+    async def _capture(request: object, **_k: object) -> None:
+        captured["request"] = request
 
     with (
         patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
         patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
-        patch("gflow_cli.cli_video._generate_and_report", new=_should_not_run),
+        patch("gflow_cli.cli_video._generate_and_report", new=_capture),
     ):
         result = runner.invoke(
             video,
@@ -542,7 +549,10 @@ def test_i2v_rejects_omni_flash_end_frame_via_cli(tmp_path: Path) -> None:
                 str(end),
             ],
         )
-    assert result.exit_code == 17, result.output
+    assert result.exit_code == 0, result.output
+    request = captured["request"]
+    assert request.model is VideoModel.OMNI_FLASH  # type: ignore[attr-defined]
+    assert request.end_image == end  # type: ignore[attr-defined]
 
 
 def test_i2v_run_defaults_to_veo_lite_when_model_omitted(tmp_path: Path) -> None:
@@ -605,45 +615,50 @@ def test_i2v_run_accepts_omni_flash_start_only(tmp_path: Path) -> None:
     assert request.model is VideoModel.OMNI_FLASH  # type: ignore[attr-defined]
 
 
-def test_i2v_run_rejects_omni_flash_with_end_frame(tmp_path: Path) -> None:
-    """omni-flash + --end-frame must be rejected pre-spend with
-    ModelModeIncompatibilityError (exit 17): first+last is 'coming soon' for
-    Omni Flash per Flow's support matrix, with no wire proof of the route."""
+def test_i2v_run_accepts_omni_flash_with_end_frame(tmp_path: Path) -> None:
+    """omni-flash + --end-frame reaches generation with BOTH frames bound (#626).
+
+    Flow shipped first+last for Omni 1.1 Flash, and a route-aborted capture on
+    2026-09-02 proved the wire route: the submit fired
+    ``video:batchAsyncGenerateVideoStartAndEndImage`` with a non-null
+    ``startImage`` AND ``endImage``. The pre-spend rejection this replaces
+    (exit 17) is gone for i2v; asserting both images survive onto the request
+    is what would fail if the guard were reinstated.
+    """
     import asyncio
 
+    from gflow_cli.api.video import VideoModel
     from gflow_cli.cli_video import _I2VParams, _run_i2v
-    from gflow_cli.errors import EXIT_CODE_MAP, ModelModeIncompatibilityError
 
     start = tmp_path / "start.png"
     end = tmp_path / "end.png"
     start.write_bytes(b"\x89PNG\r\n\x1a\n")
     end.write_bytes(b"\x89PNG\r\n\x1a\n")
+    captured: dict[str, object] = {}
 
-    async def _should_not_run(*_a: object, **_k: object) -> None:
-        raise AssertionError("_generate_and_report must not be reached")
+    async def _capture(request: object, **_k: object) -> None:
+        captured["request"] = request
 
-    with patch("gflow_cli.cli_video._generate_and_report", new=_should_not_run):
-        try:
-            asyncio.run(
-                _run_i2v(
-                    profile_name="default",
-                    profile_dir=tmp_path,
-                    params=_I2VParams(
-                        image=str(start),
-                        prompt="rise up",
-                        aspect="9:16",
-                        model="omni-flash",
-                        end_frame=str(end),
-                    ),
-                    out_dir=None,
-                )
+    with patch("gflow_cli.cli_video._generate_and_report", new=_capture):
+        asyncio.run(
+            _run_i2v(
+                profile_name="default",
+                profile_dir=tmp_path,
+                params=_I2VParams(
+                    image=str(start),
+                    prompt="rise up",
+                    aspect="9:16",
+                    model="omni-flash",
+                    end_frame=str(end),
+                ),
+                out_dir=None,
             )
-        except ModelModeIncompatibilityError as e:
-            assert EXIT_CODE_MAP[ModelModeIncompatibilityError] == 17
-            assert "END frame" in (e.detail or "")
-            assert "#125" in (e.detail or "")
-        else:
-            raise AssertionError("expected ModelModeIncompatibilityError")
+        )
+
+    request = captured["request"]
+    assert request.model is VideoModel.OMNI_FLASH  # type: ignore[attr-defined]
+    assert request.start_image == start  # type: ignore[attr-defined]
+    assert request.end_image == end  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -1621,6 +1636,39 @@ class TestDurationCapabilityGuard:
         assert result.exit_code == 2, result.output
         assert "no duration control" in result.output
         assert model in result.output
+
+    def test_duration_on_i2v_without_model_exits_2_not_unexpected_error(
+        self, tmp_path: Path
+    ) -> None:
+        """#630: omitting ``--model`` on i2v must not lose the explanation.
+
+        For i2v an omitted ``--model`` is not "no model" — it binds
+        ``I2V_DEFAULT_MODEL`` (veo-lite), which renders no duration control. The
+        CLI guard used to return early on ``model is None``, so this most
+        natural way to try the flag fell through to the DTO's bare ``ValueError``
+        and surfaced as "Unexpected error. … file a bug" (exit 1) — telling the
+        user to report a plain usage error whose text already existed.
+        """
+        ref = tmp_path / "ref.png"
+        ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+        result = CliRunner().invoke(
+            video, ["i2v", "a prompt", "--initial-frame", str(ref), "--duration", "8"]
+        )
+        assert result.exit_code == 2, result.output
+        assert "no duration control" in result.output
+        assert "Unexpected error" not in result.output
+
+    def test_duration_on_t2v_without_model_is_left_alone(self, tmp_path: Path) -> None:
+        """Negative control: t2v with no ``--model`` must NOT be rejected here.
+
+        t2v inherits Flow's sticky UI default, which gflow cannot know, so the
+        effective model is genuinely unresolvable — guarding it would reject a
+        run that may be perfectly valid. Only i2v has a gflow-side default to
+        resolve. Without this, "resolve the default" could quietly grow into
+        "assume veo-lite everywhere".
+        """
+        result = CliRunner().invoke(video, ["t2v", "a prompt", "--duration", "8", "--dry-run"])
+        assert "no duration control" not in result.output
 
     def test_duration_on_omni_flash_passes_the_guard(self, tmp_path: Path) -> None:
         """Negative control: the guard must not over-reject the one model that

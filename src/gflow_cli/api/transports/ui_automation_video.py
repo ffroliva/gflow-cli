@@ -54,7 +54,6 @@ from gflow_cli.errors import (
     FlowAgentUiError,
     FlowAppError,
     MediaUploadRejectedError,
-    ModelModeIncompatibilityError,
     RateLimitError,
     ReferenceNotFoundError,
     TransportTimeoutError,
@@ -88,10 +87,15 @@ VIDEO_GENERATE_ROUTES = (
 # The pure text-to-video route. An i2v request that lands here had its frame
 # refs silently dropped (issue #125) — used by the Layer-2 post-submit backstop.
 _T2V_GENERATE_ROUTE = "batchAsyncGenerateVideoText"
+# The first+last interpolation route. A request carrying an end frame that lands
+# anywhere else had that frame dropped at submit (#626) — same backstop.
+_START_AND_END_GENERATE_ROUTE = "batchAsyncGenerateVideoStartAndEndImage"
 
 # Substring, not a path glob: the real endpoints carry a namespaced final segment
 # (`.../flowMedia:batchGenerateImages`), which `**/batchGenerateImages` can never
-# match. See `_intercept_reference_entities` for why it is registered on the context.
+# match. The VIDEO endpoint is namespaced too (`.../video:batchAsyncGenerateVideoText`),
+# so `**/batchAsyncGenerateVideo*` was equally dead — #615 names only the image one.
+# See `_intercept_reference_entities` for why it is registered on the context.
 _GENERATION_ROUTE_RE = re.compile(r"batchGenerateImages|batchAsyncGenerateVideo")
 # Status-poll route — Flow's SPA polls this itself while a generation runs.
 VIDEO_STATUS_ROUTE = "batchCheckAsyncVideoGenerationStatus"
@@ -3593,49 +3597,95 @@ class VideoGenerationMixin:
             await result_or_coro
 
     @staticmethod
-    def _resolve_i2v_model(
+    def _assert_i2v_route(
+        captured_url: str,
         request: GenerateVideoRequest,
-        is_i2v_with_frames: bool,
-    ) -> VideoModel | None:
-        """Validate and resolve the effective model for an I2V request.
+        effective_model: VideoModel | None,
+    ) -> None:
+        """Fail an i2v run whose submit did not route to the endpoint its
+        frames required (issues #125, #626).
 
-        Raises ``ModelModeIncompatibilityError`` when the model/frame
-        combination is unsupported: no current model rejects a START frame
-        (omni-flash re-verified on the wire 2026-08-03, refs #125), but an END
-        frame requires :meth:`VideoModel.supports_i2v_end_frame` (omni-flash:
-        Flow lists first+last as "coming soon" — no wire proof). Returns the
-        effective model to use — defaults to ``I2V_DEFAULT_MODEL`` when
-        ``is_i2v_with_frames`` and no model is set.
+        Two mis-billing shapes, one check:
+
+        * **All frames dropped** — Flow routes to ``batchAsyncGenerateVideoText``
+          and bills a text-only clip. Observed live 2026-05-30 on omni-flash,
+          which is why omni-flash was excluded from i2v entirely at the time.
+        * **End frame dropped** — Flow keeps the start frame but degrades
+          ``StartAndEndImage`` to ``StartImage``, billing a clip that starts
+          right but was never interpolated toward the end frame. Not previously
+          detectable: until #626 no model could legally carry an end frame that
+          Flow might drop, so the T2V check above was sufficient.
+
+        Both spend a credit before we can see them — the point is to refuse to
+        report success, not to prevent the spend. This is what replaces the
+        static capability table: it validates the route Flow actually used, so
+        a staged or partial rollout surfaces as a loud failure on any account
+        rather than a silently wrong video.
         """
+        model_value = effective_model.value if effective_model else None
+        if _T2V_GENERATE_ROUTE in captured_url:
+            log.error(
+                "ui_automation_video.i2v_routed_to_t2v",
+                url=captured_url,
+                model=model_value,
+                issue_ref="#125",
+            )
+            raise WireFormatError(
+                detail=(
+                    "i2v request routed to the T2V endpoint "
+                    f"({_T2V_GENERATE_ROUTE}); Flow dropped the start/end "
+                    "frames and produced a text-only video (issue #125). "
+                    "The credit was spent but the output is not an "
+                    "interpolation — refusing to report success."
+                ),
+                route=_T2V_GENERATE_ROUTE,
+            )
+
         has_end_ref = (
             request.end_image is not None
             or request.end_image_ref_id is not None
             or request.end_image_ref_name is not None
         )
-        if (
-            is_i2v_with_frames
-            and request.model is not None
-            and has_end_ref
-            and not request.model.supports_i2v_end_frame()
-        ):
+        if has_end_ref and _START_AND_END_GENERATE_ROUTE not in captured_url:
             log.error(
-                "ui_automation_video.model_mode_rejected",
-                model=request.model.value,
-                mode=request.mode.name,
-                has_start_image=request.start_image is not None,
-                has_end_image=has_end_ref,
-                issue_ref="#125",
+                "ui_automation_video.i2v_end_frame_dropped",
+                url=captured_url,
+                model=model_value,
+                issue_ref="#626",
             )
-            raise ModelModeIncompatibilityError(
+            raise WireFormatError(
                 detail=(
-                    f"{request.model.value!r} does not support this i2v frame "
-                    f"combination: an END frame (first+last interpolation) "
-                    f"requires a Veo 3.1 model — Flow lists it as 'coming "
-                    f"soon' for omni-flash and gflow has no wire-level proof "
-                    f"of that route (refs #125). Drop the end frame, or use a "
-                    f"Veo 3.1 model (e.g. veo-lite)."
+                    "i2v request carried an END frame but Flow routed it to "
+                    f"{captured_url!r} instead of "
+                    f"{_START_AND_END_GENERATE_ROUTE}; the end frame was "
+                    "dropped at submit, so the clip is not a first+last "
+                    "interpolation (issue #626). The credit was spent — "
+                    "refusing to report success. If this persists, Flow may "
+                    "have rolled first+last back for this model or account: "
+                    "re-run without --end-frame, or use a Veo 3.1 model."
                 ),
+                route=_START_AND_END_GENERATE_ROUTE,
             )
+
+    @staticmethod
+    def _resolve_i2v_model(
+        request: GenerateVideoRequest,
+        is_i2v_with_frames: bool,
+    ) -> VideoModel | None:
+        """Resolve the effective model for an I2V request.
+
+        No model/frame combination is rejected any more: every current model
+        carries both start-only and start+end i2v. omni-flash's START frame was
+        wire-verified 2026-08-03 and its END frame on 2026-09-02 (#626) — two
+        accounts, route-aborted at zero credits, both firing
+        ``batchAsyncGenerateVideoStartAndEndImage`` with a non-null
+        ``endImage``. What replaces the pre-submit guard is
+        :meth:`_assert_i2v_route`, which checks the route Flow *actually* used
+        rather than the one a static capability table predicted.
+
+        Returns the effective model to use — defaults to ``I2V_DEFAULT_MODEL``
+        when ``is_i2v_with_frames`` and no model is set.
+        """
         effective_model = request.model
         if is_i2v_with_frames and effective_model is None:
             effective_model = I2V_DEFAULT_MODEL
@@ -3777,27 +3827,12 @@ class VideoGenerationMixin:
                     generate_captured
                 )
 
-            # Layer-2 backstop (issue #125): for i2v, the request MUST have
-            # routed to a Start/StartAndEndImage endpoint.
+            # Layer-2 backstop (issues #125, #626): for i2v, the request MUST
+            # have routed to the endpoint matching the frames it carried.
             if is_i2v_with_frames:
-                captured_url = str(generate_resp.get("url") or "")
-                if _T2V_GENERATE_ROUTE in captured_url:
-                    log.error(
-                        "ui_automation_video.i2v_routed_to_t2v",
-                        url=captured_url,
-                        model=(effective_model.value if effective_model else None),
-                        issue_ref="#125",
-                    )
-                    raise WireFormatError(
-                        detail=(
-                            "i2v request routed to the T2V endpoint "
-                            f"({_T2V_GENERATE_ROUTE}); Flow dropped the start/end "
-                            "frames and produced a text-only video (issue #125). "
-                            "The credit was spent but the output is not an "
-                            "interpolation — refusing to report success."
-                        ),
-                        route=_T2V_GENERATE_ROUTE,
-                    )
+                VideoGenerationMixin._assert_i2v_route(
+                    str(generate_resp.get("url") or ""), request, effective_model
+                )
 
             if request.reference_entities:
                 VideoGenerationMixin._assert_entities_attached(

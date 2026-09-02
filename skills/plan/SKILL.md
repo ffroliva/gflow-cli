@@ -91,10 +91,15 @@ Skip any question already answered by predict/scenario output or the feature des
 | 3 | Core implementation | Domain objects / value types / parsers. |
 | 4 | Transport / API layer | `FlowApiClient` or `UiAutomationTransport` changes. |
 | 5 | CLI surface | `cli_*.py` + Click commands + `--help` text. |
-| 6 | Docs update | `USAGE.md`, `CONFIGURATION.md` (new env vars), `KNOWN_ISSUES.md` if relevant. |
-| 7 | Full gates + release prep | `/gflow:check` green; CHANGELOG updated. |
+| 6 | **MCP surface mirror** | **Never optional when task 5 exists.** `mcp/tools.py` signature + docstring claims, the queued-path payload keys in `worker/codec.py`, `tests/mcp/test_cli_parity.py` for a new leaf. |
+| 7 | Docs update | `USAGE.md`, `CONFIGURATION.md` (new env vars), `docs/MCP.md`, `KNOWN_ISSUES.md` if relevant. |
+| 8 | Full gates + release prep | `/gflow:check` green; CHANGELOG updated. |
 
-Adjust: not every task applies to every feature. Merge or split tasks as the scope demands.
+Adjust: not every task applies to every feature. Merge or split tasks as the scope demands —
+**except task 6.** If the plan has a task 5, it has a task 6, because gflow ships every
+capability twice and the automated gates cannot see the two drifting apart. A plan that
+touches the CLI and has no MCP task is incomplete, not lean. The mirror axes are enumerated
+once, in `skills/check/SKILL.md` step 1b; cite them, do not copy them.
 
 ### Phase 4 — Draft the plan and show it to the user
 

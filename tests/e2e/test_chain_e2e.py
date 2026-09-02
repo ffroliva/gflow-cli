@@ -55,7 +55,6 @@ pytestmark = [pytest.mark.e2e, pytest.mark.e2e_video]
 
 _E2E_ASPECT_ENV = "GFLOW_CLI_E2E_VIDEO_ASPECT"
 _E2E_MODEL_ENV = "GFLOW_CLI_E2E_VIDEO_MODEL"
-_E2E_DURATION_ENV = "GFLOW_CLI_E2E_CHAIN_DURATION"
 
 # Short, safe prompts — generic enough to pass content-policy, with motion so
 # the seeded I2V link has something to continue.
@@ -101,10 +100,6 @@ def _model() -> VideoModel:
     return model
 
 
-def _duration() -> int:
-    return int(os.environ.get(_E2E_DURATION_ENV, "4").strip())
-
-
 @pytest.mark.asyncio
 async def test_chain_two_link_seeds_i2v_from_last_frame(
     monkeypatch: pytest.MonkeyPatch,
@@ -145,11 +140,13 @@ async def test_chain_two_link_seeds_i2v_from_last_frame(
 
     aspect = _aspect()
     model = _model()
-    duration = _duration()
 
+    # No per-link duration: chains reject it outright (#634) because only
+    # omni_flash renders a duration control and chains reject omni_flash.
+    # Passing one here made this test fail 100% of the time rather than skip.
     links = [
-        ChainLinkSpec(prompt=_LINK0_PROMPT, duration=duration),
-        ChainLinkSpec(prompt=_LINK1_PROMPT, duration=duration),
+        ChainLinkSpec(prompt=_LINK0_PROMPT),
+        ChainLinkSpec(prompt=_LINK1_PROMPT),
     ]
 
     async with FlowApiClient(profile_dir=profile) as client:

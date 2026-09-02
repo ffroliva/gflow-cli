@@ -21,17 +21,26 @@ from gflow_cli._cli_helpers import (
     _validate_project_id,
     apply_tool_option,
     run_with_handlers,
+    set_interrupt_context,
     slugify_project_name,
     tool_option,
 )
+from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.video import VideoModel, is_media_uuid, reference_cap_for
+from gflow_cli.api.extend_chain import run_extend_chain
+from gflow_cli.api.video import (
+    I2V_DEFAULT_MODEL,
+    VideoModel,
+    is_media_uuid,
+    reference_cap_for,
+)
 from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.models import AssetKind, OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataStoreError
+from gflow_cli.errors import ConfigurationError, DataStoreError, GFlowError
+from gflow_cli.image_batch import resolve_jitter_range
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
@@ -159,32 +168,49 @@ def _reject_agentic_ui_mode(ui_mode: str | None) -> None:
         raise click.UsageError(msg)
 
 
-def _reject_duration_without_control(model: str | None, duration: str | int | None) -> None:
+def _reject_duration_without_control(
+    model: str | None,
+    duration: str | int | None,
+    *,
+    default_model: VideoModel | None = None,
+) -> None:
     """#451/#288: reject ``--duration`` on a model that renders no duration control.
 
     The DTO guards this too (defence in depth for API callers), but a bare
     ``ValueError`` surfaces through the CLI as "Unexpected error." (exit 1) and
     the explanation is lost. Raising a ``UsageError`` here gives exit 2 and
     prints the reason — the same treatment ``--ui-mode agentic`` gets.
+
+    ``default_model`` is the model this command binds when the user passes no
+    ``--model`` (#630). Pass it only where gflow *knows* that default: `i2v`
+    binds ``I2V_DEFAULT_MODEL``, so an omitted flag there is not "no model" and
+    the guard must still run — otherwise the most natural way to try
+    ``--duration`` skips this check and dies as "Unexpected error." `t2v`/`r2v`
+    inherit Flow's sticky UI default, which gflow cannot know, so they pass
+    nothing and stay unguarded by design rather than by assumption.
     """
-    if duration is None or model is None:
+    if duration is None:
         return
-    try:
-        resolved = VideoModel.from_cli(model)
-    except ValueError:
-        # Unknown alias: Click's Choice already rejects it on the CLI path, and
-        # a programmatic caller deserves that error, not this guard's. Let the
-        # real validation report it rather than dying as "Unexpected error."
+    if model is None:
+        resolved = default_model
+    else:
+        try:
+            resolved = VideoModel.from_cli(model)
+        except ValueError:
+            # Unknown alias: Click's Choice already rejects it on the CLI path, and
+            # a programmatic caller deserves that error, not this guard's. Let the
+            # real validation report it rather than dying as "Unexpected error."
+            return
+    if resolved is None or resolved.supports_duration():
         return
-    # from_cli returns None only for a None argument, which we returned on above.
-    if resolved is not None and not resolved.supports_duration():
-        msg = (
-            f"--duration is not supported by --model {model} — Flow renders no duration "
-            f"control for it (verified live; refs #451/#288). Only omni-flash exposes a "
-            f"duration (4/6/8/10s). Drop --duration to accept Flow's default length, or "
-            f"use --model omni-flash."
-        )
-        raise click.UsageError(msg)
+    named = f"--model {model}" if model is not None else f"the default model {resolved.value}"
+    msg = (
+        f"--duration is not supported by {named} — Flow renders no duration "
+        f"control for it (verified live; refs #451/#288). Only omni-flash exposes a "
+        f"duration (4/6/8/10s). Drop --duration to accept Flow's default length, or "
+        f"use --model omni-flash."
+    )
+    raise click.UsageError(msg)
 
 
 def _relocate_single_video(item: Any, target: Path) -> Any:
@@ -509,28 +535,20 @@ async def _run_i2v(
         Mode,
         VideoModel,
     )
-    from gflow_cli.errors import ModelModeIncompatibilityError
 
-    # Resolve the model with i2v-specific defaulting + validation, BEFORE any
-    # paid call. Start-frame i2v is supported by every current model (omni
-    # included — re-verified on the wire 2026-08-03, refs #125). The END frame
-    # is narrower: Flow lists first+last as "coming soon" for omni-flash and
-    # there is no wire proof for it, so reject that combination up front — a
-    # stale `--config` JSON or direct programmatic call can smuggle it past
-    # the Click Choice.
+    # Resolve the model with i2v-specific defaulting, BEFORE any paid call.
+    # No model/frame combination is rejected here any more: every current model
+    # carries both start-only and start+end i2v. omni-flash's start frame was
+    # wire-verified 2026-08-03 and its END frame on 2026-09-02 (#626) — two
+    # accounts, route-aborted at zero credits, both firing
+    # ``batchAsyncGenerateVideoStartAndEndImage`` with a non-null ``endImage``.
+    # A partial regression (Flow silently dropping the end frame back to the
+    # StartImage route) is caught post-submit by the transport's route
+    # backstop, which fails the run rather than bill for a clip that ignored
+    # the frame.
     resolved_model = VideoModel.from_cli(params.model)
     if resolved_model is None:
         resolved_model = I2V_DEFAULT_MODEL
-    has_end_frame = params.end_frame is not None or params.end_frame_ref_id is not None
-    if has_end_frame and not resolved_model.supports_i2v_end_frame():
-        msg = (
-            f"{resolved_model.value!r} does not support an END frame "
-            f"(first+last interpolation): Flow's official support matrix lists "
-            f"it as 'coming soon' for this model and gflow has no wire-level "
-            f"proof of the StartAndEndImage route for it (refs #125). Drop "
-            f"--end-frame, or use a Veo 3.1 model (e.g. --model veo-lite)."
-        )
-        raise ModelModeIncompatibilityError(detail=msg)
 
     effective_title = params.project_name or slugify_project_name(params.prompt, prefix="gflow-i2v")
     request = GenerateVideoRequest(
@@ -924,6 +942,7 @@ async def _run_chain(
 
     from gflow_cli import chain as chain_mod
     from gflow_cli.api.video import Aspect
+    from gflow_cli.chain import reject_unusable_links
     from gflow_cli.chain_manifest import parse_chain_manifest
     from gflow_cli.data.chain_repo import ChainLinkRecorder
     from gflow_cli.errors import ChainManifestError
@@ -932,6 +951,14 @@ async def _run_chain(
     aspect_enum = Aspect.from_cli(aspect)
 
     links: list[ChainLinkSpec] = parse_chain_manifest(_Path(manifest))
+
+    # Validate here as well as inside run_chain (#634). run_chain's own guard is
+    # the root-cause one and protects programmatic callers, but it runs after the
+    # --dry-run short-circuit below, after the cost prompt, and after Chrome
+    # boots — so without this call `chain bad.jsonl --dry-run` would exit 0 on a
+    # manifest the real run refuses, and the pre-flight command would green-light
+    # the crash it exists to prevent.
+    reject_unusable_links(model=resolved_model, links=links)
 
     if max_links is not None and len(links) > max_links:
         msg = (
@@ -1286,9 +1313,8 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     default=None,
     type=click.Choice(["omni-flash", "veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
     help=(
-        "Video model. Defaults to veo-lite (cheapest). omni-flash supports the "
-        "start frame only (--end-frame requires a Veo 3.1 model) and unlocks "
-        "--duration 10."
+        "Video model. Defaults to veo-lite (cheapest). omni-flash supports both "
+        "--initial-frame and --end-frame, and unlocks --duration 10."
     ),
 )
 @click.option(
@@ -1331,7 +1357,9 @@ def i2v(  # NOSONAR
 ) -> None:
     """Generate a video from an initial frame + motion PROMPT."""
     _reject_agentic_ui_mode(ui_mode)
-    _reject_duration_without_control(model, duration)
+    # i2v binds I2V_DEFAULT_MODEL when --model is omitted, so the guard needs
+    # that default to fire on the no-flag path (#630).
+    _reject_duration_without_control(model, duration, default_model=I2V_DEFAULT_MODEL)
     resolved_image, resolved_prompt = _resolve_i2v_args(image, prompt, initial_frame)
 
     end_hint = "'--end-frame'"
@@ -1560,7 +1588,9 @@ def r2v(
         "Only Veo 3.1 models are accepted (omni-flash is single-clip only for "
         "now — not proven at chain scale, refs #125). The MANIFEST is a JSONL "
         'file: one JSON object per line, each with a required "prompt" and '
-        'optional "model"/"duration"/"aspect" overrides.\n\n'
+        'optional "model"/"aspect" overrides. A per-link "duration" is rejected '
+        "before anything is submitted: only omni-flash renders a duration "
+        "control, and chains cannot use it (refs #634).\n\n"
         "Each link is saved as its own mp4. Stitching the clips into a single "
         "file is a follow-up step — use `gflow scene`.\n\n"
         "\b\n"
@@ -1690,5 +1720,429 @@ def chain(
             tool_specs=tool_specs,
         ),
         cli_command="video chain",
+        as_json=as_json,
+    )
+
+
+# --------------------------------------------------------------------------
+# video extend
+# --------------------------------------------------------------------------
+
+# One extend segment is always 8s — the model's videoLengthSeconds, not a
+# request parameter. inputSpec.maxInputV2vVideoDuration is also 8, which is why
+# a long video is a chain of 8s continuations rather than one growing clip.
+_EXTEND_SEGMENT_SECONDS = 8
+# Measured: returned media is 7.000s while Flow bills 8. See KNOWN_ISSUES.
+_EXTEND_CONTENT_SECONDS = 7
+
+
+def _print_extend_plan(*, media_id: str, prompt: str, aspect: str, segments: int) -> None:
+    """Show what will be submitted BEFORE a client exists.
+
+    Deliberately printed without opening a browser: `--dry-run` must be instant
+    and must not be able to spend. The exact credit cost is tier-dependent and
+    comes from the (free) capability listing once the run starts; the balance
+    check that uses it aborts before the first submit.
+    """
+    # Report CONTENT seconds, not billed seconds. This is the last screen before
+    # the confirm prompt, so quoting Flow's advertised 8s here would contradict
+    # --help, USAGE and KNOWN_ISSUES on the one line a user cannot skip.
+    footage = segments * _EXTEND_CONTENT_SECONDS
+    billed = segments * _EXTEND_SEGMENT_SECONDS
+    console.print("[bold]Extend plan[/bold]")
+    console.print(f"  source clip : {media_id}")
+    console.print(f"  prompt      : {prompt}")
+    console.print(f"  aspect      : {aspect}")
+    console.print(
+        f"  segments    : {segments} x ~{_EXTEND_CONTENT_SECONDS}s = ~{footage}s of new "
+        f"footage (Flow bills {billed}s)"
+    )
+    console.print("  cost        : spends credits — exact amount is shown before submitting")
+
+
+async def _run_extend(  # noqa: PLR0913
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    media_id: str,
+    prompts: tuple[str, ...],
+    segments: int,
+    aspect: str,
+    jitter: str | None,
+    output_file: Path | None,
+    project_id: str | None,
+    scene_id: str | None,
+    seed: int | None,
+    as_json: bool,
+) -> None:
+    """Submit N chained extends, then optionally render them to one file."""
+    if not project_id:
+        msg = "--project is required: extend must know which project owns MEDIA_ID"
+        raise ConfigurationError(msg)
+
+    # `chain` defaults jitter to 0.0, which ships unpaced runs and contradicts
+    # ACCOUNT_SAFETY's "submissions are paced". Reuse image_batch's resolver so
+    # a configured MIN is honoured (keeping only the max would let a 45-120
+    # setting sleep 0.4s) and a malformed spec is surfaced, not swallowed.
+    jitter_range = resolve_jitter_range(jitter)
+
+    recorder: OperationRecorder | None = None
+    store: DataStore | None = None
+    try:
+        store = DataStore.open(get_settings().resolved_db_path())
+        recorder = OperationRecorder(
+            DataRepository(store), prompt_mode=get_settings().history_prompts
+        )
+    except DataStoreError as exc:  # catalog is a convenience, never a gate
+        logger.warning("extend_recorder_unavailable", error_class=type(exc).__name__)
+
+    try:
+        await _extend_session(
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            media_id=media_id,
+            prompts=prompts,
+            segments=segments,
+            aspect=aspect,
+            jitter_range=jitter_range,
+            output_file=output_file,
+            project_id=project_id,
+            scene_id=scene_id,
+            seed=seed,
+            as_json=as_json,
+            recorder=recorder,
+        )
+    finally:
+        # Leaks on every exit path otherwise, and on Windows a stray handle
+        # blocks a later `gflow data` call in the same process.
+        if store is not None:
+            store.close()
+
+
+async def _extend_session(  # noqa: PLR0913
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    media_id: str,
+    prompts: tuple[str, ...],
+    segments: int,
+    aspect: str,
+    jitter_range: tuple[float, float],
+    output_file: Path | None,
+    project_id: str,
+    scene_id: str | None,
+    seed: int | None,
+    as_json: bool,
+    recorder: OperationRecorder | None,
+) -> None:
+    """The browser-bound half of `_run_extend`, split out so the caller can own
+    the DataStore lifetime with a plain try/finally."""
+    async with FlowApiClient(profile_dir=profile_dir) as client:
+        listing = await client.capability_listing(project_id)
+        tier = video_extend.account_service_tier(listing)
+        model_key, unit = video_extend.resolve_extend_model(
+            listing, service_tier=tier, aspect=aspect
+        )
+        balance = video_extend.account_credits(listing)
+
+        # Pre-flight balance check for the WHOLE run. `chain` never knew prices
+        # so it could not do this; stopping here beats stopping at segment 6
+        # holding a half-length video and a spent balance.
+        total_cost = unit * segments
+        # `balance` is the only unknown here — the resolver cannot return a model
+        # without also returning its cost.
+        if balance is not None and balance < total_cost:
+            msg = (
+                f"insufficient credits: {segments} segment(s) cost {total_cost}, "
+                f"balance is {balance}. Nothing was submitted."
+            )
+            raise ConfigurationError(msg)
+        if not as_json:
+            have = "unknown" if balance is None else str(balance)
+            console.print(
+                f"  model       : {model_key} ({total_cost} credits total, balance {have})"
+            )
+
+        # Resuming: read the scene back so the run appends after the clips that
+        # are already there, seeding from the real tail rather than the original.
+        target_scene = scene_id
+        start_position = 1
+        source_media = media_id
+        if target_scene:
+            existing = await client.get_scene_workflows(target_scene, project_id=project_id)
+            clips = sorted(existing.workflows, key=lambda w: w.metadata.position)
+            if clips:
+                # Positions go non-contiguous when clips are deleted in Flow's
+                # UI; len(clips) would collide with an occupied slot.
+                start_position = clips[-1].metadata.position + 1
+                tail = clips[-1]
+                if tail.media_id:
+                    source_media = tail.media_id
+                if not as_json:
+                    console.print(
+                        f"  resuming    : scene has {len(clips)} clip(s), "
+                        f"continuing from {source_media}"
+                    )
+        if not target_scene:
+            workflow_id = video_extend.workflow_id_for_media(listing, media_id)
+            if not workflow_id:
+                msg = (
+                    f"media {media_id} is not in project {project_id} "
+                    "(no workflow owns it) — check --project"
+                )
+                raise ConfigurationError(msg)
+            scene = await client.create_scene(project_id=project_id, workflow_ids=[workflow_id])
+            target_scene = scene.scene_id
+
+        # Publish the resume handle BEFORE the first submit, so an interrupt at
+        # any point has something to report rather than only on a clean failure.
+        set_interrupt_context(credits_spent=0, resume_id=target_scene, segments_done=0)
+
+        submitted_count = 0
+        spent_so_far = 0
+
+        def _on_submitted(started: Any) -> None:
+            # Update BEFORE the ~2 min poll: a Ctrl+C during that wait must
+            # report what is already billed, not the pre-run zeroes.
+            nonlocal submitted_count, spent_so_far
+            submitted_count += 1
+            spent_so_far += started.unit_cost or 0
+            set_interrupt_context(
+                credits_spent=spent_so_far,
+                resume_id=target_scene,
+                segments_done=submitted_count,
+            )
+            if not as_json:
+                console.print(f"  submitted   : {started.media_id} ({started.model_key})")
+            # Persist at SUBMIT: Flow bills on acceptance, so a row written only
+            # after the ~2 min poll would leave an interrupted run's paid media
+            # invisible to `gflow data`. Never fatal — a catalog write must not
+            # sink a generation the user has already paid for.
+            if recorder is not None:
+                try:
+                    recorder.record_started_extend(
+                        profile_name=profile_name,
+                        profile_dir=profile_dir,
+                        project_id=project_id,
+                        aspect=aspect,
+                        started=started,
+                    )
+                except DataStoreError as exc:
+                    logger.warning("extend_record_failed", error_class=type(exc).__name__)
+
+        result = await run_extend_chain(
+            client,
+            media_id=source_media,
+            start_position=start_position,
+            project_id=project_id,
+            scene_id=target_scene,
+            prompts=prompts,
+            segments=segments,
+            aspect=aspect,
+            seed=seed,
+            jitter_range=jitter_range,
+            on_submitted=_on_submitted,
+        )
+        set_interrupt_context(
+            credits_spent=result.credits_spent,
+            resume_id=target_scene,
+            segments_done=len(result.completed_media_ids),
+        )
+
+        rendered: str | None = None
+        # Render even a partial chain: those segments are generated and billed,
+        # and discarding them because the run did not finish wastes real money.
+        if output_file is not None and result.completed_media_ids:
+            scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
+            # Scene.to_concat_inputs owns the end_time>0 fallback (an omitted
+            # endTime parses to 0s and would render a zero-length clip) and
+            # raises on a missing media_id instead of silently dropping a paid
+            # segment. cli_scene.py uses it for the identical job.
+            inputs = list(scene_state.to_concat_inputs())
+            if not as_json:
+                console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
+            await client.concatenate_scene(inputs, out_path=output_file)
+            rendered = str(output_file)
+
+        payload = {
+            "scene_id": target_scene,
+            "project_id": project_id,
+            "model": model_key,
+            "segments_requested": segments,
+            "segments_completed": len(result.completed_media_ids),
+            "media_ids": result.completed_media_ids,
+            "credits_spent": result.credits_spent,
+            "seconds_added": len(result.completed_media_ids) * _EXTEND_CONTENT_SECONDS,
+            "seconds_billed": len(result.completed_media_ids) * _EXTEND_SEGMENT_SECONDS,
+            "output": rendered,
+            "aborted": result.aborted,
+            "profile": profile_name,
+        }
+        if as_json:
+            json_output.emit(payload)
+        else:
+            state = (
+                "[yellow]Partial[/yellow]"
+                if result.aborted
+                else "[bold green]Extended[/bold green]"
+            )
+            console.print(
+                f"{state} — {len(result.completed_media_ids)}/{segments} segment(s), "
+                f"{result.credits_spent} credits, scene {target_scene}"
+            )
+            if rendered:
+                console.print(f"  wrote: {rendered}")
+            elif result.completed_media_ids:
+                console.print("  render one file: gflow scene create --output <path>")
+
+        # A chain that abandoned paid work must not exit 0 and look complete.
+        if result.error is not None:
+            if as_json:
+                # The payload above is already on stdout. Re-raising would let
+                # run_with_handlers print a SECOND JSON document, and
+                # `json.loads(stdout)` would fail with "Extra data" — the same
+                # trap its own `except SystemExit` branch documents.
+                code = (
+                    json_output.exit_code_for(result.error)
+                    if isinstance(result.error, GFlowError)
+                    else 1
+                )
+                raise SystemExit(code)
+            raise result.error
+
+
+@video.command(
+    "extend",
+    short_help="Continue an existing clip by another 8 seconds (costs credits).",
+    help=(
+        "Continue an existing video by generating another 8-second segment that "
+        "carries its motion and audio forward.\n\n"
+        "MEDIA_ID is the clip to continue; PROMPT says what happens next.\n\n"
+        "Unlike `video chain`, which restarts from an extracted still, extend is "
+        "seeded server-side from the source clip, so the join is continuous. "
+        "The result lands as a Scene; render it to one file with "
+        "`gflow scene create --output`.\n\n"
+        "\b\n"
+        "Examples:\n"
+        '  gflow video extend <media-id> "the wave recedes" --project <project-id>\n'
+        '  gflow video extend <media-id> "drifts upward" --project <project-id> --aspect 16:9\n\n'
+        "--project is REQUIRED here: extend must know which project owns MEDIA_ID. "
+        "The shared --project help calls it optional because it is — for every "
+        "other generate command.\n\n"
+        "Each segment spends credits — the exact cost depends on your plan and is "
+        "shown for confirmation before anything is submitted.\n\n"
+        "Note: a segment carries ~7s of content though Flow bills 8s, so a "
+        "multi-segment render holds a frozen, silent second at each internal "
+        "seam. See KNOWN_ISSUES."
+    ),
+)
+@click.argument("media_id")
+@click.argument("prompts", nargs=-1, required=True)
+@click.option(
+    "--aspect",
+    default="9:16",
+    show_default=True,
+    # Flow publishes no SQUARE extend model in either family, so 1:1 is refused
+    # here rather than surfacing as a late, paid-for failure.
+    type=click.Choice(["9:16", "16:9"]),
+    help="Aspect of the extension (portrait 9:16 or landscape 16:9). No square variant exists.",
+)
+@click.option(
+    "--segments",
+    "-n",
+    default=None,
+    type=click.IntRange(1, 30),
+    help=(
+        "How many 8s continuations to chain (default: one per PROMPT). Capped at "
+        "30 — beyond that the credit cost and per-profile load exceed anything "
+        "this tool has measured as safe."
+    ),
+)
+@click.option(
+    "--jitter",
+    default=None,
+    type=str,
+    help=(
+        "Max seconds of random pause between submissions. Defaults to the "
+        "GFLOW_CLI_JITTER_RANGE setting; 0 disables pacing (not advised)."
+    ),
+)
+@click.option(
+    "-o",
+    "--output",
+    "output_file",
+    default=None,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Render the finished scene to ONE mp4 here (server-side concat, credit-free).",
+)
+@_project_option
+@click.option("--scene", "scene_id", default=None, help="Existing scene to extend within.")
+@click.option(
+    "--resume-from",
+    "resume_from",
+    default=None,
+    help=(
+        "Scene id from an interrupted or partial run. Continues appending to that "
+        "scene instead of creating a new one, so already-billed segments are kept."
+    ),
+)
+@click.option("--seed", default=None, type=int, help="Fixed seed, for a reproducible run.")
+@click.option("--yes", is_flag=True, help="Skip the cost confirmation.")
+@click.option("--dry-run", is_flag=True, help="Show the plan and cost, submit nothing.")
+@click.option("--profile", default=None, help="Auth profile to use.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def extend(  # noqa: PLR0913
+    media_id: str,
+    prompts: tuple[str, ...],
+    aspect: str,
+    segments: int | None,
+    jitter: str | None,
+    output_file: Path | None,
+    project_id: str | None,
+    scene_id: str | None,
+    resume_from: str | None,
+    seed: int | None,
+    yes: bool,
+    dry_run: bool,
+    profile: str | None,
+    as_json: bool,
+) -> None:
+    """Continue MEDIA_ID, one PROMPT per 8-second segment."""
+    # --resume-from and --scene are the same knob wearing two names; resume is
+    # the one the interrupt banner advertises, so it wins.
+    scene_id = resume_from or scene_id
+    if scene_id is not None and not is_media_uuid(scene_id):
+        msg = f"scene id must be a UUID, got {scene_id!r}"
+        raise click.BadParameter(msg)
+    if not is_media_uuid(media_id):
+        msg = f"MEDIA_ID must be a media UUID, got {media_id!r}"
+        raise click.BadParameter(msg)
+    count = segments if segments is not None else len(prompts)
+    # The cost gate runs before a client exists, so --dry-run cannot spend and
+    # cannot even open a browser.
+    _print_extend_plan(media_id=media_id, prompt=prompts[0], aspect=aspect, segments=count)
+    if dry_run:
+        return
+    if not yes:
+        click.confirm(f"Submit {count} extend segment(s)?", abort=True)
+
+    profile_name = _resolve_profile(profile)
+    provider_dir = _make_provider_dir(profile_name)
+    run_with_handlers(
+        lambda: _run_extend(
+            profile_name=profile_name,
+            profile_dir=provider_dir,
+            media_id=media_id,
+            prompts=tuple(prompts),
+            segments=count,
+            aspect=aspect,
+            jitter=jitter,
+            output_file=output_file,
+            project_id=project_id,
+            scene_id=scene_id,
+            seed=seed,
+            as_json=as_json,
+        ),
+        cli_command="video extend",
         as_json=as_json,
     )

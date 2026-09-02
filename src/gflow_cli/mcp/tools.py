@@ -981,9 +981,10 @@ async def gflow_generate_video(  # NOSONAR
         model: Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality',
             'omni_flash' (aliases accepted, mirrors the CLI ``--model``). When
             omitted, Flow's UI default applies EXCEPT for i2v with frames,
-            where the transport defaults to veo-lite. Note: 'omni_flash'
-            supports start-frame i2v (wire-verified 2026-08-03, refs #125) but
-            NOT an end frame — i2v with 'end_frame' requires a Veo 3.1 model.
+            where the transport defaults to veo-lite. Every model supports i2v
+            with a start frame and with an end frame; 'omni_flash' was the last
+            exception and its end-frame route was wire-verified 2026-09-02
+            (refs #125, #626).
         duration: Optional clip length in seconds (mirrors the CLI ``--duration``).
             When omitted, Flow's per-model default applies.
         count: Number of videos to generate (mirrors the CLI ``--count``; default 1).
@@ -1038,15 +1039,36 @@ async def gflow_generate_video(  # NOSONAR
                 "or 'auto'.",
             )
 
+    from gflow_cli.api.video import I2V_DEFAULT_MODEL, VideoModel
+
     # Validate the model alias up front (mirrors the CLI's pre-spend check) so an
     # unknown model fails fast with a 400 instead of dying deep in the worker.
     if model is not None:
-        from gflow_cli.api.video import VideoModel
-
         try:
             VideoModel.from_cli(model)
         except ValueError as exc:
             return _bad_param("Invalid Video Model", str(exc))
+
+    # Only omni-flash renders a duration control (#451/#288). Without this the
+    # request is queued and the DTO raises a bare ValueError inside the worker,
+    # so the agent gets an opaque failure for a plain parameter mistake. Mirrors
+    # the CLI's `_reject_duration_without_control` (#630) — including its
+    # default-model resolution: i2v binds I2V_DEFAULT_MODEL when `model` is
+    # omitted, so "no model" is not "no opinion" there. t2v/r2v inherit Flow's
+    # sticky UI default, which is unknowable here, so they stay unguarded.
+    if duration is not None:
+        effective = VideoModel.from_cli(model) if model is not None else None
+        if effective is None and mode == "i2v" and (initial_frame or end_frame):
+            effective = I2V_DEFAULT_MODEL
+        if effective is not None and not effective.supports_duration():
+            return _bad_param(
+                "Unsupported duration for model",
+                f"model {effective.value!r} renders no duration control in Flow, so "
+                f"duration={duration} cannot be applied. Only "
+                f"{VideoModel.OMNI_FLASH.value!r} exposes a duration (4/6/8/10s). "
+                f"Omit 'duration' to accept Flow's default length, or pass "
+                f"model='{VideoModel.OMNI_FLASH.value}'.",
+            )
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_video")

@@ -445,7 +445,15 @@ class TestGenerateVideoWired:
     @pytest.mark.asyncio
     async def test_video_forwards_model_duration_count_to_payload(self) -> None:
         """model/duration/count must reach the generation payload so agents get
-        the same Veo-model / length / batch control the CLI exposes (parity)."""
+        the same model / length / batch control the CLI exposes (parity).
+
+        Uses ``omni_flash`` because parity is the whole point: it is the only
+        model Flow gives a duration control, and the CLI rejects ``--duration``
+        on every Veo 3.1 model with exit 2 (#451/#288). This test previously
+        passed ``veo_quality`` + ``duration=8`` and asserted it reached the
+        payload — asserting, in the name of parity, the exact combination the
+        CLI refuses. The MCP tool now returns a 400 for it too (#630).
+        """
         from unittest.mock import AsyncMock
 
         from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
@@ -464,14 +472,14 @@ class TestGenerateVideoWired:
             patch("gflow_cli.mcp.tools._run_generation_task", AsyncMock(side_effect=_fake_run)),
         ):
             result = await gflow_generate_video(
-                prompt="a slow zoom", model="veo_quality", duration=8, count=2
+                prompt="a slow zoom", model="omni_flash", duration=8, count=2
             )
 
         assert result["status"] == "completed"
-        assert captured["model"] == "veo_quality"
+        assert captured["model"] == "omni_flash"
         assert captured["duration"] == 8
         assert captured["count"] == 2
-        assert result["params"]["model"] == "veo_quality"
+        assert result["params"]["model"] == "omni_flash"
 
     @pytest.mark.asyncio
     async def test_video_omits_unset_model_and_duration_from_payload(self) -> None:

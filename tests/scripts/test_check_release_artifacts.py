@@ -35,8 +35,16 @@ def _repo(tmp_path: Path, version: str = "1.2.3", *, complete: bool = True) -> P
         (tmp_path / "docs" / "INDEX.md").write_text(
             f"[LIVE_VERIFICATION_v{version}](LIVE_VERIFICATION_v{version}.md)", encoding="utf-8"
         )
+        (tmp_path / "docs" / "PROJECT_STATUS.md").write_text(
+            f"# Project Status\n\n## Current release\n\n**v{version} — alpha.** shipped.\n",
+            encoding="utf-8",
+        )
     else:
         (tmp_path / "docs" / "INDEX.md").write_text("nothing", encoding="utf-8")
+        (tmp_path / "docs" / "PROJECT_STATUS.md").write_text(
+            "# Project Status\n\n## Current release\n\n**v0.0.1 — alpha.** stale.\n",
+            encoding="utf-8",
+        )
     return tmp_path
 
 
@@ -50,6 +58,51 @@ def test_missing_live_verification_fails(tmp_path: Path) -> None:
     root = _repo(tmp_path, complete=False)
     violations = find_violations(root)
     assert any("LIVE_VERIFICATION_v1.2.3.md missing" in v for v in violations)
+
+
+@pytest.mark.unit
+def test_stale_project_status_current_release_fails(tmp_path: Path) -> None:
+    """PROJECT_STATUS.md's "Current release" must name the version being cut.
+
+    That file claims in its own header to be "Updated on every signed tag", and
+    nothing enforced it: v0.64.0 was cut with the section still announcing
+    v0.63.0 as current, caught only by a human doc-review council. A release
+    that ships announcing the wrong version as current is a release-blocking
+    documentation defect, so it belongs in the mechanical gate.
+    """
+    root = _repo(tmp_path)
+    (root / "docs" / "PROJECT_STATUS.md").write_text(
+        "# Project Status\n\n## Current release\n\n**v1.2.2 — alpha.** the PREVIOUS release.\n",
+        encoding="utf-8",
+    )
+    violations = find_violations(root)
+    assert any("PROJECT_STATUS.md" in v for v in violations), violations
+
+
+@pytest.mark.unit
+def test_missing_project_status_fails(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    (root / "docs" / "PROJECT_STATUS.md").unlink()
+    violations = find_violations(root)
+    assert any("PROJECT_STATUS.md" in v for v in violations), violations
+
+
+@pytest.mark.unit
+def test_project_status_version_elsewhere_does_not_satisfy_the_gate(tmp_path: Path) -> None:
+    """The version must appear in the "Current release" section specifically.
+
+    Every past release is still named further down the file, so a plain
+    whole-file substring search would pass on a completely stale header — the
+    exact failure this check exists to catch.
+    """
+    root = _repo(tmp_path)
+    (root / "docs" / "PROJECT_STATUS.md").write_text(
+        "# Project Status\n\n## Current release\n\n**v1.2.2 — alpha.** stale header.\n\n"
+        "<details><summary>older</summary>\n\n**v1.2.3 — alpha.** buried mention.\n\n</details>\n",
+        encoding="utf-8",
+    )
+    violations = find_violations(root)
+    assert any("PROJECT_STATUS.md" in v for v in violations), violations
 
 
 @pytest.mark.unit
