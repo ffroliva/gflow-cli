@@ -92,10 +92,11 @@ Asks:
 
 Output: structured analysis, confidence `0–10`, performance bottlenecks.
 
-#### Persona 4 — CLI UX / Cross-platform
-*Scope: exit codes (RFC 9457), `structlog` events, Windows/macOS/Linux path handling, `--help` text, error recovery UX.*
+#### Persona 4 — CLI **and MCP** UX / Cross-platform
+*Scope: exit codes (RFC 9457), `structlog` events, Windows/macOS/Linux path handling, `--help` text, error recovery UX, **and the MCP tool surface that mirrors all of it**.*
 
 Asks:
+- **Does this change land on the MCP surface too, and what breaks if it does not?** gflow ships every capability twice — as a CLI command and an MCP tool — and the automated parity gate is command-level only, so an unmirrored option or a docstring that still describes removed behaviour passes every check. Name the affected MCP tool, the payload keys on the queued `worker/codec.py` path, and any docstring claim that becomes false. If the proposal genuinely has no MCP surface, say so explicitly — silence here is what let #626 ship a CLI unlock with `mcp/tools.py` still telling agents the combination was rejected.
 - What exit code does failure produce? Is it in `EXIT_CODE_MAP`? Is it distinct from existing codes?
 - What `structlog` events does this introduce? Are `error_raised` / `error_unhandled` paths handled?
 - Are new env vars or flags introduced? Do they follow `GFLOW_CLI_*` convention and have a `.env.template` entry?
