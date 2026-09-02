@@ -1534,14 +1534,14 @@ voice = "alnilam"
 id = "scene_01"
 action = "A mysterious stickman walks slowly through a dark forest."
 framing = "wide"
-duration = 5
+duration = 4
 characters = ["Stickman"]
 
 [[scenes]]
 id = "scene_02"
 action = "Close up of the stickman looking back in shock."
 framing = "close-up"
-duration = 5
+duration = 4
 characters = ["Stickman"]
 style_variant = "warm"
 ```

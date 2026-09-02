@@ -67,6 +67,7 @@ __all__ = [
     "LinkCompletedHook",
     "LinkFailedHook",
     "LinkStartedHook",
+    "reject_unusable_links",
     "run_chain",
 ]
 
@@ -195,26 +196,20 @@ def _build_link_request(
     )
 
 
-def _reject_unusable_links(*, model: VideoModel, links: Sequence[ChainLinkSpec]) -> None:
+def reject_unusable_links(*, model: VideoModel, links: Sequence[ChainLinkSpec]) -> None:
     """Reject a chain that cannot succeed, BEFORE link 0 renders (#125, #634).
 
-    Every check here used to happen too late or not at all, and "too late" in a
-    chain means *after money was spent*: a chain that dies at link 3 has already
-    generated and billed links 0-2, and the DTO's bare ``ValueError`` surfaced as
-    exit 1 "Unexpected error" with the explanation lost (the same shape #630/#632
-    fixed for single-clip i2v).
+    "Too late" in a chain means *after money was spent*: a chain that dies at
+    link 3 has already generated and billed links 0-2.
 
     Two things are checked per link, against the link's EFFECTIVE model:
 
-    * **omni_flash.** The chain-level ``model`` was already rejected below, but
+    * **omni_flash.** The chain-level ``model`` is rejected first, but
       :func:`_build_link_request` prefers ``spec.model`` when set, so a per-link
       override walked straight past that check.
-    * **duration.** Chains reject omni_flash, and ``supports_duration()`` is True
-      for omni_flash alone — so no model a chain can use renders a duration
-      control, and any per-link ``duration`` is unsatisfiable by construction.
-      Expressed as ``supports_duration()`` rather than a blanket ban so that if
-      the omni_flash restriction is ever lifted, duration follows automatically
-      instead of silently staying wrong.
+    * **duration.** A blanket ban, because chains reject omni_flash and
+      ``supports_duration()`` is True for omni_flash alone — so no model a chain
+      can use renders a duration control at all.
     """
     if model is VideoModel.OMNI_FLASH:
         msg = (
@@ -236,7 +231,7 @@ def _reject_unusable_links(*, model: VideoModel, links: Sequence[ChainLinkSpec])
                 f"model override, or use a Veo 3.1 model."
             )
             raise ModelModeIncompatibilityError(msg)
-        if spec.duration is not None and not effective.supports_duration():
+        if spec.duration is not None:
             msg = (
                 f"links[{index}] sets duration {spec.duration}, which no chain can "
                 f"apply: Flow renders a duration control for omni_flash only, and "
@@ -374,7 +369,7 @@ async def run_chain(
             to the t2v backstop) or ``WafRejectionError`` (403). Carries the
             ``Path`` of every link completed before the failure.
     """
-    _reject_unusable_links(model=model, links=links)
+    reject_unusable_links(model=model, links=links)
 
     results: list[ChainLinkResult] = []
     completed_paths: list[Path] = []

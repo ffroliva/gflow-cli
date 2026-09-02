@@ -557,9 +557,8 @@ def test_movie_duration_with_omni_flash_is_accepted(tmp_path: Path) -> None:
 
 
 def test_movie_duration_without_model_is_accepted(tmp_path: Path) -> None:
-    """Negative control: with no model the effective model is Flow's sticky UI
-    default, genuinely unknowable here — so this stays unguarded BY DESIGN,
-    exactly as t2v/r2v were left after #632."""
+    """Negative control: no model means Flow's sticky UI default, unknowable
+    here, so this stays unguarded BY DESIGN — as t2v/r2v were left after #632."""
     path = _write_toml(tmp_path, _SCENE_HEAD + "duration = 4\n")
     assert MovieManifest.from_toml_path(path).scenes[0].duration == 4
 
@@ -571,3 +570,12 @@ def test_movie_unknown_model_alias_raises_at_parse(tmp_path: Path) -> None:
     path = _write_toml(tmp_path, _SCENE_HEAD + 'model = "veo-lightning"\n')
     with pytest.raises(ConfigurationError, match="model"):
         MovieManifest.from_toml_path(path)
+
+
+def test_movie_float_duration_with_veo_model_still_parses(tmp_path: Path) -> None:
+    """Regression control: `4.0 in {4, 6, 8, 10}` is True, so a float slips past
+    the VALUE check — but Scene.duration only keeps ints, so such a manifest used
+    to render with the duration silently unset. Guarding the RAW value would have
+    turned that into a hard error. The guard tests the coerced value instead."""
+    path = _write_toml(tmp_path, _SCENE_HEAD + 'model = "veo-lite"\nduration = 4.0\n')
+    assert MovieManifest.from_toml_path(path).scenes[0].duration is None

@@ -321,7 +321,7 @@ async def test_rejects_per_link_duration_up_front(tmp_path: Path) -> None:
 
     msg = str(excinfo.value)
     assert "duration" in msg.lower()
-    assert "1" in msg, "names the offending link index"
+    assert "links[1]" in msg, "names the offending link index"
     client.generate_video.assert_not_awaited()
 
 
@@ -368,7 +368,7 @@ async def test_per_link_veo_model_override_still_allowed(tmp_path: Path) -> None
     client = _make_client(results)
     links = [
         ChainLinkSpec(prompt="a cat wakes up"),
-        ChainLinkSpec(prompt="the cat stretches", model=VideoModel.VEO_3_1_LITE),
+        ChainLinkSpec(prompt="the cat stretches", model=VideoModel.VEO_3_1_FAST),
     ]
 
     out = await run_chain(
@@ -381,6 +381,12 @@ async def test_per_link_veo_model_override_still_allowed(tmp_path: Path) -> None
 
     assert len(out) == 2
     assert client.generate_video.await_count == 2
+    # The override must actually REACH the request. Asserting only the await
+    # count would pass an implementation that silently dropped spec.model.
+    link1_req = client.generate_video.await_args_list[1].kwargs["req"]
+    assert link1_req.model is VideoModel.VEO_3_1_FAST
+    link0_req = client.generate_video.await_args_list[0].kwargs["req"]
+    assert link0_req.model is VideoModel.VEO_3_1_LITE, "link 0 inherits the chain default"
 
 
 async def test_per_link_recording_hooks_threaded_with_own_request(tmp_path: Path) -> None:

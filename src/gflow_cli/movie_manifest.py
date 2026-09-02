@@ -529,7 +529,7 @@ def _validate_scene_framing(framing: object, idx: int) -> None:
         )
 
 
-def _validate_scene_model(model: object, idx: int, duration: object = None) -> None:
+def _validate_scene_model(model: object, idx: int, duration: int | None) -> None:
     """Validate the scene's model alias, and its compatibility with *duration*.
 
     Both checks belong at PARSE time (#634). Before this, the alias was only
@@ -613,7 +613,12 @@ def _parse_scene(
 
     _validate_scene_variant(variant, chars, characters, idx)
 
-    aspect, duration = _parse_scene_numeric_fields(d, idx)
+    aspect, duration_raw = _parse_scene_numeric_fields(d, idx)
+    # Coerce BEFORE the model cross-check, so the guard tests the value the Scene
+    # will actually carry. `4.0 in {4, 6, 8, 10}` is True, so a float slips past
+    # the value check but is then dropped here — guarding the raw value would
+    # reject a manifest that previously rendered fine (duration silently unset).
+    duration = duration_raw if isinstance(duration_raw, int) else None
 
     model = d.get("model")
     _validate_scene_model(model, idx, duration)
@@ -637,7 +642,7 @@ def _parse_scene(
         characters=tuple(chars),
         variant=str(variant) if isinstance(variant, str) else None,
         dialogue=tuple(dialogue),
-        duration=duration if isinstance(duration, int) else None,
+        duration=duration,
         model=model if isinstance(model, str) else None,
         aspect=aspect,
         count=1,

@@ -942,6 +942,7 @@ async def _run_chain(
 
     from gflow_cli import chain as chain_mod
     from gflow_cli.api.video import Aspect
+    from gflow_cli.chain import reject_unusable_links
     from gflow_cli.chain_manifest import parse_chain_manifest
     from gflow_cli.data.chain_repo import ChainLinkRecorder
     from gflow_cli.errors import ChainManifestError
@@ -950,6 +951,14 @@ async def _run_chain(
     aspect_enum = Aspect.from_cli(aspect)
 
     links: list[ChainLinkSpec] = parse_chain_manifest(_Path(manifest))
+
+    # Validate here as well as inside run_chain (#634). run_chain's own guard is
+    # the root-cause one and protects programmatic callers, but it runs after the
+    # --dry-run short-circuit below, after the cost prompt, and after Chrome
+    # boots — so without this call `chain bad.jsonl --dry-run` would exit 0 on a
+    # manifest the real run refuses, and the pre-flight command would green-light
+    # the crash it exists to prevent.
+    reject_unusable_links(model=resolved_model, links=links)
 
     if max_links is not None and len(links) > max_links:
         msg = (
@@ -1579,7 +1588,9 @@ def r2v(
         "Only Veo 3.1 models are accepted (omni-flash is single-clip only for "
         "now — not proven at chain scale, refs #125). The MANIFEST is a JSONL "
         'file: one JSON object per line, each with a required "prompt" and '
-        'optional "model"/"duration"/"aspect" overrides.\n\n'
+        'optional "model"/"aspect" overrides. A per-link "duration" is rejected '
+        "before anything is submitted: only omni-flash renders a duration "
+        "control, and chains cannot use it (refs #634).\n\n"
         "Each link is saved as its own mp4. Stitching the clips into a single "
         "file is a follow-up step — use `gflow scene`.\n\n"
         "\b\n"
