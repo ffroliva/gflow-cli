@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow video i2v --model omni-flash --end-frame` now works** ([#626](https://github.com/ffroliva/gflow-cli/issues/626)).
+  Google shipped first-and-last-frame generation for Omni 1.1 Flash, so the
+  guard that rejected that combination with exit 17 is gone:
+
+  ```bash
+  gflow video i2v ./start.png "she turns toward the window" \
+      --model omni-flash --end-frame ./end.png --duration 10
+  ```
+
+  omni-flash is the only model that also exposes `--duration`, so this is the
+  one route to a 10-second first+last interpolation.
+
+### Changed
+
+- **i2v end-frame safety moved from a static table to a post-submit route
+  check.** gflow used to decide which models could carry an end frame from a
+  hardcoded capability list, which silently went stale when Google shipped the
+  feature. It now verifies the route Flow *actually* used: a run that carried an
+  end frame but came back on `batchAsyncGenerateVideoStartImage` — Flow dropping
+  the frame at submit and billing a clip that was never interpolated — fails
+  with `WireFormatError` instead of being reported as a success. This also
+  catches a partial or staged rollback on any account, which the old table
+  could not.
+
+  **Breaking for scripts** that branched on exit 17 for `omni-flash` +
+  `--end-frame`: that combination now succeeds. Exit 17 is unchanged for
+  `gflow video chain --model omni-flash`, which is still rejected (chain-scale
+  seeded i2v remains unverified).
+
 ## [0.63.0] — 2026-09-01
 
 ### Added

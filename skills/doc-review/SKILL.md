@@ -175,6 +175,22 @@ assign a coverage grade: **D0** (nothing) · **D1** (docstrings only) · **D2**
 be **D3+**; a new env var or command at **D0/D1** is a release-blocking finding.
 List every surface below D3 with its grade and the doc it needs.
 
+**Every CLI surface in that list has an MCP twin — grade both.** `docs/MCP.md` and the
+`mcp/tools.py` docstrings are documentation for an *agent* audience, and they rot the same
+way, silently, with a green test suite. Two failure shapes, both release-blocking:
+
+- **Absent:** a CLI flag shipped and mirrored in code, but `docs/MCP.md` never mentions the
+  MCP parameter. The D0–D4 grading above applies unchanged.
+- **False:** the tool docstring or `docs/MCP.md` still asserts a restriction the code dropped.
+  This is worse than absent — it tells agents not to attempt something that now works, and no
+  link check, lint, or parity test can see it. Grade a false claim as a blocker regardless of
+  how well-documented the surface otherwise is.
+
+```bash
+# Cross-check every behavioural claim about models/flags in the MCP surface against the code.
+grep -rn "rejected\|not supported\|requires a\|only\|coming soon" src/gflow_cli/mcp/tools.py docs/MCP.md
+```
+
 ---
 
 ## 5 · Skill files (`skills/` + `.claude/commands/gflow/`)

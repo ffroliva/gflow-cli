@@ -38,31 +38,22 @@ class TestVideoModelEnum:
         with pytest.raises(ValueError, match="Unknown video model"):
             VideoModel.from_cli("sora")
 
-    def test_omni_flash_does_not_support_i2v_end_frame(self) -> None:
-        # Flow's support matrix: "Frames to Video: First + last" is "coming
-        # soon" for Omni Flash, and there is no wire proof of that route.
-        assert VideoModel.OMNI_FLASH.supports_i2v_end_frame() is False
+    def test_no_model_gates_the_i2v_end_frame(self) -> None:
+        """End-frame capability is no longer model-conditional (#626).
 
-    @pytest.mark.parametrize(
-        "model",
-        [
-            VideoModel.VEO_3_1_LITE,
-            VideoModel.VEO_3_1_FAST,
-            VideoModel.VEO_3_1_QUALITY,
-            VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
-        ],
-    )
-    def test_veo_3_1_models_support_i2v_end_frame(self, model: VideoModel) -> None:
-        assert model.supports_i2v_end_frame() is True
+        Every model now carries a start+end i2v pair, so the
+        ``supports_i2v_end_frame()`` predicate that used to exclude
+        ``OMNI_FLASH`` is gone rather than left as a constant ``True``. This
+        test fails if anyone reintroduces it — the right response to a real
+        future asymmetry is a fresh predicate with fresh wire evidence, not a
+        revival of the stale one.
+        """
+        assert not hasattr(VideoModel.OMNI_FLASH, "supports_i2v_end_frame")
 
     def test_i2v_default_model_is_veo_lite(self) -> None:
         from gflow_cli.api.video import I2V_DEFAULT_MODEL
 
         assert I2V_DEFAULT_MODEL is VideoModel.VEO_3_1_LITE
-        # The default MUST support the FULL i2v surface (incl. --end-frame) —
-        # guards against a future edit pointing the default at a model with a
-        # narrower capability (e.g. omni_flash, start-frame only).
-        assert I2V_DEFAULT_MODEL.supports_i2v_end_frame() is True
 
 
 class TestVideoRequestNewFields:

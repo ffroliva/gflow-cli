@@ -602,29 +602,17 @@ class TestGenerateVideoGuards:
         with pytest.raises(RuntimeError, match="setup"):
             await transport.generate_video(request=GenerateVideoRequest(prompt="x"))
 
-    @pytest.mark.asyncio
-    async def test_i2v_with_omni_flash_raises_before_any_browser_call(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        install_log_capture: structlog.testing.LogCapture,
-    ) -> None:
-        """Issue #125: omni-flash + i2v with an END frame must raise
-        ModelModeIncompatibilityError BEFORE any DOM interaction, and emit
-        `model_mode_rejected` — first+last is "coming soon" for omni-flash
-        per Flow's support matrix, with no wire proof of the route."""
-        from gflow_cli.api.video import VideoModel
-        from gflow_cli.errors import ModelModeIncompatibilityError
+    def test_i2v_with_omni_flash_end_frame_resolves_to_omni_flash(self) -> None:
+        """omni-flash + an END frame is a supported combination (#626).
 
-        transport = UiAutomationTransport()
-        transport._page = _mock_async_page()
-        transport._setup_done = True
-        # If the guard fails to fire first, _enter_editor would run — make it
-        # explode so a regression is caught loudly rather than silently passing.
-        monkeypatch.setattr(
-            transport,
-            "_enter_editor",
-            AsyncMock(side_effect=AssertionError("guard must fire before _enter_editor")),
-        )
+        Flow shipped first+last for Omni 1.1 Flash and a route-aborted capture
+        on 2026-09-02 proved the wire route
+        (``batchAsyncGenerateVideoStartAndEndImage``, both images non-null), so
+        the pre-submit rejection this replaces is gone. Reinstating it would
+        make this raise instead of returning the requested model.
+        """
+        from gflow_cli.api.video import VideoModel
+
         req = GenerateVideoRequest(
             prompt="rise up",
             mode=Mode.I2V,
@@ -632,21 +620,8 @@ class TestGenerateVideoGuards:
             start_image=Path("a.png"),
             end_image=Path("b.png"),
         )
-        with pytest.raises(ModelModeIncompatibilityError, match="#125"):
-            await transport.generate_video(request=req, download=False)
-
-        events = [
-            e
-            for e in install_log_capture.entries
-            if e["event"] == "ui_automation_video.model_mode_rejected"
-        ]
-        assert len(events) == 1
-        evt = events[0]
-        assert evt["model"] == "omni_flash"
-        assert evt["mode"] == "I2V"
-        assert evt["has_start_image"] is True
-        assert evt["has_end_image"] is True
-        assert evt["issue_ref"] == "#125"
+        resolved = VideoGenerationMixin._resolve_i2v_model(req, True)
+        assert resolved is VideoModel.OMNI_FLASH
 
     @pytest.mark.asyncio
     async def test_i2v_start_only_with_omni_flash_proceeds(
@@ -1215,6 +1190,111 @@ class TestI2vT2vRoutingBackstop:
         )
         with pytest.raises(WireFormatError, match="#125"):
             await transport.generate_video(request=req, download=False)
+
+    def test_end_frame_routed_to_start_only_raises(self) -> None:
+        """A request carrying an END frame that Flow routed to the START-only
+        endpoint must raise, not be reported as a success (#626).
+
+        The T2V check above only catches Flow dropping *both* frames. Now that
+        omni-flash may carry an end frame, the narrower regression — Flow keeps
+        the start frame and silently drops the end one, so ``StartAndEndImage``
+        degrades to ``StartImage`` — spends the credit and yields a
+        non-interpolated clip that the T2V check waves straight through. Same
+        mis-billing class the removed pre-submit guard covered.
+        """
+        req = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            model=VideoModel.OMNI_FLASH,
+            start_image=Path("a.png"),
+            end_image=Path("b.png"),
+        )
+        with pytest.raises(WireFormatError, match="end frame"):
+            VideoGenerationMixin._assert_i2v_route(_I2V_START_URL, req, VideoModel.OMNI_FLASH)
+
+    @pytest.mark.asyncio
+    async def test_end_frame_dropped_raises_through_generate_video(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The end-frame check must fire through its real call site, not just
+        when called directly.
+
+        The direct-call tests above cover the helper's logic; this covers the
+        wiring in ``_submit_and_poll``. Without it, a positional-argument slip
+        at the call site (swapping ``request`` and ``effective_model``) stays
+        invisible: the T2V branch returns before touching either argument, so
+        every other ``generate_video`` test would still pass while the #626
+        branch blew up with an AttributeError on the one path that matters.
+        """
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(transport, "_send_prompt", AsyncMock())
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
+        _stub_video_helpers(
+            monkeypatch,
+            generate_resp={
+                "status": 200,
+                "url": _I2V_START_URL,
+                "body": {"media": [{"name": "v"}]},
+            },
+        )
+        req = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            model=VideoModel.OMNI_FLASH,
+            start_image=Path("a.png"),
+            end_image=Path("b.png"),
+        )
+        with pytest.raises(WireFormatError, match="#626"):
+            await transport.generate_video(request=req, download=False)
+
+    def test_end_frame_routed_to_start_and_end_is_accepted(self) -> None:
+        """Control for the test above: the correct route passes the backstop.
+
+        Without this, a backstop that rejected *every* end-frame request would
+        still look green.
+        """
+        req = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            model=VideoModel.OMNI_FLASH,
+            start_image=Path("a.png"),
+            end_image=Path("b.png"),
+        )
+        VideoGenerationMixin._assert_i2v_route(_I2V_START_END_URL, req, VideoModel.OMNI_FLASH)
+
+    def test_start_only_i2v_is_not_held_to_the_end_frame_route(self) -> None:
+        """A start-only request must still be accepted on ``StartImage``.
+
+        Guards the new check against over-reach: it may fire only when the
+        request actually carries an end frame.
+        """
+        req = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            model=VideoModel.OMNI_FLASH,
+            start_image=Path("a.png"),
+        )
+        VideoGenerationMixin._assert_i2v_route(_I2V_START_URL, req, VideoModel.OMNI_FLASH)
+
+    def test_uuid_end_frame_ref_also_requires_the_end_route(self) -> None:
+        """A UUID-backed end frame gets the same protection as a local path.
+
+        `end_image_ref_id` and `end_image_ref_name` are the other two ways an
+        end frame reaches the request; keying the check off `end_image` alone
+        would leave both unguarded.
+        """
+        req = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            model=VideoModel.OMNI_FLASH,
+            start_image_ref_id=_FRAME_REF_UUID,
+            end_image_ref_id="6a3d0c11-2b8e-4f6a-9c77-1d5f0e2a4b93",
+        )
+        with pytest.raises(WireFormatError, match="end frame"):
+            VideoGenerationMixin._assert_i2v_route(_I2V_START_URL, req, VideoModel.OMNI_FLASH)
 
     @pytest.mark.asyncio
     async def test_uuid_i2v_routed_to_t2v_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:

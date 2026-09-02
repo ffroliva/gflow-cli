@@ -65,6 +65,15 @@ Disprove parts of the reporter's framing where the code says otherwise (e.g.
 `browser_engine: playwright` is the engine axis, not the channel) — a precise
 correction is more useful than agreement.
 
+**Name the affected SURFACES, not just the affected code.** A reporter hits one
+surface; the defect usually spans both. gflow ships most capabilities twice — CLI
+command and MCP tool — so state explicitly whether the issue reproduces on the CLI,
+on the MCP tool, or on both, and whether a fix in one automatically fixes the other
+(it does when both route through the same transport; it does not when the MCP path
+carries its own params through `worker/codec.py`). Getting this wrong scopes the
+whole downstream fix wrong: a "CLI bug" that is really a shared-transport bug leaves
+MCP users broken after the issue is closed.
+
 ### 3. Classify — exactly one verdict
 
 | Verdict | Meaning |

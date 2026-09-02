@@ -75,13 +75,21 @@ $env:PYTHONUTF8=1
 uv run python scripts/ci/check_repo_hygiene.py
 uv run python scripts/ci/check_doc_links.py
 uv run python scripts/ci/check_website_docs_pii.py
+uv run python scripts/ci/generate_website_docs.py --check
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run pyright src
 uv run python -m pytest -q --cov=gflow_cli
 ```
 
-Or invoke the wrapper: `/gflow:check`.
+Or invoke the wrapper: `/gflow:check` — **prefer it.** This list is the mechanical subset;
+the skill additionally carries the **step 1b surface blast-radius sweep** (MCP↔CLI parity and
+the five other mirror axes), which no command here can check and no CI gate can see.
+
+> **Do not trim this list again.** It previously omitted
+> `generate_website_docs.py --check`, so an agent following AGENTS.md instead of the skill
+> shipped a stale `website/docs/` mirror to a green local run and a red CI (#626 session,
+> 2026-09-02). Two lists that disagree means the shorter one is silently wrong.
 
 - Use `pytest -m "not live and not e2e and not smoke"` locally; full suite OOMs on small dev machines. Scope to changed dirs; trust CI for the full sweep.
 - TDD is non-negotiable. Coverage floor: 80% overall.
@@ -97,6 +105,26 @@ Or invoke the wrapper: `/gflow:check`.
 - 100-char line length, `ruff` configured. Imports sorted by `ruff` (isort rules).
 - **YAGNI / least-code**: prefer the smallest change that works. No speculative abstractions (interface/factory with one implementation), no config or flags nobody sets, no dead constants/helpers, no reinventing the stdlib. Review carries this as its own lens — the **D14 over-engineering** dimension of [`pr-council-review`](skills/pr-council-review/SKILL.md) (baseline, always runs). Its rubric is portable; the `ponytail` plugin (see CONTRIBUTING) is an optional accelerant, not a dependency.
 - **MCP & CLI Schema Symmetry**: Any updates or additions to user-facing CLI command parameters (e.g., `gflow image t2i`, `gflow video`) must be mirrored in the corresponding MCP tool definitions. Never add option/argument fields to Click commands without updating the MCP server implementation. This symmetry is enforced programmatically in CI via `tests/mcp/test_cli_parity.py` (every CLI leaf command needs a mapped MCP tool or an explicit, reasoned exemption) plus the schema checks in `tests/mcp/test_server.py`.
+
+  **That CI gate is command-level only** — it fires on a new *leaf*, and stays green while an
+  option goes unmirrored, a queued-payload key goes unread, or a tool docstring asserts a
+  restriction the CLI no longer has. So MCP is a responsibility of **every phase**, not a
+  post-hoc checklist item. Each skill owns its slice:
+
+  | Phase | Skill | Its MCP duty |
+  |---|---|---|
+  | 1 Triage | `issue-assessment` | Name which surfaces reproduce it — CLI, MCP, or both |
+  | 2 Pre-impl | `predict` | Persona 4 scopes the MCP blast radius before code exists |
+  | 3 BDD | `scenario` | **D13** — enumerate the MCP twin of every edge case |
+  | 4 Plan | `plan` | **Task 6 is not optional when task 5 exists** |
+  | 5 Review | `pr-council-review` | **D15** — surface parity, incl. the payload-key round trip |
+  | 7 Check | `check` | **Step 1b** — the canonical six mirror axes |
+  | 8 Live-verify | `live-verify` | The MCP queued path is *different code*; decide if it needs its own run |
+  | 10 Release | `doc-review` | Grade `docs/MCP.md` + tool docstrings; a **false** claim blocks |
+
+  The six mirror axes are written out **once**, in [`skills/check/SKILL.md`](skills/check/SKILL.md)
+  step 1b. Every other skill cites them. Do not copy the table around — a duplicated checklist
+  drifts, which is the exact failure this row exists to prevent.
 - **Locale-Invariance Discipline for UI Automation**: **Never** write text-label string selectors (`has-text(...)` or multi-locale text lists) for DOM elements, overlays, announcements, menus, tabs, or buttons. All DOM selectors in `src/gflow_cli/api/transports/` must be 100% language-agnostic, anchoring exclusively on structural properties: **Tier 1 Anchors** — e.g. hyperlinks (`a[href*='changelog']`), icon ligatures (`button:has(i.google-symbols:text('close'))`), ARIA roles (`[role='banner']`, `button[data-dismiss]`), and hierarchical DOM relationships (`[role='dialog']:has(a[href*='changelog']) button`). Relying on translated display labels or maintaining multi-locale text cascades is strictly forbidden as an anti-pattern hack.
 
 ## PR instructions

@@ -118,6 +118,17 @@ Pull in parallel via `ctx_batch_execute`:
 | **D12 — BDD step-stub signatures** | adaptive | any path under `tests/features/` |
 | **D13 — Dev / release scripts** | adaptive | any path under `scripts/` |
 | **D14 — Over-engineering / YAGNI** | ✅ baseline (NEW v3) | always |
+| **D15 — Surface parity (CLI ↔ MCP ↔ docs)** | adaptive (NEW v4) | any path matching `src/gflow_cli/cli*.py`, `src/gflow_cli/mcp/**`, `src/gflow_cli/worker/**`, or a changed `--help`/remediation string |
+
+**D15 specifics.** gflow ships every capability twice, and no automated gate can see the two
+copies drift: `tests/mcp/test_cli_parity.py` is command-level (a new *leaf* needs a mapping),
+so an unmirrored option, an unread queued-payload key, or a docstring asserting removed
+behaviour is green everywhere. Walk the six mirror axes in `skills/check/SKILL.md` step 1b
+against the diff and report each as satisfied or drifted. Highest-yield check: for every
+param the PR touches, confirm the key `mcp/tools.py` writes into the queue payload is the key
+`worker/codec.py` reads — they are matched by string, so a mismatch type-checks and silently
+no-ops. This dimension exists because #626 unlocked a CLI combination while `mcp/tools.py`
+and `docs/MCP.md` went on telling agents it was rejected, through a fully green pipeline.
 
 **Baseline floor is non-negotiable.** D1–D5 and D14 ALWAYS run. **Docs-only PRs** (100% paths under `*.md`, `docs/**`, `CHANGELOG.md`, `README.md`, `LICENSE`, `AUTHORS`) → D4 reframes from "test code coverage" to "docs-verification"; D5 still runs unchanged.
 
