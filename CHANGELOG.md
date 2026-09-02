@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `referenceEntity` guard never ran, on any image or video generation
+  ([#615](https://github.com/ffroliva/gflow-cli/issues/615)).**
+  `_intercept_reference_entities` strips character entities the caller did not
+  request, so a "poisoned" entity left in the Flow composer cannot smuggle itself
+  into an unrelated generation. It had never fired once, on any released version.
+
+  The route glob `**/batchGenerateImages` requires the final path segment to equal
+  `batchGenerateImages`, but the real endpoint is `.../flowMedia:batchGenerateImages`
+  — so it could never match. The **video** guard was dead for the same reason
+  (`.../video:batchAsyncGenerateVideoText`), which the original report does not
+  mention. Registration also moved from the page to the browser context, which
+  covers worker-delegated requests the page level cannot observe.
+
+  The failure was invisible because the response listener does a substring test and
+  kept working normally, and because the guard logged only when it *stripped*
+  something — so "never ran" and "ran, nothing to strip" were identical silence. It
+  failed **open**, quietly. Reported by
+  [@DioServis](https://github.com/DioServis), who separated both causes.
+
+  **Verified live**, A/B-controlled at zero credits: with the fix absent the guard
+  never fired and the test failed; with it present the guard fired and the test
+  passed — same account, same prompt, one variable. That also settles whether Flow
+  delegates to a dedicated Web Worker (it does; `context.route` suffices) and
+  confirms the request rewrite does not corrupt the body. See
+  [docs/LIVE_VERIFICATION_reference_entity_guard.md](docs/LIVE_VERIFICATION_reference_entity_guard.md).
+
+  **Coverage is partial by construction:** direct-wire routes issued through
+  Playwright's `APIRequestContext` are not routable at all and bypass the guard
+  regardless of matcher — tracked in
+  [#619](https://github.com/ffroliva/gflow-cli/issues/619).
+
 ## [0.64.0] — 2026-09-02
 
 ### Added
