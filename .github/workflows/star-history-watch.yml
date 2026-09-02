@@ -1,0 +1,89 @@
+name: Star history watch
+
+# ── Why this exists ──────────────────────────────────────────────────────────
+# The star-history chart in README.md is the project's front door — it renders on
+# GitHub and on the PyPI project page. When it breaks it does so SILENTLY: the
+# endpoint answers HTTP 200 with `image/svg+xml`, and the body is a "GitHub
+# restricted access to star data" placard instead of a chart. Every status-code
+# check passes. That is how it stayed broken from 2026-08-30 to 2026-09-02 with
+# no signal — a human noticed it in a browser.
+#
+# The chart depends on the `sealed_token` param surviving in the README URL
+# (GitHub restricted the public /stargazers endpoint on 2026-06-30; star-history's
+# per-repo cache expires in under 3 days without a token-bearing request). So this
+# probes for the two ways it dies: the token gets stripped, or the underlying PAT
+# expires or is revoked.
+#
+# The URL is read out of README.md rather than hardcoded here, so the probe can
+# never drift from what is actually shipped.
+
+on:
+  schedule:
+    # Daily 06:00 UTC — an hour after the selector probe, well clear of it.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe the README star-history chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.repository == 'ffroliva/gflow-cli'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Fetch each star-history URL in README.md and inspect the SVG body
+        run: |
+          set -uo pipefail
+          urls=$(grep -o 'https://api\.star-history\.com/chart?[^"]*' README.md | sort -u)
+          if [ -z "$urls" ]; then
+            echo "::error::No star-history URL found in README.md. If the chart was removed on"
+            echo "::error::purpose, delete this workflow too."
+            exit 1
+          fi
+
+          failed=0
+          while IFS= read -r url; do
+            # Redact the sealed token before anything reaches the public log.
+            safe=$(printf '%s' "$url" | sed 's/sealed_token=.\{8\}.*/sealed_token=<redacted>/')
+            echo "── $safe"
+
+            case "$url" in
+              *sealed_token=*) ;;
+              *)
+                echo "::error::sealed_token is missing from this URL. A tokenless chart reverts to"
+                echo "::error::the restriction placard within ~3 days. See the comment in README.md."
+                failed=1
+                ;;
+            esac
+
+            # Cache-bust so we measure the live endpoint, not star-history's warm cache.
+            code=$(curl -sS --max-time 30 -o body.svg -w '%{http_code}' "$url&cb=$GITHUB_RUN_ID") || {
+              echo "::warning::curl failed — treating as a transient star-history outage, not a token problem."
+              continue
+            }
+            bytes=$(wc -c < body.svg)
+            echo "   http=$code bytes=$bytes"
+
+            if [ "$code" != "200" ]; then
+              echo "::warning::HTTP $code from star-history — likely their outage, not our token."
+              continue
+            fi
+            # The whole point: a 200 is not proof. Read the SVG text.
+            if grep -qi 'restricted access to star data' body.svg; then
+              echo "::error::Chart is serving the GitHub restriction placard. The sealed token is"
+              echo "::error::present but not working — the underlying PAT has most likely expired or"
+              echo "::error::been revoked. Mint a fine-grained PAT (metadata:read on this repo), seal"
+              echo "::error::it at star-history.com, and replace the sealed_token param in README.md."
+              failed=1
+            else
+              echo "   ✅ real chart"
+            fi
+          done <<< "$urls"
+
+          exit "$failed"
