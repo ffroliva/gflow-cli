@@ -14,6 +14,47 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### Flow is migrating to `flow.google.com`; the migrated frontend is not drivable
+
+- **Status:** Open · **Severity:** High (every generation command fails on a migrated page load) · **Affected:** all `gflow image` / `gflow video` generation, CLI and MCP alike, on accounts the rollout has reached
+- **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
+
+Google is moving Flow off Labs onto its own origin. On a migrated page load,
+`https://labs.google/fx/tools/flow/project/<id>` redirects to
+`https://flow.google.com/project/<id>` and serves a rewritten frontend that
+contains **zero `<i>` elements**. Every gflow selector anchors on Material
+Symbols ligatures (`i.google-symbols:text-is(...)`), so cohort detection and
+every mode control miss at once.
+
+**The rollout flaps per page load.** The same account, profile and project land
+on the old host on one navigation and the migrated one on the next, minutes
+apart, with no client change. Measured on one account ~35 minutes apart:
+
+```
+old host       labs.google/fx/<locale>/tools/flow/...   i=55  i.google-symbols=49  crop_* present   -> exit 0
+migrated host  flow.google.com/project/...              i=0   i.google-symbols=0   crop_* absent    -> exit 36
+```
+
+This is **not** selector rot, not [#493](https://github.com/ffroliva/gflow-cli/issues/493),
+and not the agentic cohort — the agentic indicators are absent too. It is a
+different origin serving different markup.
+
+**Workaround:** re-run the command. While the rollout flaps, a fresh navigation
+frequently lands the old frontend and the run completes normally. Automated
+callers get this for free: the failure is `FlowHostMigratedError` (exit 36) with
+`retryable: true`, so retry loops driven by the `--json` / MCP / worker error
+envelope will keep trying.
+
+**What gflow does today (v0.66.0):** recognises the migrated origin and fails
+with the distinct, retryable exit 36 instead of the misleading
+`UiSelectorDriftError` (exit 23, "file a selector bug"). `_check_logged_in` also
+accepts the migrated host, so a migrated load is no longer misread as a
+logged-out session. **Support for driving the new frontend is separate work and
+is not implemented** — once the rollout completes for an account, no retry will
+help until then.
+
+---
+
 ### A Veo extend segment is 7 seconds, not the 8 Flow advertises — so concat pads a frozen second
 
 - **Status:** Open · **Severity:** Medium (audible/visible on every internal seam of a chained extend) · **Affected:** `gflow video extend -n >1` with `-o`, and any scene mixing extend segments

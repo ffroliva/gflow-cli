@@ -400,3 +400,31 @@ class TestHarState:
         assert rec.resolve_har_state(close_ok=True) == "possibly_incomplete"  # never written
         har.write_text("{}")
         assert rec.resolve_har_state(close_ok=True) == "complete"
+
+
+# ---------------------------------------------------------------------------
+# #639: every arm of the mode-switch cascade must keep capturing incidents
+# ---------------------------------------------------------------------------
+
+
+def test_every_mode_switch_error_arm_is_a_capture_trigger() -> None:
+    """`_mode_switch_error` returns one of four classes, and the operator needs a
+    bundle for ALL of them — the reporter's own #639 evidence came from one.
+
+    This is the invariant, not a list of four names: adding a fifth arm without
+    adding it here silently turns capture OFF for that failure, and nothing else
+    in the suite would notice.
+    """
+    from gflow_cli.diagnostics import _capture_triggers, _screenshot_triggers
+    from gflow_cli.errors import (
+        FlowAgentUiError,
+        FlowAppError,
+        FlowHostMigratedError,
+        UiSelectorDriftError,
+    )
+
+    arms = (FlowAppError, FlowHostMigratedError, FlowAgentUiError, UiSelectorDriftError)
+    captured = _capture_triggers()
+    shot = _screenshot_triggers()
+    assert [a for a in arms if a not in captured] == []
+    assert [a for a in arms if a not in shot] == []

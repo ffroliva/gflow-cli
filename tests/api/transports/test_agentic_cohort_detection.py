@@ -197,3 +197,107 @@ async def test_mode_switch_error_is_flow_app_error_on_app_crash(tmp_path: Path) 
 
     assert isinstance(err, FlowAppError)
     assert "crashed" in str(err)
+
+
+# --- #639: the flow.google.com migration branch of _mode_switch_error ----------
+
+
+def _migrated_page(present: set[str] | None = None) -> MagicMock:
+    """A page served by the migrated origin: zero ligatures, healthy render."""
+    page = _page_with_present(present or set())
+    page.url = "https://flow.google.com/project/9d0f4c22-0000-4000-8000-abcdef123456"
+    page.evaluate = AsyncMock(return_value={"ligatures": []})
+    page.screenshot = AsyncMock()
+    return page
+
+
+@pytest.mark.asyncio
+async def test_migrated_host_yields_flow_host_migrated_error(tmp_path: Path) -> None:
+    """The whole point of #639: on flow.google.com every ligature probe misses
+    for a reason that is NOT selector rot, so the operator must not be told to
+    file a selector bug."""
+    from gflow_cli.errors import FlowHostMigratedError
+
+    err = await VideoGenerationMixin._mode_switch_error(_migrated_page(), tmp_path, media="image")
+
+    assert isinstance(err, FlowHostMigratedError)
+    msg = str(err)
+    assert "flow.google.com" in msg
+    assert "image generation" in msg  # media verb interpolated, as the sibling arms do
+
+
+@pytest.mark.asyncio
+async def test_migrated_host_branch_is_symmetric_for_video(tmp_path: Path) -> None:
+    from gflow_cli.errors import FlowHostMigratedError
+
+    err = await VideoGenerationMixin._mode_switch_error(_migrated_page(), tmp_path, media="video")
+    assert isinstance(err, FlowHostMigratedError)
+    assert "video generation" in str(err)
+
+
+@pytest.mark.asyncio
+async def test_migrated_error_is_retryable_with_its_own_exit_code(tmp_path: Path) -> None:
+    """The migration flaps per page load, so a re-navigation often lands the old
+    host and succeeds — callers with automatic retry must not give up (#639)."""
+    from gflow_cli.errors import EXIT_CODE_MAP, FlowHostMigratedError, is_retryable
+
+    err = await VideoGenerationMixin._mode_switch_error(_migrated_page(), tmp_path, media="image")
+    assert is_retryable(err)
+    assert EXIT_CODE_MAP[FlowHostMigratedError] == 36
+
+
+@pytest.mark.asyncio
+async def test_flow_app_crash_still_wins_over_migrated_host(tmp_path: Path) -> None:
+    """Ordering: a crashed app is the more specific diagnosis — the editor never
+    rendered at all, so which origin served it is not the actionable fact."""
+    from gflow_cli.errors import FlowAppError
+
+    page = _migrated_page()
+    page.title = AsyncMock(return_value="Application error: a client-side exception")
+
+    err = await VideoGenerationMixin._mode_switch_error(page, tmp_path, media="image")
+    assert isinstance(err, FlowAppError)
+
+
+@pytest.mark.asyncio
+async def test_migrated_host_wins_over_cohort_indicator(tmp_path: Path) -> None:
+    """Ordering: if a cohort ligature somehow matches on the migrated origin,
+    the host is still the more useful fact — the #174/#183 agentic remediation
+    does not apply to a different frontend."""
+    from gflow_cli.errors import FlowHostMigratedError
+
+    lib = next(s for s in LIBRARY_UI_INDICATORS if "left_panel_close" in s)
+    err = await VideoGenerationMixin._mode_switch_error(
+        _migrated_page({lib}), tmp_path, media="image"
+    )
+    assert isinstance(err, FlowHostMigratedError)
+
+
+@pytest.mark.asyncio
+async def test_old_host_drift_is_unchanged_and_not_retryable(tmp_path: Path) -> None:
+    """No regression: genuine selector rot on labs.google must still be exit 23
+    and must still NOT be retryable — retrying real drift loops forever."""
+    from gflow_cli.errors import UiSelectorDriftError, is_retryable
+
+    page = _page_with_present(set())
+    page.url = "https://labs.google/fx/tools/flow/project/abc-123"
+    page.evaluate = AsyncMock(return_value={"ligatures": []})
+    page.screenshot = AsyncMock()
+
+    err = await VideoGenerationMixin._mode_switch_error(page, tmp_path, media="video")
+    assert isinstance(err, UiSelectorDriftError)
+    assert not is_retryable(err)
+
+
+@pytest.mark.asyncio
+async def test_unreadable_page_url_falls_through_to_drift(tmp_path: Path) -> None:
+    """Defensive: a page whose .url is not a usable string (closed context,
+    test double) must not crash the diagnosis — it degrades to the old verdict."""
+    from gflow_cli.errors import UiSelectorDriftError
+
+    page = _page_with_present(set())  # MagicMock .url — never assigned a string
+    page.evaluate = AsyncMock(return_value={"ligatures": []})
+    page.screenshot = AsyncMock()
+
+    err = await VideoGenerationMixin._mode_switch_error(page, tmp_path, media="image")
+    assert isinstance(err, UiSelectorDriftError)

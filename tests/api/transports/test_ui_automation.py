@@ -461,6 +461,46 @@ class TestCheckLoggedIn:
         )
         assert await t._check_logged_in(page) is True  # type: ignore[attr-defined]
 
+    # --- #639: Flow's migration to flow.google.com ---------------------------
+
+    @pytest.mark.asyncio
+    async def test_returns_true_in_project_editor_on_migrated_host(self) -> None:
+        """A migrated load is a VALID authenticated session. The old gate hard-
+        required `labs.google` in the URL, so it reported a logged-in user as
+        logged out and drove a pointless re-auth (#639)."""
+        t = UiAutomationTransport()
+        page = _make_page(
+            url="https://flow.google.com/project/abc-123",
+            signin_count=99,  # ignored — /project/ short-circuits.
+        )
+        assert await t._check_logged_in(page) is True  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_migrated_host_without_signin_button(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_page(url="https://flow.google.com/", signin_count=0)
+        assert await t._check_logged_in(page) is True  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_migrated_host_with_signin_button(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_page(url="https://flow.google.com/", signin_count=1)
+        assert await t._check_logged_in(page) is False  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_rejects_flow_host_smuggled_into_a_foreign_url(self) -> None:
+        """Security: the gate was a SUBSTRING match, so a URL merely CONTAINING
+        `labs.google` and `/flow` passed it. The host is now parsed and matched
+        exactly."""
+        t = UiAutomationTransport()
+        for url in (
+            "https://evil.example/?next=labs.google/fx/tools/flow",
+            "https://labs.google.evil.example/fx/tools/flow",
+            "https://flow.google.com.evil.example/project/x",
+        ):
+            page = _make_page(url=url, signin_count=0)
+            assert await t._check_logged_in(page) is False, url  # type: ignore[attr-defined]
+
 
 # ---------------------------------------------------------------------------
 # Unit 3.4 — _enter_editor(page, out_dir)

@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Flow's migration to `flow.google.com` was reported as selector drift
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** Google is moving Flow
+  off Labs onto its own origin. The migrated frontend renders **zero** Material Symbols
+  `<i>` elements, so every gflow selector — cohort detection included — misses at once,
+  and the run died with `UiSelectorDriftError` (exit 23, `retryable: false`): an error
+  that reads like the selectors rotted and sent operators hunting for the wrong cause.
+  The rollout **flaps per page load** — the same account and project land on the old
+  host on one navigation and the migrated one on the next — so a re-run frequently
+  succeeds, but the non-retryable classification made automated callers give up.
+  gflow now recognises the migrated origin and raises the distinct, **retryable**
+  `FlowHostMigratedError` (exit 36) naming the migration. Applies to CLI and MCP alike
+  (both route through the shared mode-switch raise site, and `retryable` has a single
+  source of truth). **This does not add support for the migrated frontend** — that is
+  separate work; see [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+
+- **A migrated page load was misread as a logged-out session
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** `_check_logged_in`
+  hard-required `labs.google` in the URL, so a perfectly valid authenticated session on
+  the migrated host failed the gate and drove a pointless re-auth. It now accepts both
+  Flow origins.
+
+### Security
+
+- **The authenticated-session URL gate matched hosts by substring.** `_check_logged_in`
+  tested `"labs.google" in page.url`, which any foreign URL satisfies merely by carrying
+  the string in its path or query (`https://evil.example/?next=labs.google/fx/tools/flow`).
+  The host is now parsed and matched exactly.
+
+### Changed
+
+- Incident bundles from a `flow.google.com` load previously reported
+  `url.host_category: "other"` / `url.route: "other"`, hiding the most useful fact about
+  the failure. The migrated origin is now classified as `flow_app`, with the same
+  identifier reduction applied.
+
 ## [0.65.0] — 2026-09-02
 
 ### Fixed
