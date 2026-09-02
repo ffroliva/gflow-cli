@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.64.0] — 2026-09-02
+
 ### Added
 
 - **`gflow video i2v --model omni-flash --end-frame` now works** ([#626](https://github.com/ffroliva/gflow-cli/issues/626)).
@@ -37,6 +39,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--end-frame`: that combination now succeeds. Exit 17 is unchanged for
   `gflow video chain --model omni-flash`, which is still rejected (chain-scale
   seeded i2v remains unverified).
+
+- **MCP↔CLI parity is now a duty of every pipeline phase** (contributor-facing).
+  `tests/mcp/test_cli_parity.py` is command-level: it fires when a new CLI *leaf*
+  lacks a mapped MCP tool, and stays green while an option goes unmirrored, a
+  queued-payload key goes unread, or a tool docstring asserts a restriction the
+  CLI no longer has. #626 shipped exactly that third case — `mcp/tools.py` and
+  `docs/MCP.md` kept telling agents `omni_flash` was rejected for i2v-with-frames
+  through a fully green pipeline. Each skill now owns a slice: `issue-assessment`
+  names affected surfaces, `predict` scopes the MCP blast radius, `scenario` adds
+  **D13**, `plan` makes the MCP mirror **task 6** (not optional when task 5
+  exists), `pr-council-review` adds **D15**, `check` adds **step 1b** (the
+  canonical six mirror axes), `live-verify` treats the MCP queued path as
+  separate code, and `doc-review` grades a *false* MCP claim as release-blocking.
+  Automating the mechanically checkable part is tracked in
+  [#628](https://github.com/ffroliva/gflow-cli/issues/628).
+
+### Fixed
+
+- **`AGENTS.md`'s Impeccable Routine was missing `generate_website_docs.py --check`**,
+  which `skills/check` already ran. Following the shorter list produced a green
+  local run against a stale `website/docs/` mirror and a red CI. The two lists now
+  agree.
 
 ## [0.63.0] — 2026-09-01
 
@@ -3546,7 +3570,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.63.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.64.0...HEAD
+[0.64.0]: https://github.com/ffroliva/gflow-cli/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/ffroliva/gflow-cli/compare/v0.62.1...v0.63.0
 [0.62.1]: https://github.com/ffroliva/gflow-cli/compare/v0.62.0...v0.62.1
 [0.62.0]: https://github.com/ffroliva/gflow-cli/compare/v0.61.0...v0.62.0
