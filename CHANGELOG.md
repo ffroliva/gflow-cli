@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.64.0] — 2026-09-02
+
+### Added
+
+- **`gflow video i2v --model omni-flash --end-frame` now works** ([#626](https://github.com/ffroliva/gflow-cli/issues/626)).
+  Google shipped first-and-last-frame generation for Omni 1.1 Flash, so the
+  guard that rejected that combination with exit 17 is gone:
+
+  ```bash
+  gflow video i2v ./start.png "she turns toward the window" \
+      --model omni-flash --end-frame ./end.png --duration 10
+  ```
+
+  omni-flash is the only model that also exposes `--duration`, so this is the
+  one route to a 10-second first+last interpolation.
+
+### Changed
+
+- **i2v end-frame safety moved from a static table to a post-submit route
+  check.** gflow used to decide which models could carry an end frame from a
+  hardcoded capability list, which silently went stale when Google shipped the
+  feature. It now verifies the route Flow *actually* used: a run that carried an
+  end frame but came back on `batchAsyncGenerateVideoStartImage` — Flow dropping
+  the frame at submit and billing a clip that was never interpolated — fails
+  with `WireFormatError` instead of being reported as a success. This also
+  catches a partial or staged rollback on any account, which the old table
+  could not.
+
+  **Breaking for scripts** that branched on exit 17 for `omni-flash` +
+  `--end-frame`: that combination now succeeds. Exit 17 is unchanged for
+  `gflow video chain --model omni-flash`, which is still rejected (chain-scale
+  seeded i2v remains unverified).
+
+- **MCP↔CLI parity is now a duty of every pipeline phase** (contributor-facing).
+  `tests/mcp/test_cli_parity.py` is command-level: it fires when a new CLI *leaf*
+  lacks a mapped MCP tool, and stays green while an option goes unmirrored, a
+  queued-payload key goes unread, or a tool docstring asserts a restriction the
+  CLI no longer has. #626 shipped exactly that third case — `mcp/tools.py` and
+  `docs/MCP.md` kept telling agents `omni_flash` was rejected for i2v-with-frames
+  through a fully green pipeline. Each skill now owns a slice: `issue-assessment`
+  names affected surfaces, `predict` scopes the MCP blast radius, `scenario` adds
+  **D13**, `plan` makes the MCP mirror **task 6** (not optional when task 5
+  exists), `pr-council-review` adds **D15**, `check` adds **step 1b** (the
+  canonical six mirror axes), `live-verify` treats the MCP queued path as
+  separate code, and `doc-review` grades a *false* MCP claim as release-blocking.
+  Automating the mechanically checkable part is tracked in
+  [#628](https://github.com/ffroliva/gflow-cli/issues/628).
+
+### Fixed
+
+- **`AGENTS.md`'s Impeccable Routine was missing `generate_website_docs.py --check`**,
+  which `skills/check` already ran. Following the shorter list produced a green
+  local run against a stale `website/docs/` mirror and a red CI. The two lists now
+  agree.
+
 ## [0.63.0] — 2026-09-01
 
 ### Added
@@ -3515,7 +3570,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.63.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.64.0...HEAD
+[0.64.0]: https://github.com/ffroliva/gflow-cli/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/ffroliva/gflow-cli/compare/v0.62.1...v0.63.0
 [0.62.1]: https://github.com/ffroliva/gflow-cli/compare/v0.62.0...v0.62.1
 [0.62.0]: https://github.com/ffroliva/gflow-cli/compare/v0.61.0...v0.62.0

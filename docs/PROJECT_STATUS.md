@@ -4,6 +4,49 @@
 
 ## Current release
 
+**v0.64.0 — alpha.** **`gflow video i2v --model omni-flash --end-frame` — first+last
+interpolation on Omni 1.1 Flash ([#626](https://github.com/ffroliva/gflow-cli/issues/626)).**
+Google shipped first-and-last-frame generation for Omni 1.1 Flash, so the guard that
+rejected that combination with exit 17 was enforcing a fact that had expired. omni-flash is
+also the only model exposing `--duration`, so this is the one route to a 10-second first+last
+interpolation.
+
+The interesting part is what replaced the guard. gflow used to decide which models could
+carry an end frame from a hand-maintained mirror of Google's support matrix — which went
+stale silently, and could have gone stale in the permissive direction just as easily. That
+table is **deleted**, not corrected. gflow now checks the route Flow *actually* used after
+submit: a run carrying an end frame that comes back on `batchAsyncGenerateVideoStartImage` —
+Flow dropping the frame and billing a clip that was never interpolated — fails with
+`WireFormatError` rather than being reported as success. That catches a partial or staged
+rollback on any account, at any time, with nobody re-reading a support page. It also closes a
+narrower hole the old backstop had: it only fired when Flow dropped *every* frame to the T2V
+route.
+
+**Live-verified on two accounts at zero credits plus one paid render.** The route-abort probe
+fired `batchAsyncGenerateVideoStartAndEndImage` with both images non-null on two distinct
+Google accounts, ruling out a staged rollout. The decisive layer is semantic, not structural:
+the paid 4s clip's **last frame is the supplied end image** and its first frame is the start
+image — the only check that distinguishes "Flow used the end frame" from "Flow accepted and
+ignored it", since exit code, HTTP status and file properties pass either way. Recorded as
+*not* verified rather than omitted: `--duration 10` + end frame is submit-verified only, its
+status poll having hit the pre-existing 401 of
+[#561](https://github.com/ffroliva/gflow-cli/issues/561). See
+[LIVE_VERIFICATION_v0.64.0.md](LIVE_VERIFICATION_v0.64.0.md).
+
+**Breaking:** scripts branching on exit 17 for `omni-flash` + `--end-frame` now see success.
+Exit 17 is unchanged for `gflow video chain --model omni-flash`, still rejected because
+chain-scale seeded i2v remains unverified.
+
+Also in this release, contributor-facing: **MCP↔CLI parity became a duty of every pipeline
+phase.** This very change drifted — `mcp/tools.py` and `docs/MCP.md` went on telling agents
+`omni_flash` was rejected for i2v-with-frames — through green lint, types, the full suite and
+`test_cli_parity.py`, which is command-level and cannot see a docstring that lies. Each skill
+now owns a slice (`scenario` D13, `plan` task 6, `pr-council-review` D15, `check` step 1b,
+`doc-review` blocking on a *false* MCP claim); automating the mechanically checkable part is
+tracked in [#628](https://github.com/ffroliva/gflow-cli/issues/628).
+
+<details><summary>v0.63.0 — <code>gflow video extend</code>, past Flow's 8-second ceiling</summary>
+
 **v0.63.0 — alpha.** **`gflow video extend` — continue a clip past Flow's 8-second ceiling.**
 Veo caps a single generation at 8 seconds. `extend` chains server-side
 continuations: each segment is seeded from the *previous segment's* media rather
@@ -33,6 +76,8 @@ defective is worse than no wrapper. See
 Also in this release: `CLAUDE.md` now `@`-imports `AGENTS.md` so the project's
 agent rules load rather than being politely requested, and `AGENTS.md` opens with
 a Skill Routing table making the `/gflow:` lifecycle the default workflow.
+
+</details>
 
 > **Releases v0.60.0 – v0.62.1 are not expanded below.** This file drifted for
 > five releases; rather than reconstruct their summaries after the fact, they are
@@ -398,6 +443,7 @@ reporter-verified e2e on macOS).
 | `gflow scene` — Add Clip / Scenes compose + credit-free server-side extended video (`runVideoFxConcatenation`) | ✅ done (v0.12.0) |
 | `gflow video chain` — last-frame I2V chaining from a JSONL manifest (`--dry-run`/`--max-links`/`--resume-from`) | ✅ done (v0.12.0) |
 | `gflow video extend` — chained server-side Veo continuations past the 8s ceiling (tier-resolved model, whole-run balance pre-flight, resumable) | ✅ done (v0.63.0) |
+| `i2v --model omni-flash --end-frame` — first+last interpolation on Omni 1.1 Flash; static capability table replaced by a post-submit route check that fails a dropped end frame (#626) | ✅ done (v0.64.0) |
 | Create-project generation works under Flow's Agent docked chat panel | ✅ done (v0.12.0) |
 | Video status poll raises `AuthExpiredError` (exit 3) on mid-workflow 401 (#156) + Docker `/dev/shm` hardening | ✅ done (v0.15.1) |
 | Locale-free resource-picker include selectors — entity attach works on every account language (#170) | ✅ done (v0.16.0) |

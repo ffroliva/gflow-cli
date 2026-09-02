@@ -514,20 +514,25 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > `t2v` and `i2v` (not `r2v`) additionally take `-o, --output PATH` (explicit file destination).
 > The mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
 >
-> **`i2v` model rules (issue #125, re-verified 2026-08-03):** every model —
-> `omni-flash` included — supports **start-frame** i2v; the **default is
-> `veo-lite`** (not Flow's UI default). `--model omni-flash` unlocks
-> `--duration 10` for i2v. The **end frame is narrower**: `--end-frame`
-> (first+last interpolation) requires a Veo 3.1 model — Flow's official
-> support matrix lists first+last as "coming soon" for Omni Flash, and gflow
-> rejects that combination up front (exit 17).
+> **`i2v` model rules (issues #125 / #626):** every model — `omni-flash`
+> included — supports i2v with a **start frame** and with an **end frame**
+> (`--end-frame`, first+last interpolation). The **default is `veo-lite`** (not
+> Flow's UI default) because it is the cheapest, not because of any capability
+> edge. `--model omni-flash` additionally unlocks `--duration 10` for i2v.
 > History: omni-flash was excluded from i2v entirely after a 2026-05-30 wire
 > capture showed Flow silently dropping the frames and billing the run as
 > text-to-video. A 2026-08-03 route-aborted re-capture
 > (`scripts/dev/capture_i2v_intercept_submit.py --model omni-flash
 > --start-only`) proved Flow now routes omni + start frame to
 > `batchAsyncGenerateVideoStartImage` with the frame bound, and a live x1
-> 10s generation confirmed the output interpolates from the start frame.
+> 10s generation confirmed the output interpolates from the start frame. The
+> end frame followed once Flow shipped first+last for Omni 1.1 Flash: on
+> 2026-09-02 the same probe without `--start-only` captured
+> `batchAsyncGenerateVideoStartAndEndImage` with both `startImage` and
+> `endImage` non-null, reproduced on two accounts at zero credits (#626).
+> Instead of a static per-model table, gflow now checks the route Flow
+> **actually used** after submit: a run whose end frame was silently dropped
+> fails loudly rather than reporting a clip that ignored it as a success.
 
 ## `gflow video t2v`
 
@@ -1603,7 +1608,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
 | `15` | `BrowserSessionClosedError` | The automation browser window was closed mid-operation | Re-run; keep the browser window open until the command finishes |
 | `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
-| `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode (e.g. `--model omni-flash` with `--end-frame`, or `omni-flash` for `chain` — issue #125) | omni-flash does start-frame `i2v` only: drop `--end-frame`, or use a Veo 3.1 model (`veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`) for first+last and for `chain` |
+| `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode — today that is `omni-flash` for `chain` (issues #125, #626) | Use a Veo 3.1 model (`veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`) for `chain`. Single-clip `i2v` with omni-flash, `--end-frame` included, is accepted |
 | `18` | `VideoModelSelectionError` | gflow could not select the requested video model in Flow's editor for an `i2v` run (model-picker option not found) | Usually transient — retry; if it persists, Flow's model-picker UI changed (report referencing #125) |
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --output`) | Retry; the recorded compose survives, so re-render is safe |
 | `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |

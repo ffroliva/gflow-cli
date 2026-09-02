@@ -31,6 +31,82 @@ The last check fails on either half of the published-site contract:
   `website/mkdocs.yml` points at it, so it is live but unreachable. Add the
   entry under the right nav section.
 
+**1b. Surface blast radius — MCP↔CLI parity and the other mirrors** (read-only; MANDATORY whenever the change touches a CLI command, option, flag help text, exit code, or user-facing error string)
+
+`tests/mcp/test_cli_parity.py` is a **command-level** gate only: it asserts every CLI *leaf*
+has a mapped MCP tool or a stated exemption. It is green while a new `--option` goes
+unmirrored, and green while an MCP docstring asserts a restriction the CLI no longer has.
+That semantic drift is invisible to every automated gate in this file, so it is checked here
+by hand — deliberately, because the alternative is shipping it.
+
+```bash
+PYTHONUTF8=1 uv run python -m pytest -q tests/mcp/test_cli_parity.py tests/mcp/test_server.py
+```
+
+Then enumerate the blast radius. For the CLI symbol(s) you changed (option name, model
+alias, exit code, capability), grep the whole repo and confirm **every** hit is either
+updated or still true:
+
+```bash
+# substitute the flag / alias / capability word you changed
+grep -rn --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=tmp "<your-symbol>" \
+    src/gflow_cli/mcp/ docs/ website/docs/ README.md KNOWN_ISSUES.md CHANGELOG.md skills/
+```
+
+Six axes, in blast-radius order. Tick each or state why it does not apply — "I did not touch
+a CLI surface" is a valid answer for the whole step; silence is not.
+
+**A. Execution paths — a request is built in THREE places, not one.**
+
+| Hop | File | Fails as |
+|---|---|---|
+| CLI | `cli_video.py` / `cli_image.py` dataclass → request | option parsed but never passed |
+| MCP direct | `mcp/tools.py` tool signature → payload dict | param accepted, dropped before the queue |
+| MCP queued | `mcp/tools.py` payload keys → `worker/codec.py` decode → request | **silent no-op** — accepted, queued, never read |
+
+The third hop is the dangerous one: the payload key the tool writes and the key the codec
+reads are matched by string, so a mismatch type-checks, lints, and passes tests while doing
+nothing. This has shipped before — a dead `output` param the queue never read survived until
+a pre-release audit (#495). Verify the key names literally line up end to end:
+
+```bash
+grep -n "<param>" src/gflow_cli/mcp/tools.py src/gflow_cli/worker/codec.py
+```
+
+**B. MCP surface truth** — `mcp/tools.py` tool signature **and** every behavioural claim in
+its docstring; `docs/MCP.md` parameter prose. `tests/mcp/test_cli_parity.py`'s
+`CLI_TO_MCP` / `_MCP_EXEMPT` only when adding a NEW leaf.
+
+**C. Agent-facing surfaces** — read by Codex / Cursor / Aider, not just by us, and covered by
+no test at all: `skills/gflow-cli/SKILL.md`, the `AGENTS.md` "Command surface" bullet,
+`README.md`, `docs/INDEX.md`.
+
+**D. Error and exit-code surface** — `errors.py` `_default_remediation` **and** the class
+docstring, `EXIT_CODE_MAP`, and the exit-code table in `docs/USAGE.md`. When a raise site is
+deleted, re-derive what the remaining sites are: a remediation string that still describes a
+removed case actively misleads.
+
+```bash
+grep -rn "raise <ErrorClass>" src/gflow_cli/   # must match what the docs table claims
+```
+
+**E. Declarative / template surfaces** — defaults baked into files users copy:
+`cli_movie.py`'s manifest template, `movie_manifest.py`, `chain_manifest.py`,
+`.env.template` for any env var, and the capability-reporting commands `gflow models` and
+`gflow doctor`.
+
+**F. Docs + published mirror** — `docs/USAGE.md` command section, `website/docs/`
+(regenerate; step 1 catches staleness but never wrongness), `KNOWN_ISSUES.md` claims about
+the surface, `CHANGELOG.md` under `### Changed` whenever behaviour a script could branch on
+moves.
+
+**Why this step exists.** In #626 the CLI stopped rejecting `omni-flash --end-frame` while
+`mcp/tools.py` and `docs/MCP.md` went on telling agents the combination was rejected. Lint,
+types, the full 2065-test suite, and the parity gate were green throughout, because none of
+them can see a docstring that lies. The AGENTS.md prose saying "keep them in sync" had been
+there the whole time and did not fire — the project's own lesson, again: wire the rule, or it
+is a wish.
+
 **2. Auto-fix lint and formatting** (rewrites files in place)
 
 ```bash
@@ -82,6 +158,7 @@ uv run python -m pytest -q --cov=gflow_cli --cov-fail-under=80
 ## Output
 
 - List files changed by the fix pass (empty = nothing needed fixing)
+- **Step 1b blast radius — the mirror table, each row ticked or explicitly marked N/A. "I did not touch a CLI surface" is a valid answer; silence is not.**
 - **Step 4 verify result — `ruff check` + `ruff format --check` both clean (this is the CI gate; a non-zero here is a blocking finding, not a warning)**
 - All pyright errors with `file:line` references
 - Pytest summary line and coverage percentage

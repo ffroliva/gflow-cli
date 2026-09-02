@@ -513,28 +513,20 @@ async def _run_i2v(
         Mode,
         VideoModel,
     )
-    from gflow_cli.errors import ModelModeIncompatibilityError
 
-    # Resolve the model with i2v-specific defaulting + validation, BEFORE any
-    # paid call. Start-frame i2v is supported by every current model (omni
-    # included — re-verified on the wire 2026-08-03, refs #125). The END frame
-    # is narrower: Flow lists first+last as "coming soon" for omni-flash and
-    # there is no wire proof for it, so reject that combination up front — a
-    # stale `--config` JSON or direct programmatic call can smuggle it past
-    # the Click Choice.
+    # Resolve the model with i2v-specific defaulting, BEFORE any paid call.
+    # No model/frame combination is rejected here any more: every current model
+    # carries both start-only and start+end i2v. omni-flash's start frame was
+    # wire-verified 2026-08-03 and its END frame on 2026-09-02 (#626) — two
+    # accounts, route-aborted at zero credits, both firing
+    # ``batchAsyncGenerateVideoStartAndEndImage`` with a non-null ``endImage``.
+    # A partial regression (Flow silently dropping the end frame back to the
+    # StartImage route) is caught post-submit by the transport's route
+    # backstop, which fails the run rather than bill for a clip that ignored
+    # the frame.
     resolved_model = VideoModel.from_cli(params.model)
     if resolved_model is None:
         resolved_model = I2V_DEFAULT_MODEL
-    has_end_frame = params.end_frame is not None or params.end_frame_ref_id is not None
-    if has_end_frame and not resolved_model.supports_i2v_end_frame():
-        msg = (
-            f"{resolved_model.value!r} does not support an END frame "
-            f"(first+last interpolation): Flow's official support matrix lists "
-            f"it as 'coming soon' for this model and gflow has no wire-level "
-            f"proof of the StartAndEndImage route for it (refs #125). Drop "
-            f"--end-frame, or use a Veo 3.1 model (e.g. --model veo-lite)."
-        )
-        raise ModelModeIncompatibilityError(detail=msg)
 
     effective_title = params.project_name or slugify_project_name(params.prompt, prefix="gflow-i2v")
     request = GenerateVideoRequest(
@@ -1290,9 +1282,8 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     default=None,
     type=click.Choice(["omni-flash", "veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
     help=(
-        "Video model. Defaults to veo-lite (cheapest). omni-flash supports the "
-        "start frame only (--end-frame requires a Veo 3.1 model) and unlocks "
-        "--duration 10."
+        "Video model. Defaults to veo-lite (cheapest). omni-flash supports both "
+        "--initial-frame and --end-frame, and unlocks --duration 10."
     ),
 )
 @click.option(

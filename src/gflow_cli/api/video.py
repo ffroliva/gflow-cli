@@ -76,30 +76,6 @@ class VideoModel(StrEnum):
             )
         return _VIDEO_MODEL_FROM_CLI[key]
 
-    def supports_i2v_end_frame(self) -> bool:
-        """Whether this model supports i2v with an END frame (first+last
-        interpolation).
-
-        ``OMNI_FLASH`` is excluded: Google's official support matrix lists
-        "Frames to Video: First + last" as "coming soon" for it (2026-08), and
-        there is no wire-level capture proving the
-        ``batchAsyncGenerateVideoStartAndEndImage`` route for Omni Flash. The
-        ``VEO_3_1_*`` variants have carried end frames on that route since the
-        original #125 captures.
-
-        START-frame i2v needs no capability gate: every current model
-        supports it. History (issue #125): a 2026-05-30 route-abort capture
-        showed ``OMNI_FLASH`` silently dropping frame refs at submit and
-        routing to ``batchAsyncGenerateVideoText``, so it was excluded from
-        i2v entirely. Re-verified 2026-08-03 with the same probe
-        (``capture_i2v_intercept_submit.py --model omni-flash --start-only``,
-        request aborted in-browser, zero credits): Flow now routes Omni Flash
-        + bound Start frame to ``batchAsyncGenerateVideoStartImage`` with a
-        non-null ``startImage`` — confirmed the same day by one live x1 10s
-        generation whose output's first frame IS the uploaded start frame.
-        """
-        return self is not VideoModel.OMNI_FLASH
-
     def supports_duration(self) -> bool:
         """Whether this model renders a duration control at all (issues #451/#288).
 
@@ -120,9 +96,10 @@ class VideoModel(StrEnum):
 
 # Default model for ``gflow video i2v`` and direct ``FlowApiClient.generate_video``
 # callers when ``model`` is omitted and the request carries a start/end frame.
-# ``veo_3_1_lite`` stays the default: it is the cheapest model that supports
-# BOTH start-only and start+end i2v. ``omni_flash`` (start-only, 10s capable —
-# re-verified 2026-08-03, refs #125) is opt-in via an explicit ``--model``.
+# ``veo_3_1_lite`` stays the default because it is the cheapest model, not
+# because of any capability edge: since Flow shipped first+last for Omni 1.1
+# Flash, EVERY model carries both start-only and start+end i2v (#626), so
+# ``omni_flash`` (10s capable) is a plain opt-in via an explicit ``--model``.
 I2V_DEFAULT_MODEL: VideoModel = VideoModel.VEO_3_1_LITE
 
 
