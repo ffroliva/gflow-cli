@@ -135,6 +135,27 @@ rg -n "__version__|<OLD_VERSION>|version assertion" tests src pyproject.toml .co
   [<NEW_VERSION>]: https://github.com/ffroliva/gflow-cli/compare/v<PREV_VERSION>...v<NEW_VERSION>
   ```
 
+**9b. Update `docs/PROJECT_STATUS.md` — this is an ACTION, not a review finding.**
+
+Rewrite the `## Current release` section to describe the release being cut, and add a
+milestone-history row for its headline change. Demote the previous release into a
+`<details><summary>vPREV — …</summary>` block rather than deleting it.
+
+The file's own header says "Updated on every signed tag" — a promise that went unkept for
+five consecutive releases, and again in v0.64.0, where the section still announced v0.63.0 as
+current at tag time. It was caught only because a human council happened to read the file.
+`scripts/ci/check_release_artifacts.py` now enforces it (violation 6): the version being cut
+must appear in that section specifically, not merely somewhere in the file — every past
+release is still named further down, so a whole-file search would pass on a fully stale
+header. Run it before committing:
+
+```bash
+uv run python scripts/ci/check_release_artifacts.py
+```
+
+Doing this at step 9b rather than discovering it at step 10 is the point: doc-review is a
+*detector*, and a gate that only detects still costs a round trip every release.
+
 **10. Run the documentation review gate.**
 
 Run `/gflow:doc-review` — audit all version refs, INDEX completeness, evidence files, **the published `website/docs/` mirror (PII gate + content-drift check, §4b)**, **code↔docs parity via git log (§4c)**, skill files, CHANGELOG footer, and memory files. Fix every **FAIL** before continuing. Fold all discovered fixes into the release prep commit — **including any `website/docs/` re-sync** (the mirror is anonymized and hand-synced; a canonical doc change this release must be mirrored, and `CHANGELOG.md` must never appear under `website/docs/`).
@@ -149,6 +170,7 @@ will fail the gate.
 
 ```bash
 git add pyproject.toml .codex-plugin/plugin.json src/gflow_cli/__init__.py uv.lock CHANGELOG.md
+git add docs/PROJECT_STATUS.md                 # step 9b — enforced by check_release_artifacts
 git add docs/ website/docs/ skills/ .claude/commands/gflow/   # include any doc-review + mirror fixes
 # doc-review version-currency fixes often also touch ROOT docs — stage them too:
 git add README.md PLAN.md KNOWN_ISSUES.md AGENTS.md llms.txt 2>/dev/null || true
