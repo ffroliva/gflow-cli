@@ -507,6 +507,12 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > with a message naming the model, before any browser work; it used to burn ~30 s
 > of selector timeouts and die with exit 23 as if Flow's UI had drifted. Omit
 > `--duration` to accept Flow's default length for those models.
+> On `i2v` this applies **even with no `--model`** (#630): omitting the flag binds
+> the `veo-lite` default, which has no duration control, so that combination is
+> rejected with exit 2 naming the default rather than dying as "Unexpected error".
+> `t2v`/`r2v` with no `--model` inherit Flow's sticky UI default, which gflow
+> cannot know, so they are not pre-checked. The MCP `gflow_generate_video` tool
+> applies the same rule and answers with a 400 envelope.
 > `--count` is enforced **fail-closed**: if Flow's count control cannot be
 > located (selector drift), the run refuses with exit 23 *before* submitting
 > instead of proceeding on Flow's sticky default (typically x2) and silently
@@ -839,12 +845,21 @@ Options:
 
 ### JSONL manifest format
 
-One JSON object per line. Only `prompt` is required; `model` / `duration` /
-`aspect` are optional per-link overrides (omit to inherit the chain default).
-Blank lines and `#`-prefixed comment lines are skipped.
+One JSON object per line. Only `prompt` is required; `model` and `aspect` are
+optional per-link overrides (omit to inherit the chain default). Blank lines and
+`#`-prefixed comment lines are skipped.
+
+> **`duration` is not supported in a chain** (issue #634). Flow renders a
+> duration control for `omni-flash` alone, and chains reject `omni-flash` (see
+> the note above) — so no model a chain can use can apply one. A manifest
+> carrying `duration` is now rejected **before the first link is submitted**;
+> previously it crashed partway through, after earlier links had already
+> rendered and spent credits. Chain links use Flow's default clip length. A
+> per-link `"model": "omni-flash"` override is rejected up front for the same
+> reason.
 
 ```jsonl
-{"prompt": "a lone wolf on a snowy ridge at dawn, cinematic", "model": "veo-lite", "duration": 4, "aspect": "16:9"}
+{"prompt": "a lone wolf on a snowy ridge at dawn, cinematic", "model": "veo-lite", "aspect": "16:9"}
 {"prompt": "it lifts its head and turns to face the camera"}
 {"prompt": "it bounds down the slope toward the valley"}
 ```
@@ -1519,14 +1534,14 @@ voice = "alnilam"
 id = "scene_01"
 action = "A mysterious stickman walks slowly through a dark forest."
 framing = "wide"
-duration = 5
+duration = 4
 characters = ["Stickman"]
 
 [[scenes]]
 id = "scene_02"
 action = "Close up of the stickman looking back in shock."
 framing = "close-up"
-duration = 5
+duration = 4
 characters = ["Stickman"]
 style_variant = "warm"
 ```

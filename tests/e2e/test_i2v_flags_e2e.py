@@ -19,6 +19,18 @@ Criteria covered:
                was bound through the editor's media dialog (not silently dropped).
   I2V-FLAG-2 — Positional back-compat form (``gflow video i2v <img> "<prompt>"``)
                still produces a successful VideoResult — no regression.
+  I2V-FLAG-3 — ``--initial-frame`` + ``--end-frame`` together bind both slots.
+  I2V-FLAG-4 — omni-flash + end frame + ``--duration 10``: the largest-payload
+               combination, asserting the captured route is
+               ``StartAndEndImage`` rather than a silently degraded
+               ``StartImage`` (#626).
+
+Every test here passes ``--model omni-flash`` wherever it passes ``--duration``.
+That is not stylistic: since #451/#288 the Veo 3.1 models render no duration
+control at all, so ``--duration`` without that flag now fails before any browser
+work. These tests carried a bare ``--duration 4`` for months after that shipped
+and would all have failed — they never run in CI (opt-in, credit-bearing), so
+nothing noticed. If you add a case here, run it at least once.
 
 Note: ``--end-frame`` / ``--end-image`` interpolation is covered at the
 transport level by ``test_e2e_i2v_start_end_frame_attach`` in
@@ -134,6 +146,8 @@ def test_e2e_i2v_initial_frame_flag(
             "9:16",
             "--out-dir",
             str(out_dir),
+            "--model",
+            "omni-flash",
             "--duration",
             "4",
             "--count",
@@ -186,6 +200,8 @@ def test_e2e_i2v_positional_back_compat(
             "9:16",
             "--out-dir",
             str(out_dir),
+            "--model",
+            "omni-flash",
             "--duration",
             "4",
             "--count",
@@ -233,6 +249,8 @@ def test_e2e_i2v_start_end_frame_flags(
             "16:9",
             "--out-dir",
             str(out_dir),
+            "--model",
+            "omni-flash",
             "--duration",
             "4",
             "--profile",
@@ -253,4 +271,80 @@ def test_e2e_i2v_start_end_frame_flags(
     # One for start, one for end.
     assert len(frame_attached_events) >= 2, (
         f"expected at least 2 frame_attached events, got {len(frame_attached_events)}"
+    )
+
+
+def test_e2e_i2v_omni_flash_end_frame_max_duration(
+    e2e_profile_dir: Path,
+    unisolated_home: Path,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """I2V-FLAG-4: omni-flash + end frame + ``--duration 10`` (#626).
+
+    The largest-payload i2v combination, and the one v0.64.0 shipped
+    **submit-verified only**: its live run reached
+    ``batchAsyncGenerateVideoStartAndEndImage`` with both images bound, then the
+    status poll returned HTTP 401 (#561) before the render finished. This test
+    is the executable form of that missing check, so the gap closes the next
+    time anyone runs the credit-bearing suite instead of waiting for another
+    hand-typed live session.
+
+    omni-flash is also the ONLY model that renders a duration control, so this
+    is the sole path that exercises duration and end-frame interpolation
+    together. Asserting the captured route (not just exit 0) is what would fail
+    if Flow silently degraded ``StartAndEndImage`` back to ``StartImage`` — the
+    mis-billing shape ``_assert_i2v_route`` exists to refuse.
+    """
+    start = _make_png(tmp_path / "start.png")
+    end = _make_png(tmp_path / "end.png")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(exist_ok=True)
+
+    profile_name = os.environ["GFLOW_CLI_E2E_PROFILE"]
+    runner = CliRunner()
+    result = runner.invoke(
+        video,
+        [
+            "i2v",
+            "--initial-frame",
+            str(start),
+            "--end-frame",
+            str(end),
+            _PROMPT,
+            "--aspect",
+            "9:16",
+            "--out-dir",
+            str(out_dir),
+            "--model",
+            "omni-flash",
+            "--duration",
+            "10",
+            "--profile",
+            profile_name,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert list(out_dir.glob("*.mp4")), "expected a downloaded mp4 for omni-flash first+last"
+
+    captured = [
+        e
+        for e in install_log_capture.entries
+        if e.get("event") == "ui_automation_video.generate_captured"
+    ]
+    assert captured, "no generate_captured event — cannot prove which route Flow used"
+    url = str(captured[-1].get("url", ""))
+    assert "batchAsyncGenerateVideoStartAndEndImage" in url, (
+        f"omni-flash carried an end frame but Flow routed to {url!r}; the end frame "
+        "was dropped at submit (refs #626)"
+    )
+
+    duration_events = [
+        e
+        for e in install_log_capture.entries
+        if e.get("event") == "ui_automation_video.duration_set"
+    ]
+    assert any(e.get("seconds") == 10 for e in duration_events), (
+        f"expected duration_set seconds=10, got {[e.get('seconds') for e in duration_events]}"
     )

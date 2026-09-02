@@ -57,7 +57,7 @@ characters = ["Stickman"]         # which characters appear (drives R2V reuse)
 speaker = "Stickman"
 line = "We finally made it to the top!"
 aspect = "9:16"
-model = "veo-lite"
+model = "omni-flash"              # only model with a duration control (see below)
 duration = 8
 
 [[scenes]]
@@ -68,6 +68,16 @@ style_suffix = "golden hour light" # appended after the variant suffix
 aspect = "9:16"
 duration = 6
 ```
+
+> **Scene `duration` requires `model = "omni-flash"`** (issue #634). Flow renders
+> a duration control for `omni-flash` alone; every Veo 3.1 model renders none, so
+> a scene pairing `duration` with a Veo model is rejected at **parse time** with
+> exit 11 — before any scene generates. Valid values are `4`, `6`, `8`, `10`.
+>
+> A scene with a `duration` and **no** `model` still parses: with no model named,
+> the clip inherits Flow's sticky UI default, which gflow cannot know here and so
+> cannot check. If that default is a Veo model the duration is silently not
+> applied. Name `model = "omni-flash"` explicitly whenever the length matters.
 
 On first run, characters with `identity = "entity"` are created once (image
 generation — **free**, no credits) and cached. Each scene then generates a clip

@@ -55,7 +55,7 @@ def test_parse_uuid_from_url(): ...
 async def test_upload_returns_asset(): ...
 
 @pytest.mark.e2e               # Hits the real Flow API. Requires GFLOW_CLI_E2E_PROFILE env var.
-@pytest.mark.e2e_image         # Cost sub-marker: spends ~1 Imagen credit.
+@pytest.mark.e2e_image         # Cost sub-marker: zero credits; draws on the daily image cap.
 async def test_full_t2i_roundtrip(): ...
 
 @pytest.mark.e2e
@@ -71,14 +71,14 @@ export GFLOW_CLI_E2E_PROFILE=<profile-name>   # name of a logged-in profile
 # Zero-credit sanity check (auth + health)
 uv run pytest -m e2e_auth -v
 
-# Single image (1 Imagen credit)
+# Single image (zero credits; daily image cap)
 uv run pytest -m "e2e_image and not e2e_batch" -v
 
 # Full regression (all credits)
 GFLOW_CLI_E2E_RUN_VIDEO=1 uv run pytest -m e2e -v
 ```
 
-E2e tests spend real Veo/Imagen credits. Video tests default to opt-out — set
+E2e video tests spend real Veo credits (image tests are free, daily-capped). Video tests default to opt-out — set
 `GFLOW_CLI_E2E_RUN_VIDEO=1` to include them. Run the full suite on `develop`
 before opening a release PR to `main`.
 

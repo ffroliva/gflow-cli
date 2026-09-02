@@ -4,7 +4,8 @@ Requires the master opt-in:
     GFLOW_CLI_E2E_PROFILE=<profile-name> uv run pytest -m e2e -v \
         tests/e2e/test_asset_tagging_e2e.py
 
-Spends ~2 Imagen credits: one to create a TAGGABLE character (a bare, image-less
+Runs 2 image generations (zero credits; daily-capped): one to create a TAGGABLE
+character (a bare, image-less
 entity cannot stage as a referenceEntity), one for the t2i generation that
 applies the tag.
 """

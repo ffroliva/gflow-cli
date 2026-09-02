@@ -28,7 +28,12 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.extend_chain import run_extend_chain
-from gflow_cli.api.video import VideoModel, is_media_uuid, reference_cap_for
+from gflow_cli.api.video import (
+    I2V_DEFAULT_MODEL,
+    VideoModel,
+    is_media_uuid,
+    reference_cap_for,
+)
 from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.models import AssetKind, OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
@@ -163,32 +168,49 @@ def _reject_agentic_ui_mode(ui_mode: str | None) -> None:
         raise click.UsageError(msg)
 
 
-def _reject_duration_without_control(model: str | None, duration: str | int | None) -> None:
+def _reject_duration_without_control(
+    model: str | None,
+    duration: str | int | None,
+    *,
+    default_model: VideoModel | None = None,
+) -> None:
     """#451/#288: reject ``--duration`` on a model that renders no duration control.
 
     The DTO guards this too (defence in depth for API callers), but a bare
     ``ValueError`` surfaces through the CLI as "Unexpected error." (exit 1) and
     the explanation is lost. Raising a ``UsageError`` here gives exit 2 and
     prints the reason — the same treatment ``--ui-mode agentic`` gets.
+
+    ``default_model`` is the model this command binds when the user passes no
+    ``--model`` (#630). Pass it only where gflow *knows* that default: `i2v`
+    binds ``I2V_DEFAULT_MODEL``, so an omitted flag there is not "no model" and
+    the guard must still run — otherwise the most natural way to try
+    ``--duration`` skips this check and dies as "Unexpected error." `t2v`/`r2v`
+    inherit Flow's sticky UI default, which gflow cannot know, so they pass
+    nothing and stay unguarded by design rather than by assumption.
     """
-    if duration is None or model is None:
+    if duration is None:
         return
-    try:
-        resolved = VideoModel.from_cli(model)
-    except ValueError:
-        # Unknown alias: Click's Choice already rejects it on the CLI path, and
-        # a programmatic caller deserves that error, not this guard's. Let the
-        # real validation report it rather than dying as "Unexpected error."
+    if model is None:
+        resolved = default_model
+    else:
+        try:
+            resolved = VideoModel.from_cli(model)
+        except ValueError:
+            # Unknown alias: Click's Choice already rejects it on the CLI path, and
+            # a programmatic caller deserves that error, not this guard's. Let the
+            # real validation report it rather than dying as "Unexpected error."
+            return
+    if resolved is None or resolved.supports_duration():
         return
-    # from_cli returns None only for a None argument, which we returned on above.
-    if resolved is not None and not resolved.supports_duration():
-        msg = (
-            f"--duration is not supported by --model {model} — Flow renders no duration "
-            f"control for it (verified live; refs #451/#288). Only omni-flash exposes a "
-            f"duration (4/6/8/10s). Drop --duration to accept Flow's default length, or "
-            f"use --model omni-flash."
-        )
-        raise click.UsageError(msg)
+    named = f"--model {model}" if model is not None else f"the default model {resolved.value}"
+    msg = (
+        f"--duration is not supported by {named} — Flow renders no duration "
+        f"control for it (verified live; refs #451/#288). Only omni-flash exposes a "
+        f"duration (4/6/8/10s). Drop --duration to accept Flow's default length, or "
+        f"use --model omni-flash."
+    )
+    raise click.UsageError(msg)
 
 
 def _relocate_single_video(item: Any, target: Path) -> Any:
@@ -920,6 +942,7 @@ async def _run_chain(
 
     from gflow_cli import chain as chain_mod
     from gflow_cli.api.video import Aspect
+    from gflow_cli.chain import reject_unusable_links
     from gflow_cli.chain_manifest import parse_chain_manifest
     from gflow_cli.data.chain_repo import ChainLinkRecorder
     from gflow_cli.errors import ChainManifestError
@@ -928,6 +951,14 @@ async def _run_chain(
     aspect_enum = Aspect.from_cli(aspect)
 
     links: list[ChainLinkSpec] = parse_chain_manifest(_Path(manifest))
+
+    # Validate here as well as inside run_chain (#634). run_chain's own guard is
+    # the root-cause one and protects programmatic callers, but it runs after the
+    # --dry-run short-circuit below, after the cost prompt, and after Chrome
+    # boots — so without this call `chain bad.jsonl --dry-run` would exit 0 on a
+    # manifest the real run refuses, and the pre-flight command would green-light
+    # the crash it exists to prevent.
+    reject_unusable_links(model=resolved_model, links=links)
 
     if max_links is not None and len(links) > max_links:
         msg = (
@@ -1326,7 +1357,9 @@ def i2v(  # NOSONAR
 ) -> None:
     """Generate a video from an initial frame + motion PROMPT."""
     _reject_agentic_ui_mode(ui_mode)
-    _reject_duration_without_control(model, duration)
+    # i2v binds I2V_DEFAULT_MODEL when --model is omitted, so the guard needs
+    # that default to fire on the no-flag path (#630).
+    _reject_duration_without_control(model, duration, default_model=I2V_DEFAULT_MODEL)
     resolved_image, resolved_prompt = _resolve_i2v_args(image, prompt, initial_frame)
 
     end_hint = "'--end-frame'"
@@ -1555,7 +1588,9 @@ def r2v(
         "Only Veo 3.1 models are accepted (omni-flash is single-clip only for "
         "now — not proven at chain scale, refs #125). The MANIFEST is a JSONL "
         'file: one JSON object per line, each with a required "prompt" and '
-        'optional "model"/"duration"/"aspect" overrides.\n\n'
+        'optional "model"/"aspect" overrides. A per-link "duration" is rejected '
+        "before anything is submitted: only omni-flash renders a duration "
+        "control, and chains cannot use it (refs #634).\n\n"
         "Each link is saved as its own mp4. Stitching the clips into a single "
         "file is a follow-up step — use `gflow scene`.\n\n"
         "\b\n"

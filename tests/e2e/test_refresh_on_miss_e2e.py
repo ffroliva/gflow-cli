@@ -16,7 +16,7 @@ identity — proven live against real Flow:
    attaches the existing tile — no duplicate upload. The catalog is healed
    with ``sync.source == "refresh"`` provenance.
 
-Costs 2 Imagen credits (seed + referencing generation).
+Costs 2 image generations (zero credits) (seed + referencing generation).
 
 Opt in with::
 

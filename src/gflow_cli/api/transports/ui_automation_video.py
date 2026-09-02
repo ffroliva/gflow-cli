@@ -90,6 +90,13 @@ _T2V_GENERATE_ROUTE = "batchAsyncGenerateVideoText"
 # The first+last interpolation route. A request carrying an end frame that lands
 # anywhere else had that frame dropped at submit (#626) — same backstop.
 _START_AND_END_GENERATE_ROUTE = "batchAsyncGenerateVideoStartAndEndImage"
+
+# Substring, not a path glob: the real endpoints carry a namespaced final segment
+# (`.../flowMedia:batchGenerateImages`), which `**/batchGenerateImages` can never
+# match. The VIDEO endpoint is namespaced too (`.../video:batchAsyncGenerateVideoText`),
+# so `**/batchAsyncGenerateVideo*` was equally dead — #615 names only the image one.
+# See `_intercept_reference_entities` for why it is registered on the context.
+_GENERATION_ROUTE_RE = re.compile(r"batchGenerateImages|batchAsyncGenerateVideo")
 # Status-poll route — Flow's SPA polls this itself while a generation runs.
 VIDEO_STATUS_ROUTE = "batchCheckAsyncVideoGenerationStatus"
 
@@ -936,26 +943,31 @@ class VideoGenerationMixin:
         from unittest.mock import AsyncMock, Mock
 
         if isinstance(page, Mock):
-            if not isinstance(getattr(page, "route", None), AsyncMock):
-                page.route = AsyncMock()
-            if not isinstance(getattr(page, "unroute", None), AsyncMock):
-                page.unroute = AsyncMock()
+            if not isinstance(getattr(page.context, "route", None), AsyncMock):
+                page.context.route = AsyncMock()
+            if not isinstance(getattr(page.context, "unroute", None), AsyncMock):
+                page.context.unroute = AsyncMock()
 
         async def intercept_generation_request(route: Any) -> None:
             req_obj = route.request
+            # Ran-at-all signal (#620): absence of the `finally` emission below
+            # means no handler observed the submit.
+            had_reference_entities = False
+            modified = False
+            outcome = "forwarded"
             try:
                 post_data = req_obj.post_data
+                body: dict[str, Any] = (
+                    cast(dict[str, Any], json.loads(post_data)) if post_data else {}
+                )
                 if not post_data:
-                    await route.continue_()
-                    return
-
-                body = cast(dict[str, Any], json.loads(post_data))
-                modified = False
+                    outcome = "empty_post_data"
 
                 if "requests" in body and isinstance(body["requests"], list):
                     requests_list = cast(list[dict[str, Any]], body["requests"])
                     for item in requests_list:
                         if "referenceEntities" in item:
+                            had_reference_entities = True
                             refs = item["referenceEntities"]
                             if isinstance(refs, list):
                                 refs_list = cast(list[dict[str, Any]], refs)
@@ -975,32 +987,61 @@ class VideoGenerationMixin:
                                     modified = True
 
                 if modified:
+                    # Kept alongside batch_request_intercepted, though strictly
+                    # subsumed by it: the #615 thread publicly told the reporter to
+                    # grep their logs for THIS event name. Removing it would break
+                    # instructions already given to an outside contributor.
                     log.info(
                         "ui_automation.batch_request_modified",
                         url=req_obj.url,
                         reason="stripped unrequested referenceEntities",
                         expected_entities=list(expected_entities),
                     )
-                    await route.continue_(post_data=json.dumps(body))
+                    await route.continue_(
+                        post_data=json.dumps(body, separators=(",", ":"), ensure_ascii=False)
+                    )
                 else:
                     await route.continue_()
             except Exception as exc:
+                outcome = f"error: {type(exc).__name__}"
                 log.warning(
                     "ui_automation.batch_request_modify_failed",
                     url=req_obj.url,
                     error=str(exc),
                 )
                 await route.continue_()
+            finally:
+                # `finally`, not the happy path: an emission the decode-error
+                # branch skips would make absence ambiguous again.
+                log.info(
+                    "ui_automation.batch_request_intercepted",
+                    url=req_obj.url,
+                    had_reference_entities=had_reference_entities,
+                    modified=modified,
+                    outcome=outcome,
+                    expected_entities=list(expected_entities),
+                )
 
-        # Register rules for both image and video endpoints
-        await page.route("**/batchGenerateImages", intercept_generation_request)
-        await page.route("**/batchAsyncGenerateVideo*", intercept_generation_request)
+        # CONTEXT, not page: these requests are Web-Worker-delegated in the current
+        # Flow cohort, so `page.route` cannot see them at all (#615). The capture path
+        # already recorded this — see ui_automation.py "page-level network capture is
+        # dead in this cohort".
+        #
+        # ponytail: context-wide routing is only safe because every generation entry
+        # point runs under `self._generate_lock`, so exactly one handler is registered
+        # at a time. Playwright dispatches to the newest matching handler and this one
+        # never calls `route.fallback()`, so if generation is ever parallelised across
+        # the page pool (`Settings.concurrency` accepts up to 16), one run would filter
+        # another run's request against the wrong `expected_entities` — stripping
+        # legitimate references. Scope the handler per-page before parallelising; note
+        # `route.request` has no owning page for Worker-delegated requests, so that
+        # scoping needs a different key.
+        await page.context.route(_GENERATION_ROUTE_RE, intercept_generation_request)
         try:
             yield
         finally:
             try:
-                await page.unroute("**/batchGenerateImages")
-                await page.unroute("**/batchAsyncGenerateVideo*")
+                await page.context.unroute(_GENERATION_ROUTE_RE, intercept_generation_request)
             except Exception:
                 pass
 

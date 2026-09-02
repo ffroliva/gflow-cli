@@ -9,7 +9,7 @@ confirmed in the existing project). The tests below make that manual proof
 
 # Cost & opt-in gates
 
-``character create`` spends Imagen credits (it runs a real face image
+``character create`` drives real image generation, zero credits (it runs a real face image
 generation, optionally a body one). The tests are therefore **default-OFF** so
 CI and ``/gflow:check`` never burn credits. Two gates must BOTH be satisfied:
 
@@ -29,7 +29,7 @@ Env-parameterized (sensible defaults so a bare opt-in works on ``denon82``):
 
 # Spending
 
-  - each ``character create`` ≈ 1 Imagen credit (face only; no ``--body-prompt``).
+  - each ``character create`` = 1 image generation, zero credits (face only; no ``--body-prompt``).
   - the partial-saga test runs ``create`` TWICE with the SAME name; the second
     run must RESUME (idempotent) and NOT create a second entity — so it should
     not double-spend. A true mid-saga kill is a MANUAL exercise; this test
@@ -87,7 +87,8 @@ def _require_character_optin() -> None:
     if os.environ.get(_RUN_CHARACTER_ENV, "0").strip() != "1":
         pytest.skip(
             f"{_RUN_CHARACTER_ENV} != 1 — character-create e2e is opt-in because "
-            "it spends Imagen credits. Set GFLOW_CLI_E2E_RUN_CHARACTER=1 (and "
+            "it drives a real browser image generation (zero credits; daily-capped). "
+            "Set GFLOW_CLI_E2E_RUN_CHARACTER=1 (and "
             f"{_PROJECT_ENV}) to run it."
         )
 
@@ -164,7 +165,7 @@ def _open_db(env: dict[str, str]) -> sqlite3.Connection:
 
 
 def test_character_create_binds_parent_entity(e2e_env: dict[str, str]) -> None:
-    """Live ``character create`` (≈1 Imagen credit): the face generation must
+    """Live ``character create`` (1 image generation, zero credits): the face generation must
     bind to the created entity, and the read-back must land in the SAME
     existing project.
 
@@ -455,7 +456,7 @@ def test_character_personality_utf8(e2e_env: dict[str, str]) -> None:
 
 
 def test_character_create_format_prompt_clicks_format_button(e2e_env: dict[str, str]) -> None:
-    """Live ``character create --format-prompt`` (≈1 Imagen credit): Flow's
+    """Live ``character create --format-prompt`` (1 image generation, zero credits): Flow's
     in-editor **Format** button must actually be found, enabled, and clicked.
 
     `format_character_prompt` is best-effort by design — a missing button logs

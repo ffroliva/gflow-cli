@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.65.0] — 2026-09-02
+
+### Fixed
+
+- **`gflow video chain` and `gflow movie run` died MID-SPEND on `duration` × `model`
+  ([#634](https://github.com/ffroliva/gflow-cli/issues/634),
+  [#635](https://github.com/ffroliva/gflow-cli/issues/635)).** The same defect
+  [#632](https://github.com/ffroliva/gflow-cli/pull/632) fixed for single-clip i2v, but
+  on these two surfaces it crashed *after* earlier links or scenes had already rendered
+  and billed — surfacing as exit 1 `"Unexpected error"` with the explanation lost.
+
+  For chains it was not an occasional mismatch but a **guaranteed** crash:
+  `supports_duration()` is True for `omni_flash` alone, and chains reject `omni_flash`, so
+  no model a chain can use has a duration control. Every manifest `duration` was
+  unsatisfiable by construction — **including the one shipped as the documented example**
+  in `docs/USAGE.md`, which a test pinned as valid.
+
+  Tracing it surfaced a second hole: the `omni_flash` rejection only ever tested the
+  *chain-level* model, while `_build_link_request` prefers a per-link override — so
+  `"model": "omni-flash"` on a link walked past the invariant. Both now validate every
+  link's effective model before link 0 renders, and `--dry-run` refuses what the real run
+  refuses.
+
+  **BREAKING:** a `movie.toml` scene pairing a Veo model with a `duration` parsed before
+  and now fails at parse with exit 11. That combination could never have rendered; it
+  previously failed later and more expensively. Scene `duration` requires
+  `model = "omni-flash"`.
+
+- **`gflow video i2v --duration` with no `--model` died as `"Unexpected error"`
+  ([#630](https://github.com/ffroliva/gflow-cli/issues/630)).** An omitted `--model` on
+  i2v is not "no model" — it binds `veo-lite`, which renders no duration control, so the
+  guard was bypassed in exactly the default case and the DTO's bare `ValueError` escaped
+  as exit 1. It now exits 2 naming the model and the fix. MCP had the same hole and
+  queued the task before failing; `gflow_generate_video` now returns a 400 up front.
+
+- **The `referenceEntity` guard was unobservable, and its e2e could not fail
+  ([#620](https://github.com/ffroliva/gflow-cli/issues/620)).**
+  `tests/e2e/test_entity_smuggling_e2e.py` wrapped both checks in `if bodies:` /
+  `if modified:`, so it passed whether the guard fired or never fired — and the second
+  block only *printed*. It sat through #615 without noticing.
+
+  Fixing the assertions alone would not have been enough: the guard logged only when it
+  *stripped* something, so "never ran" and "ran, nothing to strip" were identical silence.
+  `ui_automation.batch_request_intercepted` now fires on every intercepted request from a
+  `finally` — every exit, including the parse-error branch — carrying
+  `had_reference_entities`, `modified` and `outcome`. **Absence of the event is now
+  evidence**, which is what turned the question blocking #615's fix into a measurement.
+
+- **Image e2e tests were priced in credits they do not cost.** `pyproject.toml` markers,
+  `docs/E2E_TESTING.md`'s cost table, `tests/e2e/conftest.py`, `CONTRIBUTING.md`,
+  `docs/USER_GUIDE.md` and ~20 strings across 13 files claimed image generation spends
+  credits. Only video (Veo) does; images draw on a **daily cap**, which is a rate limit,
+  not a charge. `scripts/canary/run_canary.py` carried the same error as a code constant
+  misnamed for four of its five entries (`_CREDIT_MARKERS` → `_MANUAL_ONLY_MARKERS`,
+  behaviour unchanged — the refusal is about not driving a live browser unattended). A
+  cost model that overstates the price of a free test discourages running it, and the test
+  it discouraged is the one that would have caught #615.
+
+- **The `referenceEntity` guard never ran, on any image or video generation
+  ([#615](https://github.com/ffroliva/gflow-cli/issues/615)).**
+  `_intercept_reference_entities` strips character entities the caller did not
+  request, so a "poisoned" entity left in the Flow composer cannot smuggle itself
+  into an unrelated generation. It had never fired once, on any released version.
+
+  The route glob `**/batchGenerateImages` requires the final path segment to equal
+  `batchGenerateImages`, but the real endpoint is `.../flowMedia:batchGenerateImages`
+  — so it could never match. The **video** guard was dead for the same reason
+  (`.../video:batchAsyncGenerateVideoText`), which the original report does not
+  mention. Registration also moved from the page to the browser context, which
+  covers worker-delegated requests the page level cannot observe.
+
+  The failure was invisible because the response listener does a substring test and
+  kept working normally, and because the guard logged only when it *stripped*
+  something — so "never ran" and "ran, nothing to strip" were identical silence. It
+  failed **open**, quietly. Reported by
+  [@DioServis](https://github.com/DioServis), who separated both causes.
+
+  **Verified live**, A/B-controlled at zero credits: with the fix absent the guard
+  never fired and the test failed; with it present the guard fired and the test
+  passed — same account, same prompt, one variable. That also settles whether Flow
+  delegates to a dedicated Web Worker (it does; `context.route` suffices) and
+  confirms the request rewrite does not corrupt the body. See
+  [docs/LIVE_VERIFICATION_reference_entity_guard.md](docs/LIVE_VERIFICATION_reference_entity_guard.md).
+
+  **Coverage is partial by construction:** direct-wire routes issued through
+  Playwright's `APIRequestContext` are not routable at all and bypass the guard
+  regardless of matcher — tracked in
+  [#619](https://github.com/ffroliva/gflow-cli/issues/619).
+
 ## [0.64.0] — 2026-09-02
 
 ### Added
@@ -3570,7 +3659,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.64.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.65.0...HEAD
+[0.65.0]: https://github.com/ffroliva/gflow-cli/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/ffroliva/gflow-cli/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/ffroliva/gflow-cli/compare/v0.62.1...v0.63.0
 [0.62.1]: https://github.com/ffroliva/gflow-cli/compare/v0.62.0...v0.62.1

@@ -530,3 +530,60 @@ def test_chain_help_states_cost_and_scene_followup() -> None:
     out = result.output.lower()
     assert "credit" in out
     assert "gflow scene" in out
+
+
+def _manifest_raw(tmp_path: Path, lines: list[str]) -> Path:
+    p = tmp_path / "chain.jsonl"
+    p.write_text("\n".join(lines), encoding="utf-8")
+    return p
+
+
+def test_chain_dry_run_rejects_a_manifest_duration(tmp_path: Path) -> None:
+    """#634: --dry-run must refuse what the real run refuses.
+
+    run_chain's own guard sits behind the --dry-run short-circuit, so without the
+    CLI-level call the documented pre-flight command exits 0 on a manifest that
+    the real run rejects — green-lighting the crash it exists to prevent.
+    """
+    runner = CliRunner()
+    manifest = _manifest_raw(
+        tmp_path,
+        ['{"prompt": "link 0"}', '{"prompt": "link 1", "duration": 4}'],
+    )
+    p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
+    with (
+        p_resolve,
+        p_provider,
+        p_rec,
+        patch("gflow_cli.chain.run_chain", new_callable=AsyncMock) as mock_run,
+        patch("gflow_cli.api.client.FlowApiClient.__init__") as mock_client_init,
+    ):
+        result = runner.invoke(video, ["chain", str(manifest), "--dry-run"])
+
+    assert result.exit_code != 0, result.output
+    assert "duration" in result.output.lower()
+    mock_run.assert_not_awaited()
+    mock_client_init.assert_not_called()
+
+
+def test_chain_dry_run_rejects_a_per_link_omni_flash_override(tmp_path: Path) -> None:
+    """#634: the per-link model override bypassed the chain-level omni check."""
+    runner = CliRunner()
+    manifest = _manifest_raw(
+        tmp_path,
+        ['{"prompt": "link 0"}', '{"prompt": "link 1", "model": "omni-flash"}'],
+    )
+    p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
+    with (
+        p_resolve,
+        p_provider,
+        p_rec,
+        patch("gflow_cli.chain.run_chain", new_callable=AsyncMock) as mock_run,
+        patch("gflow_cli.api.client.FlowApiClient.__init__") as mock_client_init,
+    ):
+        result = runner.invoke(video, ["chain", str(manifest), "--dry-run"])
+
+    assert result.exit_code != 0, result.output
+    assert "omni" in result.output.lower()
+    mock_run.assert_not_awaited()
+    mock_client_init.assert_not_called()

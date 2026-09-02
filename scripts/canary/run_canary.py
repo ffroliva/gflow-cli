@@ -20,8 +20,8 @@ Otherwise the signal trains red-blindness and dies. The converse matters just as
 much — see ``_PRECONDITION_RE`` for why a real failure must never be *demoted*
 to DEFERRED.
 
-Scope: ``-m e2e_auth`` only ($0, no reCAPTCHA). Credit tiers are refused outright
-(see ``_CREDIT_MARKERS``) — a promise in a docstring is not enforcement.
+Scope: ``-m e2e_auth`` only ($0, no reCAPTCHA). Generation tiers are refused outright
+(see ``_MANUAL_ONLY_MARKERS``) — a promise in a docstring is not enforcement.
 
 Publishing is sanitized for a public repo: SHA, counts, duration, failure class,
 and failing test *base* names. Never raw logs, profile paths, prompts, signed
@@ -66,9 +66,12 @@ GREEN, RED, AUTH_EXPIRED, DEFERRED = "GREEN", "RED", "AUTH-EXPIRED", "DEFERRED"
 # a hang still reports.
 _TIER_TIMEOUT_S = 45 * 60
 
-# Tiers that spend real money. #502 is explicit that credit tiers stay manual;
-# relying on the default value of --markers to enforce that is not enforcement.
-_CREDIT_MARKERS = ("e2e_image", "e2e_video", "e2e_batch", "e2e_character", "smoke")
+# Tiers that drive a REAL generation against the live account. #502 is explicit that
+# they stay manual; relying on the default value of --markers is not enforcement.
+# Note the reason is not uniformly "credits": e2e_video spends Veo credits, while the
+# image tiers cost nothing and instead draw on the daily image cap and exercise
+# reCAPTCHA. Either way they are not safe to run unattended.
+_MANUAL_ONLY_MARKERS = ("e2e_image", "e2e_video", "e2e_batch", "e2e_character", "smoke")
 
 # Profile-state preconditions: they fail closed BEFORE any browser starts, so
 # nothing was exercised and the run says nothing about Flow.
@@ -367,11 +370,11 @@ def main() -> int:
     )
     args = p.parse_args()
 
-    spending = [m for m in _CREDIT_MARKERS if m in args.markers]
-    if spending:
+    manual_only = [m for m in _MANUAL_ONLY_MARKERS if m in args.markers]
+    if manual_only:
         raise SystemExit(
-            f"--markers selects credit-spending tiers {spending}. The canary never spends "
-            "credits unattended (#502); run those manually via /gflow:live-verify."
+            f"--markers selects generation tiers {manual_only}. The canary never drives a "
+            "real generation unattended (#502); run those manually via /gflow:live-verify."
         )
     if not args.profile:
         raise SystemExit("--profile (or GFLOW_CLI_E2E_PROFILE) is required")

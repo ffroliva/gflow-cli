@@ -20,6 +20,7 @@ from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+import structlog
 
 from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import (
@@ -3256,26 +3257,69 @@ class TestReferenceEntitiesInterception:
     filter/strip referenceEntities from outgoing HTTP request bodies.
     """
 
+    @staticmethod
+    def _captured_handler(mock_page: Any) -> Any:
+        """Return the registered handler, whichever LEVEL it was registered on.
+
+        #618 moves registration from ``page.route`` to ``page.context.route``.
+        Reaching into ``mock_page.route`` directly pins the level and breaks the
+        moment that lands — which it did, silently, when both branches were
+        stacked. Ask for the handler, not for where it was hung.
+        """
+        for mock in (mock_page.route, mock_page.context.route):
+            calls = getattr(mock, "call_args_list", [])
+            if calls:
+                return calls[0][0][1]
+        raise AssertionError("no route handler registered at page or context level")
+
+    def test_matcher_fires_against_the_real_endpoint_urls(self) -> None:
+        """#615 regression: the guard is only real if its matcher matches reality.
+
+        The previous test asserted a pattern *string* had been registered and then
+        invoked the handler by hand, so it stayed green for months while the guard
+        never fired once. Assert against URLs the code actually builds.
+        """
+        from gflow_cli.api import routes
+        from gflow_cli.api.transports import ui_automation_video as uav
+
+        image_url = routes.batch_generate_images_url("abc123")
+        assert uav._GENERATION_ROUTE_RE.search(image_url), image_url  # noqa: SLF001
+
+        for route_name in uav.VIDEO_GENERATE_ROUTES:
+            assert uav._GENERATION_ROUTE_RE.search(route_name), route_name  # noqa: SLF001
+
+    def test_the_old_glob_could_never_have_matched(self) -> None:
+        """Documents the defect so it cannot quietly return.
+
+        `page.route("**/batchGenerateImages")` requires the final path segment to
+        equal `batchGenerateImages`. The real segment is namespaced, so it never did.
+        """
+        from gflow_cli.api import routes
+
+        last_segment = routes.batch_generate_images_url("abc123").rsplit("/", 1)[-1]
+        assert last_segment == "flowMedia:batchGenerateImages"
+        assert last_segment != "batchGenerateImages"
+
     @pytest.mark.asyncio
     async def test_intercept_reference_entities_strips_unrequested(self) -> None:
+        from gflow_cli.api.transports.ui_automation_video import _GENERATION_ROUTE_RE
+
         transport = UiAutomationTransport()
         mock_page = MagicMock()
         mock_page.route = AsyncMock()
-        mock_page.unroute = AsyncMock()
 
         expected = {"requested-character-id"}
 
         async with transport._intercept_reference_entities(mock_page, expected):  # noqa: SLF001
-            # Verify routes were registered
-            mock_page.route.assert_any_call("**/batchGenerateImages", ANY)
-            mock_page.route.assert_any_call("**/batchAsyncGenerateVideo*", ANY)
+            # Registered on the CONTEXT, not the page: these requests are
+            # Web-Worker-delegated and page-level routing cannot see them (#615).
+            mock_page.context.route.assert_any_call(_GENERATION_ROUTE_RE, ANY)
+            assert not mock_page.route.called, "must not register at page level (#615)"
 
-        # Verify unroute was called
-        mock_page.unroute.assert_any_call("**/batchGenerateImages")
-        mock_page.unroute.assert_any_call("**/batchAsyncGenerateVideo*")
+        mock_page.context.unroute.assert_called_once_with(_GENERATION_ROUTE_RE, ANY)
 
         # Now test the route handler logic
-        intercept_handler = mock_page.route.call_args_list[0][0][1]
+        intercept_handler = mock_page.context.route.call_args_list[0][0][1]
 
         # Case 1: unrequested entity (should be stripped)
         mock_route = MagicMock()
@@ -3315,6 +3359,91 @@ class TestReferenceEntitiesInterception:
         await intercept_handler(mock_route)
 
         # If unmodified, continue_ is called with no post_data argument
+        mock_route.continue_.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_intercept_emits_ran_at_all_signal_even_when_nothing_stripped(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """#620: the handler must announce that it RAN, not only that it stripped.
+
+        Before this, the only events it could emit were ``batch_request_modified``
+        (inside ``if modified:``) and ``batch_request_modify_failed``. So a run where
+        the route never matched and a run where it matched with nothing to strip
+        produced byte-identical logs: total silence. That is why #615 — a guard that
+        never fired once — was invisible for months, and why no test could tell the
+        two states apart. The absence of this event is now itself evidence.
+        """
+        transport = UiAutomationTransport()
+        mock_page = MagicMock()
+        mock_page.route = AsyncMock()
+        mock_page.unroute = AsyncMock()
+        mock_page.context.route = AsyncMock()
+        mock_page.context.unroute = AsyncMock()
+
+        async with transport._intercept_reference_entities(mock_page, set()):  # noqa: SLF001
+            handler = self._captured_handler(mock_page)
+
+        # A perfectly clean request: no referenceEntities at all, nothing to strip.
+        mock_route = MagicMock()
+        mock_route.request.url = (
+            "https://aisandbox-pa.googleapis.com/v1/projects/p1/flowMedia:batchGenerateImages"
+        )
+        mock_route.request.post_data = json.dumps({"requests": [{"prompt": "a red apple"}]})
+        mock_route.continue_ = AsyncMock()
+
+        await handler(mock_route)
+
+        events = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation.batch_request_intercepted"
+        ]
+        assert events, (
+            "handler ran but emitted no batch_request_intercepted event — "
+            "'never fired' and 'fired, nothing to strip' are indistinguishable again"
+        )
+        assert events[0]["had_reference_entities"] is False
+        assert events[0]["modified"] is False
+        # It must still forward the request untouched.
+        mock_route.continue_.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_intercept_signal_survives_a_handler_exception(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """The ran-at-all signal must fire even when the handler THROWS (#620).
+
+        Emitted from the happy path only, it would stay silent exactly when the
+        guard ran but failed to parse — and the e2e would then report "the guard
+        never ran", sending a reader hunting a route-matching problem that is not
+        there. Emitting from ``finally`` is what makes "absence is evidence" sound.
+        """
+        transport = UiAutomationTransport()
+        mock_page = MagicMock()
+        mock_page.route = AsyncMock()
+        mock_page.unroute = AsyncMock()
+        mock_page.context.route = AsyncMock()
+        mock_page.context.unroute = AsyncMock()
+
+        async with transport._intercept_reference_entities(mock_page, set()):  # noqa: SLF001
+            handler = self._captured_handler(mock_page)
+
+        mock_route = MagicMock()
+        mock_route.request.url = "https://x/v1/projects/p1/flowMedia:batchGenerateImages"
+        mock_route.request.post_data = "{not valid json"
+        mock_route.continue_ = AsyncMock()
+
+        await handler(mock_route)
+
+        events = [
+            e
+            for e in install_log_capture.entries
+            if e["event"] == "ui_automation.batch_request_intercepted"
+        ]
+        assert events, "handler threw and went silent — 'absence is evidence' would lie"
+        assert events[0]["outcome"].startswith("error:")
+        # And it must still forward the request rather than hanging the generation.
         mock_route.continue_.assert_awaited_once_with()
 
 

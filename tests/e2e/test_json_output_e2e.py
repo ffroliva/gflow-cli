@@ -90,7 +90,7 @@ def test_e2e_models_catalog_json_shape() -> None:
 def test_e2e_image_t2i_json_shape(e2e_env: dict[str, str], tmp_path: Path) -> None:
     """`gflow image t2i --json` produces a pure-JSON document with the
     ``image_result`` schema (status / command / project_id / model / count /
-    images[]) when run against real Flow. Costs 1 Imagen credit.
+    images[]) when run against real Flow. Runs 1 image generation (zero credits).
 
     A worker keys ``images[0].seed`` for refine-regen continuity; this test
     asserts the field is present and an int, plus the on-disk file landed.

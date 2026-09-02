@@ -1,6 +1,6 @@
 """Live e2e regression test for issue #313: Flow's Agent-mode "tune" settings
 panel has a STICKY "Image generation default" count that can silently
-override the requested count if left mismatched. Spends Imagen credits (free
+override the requested count if left mismatched. Runs real image generation, zero credits (free
 — image generation costs 0 Flow credits, only video does). Skipped by
 default; opt in with ``GFLOW_CLI_E2E_PROFILE=<agentic profile>`` and
 ``-m e2e_image``.
