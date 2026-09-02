@@ -138,6 +138,10 @@ class ErrorBodySummary:
 # dot. Everything else is ``other`` and its raw host/path is never persisted.
 _HOST_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("labs.google", "flow_app"),
+    # #639: Google is migrating Flow onto its own origin. Without this the
+    # incident bundle from a migrated load reported host_category "other",
+    # hiding the single most useful fact about the failure.
+    ("flow.google.com", "flow_app"),
     ("aisandbox-pa.googleapis.com", "aisandbox"),
     ("accounts.google.com", "google_auth"),
     ("storage.googleapis.com", "google_cdn"),
@@ -1840,6 +1844,7 @@ def _capture_triggers() -> tuple[type[BaseException], ...]:
         BrowserSessionClosedError,
         FlowAgentUiError,
         FlowAppError,
+        FlowHostMigratedError,
         NetworkError,
         TransportTimeoutError,
         UiModeUnavailableError,
@@ -1851,6 +1856,10 @@ def _capture_triggers() -> tuple[type[BaseException], ...]:
     return (
         FlowAppError,
         FlowAgentUiError,
+        # #639: this arm REPLACED UiSelectorDriftError on the migrated frontend.
+        # Omitting it here would silently disable capture for the one failure whose
+        # bundle we most need to build selector support for the new origin.
+        FlowHostMigratedError,
         UiModeUnavailableError,
         UiSelectorDriftError,
         TransportTimeoutError,
@@ -1865,6 +1874,7 @@ def _screenshot_triggers() -> tuple[type[BaseException], ...]:
     from gflow_cli.errors import (
         FlowAgentUiError,
         FlowAppError,
+        FlowHostMigratedError,
         TransportTimeoutError,
         UiModeUnavailableError,
         UiSelectorDriftError,
@@ -1873,6 +1883,7 @@ def _screenshot_triggers() -> tuple[type[BaseException], ...]:
     return (
         FlowAppError,
         FlowAgentUiError,
+        FlowHostMigratedError,
         UiModeUnavailableError,
         UiSelectorDriftError,
         TransportTimeoutError,

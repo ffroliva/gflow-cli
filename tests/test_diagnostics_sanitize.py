@@ -67,6 +67,19 @@ class TestSanitizeUrl:
         again = sanitize_url(f"https://labs.google/fx/tools/flow/project/{uuid}", h)
         assert again.route == out.route
 
+    def test_migrated_flow_host_is_classified_not_other(self) -> None:
+        """#639: an incident bundle from a flow.google.com load reported
+        host_category "other"/route "other", hiding the single most useful fact
+        about the failure. The migrated origin is Flow, and is labelled as Flow.
+        """
+        h = CommandHasher()
+        uuid = "0bd19956-ae42-4c95-a897-940e0e2c0a63"
+        out = sanitize_url(f"https://flow.google.com/project/{uuid}?tok={CANARY_TOKEN}", h)
+        assert out.host_category == "flow_app"
+        assert out.route != "other"
+        assert uuid not in out.route  # the id reducer still applies on the new host
+        assert not _leaked(out)
+
     def test_known_aisandbox_method_routes_stay_canonical(self) -> None:
         h = CommandHasher()
         out = sanitize_url(

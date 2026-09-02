@@ -15,6 +15,7 @@ from gflow_cli.api.transports._common import (
     FLOW_URL,
     PER_CALL_TIMEOUT_S,
     REFRESH_SAFETY_MARGIN_S,
+    flow_host_kind,
     interpret_response,
     mint_batch_id,
 )
@@ -240,3 +241,56 @@ def test_interpret_response_500_redacts_signed_url_in_body() -> None:
     with pytest.raises(NetworkError) as excinfo:
         interpret_response("bearer", _resp(500, body))
     assert "abcdef123456" not in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# #639: Flow's migration to flow.google.com — host classification
+# ---------------------------------------------------------------------------
+
+
+class TestFlowHostKind:
+    """``flow_host_kind`` is the single place that knows which origins serve
+    Flow. It is TOTAL: any input that is not a parseable https Flow URL returns
+    ``None`` rather than raising, because both call sites read ``page.url`` on a
+    best-effort path where a probe error must never abort the real diagnosis.
+    """
+
+    def test_labs_host_is_labs(self) -> None:
+        assert flow_host_kind("https://labs.google/fx/tools/flow?hl=en") == "labs"
+
+    def test_localised_labs_path_is_labs(self) -> None:
+        assert flow_host_kind("https://labs.google/fx/pt/tools/flow/project/abc") == "labs"
+
+    def test_migrated_host_is_migrated(self) -> None:
+        assert flow_host_kind("https://flow.google.com/project/abc-123") == "migrated"
+
+    def test_unknown_host_is_none(self) -> None:
+        assert flow_host_kind("https://example.com/") is None
+
+    def test_accounts_google_is_none(self) -> None:
+        assert flow_host_kind("https://accounts.google.com/v3/signin/identifier") is None
+
+    def test_host_match_is_exact_not_substring(self) -> None:
+        """Security: the gate this replaces was ``"labs.google" in page.url``,
+        which an attacker-controlled URL satisfies in a query string or path."""
+        assert flow_host_kind("https://evil.example/?next=labs.google/fx/tools/flow") is None
+        assert flow_host_kind("https://labs.google.evil.example/fx/tools/flow") is None
+        assert flow_host_kind("https://flow.google.com.evil.example/project/x") is None
+
+    def test_subdomain_of_labs_is_not_flow(self) -> None:
+        assert flow_host_kind("https://cdn.labs.google/fx/tools/flow") is None
+
+    def test_host_is_case_insensitive(self) -> None:
+        assert flow_host_kind("https://FLOW.GOOGLE.COM/project/x") == "migrated"
+
+    def test_non_https_is_none(self) -> None:
+        assert flow_host_kind("http://flow.google.com/project/x") is None
+
+    def test_non_string_input_is_none(self) -> None:
+        """A MagicMock page whose ``.url`` was never set must not raise."""
+        assert flow_host_kind(MagicMock()) is None
+        assert flow_host_kind(None) is None
+
+    def test_malformed_url_is_none(self) -> None:
+        assert flow_host_kind("https://[oops") is None
+        assert flow_host_kind("") is None
