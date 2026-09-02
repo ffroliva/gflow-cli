@@ -4,6 +4,46 @@
 
 ## Current release
 
+**v0.66.0 — alpha.** **Google started moving Flow to a new domain, and gflow blamed its own
+selectors for it.**
+
+On a migrated page load, `labs.google/fx/tools/flow/project/<id>` redirects to
+`flow.google.com/project/<id>` and serves a rewritten frontend containing **zero `<i>`
+elements**. Every gflow selector anchors on Material Symbols ligatures, so cohort detection
+and every mode control missed at once and the run died `UiSelectorDriftError` — exit 23,
+`retryable: false`. That error means "a selector rotted, file a bug", so it sent operators
+hunting where nothing was broken. The selectors are correct for the host they were written
+against; that host is being replaced under them
+([#639](https://github.com/ffroliva/gflow-cli/issues/639), reported by
+[@maipmacrothorax-75](https://github.com/maipmacrothorax-75) with measurements from both
+sides of the rollout).
+
+The rollout **flaps per page load** — the same account, profile and project land on the old
+host on one navigation and the migrated one on the next — so a re-run frequently succeeds,
+which `retryable: false` was throwing away. gflow now recognises the migrated origin and
+raises a distinct, **retryable** `FlowHostMigratedError` (exit 36). CLI and MCP both inherit
+it: they share the raise site, and `is_retryable` is a single source of truth for the
+`--json`, MCP and worker envelopes.
+
+Tracing the same root cause turned up three things the report did not name. `_check_logged_in`
+hard-required `labs.google` in the URL, so a valid authenticated session on the migrated host
+was read as **logged-out** — and that gate was a *substring* match, satisfied by any foreign
+URL merely carrying the string in a path or query. Separately, `UiSelectorDriftError` is an
+incident-**capture** trigger, so swapping in a new class would have silently switched off
+bundle capture for exactly the failure whose evidence is most wanted; a test now pins that
+invariant across all four arms of the raise site rather than a list of names.
+
+**This does not add support for the migrated frontend.** It converts a confusing hard failure
+into a clear retryable one. Once the rollout completes for an account, no retry will help —
+#639 stays open for that work, with the anchor recon it needs already recorded.
+
+Verification: [LIVE_VERIFICATION_v0.66.0](LIVE_VERIFICATION_v0.66.0.md) — proven against the
+**real** migrated frontend at zero credits (`i_total: 0`, `flow_host_kind: "migrated"`,
+`check_logged_in: true`, exit 36, `retryable: true`), with a credit-free `image t2i` on the
+old host minutes earlier completing exit 0 to prove no regression.
+
+<details><summary>v0.65.0 — the referenceEntity guard that had never fired</summary>
+
 **v0.65.0 — alpha.** **A safety net that had never once fired, and two crashes that spent
 your credits before failing.**
 
@@ -44,6 +84,8 @@ regardless of matcher — [#619](https://github.com/ffroliva/gflow-cli/issues/61
 
 Verification:
 [LIVE_VERIFICATION_reference_entity_guard](LIVE_VERIFICATION_reference_entity_guard.md).
+
+</details>
 
 <details><summary>v0.64.0 — <code>i2v --end-frame</code> on Omni 1.1 Flash</summary>
 
@@ -443,6 +485,7 @@ reporter-verified e2e on macOS).
 
 | Milestone | Status |
 |---|---|
+| Flow `flow.google.com` migration named as its own retryable failure (exit 36) | ✅ done (v0.66.0) |
 | Repo scaffold, CI, license, README, disclaimer | ✅ done |
 | Auth login flow (one-time browser capture) | ✅ done |
 | Video: `t2v` / `i2v` / `batch` (Veo 3.1) | ✅ done (v0.2.0a1) |

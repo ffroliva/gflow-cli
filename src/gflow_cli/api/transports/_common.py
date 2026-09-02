@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import uuid
 from typing import Any
+from urllib.parse import urlsplit
 
 import structlog
 
@@ -51,6 +52,37 @@ REFRESH_SAFETY_MARGIN_S: int = 60
 def mint_batch_id() -> str:
     """Return a fresh UUID4 string for use as a batch request identifier."""
     return str(uuid.uuid4())
+
+
+# Flow's own origins. Google is migrating the app off labs.google onto
+# flow.google.com (issue #639) and the two FLAP per page load, so both are live
+# and every host gate has to accept both.
+_FLOW_HOSTS: dict[str, str] = {
+    "labs.google": "labs",
+    "flow.google.com": "migrated",
+}
+
+
+def flow_host_kind(url: object) -> str | None:
+    """Classify a URL's origin as ``"labs"``, ``"migrated"``, or ``None``.
+
+    Exact host match over a parsed https URL — never a substring test, which any
+    foreign URL satisfies just by mentioning the host in its path or query.
+
+    Total by construction: both callers read this straight off ``page.url`` on
+    best-effort paths where a probe error must never displace the real failure,
+    so anything unparseable — or not even a string — classifies as ``None``.
+    """
+    if not isinstance(url, str):
+        return None
+    try:
+        parts = urlsplit(url)
+        if parts.scheme != "https":
+            return None
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return None
+    return _FLOW_HOSTS.get(host)
 
 
 PROJECT_URL_FRAGMENT = "/project/"

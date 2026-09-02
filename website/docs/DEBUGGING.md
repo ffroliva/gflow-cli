@@ -106,7 +106,8 @@ at command startup).
 ### What triggers a capture (and what never does)
 
 Captured: `FlowAppError` (31), `FlowAgentUiError` (25),
-`UiModeUnavailableError` (28), `UiSelectorDriftError` (23),
+`FlowHostMigratedError` (36), `UiModeUnavailableError` (28),
+`UiSelectorDriftError` (23),
 `TransportTimeoutError` (9), `BrowserSessionClosedError` (15),
 `WireFormatError` (7), `WafRejectionError` (10), `NetworkError` (6),
 unexpected exceptions while a page is alive, and `ProfileLockedError` (11)

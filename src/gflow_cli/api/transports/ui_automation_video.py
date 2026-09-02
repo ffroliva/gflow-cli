@@ -31,6 +31,7 @@ from gflow_cli.api.transports._common import (
     close_menu,
     count_visible,
     extract_project_id,
+    flow_host_kind,
     generation_error,
     offered_menu_labels,
 )
@@ -53,6 +54,7 @@ from gflow_cli.errors import (
     AuthExpiredError,
     FlowAgentUiError,
     FlowAppError,
+    FlowHostMigratedError,
     MediaUploadRejectedError,
     RateLimitError,
     ReferenceNotFoundError,
@@ -1432,7 +1434,7 @@ class VideoGenerationMixin:
     @staticmethod
     async def _mode_switch_error(
         page: Page, out_dir: Path | None, *, media: str
-    ) -> FlowAppError | FlowAgentUiError | UiSelectorDriftError:
+    ) -> FlowAppError | FlowHostMigratedError | FlowAgentUiError | UiSelectorDriftError:
         """Build (do NOT raise — the caller raises) the right error for a
         ``mode_switch_trigger`` miss on the ``image``/``video`` path: dump DOM
         diagnostics, then classify — a transient :class:`FlowAppError` if Flow's app
@@ -1448,6 +1450,20 @@ class VideoGenerationMixin:
                 detail=(
                     "Flow's web app crashed (client-side exception) before the editor "
                     f"rendered, so there is no {media} generation control to drive."
+                    f"{diag_clause}"
+                )
+            )
+        # #639: checked BEFORE the cohort probe, because the cohort indicators are
+        # themselves ligature selectors — on the migrated frontend they miss for the
+        # same reason everything else does, so their silence proves nothing here.
+        if flow_host_kind(page.url) == "migrated":
+            return FlowHostMigratedError(
+                detail=(
+                    "Flow served this project from flow.google.com — the origin Google "
+                    "is migrating the app onto — whose frontend renders none of the "
+                    f"controls gflow drives, so there is no {media} generation control "
+                    "here. This is not selector drift. The migration currently flaps "
+                    "per page load, so retrying often lands the old frontend."
                     f"{diag_clause}"
                 )
             )

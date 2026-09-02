@@ -34,6 +34,7 @@ from gflow_cli.api.transports._common import (
     close_menu,
     count_visible,
     extract_project_id,
+    flow_host_kind,
     generation_error,
     offered_menu_labels,
 )
@@ -1077,20 +1078,21 @@ class UiAutomationTransport(VideoGenerationMixin):
         """True if the page shows the authenticated Flow UI.
 
         Gates (pattern G13):
-        - URL is on labs.google AND contains /flow (locale-stable;
-          /fx/pt/tools/flow, /fx/es/tools/flow, etc. all match).
-        - URL is NOT on accounts.google.com.
+        - URL's host is one of Flow's own origins — ``labs.google`` or, since
+          #639, the migrated ``flow.google.com``. Locale-stable: /fx/pt/tools/flow,
+          /fx/es/tools/flow etc. all match, and so does the migrated /project/<id>.
         - /project/<uuid> URLs short-circuit to True (editor already open).
         - Otherwise reject if a top-level Sign-in CTA is visible.
+
+        The host is PARSED and matched exactly. This gate used to be the
+        substring test ``"labs.google" in page.url``, which any foreign URL
+        satisfies simply by carrying the string in a path or query.
 
         A failure in the locator probe is treated as "no Sign-in button"
         — the URL gate already established Flow context, and a transient
         DOM error shouldn't force a re-auth loop.
         """
-        if "accounts.google.com" in page.url:
-            return False
-        on_flow = "labs.google" in page.url and "/flow" in page.url
-        if not on_flow:
+        if flow_host_kind(page.url) is None:
             return False
         if _PROJECT_URL_FRAGMENT in page.url:
             return True

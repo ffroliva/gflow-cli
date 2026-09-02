@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.66.0] — 2026-09-03
+
+### Fixed
+
+- **Flow's migration to `flow.google.com` was reported as selector drift
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** Google is moving Flow
+  off Labs onto its own origin. The migrated frontend renders **zero** Material Symbols
+  `<i>` elements, so every gflow selector — cohort detection included — misses at once,
+  and the run died with `UiSelectorDriftError` (exit 23, `retryable: false`): an error
+  that reads like the selectors rotted and sent operators hunting for the wrong cause.
+  The rollout **flaps per page load** — the same account and project land on the old
+  host on one navigation and the migrated one on the next — so a re-run frequently
+  succeeds, but the non-retryable classification made automated callers give up.
+  gflow now recognises the migrated origin and raises the distinct, **retryable**
+  `FlowHostMigratedError` (exit 36) naming the migration. Applies to CLI and MCP alike
+  (both route through the shared mode-switch raise site, and `retryable` has a single
+  source of truth). **This does not add support for the migrated frontend** — that is
+  separate work; see [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+
+- **A migrated page load was misread as a logged-out session
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** `_check_logged_in`
+  hard-required `labs.google` in the URL, so a perfectly valid authenticated session on
+  the migrated host failed the gate and drove a pointless re-auth. It now accepts both
+  Flow origins.
+
+### Security
+
+- **The authenticated-session URL gate matched hosts by substring.** `_check_logged_in`
+  tested `"labs.google" in page.url`, which any foreign URL satisfies merely by carrying
+  the string in its path or query (`https://evil.example/?next=labs.google/fx/tools/flow`).
+  The host is now parsed and matched exactly.
+
+### Changed
+
+- Incident bundles from a `flow.google.com` load previously reported
+  `url.host_category: "other"` / `url.route: "other"`, hiding the most useful fact about
+  the failure. The migrated origin is now classified as `flow_app`, with the same
+  identifier reduction applied.
+
+Live-verified 2026-09-03 at zero credits against the **real** migrated frontend, on an
+account inside the rollout: `flow_host_kind: "migrated"`, `_check_logged_in: true` (it was
+`false` before the fix), and `_mode_switch_error` returning `FlowHostMigratedError` / exit 36 /
+`retryable: true` — while a credit-free `image t2i` minutes earlier landed on the old host and
+completed exit 0, proving no regression. See
+[docs/LIVE_VERIFICATION_v0.66.0.md](docs/LIVE_VERIFICATION_v0.66.0.md).
+
 ## [0.65.0] — 2026-09-02
 
 ### Fixed
@@ -3659,7 +3705,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.65.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.66.0...HEAD
+[0.66.0]: https://github.com/ffroliva/gflow-cli/compare/v0.65.0...v0.66.0
 [0.65.0]: https://github.com/ffroliva/gflow-cli/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/ffroliva/gflow-cli/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/ffroliva/gflow-cli/compare/v0.62.1...v0.63.0
