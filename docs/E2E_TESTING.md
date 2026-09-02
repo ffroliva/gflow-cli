@@ -17,8 +17,8 @@ layers. The dominant constraint is not developer time or CI compute but
 Layer 0 — Static Analysis     ruff · pyright · detect-secrets
 Layer 1 — Unit Tests           pure logic, no I/O
 Layer 2 — Integration Tests    real Provider plumbing, mocked HTTP/browser
-Layer 3 — Smoke Tests          1 Imagen credit, golden path only (post-release)
-Layer 4 — Full E2E Tests       real credits, all strategies (pre-release gate)
+Layer 3 — Smoke Tests          image gen only — ZERO credits, golden path (post-release)
+Layer 4 — Full E2E Tests       real Veo credits (video only), all strategies (pre-release gate)
 ```
 
 **Only Layers 3 and 4 ever hit the real Flow API.**
@@ -46,11 +46,18 @@ Tests in `tests/smoke/` carry `pytest.mark.smoke`.
 Each e2e test also carries **one or more cost sub-markers** so you can run
 exactly the cost tier you can afford:
 
+> **Image generation costs ZERO Flow credits.** Only video (Veo) spends credits.
+> Images are limited by a **daily cap**, not billed — hitting it is a rate limit,
+> not a charge. This table said "~1 Imagen credit" for years, which discouraged
+> running tests that were always free; that stale claim is what left the #615
+> `referenceEntity` guard unverified while it silently did nothing. Confirmed with
+> the maintainer 2026-09-02.
+
 | Marker | Credit cost | Typical wallclock | When to use |
 |---|---|---|---|
 | `e2e_auth` | 0 | < 30 s | auth/session/health-check — always safe to run |
-| `e2e_image` | ~1 Imagen | 30–120 s | text-to-image or image-to-image golden path |
-| `e2e_batch` | N × Imagen | 2–10 min | batch image generation |
+| `e2e_image` | **0** (daily cap) | 30–120 s | text-to-image or image-to-image golden path |
+| `e2e_batch` | **0** (daily cap) | 2–10 min | batch image generation |
 | `e2e_video` | ~1 Veo | 1–10 min | text-to-video or image-to-video |
 | `e2e_data` | (same as above) | +0 s | DB persistence check — combined with image/video |
 
@@ -61,9 +68,9 @@ data-layer assertions depend on a real generation having run first.
 
 ```
 e2e ─┬─ e2e_auth     (auth/session, health check — zero credits)
-     ├─ e2e_image    (t2i, i2i — 1 Imagen credit per test)
+     ├─ e2e_image    (t2i, i2i — ZERO credits, daily cap only)
      │   └─ e2e_data (+ DB assertions)
-     ├─ e2e_batch    (batch t2i — N Imagen credits)
+     ├─ e2e_batch    (batch t2i — ZERO credits, daily cap only)
      └─ e2e_video    (t2v, i2v — 1 Veo credit per test)
          └─ e2e_data (+ DB assertions)
 ```
@@ -79,7 +86,7 @@ e2e ─┬─ e2e_auth     (auth/session, health check — zero credits)
 | `GFLOW_CLI_E2E_VIDEO_ASPECT` | `"landscape"` | Aspect ratio for video e2e: `landscape` or `portrait`. |
 | `GFLOW_CLI_E2E_VIDEO_MODEL` | `"omni-flash"` | Veo model for i2v tests: `omni-flash` or `veo-fast`. |
 | `GFLOW_CLI_E2E_VIDEO_DURATION` | `"4"` | Seconds of video to generate in i2v tests (minimum credit unit). |
-| `GFLOW_CLI_E2E_RUN_ENTITY_PROV` | `"0"` | Set to `"1"` to run the entity-provenance e2e (#402) — asserts a generation Flow actually accepted records its `entity_ids` / `entity_names` in `operations.metadata_json`. Opt-in because it spends Imagen credits. |
+| `GFLOW_CLI_E2E_RUN_ENTITY_PROV` | `"0"` | Set to `"1"` to run the entity-provenance e2e (#402) — asserts a generation Flow actually accepted records its `entity_ids` / `entity_names` in `operations.metadata_json`. Opt-in because it drives a real browser generation (no credit cost — images are free). |
 | `GFLOW_CLI_E2E_BATCH_MANIFEST` | `test_assets/sample_batch.tsv` | TSV manifest for the batch image e2e. |
 | `GFLOW_CLI_E2E_BATCH_JITTER` | `"1"` | Set to `"0"` to disable inter-request jitter in batch tests. |
 | `GFLOW_CLI_E2E_PROMPT` | *(safe default)* | Prompt override for the smoke test. |
@@ -114,7 +121,7 @@ uv run pytest -m smoke tests/smoke/test_profile_account_smoke.py -v
 
 | Smoke test | Credits | Notes |
 |---|---|---|
-| `test_real_flow.py` | ~1 Imagen | Full golden path; use `GFLOW_CLI_E2E_PROMPT` to override the prompt |
+| `test_real_flow.py` | **0** (daily cap) | Full golden path; use `GFLOW_CLI_E2E_PROMPT` to override the prompt |
 | `test_profile_account_smoke.py` | **0** | Auth verification only; backfills `.gflow_account` for pre-v0.10 profiles |
 
 ### Layer 4 — Cost-stratified e2e runs
@@ -128,7 +135,7 @@ uv run pytest -m "e2e_auth or (e2e and e2e_data and not e2e_image and not e2e_vi
 # Cheapest live generation: single image only
 uv run pytest -m "e2e_image and not e2e_batch" -v
 
-# Add batch (N Imagen credits — check sample_batch.tsv for row count)
+# Add batch (zero credits; consumes more of the daily image cap — see sample_batch.tsv for row count)
 uv run pytest -m "e2e_image" -v
 
 # Add video (1 Veo credit per test)
@@ -314,7 +321,7 @@ aging test.
 tests/
 ├── conftest.py                           # install_log_capture; auto-marker hook
 ├── smoke/
-│   ├── test_real_flow.py                 # [smoke] golden path, 1 Imagen credit
+│   ├── test_real_flow.py                 # [smoke] golden path, ZERO credits
 │   └── test_profile_account_smoke.py     # [smoke] profile account persistence — 0 credits
 └── e2e/
     ├── conftest.py                       # e2e_profile_dir, e2e_nosession_profile,
@@ -344,7 +351,7 @@ field bundle a user emails), which is unit-covered offline by
 
 | File | Credits | What it verifies |
 |------|---------|-----------------|
-| `test_real_flow.py` | 1 Imagen | Golden path: open Flow, submit prompt, save PNG, check dimensions |
+| `test_real_flow.py` | **0** | Golden path: open Flow, submit prompt, save PNG, check dimensions |
 | `test_profile_account_smoke.py` | 0 | `.gflow_account` file present + valid email; `list_profiles()` surfaces `google_account`; `gflow auth list --json` includes the field |
 
 > **Real environment required.** Both smoke tests require a profile that has been

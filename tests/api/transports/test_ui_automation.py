@@ -20,6 +20,7 @@ from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+import structlog
 
 from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports.ui_automation import (
@@ -3316,6 +3317,76 @@ class TestReferenceEntitiesInterception:
 
         # If unmodified, continue_ is called with no post_data argument
         mock_route.continue_.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_intercept_emits_ran_at_all_signal_even_when_nothing_stripped(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """#620: the handler must announce that it RAN, not only that it stripped.
+
+        Before this, the only events it could emit were ``batch_request_modified``
+        (inside ``if modified:``) and ``batch_request_modify_failed``. So a run where
+        the route never matched and a run where it matched with nothing to strip
+        produced byte-identical logs: total silence. That is why #615 — a guard that
+        never fired once — was invisible for months, and why no test could tell the
+        two states apart. The absence of this event is now itself evidence.
+        """
+        transport = UiAutomationTransport()
+        mock_page = MagicMock()
+        mock_page.route = AsyncMock()
+        mock_page.unroute = AsyncMock()
+
+        async with transport._intercept_reference_entities(mock_page, set()):  # noqa: SLF001
+            handler = mock_page.route.call_args_list[0][0][1]
+
+        # A perfectly clean request: no referenceEntities at all, nothing to strip.
+        mock_route = MagicMock()
+        mock_route.request.url = (
+            "https://aisandbox-pa.googleapis.com/v1/projects/p1/flowMedia:batchGenerateImages"
+        )
+        mock_route.request.post_data = json.dumps({"requests": [{"prompt": "a red apple"}]})
+        mock_route.continue_ = AsyncMock()
+
+        await handler(mock_route)
+
+        events = [e for e in install_log_capture.entries if e["event"].endswith("_intercepted")]
+        assert events, (
+            "handler ran but emitted no batch_request_intercepted event — "
+            "'never fired' and 'fired, nothing to strip' are indistinguishable again"
+        )
+        assert events[0]["had_reference_entities"] is False
+        assert events[0]["modified"] is False
+        # It must still forward the request untouched.
+        mock_route.continue_.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_intercept_signal_reports_when_it_did_strip(
+        self, install_log_capture: structlog.testing.LogCapture
+    ) -> None:
+        """The same event distinguishes the third state: ran AND stripped."""
+        transport = UiAutomationTransport()
+        mock_page = MagicMock()
+        mock_page.route = AsyncMock()
+        mock_page.unroute = AsyncMock()
+
+        async with transport._intercept_reference_entities(mock_page, set()):  # noqa: SLF001
+            handler = mock_page.route.call_args_list[0][0][1]
+
+        mock_route = MagicMock()
+        mock_route.request.url = (
+            "https://aisandbox-pa.googleapis.com/v1/projects/p1/flowMedia:batchGenerateImages"
+        )
+        mock_route.request.post_data = json.dumps(
+            {"requests": [{"prompt": "p", "referenceEntities": [{"entityId": "poisoned"}]}]}
+        )
+        mock_route.continue_ = AsyncMock()
+
+        await handler(mock_route)
+
+        events = [e for e in install_log_capture.entries if e["event"].endswith("_intercepted")]
+        assert events, "no ran-at-all signal on the stripping path"
+        assert events[0]["had_reference_entities"] is True
+        assert events[0]["modified"] is True
 
 
 def test_images_from_responses_raises_ratelimiterror_on_429():

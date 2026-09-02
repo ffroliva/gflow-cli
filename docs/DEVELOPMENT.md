@@ -91,7 +91,7 @@ See [docs/GITHUB.md § SonarCloud Quality Gate](GITHUB.md#sonarcloud-quality-gat
 
 ### E2e gate before merging develop → main
 
-E2e tests require a live authenticated profile and are **not run in CI** (they spend real Veo/Imagen credits). Before opening a `develop → main` release PR:
+E2e tests require a live authenticated profile and are **not run in CI** (video tests spend real Veo credits; image tests cost nothing but draw on a daily image cap). Before opening a `develop → main` release PR:
 
 ```bash
 export GFLOW_CLI_E2E_PROFILE=<your-profile-name>

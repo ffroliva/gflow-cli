@@ -64,28 +64,46 @@ async def test_e2e_entity_smuggling_interception(
     assert image.media_name, "Image generation failed"
     assert image.fife_url.startswith("https://")
 
-    # 4. Check structural logs for interception and request shape
-    # We look for "ui_automation.batch_request_body" (only logged in classic mode)
-    bodies = [
-        e for e in install_log_capture.entries if e["event"] == "ui_automation.batch_request_body"
-    ]
-    # If classic mode ran and captured requests, confirm no referenceEntities were sent
-    if bodies:
-        for entry in bodies:
-            summary = entry.get("summary")
-            assert isinstance(summary, dict)
-            assert not summary.get("mentions_reference_entities"), (
-                f"referenceEntities were leaked to the server in outgoing request: {summary}"
-            )
-
-    # Optional: Verify if the UI did attempt to smuggle and was modified
-    modified = [
+    # 4. Prove the guard RAN. (#620)
+    #
+    # Both assertion blocks here used to be wrapped in `if bodies:` / `if modified:`,
+    # so the test passed identically whether the guard fired or never fired — and the
+    # second block only *printed*. It asserted nothing, ever. That is the same defect
+    # class as the bug it was supposed to catch (#615), which it sat through silently.
+    #
+    # `batch_request_intercepted` is emitted by the handler itself on EVERY intercepted
+    # request, so its ABSENCE is the discriminating evidence: it means no route handler
+    # observed the generation submit at all.
+    intercepted = [
         e
         for e in install_log_capture.entries
-        if e["event"] == "ui_automation.batch_request_modified"
+        if e["event"] == "ui_automation.batch_request_intercepted"
     ]
-    if modified:
-        print(
-            "Note: Outgoing payload was successfully intercepted and modified "
-            "to strip smuggled entities."
+    if not intercepted:
+        pytest.fail(
+            "The referenceEntity guard never ran: no "
+            "'ui_automation.batch_request_intercepted' event was emitted for a "
+            "generation that demonstrably reached Flow (an image came back). "
+            "Either the route matcher does not match the real endpoint URL, or the "
+            "request is delegated to a worker the registered level cannot observe "
+            "(a Service Worker is invisible to BrowserContext.route). Refs #615, #620."
+        )
+
+    # The guard ran. Now it must not have leaked an unrequested entity: this run
+    # requested NO reference entities, so nothing may reach the wire.
+    leaked = [e for e in intercepted if e.get("had_reference_entities") and not e.get("modified")]
+    assert not leaked, (
+        f"referenceEntities reached the server unstripped on a run that requested "
+        f"none — the guard observed the request but did not filter it: {leaked}"
+    )
+
+    # Cross-check against the independent page-level observer where it is available.
+    # Unconditional on purpose: if it captured bodies, they must agree with the guard.
+    for entry in (
+        e for e in install_log_capture.entries if e["event"] == "ui_automation.batch_request_body"
+    ):
+        summary = entry.get("summary")
+        assert isinstance(summary, dict)
+        assert not summary.get("mentions_reference_entities"), (
+            f"referenceEntities were leaked to the server in outgoing request: {summary}"
         )

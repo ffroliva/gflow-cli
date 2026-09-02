@@ -946,16 +946,27 @@ class VideoGenerationMixin:
             try:
                 post_data = req_obj.post_data
                 if not post_data:
+                    # Still an observation that the handler RAN — see the
+                    # batch_request_intercepted note below.
+                    log.info(
+                        "ui_automation.batch_request_intercepted",
+                        url=req_obj.url,
+                        had_reference_entities=False,
+                        modified=False,
+                        reason="empty post_data",
+                    )
                     await route.continue_()
                     return
 
                 body = cast(dict[str, Any], json.loads(post_data))
                 modified = False
+                had_reference_entities = False
 
                 if "requests" in body and isinstance(body["requests"], list):
                     requests_list = cast(list[dict[str, Any]], body["requests"])
                     for item in requests_list:
                         if "referenceEntities" in item:
+                            had_reference_entities = True
                             refs = item["referenceEntities"]
                             if isinstance(refs, list):
                                 refs_list = cast(list[dict[str, Any]], refs)
@@ -973,6 +984,20 @@ class VideoGenerationMixin:
                                 if not filtered_refs:
                                     item.pop("referenceEntities", None)
                                     modified = True
+
+                # Ran-at-all signal (#620). Emitted on EVERY intercepted request,
+                # including the no-op. Before this the handler was silent unless it
+                # stripped something, which made "the route never matched" and "the
+                # route matched, nothing to strip" produce identical logs — exactly
+                # why #615 stayed invisible for months and why no test could tell
+                # the two apart. Absence of this event is now itself evidence.
+                log.info(
+                    "ui_automation.batch_request_intercepted",
+                    url=req_obj.url,
+                    had_reference_entities=had_reference_entities,
+                    modified=modified,
+                    expected_entities=list(expected_entities),
+                )
 
                 if modified:
                     log.info(
