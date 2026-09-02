@@ -305,6 +305,35 @@ incident bundle's `ui.json` carries the same data). Attach it to
 [#493](https://github.com/ffroliva/gflow-cli/issues/493) — that would indicate a
 state genuinely different from the sidebar one.
 
+### The referenceEntity guard covers browser-driven generation only
+
+- **Status:** **Open** — structural, tracked in
+  [#619](https://github.com/ffroliva/gflow-cli/issues/619)
+- **Severity:** Low today · **Affects:** any future direct-wire route that carries
+  `referenceEntities`
+
+`_intercept_reference_entities` strips character entities the caller did not request. As
+of v0.65.0 it **does** run — it never had before
+([#615](https://github.com/ffroliva/gflow-cli/issues/615)), and the fix is A/B-verified
+live (see
+[LIVE_VERIFICATION_reference_entity_guard](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_reference_entity_guard.md)).
+
+But it guards by registering a Playwright route handler, so it can only ever observe
+**browser-initiated** traffic. Every direct-wire route goes through `client._post_json`,
+which issues the request via `page.request.post` — Playwright's `APIRequestContext`. Those
+calls leave from the Python side using the browser context's cookies and never enter the
+browser's network stack, so **no route handler observes them, at any level**. This is
+Playwright behaving as designed, not a bug in our usage.
+
+**It does not bite today:** no direct-wire route currently sends `referenceEntities`. It is
+recorded because the coverage gap is invisible from the outside — the guard looks
+comprehensive and is not — and because it is the same fail-open shape as #615 one layer
+down. Any new direct-wire route that carries entity references would inherit the blind spot
+silently.
+
+**No workaround needed today.** If you are adding a direct-wire route that sends
+`referenceEntities`, filter them at the call site rather than relying on the guard.
+
 ### Flow's new full-page media-library UI breaks entity attach (A/B rollout)
 
 - **Status:** **Open** — Flow-side staged rollout; tracked in
