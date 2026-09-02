@@ -845,12 +845,21 @@ Options:
 
 ### JSONL manifest format
 
-One JSON object per line. Only `prompt` is required; `model` / `duration` /
-`aspect` are optional per-link overrides (omit to inherit the chain default).
-Blank lines and `#`-prefixed comment lines are skipped.
+One JSON object per line. Only `prompt` is required; `model` and `aspect` are
+optional per-link overrides (omit to inherit the chain default). Blank lines and
+`#`-prefixed comment lines are skipped.
+
+> **`duration` is not supported in a chain** (issue #634). Flow renders a
+> duration control for `omni-flash` alone, and chains reject `omni-flash` (see
+> the note above) — so no model a chain can use can apply one. A manifest
+> carrying `duration` is now rejected **before the first link is submitted**;
+> previously it crashed partway through, after earlier links had already
+> rendered and spent credits. Chain links use Flow's default clip length. A
+> per-link `"model": "omni-flash"` override is rejected up front for the same
+> reason.
 
 ```jsonl
-{"prompt": "a lone wolf on a snowy ridge at dawn, cinematic", "model": "veo-lite", "duration": 4, "aspect": "16:9"}
+{"prompt": "a lone wolf on a snowy ridge at dawn, cinematic", "model": "veo-lite", "aspect": "16:9"}
 {"prompt": "it lifts its head and turns to face the camera"}
 {"prompt": "it bounds down the slope toward the valley"}
 ```
@@ -1525,14 +1534,14 @@ voice = "alnilam"
 id = "scene_01"
 action = "A mysterious stickman walks slowly through a dark forest."
 framing = "wide"
-duration = 5
+duration = 4
 characters = ["Stickman"]
 
 [[scenes]]
 id = "scene_02"
 action = "Close up of the stickman looking back in shock."
 framing = "close-up"
-duration = 5
+duration = 4
 characters = ["Stickman"]
 style_variant = "warm"
 ```

@@ -43,6 +43,12 @@ def test_parses_minimal_prompt_only_line(tmp_path: Path) -> None:
 
 
 def test_parses_multi_link_in_order_with_and_without_overrides(tmp_path: Path) -> None:
+    """Parsing ``duration`` is NOT the same as a chain accepting it (#634/#635).
+
+    This asserts the parser's contract only — ``run_chain`` rejects any link
+    carrying a ``duration``; see
+    ``tests/test_chain.py::test_rejects_per_link_duration_up_front``.
+    """
     path = _write(
         tmp_path,
         '{"prompt": "first", "model": "veo-lite", "duration": 4, "aspect": "16:9"}\n'
