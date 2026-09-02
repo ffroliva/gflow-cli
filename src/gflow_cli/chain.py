@@ -195,6 +195,57 @@ def _build_link_request(
     )
 
 
+def _reject_unusable_links(*, model: VideoModel, links: Sequence[ChainLinkSpec]) -> None:
+    """Reject a chain that cannot succeed, BEFORE link 0 renders (#125, #634).
+
+    Every check here used to happen too late or not at all, and "too late" in a
+    chain means *after money was spent*: a chain that dies at link 3 has already
+    generated and billed links 0-2, and the DTO's bare ``ValueError`` surfaced as
+    exit 1 "Unexpected error" with the explanation lost (the same shape #630/#632
+    fixed for single-clip i2v).
+
+    Two things are checked per link, against the link's EFFECTIVE model:
+
+    * **omni_flash.** The chain-level ``model`` was already rejected below, but
+      :func:`_build_link_request` prefers ``spec.model`` when set, so a per-link
+      override walked straight past that check.
+    * **duration.** Chains reject omni_flash, and ``supports_duration()`` is True
+      for omni_flash alone — so no model a chain can use renders a duration
+      control, and any per-link ``duration`` is unsatisfiable by construction.
+      Expressed as ``supports_duration()`` rather than a blanket ban so that if
+      the omni_flash restriction is ever lifted, duration follows automatically
+      instead of silently staying wrong.
+    """
+    if model is VideoModel.OMNI_FLASH:
+        msg = (
+            f"model {model.value!r} is not supported for chains: a chain "
+            f"renders N seeded i2v links back-to-back, and omni_flash i2v is "
+            f"wire-verified for single generations only (start frame "
+            f"2026-08-03, end frame 2026-09-02; refs #125, #626). Use a Veo "
+            f"3.1 model."
+        )
+        raise ModelModeIncompatibilityError(msg)
+
+    for index, spec in enumerate(links):
+        effective = spec.model if spec.model is not None else model
+        if effective is VideoModel.OMNI_FLASH:
+            msg = (
+                f"links[{index}] overrides model to {effective.value!r}, which is "
+                f"not supported for chains: omni_flash i2v is wire-verified for "
+                f"single generations only (refs #125, #626). Drop the per-link "
+                f"model override, or use a Veo 3.1 model."
+            )
+            raise ModelModeIncompatibilityError(msg)
+        if spec.duration is not None and not effective.supports_duration():
+            msg = (
+                f"links[{index}] sets duration {spec.duration}, which no chain can "
+                f"apply: Flow renders a duration control for omni_flash only, and "
+                f"chains reject omni_flash (refs #125, #451, #288, #634). Drop the "
+                f"per-link duration to accept Flow's default clip length."
+            )
+            raise ModelModeIncompatibilityError(msg)
+
+
 async def _generate_link(
     *,
     client: FlowApiClient,
@@ -323,15 +374,7 @@ async def run_chain(
             to the t2v backstop) or ``WafRejectionError`` (403). Carries the
             ``Path`` of every link completed before the failure.
     """
-    if model is VideoModel.OMNI_FLASH:
-        msg = (
-            f"model {model.value!r} is not supported for chains: a chain "
-            f"renders N seeded i2v links back-to-back, and omni_flash i2v is "
-            f"wire-verified for single generations only (start frame "
-            f"2026-08-03, end frame 2026-09-02; refs #125, #626). Use a Veo "
-            f"3.1 model."
-        )
-        raise ModelModeIncompatibilityError(msg)
+    _reject_unusable_links(model=model, links=links)
 
     results: list[ChainLinkResult] = []
     completed_paths: list[Path] = []

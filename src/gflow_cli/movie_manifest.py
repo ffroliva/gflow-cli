@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from gflow_cli.api.video import VideoModel
 from gflow_cli.composition import (
     FRAMING,
     Character,
@@ -528,10 +529,36 @@ def _validate_scene_framing(framing: object, idx: int) -> None:
         )
 
 
-def _validate_scene_model(model: object, idx: int) -> None:
-    """Validate that scene model, if given, is a string."""
-    if model is not None and not isinstance(model, str):
+def _validate_scene_model(model: object, idx: int, duration: object = None) -> None:
+    """Validate the scene's model alias, and its compatibility with *duration*.
+
+    Both checks belong at PARSE time (#634). Before this, the alias was only
+    checked to be a *string* and ``duration`` only to be one of 4/6/8/10 — the
+    two were never checked against each other, and the alias itself was not
+    resolved until ``VideoModel.from_cli`` ran inside the per-scene render loop.
+    Either failure therefore landed mid-run, after earlier scenes had generated
+    and billed, as exit 1 "Unexpected error".
+    """
+    if model is None:
+        # No model means Flow's sticky UI default, which is genuinely unknowable
+        # here — so a duration cannot be checked against it. Left unguarded BY
+        # DESIGN, the same call #632 made for t2v/r2v.
+        return
+    if not isinstance(model, str):
         raise ConfigurationError(f"scenes[{idx}].model must be a string.")
+    try:
+        resolved = VideoModel.from_cli(model)
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"scenes[{idx}].model {model!r} is not a known model alias: {exc}"
+        ) from exc
+    if duration is not None and resolved is not None and not resolved.supports_duration():
+        raise ConfigurationError(
+            f"scenes[{idx}].duration {duration} cannot be applied to model "
+            f"{model!r} — Flow renders no duration control for it (verified live; "
+            f"refs #451, #288, #634). Only omni-flash exposes a duration "
+            f'(4/6/8/10s). Drop the duration, or use model = "omni-flash".'
+        )
 
 
 def _validate_scene_style_variant(
@@ -589,7 +616,7 @@ def _parse_scene(
     aspect, duration = _parse_scene_numeric_fields(d, idx)
 
     model = d.get("model")
-    _validate_scene_model(model, idx)
+    _validate_scene_model(model, idx, duration)
 
     style_variant = _scene_opt_str(d, "style_variant", idx)
     _validate_scene_style_variant(style_variant, idx, style_variant_names)

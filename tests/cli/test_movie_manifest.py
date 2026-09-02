@@ -62,7 +62,11 @@ action = "Establishing shot"
 framing = "wide"
 aspect = "16:9"
 duration = 8
-model = "veo-lite"
+# omni-flash, not veo-lite: this fixture pins "a scene carrying BOTH a model and
+# a duration", and omni-flash is the only model that renders a duration control.
+# With veo-lite it pinned the #634 crash as valid — the same entrenchment #635
+# describes for the chain manifest, and the same swap #632 made for the MCP test.
+model = "omni-flash"
 
 [[scenes]]
 id = "alice-arrives"
@@ -527,3 +531,43 @@ class TestMovieState:
         )
         loaded = MovieState.load(path, title="T", project="p")
         assert loaded.scenes["s1"].consistency_method == "text"
+
+
+# --------------------------------------------------------------------------- #
+# #634 — duration x model is validated at PARSE time, not at spend time
+# --------------------------------------------------------------------------- #
+_SCENE_HEAD = 'title = "T"\nproject = "p"\n\n[[scenes]]\nid = "s"\naction = "x"\n'
+
+
+def test_movie_duration_with_model_lacking_duration_control_raises(tmp_path: Path) -> None:
+    """`_parse_scene_numeric_fields` only ever checked duration's VALUE
+    (4/6/8/10), so `duration = 4` alongside a Veo model parsed clean and died
+    later inside the per-scene render loop — after earlier scenes had already
+    generated and billed, as exit 1 "Unexpected error"."""
+    path = _write_toml(tmp_path, _SCENE_HEAD + 'model = "veo-lite"\nduration = 4\n')
+    with pytest.raises(ConfigurationError, match="duration"):
+        MovieManifest.from_toml_path(path)
+
+
+def test_movie_duration_with_omni_flash_is_accepted(tmp_path: Path) -> None:
+    """Negative control: omni-flash DOES render a duration control, so the guard
+    must not blanket-ban duration the way chains legitimately do."""
+    path = _write_toml(tmp_path, _SCENE_HEAD + 'model = "omni-flash"\nduration = 4\n')
+    assert MovieManifest.from_toml_path(path).scenes[0].duration == 4
+
+
+def test_movie_duration_without_model_is_accepted(tmp_path: Path) -> None:
+    """Negative control: with no model the effective model is Flow's sticky UI
+    default, genuinely unknowable here — so this stays unguarded BY DESIGN,
+    exactly as t2v/r2v were left after #632."""
+    path = _write_toml(tmp_path, _SCENE_HEAD + "duration = 4\n")
+    assert MovieManifest.from_toml_path(path).scenes[0].duration == 4
+
+
+def test_movie_unknown_model_alias_raises_at_parse(tmp_path: Path) -> None:
+    """Same class of defect: the alias was only checked to be a *string*, so a
+    typo reached `VideoModel.from_cli` inside the render loop and crashed
+    mid-spend. Resolve it while parsing instead."""
+    path = _write_toml(tmp_path, _SCENE_HEAD + 'model = "veo-lightning"\n')
+    with pytest.raises(ConfigurationError, match="model"):
+        MovieManifest.from_toml_path(path)
