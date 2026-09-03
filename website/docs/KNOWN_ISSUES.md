@@ -50,13 +50,25 @@ callers get this for free: the failure is `FlowHostMigratedError` (exit 36) with
 `retryable: true`, so retry loops driven by the `--json` / MCP / worker error
 envelope will keep trying.
 
-**What gflow does today (v0.66.0):** recognises the migrated origin and fails
+**What gflow does today (v0.66.2):** recognises the migrated origin and fails
 with the distinct, retryable exit 36 instead of the misleading
 `UiSelectorDriftError` (exit 23, "file a selector bug"). `_check_logged_in` also
 accepts the migrated host, so a migrated load is no longer misread as a
 logged-out session. **Support for driving the new frontend is separate work and
 is not implemented** — once the rollout completes for an account, no retry will
 help until then.
+
+> **v0.66.1's fast-fail did not fire in the field, and v0.66.2 is the correction.**
+> The guard read `page.url` once, at `get_ui_driver` entry — before the hop to
+> `flow.google.com` had landed, because `project_editor_url` only builds
+> `labs.google` URLs and the redirect arrives *after* `page.goto` returns.
+> Measured by the reporter on three consecutive v0.66.1 runs: exit 36 at **57.0 /
+> 57.1 / 58.3 s**, through the slow selector-probe path. v0.66.2 re-checks the host
+> at the points the run already blocks, so the abort costs the old host nothing and
+> lands as soon as the redirect is observable. The same release stops a
+> `NOT_REDIRECTED` locale cache from disabling the `<html lang>` recovery (#643),
+> which had made that state unrecoverable on exactly the profiles it was written
+> for.
 
 ---
 

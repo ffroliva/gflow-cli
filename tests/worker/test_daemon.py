@@ -746,3 +746,42 @@ async def test_worker_error_json_retryable_matches_cli(temp_db: DataStore) -> No
     assert updated.error["retryable"] is is_retryable(exc)
     assert updated.error["exit_code"] == 31
     worker.close()
+
+
+@pytest.mark.asyncio
+async def test_migrated_host_error_crosses_the_queued_path(temp_db: DataStore) -> None:
+    """#639: the MCP surface is repaired by the same shared-transport fix as the CLI,
+    but only if the envelope survives the queue.
+
+    The reporter's whole benefit is an orchestrator that reads ``retryable`` and
+    re-runs — before v0.66.0 the flag was false, so their retry loop never fired at
+    all. That flag reaches an MCP client only through this persisted queue row, which
+    is different code from the CLI's ``--json`` path.
+    """
+    from gflow_cli.errors import FlowHostMigratedError, is_retryable
+
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2i-migrated-host",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "scenic landscape"},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    exc = FlowHostMigratedError(detail="Flow served this project from flow.google.com")
+    fake_client.generate_image.side_effect = exc
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    updated = repo.get_task("task-t2i-migrated-host")
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error is not None
+    assert updated.error["exit_code"] == 36
+    assert updated.error["retryable"] is True
+    assert updated.error["retryable"] is is_retryable(exc)
+    worker.close()
