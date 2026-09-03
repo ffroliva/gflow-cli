@@ -4,6 +4,39 @@
 
 ## Current release
 
+**v0.66.1 — alpha.** **The migrated-origin failure went from 36 seconds of doomed probing to
+instant, and stopped throwing away a locale it had already learned.**
+
+v0.66.0 taught gflow to *name* Google's `flow.google.com` migration
+([#639](https://github.com/ffroliva/gflow-cli/issues/639)). This release makes living with it
+cheap. Two fixes, both measured on real migrated loads rather than reasoned about:
+
+**Fail fast.** The migrated frontend renders none of the controls gflow drives, so every DOM
+probe was doomed before it started — yet a run still burned the `detect_ui_mode` poll window
+(~8 s, both arms missing), the crop cascade (~24 s) and the URL settle (4 s) before raising
+`FlowHostMigratedError`. Because the rollout flaps per page load and callers retry on exit 36,
+that was paid on **every attempt of a retry loop**. The host is knowable from `page.url` in
+microseconds; measured live, exit 36 now arrives in **0 ms**.
+
+**Stop discarding the locale.** The migrated origin serves `/project/<id>` with no
+`/fx/<locale>/tools/flow` segment, so locale resolution was structurally blind there — and
+`next_locale_state("pt", None)` then *demoted* an already-learned locale to PROVISIONAL on
+every migrated load, silently undoing [#587](https://github.com/ffroliva/gflow-cli/issues/587).
+The locale had not disappeared with the URL shape; it was in `<html lang>` the whole time.
+Measured on two accounts, `<html lang>` **agreed with the URL segment wherever both existed** —
+which is what licenses it as a fallback, where `navigator.language` (which reports the value
+gflow itself sets) would not
+([#643](https://github.com/ffroliva/gflow-cli/issues/643)).
+
+Neither fix makes the migrated frontend drivable — #639 stays open for that. What they buy is a
+failure that is instant and honest instead of slow and lossy.
+
+Verification: [LIVE_VERIFICATION_v0.66.1](LIVE_VERIFICATION_v0.66.1.md) — proven on **both sides
+of the still-flapping rollout** at zero credits: 0 ms exit 36 on a migrated load, and minutes
+later **exit 0** with a real 768x1376 JPEG on an old-host load, proving the guard is scoped.
+
+<details><summary>v0.66.0 — naming Flow's flow.google.com migration</summary>
+
 **v0.66.0 — alpha.** **Google started moving Flow to a new domain, and gflow blamed its own
 selectors for it.**
 
@@ -41,6 +74,8 @@ Verification: [LIVE_VERIFICATION_v0.66.0](LIVE_VERIFICATION_v0.66.0.md) — prov
 **real** migrated frontend at zero credits (`i_total: 0`, `flow_host_kind: "migrated"`,
 `check_logged_in: true`, exit 36, `retryable: true`), with a credit-free `image t2i` on the
 old host minutes earlier completing exit 0 to prove no regression.
+
+</details>
 
 <details><summary>v0.65.0 — the referenceEntity guard that had never fired</summary>
 
@@ -485,6 +520,7 @@ reporter-verified e2e on macOS).
 
 | Milestone | Status |
 |---|---|
+| Migrated-origin runs fail instantly (0 ms) and keep their learned locale | ✅ done (v0.66.1) |
 | Flow `flow.google.com` migration named as its own retryable failure (exit 36) | ✅ done (v0.66.0) |
 | Repo scaffold, CI, license, README, disclaimer | ✅ done |
 | Auth login flow (one-time browser capture) | ✅ done |
