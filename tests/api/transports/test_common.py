@@ -6,7 +6,7 @@ RED phase: all tests fail with ModuleNotFoundError until _common.py is created.
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,6 +15,7 @@ from gflow_cli.api.transports._common import (
     FLOW_URL,
     PER_CALL_TIMEOUT_S,
     REFRESH_SAFETY_MARGIN_S,
+    await_url_settled,
     flow_host_kind,
     interpret_response,
     mint_batch_id,
@@ -294,3 +295,44 @@ class TestFlowHostKind:
     def test_malformed_url_is_none(self) -> None:
         assert flow_host_kind("https://[oops") is None
         assert flow_host_kind("") is None
+
+
+# ---------------------------------------------------------------------------
+# #643: await_url_settled must not wait for a shape the migrated origin cannot have
+# ---------------------------------------------------------------------------
+
+
+class TestAwaitUrlSettledOnMigratedHost:
+    """On `flow.google.com` the localised URL shape can never appear — the path is
+    `/project/<id>`, with no `/fx/<locale>/tools/flow` segment at all.
+
+    Measured on two profiles: `await_url_settled` burned the FULL 4 s
+    `URL_SETTLE_TIMEOUT_MS` on every migrated navigation (4018 ms / 4017 ms) to
+    return the `None` it could have returned immediately. That is spent on top of
+    the ~8 s mode-detect window and ~24 s crop cascade a migrated run already
+    wastes before failing.
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_none_immediately_on_migrated_host(self) -> None:
+        page = MagicMock()
+        page.url = "https://flow.google.com/project/abc-123"
+        page.wait_for_url = AsyncMock(side_effect=AssertionError("must not wait"))
+        assert await await_url_settled(page) is None
+        page.wait_for_url.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_still_waits_on_the_labs_host(self) -> None:
+        """No regression: the old host CAN still redirect, so the wait must stay."""
+        page = MagicMock()
+        page.url = "https://labs.google/fx/tools/flow"
+        page.wait_for_url = AsyncMock()
+        await await_url_settled(page)
+        page.wait_for_url.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_already_localised_url_still_short_circuits(self) -> None:
+        page = MagicMock()
+        page.url = "https://labs.google/fx/pt/tools/flow"
+        page.wait_for_url = AsyncMock(side_effect=AssertionError("must not wait"))
+        assert await await_url_settled(page) == "https://labs.google/fx/pt/tools/flow"

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.66.1] — 2026-09-03
+
+### Fixed
+
+- **A migrated-origin run spent ~36 s discovering a failure knowable in microseconds
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** `flow.google.com` renders none
+  of the controls gflow drives, so every DOM probe is doomed before it starts — yet the run
+  still burned the full `detect_ui_mode` poll window (~8 s, both arms missing), the crop
+  selector cascade (~24 s) and the URL settle (4 s) before raising `FlowHostMigratedError`.
+  Because the rollout flaps per page load and callers retry on exit 36, that cost was paid on
+  **every attempt** of a retry loop. `get_ui_driver` now checks the host first and fails fast
+  with the same retryable exit 36. The old host is untouched and still gets full DOM detection;
+  a page whose URL cannot be read still probes rather than bailing, so a transient is never
+  mistaken for a migrated origin.
+
+- **Locale resolution was blind on `flow.google.com`, and silently discarded a locale it had
+  already learned ([#643](https://github.com/ffroliva/gflow-cli/issues/643)).** The migrated
+  origin serves `/project/<id>` with no `/fx/<locale>/tools/flow` segment, so
+  `locale_segment_from_url` could never match there. The locale had not disappeared — it moved
+  into `<html lang>`, which stays correct on the migrated host. Two measured consequences:
+  `next_locale_state("pt", None)` returned PROVISIONAL, **demoting** an already-learned locale
+  on every migrated load (so a fully-migrated account could never learn it again, undoing
+  [#587](https://github.com/ffroliva/gflow-cli/issues/587)); and `await_url_settled` burned the
+  full 4 s timeout per navigation waiting for a shape that can no longer exist. gflow now falls
+  back to `<html lang>` when the URL carries no segment, and skips the settle wait entirely on
+  the migrated origin.
+
+  The fallback is evidence-backed, not assumed: measured on two accounts (`en` and `pt-BR`),
+  `<html lang>` **agreed with the URL segment wherever both existed**. Unlike
+  `navigator.language` — which reports the value gflow itself sets — it is server-rendered by
+  Flow. Where Flow does state the locale in the URL, that stays authoritative.
+
 ## [0.66.0] — 2026-09-03
 
 ### Fixed
@@ -3705,7 +3737,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.66.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.66.1...HEAD
+[0.66.1]: https://github.com/ffroliva/gflow-cli/compare/v0.66.0...v0.66.1
 [0.66.0]: https://github.com/ffroliva/gflow-cli/compare/v0.65.0...v0.66.0
 [0.65.0]: https://github.com/ffroliva/gflow-cli/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/ffroliva/gflow-cli/compare/v0.63.0...v0.64.0
