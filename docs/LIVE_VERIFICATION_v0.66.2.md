@@ -19,8 +19,9 @@ maintainer accounts during this work:
 | `denon82` | 12 | **0** | 12 |
 
 Measured with `scripts/dev/measure_migrated_host_flip.py` across three sweeps on `ffroliva` and
-one on `denon82`, over ~2 hours (full record:
-[`PROBE.md`](superpowers/plans/2026-09-03-migrated-host-gate/PROBE.md)).
+one on `denon82`, over ~2 hours (the raw per-navigation record is in the `scripts/dev/_spike_out/` JSON the
+instrument writes; the planning artifacts were consolidated at release per the repo's
+spec-to-memory convention).
 
 So **the migrated path was not reachable from this machine and is NOT live-verified here.** It is
 unit-tested and A/B-controlled only. That is stated in the NOT-verified section below rather than

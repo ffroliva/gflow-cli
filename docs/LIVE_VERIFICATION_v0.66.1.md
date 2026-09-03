@@ -26,8 +26,7 @@
 > is unreachable through the client on exactly the profiles that need it. `profile_ffroliva`
 > is latched that way today.
 >
-> Both are fixed for v0.66.2 — see
-> [`docs/superpowers/plans/2026-09-03-migrated-host-gate/`](superpowers/plans/2026-09-03-migrated-host-gate/PLAN.md).
+> Both are fixed for v0.66.2 — see [LIVE_VERIFICATION_v0.66.2](LIVE_VERIFICATION_v0.66.2.md).
 > **Layer 2 (no regression on the old host) stands unchanged and is still the load-bearing
 > result here.** The lesson is recorded rather than the numbers quietly edited: a function
 > measured in isolation is not a verification of the path users take.
