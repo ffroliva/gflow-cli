@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.66.1] — 2026-09-03
+
 ### Fixed
 
 - **A migrated-origin run spent ~36 s discovering a failure knowable in microseconds
@@ -3735,7 +3737,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.66.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.66.1...HEAD
+[0.66.1]: https://github.com/ffroliva/gflow-cli/compare/v0.66.0...v0.66.1
 [0.66.0]: https://github.com/ffroliva/gflow-cli/compare/v0.65.0...v0.66.0
 [0.65.0]: https://github.com/ffroliva/gflow-cli/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/ffroliva/gflow-cli/compare/v0.63.0...v0.64.0
