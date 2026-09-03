@@ -44,12 +44,19 @@ class _FakePage:
         *,
         url: str = "https://labs.google/fx/tools/flow?hl=en",
         lang: str | None = "",
+        lang_after_hydration: str | None = None,
     ) -> None:
         self.url = url
         self._redirects_to = redirects_to
         self._lang = lang
+        #: #651: Flow serves an `en` shell and rewrites `lang` at hydration. When
+        #: set, the FIRST read returns `lang` and every read after the settle-wait
+        #: returns this — the shape a single early read gets wrong.
+        self._lang_after = lang_after_hydration
+        self._hydrated = False
         self.probed = False
         self.lang_probed = False
+        self.lang_waited = False
         self.goto = AsyncMock(side_effect=self._goto)
 
     async def _goto(self, url: str, **_k: Any) -> None:
@@ -69,7 +76,19 @@ class _FakePage:
         if self._lang is None:
             msg = "Execution context was destroyed"
             raise RuntimeError(msg)
+        if self._hydrated and self._lang_after is not None:
+            return self._lang_after
         return self._lang
+
+    async def wait_for_function(self, *_a: Any, **_k: Any) -> None:
+        """The #651 settle-wait. Hydration flips `lang` only if this page models
+        an account whose locale differs from the `en` shell; otherwise it times
+        out, which is a legitimate ANSWER (the shell value was already right)."""
+        self.lang_waited = True
+        if self._lang_after is None:
+            msg = "Timeout waiting for function"
+            raise TimeoutError(msg)
+        self._hydrated = True
 
 
 async def _bootstrap(tmp_path: Path, page: _FakePage) -> FlowApiClient:
@@ -373,3 +392,50 @@ async def test_a_lang_only_locale_is_not_evidence_that_flow_redirects(tmp_path: 
     client3 = await _bootstrap(tmp_path, page3)
     assert page3.probed is False, "the settle must be off once NOT_REDIRECTED commits"
     assert client3._account_locale == "en"
+
+
+# --- #651: <html lang> starts as the `en` shell and flips at hydration ---------
+
+
+async def test_a_lang_read_before_hydration_must_not_win(tmp_path: Path) -> None:
+    """The defect, measured on a real pt account on the OLD host: `<html lang>`
+    reads `en` until ~1.9 s and `pt` from ~2.3 s, so a single early read returned
+    `en` for EVERY account whose URL could not answer.
+
+    `readyState` cannot rescue this — it reaches "complete" ~1 s before the flip
+    (see `scripts/dev/measure_html_lang_settle.py`), so the fix has to observe the
+    change itself.
+    """
+    write_account_locale(tmp_path, NOT_REDIRECTED)
+    page = _FakePage(lang="en", lang_after_hydration="pt")
+
+    client = await _bootstrap(tmp_path, page)
+
+    assert page.lang_waited is True, "the settle-wait must run"
+    assert client._account_locale == "pt", "the post-hydration locale must win"
+
+
+async def test_a_locale_equal_to_the_shell_default_still_resolves(tmp_path: Path) -> None:
+    """An `en` account never changes the attribute, so the wait times out. That is
+    an ANSWER, not a failure: the first read was already right."""
+    write_account_locale(tmp_path, NOT_REDIRECTED)
+    page = _FakePage(lang="en")  # no hydration flip
+
+    client = await _bootstrap(tmp_path, page)
+
+    assert page.lang_waited is True
+    assert client._account_locale == "en"
+
+
+async def test_the_settle_wait_is_skipped_when_the_url_already_answered(
+    tmp_path: Path,
+) -> None:
+    """No regression for redirecting accounts: the URL is authoritative and cheap,
+    so the `<html lang>` path — and its wait — must never be reached."""
+    page = _FakePage("https://labs.google/fx/pt/tools/flow", lang="en", lang_after_hydration="de")
+
+    client = await _bootstrap(tmp_path, page)
+
+    assert client._account_locale == "pt"
+    assert page.lang_probed is False, "the URL answered; do not touch <html lang>"
+    assert page.lang_waited is False, "the URL answered; do not pay the settle-wait"
