@@ -34,6 +34,7 @@ from gflow_cli.api.transports._common import (
     flow_host_kind,
     generation_error,
     offered_menu_labels,
+    raise_if_migrated,
 )
 from gflow_cli.api.transports.drivers.factory import AGENTIC_INDICATOR_SELECTORS
 from gflow_cli.api.video import (
@@ -1527,6 +1528,14 @@ class VideoGenerationMixin:
             if await VideoGenerationMixin._media_panel_present(page):
                 return False
 
+            # #639: the media panel is missing. Before concluding that means Agent
+            # mode and spending ~10.6 s dismissing affordances that are not there,
+            # ask whether this is a host we can drive at all. `_media_panel_present`
+            # uses `.count()` and does not wait, but it is still the first DOM work
+            # after navigation — by here a post-goto redirect to flow.google.com has
+            # usually landed, which the caller's entry check was too early to see.
+            raise_if_migrated(page, at="exit_agent_mode")
+
             acted = await VideoGenerationMixin._dismiss_agent_affordances(
                 page, allow_reload=allow_reload
             )
@@ -1549,7 +1558,10 @@ class VideoGenerationMixin:
                     note="dismissed Agent affordance(s) but the media panel did not re-mount",
                 )
             return False
-        except FlowAgentUiError:
+        except (FlowAgentUiError, FlowHostMigratedError):
+            # #639: the migrated-host abort is a real verdict, not a probe failure.
+            # Falling into the handler below would log it at debug and return False,
+            # which is how a fast-fail becomes invisible.
             raise
         except Exception as e:  # noqa: BLE001
             log.debug("ui_automation_video.agent_toggle_probe_failed", error=str(e)[:80])

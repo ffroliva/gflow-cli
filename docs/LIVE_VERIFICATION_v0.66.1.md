@@ -3,6 +3,34 @@
 **Date:** 2026-09-03 · **Account:** ffroliva@gmail.com · **Platform:** Windows 11, Chrome strategy
 **Credits spent:** **0** — one Imagen image (images are credit-free) plus read-only probes.
 
+> ## ⚠️ Correction (2026-09-03, same day) — Layer 1's latency numbers are not user-visible
+>
+> **Layer 1 below measured `get_ui_driver` in isolation, on a page already sitting on
+> `flow.google.com`.** That precondition never holds on a real run: `project_editor_url`
+> only ever builds a `labs.google` URL and the hop to the migrated origin is a
+> *post-`goto`* redirect that neither settle path waits for, so on the CLI route the guard
+> read a pre-redirect URL and declined.
+>
+> The reporter of #639 measured the real path on three consecutive v0.66.1 runs: **57.0 /
+> 57.1 / 58.3 s**, terminating through `ui_automation_video.selector_probe_failed` — the
+> slow path — with `ui_driver.migrated_host_bail` **absent from the timeline entirely**.
+>
+> So of the rows below: `"get_ui_driver": {"ms": 0}` and **`time to exit 36 — 0 ms` are
+> true of the isolated probe and false of every CLI run.** The claim
+> *"`ui_driver.migrated_host_bail` is logged, so the fast path is observable rather than
+> inferred"* is the one the field timeline falsified — the event was never emitted, and
+> nothing here noticed because the isolated probe emitted it.
+>
+> The same gap hid the locale fix: `client.py` returned before `_resolve_account_locale`
+> on a `NOT_REDIRECTED` cache, so the `<html lang>` recovery Layer 1 exercised **directly**
+> is unreachable through the client on exactly the profiles that need it. `profile_ffroliva`
+> is latched that way today.
+>
+> Both are fixed for v0.66.2 — see [LIVE_VERIFICATION_v0.66.2](LIVE_VERIFICATION_v0.66.2.md).
+> **Layer 2 (no regression on the old host) stands unchanged and is still the load-bearing
+> result here.** The lesson is recorded rather than the numbers quietly edited: a function
+> measured in isolation is not a verification of the path users take.
+
 ## What had to be proven
 
 Two fixes, both on the migrated-origin path, and both verifiable live because the account is
@@ -31,10 +59,13 @@ Plus the property that matters more than either: **the old host still works.**
 | `detect_ui_mode` poll window | ~8 s | skipped |
 | crop selector cascade | ~24 s | skipped |
 | `await_url_settled` | 4018 ms | **0 ms** |
-| **time to exit 36** | **~36 s** | **0 ms** |
+| **time to exit 36** (isolated probe) | ~36 s | **0 ms** |
+| **time to exit 36** (real CLI run) | ~57 s | **~57 s — UNCHANGED, see the correction above** |
 | locale on migrated origin | `null` (and demoted a learned locale) | **`en`** recovered from `<html lang>` |
 
-`ui_driver.migrated_host_bail` is logged, so the fast path is observable rather than inferred.
+~~`ui_driver.migrated_host_bail` is logged, so the fast path is observable rather than inferred.~~
+**Retracted.** It is logged by the isolated probe and by nothing on the CLI route — the field
+timeline has no such event. Observability of a path you did not exercise is not observability.
 
 ## Layer 2 — no regression on the old host (full generation, exit 0)
 

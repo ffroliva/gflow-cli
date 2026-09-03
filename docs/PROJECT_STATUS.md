@@ -4,36 +4,74 @@
 
 ## Current release
 
-**v0.66.1 — alpha.** **The migrated-origin failure went from 36 seconds of doomed probing to
-instant, and stopped throwing away a locale it had already learned.**
+**v0.66.2 — alpha.** **The fast-fail v0.66.1 announced had never once fired, and the locale
+cache was answering a question nobody asked it.**
 
-v0.66.0 taught gflow to *name* Google's `flow.google.com` migration
-([#639](https://github.com/ffroliva/gflow-cli/issues/639)). This release makes living with it
-cheap. Two fixes, both measured on real migrated loads rather than reasoned about:
+v0.66.1 claimed exit 36 arrived in 0 ms on Google's migrated `flow.google.com` frontend
+([#639](https://github.com/ffroliva/gflow-cli/issues/639)). It did not. That number came from
+calling `get_ui_driver` **in isolation on a page already sitting on the migrated origin** — a
+state no real run ever reaches, because `project_editor_url` only ever builds a `labs.google`
+URL and the hop to the new origin is a *post-`goto`* redirect that neither settle path waits
+for. The guard read a pre-redirect URL and declined. The reporter measured the truth on three
+consecutive runs: **57.0 / 57.1 / 58.3 s**, through the slow selector-probe path, with the bail
+event absent from the timeline entirely.
 
-**Fail fast.** The migrated frontend renders none of the controls gflow drives, so every DOM
-probe was doomed before it started — yet a run still burned the `detect_ui_mode` poll window
-(~8 s, both arms missing), the crop cascade (~24 s) and the URL settle (4 s) before raising
-`FlowHostMigratedError`. Because the rollout flaps per page load and callers retry on exit 36,
-that was paid on **every attempt of a retry loop**. The host is knowable from `page.url` in
-microseconds; measured live, exit 36 now arrives in **0 ms**.
+**Check the host where the run already blocks.** A shared `raise_if_migrated()` now runs at
+`get_ui_driver` entry, on every `detect_ui_mode` poll tick, in `_exit_agent_mode` once the media
+panel is found absent, and inside `mode_control`'s 8 s composer poll — the last of which was
+found by review after the first fix shipped, and covers both `--ui-mode agentic` and a redirect
+landing mid-`ensure_media_mode`. None of these adds a wait: `page.url` is a cached property and
+`flow_host_kind` is one parse plus a dict lookup. Three blanket `except Exception` handlers that
+would have demoted the abort to a warning now re-raise it.
 
-**Stop discarding the locale.** The migrated origin serves `/project/<id>` with no
-`/fx/<locale>/tools/flow` segment, so locale resolution was structurally blind there — and
-`next_locale_state("pt", None)` then *demoted* an already-learned locale to PROVISIONAL on
-every migrated load, silently undoing [#587](https://github.com/ffroliva/gflow-cli/issues/587).
-The locale had not disappeared with the URL shape; it was in `<html lang>` the whole time.
-Measured on two accounts, `<html lang>` **agreed with the URL segment wherever both existed** —
-which is what licenses it as a fallback, where `navigator.language` (which reports the value
-gflow itself sets) would not
+**Stop letting a `lang` attribute mean "this account redirects".** Two locale defects, both
+shipped in v0.66.1. `NOT_REDIRECTED` was an *absorbing* state: it returned before the only site
+of the `<html lang>` recovery, so the profiles #643 was written for could never use it. And the
+recovered locale was then recorded as evidence of a redirect — which it is not, since every
+account declares one — switching the URL settle back on permanently and costing the full 4 s
+`URL_SETTLE_TIMEOUT_MS` on every bootstrap of any non-redirecting account. Measured on a real
+profile: **7.41 s → 2.66 s**, locale still recovered
 ([#643](https://github.com/ffroliva/gflow-cli/issues/643)).
 
-Neither fix makes the migrated frontend drivable — #639 stays open for that. What they buy is a
-failure that is instant and honest instead of slow and lossy.
+Two designs were rejected **by measurement**, not preference: a bounded settle (72/72
+navigations across two accounts showed no post-`goto` URL change at all, so the bound would be
+pure dead time), and caching "this profile is migrated" to navigate straight to
+`flow.google.com` (it would have locked both maintainer accounts out of a working frontend the
+day it shipped).
 
-Verification: [LIVE_VERIFICATION_v0.66.1](LIVE_VERIFICATION_v0.66.1.md) — proven on **both sides
-of the still-flapping rollout** at zero credits: 0 ms exit 36 on a migrated load, and minutes
-later **exit 0** with a real 768x1376 JPEG on an old-host load, proving the guard is scoped.
+Still not drivable — #639 stays open for that.
+
+Verification: [LIVE_VERIFICATION_v0.66.2](LIVE_VERIFICATION_v0.66.2.md). The old host is proven
+live at zero credits (**exit 0**, real 768x1376 JPEG, twice). The **migrated** path — which no
+maintainer account could reach, because the rollout flapped back mid-work — was verified by
+[@maipmacrothorax-75](https://github.com/maipmacrothorax-75) on a permanently-migrated account:
+**57 s → 4.08–4.26 s**, `ui_driver.migrated_host_bail` present with `at=mode_control` on all nine
+runs, and the crop cascade and agent dismissal both gone. That measurement was posted to #639
+before the tag was cut and was not read in time, so the shipped verification doc understated its
+own result; the correction is recorded there rather than quietly applied.
+
+**Found by that same verification and NOT fixed here:** on a pt-BR account the locale resolves
+`en` while both pages serve `<html lang="pt">` — the probe appears to read before the app sets
+the attribute. That is the population #643 was written for, so the `<html lang>` fallback can
+latch a locale the account does not use. Tracked separately; it is not a migration bug.
+
+<details><summary>v0.66.1 — a fast-fail that never fired (superseded by v0.66.2)</summary>
+
+**v0.66.1 — alpha.** Intended to make the migrated-origin failure instant and to stop discarding
+a learned locale. **Both fixes were real but neither reached the path users take**, and this
+entry is kept to record that rather than to claim it.
+
+The `0 ms` exit 36 reported here was measured on `get_ui_driver` in isolation, on an
+already-migrated page; the CLI route was unchanged at ~57 s. The `<html lang>` locale recovery
+was likewise exercised directly, while the client returned before it on any profile cached
+`NOT_REDIRECTED`. v0.66.2 fixes both, and additionally a settle regression this release
+introduced. See the correction block at the top of
+[LIVE_VERIFICATION_v0.66.1](LIVE_VERIFICATION_v0.66.1.md).
+
+What did hold: `_check_logged_in` accepting the migrated host, and the old-host no-regression
+result (exit 0 with a real JPEG), which was the load-bearing evidence in that release.
+
+</details>
 
 <details><summary>v0.66.0 — naming Flow's flow.google.com migration</summary>
 

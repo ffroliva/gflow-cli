@@ -132,6 +132,11 @@ class TestResolveAccountLocaleFallsBackToHtmlLang:
     and `next_locale_state("pt", None)` then returned PROVISIONAL, DEMOTING a
     correctly-learned locale (measured on `denon82`). The locale was sitting in
     `<html lang>` the whole time.
+
+    Since #639 the method returns ``(locale, from_url)``. The second element is the
+    ONLY evidence that Flow redirects this account, and the caller folds just that
+    into the cached state — a ``lang`` attribute is not a redirect, and treating it
+    as one switched the URL settle back on permanently.
     """
 
     @staticmethod
@@ -147,16 +152,18 @@ class TestResolveAccountLocaleFallsBackToHtmlLang:
         from gflow_cli.api.client import FlowApiClient
 
         page = self._page("https://flow.google.com/project/abc-123", "pt")
-        got = await FlowApiClient._resolve_account_locale(object(), page)  # type: ignore[arg-type]
+        got, from_url = await FlowApiClient._resolve_account_locale(object(), page)  # type: ignore[arg-type]
         assert got == "pt"
+        assert from_url is None, "a lang-derived locale is not evidence of a redirect"
 
     @pytest.mark.asyncio
     async def test_migrated_english_region_tag_reduces_to_segment(self) -> None:
         from gflow_cli.api.client import FlowApiClient
 
         page = self._page("https://flow.google.com/", "en-GB")
-        got = await FlowApiClient._resolve_account_locale(object(), page)  # type: ignore[arg-type]
+        got, from_url = await FlowApiClient._resolve_account_locale(object(), page)  # type: ignore[arg-type]
         assert got == "en"
+        assert from_url is None
 
     @pytest.mark.asyncio
     async def test_url_segment_still_wins_on_the_old_host(self) -> None:
@@ -165,8 +172,9 @@ class TestResolveAccountLocaleFallsBackToHtmlLang:
         from gflow_cli.api.client import FlowApiClient
 
         page = self._page("https://labs.google/fx/pt/tools/flow", "de")
-        got = await FlowApiClient._resolve_account_locale(object(), page)  # type: ignore[arg-type]
+        got, from_url = await FlowApiClient._resolve_account_locale(object(), page)  # type: ignore[arg-type]
         assert got == "pt"
+        assert from_url == "pt", "a URL segment IS evidence of a redirect"
         page.evaluate.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -174,7 +182,7 @@ class TestResolveAccountLocaleFallsBackToHtmlLang:
         from gflow_cli.api.client import FlowApiClient
 
         page = self._page("https://flow.google.com/", "")
-        assert await FlowApiClient._resolve_account_locale(object(), page) is None  # type: ignore[arg-type]
+        assert await FlowApiClient._resolve_account_locale(object(), page) == (None, None)  # type: ignore[arg-type]
 
     @pytest.mark.asyncio
     async def test_evaluate_failure_is_survivable(self) -> None:
@@ -182,4 +190,4 @@ class TestResolveAccountLocaleFallsBackToHtmlLang:
 
         page = self._page("https://flow.google.com/", "pt")
         page.evaluate = AsyncMock(side_effect=RuntimeError("no execution context"))
-        assert await FlowApiClient._resolve_account_locale(object(), page) is None  # type: ignore[arg-type]
+        assert await FlowApiClient._resolve_account_locale(object(), page) == (None, None)  # type: ignore[arg-type]

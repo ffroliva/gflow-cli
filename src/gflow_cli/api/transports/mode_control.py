@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Literal
 
 import structlog
 
+from gflow_cli.api.transports._common import raise_if_migrated
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -130,9 +132,18 @@ async def _wait_until(
 
     Uses ``page.wait_for_timeout`` for the pacing so test fakes stay
     deterministic (their no-op wait makes the loop spin through instantly).
+
+    #639: the host is re-read every tick. This is the longest wait on the doomed
+    migrated-origin path — three call sites poll ``_composer_present`` for 8 s,
+    and on ``flow.google.com`` it can never become true — so without this an
+    ``--ui-mode agentic`` run, or a redirect that lands *during*
+    ``ensure_media_mode``, pays the whole window before anything notices the
+    origin changed. The callers' own guards are point-in-time snapshots taken
+    before this loop starts; they cannot see a flip that happens inside it.
     """
     waited = 0
     while True:
+        raise_if_migrated(page, at="mode_control")
         if await probe(page):
             return True
         if waited >= timeout_ms:

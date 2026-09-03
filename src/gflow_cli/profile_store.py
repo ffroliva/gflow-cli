@@ -327,9 +327,11 @@ def next_locale_state(cached: str | None, observed: str | None) -> str:
     """
     if observed is not None:
         return observed
-    # Silence corroborates an earlier silence; it never demotes a committed state
-    # (unreachable from the client, which returns early on NOT_REDIRECTED, but the
-    # function must be right on its own terms).
+    # Silence corroborates an earlier silence; it never demotes a committed state.
+    # Since #639 the ``NOT_REDIRECTED`` case is REACHABLE from the client: it now
+    # skips only the settle and still reads ``<html lang>``, so a latched profile
+    # folds a fresh observation through here on every run. That is the point — the
+    # state was absorbing precisely because this was unreachable.
     return NOT_REDIRECTED if cached in (PROVISIONAL, NOT_REDIRECTED) else PROVISIONAL
 
 
