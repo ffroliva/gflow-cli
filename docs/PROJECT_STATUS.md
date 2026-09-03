@@ -42,11 +42,18 @@ day it shipped).
 Still not drivable — #639 stays open for that.
 
 Verification: [LIVE_VERIFICATION_v0.66.2](LIVE_VERIFICATION_v0.66.2.md). The old host is proven
-live at zero credits (**exit 0**, real 768x1376 JPEG, twice). **The migrated path is recorded as
-NOT verified**: the rollout flapped back mid-work and 72/72 navigations landed on `labs.google`,
-so the gate rests on unit tests and A/B controls, and **no time-to-exit-36 is claimed anywhere**.
-Given this release exists because a number was reported from the wrong entrypoint, inventing a
-replacement would have repeated the error.
+live at zero credits (**exit 0**, real 768x1376 JPEG, twice). The **migrated** path — which no
+maintainer account could reach, because the rollout flapped back mid-work — was verified by
+[@maipmacrothorax-75](https://github.com/maipmacrothorax-75) on a permanently-migrated account:
+**57 s → 4.08–4.26 s**, `ui_driver.migrated_host_bail` present with `at=mode_control` on all nine
+runs, and the crop cascade and agent dismissal both gone. That measurement was posted to #639
+before the tag was cut and was not read in time, so the shipped verification doc understated its
+own result; the correction is recorded there rather than quietly applied.
+
+**Found by that same verification and NOT fixed here:** on a pt-BR account the locale resolves
+`en` while both pages serve `<html lang="pt">` — the probe appears to read before the app sets
+the attribute. That is the population #643 was written for, so the `<html lang>` fallback can
+latch a locale the account does not use. Tracked separately; it is not a migration bug.
 
 <details><summary>v0.66.1 — a fast-fail that never fired (superseded by v0.66.2)</summary>
 

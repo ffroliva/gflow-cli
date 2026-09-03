@@ -153,18 +153,69 @@ the *cached* state. Because the lang-derived locale is deliberately not persiste
 unchanged by this branch — the earlier claim that they become "account-correct" was wrong and is
 retracted here rather than shipped.
 
+## Layer 6 — the migrated path, verified independently by the reporter
+
+Everything above was measured on maintainer accounts that had flapped back to the old host. The
+migrated path was verified by [@maipmacrothorax-75](https://github.com/maipmacrothorax-75) on a
+permanently-migrated account — branch installed from git, reverted afterwards, zero credits,
+posted to [#639](https://github.com/ffroliva/gflow-cli/issues/639).
+
+| | v0.66.1 | branch, before the `mode_control` guard | v0.66.2 |
+|---|---|---|---|
+| total, per run | 57.0 / 58.3 / 57.0 s | 19.4 / 15.0 / 14.9 s | **4.08 – 4.26 s** |
+| `ui_driver.migrated_host_bail` | **absent** | present, `at=detect_ui_mode` | present, **`at=mode_control`** |
+| `mode_control.ensure_media_incomplete` | every run | every run | **never** |
+| `ui_automation_video.selector_probe_failed` | every run | never | never |
+
+Typical v0.66.2 timeline on a migrated load:
+
+```
+2.82  ui_automation.url_stable_after_goto
+3.44  ui_driver.migrated_host_bail   at=mode_control   (+0.62)
+4.09  error_raised                   FlowHostMigratedError, exit 36, retryable
+```
+
+**~0.6 s from the host becoming knowable to the abort**; ~4 s total, essentially browser launch
+plus navigation. Nine runs on the final build, `at=mode_control` every time.
+
+Two things this settles that no maintainer measurement could:
+
+1. **The `at=` field earned itself.** The intermediate run bailed at `detect_ui_mode`, not
+   `exit_agent_mode` — which is how the reporter identified, from the log alone, that the
+   `exit_agent_mode` guard sat *after* the ~11 s dismissal rather than before it. A late review
+   angle found the same gap independently; the log field is what made it visible from outside
+   the codebase.
+2. **57 s → 4 s is real**, and it is the difference between a caller's retry loop being viable
+   and not.
+
+**One unexplained anomaly, recorded because it was observed.** The first run after a fresh
+install ended in `error_unhandled` at 3.42 s — after `setup_shared_page`, before
+`entering_existing_project` — `exception_class: "Error"` (Playwright's base class), message
+redacted to hashes. It did not reproduce; the other 8 runs on that build were clean exit 36. A
+one-off that cannot be reproduced is not evidence, and it is here only so a second sighting has
+something to match against.
+
 ## Recorded as NOT verified rather than omitted
 
-- **The migrated path firing fast.** 72/72 navigations landed on the old host, so no migrated load
-  was available to time. The gate is proven by unit tests and A/B control, **not** by a live run.
-  The instrument is committed; the honest next step is a later flap or a run from the reporter's
-  permanently-migrated account.
-- **The achieved time-to-exit-36 on a real migrated run.** Unmeasured, and deliberately not
-  estimated. The design does not depend on it — the guard sits where the run already blocks.
+- ~~**The migrated path firing fast.**~~ **Now verified — see Layer 6.** This entry originally
+  said unverified because 72/72 navigations *from this machine* landed on the old host. That was
+  true of this machine and false of the project: the reporter had already run it on a
+  permanently-migrated account and posted the numbers to #639 before the tag was cut, and they
+  were not read in time. Kept rather than deleted — "I could not measure it" and "nobody measured
+  it" are different claims, and this doc conflated them.
 - **Driving the migrated frontend.** Still impossible. #639 stays open; this PR says `Refs`.
 - **A non-English profile recovering live.** `denon82` is cached `"pt"` (it genuinely redirects),
   so the lang-recovery path was exercised live only on `en`. The `pt` case is unit-tested.
 - **The `en-GB` → `en` region reduction where region is load-bearing** (`zh-Hans`/`zh-Hant`).
   Unchanged from v0.66.1, still only two locales observed.
+- **A defect this verification found, shipped in v0.66.2 and not fixed by it.** On the reporter's
+  **pt-BR** account the locale resolves to `en`, while `document.documentElement.lang` reads `pt`
+  on both `flow.google.com/` and `flow.google.com/project/<id>`, `navigator.language` is `pt-BR`,
+  and the whole UI renders in Portuguese. The probe logs at ~1.63 s, before
+  `entering_existing_project` at ~2.31 s — early enough that it may be reading the initial HTML
+  shell before the app sets `lang`. **The mismatch is measured; the mechanism is a hypothesis and
+  was not instrumented.** This is precisely the population #643 was written for, so the
+  `<html lang>` fallback (shipped v0.66.1) can latch a locale the account does not use. Tracked
+  separately — it is not a migration bug.
 - **Full-suite coverage %.** The targeted suites ran without `--cov` (an unscoped `pytest --cov`
   OOMs this machine); the 80% floor is enforced by CI.
