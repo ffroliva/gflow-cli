@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.66.3] — 2026-09-03
+
+### Fixed
+
+- **`<html lang>` was read before the app set it, so every account whose URL could not answer
+  resolved to `en` ([#651](https://github.com/ffroliva/gflow-cli/issues/651)).** Flow serves an
+  **`en` shell** and rewrites `lang` during hydration. The single early read added by
+  [#643](https://github.com/ffroliva/gflow-cli/issues/643) therefore returned the shell value —
+  and the accounts it hit are exactly the ones #643 was written for: those where the URL carries
+  no locale segment. Reported by
+  [@maipmacrothorax-75](https://github.com/maipmacrothorax-75) on a pt-BR account resolving `en`
+  while both pages served `<html lang="pt">`, with the mechanism offered explicitly as a guess.
+
+  The guess is confirmed, and it reproduces on the **old** host — so this was never a migration
+  bug. Measured on a pt account, two consecutive loads:
+
+  | t (ms) | `lang` | `readyState` |
+  |---|---|---|
+  | 887 | `en` | interactive |
+  | **1510** | `en` | **complete** |
+  | 2092 | `en` | complete |
+  | **2488** | **`pt`** | complete |
+
+  **`readyState` is not a usable signal** — it reaches `complete` a full second *before* the
+  flip, so the obvious "wait for complete, then read" would have shipped the same bug with more
+  code. The DOM node count oscillates (136 → 300 → 249 → 251) and does not discriminate either.
+  Nothing cheap predicts the flip, so `_resolve_account_locale` now **observes** it: read once,
+  bounded-wait for the value to change, re-read.
+
+  A timeout is an **answer**, not a failure — either the account's locale genuinely equals the
+  shell default, or the page never hydrated in the window. Both leave the first read as the best
+  available answer, which is exactly the previous behaviour, so the branch can never be worse
+  than what it replaces. It is logged as `client.account_locale_lang_unchanged` so the field can
+  tell the two apart. Cost: an account whose locale **is** the shell default pays the 4 s bound
+  once per process.
+
 ## [0.66.2] — 2026-09-03
 
 ### Fixed
@@ -3784,7 +3820,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.66.2...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.66.3...HEAD
+[0.66.3]: https://github.com/ffroliva/gflow-cli/compare/v0.66.2...v0.66.3
 [0.66.2]: https://github.com/ffroliva/gflow-cli/compare/v0.66.1...v0.66.2
 [0.66.1]: https://github.com/ffroliva/gflow-cli/compare/v0.66.0...v0.66.1
 [0.66.0]: https://github.com/ffroliva/gflow-cli/compare/v0.65.0...v0.66.0

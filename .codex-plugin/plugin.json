@@ -1,6 +1,6 @@
 {
   "name": "gflow",
-  "version": "0.66.2",
+  "version": "0.66.3",
   "description": "Reusable development and operations workflows for gflow-cli",
   "author": {
     "name": "Flavio Oliva",

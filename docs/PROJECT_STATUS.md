@@ -4,6 +4,40 @@
 
 ## Current release
 
+**v0.66.3 — alpha.** **gflow was reading Flow's locale off the `en` shell it serves before the
+app rewrites it, so every account whose URL could not answer came back English.**
+
+Flow serves an `en` shell and sets the real `<html lang>` during hydration. The single early read
+added by [#643](https://github.com/ffroliva/gflow-cli/issues/643) therefore returned `en` — for
+exactly the accounts #643 existed to help, the ones whose URL carries no locale segment. Reported
+by [@maipmacrothorax-75](https://github.com/maipmacrothorax-75) on a pt-BR account resolving `en`
+while both pages served `<html lang="pt">`, with the mechanism offered explicitly as a guess.
+
+The guess was right, and it **reproduces on the old host** — so this was never a migration bug.
+Measured, two consecutive loads:
+
+| t (ms) | `lang` | `readyState` |
+|---|---|---|
+| 887 | `en` | interactive |
+| **1510** | `en` | **complete** |
+| 2092 | `en` | complete |
+| **2488** | **`pt`** | complete |
+
+The useful part of that table is the negative result: **`readyState` reaches `complete` a full
+second before the flip**, so the obvious "wait for complete, then read" would have shipped the
+same bug with more code. DOM node count oscillates and does not discriminate either. Nothing
+cheap predicts the flip, so the resolver now **observes** it — read, bounded-wait for a change,
+re-read — and treats a timeout as an *answer* (the shell value was already correct) rather than a
+failure, logged distinctly so the field can tell the two apart.
+
+Verification: [LIVE_VERIFICATION_v0.66.3](LIVE_VERIFICATION_v0.66.3.md). Proven at zero credits:
+the helper captures the flip live (`en` → `pt`, +638 ms) and a real bootstrap on an `en` account
+resolves correctly at the cost of the 4 s bound. Those two are reported **separately**, because
+collapsing a component measurement into a user-facing claim is the mistake v0.66.1 made and
+v0.66.2 corrected.
+
+<details><summary>v0.66.2 — the fast-fail that had never fired, and a locale cache answering the wrong question</summary>
+
 **v0.66.2 — alpha.** **The fast-fail v0.66.1 announced had never once fired, and the locale
 cache was answering a question nobody asked it.**
 
@@ -54,6 +88,9 @@ own result; the correction is recorded there rather than quietly applied.
 `en` while both pages serve `<html lang="pt">` — the probe appears to read before the app sets
 the attribute. That is the population #643 was written for, so the `<html lang>` fallback can
 latch a locale the account does not use. Tracked separately; it is not a migration bug.
+
+
+</details>
 
 <details><summary>v0.66.1 — a fast-fail that never fired (superseded by v0.66.2)</summary>
 
