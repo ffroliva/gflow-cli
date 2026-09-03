@@ -22,7 +22,7 @@ import time
 import uuid
 from dataclasses import replace as _dataclass_replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, NoReturn, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, Self, TypeVar, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
@@ -849,17 +849,73 @@ class FlowApiClient:
         # returns None and `next_locale_state` DEMOTES an already-learned locale
         # to PROVISIONAL (measured: a pt account lost its "pt" on every migrated
         # load). Best-effort: a probe failure must never break navigation.
-        try:
-            lang = await page.evaluate("() => document.documentElement.lang || ''")
-        except Exception as exc:  # noqa: BLE001 - observation only
-            logger.info("client.account_locale_lang_probe_failed", error=type(exc).__name__)
-            lang = None
+        lang = await self._settled_lang(page)
         segment = routes.locale_segment_from_lang_attr(lang)
         if segment is not None:
             logger.info("client.account_locale_resolved", locale=segment, source="html_lang")
             return segment, None
         logger.info("client.account_locale_unresolved", last_url=settled)
         return None, None
+
+    #: How long to wait for `<html lang>` to leave the server-default shell value
+    #: (#651). Measured on a pt account, two consecutive loads: the attribute reads
+    #: `en` until ~1.9 s and flips to `pt` at 2.26 / 2.49 s. 4 s leaves margin
+    #: without being open-ended; a slower network could still exceed it, which the
+    #: `lang_unchanged` event makes visible rather than silent.
+    _LANG_SETTLE_TIMEOUT_MS: ClassVar[float] = 4_000.0
+
+    async def _settled_lang(self, page: Any) -> str | None:
+        """Read ``<html lang>`` only after hydration has had a chance to set it (#651).
+
+        Flow serves an **`en` shell** and the app rewrites ``lang`` during
+        hydration, so a single early read returns ``en`` for every account. That is
+        not a migrated-origin quirk — it was measured on the OLD host:
+
+        ===========  ==========  ==============
+        t (ms)       ``lang``    ``readyState``
+        ===========  ==========  ==============
+        887          ``en``      interactive
+        1510         ``en``      **complete**
+        2092         ``en``      complete
+        **2488**     **``pt``**  complete
+        ===========  ==========  ==============
+
+        **``readyState`` is not a usable signal** — it reaches ``complete`` a full
+        second *before* the flip, so the obvious "wait for complete, then read" is
+        wrong. The DOM node count oscillates (136 → 300 → 249 → 251) and does not
+        discriminate either. Nothing cheap predicts the flip, so this observes it.
+
+        Cost: an account whose real locale IS the shell default never changes the
+        attribute and pays the full timeout once per process. That is the price of
+        not guessing, and it is bounded; the alternative shipped a wrong locale for
+        every account whose URL could not answer.
+        """
+        try:
+            first = await page.evaluate("() => document.documentElement.lang || ''")
+        except Exception as exc:  # noqa: BLE001 - observation only
+            logger.info("client.account_locale_lang_probe_failed", error=type(exc).__name__)
+            return None
+        try:
+            await page.wait_for_function(
+                "initial => (document.documentElement.lang || '') !== initial",
+                arg=first,
+                timeout=self._LANG_SETTLE_TIMEOUT_MS,
+            )
+            after = await page.evaluate("() => document.documentElement.lang || ''")
+        except Exception as exc:  # noqa: BLE001 - a timeout is an ANSWER, not a failure
+            # Either the account's locale genuinely equals the shell default, or the
+            # page never hydrated within the window. Both leave the first read as the
+            # best available answer — which is exactly the pre-#651 behaviour, so this
+            # branch can never be worse than what it replaces.
+            logger.info(
+                "client.account_locale_lang_unchanged",
+                lang=first,
+                waited_ms=self._LANG_SETTLE_TIMEOUT_MS,
+                reason=type(exc).__name__,
+            )
+            return first
+        logger.info("client.account_locale_lang_settled", was=first, now=after)
+        return after
 
     async def _launch_persistent_context(self, kwargs: JsonObject) -> BrowserContext:
         """Launch the persistent context; translate a launch-time crash into ProfileLockedError."""
