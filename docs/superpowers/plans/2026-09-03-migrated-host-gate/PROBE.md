@@ -10,19 +10,19 @@ After each `page.goto(<labs.google project URL>, wait_until="domcontentloaded")`
 sampled every 25 ms for 10-20 s, recording every change and the offset at which
 `flow_host_kind` first answers `"migrated"`.
 
-## Result — 68 navigations, two profiles, zero migrated loads
+## Result — 72 navigations, two profiles, zero migrated loads
 
 | profile | cached locale state | resolved | URL built | navs | landed migrated | post-`goto` URL change | `html lang` |
 |---|---|---|---|---|---|---|---|
-| `ffroliva` | `''` (= `NOT_REDIRECTED`, latched) | `None` | `labs.google/fx/tools/flow/project/<id>` (bare) | 56 | **0** | **none, ever** | `en` |
+| `ffroliva` | `''` (= `NOT_REDIRECTED`, latched) | `None` | `labs.google/fx/tools/flow/project/<id>` (bare) | 60 | **0** | **none, ever** | `en` |
 | `denon82` | `'pt'` | `'pt'` | `labs.google/fx/pt/tools/flow/project/<id>` | 12 | **0** | **none, ever** | `pt` |
 
-`goto` returned in **449-1036 ms** across all 68. Three sweeps, spread over ~2 hours.
+`goto` returned in **449-1036 ms** across all 72. Three sweeps on `ffroliva` plus one on `denon82`, spread over ~2 hours.
 
 ## What this establishes
 
 1. **The rollout has flapped back on both maintainer accounts.** Yesterday `ffroliva` served the
-   migrated frontend (see `docs/LIVE_VERIFICATION_v0.66.0.md`); today it is 56/56 old host. The
+   migrated frontend (see `docs/LIVE_VERIFICATION_v0.66.0.md`); today it is 60/60 old host. The
    reporter's account went 6/6 migrated yesterday. The flap is real and per-account.
    → **Today the old-host no-regression path IS live-verifiable here and the migrated path is NOT.**
    That is the inverse of yesterday, and the inverse of what the #639 assessment assumed.
@@ -33,7 +33,7 @@ sampled every 25 ms for 10-20 s, recording every change and the offset at which
    — and with it the whole #643 `<html lang>` recovery — never ran.
    And `html lang` reads **`en`** on that very page: the value B2 would recover is right there.
 
-3. **A bounded settle (A1) would be pure dead time here.** Not one of the 68 navigations produced a
+3. **A bounded settle (A1) would be pure dead time here.** Not one of the 72 navigations produced a
    post-`goto` URL change, on either the bare or the localised URL shape. There is nothing to wait
    for on a non-migrated load, and no predicate can distinguish "no redirect coming" from "redirect
    not yet arrived" without paying the bound. This is the measured form of the #587 regression
@@ -43,7 +43,7 @@ sampled every 25 ms for 10-20 s, recording every change and the offset at which
    redirected — so `NOT_REDIRECTED` is a true observation for that account. The defect is not the
    observation; it is that the cached observation also switches off the locale *read*. That is
    precisely B2's thesis, and it is why B1 (delete the early return) is the wrong shape: it would
-   reintroduce a 4 s settle on an account measured 56/56 to have nothing to settle.
+   reintroduce a 4 s settle on an account measured 60/60 to have nothing to settle.
 
 ## What this does NOT establish
 

@@ -10,7 +10,7 @@ Both defects are real and the fix shape is agreed: **A2 (re-check the host where
 already blocks) + B2 (split "skip the settle" from "skip the locale probe")**. The council
 splits hard on one thing — Performance ranks A3 (cache "migrated", navigate straight to
 `flow.google.com`) first at ~0 ms; CLI-UX and Devil's Advocate disqualify it. **A live
-measurement taken during this predict settles it against A3**: 28/28 navigations across both
+measurement taken during this predict settles it against A3**: 32/32 navigations across both
 maintainer profiles landed on `labs.google` today, so a sticky migrated-cache would have locked
 both accounts out of a working frontend. A3-as-specified is rejected. The residual CAUTION is
 that the migrated path **cannot be live-verified from this machine today** — which is exactly
@@ -78,7 +78,10 @@ fix be called live-verified on the migrated path from this machine.
 
 ## Live measurement taken during this predict
 
-`scripts/dev/measure_migrated_host_flip.py`, 68 navigations, two authenticated profiles, 25 ms
+> Point-in-time record: 32 navigations were available when this verdict was issued.
+> Sweeping continued afterwards and reached **72** with the same result — see `PROBE.md`.
+
+`scripts/dev/measure_migrated_host_flip.py`, 32 navigations, two authenticated profiles, 25 ms
 sampling, zero credits (full record: `PROBE.md`):
 
 | profile | cached locale | resolved | navs | landed migrated | post-`goto` URL change | `html lang` |
@@ -89,7 +92,7 @@ sampling, zero credits (full record: `PROBE.md`):
 1. **Defect B reproduces live on the maintainer's own primary profile** — every bootstrap logged
    `client.account_locale_cached locale=None settle_skipped=True`, so the #643 recovery never ran,
    while `html lang` reads `en` on that very page.
-2. **A1 would be pure dead time** — 28/28 with no post-`goto` URL change at all.
+2. **A1 would be pure dead time** — 32/32 with no post-`goto` URL change at all.
 3. **A3-direct-navigate would have locked both accounts out of a working frontend today.**
 4. **`ffroliva`'s latch is correct *about redirects*** — the bare URL is served as-is, never
    redirected. So B1 (delete the early return) is the wrong shape; only the locale *read* is
@@ -98,7 +101,7 @@ sampling, zero credits (full record: `PROBE.md`):
 ## High-confidence risks (2+ personas)
 
 1. **A3's sticky cache converts a recoverable failure into a permanent one** — Architect, CLI-UX,
-   Devil's Advocate; now demonstrated by the 28/28 old-host measurement. **Rejected.**
+   Devil's Advocate; now demonstrated by the 32/32 old-host measurement. **Rejected.**
 2. **Latched profiles are blind to the host signal until B lands** — Performance (scoped STOP),
    Architect, Devil's Advocate. **B ships with or before A.**
 3. **Neither fix's migrated path is live-verifiable here today** — Performance, Devil's Advocate.

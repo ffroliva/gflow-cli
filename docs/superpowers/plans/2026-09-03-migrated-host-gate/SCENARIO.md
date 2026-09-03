@@ -41,9 +41,9 @@ read**. The state keeps meaning what its own docstring says (`profile_store.py:2
 | # | Dim | Scenario | Severity | Expected behaviour | Test category |
 |---|---|---|---|---|---|
 | 1 | D7 | `page.url` is `labs.google` at `get_ui_driver` entry and `flow.google.com` by the first blocking wait (**the field case**) | **Critical** | `FlowHostMigratedError`, exit 36, `retryable: true`, raised at the first blocking wait — **not** `UiSelectorDriftError` exit 23, and not after the full ~54 s | Integration (mocked Playwright, URL flips between calls) |
-| 2 | D3/D7 | Old host throughout — 68/68 of today's measured loads | **Critical** | Byte-identical behaviour to v0.66.1: no added latency, no added navigation, no extra `page.evaluate`, driver binds and generation proceeds | Integration + **E2E live (old host) — the merge gate** |
+| 2 | D3/D7 | Old host throughout — 72/72 of today's measured loads | **Critical** | Byte-identical behaviour to v0.66.1: no added latency, no added navigation, no extra `page.evaluate`, driver binds and generation proceeds | Integration + **E2E live (old host) — the merge gate** |
 | 3 | D1 | Profile latched at `NOT_REDIRECTED`; `<html lang>` = `pt` | **Critical** | Locale resolves `pt`, is written through `next_locale_state`, **and the settle stays skipped** | Unit |
-| 4 | D1 | Profile latched at `NOT_REDIRECTED` on an account that genuinely never redirects (`ffroliva`, measured 56/56 bare-URL, `<html lang>` = `en`) | **Critical** | Records `en`; **no `await_url_settled` call, no 4 s regression**. This is the case B1 would break — the latch is *correct about redirects* | Unit + E2E live (old host) |
+| 4 | D1 | Profile latched at `NOT_REDIRECTED` on an account that genuinely never redirects (`ffroliva`, measured 60/60 bare-URL, `<html lang>` = `en`) | **Critical** | Records `en`; **no `await_url_settled` call, no 4 s regression**. This is the case B1 would break — the latch is *correct about redirects* | Unit + E2E live (old host) |
 | 5 | D5 | Two pooled Pages in one run land different hosts | **High** | The guard reads the Page it is about to drive; a bail on Page A must not abort work on Page B, and no module-level flag may be introduced | Unit |
 | 6 | D4 | Batch/chain item 3 of 10 lands migrated, items 1-2 and 4-10 land old host | **High** | Item 3 fails exit 36 `retryable`; the run does not abort the remaining items; no double-billing on retry | Integration |
 | 7 | D7 | Flow's web app crashed **and** the URL is migrated | **Medium** | Ordering stays deliberate and documented — `_mode_switch_error` checks the crash first today (`ui_automation_video.py:1447-1456`); the new early guard must not silently invert that | Unit |
@@ -88,11 +88,11 @@ read**. The state keeps meaning what its own docstring says (`profile_store.py:2
 
 ## Open question carried from predict (do not design around a guess)
 
-**When does `page.url` actually flip after `goto` on a migrated load?** Unmeasured — 68/68 of
+**When does `page.url` actually flip after `goto` on a migrated load?** Unmeasured — 72/72 of
 today's navigations landed old host, so zero migrated loads were sampled. The instrument exists
 (`scripts/dev/measure_migrated_host_flip.py`). Until that number exists:
 
-- Do **not** introduce a bounded wait (its bound would be a guess, and 68/68 says it would be
+- Do **not** introduce a bounded wait (its bound would be a guess, and 72/72 says it would be
   pure dead time on a healthy account).
 - Do **not** promise a sub-second time-to-exit-36. A2's honest value is ~14-22 s, down from ~57 s.
 - Report the achieved number from a real run, or report that it is unmeasured.

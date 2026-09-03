@@ -9,6 +9,7 @@ Feature: A latched profile can still learn its locale
     When gflow bootstraps
     Then the account locale resolves to "pt"
     And no URL settle is awaited
+    And the profile stays cached as NOT_REDIRECTED
 
   Scenario: the document declares no usable locale
     Given a profile cached as NOT_REDIRECTED

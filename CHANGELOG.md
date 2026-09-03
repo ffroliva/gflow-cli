@@ -37,8 +37,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return outright was rejected, because on that account the cached "not redirected" is a true
   observation.
 
-- **`docs/MCP.md` omitted `FlowHostMigratedError` from its retryable-class list**, which would
-  have told an MCP agent not to auto-retry a failure the envelope marks `retryable: true`.
+- **A `<html lang>` locale was treated as evidence that Flow redirects the account, which
+  switched the URL settle back on permanently ([#643](https://github.com/ffroliva/gflow-cli/issues/643)).**
+  Shipped in v0.66.1 and present on `develop`: #643's `<html lang>` fallback returns a segment for
+  an account Flow serves **bare** and never redirects, and `next_locale_state` recorded it as the
+  cached state. Every later bootstrap then saw `cached != NOT_REDIRECTED`, settled, and burned the
+  full 4 s `URL_SETTLE_TIMEOUT_MS` waiting for a redirect that never comes — the exact cost #587
+  exists to remove, on any non-redirecting account with a `lang` attribute. Only a **URL-derived**
+  segment is now folded into that cache; the lang-derived one is used in-process to build URLs and
+  never persisted. Measured on a real profile: warm bootstrap **7.41 s → 2.66 s**, with the locale
+  still recovered.
+
+- **`docs/MCP.md`'s retryable-class list was incomplete**, which would have told an MCP agent not
+  to auto-retry failures the envelope marks `retryable: true`. It omitted `FlowHostMigratedError`,
+  `UiModeUnavailableError` and `SyncPartialError`; it now matches `errors.RETRYABLE_ERRORS`.
 
 ## [0.66.1] — 2026-09-03
 

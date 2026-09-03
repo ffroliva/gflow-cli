@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from gflow_cli.api.transports._common import raise_if_migrated
 from gflow_cli.api.transports.drivers.agentic import AgenticFlowUiDriver
 from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
 from gflow_cli.api.transports.mode_control import CROP_SELECTORS
@@ -111,8 +112,6 @@ async def detect_ui_mode(
     """
     timeout_s = _DETECT_TIMEOUT_S if timeout_s is None else timeout_s
     poll_interval_s = _DETECT_POLL_INTERVAL_S if poll_interval_s is None else poll_interval_s
-    from gflow_cli.api.transports._common import raise_if_migrated
-
     deadline = asyncio.get_event_loop().time() + timeout_s
     while True:
         # #639: re-read the host every tick. The loop already awaits between ticks,
@@ -169,8 +168,6 @@ async def get_ui_driver(
     # post-goto redirect nobody waits for, so on a fresh project navigation this
     # reads a pre-redirect URL and declines. The re-checks in detect_ui_mode and
     # _exit_agent_mode are what actually catch the field case.
-    from gflow_cli.api.transports._common import raise_if_migrated
-
     raise_if_migrated(page, at="get_ui_driver")
 
     # Prerequisite switch: when a specific arm is required and the current one
@@ -207,6 +204,14 @@ async def get_ui_driver(
         # tune-ligature force-clicker. mode_control is a leaf — no cycle.
         from gflow_cli.api.transports.mode_control import ensure_agent_mode
 
+        # #639: symmetric with the CLASSIC arm above. `ensure_agent_mode` opens with
+        # an ~8 s composer-ready poll that `mode_control` cannot guard on its own (it
+        # is a leaf and knows nothing about hosts), so without this the AGENTIC arm
+        # reaches the same verdict ~8 s later than CLASSIC.
+        # OUTSIDE the try on purpose: the blanket handler below would demote the
+        # abort to a warning and carry on, which is the exact failure the CLASSIC arm
+        # needs an `except FlowHostMigratedError: raise` carve-out to avoid.
+        raise_if_migrated(page, at="ensure_agent_mode")
         try:
             log.info("ui_driver.ui_mode.attempt_force_agent")
             await ensure_agent_mode(page)

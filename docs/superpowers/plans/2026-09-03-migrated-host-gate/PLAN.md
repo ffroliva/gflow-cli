@@ -17,17 +17,17 @@ Nothing else changes: no new navigation target, no new cache, no new CLI option,
 
 **Predict verdict:** **CAUTION — 7/10** (`PREDICT.md`)
 **Scenario:** `SCENARIO.md` in this directory — 20 scenarios, 10 must-cover.
-**Probe evidence:** `PROBE.md` — 68 navigations, two profiles, zero
+**Probe evidence:** `PROBE.md` — 72 navigations, two profiles, zero
 migrated loads.
 
 **Rejected in predict, recorded so nobody re-proposes them:**
 
 | Rejected | Why |
 |---|---|
-| **A1** bounded settle | 68/68 measured navigations had **no post-`goto` URL change at all** — the bound would be pure dead time on every navigation, at all four `_settle_if_redirecting` sites. This is the #587 regression re-created for a second signal. |
+| **A1** bounded settle | 72/72 measured navigations had **no post-`goto` URL change at all** — the bound would be pure dead time on every navigation, at all four `_settle_if_redirecting` sites. This is the #587 regression re-created for a second signal. |
 | **A3** cache "migrated", navigate straight to `flow.google.com` | Would have locked **both** maintainer accounts out of a working frontend today. Converts a flapping, retry-recoverable failure into a permanent one, and makes `FlowHostMigratedError`'s own remediation text false. |
 | **A4** `framenavigated` listener | Buys nothing without an event-driven rewrite the call chain does not have; introduces cross-module shared mutable state (`docs/ARCHITECTURE.md:45`). |
-| **B1** delete the `NOT_REDIRECTED` early return | `ffroliva` is latched **and correct** — measured 56/56 bare-URL loads with no redirect. B1 would reintroduce a 4 s settle on an account with nothing to settle. |
+| **B1** delete the `NOT_REDIRECTED` early return | `ffroliva` is latched **and correct** — measured 60/60 bare-URL loads with no redirect. B1 would reintroduce a 4 s settle on an account with nothing to settle. |
 
 **Risk register:**
 

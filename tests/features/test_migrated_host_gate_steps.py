@@ -23,6 +23,9 @@ from gflow_cli.profile_store import NOT_REDIRECTED, read_account_locale, write_a
 if TYPE_CHECKING:
     from pathlib import Path
 
+# Two features, one step module: pytest-bdd resolves step phrases per collecting
+# module, so these definitions do not leak into other feature files — but the two
+# features here DO share this namespace, so their phrases must stay distinct.
 scenarios("migrated_host_gate.feature")
 scenarios("latched_locale_recovery.feature")
 
