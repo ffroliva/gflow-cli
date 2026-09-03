@@ -77,21 +77,12 @@ class VideoModel(StrEnum):
         return _VIDEO_MODEL_FROM_CLI[key]
 
     def supports_duration(self) -> bool:
-        """Whether this model renders a duration control at all (issues #451/#288).
+        """Whether this model renders a duration control in Flow's UI.
 
-        Verified live on two accounts and two locales (2026-08-14): the classic
-        video settings popover is **model-conditional**. ``OMNI_FLASH`` renders
-        a `4s / 6s / 8s / 10s` row; the ``VEO_3_1_*`` models render **no
-        duration control whatsoever** — so a duration simply cannot be selected
-        for them.
-
-        This is why ``--duration`` on a Veo model failed as
-        ``UiSelectorDriftError`` (exit 23): the transport hunted a control the
-        model never draws. Reproduced identically on playwright 1.59 and 1.61,
-        which is why the version bound was correctly exonerated, and the locale
-        hypothesis correctly refuted — it was never either.
+        Google Flow renders duration tabs (4s / 6s / 8s) for all Veo 3.1 models,
+        and (4s / 6s / 8s / 10s) for Omni Flash.
         """
-        return self is VideoModel.OMNI_FLASH
+        return True
 
 
 # Default model for ``gflow video i2v`` and direct ``FlowApiClient.generate_video``
@@ -193,15 +184,11 @@ def model_aliases(model: VideoModel) -> list[str]:
 def max_duration_for(model: VideoModel) -> int:
     """Maximum selectable clip length in seconds.
 
-    ``omni_flash`` = 10. The ``VEO_3_1_*`` models return **0**: verified live on
-    two accounts (2026-08-14) they render no duration control at all, so no
-    duration is selectable for them — see :meth:`VideoModel.supports_duration`
-    and issues #451/#288. Returning 8 here (the old value) contradicted that
-    predicate and made ``gflow models`` advertise a duration users cannot set.
+    ``omni_flash`` = 10. The ``VEO_3_1_*`` models cap at 8s.
     """
     if model is VideoModel.OMNI_FLASH:
         return 10
-    return 0 if not model.supports_duration() else 8
+    return 8 if model.supports_duration() else 0
 
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs (the same

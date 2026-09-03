@@ -552,13 +552,17 @@ def _validate_scene_model(model: object, idx: int, duration: int | None) -> None
         raise ConfigurationError(
             f"scenes[{idx}].model {model!r} is not a known model alias: {exc}"
         ) from exc
-    if duration is not None and resolved is not None and not resolved.supports_duration():
-        raise ConfigurationError(
-            f"scenes[{idx}].duration {duration} cannot be applied to model "
-            f"{model!r} — Flow renders no duration control for it (verified live; "
-            f"refs #451, #288, #634). Only omni-flash exposes a duration "
-            f'(4/6/8/10s). Drop the duration, or use model = "omni-flash".'
-        )
+    if duration is not None and resolved is not None:
+        if not resolved.supports_duration():
+            raise ConfigurationError(
+                f"scenes[{idx}].duration {duration} cannot be applied to model "
+                f"{model!r} — Flow renders no duration control for it."
+            )
+        if duration == 10 and resolved is not VideoModel.OMNI_FLASH:
+            raise ConfigurationError(
+                f"scenes[{idx}].duration 10 is only available for model "
+                f'"omni-flash" — {model!r} supports 4s, 6s, or 8s.'
+            )
 
 
 def _validate_scene_style_variant(

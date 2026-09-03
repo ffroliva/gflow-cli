@@ -539,15 +539,18 @@ class TestMovieState:
 _SCENE_HEAD = 'title = "T"\nproject = "p"\n\n[[scenes]]\nid = "s"\naction = "x"\n'
 
 
-def test_movie_duration_with_model_lacking_duration_control_raises(tmp_path: Path) -> None:
-    """`_parse_scene_numeric_fields` only ever checked duration's VALUE
-    (4/6/8/10), so `duration = 4` alongside a Veo model parsed clean and died
-    later inside the per-scene render loop — after earlier scenes had already
-    generated and billed, as exit 1 "Unexpected error"."""
-    path = _write_toml(tmp_path, _SCENE_HEAD + 'model = "veo-lite"\nduration = 4\n')
-    with pytest.raises(ConfigurationError, match="duration"):
+def test_movie_duration_10_with_veo_model_raises(tmp_path: Path) -> None:
+    """10s duration is only available for omni-flash — Veo models cap at 8s."""
+    path = _write_toml(tmp_path, _SCENE_HEAD + 'model = "veo-lite"\nduration = 10\n')
+    with pytest.raises(ConfigurationError, match="duration 10 is only available for model"):
         MovieManifest.from_toml_path(path)
 
+
+def test_movie_duration_with_veo_lite_is_accepted(tmp_path: Path) -> None:
+    """Veo 3.1 models support 4s, 6s, and 8s durations."""
+    for dur in (4, 6, 8):
+        path = _write_toml(tmp_path, _SCENE_HEAD + f'model = "veo-lite"\nduration = {dur}\n')
+        assert MovieManifest.from_toml_path(path).scenes[0].duration == dur
 
 def test_movie_duration_with_omni_flash_is_accepted(tmp_path: Path) -> None:
     """Negative control: omni-flash DOES render a duration control, so the guard

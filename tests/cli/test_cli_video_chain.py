@@ -548,7 +548,7 @@ def test_chain_dry_run_rejects_a_manifest_duration(tmp_path: Path) -> None:
     runner = CliRunner()
     manifest = _manifest_raw(
         tmp_path,
-        ['{"prompt": "link 0"}', '{"prompt": "link 1", "duration": 4}'],
+        ['{"prompt": "link 0"}', '{"prompt": "link 1", "duration": 10}'],
     )
     p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
     with (

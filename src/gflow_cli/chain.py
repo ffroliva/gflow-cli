@@ -207,9 +207,8 @@ def reject_unusable_links(*, model: VideoModel, links: Sequence[ChainLinkSpec]) 
     * **omni_flash.** The chain-level ``model`` is rejected first, but
       :func:`_build_link_request` prefers ``spec.model`` when set, so a per-link
       override walked straight past that check.
-    * **duration.** A blanket ban, because chains reject omni_flash and
-      ``supports_duration()`` is True for omni_flash alone — so no model a chain
-      can use renders a duration control at all.
+    * **duration.** Duration 10 is rejected, because chains reject omni_flash and
+      10s is available for omni_flash alone — Veo 3.1 models support 4s, 6s, or 8s.
     """
     if model is VideoModel.OMNI_FLASH:
         msg = (
@@ -231,12 +230,11 @@ def reject_unusable_links(*, model: VideoModel, links: Sequence[ChainLinkSpec]) 
                 f"model override, or use a Veo 3.1 model."
             )
             raise ModelModeIncompatibilityError(msg)
-        if spec.duration is not None:
+        if spec.duration is not None and spec.duration == 10:
             msg = (
-                f"links[{index}] sets duration {spec.duration}, which no chain can "
-                f"apply: Flow renders a duration control for omni_flash only, and "
-                f"chains reject omni_flash (refs #125, #451, #288, #634). Drop the "
-                f"per-link duration to accept Flow's default clip length."
+                f"links[{index}] sets duration 10, which is only available for "
+                f"omni_flash — and chains reject omni_flash (refs #125, #451, #288, #634). "
+                f"Veo 3.1 models support 4s, 6s, or 8s."
             )
             raise ModelModeIncompatibilityError(msg)
 

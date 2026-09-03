@@ -825,37 +825,26 @@ class TestUiModeEnvelopeShape:
         assert result["error"]["title"] == "Unsupported ui_mode for video"
 
     @pytest.mark.asyncio
-    async def test_duration_on_a_model_without_a_duration_control_is_a_400(self) -> None:
-        """#630 / #451: the MCP surface must reject this like the CLI does.
-
-        Only omni-flash renders a duration control. Without an up-front check the
-        request reaches the worker, where the DTO raises a bare ``ValueError`` —
-        an agent gets an opaque worker failure instead of an actionable 400,
-        after the task has already been queued.
-        """
+    async def test_duration_10_on_veo_lite_is_a_400(self) -> None:
+        """#630 / #451: duration 10 is only available for omni-flash."""
         from gflow_cli.mcp.tools import gflow_generate_video
 
-        result = await gflow_generate_video(prompt="x", model="veo_lite", duration=8)
+        result = await gflow_generate_video(prompt="x", model="veo_lite", duration=10)
         assert result["status"] == "error"
         assert result["error"]["status"] == 400
         assert "duration" in result["error"]["title"].lower()
 
     @pytest.mark.asyncio
-    async def test_duration_on_i2v_without_model_is_a_400(self) -> None:
-        """The no-``model`` i2v path needs the same treatment as the CLI (#630).
-
-        i2v binds ``I2V_DEFAULT_MODEL`` (veo-lite, no duration control) when the
-        caller omits ``model``, so "no model" is not "no opinion" here.
-        """
+    async def test_duration_10_on_i2v_without_model_is_a_400(self) -> None:
+        """The no-``model`` i2v path binds I2V_DEFAULT_MODEL (veo-lite), capping at 8s."""
         from gflow_cli.mcp.tools import gflow_generate_video
 
         result = await gflow_generate_video(
-            prompt="x", mode="i2v", initial_frame="a.png", duration=8
+            prompt="x", mode="i2v", initial_frame="a.png", duration=10
         )
         assert result["status"] == "error"
         assert result["error"]["status"] == 400
         assert "duration" in result["error"]["title"].lower()
-
     @pytest.mark.asyncio
     async def test_duration_on_omni_flash_is_not_rejected(self) -> None:
         """Negative control: the one model that DOES render a duration row must

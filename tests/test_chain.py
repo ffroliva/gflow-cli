@@ -294,20 +294,15 @@ async def test_rejects_non_interpolation_model_up_front(tmp_path: Path) -> None:
 
 
 async def test_rejects_per_link_duration_up_front(tmp_path: Path) -> None:
-    """#634: a per-link ``duration`` is rejected BEFORE any spend.
+    """#634: duration 10 is rejected BEFORE any spend.
 
-    No model a chain can use renders a duration control: ``supports_duration()``
-    is True for ``OMNI_FLASH`` only, and chains reject ``OMNI_FLASH`` outright.
-    So any manifest ``duration`` is unsatisfiable by construction. Before this
-    guard the DTO's bare ValueError escaped mid-chain — AFTER earlier links had
-    rendered and billed — as exit 1 "Unexpected error".
+    10s is available for omni-flash only, and chains reject omni-flash outright.
+    So any chain link with duration=10 is unsatisfiable by construction.
     """
-    # Link 0 is given a WORKING result on purpose: without the guard it renders
-    # and bills before link 1 dies, which is precisely the mid-spend failure.
     client = _make_client([_ok_result("m0", tmp_path / "link0.mp4")])
     links = [
         ChainLinkSpec(prompt="a cat wakes up"),
-        ChainLinkSpec(prompt="the cat stretches", duration=4),
+        ChainLinkSpec(prompt="the cat stretches", duration=10),
     ]
 
     with pytest.raises(ModelModeIncompatibilityError) as excinfo:

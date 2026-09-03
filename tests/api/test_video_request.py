@@ -94,15 +94,24 @@ class TestModelCapabilityGuards:
     that the selected model cannot render must fail at the DTO — not 30s later
     as a UiSelectorDriftError that blames the UI for a capability mismatch."""
 
-    def test_duration_rejected_on_models_without_a_duration_control(self) -> None:
+    def test_duration_allowed_on_veo_models_within_cap(self) -> None:
         for model in (
             VideoModel.VEO_3_1_LITE,
             VideoModel.VEO_3_1_FAST,
             VideoModel.VEO_3_1_QUALITY,
         ):
-            with pytest.raises(ValueError, match="no duration control"):
-                GenerateVideoRequest(prompt="x", mode=Mode.T2V, model=model, duration=8)
+            for dur in (4, 6, 8):
+                req = GenerateVideoRequest(prompt="x", mode=Mode.T2V, model=model, duration=dur)
+                assert req.duration == dur
 
+    def test_duration_10_rejected_on_veo_models(self) -> None:
+        for model in (
+            VideoModel.VEO_3_1_LITE,
+            VideoModel.VEO_3_1_FAST,
+            VideoModel.VEO_3_1_QUALITY,
+        ):
+            with pytest.raises(ValueError, match="caps at 8s"):
+                GenerateVideoRequest(prompt="x", mode=Mode.T2V, model=model, duration=10)
     def test_duration_allowed_on_omni_flash(self) -> None:
         req = GenerateVideoRequest(
             prompt="x", mode=Mode.T2V, model=VideoModel.OMNI_FLASH, duration=10
@@ -116,9 +125,9 @@ class TestModelCapabilityGuards:
 
     def test_supports_duration_matches_the_verified_matrix(self) -> None:
         assert VideoModel.OMNI_FLASH.supports_duration()
-        assert not VideoModel.VEO_3_1_LITE.supports_duration()
-        assert not VideoModel.VEO_3_1_FAST.supports_duration()
-        assert not VideoModel.VEO_3_1_QUALITY.supports_duration()
+        assert VideoModel.VEO_3_1_LITE.supports_duration()
+        assert VideoModel.VEO_3_1_FAST.supports_duration()
+        assert VideoModel.VEO_3_1_QUALITY.supports_duration()
 
     def test_ingredient_capability_has_exactly_one_source_of_truth(self) -> None:
         """`reference_cap_for` IS the ingredient-capability answer: a cap of 0

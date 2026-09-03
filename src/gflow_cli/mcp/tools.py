@@ -1060,15 +1060,19 @@ async def gflow_generate_video(  # NOSONAR
         effective = VideoModel.from_cli(model) if model is not None else None
         if effective is None and mode == "i2v" and (initial_frame or end_frame):
             effective = I2V_DEFAULT_MODEL
-        if effective is not None and not effective.supports_duration():
-            return _bad_param(
-                "Unsupported duration for model",
-                f"model {effective.value!r} renders no duration control in Flow, so "
-                f"duration={duration} cannot be applied. Only "
-                f"{VideoModel.OMNI_FLASH.value!r} exposes a duration (4/6/8/10s). "
-                f"Omit 'duration' to accept Flow's default length, or pass "
-                f"model='{VideoModel.OMNI_FLASH.value}'.",
-            )
+        if effective is not None:
+            if not effective.supports_duration():
+                return _bad_param(
+                    "Unsupported duration for model",
+                    f"model {effective.value!r} renders no duration control in Flow, so "
+                    f"duration={duration} cannot be applied.",
+                )
+            if duration in (10, "10") and effective is not VideoModel.OMNI_FLASH:
+                return _bad_param(
+                    "Unsupported duration for model",
+                    f"duration=10 is only available for {VideoModel.OMNI_FLASH.value!r}; "
+                    f"{effective.value!r} supports 4s, 6s, or 8s.",
+                )
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_video")

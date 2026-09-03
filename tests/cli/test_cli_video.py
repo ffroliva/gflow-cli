@@ -1620,7 +1620,7 @@ class TestDurationCapabilityGuard:
 
     @pytest.mark.parametrize("command", ["t2v", "i2v", "r2v"])
     @pytest.mark.parametrize("model", ["veo-lite", "veo-fast", "veo-quality"])
-    def test_duration_on_a_veo_model_exits_2_with_the_reason(
+    def test_duration_10_on_a_veo_model_exits_2_with_the_reason(
         self, command: str, model: str, tmp_path: Path
     ) -> None:
         ref = tmp_path / "ref.png"
@@ -1631,33 +1631,22 @@ class TestDurationCapabilityGuard:
             "r2v": ["--ref", str(ref)],
         }[command]
         result = CliRunner().invoke(
-            video, [command, "a prompt", "--model", model, "--duration", "8", *extra]
+            video, [command, "a prompt", "--model", model, "--duration", "10", *extra]
         )
         assert result.exit_code == 2, result.output
-        assert "no duration control" in result.output
+        assert "only available for --model omni-flash" in result.output
         assert model in result.output
 
-    def test_duration_on_i2v_without_model_exits_2_not_unexpected_error(
+    def test_duration_10_on_i2v_without_model_exits_2(
         self, tmp_path: Path
     ) -> None:
-        """#630: omitting ``--model`` on i2v must not lose the explanation.
-
-        For i2v an omitted ``--model`` is not "no model" — it binds
-        ``I2V_DEFAULT_MODEL`` (veo-lite), which renders no duration control. The
-        CLI guard used to return early on ``model is None``, so this most
-        natural way to try the flag fell through to the DTO's bare ``ValueError``
-        and surfaced as "Unexpected error. … file a bug" (exit 1) — telling the
-        user to report a plain usage error whose text already existed.
-        """
         ref = tmp_path / "ref.png"
         ref.write_bytes(b"\x89PNG\r\n\x1a\n")
         result = CliRunner().invoke(
-            video, ["i2v", "a prompt", "--initial-frame", str(ref), "--duration", "8"]
+            video, ["i2v", "a prompt", "--initial-frame", str(ref), "--duration", "10"]
         )
         assert result.exit_code == 2, result.output
-        assert "no duration control" in result.output
-        assert "Unexpected error" not in result.output
-
+        assert "only available for --model omni-flash" in result.output
     def test_duration_on_t2v_without_model_is_left_alone(self, tmp_path: Path) -> None:
         """Negative control: t2v with no ``--model`` must NOT be rejected here.
 

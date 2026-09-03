@@ -201,16 +201,17 @@ def _reject_duration_without_control(
             # a programmatic caller deserves that error, not this guard's. Let the
             # real validation report it rather than dying as "Unexpected error."
             return
-    if resolved is None or resolved.supports_duration():
-        return
-    named = f"--model {model}" if model is not None else f"the default model {resolved.value}"
-    msg = (
-        f"--duration is not supported by {named} — Flow renders no duration "
-        f"control for it (verified live; refs #451/#288). Only omni-flash exposes a "
-        f"duration (4/6/8/10s). Drop --duration to accept Flow's default length, or "
-        f"use --model omni-flash."
-    )
-    raise click.UsageError(msg)
+    if resolved is not None:
+        named = f"--model {model}" if model is not None else f"the default model {resolved.value}"
+        if not resolved.supports_duration():
+            msg = f"--duration is not supported by {named}."
+            raise click.UsageError(msg)
+        if duration in ("10", 10) and resolved is not VideoModel.OMNI_FLASH:
+            msg = (
+                f"--duration 10 is only available for --model omni-flash — "
+                f"{named} supports 4s, 6s, or 8s."
+            )
+            raise click.UsageError(msg)
 
 
 def _relocate_single_video(item: Any, target: Path) -> Any:
@@ -1142,9 +1143,8 @@ def video() -> None:
     default=None,
     type=click.Choice(["4", "6", "8", "10"]),
     help=(
-        "Clip length in seconds. REQUIRES --model omni-flash: the Veo 3.1 "
-        "models render no duration control in Flow, so no length can be "
-        "selected for them (refs #451/#288). Omit for Flow's default length."
+        "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
+        "Omit for Flow's default length."
     ),
 )
 @click.option(
@@ -1322,9 +1322,8 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     default=None,
     type=click.Choice(["4", "6", "8", "10"]),
     help=(
-        "Clip length in seconds. REQUIRES --model omni-flash: the Veo 3.1 "
-        "models render no duration control in Flow, so no length can be "
-        "selected for them (refs #451/#288). Omit for Flow's default length."
+        "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
+        "Omit for Flow's default length."
     ),
 )
 @click.option(
@@ -1467,9 +1466,8 @@ def i2v(  # NOSONAR
     default=None,
     type=click.Choice(["4", "6", "8", "10"]),
     help=(
-        "Clip length in seconds. REQUIRES --model omni-flash: the Veo 3.1 "
-        "models render no duration control in Flow, so no length can be "
-        "selected for them (refs #451/#288). Omit for Flow's default length."
+        "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
+        "Omit for Flow's default length."
     ),
 )
 @click.option(
