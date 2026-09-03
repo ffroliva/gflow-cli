@@ -770,25 +770,44 @@ class FlowApiClient:
             wait_until="domcontentloaded",
             timeout=60_000,
         )
-        if cached == NOT_REDIRECTED:
-            self._account_locale = None
-            logger.info("client.account_locale_cached", locale=None, settle_skipped=True)
-            return
-        self._account_locale = await self._resolve_account_locale(self._page)
+        # #639: NOT_REDIRECTED means "there is no redirect to wait for". It must not
+        # ALSO mean "do not read the locale" — which is what returning here made it
+        # mean, and that made the state ABSORBING: `_resolve_account_locale` is the
+        # only site of the <html lang> recovery (#643) AND the only caller of
+        # `next_locale_state`, so nothing could ever move a latched profile off it.
+        # Every profile that saw two migrated loads on <=0.66.0 latched this way,
+        # which is exactly the population #643 was written for. Measured 2026-09-03
+        # on `ffroliva`: latched, and the page declares lang="en" on every load.
+        settle = cached != NOT_REDIRECTED
+        self._account_locale = await self._resolve_account_locale(self._page, settle=settle)
+        if not settle:
+            # Kept (not merged into account_locale_state) because field reports key
+            # on this event to tell "the settle was skipped" from "it timed out".
+            logger.info(
+                "client.account_locale_cached",
+                locale=self._account_locale,
+                settle_skipped=True,
+            )
         state = next_locale_state(cached, self._account_locale)
         if state != cached:
             logger.info("client.account_locale_state", was=cached, now=state)
         write_account_locale(self.profile_dir, state)
 
-    async def _resolve_account_locale(self, page: Any) -> str | None:
+    async def _resolve_account_locale(self, page: Any, *, settle: bool = True) -> str | None:
         """Settle the bootstrap navigation and read the account's locale (#580).
 
         Flow redirects the editor to the ACCOUNT's locale, but that redirect
         lands after ``goto`` returns — settling is what makes it observable.
         ``None`` means "build bare URLs", which is never worse than the
         hardcoded ``en-US`` this replaces.
+
+        ``settle=False`` (#639) skips only the wait, not the read. A profile
+        cached :data:`NOT_REDIRECTED` has nothing to wait for — measured 56/56 on
+        `ffroliva` — but its page still declares a locale in ``<html lang>``, and
+        skipping the whole function to save the wait is what made that cache an
+        absorbing state.
         """
-        settled = await await_url_settled(page)
+        settled = await await_url_settled(page) if settle else None
         segment = routes.locale_segment_from_url(settled or "")
         if segment is not None:
             logger.info("client.account_locale_resolved", locale=segment, url=settled)

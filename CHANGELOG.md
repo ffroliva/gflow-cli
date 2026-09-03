@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **v0.66.1's migrated-origin fast-fail never fired on a real run
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** The guard read `page.url` once,
+  at `get_ui_driver` entry — but `routes.project_editor_url` only ever builds a `labs.google`
+  URL and the hop to `flow.google.com` is a *post-`goto`* redirect that neither settle path
+  waits for (no locale → `_settle_if_redirecting` returns immediately; a known locale →
+  `await_url_settled` short-circuits because the labs URL already matches the localised shape).
+  So the guard classified a pre-redirect URL, declined, and the run paid ~54 s before failing
+  anyway through the slow selector-probe path. Measured by the reporter on three consecutive
+  v0.66.1 runs: **57.0 / 57.1 / 58.3 s**, with `ui_driver.migrated_host_bail` absent from the
+  timeline entirely. The host check is now a shared `raise_if_migrated` helper called at the
+  three points the run is *about to spend time* — `get_ui_driver` entry, each `detect_ui_mode`
+  poll tick, and `_exit_agent_mode` once the media panel is found absent — so it adds no wait
+  and no navigation to the old host, and aborts as soon as the redirect is observable. The
+  event now names its call site, so the fast path is visible in a field timeline instead of
+  inferred. Two blanket `except Exception` handlers that would have demoted the abort to a
+  warning now re-raise it.
+
+- **A `NOT_REDIRECTED` locale cache was an absorbing state, which made the #643 `<html lang>`
+  recovery unreachable on exactly the profiles that needed it
+  ([#643](https://github.com/ffroliva/gflow-cli/issues/643)).** `_bootstrap_and_resolve_locale`
+  returned *before* `_resolve_account_locale` — the only site of that recovery and the only
+  caller of `next_locale_state` — so nothing could ever move a latched profile off the state.
+  Every profile that saw two migrated loads on ≤0.66.0 latched this way. `NOT_REDIRECTED` now
+  skips the settle only, and still reads the locale: measured 56/56 on a latched profile whose
+  page declares `lang="en"` on every load. The 4 s settle stays skipped — deleting the early
+  return outright was rejected, because on that account the cached "not redirected" is a true
+  observation.
+
+- **`docs/MCP.md` omitted `FlowHostMigratedError` from its retryable-class list**, which would
+  have told an MCP agent not to auto-retry a failure the envelope marks `retryable: true`.
+
 ## [0.66.1] — 2026-09-03
 
 ### Fixed

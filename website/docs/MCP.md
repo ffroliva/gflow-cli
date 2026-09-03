@@ -127,7 +127,10 @@ marks a transient failure a scheduler can re-run without operator intervention â
 WAF/reCAPTCHA bounce (`WafRejectionError`), rate-limit (`RateLimitError`),
 transport timeout (`TransportTimeoutError`), network blip (`NetworkError`), a
 dropped browser session (`BrowserSessionClosedError`), a Flow web-app crash
-(`FlowAppError`), and an agentic-cohort flap (`FlowAgentUiError`). Everything
+(`FlowAppError`), an agentic-cohort flap (`FlowAgentUiError`), and a page load
+served by the migrated `flow.google.com` frontend (`FlowHostMigratedError`,
+[#639](https://github.com/ffroliva/gflow-cli/issues/639) â€” the rollout flaps per
+page load, so a retry often lands the frontend gflow can drive). Everything
 else (auth, content-policy, configuration, security) is terminal
 (`retryable: false`): retrying the identical request fails the same way. This
 flag is the **same shared classification** the CLI `--json` payload and the

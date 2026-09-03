@@ -43,10 +43,13 @@ class _FakePage:
         redirects_to: str | None = None,
         *,
         url: str = "https://labs.google/fx/tools/flow?hl=en",
+        lang: str | None = "",
     ) -> None:
         self.url = url
         self._redirects_to = redirects_to
+        self._lang = lang
         self.probed = False
+        self.lang_probed = False
         self.goto = AsyncMock(side_effect=self._goto)
 
     async def _goto(self, url: str, **_k: Any) -> None:
@@ -57,6 +60,16 @@ class _FakePage:
         if self._redirects_to is None:
             raise TimeoutError("no localised URL ever appeared")
         self.url = self._redirects_to
+
+    async def evaluate(self, *_a: Any, **_k: Any) -> str:
+        """`document.documentElement.lang` (#643). ``lang=None`` models a probe
+        that raises — a closed page, or evaluate blocked — which must never break
+        the bootstrap."""
+        self.lang_probed = True
+        if self._lang is None:
+            msg = "Execution context was destroyed"
+            raise RuntimeError(msg)
+        return self._lang
 
 
 async def _bootstrap(tmp_path: Path, page: _FakePage) -> FlowApiClient:
@@ -105,15 +118,105 @@ async def test_a_stale_segment_self_heals_on_the_next_run(tmp_path: Path) -> Non
     assert read_account_locale(tmp_path) == "pt"
 
 
-async def test_cached_no_redirect_skips_the_probe_entirely(tmp_path: Path) -> None:
-    """This is the timeout the issue is about. It must not be spent twice."""
+async def test_cached_no_redirect_skips_the_settle_but_still_reads_the_lang_attr(
+    tmp_path: Path,
+) -> None:
+    """The 4 s settle is the timeout #587 is about — it must not be spent twice.
+
+    But #639 showed the early return was skipping too much: it returned before
+    ``_resolve_account_locale``, which is the only site of the ``<html lang>``
+    recovery, so the state was ABSORBING — a latched profile could never learn a
+    locale again. ``NOT_REDIRECTED`` means "skip the settle", not "skip
+    everything", which is exactly what its own docstring says.
+    """
     write_account_locale(tmp_path, NOT_REDIRECTED)
     page = _FakePage()
 
     client = await _bootstrap(tmp_path, page)
 
-    assert page.probed is False
+    assert page.probed is False, "the settle must still be skipped (#587)"
+    assert page.lang_probed is True, "the lang attribute must still be read (#639/#643)"
     assert client._account_locale is None
+
+
+# --- #639: NOT_REDIRECTED must not be an absorbing state ----------------------
+
+
+async def test_a_latched_profile_recovers_its_locale_from_lang(tmp_path: Path) -> None:
+    """Measured on a real pt-BR migrated load: the URL carries no segment, but
+    Flow still renders ``lang="pt"``. Before this, the profile stayed None forever."""
+    write_account_locale(tmp_path, NOT_REDIRECTED)
+    page = _FakePage(lang="pt")
+
+    client = await _bootstrap(tmp_path, page)
+
+    assert client._account_locale == "pt"
+    assert read_account_locale(tmp_path) == "pt", "the latch must be released, not just read past"
+
+
+async def test_a_latched_profile_still_skips_the_settle(tmp_path: Path) -> None:
+    """The #587 anti-regression, and the reason deleting the early return was rejected.
+
+    Measured 2026-09-03 on `ffroliva`: 56/56 bootstrap loads served the bare URL
+    and never redirected. The cached ``NOT_REDIRECTED`` is a TRUE observation for
+    that account — only the locale read was wrongly disabled with it.
+    """
+    write_account_locale(tmp_path, NOT_REDIRECTED)
+    page = _FakePage(lang="en-GB")
+
+    client = await _bootstrap(tmp_path, page)
+
+    assert page.probed is False, "no settle may be awaited on a known non-redirecting account"
+    assert client._account_locale == "en"
+
+
+async def test_a_latched_profile_with_no_lang_stays_latched(tmp_path: Path) -> None:
+    write_account_locale(tmp_path, NOT_REDIRECTED)
+    page = _FakePage(lang="")
+
+    client = await _bootstrap(tmp_path, page)
+
+    assert client._account_locale is None
+    assert read_account_locale(tmp_path) == NOT_REDIRECTED
+
+
+async def test_a_lang_probe_failure_never_breaks_bootstrap(tmp_path: Path) -> None:
+    write_account_locale(tmp_path, NOT_REDIRECTED)
+    page = _FakePage(lang=None)  # evaluate raises
+
+    client = await _bootstrap(tmp_path, page)
+
+    assert client._account_locale is None
+    assert read_account_locale(tmp_path) == NOT_REDIRECTED
+
+
+@pytest.mark.parametrize(
+    "lang",
+    ["../../etc/passwd", "pt/../en", "e n", "toolongtag", "1234"],
+    ids=["traversal", "separator", "space", "too-long", "digits"],
+)
+async def test_a_malformed_lang_is_rejected_before_it_is_written(tmp_path: Path, lang: str) -> None:
+    """``write_account_locale`` writes VERBATIM and the value is interpolated into
+    a URL path, so the sanitising must happen before the write, not after."""
+    write_account_locale(tmp_path, NOT_REDIRECTED)
+    page = _FakePage(lang=lang)
+
+    client = await _bootstrap(tmp_path, page)
+
+    assert client._account_locale is None
+    assert read_account_locale(tmp_path) == NOT_REDIRECTED
+
+
+async def test_zh_hans_reduces_to_zh_without_crashing(tmp_path: Path) -> None:
+    """Known-wrong and already flagged in the shipped docstring: Flow's URL
+    segments carry no region, so ``zh-Hans``/``zh-Hant`` both reduce to ``zh``.
+    Not fixed here — pinned so it cannot silently regress into a crash."""
+    write_account_locale(tmp_path, NOT_REDIRECTED)
+    page = _FakePage(lang="zh-Hans")
+
+    client = await _bootstrap(tmp_path, page)
+
+    assert client._account_locale == "zh"
 
 
 @pytest.mark.parametrize(

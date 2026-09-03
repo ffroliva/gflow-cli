@@ -25,6 +25,7 @@ from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
     FlowApiError,
+    FlowHostMigratedError,
     NetworkError,
     RateLimitError,
     WafRejectionError,
@@ -83,6 +84,43 @@ def flow_host_kind(url: object) -> str | None:
     except ValueError:
         return None
     return _FLOW_HOSTS.get(host)
+
+
+def raise_if_migrated(page: object, *, at: str) -> None:
+    """Abort now if this page is on the migrated ``flow.google.com`` origin (#639).
+
+    The migrated frontend renders none of the controls gflow drives, so every probe
+    after this point is doomed. Call it wherever the run is **about to spend time**,
+    and never behind a wait of its own: ``page.url`` is a cached property and
+    :func:`flow_host_kind` is one parse plus a dict lookup, so a call costs the host
+    that still works nothing at all.
+
+    **Once, at entry, is not enough** — that was v0.66.1's defect.
+    ``routes.project_editor_url`` only ever builds a ``labs.google`` URL, and the hop
+    to the migrated origin is a *post-``goto``* redirect that neither settle path
+    waits for (no locale → ``_settle_if_redirecting`` returns immediately; a known
+    locale → :func:`await_url_settled` short-circuits because the labs URL already
+    matches :data:`FLOW_LOCALISED_URL_RE`). An entry-only check therefore reads a
+    pre-redirect URL and declines. Measured in the field on three consecutive runs:
+    exit 36 arrived at ~57 s, through the slow selector-probe path, with the bail
+    event absent from the timeline entirely.
+
+    ``at`` names the call site in the log event, so a field timeline SHOWS where the
+    host became knowable instead of leaving it to be inferred — which is exactly how
+    a fast path that never fired survived a release.
+    """
+    url = getattr(page, "url", None)
+    if flow_host_kind(url) != "migrated":
+        return
+    log.info("ui_driver.migrated_host_bail", at=at, url=url)
+    raise FlowHostMigratedError(
+        detail=(
+            "Flow served this project from flow.google.com — the origin Google is "
+            "migrating the app onto — whose frontend renders none of the controls "
+            "gflow drives. This is not selector drift. The migration flaps per page "
+            "load, so retrying often lands the old frontend."
+        )
+    )
 
 
 PROJECT_URL_FRAGMENT = "/project/"
