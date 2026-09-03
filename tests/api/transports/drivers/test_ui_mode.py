@@ -11,7 +11,7 @@ arm (which today drops `-i` cards and mis-hints aspect ratios).
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -317,3 +317,98 @@ def test_worker_video_ui_mode_agentic_payload_rejected() -> None:
 
     with _pytest.raises(ValueError, match="agentic"):
         build_video_request({"prompt": "a", "ui_mode": "agentic"})
+
+
+# ---------------------------------------------------------------------------
+# #639 follow-up: fail fast on the migrated origin instead of probing a DOM
+# that cannot answer
+# ---------------------------------------------------------------------------
+
+
+_CROP = "i.google-symbols:text-is('crop_16_9')"
+
+
+def _page_with_present(present: set[str]):
+    page = MagicMock()
+
+    def locator(sel: str):
+        loc = MagicMock()
+        loc.count = AsyncMock(return_value=1 if sel in present else 0)
+        return loc
+
+    page.locator = MagicMock(side_effect=locator)
+    return page
+
+
+class TestMigratedOriginFailsFast:
+    """`flow.google.com` renders none of the controls gflow drives, so every
+    probe below is doomed before it starts. Measured cost of finding that out
+    the slow way, per attempt:
+
+        detect_ui_mode poll window   ~8 s   (both arms miss, falls to deadline)
+        crop selector cascade       ~24 s
+                                    -----
+                                    ~32 s   before FlowHostMigratedError is raised
+
+    The migration flaps per load and callers retry on exit 36, so that cost is
+    paid on every attempt of a retry loop. The host is knowable in microseconds
+    from `page.url`, so none of it needs to be spent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_raises_before_probing_the_dom(self) -> None:
+        from gflow_cli.api.transports.drivers.factory import get_ui_driver
+        from gflow_cli.errors import FlowHostMigratedError
+
+        page = MagicMock()
+        page.url = "https://flow.google.com/project/abc-123"
+        page.locator = MagicMock(side_effect=AssertionError("must not probe the DOM"))
+
+        with pytest.raises(FlowHostMigratedError):
+            await get_ui_driver(page)
+        page.locator.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_error_is_retryable_with_exit_36(self) -> None:
+        from gflow_cli.api.transports.drivers.factory import get_ui_driver
+        from gflow_cli.errors import EXIT_CODE_MAP, FlowHostMigratedError, is_retryable
+
+        page = MagicMock()
+        page.url = "https://flow.google.com/"
+        page.locator = MagicMock(side_effect=AssertionError("must not probe the DOM"))
+
+        with pytest.raises(FlowHostMigratedError) as exc:
+            await get_ui_driver(page)
+        assert is_retryable(exc.value)
+        assert EXIT_CODE_MAP[FlowHostMigratedError] == 36
+
+    @pytest.mark.asyncio
+    async def test_bail_names_the_migration_not_selector_drift(self) -> None:
+        from gflow_cli.api.transports.drivers.factory import get_ui_driver
+        from gflow_cli.errors import FlowHostMigratedError
+
+        page = MagicMock()
+        page.url = "https://flow.google.com/"
+        page.locator = MagicMock(side_effect=AssertionError("must not probe the DOM"))
+        with pytest.raises(FlowHostMigratedError) as exc:
+            await get_ui_driver(page)
+        assert "flow.google.com" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_labs_host_is_untouched(self) -> None:
+        """No regression: the old host must still go through full DOM detection."""
+        from gflow_cli.api.transports.drivers.factory import detect_ui_mode
+
+        page = _page_with_present({_CROP})
+        page.url = "https://labs.google/fx/tools/flow/project/abc"
+        assert await detect_ui_mode(page, timeout_s=0.1, poll_interval_s=0.01) == "classic"
+
+    @pytest.mark.asyncio
+    async def test_unreadable_url_still_probes_rather_than_bailing(self) -> None:
+        """Defensive: a page whose .url is not a usable string must NOT be
+        mistaken for a migrated host — that would turn a transient into a
+        permanent-looking abort."""
+        from gflow_cli.api.transports.drivers.factory import detect_ui_mode
+
+        page = _page_with_present({_CROP})  # MagicMock .url, never assigned
+        assert await detect_ui_mode(page, timeout_s=0.1, poll_interval_s=0.01) == "classic"
