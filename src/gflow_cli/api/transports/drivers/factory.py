@@ -109,6 +109,10 @@ async def detect_ui_mode(
     ``timeout_s`` / ``poll_interval_s`` default to the module constants resolved
     at call time (``None`` sentinel) so tests can patch the constants to skip the
     poll window without touching production behaviour.
+
+    **Not total** (#639): raises :class:`FlowHostMigratedError` if the page is on
+    the migrated ``flow.google.com`` origin, re-checked every tick. The return
+    annotation covers only the paths that return.
     """
     timeout_s = _DETECT_TIMEOUT_S if timeout_s is None else timeout_s
     poll_interval_s = _DETECT_POLL_INTERVAL_S if poll_interval_s is None else poll_interval_s

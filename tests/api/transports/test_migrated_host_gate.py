@@ -60,6 +60,11 @@ class _FlippingPage:
         loc.wait_for = AsyncMock(side_effect=TimeoutError("not visible"))
         return loc
 
+    async def wait_for_timeout(self, *_a: Any, **_k: Any) -> None:
+        """Pacing for `mode_control._wait_until`. Not "added work" — the loop it
+        paces is pre-existing; the old-host assertions below guard the three calls
+        that WOULD be added work."""
+
     # A run that reaches for either of these has added work to the old-host path.
     async def goto(self, *_a: Any, **_k: Any) -> None:
         msg = "the guard must not navigate"
@@ -186,3 +191,60 @@ async def test_bail_emits_a_stable_event_naming_the_host_and_the_site() -> None:
     assert bail, f"expected a migrated_host_bail event, got {[e['event'] for e in logs]}"
     assert bail[0]["url"] == _MIGRATED
     assert bail[0]["at"] == "detect_ui_mode", "the event must say WHERE the host became knowable"
+
+
+# --- the long waits nobody was guarding ------------------------------------
+
+
+async def test_agentic_arm_does_not_burn_the_composer_poll_on_a_migrated_host() -> None:
+    """`--ui-mode agentic` reached `mode_control.ensure_agent_mode`, whose first act
+    is an 8 s `_composer_present` poll that on `flow.google.com` can never succeed —
+    and which returns normally rather than raising, so `get_ui_driver`'s blanket
+    `except Exception` never fired either.
+
+    The AGENTIC arm's own guard cannot cover this: no `await` separates it from the
+    entry guard, so it is the same point-in-time snapshot. Only a per-tick re-check
+    inside the poll can see a flip that happens *during* it.
+    """
+    from gflow_cli.api.transports.drivers.factory import get_ui_driver
+    from gflow_cli.config import UiMode
+
+    page = _FlippingPage()
+
+    with pytest.raises(FlowHostMigratedError):
+        await get_ui_driver(
+            page,  # type: ignore[arg-type]
+            ui_mode=UiMode.AGENTIC,
+            timeout_s=1.0,
+            poll_interval_s=0.01,
+        )
+
+
+async def test_mode_control_poll_re_reads_the_host_every_tick() -> None:
+    """The same gap on the CLASSIC path: `_exit_agent_mode`'s guard is taken before
+    `ensure_media_mode` starts, so a redirect landing inside that poll was unseen
+    until the caller's failure classifier ran ~10 s later."""
+    from gflow_cli.api.transports.mode_control import _wait_until
+
+    page = _FlippingPage()
+
+    async def _probe(p: Any) -> bool:
+        # Mirrors `_composer_present`: it touches the DOM, which is when the
+        # pending redirect becomes visible on `page.url`.
+        await p.locator("whatever").count()
+        return False
+
+    with pytest.raises(FlowHostMigratedError):
+        await _wait_until(page, _probe, 8000)  # type: ignore[arg-type]
+
+
+async def test_mode_control_poll_is_untouched_on_the_old_host() -> None:
+    """No regression: the guard must not disturb a probe that simply times out."""
+    from gflow_cli.api.transports.mode_control import _wait_until
+
+    page = _FlippingPage(flip=False)
+
+    async def _never(_p: Any) -> bool:
+        return False
+
+    assert await _wait_until(page, _never, 50) is False  # type: ignore[arg-type]
