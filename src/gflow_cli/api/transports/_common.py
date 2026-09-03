@@ -224,6 +224,12 @@ async def await_url_settled(page: Any) -> str | None:
         current = ""
     if current and FLOW_LOCALISED_URL_RE.match(current):
         return current
+    # #643: on the migrated origin the localised shape can NEVER appear — the path
+    # is /project/<id>, with no /fx/<locale>/tools/flow segment. Waiting for it
+    # burned the full timeout (measured 4018 ms on every migrated navigation) to
+    # return the None we can return now.
+    if flow_host_kind(current) == "migrated":
+        return None
 
     try:
         await page.wait_for_url(FLOW_LOCALISED_URL_RE, timeout=URL_SETTLE_TIMEOUT_MS)
