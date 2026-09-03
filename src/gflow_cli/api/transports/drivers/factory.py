@@ -152,6 +152,27 @@ async def get_ui_driver(
     Call per generation — the cohort flaps per page load, so a cached driver
     goes stale on the next navigation / batch item.
     """
+    # #639: the migrated flow.google.com frontend renders none of the controls
+    # gflow drives, so every probe below is doomed before it starts. Finding that
+    # out the slow way costs ~32 s per attempt (the ~8 s detect_ui_mode poll
+    # window, both arms missing, plus the ~24 s crop cascade) -- and because the
+    # rollout flaps and callers retry on exit 36, that is paid on every attempt of
+    # a retry loop. The host is knowable from page.url in microseconds.
+    from gflow_cli.api.transports._common import flow_host_kind
+
+    if flow_host_kind(getattr(page, "url", None)) == "migrated":
+        from gflow_cli.errors import FlowHostMigratedError
+
+        log.info("ui_driver.migrated_host_bail")
+        raise FlowHostMigratedError(
+            detail=(
+                "Flow served this project from flow.google.com — the origin Google is "
+                "migrating the app onto — whose frontend renders none of the controls "
+                "gflow drives. This is not selector drift. The migration flaps per page "
+                "load, so retrying often lands the old frontend."
+            )
+        )
+
     # Prerequisite switch: when a specific arm is required and the current one
     # differs, attempt the DOM toggle for that direction (best-effort — the
     # server can pin the arm). The re-probe below VERIFIES whether it took.

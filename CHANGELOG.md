@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A migrated-origin run spent ~36 s discovering a failure knowable in microseconds
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** `flow.google.com` renders none
+  of the controls gflow drives, so every DOM probe is doomed before it starts — yet the run
+  still burned the full `detect_ui_mode` poll window (~8 s, both arms missing), the crop
+  selector cascade (~24 s) and the URL settle (4 s) before raising `FlowHostMigratedError`.
+  Because the rollout flaps per page load and callers retry on exit 36, that cost was paid on
+  **every attempt** of a retry loop. `get_ui_driver` now checks the host first and fails fast
+  with the same retryable exit 36. The old host is untouched and still gets full DOM detection;
+  a page whose URL cannot be read still probes rather than bailing, so a transient is never
+  mistaken for a migrated origin.
+
 - **Locale resolution was blind on `flow.google.com`, and silently discarded a locale it had
   already learned ([#643](https://github.com/ffroliva/gflow-cli/issues/643)).** The migrated
   origin serves `/project/<id>` with no `/fx/<locale>/tools/flow` segment, so
