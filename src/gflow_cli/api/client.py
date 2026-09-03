@@ -792,8 +792,23 @@ class FlowApiClient:
         segment = routes.locale_segment_from_url(settled or "")
         if segment is not None:
             logger.info("client.account_locale_resolved", locale=segment, url=settled)
-        else:
-            logger.info("client.account_locale_unresolved", last_url=settled)
+            return segment
+        # #643: the migrated flow.google.com origin serves /project/<id> with no
+        # locale segment, so the URL can never answer there — but Flow still
+        # renders the account locale into <html lang>. Without this the resolver
+        # returns None and `next_locale_state` DEMOTES an already-learned locale
+        # to PROVISIONAL (measured: a pt account lost its "pt" on every migrated
+        # load). Best-effort: a probe failure must never break navigation.
+        try:
+            lang = await page.evaluate("() => document.documentElement.lang || ''")
+        except Exception as exc:  # noqa: BLE001 - observation only
+            logger.info("client.account_locale_lang_probe_failed", error=type(exc).__name__)
+            lang = None
+        segment = routes.locale_segment_from_lang_attr(lang)
+        if segment is not None:
+            logger.info("client.account_locale_resolved", locale=segment, source="html_lang")
+            return segment
+        logger.info("client.account_locale_unresolved", last_url=settled)
         return segment
 
     async def _launch_persistent_context(self, kwargs: JsonObject) -> BrowserContext:

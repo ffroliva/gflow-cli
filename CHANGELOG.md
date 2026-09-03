@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Locale resolution was blind on `flow.google.com`, and silently discarded a locale it had
+  already learned ([#643](https://github.com/ffroliva/gflow-cli/issues/643)).** The migrated
+  origin serves `/project/<id>` with no `/fx/<locale>/tools/flow` segment, so
+  `locale_segment_from_url` could never match there. The locale had not disappeared — it moved
+  into `<html lang>`, which stays correct on the migrated host. Two measured consequences:
+  `next_locale_state("pt", None)` returned PROVISIONAL, **demoting** an already-learned locale
+  on every migrated load (so a fully-migrated account could never learn it again, undoing
+  [#587](https://github.com/ffroliva/gflow-cli/issues/587)); and `await_url_settled` burned the
+  full 4 s timeout per navigation waiting for a shape that can no longer exist. gflow now falls
+  back to `<html lang>` when the URL carries no segment, and skips the settle wait entirely on
+  the migrated origin.
+
+  The fallback is evidence-backed, not assumed: measured on two accounts (`en` and `pt-BR`),
+  `<html lang>` **agreed with the URL segment wherever both existed**. Unlike
+  `navigator.language` — which reports the value gflow itself sets — it is server-rendered by
+  Flow. Where Flow does state the locale in the URL, that stays authoritative.
+
 ## [0.66.0] — 2026-09-03
 
 ### Fixed

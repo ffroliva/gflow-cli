@@ -212,6 +212,38 @@ def locale_segment_from_url(url: str) -> str | None:
     return match.group(1).lower()
 
 
+_LANG_ATTR_RE = re.compile(r"^([a-z]{2,3})(?:-[a-z]{2,4})?$")
+
+
+def locale_segment_from_lang_attr(lang: str | None) -> str | None:
+    """Derive Flow's locale SEGMENT from a page's ``<html lang>`` attribute (#643).
+
+    Needed because the migrated ``flow.google.com`` origin serves ``/project/<id>``
+    with **no locale segment at all** — :func:`locale_segment_from_url` is
+    structurally blind there. The locale did not disappear with the URL shape; it
+    is still served in the document.
+
+    Measured 2026-09-03 on two profiles, old host vs migrated:
+
+    * ``ffroliva``  old ``/fx/tools/flow`` (bare), ``lang=en``  -> migrated ``lang=en-GB``
+    * ``denon82``   old ``/fx/pt/tools/flow``,     ``lang=pt``  -> migrated ``lang=pt``
+
+    ``html lang`` **agreed with the URL segment wherever both existed**, which is
+    what licenses it as a fallback. Unlike ``navigator.language`` — which reports
+    the value gflow itself sets when it launches the context, and so answers
+    confidently but wrongly — this attribute is server-rendered by Flow.
+
+    The region suffix is dropped (``en-GB`` -> ``en``) because Flow's URL segments
+    carry no region, and the two derivations must stay comparable. Anything that
+    is not a plausible tag returns ``None`` — "build the bare URL" is always safe,
+    and guessing is the defect this exists to avoid.
+    """
+    if not lang:
+        return None
+    match = _LANG_ATTR_RE.match(lang.strip().lower())
+    return match.group(1) if match else None
+
+
 def project_editor_url(locale: str | None, project_id: str) -> str:
     """Build the user-facing Flow editor URL for an existing project.
 
