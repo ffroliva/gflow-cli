@@ -321,7 +321,9 @@ Both matrices remain valid for their respective cohorts. The CLI now validates t
 canonical model cap at the edge with exit 2 before any browser work.
 Also: `--reference-entity` no longer advertised on `video i2v` (its DTO always
 rejected it), a typed `ReferenceNotFoundError` (exit 32) replaces a bare
-Playwright timeout, and `gflow models` stops advertising a duration users cannot
+Playwright timeout. (`gflow models` reported `max_duration` 0 for the Veo models
+under that rule; since #650 it reports 8, because the cohorts that render the row
+genuinely accept it.) The v0.64.0 note below described a duration users cannot
 set. Everything verified at **zero credits**. See
 [LIVE_VERIFICATION_v0.57.1.md](LIVE_VERIFICATION_v0.57.1.md).
 
