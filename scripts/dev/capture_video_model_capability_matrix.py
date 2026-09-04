@@ -131,16 +131,23 @@ async def _menu_state(page: Any) -> dict[str, Any]:
           // and `x{n}` (count) and takes `.first`. Any VISIBLE match outside the
           // open popover is an element the transport could click by mistake.
           // Empty lists across every model = scoping/read-back is unnecessary.
-          const STRAY_ROLES = [
+          // Mirrors of the transport's two cascades, which are NOT the same.
+          // ui_automation_video.py: duration probes five roles for `{n}s`;
+          // count probes ONLY [role='tab'], for BOTH affix orders `x{n}` and
+          // the #404 legacy `{n}x`. Scanning one shared list under-reported
+          // count (missed `2x`) and over-reported it (flagged buttons the
+          // transport can never click).
+          const DURATION_ROLES = [
             "[role='tab']", "[role='button']", "button",
             "[role='option']", "[role='menuitem']",
           ];
+          const COUNT_ROLES = ["[role='tab']"];
           const visible = (e) => !!(e.offsetParent || e.getClientRects().length);
-          const strayScan = (labels) => {
+          const strayScan = (labels, roles) => {
             const seen = new Set();
             const out = [];
             for (const label of labels) {
-              for (const role of STRAY_ROLES) {
+              for (const role of roles) {
                 for (const el of document.querySelectorAll(role)) {
                   if (menu && menu.contains(el)) continue;
                   if (!visible(el)) continue;
@@ -158,8 +165,12 @@ async def _menu_state(page: Any) -> dict[str, Any]:
             }
             return out;
           };
-          const durationStrays = strayScan([4, 6, 8, 10].map(n => n + 's'));
-          const countStrays = strayScan([1, 2, 3, 4].map(n => 'x' + n));
+          const durationStrays = strayScan(
+            [4, 6, 8, 10].map(n => n + 's'), DURATION_ROLES,
+          );
+          const countStrays = strayScan(
+            [1, 2, 3, 4].flatMap(n => ['x' + n, n + 'x']), COUNT_ROLES,
+          );
           const creditRe = /([\\d.,]+)\\s*(?:cr[e\\u00e9]dito?s?|credits?)/i;
           const credits = (text.match(creditRe) || [])[1] || null;
           // The composer's dynamic summary chip, e.g. "Video · 4s x1".
@@ -171,7 +182,6 @@ async def _menu_state(page: Any) -> dict[str, Any]:
             .sort((a, b) => a.length - b.length)[0] || null;
           const body = document.body.innerText.toLowerCase();
           return {
-            menu_present: !!menu,
             tabs,
             credits_text: credits,
             composer_chip: chip,
@@ -288,6 +298,9 @@ async def _run(profile: str, project: str) -> int:
                         "tabs": [t["label"] for t in miss_state["tabs"]],
                         "model_trigger_count": trigger_count,
                         "menuitems_seen": menuitems,
+                        "menu_present": miss_state["menu_present"],
+                        "duration_strays": miss_state["duration_strays"],
+                        "count_strays": miss_state["count_strays"],
                     }
                 )
                 step(
@@ -309,6 +322,12 @@ async def _run(profile: str, project: str) -> int:
                 "ingredient_rejected": state["ingredient_reject"],
                 "page_lang": state["page_lang"],
                 "menu_text": state["menu_text"],
+                # The kill condition is "empty across EVERY model", so these
+                # have to be per-row. In the first cut they existed only in the
+                # pre-model-select baseline, which cannot answer that question.
+                "menu_present": state["menu_present"],
+                "duration_strays": state["duration_strays"],
+                "count_strays": state["count_strays"],
             }
             rows.append(row)
             step(
