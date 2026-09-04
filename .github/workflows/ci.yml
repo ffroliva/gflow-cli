@@ -196,6 +196,9 @@ jobs:
       - name: Website docs mirror in sync (regenerate-and-diff)
         run: uv run python scripts/ci/generate_website_docs.py --check
 
+      - name: Council memory (every cited slug resolves, every file is cited)
+        run: uv run python scripts/ci/check_council_memory.py
+
       - name: Lint
         run: uv run ruff check src tests
 

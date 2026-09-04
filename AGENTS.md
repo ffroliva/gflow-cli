@@ -76,6 +76,7 @@ uv run python scripts/ci/check_repo_hygiene.py
 uv run python scripts/ci/check_doc_links.py
 uv run python scripts/ci/check_website_docs_pii.py
 uv run python scripts/ci/generate_website_docs.py --check
+uv run python scripts/ci/check_council_memory.py
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run pyright src

@@ -20,9 +20,10 @@ PYTHONUTF8=1 uv run python scripts/ci/check_repo_hygiene.py
 PYTHONUTF8=1 uv run python scripts/ci/check_doc_links.py
 PYTHONUTF8=1 uv run python scripts/ci/check_website_docs_pii.py
 PYTHONUTF8=1 uv run python scripts/ci/generate_website_docs.py --check
+PYTHONUTF8=1 uv run python scripts/ci/check_council_memory.py
 ```
 
-The last check fails on either half of the published-site contract:
+`generate_website_docs.py --check` fails on either half of the published-site contract:
 
 - `DRIFT:` — canonical `docs/` changed but the `website/docs/` mirror was not
   regenerated. Fix with `uv run python scripts/ci/generate_website_docs.py` and
