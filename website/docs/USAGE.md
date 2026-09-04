@@ -496,23 +496,18 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 
 > **Shared video flags** (`t2v` / `i2v` / `r2v`):
 > `--model [omni-flash|veo-lite|veo-fast|veo-quality|veo-lite-lp]` (omit → Flow's
-> current UI default), `--duration [4|6|8|10]` (**requires `--model omni-flash`** —
-> see below),
+> current UI default), `--duration [4|6|8|10]` (4/6/8 for Veo 3.1;
+> 4/6/8/10 for omni-flash),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
-> **`--duration` only works on `omni-flash`** (issues #451/#288). Flow's settings
-> popover is model-conditional: `omni-flash` renders a `4s/6s/8s/10s` row, and the
-> Veo 3.1 models render **no duration control at all** — verified live on two
-> accounts and two locales. Passing `--duration` with a Veo model now fails fast
-> with a message naming the model, before any browser work; it used to burn ~30 s
-> of selector timeouts and die with exit 23 as if Flow's UI had drifted. Omit
-> `--duration` to accept Flow's default length for those models.
-> On `i2v` this applies **even with no `--model`** (#630): omitting the flag binds
-> the `veo-lite` default, which has no duration control, so that combination is
-> rejected with exit 2 naming the default rather than dying as "Unexpected error".
-> `t2v`/`r2v` with no `--model` inherit Flow's sticky UI default, which gflow
-> cannot know, so they are not pre-checked. The MCP `gflow_generate_video` tool
-> applies the same rule and answers with a 400 envelope.
+> **`--duration` support across models**: Flow's settings
+> popover is model- and cohort-conditional: `omni-flash` renders a `4s/6s/8s/10s` row,
+> while Veo 3.1 models accept `4s/6s/8s` where the current Flow account/cohort exposes
+> those controls (positive capture: `presentation-reels-google`, `labs.google`, 2026-09-04, PR #650;
+> the historical negative matrix on `my-profile` remains valid for its cohort).
+> 10s is reserved exclusively for `omni-flash`. Passing `--duration 10` with a Veo model
+> fails fast with exit 2 before any browser work. On a cohort where Flow renders no
+> duration control for Veo, omit `--duration` to accept Flow's default.
 > `--count` is enforced **fail-closed**: if Flow's count control cannot be
 > located (selector drift), the run refuses with exit 23 *before* submitting
 > instead of proceeding on Flow's sticky default (typically x2) and silently
@@ -845,18 +840,17 @@ Options:
 
 ### JSONL manifest format
 
-One JSON object per line. Only `prompt` is required; `model` and `aspect` are
-optional per-link overrides (omit to inherit the chain default). Blank lines and
-`#`-prefixed comment lines are skipped.
+One JSON object per line. Only `prompt` is required; `model`, `aspect`, and
+`duration` are optional per-link overrides (omit to inherit the chain default).
+Blank lines and `#`-prefixed comment lines are skipped.
 
-> **`duration` is not supported in a chain** (issue #634). Flow renders a
-> duration control for `omni-flash` alone, and chains reject `omni-flash` (see
-> the note above) — so no model a chain can use can apply one. A manifest
-> carrying `duration` is now rejected **before the first link is submitted**;
-> previously it crashed partway through, after earlier links had already
-> rendered and spent credits. Chain links use Flow's default clip length. A
-> per-link `"model": "omni-flash"` override is rejected up front for the same
-> reason.
+> **`duration` in a chain**: per-link `duration` accepts `4`, `6`, or `8`
+> seconds for Veo models, while `10` and non-standard durations are rejected
+> during pre-flight before the first link is submitted (issue #634).
+> Successful application of explicit duration depends on whether the active Flow
+> account/cohort renders the duration control. A per-link `"model": "omni-flash"`
+> override is rejected up front because omni-flash is not supported at chain
+> scale (refs #125).
 
 ```jsonl
 {"prompt": "a lone wolf on a snowy ridge at dawn, cinematic", "model": "veo-lite", "aspect": "16:9"}

@@ -7,6 +7,7 @@ from gflow_cli.api.video import (
     GenerateVideoRequest,
     Mode,
     VideoModel,
+    max_duration_for,
     reference_cap_for,
 )
 
@@ -94,14 +95,26 @@ class TestModelCapabilityGuards:
     that the selected model cannot render must fail at the DTO — not 30s later
     as a UiSelectorDriftError that blames the UI for a capability mismatch."""
 
-    def test_duration_rejected_on_models_without_a_duration_control(self) -> None:
+    def test_duration_allowed_on_veo_models_within_cap(self) -> None:
         for model in (
             VideoModel.VEO_3_1_LITE,
             VideoModel.VEO_3_1_FAST,
             VideoModel.VEO_3_1_QUALITY,
+            VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
         ):
-            with pytest.raises(ValueError, match="no duration control"):
-                GenerateVideoRequest(prompt="x", mode=Mode.T2V, model=model, duration=8)
+            for dur in (4, 6, 8):
+                req = GenerateVideoRequest(prompt="x", mode=Mode.T2V, model=model, duration=dur)
+                assert req.duration == dur
+
+    def test_duration_10_rejected_on_veo_models(self) -> None:
+        for model in (
+            VideoModel.VEO_3_1_LITE,
+            VideoModel.VEO_3_1_FAST,
+            VideoModel.VEO_3_1_QUALITY,
+            VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+        ):
+            with pytest.raises(ValueError, match="caps at 8s"):
+                GenerateVideoRequest(prompt="x", mode=Mode.T2V, model=model, duration=10)
 
     def test_duration_allowed_on_omni_flash(self) -> None:
         req = GenerateVideoRequest(
@@ -110,15 +123,24 @@ class TestModelCapabilityGuards:
         assert req.duration == 10
 
     def test_duration_allowed_when_model_is_unset(self) -> None:
-        """model=None leaves Flow's picker untouched, so there is no capability
-        to check against — the guard must not fire."""
+        """T2V leaves Flow's sticky picker default untouched."""
         assert GenerateVideoRequest(prompt="x", mode=Mode.T2V, duration=8).duration == 8
 
-    def test_supports_duration_matches_the_verified_matrix(self) -> None:
-        assert VideoModel.OMNI_FLASH.supports_duration()
-        assert not VideoModel.VEO_3_1_LITE.supports_duration()
-        assert not VideoModel.VEO_3_1_FAST.supports_duration()
-        assert not VideoModel.VEO_3_1_QUALITY.supports_duration()
+    def test_i2v_default_model_rejects_duration_10(self) -> None:
+        with pytest.raises(ValueError, match="caps at 8s"):
+            GenerateVideoRequest(
+                prompt="x", mode=Mode.I2V, start_image=Path("start.png"), duration=10
+            )
+
+    def test_max_duration_matches_the_verified_matrix(self) -> None:
+        assert max_duration_for(VideoModel.OMNI_FLASH) == 10
+        for model in (
+            VideoModel.VEO_3_1_LITE,
+            VideoModel.VEO_3_1_FAST,
+            VideoModel.VEO_3_1_QUALITY,
+            VideoModel.VEO_3_1_LITE_LOWER_PRIORITY,
+        ):
+            assert max_duration_for(model) == 8
 
     def test_ingredient_capability_has_exactly_one_source_of_truth(self) -> None:
         """`reference_cap_for` IS the ingredient-capability answer: a cap of 0

@@ -2,15 +2,11 @@
 r"""Live $0 recon — per-model capability matrix for the classic video composer.
 
 WHY (2026-08-14 owner recon): the settings popover is **model-conditional**.
-Screenshots showed `Omni Flash` rendering a duration row (4s/6s/8s/10s) while
-`Veo 3.1 - Quality/Lite/Fast` render **no duration control at all**, and
-`Veo 3.1 - Quality` rejecting image ingredients ("You cannot use image
-ingredients with this model.") that `Veo 3.1 - Fast` accepts.
-
-`api/video.py:44` currently claims "the four VEO_3_1_* models cap at 8s", which
-assumes they expose a duration control. If they expose none, that is the
-unexplained root cause of #451 / #288 (`--duration` "broken", A/B-identical on
-playwright 1.59 and 1.61 — never a Playwright regression, never locale).
+The duration controls are interactive buttons in some Flow cohorts, while other
+controls use ARIA tabs/options. The collector reads all of those roles so the
+capability matrix matches the same selector surface used by the video transport.
+`Veo 3.1 - Quality` may reject image ingredients while `Veo 3.1 - Fast` accepts
+them; that is a separate model capability and remains in the matrix.
 
 This spike reads the popover for EVERY model and dumps a structured matrix:
 duration tabs, count tabs, the live credit cost, the composer tag, and any
@@ -110,7 +106,7 @@ async def _menu_state(page: Any) -> dict[str, Any]:
         """() => {
           const menu = document.querySelector("[role='menu']");
           const scope = menu || document.body;
-          const tabs = [...scope.querySelectorAll("[role='tab']")].map(t => ({
+          const tabs = [...scope.querySelectorAll("button, [role='tab'], [role='button'], [role='option'], [role='menuitem']")].map(t => ({
             label: (t.getAttribute('aria-label') || t.textContent || '').trim(),
             id: t.id || null,
             selected: t.getAttribute('aria-selected') === 'true',

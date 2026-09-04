@@ -174,19 +174,18 @@ it fired and passed — same account, same prompt, one variable. That also settl
 question that had held the fix for two days (Flow delegates to a **dedicated Web Worker**,
 so `context.route` suffices) and proved the request rewrite does not corrupt the body.
 
-Separately, `gflow video chain` and `gflow movie run` died **mid-spend** on
+Separately, `gflow video chain` and `gflow movie run` historically died **mid-spend** on
 `duration` × `model` ([#634](https://github.com/ffroliva/gflow-cli/issues/634)) — after
-earlier links or scenes had already rendered and billed. For chains it was a guaranteed
-crash: no model a chain can use has a duration control, so *every* manifest `duration` was
-unsatisfiable — including the one shipped as the documented example, which a test pinned as
-valid ([#635](https://github.com/ffroliva/gflow-cli/issues/635)). Both surfaces now refuse
-before the first submit, and `--dry-run` refuses what the real run refuses. The same defect
-on single-clip i2v ([#630](https://github.com/ffroliva/gflow-cli/issues/630)) now exits 2
-naming the model instead of exit 1 `"Unexpected error"`.
+earlier links or scenes had already rendered and billed. Historically, manifests pairing
+unsupported durations or models caused late crashes — including an example manifest
+tested against obsolete assumptions ([#635](https://github.com/ffroliva/gflow-cli/issues/635)).
+Both surfaces now share the canonical duration check: Veo accepts 4/6/8s, omni-flash accepts
+4/6/8/10s, and invalid combinations are refused before the first submit (and `--dry-run`
+refuses what the real run refuses). Single-clip i2v ([#630](https://github.com/ffroliva/gflow-cli/issues/630))
+similarly exits 2 naming the model instead of exit 1 `"Unexpected error"`.
 
-**Breaking:** a `movie.toml` scene pairing a Veo model with a `duration` now fails at parse
-(exit 11). That combination could never have rendered; it previously failed later and more
-expensively. Scene `duration` requires `model = "omni-flash"`.
+**Validation:** a `movie.toml` scene `duration` accepts 4/6/8 for Veo 3.1 and 4/6/8/10 for
+omni-flash; invalid values are rejected during parsing (exit 11) before any spending occurs.
 
 **Known limitation:** the guard covers browser-driven generation only. Direct-wire routes
 issued through Playwright's `APIRequestContext` are not routable at all and bypass it
@@ -314,9 +313,12 @@ detector matched nothing. Recovery hinged on a close button scoped to the
 sidebar's `edit_square` affordance, so a cohort lacking that ligature could never
 recover; `ensure_media_mode` now falls back to an unscoped close from the
 demonstrably stuck state, A/B-proven live. #451/#288 were never selector drift
-either: Flow's settings popover is **model-conditional** — only `omni-flash`
-renders a duration row — so `--duration` on a Veo model hunted a control that is
-never drawn. It now fails at the CLI edge with exit 2 before any browser work.
+either: Flow's settings popover is **model-conditional by cohort**. While the historical
+negative matrix (denon82, 2026-08-14) found no duration row for Veo, a subsequent live
+capture (presentation-reels-google, labs.google, 2026-09-04, PR #650) confirmed that
+cohorts exposing duration controls offer 4/6/8s for Veo 3.1 and 4/6/8/10s for `omni-flash`.
+Both matrices remain valid for their respective cohorts. The CLI now validates the
+canonical model cap at the edge with exit 2 before any browser work.
 Also: `--reference-entity` no longer advertised on `video i2v` (its DTO always
 rejected it), a typed `ReferenceNotFoundError` (exit 32) replaces a bare
 Playwright timeout, and `gflow models` stops advertising a duration users cannot

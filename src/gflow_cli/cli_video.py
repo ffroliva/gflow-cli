@@ -33,6 +33,7 @@ from gflow_cli.api.video import (
     VideoModel,
     is_media_uuid,
     reference_cap_for,
+    validate_duration_for_model,
 )
 from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.models import AssetKind, OperationKind
@@ -174,7 +175,7 @@ def _reject_duration_without_control(
     *,
     default_model: VideoModel | None = None,
 ) -> None:
-    """#451/#288: reject ``--duration`` on a model that renders no duration control.
+    """Validate ``--duration`` when this command has a known model.
 
     The DTO guards this too (defence in depth for API callers), but a bare
     ``ValueError`` surfaces through the CLI as "Unexpected error." (exit 1) and
@@ -201,16 +202,14 @@ def _reject_duration_without_control(
             # a programmatic caller deserves that error, not this guard's. Let the
             # real validation report it rather than dying as "Unexpected error."
             return
-    if resolved is None or resolved.supports_duration():
-        return
-    named = f"--model {model}" if model is not None else f"the default model {resolved.value}"
-    msg = (
-        f"--duration is not supported by {named} — Flow renders no duration "
-        f"control for it (verified live; refs #451/#288). Only omni-flash exposes a "
-        f"duration (4/6/8/10s). Drop --duration to accept Flow's default length, or "
-        f"use --model omni-flash."
-    )
-    raise click.UsageError(msg)
+    if resolved is not None:
+        try:
+            validate_duration_for_model(resolved, duration)
+        except ValueError as exc:
+            named = (
+                f"--model {model}" if model is not None else f"the default model {resolved.value}"
+            )
+            raise click.UsageError(f"{named}: {exc}") from exc
 
 
 def _relocate_single_video(item: Any, target: Path) -> Any:
@@ -1142,9 +1141,8 @@ def video() -> None:
     default=None,
     type=click.Choice(["4", "6", "8", "10"]),
     help=(
-        "Clip length in seconds. REQUIRES --model omni-flash: the Veo 3.1 "
-        "models render no duration control in Flow, so no length can be "
-        "selected for them (refs #451/#288). Omit for Flow's default length."
+        "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
+        "Omit for Flow's default length."
     ),
 )
 @click.option(
@@ -1322,9 +1320,8 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     default=None,
     type=click.Choice(["4", "6", "8", "10"]),
     help=(
-        "Clip length in seconds. REQUIRES --model omni-flash: the Veo 3.1 "
-        "models render no duration control in Flow, so no length can be "
-        "selected for them (refs #451/#288). Omit for Flow's default length."
+        "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
+        "Omit for Flow's default length."
     ),
 )
 @click.option(
@@ -1467,9 +1464,8 @@ def i2v(  # NOSONAR
     default=None,
     type=click.Choice(["4", "6", "8", "10"]),
     help=(
-        "Clip length in seconds. REQUIRES --model omni-flash: the Veo 3.1 "
-        "models render no duration control in Flow, so no length can be "
-        "selected for them (refs #451/#288). Omit for Flow's default length."
+        "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
+        "Omit for Flow's default length."
     ),
 )
 @click.option(
@@ -1588,9 +1584,11 @@ def r2v(
         "Only Veo 3.1 models are accepted (omni-flash is single-clip only for "
         "now — not proven at chain scale, refs #125). The MANIFEST is a JSONL "
         'file: one JSON object per line, each with a required "prompt" and '
-        'optional "model"/"aspect" overrides. A per-link "duration" is rejected '
-        "before anything is submitted: only omni-flash renders a duration "
-        "control, and chains cannot use it (refs #634).\n\n"
+        'optional "model"/"aspect"/"duration" overrides. Veo links accept '
+        "duration 4, 6, or 8 seconds (10s remains omni-flash-only, which chain "
+        "does not accept); invalid values are rejected before submission. Note "
+        "that explicit duration can only take effect in Flow cohorts where the "
+        "control is rendered.\n\n"
         "Each link is saved as its own mp4. Stitching the clips into a single "
         "file is a follow-up step — use `gflow scene`.\n\n"
         "\b\n"

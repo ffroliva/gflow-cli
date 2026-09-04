@@ -14,7 +14,7 @@ fallbacks as (1) slow the clip down — with a hard "below 0.70 = obvious slow-m
 floor — or (2) **drop the scene to a Ken-Burns still**. Both are quality losses
 happening today. Extend removes the ceiling: 8s + one extend covers a beat up to
 ~22s at that floor. Its current lever, `--duration 10`, is worse — `VEO_3_1_*`
-models expose no duration control at all, and that skill's own pitfall table
+models expose 4s/6s/8s duration controls, and that skill's own pitfall table
 records that passing `--duration` makes gflow refuse pre-generation.
 
 **Architecture:** Direct-wire, not UI automation. A pure resolver + frozen request

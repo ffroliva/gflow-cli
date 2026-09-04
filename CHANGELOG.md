@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Veo 3.1 duration selection now follows Flow's live controls.** Accepts 4s/6s/8s for Veo and 4s/6s/8s/10s for omni-flash, validates model defaults before work starts, and keeps chain pre-flight fail-closed.
+
 - **v0.66.1's migrated-origin fast-fail never fired on a real run
   ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** The guard read `page.url` once,
   at `get_ui_driver` entry — but `routes.project_editor_url` only ever builds a `labs.google`

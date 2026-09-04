@@ -530,6 +530,11 @@ def test_chain_help_states_cost_and_scene_followup() -> None:
     out = result.output.lower()
     assert "credit" in out
     assert "gflow scene" in out
+    assert "duration" in out
+    assert "4" in out and "6" in out and "8" in out
+    assert "omni-flash" in out or "omni_flash" in out
+    assert "10" in out
+    assert "duration is rejected" not in out
 
 
 def _manifest_raw(tmp_path: Path, lines: list[str]) -> Path:
@@ -548,7 +553,7 @@ def test_chain_dry_run_rejects_a_manifest_duration(tmp_path: Path) -> None:
     runner = CliRunner()
     manifest = _manifest_raw(
         tmp_path,
-        ['{"prompt": "link 0"}', '{"prompt": "link 1", "duration": 4}'],
+        ['{"prompt": "link 0"}', '{"prompt": "link 1", "duration": 10}'],
     )
     p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
     with (
@@ -562,6 +567,7 @@ def test_chain_dry_run_rejects_a_manifest_duration(tmp_path: Path) -> None:
 
     assert result.exit_code != 0, result.output
     assert "duration" in result.output.lower()
+    assert "omni_flash" in result.output.lower()
     mock_run.assert_not_awaited()
     mock_client_init.assert_not_called()
 
