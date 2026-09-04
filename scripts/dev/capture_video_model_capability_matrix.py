@@ -106,7 +106,16 @@ async def _menu_state(page: Any) -> dict[str, Any]:
         """() => {
           const menu = document.querySelector("[role='menu']");
           const scope = menu || document.body;
-          const tabs = [...scope.querySelectorAll("button, [role='tab'], [role='button'], [role='option'], [role='menuitem']")].map(t => ({
+          // A capability claim must come from the popover itself. Without this,
+          // a failed open scrapes the whole page and any stray "8s" button
+          // reads as a duration tab -- the instrument manufacturing a positive.
+          const tabScope = menu;
+          const TAB_ROLES = "button, [role='tab'], [role='button'],"
+                          + " [role='option'], [role='menuitem']";
+          const tabEls = tabScope === null
+            ? []
+            : [...tabScope.querySelectorAll(TAB_ROLES)];
+          const tabs = tabEls.map(t => ({
             label: (t.getAttribute('aria-label') || t.textContent || '').trim(),
             id: t.id || null,
             selected: t.getAttribute('aria-selected') === 'true',
@@ -117,6 +126,40 @@ async def _menu_state(page: Any) -> dict[str, Any]:
           // An English-only /Generating will use N credits/ silently returns
           // null on a pt-BR UI and reads as "no cost shown" (memory:
           // flow-locale-leak-icon-ligatures).
+          // --- $0 stray-match probe -------------------------------------
+          // ui_automation_video.py probes these five roles for `{n}s` (duration)
+          // and `x{n}` (count) and takes `.first`. Any VISIBLE match outside the
+          // open popover is an element the transport could click by mistake.
+          // Empty lists across every model = scoping/read-back is unnecessary.
+          const STRAY_ROLES = [
+            "[role='tab']", "[role='button']", "button",
+            "[role='option']", "[role='menuitem']",
+          ];
+          const visible = (e) => !!(e.offsetParent || e.getClientRects().length);
+          const strayScan = (labels) => {
+            const seen = new Set();
+            const out = [];
+            for (const label of labels) {
+              for (const role of STRAY_ROLES) {
+                for (const el of document.querySelectorAll(role)) {
+                  if (menu && menu.contains(el)) continue;
+                  if (!visible(el)) continue;
+                  const txt = (el.textContent || '').trim();
+                  if (!txt.includes(label)) continue;
+                  const key = label + '|' + role + '|' + (el.id || '') + '|' + txt.slice(0, 40);
+                  if (seen.has(key)) continue;
+                  seen.add(key);
+                  out.push({
+                    label, role, tag: el.tagName,
+                    id: el.id || null, text: txt.slice(0, 60),
+                  });
+                }
+              }
+            }
+            return out;
+          };
+          const durationStrays = strayScan([4, 6, 8, 10].map(n => n + 's'));
+          const countStrays = strayScan([1, 2, 3, 4].map(n => 'x' + n));
           const creditRe = /([\\d.,]+)\\s*(?:cr[e\\u00e9]dito?s?|credits?)/i;
           const credits = (text.match(creditRe) || [])[1] || null;
           // The composer's dynamic summary chip, e.g. "Video · 4s x1".
@@ -133,6 +176,9 @@ async def _menu_state(page: Any) -> dict[str, Any]:
             credits_text: credits,
             composer_chip: chip,
             menu_text: text.slice(0, 400),
+            menu_present: menu !== null,
+            duration_strays: durationStrays,
+            count_strays: countStrays,
             page_lang: document.documentElement.lang || null,
             ingredient_reject: body.includes('cannot use image ingredients')
               || body.includes('ingredientes de imagem'),
