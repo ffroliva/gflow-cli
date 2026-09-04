@@ -55,9 +55,12 @@ def mint_batch_id() -> str:
     return str(uuid.uuid4())
 
 
-# Flow's own origins. Google is migrating the app off labs.google onto
-# flow.google.com (issue #639) and the two FLAP per page load, so both are live
-# and every host gate has to accept both.
+# Flow's own origins. Google is migrating accounts off labs.google onto
+# flow.google.com (issue #639). The handoff is a server-assigned per-account
+# boolean that the labs.google app acts on client-side after a fully
+# authenticated load (spike 2026-09-04-migrated-host-handoff-mechanism) -- it is
+# a one-way rollout, not a flap: 5/5 and 7/7 on a flagged account, 68/68 on an
+# unflagged one. Both hosts stay in this map because the fleet is mid-rollout.
 _FLOW_HOSTS: dict[str, str] = {
     "labs.google": "labs",
     "flow.google.com": "migrated",
@@ -86,6 +89,40 @@ def flow_host_kind(url: object) -> str | None:
     return _FLOW_HOSTS.get(host)
 
 
+_WATCH_ATTR = "_gflow_migrated_host_url"
+
+
+def watch_for_migrated_host(page: object) -> None:
+    """Record the labs.google -> flow.google.com hop the instant it lands (#639).
+
+    The handoff is ``window.location.replace('https://flow.google.com' + path)``
+    from a ``useEffect`` in the labs.google app, i.e. a real main-frame
+    navigation, so Playwright emits ``framenavigated`` for it. Recording that
+    event on the page object closes the window in which ``page.url`` still reads
+    the pre-hop labs URL -- the gap v0.66.1 fell into and v0.66.2 papered over by
+    re-reading ``page.url`` at five call sites. :func:`raise_if_migrated` consults
+    this record first, so the first guard after the hop fires deterministically,
+    with no wait and no extra navigation on either host.
+
+    Idempotent: attach once per page. State lives ON the page because two pooled
+    pages can legitimately be on different hosts in one run.
+    """
+    if isinstance(getattr(page, _WATCH_ATTR, None), str) or not hasattr(page, "on"):
+        return
+    setattr(page, _WATCH_ATTR, "")
+
+    def _on_frame_navigated(frame: object) -> None:
+        # Main frame only -- an iframe on the migrated origin proves nothing.
+        if getattr(frame, "parent_frame", None) is not None:
+            return
+        url = getattr(frame, "url", None)
+        if flow_host_kind(url) == "migrated":
+            setattr(page, _WATCH_ATTR, url)
+            log.info("ui_driver.migrated_host_observed", url=url)
+
+    page.on("framenavigated", _on_frame_navigated)  # type: ignore[attr-defined]
+
+
 def raise_if_migrated(page: object, *, at: str) -> None:
     """Abort now if this page is on the migrated ``flow.google.com`` origin (#639).
 
@@ -109,16 +146,20 @@ def raise_if_migrated(page: object, *, at: str) -> None:
     host became knowable instead of leaving it to be inferred — which is exactly how
     a fast path that never fired survived a release.
     """
-    url = getattr(page, "url", None)
+    # The watch record wins: it is set by the navigation event itself, so it is
+    # never behind the URL the way a cached `page.url` can be mid-hop.
+    recorded = getattr(page, _WATCH_ATTR, None)
+    url = recorded if isinstance(recorded, str) and recorded else getattr(page, "url", None)
     if flow_host_kind(url) != "migrated":
         return
     log.info("ui_driver.migrated_host_bail", at=at, url=url)
     raise FlowHostMigratedError(
         detail=(
-            "Flow served this project from flow.google.com — the origin Google is "
-            "migrating the app onto — whose frontend renders none of the controls "
-            "gflow drives. This is not selector drift. The migration flaps per page "
-            "load, so retrying often lands the old frontend."
+            "Flow handed this session to flow.google.com — the origin Google is "
+            "migrating accounts onto — whose frontend renders none of the controls "
+            "gflow drives. This is not selector drift, and it is not transient: the "
+            "handoff is a per-account setting the labs.google app applies on every "
+            "load, so retrying cannot land the old frontend."
         )
     )
 

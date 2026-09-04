@@ -236,13 +236,14 @@ async def test_migrated_host_branch_is_symmetric_for_video(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_migrated_error_is_retryable_with_its_own_exit_code(tmp_path: Path) -> None:
-    """The migration flaps per page load, so a re-navigation often lands the old
-    host and succeeds — callers with automatic retry must not give up (#639)."""
+async def test_migrated_error_is_not_retryable_and_keeps_its_exit_code(tmp_path: Path) -> None:
+    """The handoff is a server-assigned config boolean that labs.google acts on
+    client-side; measured 5/5 and 7/7 with no flap (#639, spike 2026-09-04).
+    A retry loop into it is billed a doomed minute per attempt for nothing."""
     from gflow_cli.errors import EXIT_CODE_MAP, FlowHostMigratedError, is_retryable
 
     err = await VideoGenerationMixin._mode_switch_error(_migrated_page(), tmp_path, media="image")
-    assert is_retryable(err)
+    assert not is_retryable(err)
     assert EXIT_CODE_MAP[FlowHostMigratedError] == 36
 
 

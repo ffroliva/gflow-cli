@@ -127,10 +127,7 @@ marks a transient failure a scheduler can re-run without operator intervention â
 WAF/reCAPTCHA bounce (`WafRejectionError`), rate-limit (`RateLimitError`),
 transport timeout (`TransportTimeoutError`), network blip (`NetworkError`), a
 dropped browser session (`BrowserSessionClosedError`), a Flow web-app crash
-(`FlowAppError`), an agentic-cohort flap (`FlowAgentUiError`), a page load served
-by the migrated `flow.google.com` frontend (`FlowHostMigratedError`,
-[#639](https://github.com/ffroliva/gflow-cli/issues/639) â€” the rollout flaps per
-page load, so a retry often lands the frontend gflow can drive), an unreachable
+(`FlowAppError`), an agentic-cohort flap (`FlowAgentUiError`), an unreachable
 UI arm (`UiModeUnavailableError`), and a partially-completed sync
 (`SyncPartialError`). That list is the whole of `errors.RETRYABLE_ERRORS`.
 Everything

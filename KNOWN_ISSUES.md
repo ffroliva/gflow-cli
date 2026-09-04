@@ -44,14 +44,19 @@ This is **not** selector rot, not [#493](https://github.com/ffroliva/gflow-cli/i
 and not the agentic cohort — the agentic indicators are absent too. It is a
 different origin serving different markup.
 
-**Workaround:** re-run the command. While the rollout flaps, a fresh navigation
-frequently lands the old frontend and the run completes normally. Automated
-callers get this for free: the failure is `FlowHostMigratedError` (exit 36) with
-`retryable: true`, so retry loops driven by the `--json` / MCP / worker error
-envelope will keep trying.
+**Workaround:** there is no client-side workaround for generation. The handoff
+is a per-account setting the labs.google app applies on every load (measured
+5/5 and 7/7 with no flap, 2026-09-04 — spike
+`docs/superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md`), so
+re-running cannot land the old frontend. Earlier text here said the rollout
+"flaps" and told you to retry; that observation straddled the account's one-time
+switch and is withdrawn. The REST surface (`gflow project list`, `gflow data …`)
+is unaffected. Automated callers now receive `retryable: false` so retry loops
+stop instead of billing a doomed minute per attempt.
 
-**What gflow does today (v0.66.2):** recognises the migrated origin and fails
-with the distinct, retryable exit 36 instead of the misleading
+**What gflow does today:** recognises the migrated origin — from the navigation
+event itself, the instant the hand-off lands, not by re-reading the URL later —
+and fails with the distinct, non-retryable exit 36 instead of the misleading
 `UiSelectorDriftError` (exit 23, "file a selector bug"). `_check_logged_in` also
 accepts the migrated host, so a migrated load is no longer misread as a
 logged-out session. **Support for driving the new frontend is separate work and

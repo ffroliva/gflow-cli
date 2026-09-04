@@ -350,9 +350,9 @@ class TestMigratedOriginFailsFast:
                                     -----
                                     ~32 s   before FlowHostMigratedError is raised
 
-    The migration flaps per load and callers retry on exit 36, so that cost is
-    paid on every attempt of a retry loop. The host is knowable in microseconds
-    from `page.url`, so none of it needs to be spent.
+    Before the machine flag was corrected, callers retried on exit 36, so that
+    cost was paid on every attempt of a doomed loop. The host is knowable in
+    microseconds from the navigation event, so none of it needs to be spent.
     """
 
     @pytest.mark.asyncio
@@ -369,7 +369,7 @@ class TestMigratedOriginFailsFast:
         page.locator.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_error_is_retryable_with_exit_36(self) -> None:
+    async def test_error_is_not_retryable_and_keeps_exit_36(self) -> None:
         from gflow_cli.api.transports.drivers.factory import get_ui_driver
         from gflow_cli.errors import EXIT_CODE_MAP, FlowHostMigratedError, is_retryable
 
@@ -379,7 +379,8 @@ class TestMigratedOriginFailsFast:
 
         with pytest.raises(FlowHostMigratedError) as exc:
             await get_ui_driver(page)
-        assert is_retryable(exc.value)
+        # Server-assigned per-account handoff, 5/5 and 7/7 measured: not a flap.
+        assert not is_retryable(exc.value)
         assert EXIT_CODE_MAP[FlowHostMigratedError] == 36
 
     @pytest.mark.asyncio

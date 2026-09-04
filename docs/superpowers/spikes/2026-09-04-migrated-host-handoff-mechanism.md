@@ -81,12 +81,67 @@ migration between products, unrelated to the host handoff.
    people into a loop and generates junk reports.
 2. **There is no override.** The flag is server-assigned. Re-authenticating will
    not help — the handoff happens *with* a valid session. Pointing our routes at
-   `flow.google.com` would land on an app whose DOM we cannot drive at all.
+   `flow.google.com` lands on an app the **current** drivers cannot drive — but
+   see the inventory below: it is the same product with a different widget
+   toolkit, and a driver for it is bounded work.
 3. **Detection can be instant instead of timed.** We currently navigate, wait,
    and re-read `page.url`. Because the handoff is a real navigation
    (`location.replace`), Playwright's `framenavigated` fires on it — an
    event-driven check replaces a fixed wait. Same defect shape as the #639
    locale probe, which also guesses a duration instead of awaiting a condition.
+
+## Inventory of the migrated editor (same account, `/project/<id>`, `lang=en-GB`)
+
+`scripts/dev/spike_migrated_editor_dom_inventory.py`, $0, screenshot in
+`_spike_out/`. Memory called the migrated DOM a dead-end ("a new driver, not a
+selector patch"). Half right. It IS a new driver — but over an **identical domain
+model**, which makes it plannable instead of a re-derivation from zero.
+
+**What is the same.** The composer ("What do you want to create?"), the `+`
+add-media control, an **Agent** pill, the `arrow_forward` submit, and the settings
+chip **`Video · 720p · 8s ▭ x1`** — the very chip gflow already reads. All 45
+Material Symbols ligatures gflow anchors on are present and locale-invariant:
+`crop_16_9`, `crop_9_16`, `crop_free`, `videocam`, `image`, `chrome_extension`,
+`arrow_drop_down`, `apps_spark_2`, `more_vert`, `add`, `settings_2`, …
+
+**What changed — the widget toolkit, not the model.** Angular Material replaces
+Next.js/Radix:
+
+| labs.google | flow.google.com |
+|---|---|
+| ligature carrier `<i class="google-symbols">` | `<mat-icon>` (`i.google-symbols` = 0, `mat-icon` = 45) |
+| settings popover `[role='menu']` | `.cdk-overlay-container .cdk-overlay-pane` (0 `role=menu`) |
+| option groups `[role='tab']` | `[role='radio']` inside `[role='radiogroup']` (0 tabs; 16 radios in 6 groups) |
+| settings trigger `button[aria-haspopup='menu']` | `button[aria-label="Settings trigger"].settings-trigger-button` (no `aria-haspopup`) |
+| model picker | `button` whose text is `<model name> arrow_drop_down`, inside the overlay |
+
+The six radiogroups, verbatim, map straight onto the settings DTO gflow already has:
+
+```
+[imageImage, videocamVideo]                     mode
+[crop_freeFrames, chrome_extensionIngredients]  submode
+[crop_16_916:9, crop_9_169:16]                  aspect
+[360pinfo, 720p]                                resolution   <- NEW axis, not on labs.google
+[4s, 6s, 8s, 10s]                               duration     (Omni 1.1 Flash was selected)
+[x1, x2, x3, x4]                                count
+```
+
+Each option is `<ligature><label>` text — the same shape as the labs.google tabs, so
+the existing ligature-keyed matching carries over once the role and carrier change.
+`aria-label`s are translated ("Favourite", "Reuse prompt", "Add media menu") and
+must not be anchored on — the locale-invariance rule holds here exactly as it does
+on labs.google.
+
+Also present: a dismissable "high demand" info banner at the top — the same overlay
+class `_dismiss_blocking_overlays` already handles. The #639 locale probe timed out
+(`account_locale_lang_unchanged … waited_ms=4000`) on every one of these loads, live.
+
+**So "make flow.google.com the frontend gflow drives" decomposes to:** a `mat-icon`
+carrier in the ligature cascades, a `cdk-overlay` + `radiogroup`/`radio` open/select
+protocol replacing `menu`/`tab`, the settings-trigger anchor, and a resolution axis.
+Generation is not reCAPTCHA-blocked on this path: the page mints its own token in a
+real browser, as labs.google does today — the token gate is a *headless HTTP*
+problem, not a UI-automation one. Route it through `/gflow:predict` as a new driver.
 
 ## Reproduce
 
@@ -94,6 +149,7 @@ migration between products, unrelated to the host handoff.
 $env:PYTHONUTF8=1
 .venv\Scripts\python.exe scripts\dev\spike_migrated_host_trigger.py --profile ffroliva --samples 5
 .venv\Scripts\python.exe scripts\dev\spike_migration_flag_bootstrap.py --profile ffroliva
+.venv\Scripts\python.exe scripts\dev\spike_migrated_editor_dom_inventory.py --profile ffroliva
 ```
 
 Both are read-only and spend nothing. The second dumps the raw bootstrap HTML to

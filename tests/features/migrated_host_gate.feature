@@ -8,7 +8,7 @@ Feature: Flow's migrated origin is detected before the run pays for it
     And Flow redirects the page to flow.google.com before the first blocking wait
     When gflow probes the UI cohort
     Then it fails with FlowHostMigratedError and exit code 36
-    And the error is retryable
+    And the error is not retryable
     And the error names flow.google.com rather than selector drift
 
   Scenario: the old host is untouched
