@@ -1584,9 +1584,11 @@ def r2v(
         "Only Veo 3.1 models are accepted (omni-flash is single-clip only for "
         "now — not proven at chain scale, refs #125). The MANIFEST is a JSONL "
         'file: one JSON object per line, each with a required "prompt" and '
-        'optional "model"/"aspect" overrides. A per-link "duration" is rejected '
-        "before anything is submitted: only omni-flash renders a duration "
-        "control, and chains cannot use it (refs #634).\n\n"
+        'optional "model"/"aspect"/"duration" overrides. Veo links accept '
+        "duration 4, 6, or 8 seconds (10s remains omni-flash-only, which chain "
+        "does not accept); invalid values are rejected before submission. Note "
+        "that explicit duration can only take effect in Flow cohorts where the "
+        "control is rendered.\n\n"
         "Each link is saved as its own mp4. Stitching the clips into a single "
         "file is a follow-up step — use `gflow scene`.\n\n"
         "\b\n"

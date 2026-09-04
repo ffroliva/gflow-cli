@@ -1671,8 +1671,17 @@ class TestDurationCapabilityGuard:
         resolve. Without this, "resolve the default" could quietly grow into
         "assume veo-lite everywhere".
         """
-        result = CliRunner().invoke(video, ["t2v", "a prompt", "--duration", "8"])
+        with (
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+            patch("gflow_cli.cli_video._run_t2v", new_callable=AsyncMock) as mock_run,
+        ):
+            result = CliRunner().invoke(video, ["t2v", "a prompt", "--duration", "8"])
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_args.kwargs["duration"] == 8
+        assert mock_run.call_args.kwargs["model"] is None
         assert "caps at" not in result.output
+        assert "Unexpected error" not in result.output
 
     def test_duration_on_omni_flash_passes_the_guard(self, tmp_path: Path) -> None:
         """Negative control: the guard must not over-reject omni-flash, whose

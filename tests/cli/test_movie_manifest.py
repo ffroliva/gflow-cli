@@ -551,7 +551,7 @@ def test_movie_duration_with_veo_lite_is_accepted(tmp_path: Path) -> None:
     for model in ("veo-lite", "veo-lite-lp"):
         for dur in (4, 6, 8):
             path = _write_toml(tmp_path, _SCENE_HEAD + f'model = "{model}"\nduration = {dur}\n')
-        assert MovieManifest.from_toml_path(path).scenes[0].duration == dur
+            assert MovieManifest.from_toml_path(path).scenes[0].duration == dur
 
 
 def test_movie_duration_with_omni_flash_is_accepted(tmp_path: Path) -> None:

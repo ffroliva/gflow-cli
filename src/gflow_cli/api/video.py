@@ -44,13 +44,19 @@ class VideoModel(StrEnum):
     The selector for each lives in the transport layer (this module is pure —
     no DOM knowledge).
 
-    **Capability corrections (2026-08-14, verified on two accounts and two
-    locales — see docs/superpowers/spikes/2026-08-14-video-model-capability-matrix.md):**
-    this docstring previously claimed "the four ``VEO_3_1_*`` models cap at 8s",
-    which presumed they render a duration control. They render **none at all** —
-    only ``OMNI_FLASH`` shows the 4s/6s/8s/10s row. That mistaken assumption is
-    the root cause of issues #451/#288, where ``--duration`` failures looked like
-    selector drift.
+    **Capability and cohort history (refs #451, #288, PR #650):**
+    Flow's UI exposure of duration controls is account- and cohort-dependent.
+    Historical captures (2026-08-14, two accounts/locales — see
+    docs/superpowers/spikes/2026-08-14-video-model-capability-matrix.md) found
+    no duration control rendered for Veo models, leading to issues #451/#288
+    where explicit duration failed to select a tab. A subsequent live capture
+    (2026-09-04, PR #650, labs.google) confirmed that on cohorts where the
+    duration row is rendered for Veo, `veo_3_1_lite`, `veo_3_1_fast`, and
+    `veo_3_1_quality` expose 4s, 6s, and 8s tabs, while 10s remains exclusive
+    to `omni_flash`. (`veo_3_1_lite_lower_priority` returned a picker miss in
+    that capture, so no positive live-UI claim is made for it.) On cohorts
+    without the control, explicit `--duration` cannot be applied and users
+    must accept Flow's default.
     """
 
     OMNI_FLASH = "omni_flash"

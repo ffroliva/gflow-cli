@@ -1049,13 +1049,12 @@ async def gflow_generate_video(  # NOSONAR
         except ValueError as exc:
             return _bad_param("Invalid Video Model", str(exc))
 
-    # Only omni-flash renders a duration control (#451/#288). Without this the
-    # request is queued and the DTO raises a bare ValueError inside the worker,
-    # so the agent gets an opaque failure for a plain parameter mistake. Mirrors
-    # the CLI's `_reject_duration_without_control` (#630) — including its
-    # default-model resolution: i2v binds I2V_DEFAULT_MODEL when `model` is
-    # omitted, so "no model" is not "no opinion" there. t2v/r2v inherit Flow's
-    # sticky UI default, which is unknowable here, so they stay unguarded.
+    # Centralized duration validation: validate_duration_for_model rejects an
+    # invalid duration before queuing the job so the agent gets a clean 400
+    # instead of a ValueError inside the worker. Mirrors the CLI's pre-spend
+    # checks: i2v binds I2V_DEFAULT_MODEL when `model` is omitted (so "no model"
+    # is not "no opinion" there), while t2v/r2v inherit Flow's sticky UI default,
+    # which is unknowable here and left unguarded by design.
     if duration is not None:
         effective = VideoModel.from_cli(model) if model is not None else None
         if effective is None and mode == "i2v" and (initial_frame or end_frame):
@@ -1067,12 +1066,6 @@ async def gflow_generate_video(  # NOSONAR
                 return _bad_param(
                     "Unsupported duration for model",
                     str(exc),
-                )
-            if duration in (10, "10") and effective is not VideoModel.OMNI_FLASH:
-                return _bad_param(
-                    "Unsupported duration for model",
-                    f"duration=10 is only available for {VideoModel.OMNI_FLASH.value!r}; "
-                    f"{effective.value!r} supports 4s, 6s, or 8s.",
                 )
 
     if not await _rate_limiter.acquire():
