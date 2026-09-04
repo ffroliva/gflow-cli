@@ -13,6 +13,22 @@ The same spike on profile `denon82` succeeded on **attempt 1**.
 For `ffroliva` that is **no longer true** — it is not flapping, it is migrated.
 Retrying is wasted wall-clock there.
 
+**Mechanism, settled 2026-09-04 ($0, two spikes, both on `ffroliva`).** It is not
+DNS, not a server 302, not a missing session cookie, and it does not flap. `labs.google`
+returns a normal **200** to a **fully authenticated** session (`has_labs_next_auth=True`,
+`/fx/api/auth/session` → 200), and then the labs.google app itself runs
+`window.location.replace('https://flow.google.com' + path + search)` from a `useEffect`
+gated on **a server-assigned per-account boolean on the app's runtime config**. Measured
+5/5 on the bootstrap URL; the 2026-09-03 "7/7" was the same one-way state. The
+2026-09-03 flip captures (60/60 `labs.google` on this profile) were taken **before** the
+account was flagged that evening — the "flaps per page load" text was an observation
+straddling a one-time rollout, and is withdrawn. Consequences shipped: exit 36 is
+**not retryable**; detection is event-driven off `framenavigated` (no wait, no URL
+re-read race). Full write-up: `docs/superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md`.
+Two things NOT to re-derive: the `has_labs_next_auth: false` in the headless-httpx memory was a
+property of that experiment's cookie filter, not of the account; and `pinhole` is Flow's i18n
+namespace (`pinhole_about_flow` → "About Flow"), not a migration codename.
+
 **How to apply:**
 - Any live DOM / UI-automation recon or live-verification → **use `denon82`**
   (pt-BR; expect localized text, ligature-keyed selectors still work — see

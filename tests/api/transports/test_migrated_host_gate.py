@@ -97,8 +97,12 @@ async def test_a_flip_after_entry_still_raises_exit_36() -> None:
         await get_ui_driver(page, timeout_s=1.0, poll_interval_s=0.01)  # type: ignore[arg-type]
 
     assert EXIT_CODE_MAP[FlowHostMigratedError] == 36
-    assert is_retryable(exc.value)
+    # Measured 2026-09-04: the handoff is a server-assigned config boolean that
+    # labs.google acts on client-side, 5/5 and 7/7 with no flap. A retry into it
+    # cannot succeed, so the machine flag must stop inviting one.
+    assert not is_retryable(exc.value)
     assert "flow.google.com" in str(exc.value)
+    assert "flap" not in str(exc.value).lower()
 
 
 async def test_the_flip_is_caught_before_the_agent_dismissal_burns(
@@ -143,9 +147,10 @@ async def test_old_host_adds_no_wait_and_no_navigation() -> None:
 
 
 async def test_guard_reads_the_page_it_is_about_to_drive() -> None:
-    """The flap is per page LOAD, so two pooled Pages can straddle both hosts in
-    one run. A bail on one must not abort the other — which rules out any
-    module-level 'this account is migrated' flag."""
+    """Two pooled Pages can be on different hosts in one run — a fresh navigation
+    is where an account's server-assigned flag takes effect. A bail on one must
+    not abort the other, which rules out any module-level 'this account is
+    migrated' flag: the record lives on the page object."""
     from gflow_cli.api.transports.drivers.factory import detect_ui_mode
 
     migrating = _FlippingPage()

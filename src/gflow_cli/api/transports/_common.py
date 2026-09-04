@@ -55,9 +55,12 @@ def mint_batch_id() -> str:
     return str(uuid.uuid4())
 
 
-# Flow's own origins. Google is migrating the app off labs.google onto
-# flow.google.com (issue #639) and the two FLAP per page load, so both are live
-# and every host gate has to accept both.
+# Flow's own origins. Google is migrating accounts off labs.google onto
+# flow.google.com (issue #639). The handoff is a server-assigned per-account
+# boolean that the labs.google app acts on client-side after a fully
+# authenticated load (spike 2026-09-04-migrated-host-handoff-mechanism) -- it is
+# a one-way rollout, not a flap (5/5 and 7/7 on a flagged account). Both hosts
+# stay in this map because the fleet is mid-rollout.
 _FLOW_HOSTS: dict[str, str] = {
     "labs.google": "labs",
     "flow.google.com": "migrated",
@@ -93,7 +96,11 @@ def raise_if_migrated(page: object, *, at: str) -> None:
     after this point is doomed. Call it wherever the run is **about to spend time**,
     and never behind a wait of its own: ``page.url`` is a cached property and
     :func:`flow_host_kind` is one parse plus a dict lookup, so a call costs the host
-    that still works nothing at all.
+    that still works nothing at all. Playwright assigns ``frame._url`` *before* it
+    emits ``framenavigated`` for the hop and ``page.url`` is ``main_frame.url``, so
+    the property is never behind the event: a listener cannot see the hop earlier
+    than a read at the same instant can. The fix is *where* the URL is read, not
+    *how* -- a first cut of #663 shipped a ``framenavigated`` watch for nothing.
 
     **Once, at entry, is not enough** — that was v0.66.1's defect.
     ``routes.project_editor_url`` only ever builds a ``labs.google`` URL, and the hop
@@ -115,10 +122,12 @@ def raise_if_migrated(page: object, *, at: str) -> None:
     log.info("ui_driver.migrated_host_bail", at=at, url=url)
     raise FlowHostMigratedError(
         detail=(
-            "Flow served this project from flow.google.com — the origin Google is "
-            "migrating the app onto — whose frontend renders none of the controls "
-            "gflow drives. This is not selector drift. The migration flaps per page "
-            "load, so retrying often lands the old frontend."
+            "Flow handed this session to flow.google.com — the origin Google is "
+            "migrating accounts onto — whose frontend renders none of the controls "
+            "gflow drives. This is not selector drift, and it is not transient: the "
+            "handoff is a per-account setting the labs.google app applies on every "
+            "load, so once your account is flagged, retrying will not land the old "
+            "frontend."
         )
     )
 

@@ -1463,8 +1463,8 @@ class VideoGenerationMixin:
                     "Flow served this project from flow.google.com — the origin Google "
                     "is migrating the app onto — whose frontend renders none of the "
                     f"controls gflow drives, so there is no {media} generation control "
-                    "here. This is not selector drift. The migration currently flaps "
-                    "per page load, so retrying often lands the old frontend."
+                    "here. This is not selector drift, and it is not transient: the handoff is a "
+                    "per-account setting, so retrying will not land the old frontend."
                     f"{diag_clause}"
                 )
             )

@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Exit 36 (`FlowHostMigratedError`) is no longer retryable** (#639). Two $0 spikes
+  settled the mechanism: labs.google serves a normal 200 to a fully authenticated
+  session, then the app itself runs `location.replace('https://flow.google.com' +
+  path)` from a `useEffect`, gated on a server-assigned per-account config boolean.
+  It is a one-way rollout — 5/5 and 7/7 on a flagged account — not the per-page-load
+  flap the error text claimed, so once an account is flagged a retry never lands the
+  old frontend. The remediation, the `_mode_switch_error` fallback, `docs/USAGE.md`,
+  `docs/MCP.md`, `KNOWN_ISSUES.md` and `docs/PROJECT_STATUS.md` no longer invite a
+  retry, and the MCP, worker and `--json` envelopes carry `retryable: false`.
+  Detection is unchanged from v0.66.2: Playwright updates `page.url` in the same
+  tick it emits the hop's `framenavigated`, so re-checking it wherever the run is
+  about to spend time — the shape the reporter measured at 4.1 s — was already right
+  (maintainer A/B on the same machine and profile: 16.0 s vs 16.6 s on unmodified
+  `develop`, Chrome launch included).
+
 - **`--duration` now accepts 4s/6s/8s on the Veo 3.1 models** (#650, @stgmt); `10`
   stays `omni-flash`-only. Flow's duration control turns out to be account/cohort-
   dependent — some accounts render the row for Veo, some render none, on the same

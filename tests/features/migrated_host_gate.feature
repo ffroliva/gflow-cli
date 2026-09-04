@@ -1,14 +1,14 @@
 Feature: Flow's migrated origin is detected before the run pays for it
   As an operator whose account is inside Google's flow.google.com rollout
   I want gflow to name the migration as soon as the host is knowable
-  So that a retry loop is not billed a doomed minute per attempt
+  So that a retry loop is not spent on a doomed attempt each time
 
   Scenario: the host flips after goto returns
     Given a project navigation that returns on labs.google
     And Flow redirects the page to flow.google.com before the first blocking wait
     When gflow probes the UI cohort
     Then it fails with FlowHostMigratedError and exit code 36
-    And the error is retryable
+    And the error is not retryable
     And the error names flow.google.com rather than selector drift
 
   Scenario: the old host is untouched
