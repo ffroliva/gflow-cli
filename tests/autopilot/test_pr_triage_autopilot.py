@@ -94,6 +94,178 @@ def test_extract_report_falls_back_to_full_output_when_markers_are_missing(outpu
     assert pr_triage_autopilot.extract_report(output) == output.strip()
 
 
+# --- Claude session-limit handling -------------------------------------------
+#
+# Root cause, 2026-09-04: the sandbox exits non-zero when `claude -p` hits the
+# subscription quota. `run_docker_sandbox` labels EVERY non-zero exit "Docker
+# sandbox failed", and the cycle's generic `except Exception` counts it as a
+# review failure. Three hourly retries land in the SAME exhausted window, so a
+# self-healing condition permanently disabled PR #650 and required manual ledger
+# surgery. The Docker build had succeeded every time (`#14 DONE 0.1s`).
+
+_SESSION_LIMIT_TAIL = (
+    "Docker sandbox failed (exit 1): Building Docker sandbox image...\n"
+    "#14 DONE 0.1s\nCreating network triage-net-650...\n"
+    "Launching sandboxed review for PR 650...\n"
+    "You've hit your session limit \u00b7 resets 9:10pm (UTC)\n"
+)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "You've hit your session limit \u00b7 resets 9:10pm (UTC)",
+        "you've hit your session limit",
+        "Claude AI usage limit reached|1234567890",
+        "rate limit exceeded, please try again later",
+    ],
+)
+def test_is_transient_quota_error_recognises_real_messages(message):
+    assert pr_triage_autopilot.is_transient_quota_error(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Docker sandbox failed (exit 1): failed to solve: no space left on device",
+        "run_sandboxed_review.sh: line 53: cd: /opt/nope: No such file or directory",
+        "CLAUDE_CODE_OAUTH_TOKEN is not set.",
+        "",
+    ],
+)
+def test_is_transient_quota_error_ignores_real_failures(message):
+    # A genuine defect must still burn a retry -- otherwise a broken sandbox
+    # retries forever and nobody is told.
+    assert pr_triage_autopilot.is_transient_quota_error(message) is False
+
+
+@patch("pr_triage_autopilot.send_email_alert")
+@patch("pr_triage_autopilot.send_telegram_alert")
+@patch("pr_triage_autopilot.post_gh_comment")
+@patch("pr_triage_autopilot.run_docker_sandbox")
+@patch("pr_triage_autopilot.fetch_and_checkout_pr")
+@patch("pr_triage_autopilot.restore_repo_branch")
+@patch("pr_triage_autopilot._gh_json")
+@patch("pr_triage_autopilot.get_ledger_entries")
+@patch("pr_triage_autopilot.append_ledger_entry")
+def test_quota_exhaustion_defers_instead_of_burning_a_retry(
+    mock_append_ledger,
+    mock_get_ledger,
+    mock_gh_json,
+    mock_restore,
+    mock_fetch,
+    mock_sandbox,
+    mock_post_comment,
+    mock_telegram,
+    mock_email,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("GH_SANDBOX_TOKEN", "ro-token")
+    mock_gh_json.return_value = [
+        {
+            "number": 650,
+            "author": {"login": "external-contributor", "is_bot": False},
+            "baseRefName": "develop",
+            "title": "feat: duration",
+            "body": "x",
+            "state": "OPEN",
+            "isDraft": False,
+            "additions": 10,
+            "deletions": 2,
+            "changedFiles": 1,
+            "comments": [],
+        }
+    ]
+    mock_get_ledger.return_value = []
+    mock_fetch.return_value = "cc220d5f"
+    mock_sandbox.side_effect = RuntimeError(_SESSION_LIMIT_TAIL)
+
+    pr_triage_autopilot.run_triage_cycle(
+        repo="owner/repo",
+        repo_dir=tmp_path / "repo",
+        memory_dir=tmp_path / "memory",
+        ledger_path=tmp_path / "ledger.jsonl",
+        gh_token="token-test",
+    )
+
+    entry = mock_append_ledger.call_args[0][1]
+    assert entry["status"] == "DEFERRED", "a self-healing quota error must not count as a failure"
+    assert entry.get("fail_count", 0) == 0, "a deferred run must not burn a retry"
+    mock_email.assert_not_called()  # no "FAILED permanently" mail for a quota wait
+    mock_post_comment.assert_not_called()  # never post a half-review to the PR
+
+
+@patch("pr_triage_autopilot.send_email_alert")
+@patch("pr_triage_autopilot.send_telegram_alert")
+@patch("pr_triage_autopilot.post_gh_comment")
+@patch("pr_triage_autopilot.run_docker_sandbox")
+@patch("pr_triage_autopilot.fetch_and_checkout_pr")
+@patch("pr_triage_autopilot.restore_repo_branch")
+@patch("pr_triage_autopilot._gh_json")
+@patch("pr_triage_autopilot.get_ledger_entries")
+@patch("pr_triage_autopilot.append_ledger_entry")
+def test_a_real_sandbox_failure_still_counts_as_a_failure(
+    mock_append_ledger,
+    mock_get_ledger,
+    mock_gh_json,
+    mock_restore,
+    mock_fetch,
+    mock_sandbox,
+    mock_post_comment,
+    mock_telegram,
+    mock_email,
+    tmp_path,
+    monkeypatch,
+):
+    # The regression guard for the fix above: deferring must be narrow.
+    monkeypatch.setenv("GH_SANDBOX_TOKEN", "ro-token")
+    mock_gh_json.return_value = [
+        {
+            "number": 651,
+            "author": {"login": "external-contributor", "is_bot": False},
+            "baseRefName": "develop",
+            "title": "fix: x",
+            "body": "x",
+            "state": "OPEN",
+            "isDraft": False,
+            "additions": 1,
+            "deletions": 1,
+            "changedFiles": 1,
+            "comments": [],
+        }
+    ]
+    mock_get_ledger.return_value = []
+    mock_fetch.return_value = "sha-real"
+    mock_sandbox.side_effect = RuntimeError(
+        "Docker sandbox failed (exit 1): failed to solve: no space left on device"
+    )
+
+    pr_triage_autopilot.run_triage_cycle(
+        repo="owner/repo",
+        repo_dir=tmp_path / "repo",
+        memory_dir=tmp_path / "memory",
+        ledger_path=tmp_path / "ledger.jsonl",
+        gh_token="token-test",
+    )
+
+    entry = mock_append_ledger.call_args[0][1]
+    assert entry["status"] == "FAILED"
+    assert entry["fail_count"] == 1
+
+
+def test_alert_excerpt_keeps_the_end_of_the_error():
+    """The alert truncated to str(exc)[:500] -- the HEAD of a ~2500-char blob.
+
+    Docker progress output is front-loaded, so the payload error is always the
+    LAST line. Every alert for this incident showed nine lines of `#N DONE` and
+    cut off before the sentence that explained it.
+    """
+    excerpt = pr_triage_autopilot.alert_excerpt(_SESSION_LIMIT_TAIL)
+    assert "session limit" in excerpt, "the reason must survive truncation"
+    assert len(excerpt) <= pr_triage_autopilot.ALERT_EXCERPT_CHARS + 32
+
+
 def test_get_pr_failures_count():
     entries = [
         {"pr": 101, "head_sha": "sha1", "status": "FAILED"},
