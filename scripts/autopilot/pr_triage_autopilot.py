@@ -86,6 +86,45 @@ def check_claude_auth() -> str | None:
 # set is treated as unparseable (None) rather than interpolated downstream.
 VALID_VERDICTS = ("GREEN", "YELLOW", "RED")
 
+# The review payload (`claude -p`) shares one subscription with interactive use,
+# so it can exhaust the session quota. That is transient and self-healing: the
+# window resets on its own. It reached us as a generic non-zero exit, which the
+# cycle counted as a review failure -- and three hourly retries land inside the
+# SAME exhausted window, so PR #650 was marked FAILED_PERMANENT (manual ledger
+# surgery) by a condition that needed nothing but time. The Docker build had
+# succeeded on every attempt.
+_QUOTA_SIGNATURES: tuple[str, ...] = (
+    "hit your session limit",
+    "usage limit reached",
+    "rate limit exceeded",
+    "429 too many requests",
+)
+
+# Docker's build progress is front-loaded (`#1 DONE`, `#2 DONE`, ...) and the
+# payload error is the LAST line, so a head-truncated alert shows only noise.
+# Every alert for the 2026-09-04 incident cut off before the sentence that
+# explained it.
+ALERT_EXCERPT_CHARS = 900
+
+
+def is_transient_quota_error(message: str) -> bool:
+    """True when a failure is an LLM quota wait rather than a defect.
+
+    Deliberately narrow: a broken sandbox, a missing token or a full disk must
+    still burn a retry, or a genuinely stuck PR would be retried forever with
+    nobody told.
+    """
+    haystack = message.casefold()
+    return any(sig in haystack for sig in _QUOTA_SIGNATURES)
+
+
+def alert_excerpt(message: str) -> str:
+    """Excerpt an error for an alert, keeping the END where the reason lives."""
+    text = message.strip()
+    if len(text) <= ALERT_EXCERPT_CHARS:
+        return text
+    return "...(truncated)... " + text[-ALERT_EXCERPT_CHARS:]
+
 # Markers the council report is sliced on before it is posted publicly.
 # The heading opens the report; the machine line closes it and is parsed for
 # the verdict, so everything outside the pair is preamble or wrapper logging.
@@ -660,6 +699,33 @@ def run_triage_cycle(
             )
 
         except Exception as exc:
+            # A quota wait is not a review failure. Record it, leave the retry
+            # budget untouched, and let the next tick pick the PR up once the
+            # window has reset.
+            if is_transient_quota_error(str(exc)):
+                logger.warning(
+                    "PR triage deferred: LLM quota exhausted",
+                    pr=pr_num,
+                    sha=head_sha,
+                    detail=alert_excerpt(str(exc)),
+                )
+                append_ledger_entry(
+                    ledger_path,
+                    {
+                        "pr": pr_num,
+                        "head_sha": head_sha,
+                        "status": "DEFERRED",
+                        "fail_count": 0,
+                        "error": alert_excerpt(str(exc)),
+                        "engine": engine,
+                    },
+                )
+                send_telegram_alert(
+                    f"\u23f8 PR #{pr_num} review deferred - LLM quota exhausted, "
+                    "retrying next tick (no retry burned)"
+                )
+                continue
+
             failures = get_pr_failures_count(ledger_entries, pr_num, head_sha) + 1
             status = "FAILED_PERMANENT" if failures >= MAX_RETRIS else "FAILED"
 
@@ -693,7 +759,7 @@ def run_triage_cycle(
                     f'<p>Review of <a href="https://github.com/{repo}/pull/{pr_num}">'
                     f"PR #{pr_num}</a> failed {MAX_RETRIS} times and auto-retry has "
                     f"stopped. Manual ledger reset required.</p>"
-                    f"<p>Last error: {html_lib.escape(str(exc)[:500])}</p>",
+                    f"<p>Last error: {html_lib.escape(alert_excerpt(str(exc)))}</p>",
                 )
             else:
                 send_telegram_alert(f"⚠️ PR #{pr_num} review attempt {failures} failed: {exc}")
