@@ -16,7 +16,7 @@ This is a serious quality bug — false RED verdicts erode trust in the council.
 
 1. Update the per-dimension prompt skeleton in `.claude/commands/gflow/pr-council-review.md` (and the soon-to-exist `skills/pr-council-review/SKILL.md`) with this mandatory paragraph:
 
-   > **CRITICAL — file reading rule:** The orchestrator's working tree is on `develop`, not the PR HEAD. **Do NOT use `Read` on files in `C:\development\github\gflow-cli\` — that returns the develop copy and produces false positives.** Instead:
+   > **CRITICAL — file reading rule:** The orchestrator's working tree is on `develop`, not the PR HEAD. **Do NOT use `Read` on files in the primary checkout — that returns the develop copy and produces false positives.** Instead:
    > - For diff content: `gh pr diff <N>` via `ctx_execute`.
    > - For unchanged-context inspection of a file as it WILL look post-merge: `git show origin/<head-branch>:<path>` via `ctx_execute`.
    > - For PR metadata: `gh pr view <N> --json files,body,...`.

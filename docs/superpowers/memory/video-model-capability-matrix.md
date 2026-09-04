@@ -114,13 +114,13 @@ segment ONLY for omni (`Vídeo · 720p · 8scrop_9_16x1` vs `Vídeo · 720pcrop_
 
 **RE-OPENED 2026-09-04 — the "REJECTED" verdict above is WITHDRAWN. Duration is
 COHORT-DEPENDENT.** The #650 reporter ran the same credit-free collector on a third
-profile, `presentation-reels-google`, on **`labs.google`** (`page_lang=ru`, project
-`d2e1c023-...`) and got `4s/6s/8s` on `veo_3_1_lite`, `veo_3_1_fast` **and**
+profile (the reporter's own, not a maintainer account) on **`labs.google`**
+(`page_lang=ru`) and got `4s/6s/8s` on `veo_3_1_lite`, `veo_3_1_fast` **and**
 `veo_3_1_quality`; `x1-x4` on all four; `veo_3_1_lite_lower_priority` picker MISS.
 
 It **passes this file's own read-validity check** — count tabs came back on every
 model, and the composer chip read `Video - 720p - 4s...` with a Veo model selected.
-So `NONE` on `ffroliva`/`denon82` and `4s/6s/8s` on `presentation-reels-google` are
+So `NONE` on the maintainer cohort and `4s/6s/8s` on the reporter's are
 **both real**. Credits differ too (5/10/100 vs 10/20/100; that cohort's omni adds
 `360p/720p` tabs and bills 7), a second independent signal of a distinct cohort.
 

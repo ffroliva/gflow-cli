@@ -3,7 +3,7 @@ name: data-layer-test-pollution-trap
 description: "Test fixtures write to the user's real ~/AppData/Local/.../gflow.db catalog DB on dev machines; surfaced 2026-05-26 with 100% pollution"
 ---
 
-On 2026-05-26 the user's production catalog at `<GFLOW_CLI_HOME>/gflow.db` was found to contain **only pytest fixture data** — every row pointed to `pytest-of-ffrol\pytest-N\test_*` tmp paths. No real provenance was present despite many real generations having been run.
+On 2026-05-26 the user's production catalog at `<GFLOW_CLI_HOME>/gflow.db` was found to contain **only pytest fixture data** — every row pointed to `pytest-of-<you>\pytest-N\test_*` tmp paths. No real provenance was present despite many real generations having been run.
 
 **Cause:** tests instantiate `DataStore` / `OperationRecorder` without overriding the resolved DB path. `Settings.resolved_db_path()` falls back to `<GFLOW_CLI_HOME>/gflow.db`, which is the user's real catalog on a dev machine. Tests that don't `monkeypatch.setenv("GFLOW_CLI_DB_PATH", ...)` BEFORE `get_settings()` is cached leak writes to the production DB.
 

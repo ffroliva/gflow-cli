@@ -14,7 +14,7 @@ git config --global tag.gpgsign true
 git config --global commit.gpgsign false   # only sign tags, not every commit
 ```
 
-The SSH public key at `~/.ssh/id_rsa.pub` ("hp-elitebook-flavio" in GitHub) must additionally be registered as a *Signing Key* (not just an Auth key) at https://github.com/settings/keys for the GitHub UI to render the "Verified" badge. The CI gate does not depend on this — only the local signature header matters.
+The SSH public key at `~/.ssh/id_rsa.pub` (whatever name it carries in GitHub) must additionally be registered as a *Signing Key* (not just an Auth key) at https://github.com/settings/keys for the GitHub UI to render the "Verified" badge. The CI gate does not depend on this — only the local signature header matters.
 
 **Local `git tag -v` verification (added 2026-05-29, v0.10.0):** signing a tag with `-s` succeeds, but `git tag -v vX.Y.Z` fails with `gpg.ssh.allowedSignersFile needs to be configured` until you create an allowed-signers file. This is a *verification-only* gap — the tag is still validly signed and CI still passes (CI only greps for the header). To make local verify work:
 
