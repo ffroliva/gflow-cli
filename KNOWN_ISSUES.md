@@ -267,31 +267,52 @@ listing endpoint (privacy-gated to `store` history mode), and `gflow doctor`
 (#542) surfaces the affected-row count. Freshly generated rows whose caption
 has not landed yet stay nameless until the next sync sweep.
 
-### Video duration tab probe misses on the current Frames-submode DOM
+### Video duration control is absent on some account cohorts
 
-- **Status:** Open ([#288](https://github.com/ffroliva/gflow-cli/issues/288))
-- **Severity:** Medium · **Affected:** `gflow video` with an explicit `--duration`
-  on at least some Classic-profile cohorts (3/3 miss on a live 2026-07-11 run)
+- **Status:** Mitigated — fail-fast shipped in
+  [#289](https://github.com/ffroliva/gflow-cli/pull/289).
+  [#288](https://github.com/ffroliva/gflow-cli/issues/288) and
+  [#451](https://github.com/ffroliva/gflow-cli/issues/451) are closed; the
+  Flow-side behaviour is unresolved and untracked upstream. Relaxing gflow's own
+  gate is tracked in [#650](https://github.com/ffroliva/gflow-cli/pull/650).
+- **Severity:** Medium · **Affected:** `gflow video` with an explicit
+  `--duration` (3/3 miss on a live 2026-07-11 run; re-confirmed by a $0
+  capability capture 2026-09-03)
 
-The `duration_tab` selector cascade (`[role='tab']:text-is('4s')` /
-`:has-text('4s')`) fails to match on Flow's current Frames-submode settings
-panel. Pre-fix this silently produced a clip of Flow's default length; since
-the #289 fix the run fails fast with `UiSelectorDriftError` (exit 23) and a
-`debug_no_duration_tab.png` screenshot — live-verified 2026-07-11 on the
-denon82 profile (aborted pre-submit, saving the 10-credit generation).
-**Workaround:** omit `--duration` to accept Flow's default.
+**Workaround:** omit `--duration` and accept Flow's default clip length, or pass
+`--model omni-flash`, the only model gflow currently allows a duration on.
+
+**What actually happens today.** gflow refuses `--duration` on every *named* Veo
+3.1 model at the CLI edge — `click.UsageError`, exit 2, before any browser
+launch — from a static capability table that does not consult your account. Only
+`--model omni-flash`, or `t2v`/`r2v` with `--model` omitted (nothing resolves, so
+the guard passes), reach Flow's settings popover. On that path a missing duration
+row fails fast with `UiSelectorDriftError` (exit 23) and a
+`debug_no_duration_tab.png` screenshot, aborting pre-submit so no credits are
+spent — live-verified 2026-07-11 on the denon82 profile.
 
 **Root cause (confirmed live 2026-07-11, screenshot evidence on #288): the
 duration control is ABSENT from this cohort's settings popover** — the panel
 renders mode tabs (Imagem/Video), sub-mode (Frames/Elementos), aspect
 (9:16/16:9), count (1x–x4; labels renamed to xN since — see #404), and the
-model dropdown (Veo 3.1 - Lite), and
-nothing else. The earlier locale hypothesis is refuted: the UI renders in
-Portuguese and the sibling count tabs (`1x`/`x2`) match fine; there is simply
-no duration row to click. Whether Flow removed clip-length selection for this
-cohort/model or moved it elsewhere is unknown — until that's answered,
-`--duration` cannot be honored on affected cohorts and the fail-fast is the
-correct behavior, not a selector bug to patch.
+model dropdown (Veo 3.1 - Lite), and nothing else. The earlier locale hypothesis
+is refuted: the UI renders in Portuguese and the sibling count tabs (`1x`/`x2`)
+match fine; there is simply no duration row to click.
+
+**Updated 2026-09-04 — it is a cohort difference, not a removal.** A third
+profile on the *same* `labs.google` frontend renders `4s/6s/8s` on all three
+selectable Veo 3.1 models, at different credit prices, in a credit-free capture
+whose count tabs came back on every model. (`veo_3_1_lite_lower_priority` missed
+its picker, so it is unmeasured either way.) Some accounts have the control, some
+do not; the cohort key — region, account age, experiment bucket — is unknown.
+So on an unaffected cohort Flow offers the row and gflow still refuses it: the
+flag is unavailable on every cohort today, for two different reasons.
+
+**Reporting.** If Flow's UI shows a duration row for a Veo model on your account,
+that is useful — it narrows the cohort key. Attach the exact `--model` /
+`--duration` invocation and the error text; a `--model omni-flash` run
+additionally yields the probe name and `debug_no_duration_tab.png`. No tokens or
+signed URLs.
 
 ### macOS: generation runs logged-out → HTTP 401, even with `--browser chrome`
 
