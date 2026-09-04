@@ -84,11 +84,16 @@ migration between products, unrelated to the host handoff.
    `flow.google.com` lands on an app the **current** drivers cannot drive — but
    see the inventory below: it is the same product with a different widget
    toolkit, and a driver for it is bounded work.
-3. **Detection can be instant instead of timed.** We currently navigate, wait,
-   and re-read `page.url`. Because the handoff is a real navigation
-   (`location.replace`), Playwright's `framenavigated` fires on it — an
-   event-driven check replaces a fixed wait. Same defect shape as the #639
-   locale probe, which also guesses a duration instead of awaiting a condition.
+3. **Detection was already event-timed; the fix was *where* it reads, not *how*.**
+   The handoff is a real navigation (`location.replace`), and Playwright's
+   `Frame._on_frame_navigated` assigns `frame._url` *before* it emits
+   `framenavigated` — `page.url` is `main_frame.url` — so the property and the
+   event flip in the same tick. A `framenavigated` listener therefore cannot see
+   the hop earlier than a `page.url` read at the same instant (a first cut of #663
+   shipped one; the council caught it). v0.66.1's defect was reading the URL once
+   at entry; v0.66.2's re-check at every point the run is about to spend time is
+   the correct shape (field-measured 4.1 s to exit 36). The #639 locale probe is
+   the remaining fixed wait.
 
 ## Inventory of the migrated editor (same account, `/project/<id>`, `lang=en-GB`)
 

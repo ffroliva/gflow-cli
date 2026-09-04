@@ -1189,8 +1189,8 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # FlowHostMigratedError (#639): Flow served the migrated
     # flow.google.com frontend, whose DOM gflow cannot drive. Direct
     # GFlowError subclass; exit 36 lets scripts distinguish "wrong Flow
-    # frontend, retry" from genuine selector drift (23), which it used to
-    # masquerade as.
+    # frontend" (per-account, not retryable) from genuine selector drift
+    # (23), which it used to masquerade as.
     FlowHostMigratedError: 36,
     # UiModeUnavailableError (issue #299): a command's required arm (--ui-mode /
     # inferred) couldn't be reached after a best-effort switch. Direct GFlowError
@@ -1251,8 +1251,7 @@ RETRYABLE_ERRORS: tuple[type[GFlowError], ...] = (
     # #639 is deliberately NOT here. FlowHostMigratedError used to be listed on
     # the belief that the migration "flaps per page load"; it is a server-assigned
     # per-account boolean (5/5, 7/7 measured 2026-09-04), so a retry into it is
-    # a doomed minute billed for nothing. Exit 36 stays; the machine flag no
-    # longer invites the loop.
+    # a doomed attempt. Exit 36 stays; the machine flag no longer invites the loop.
     # #299: the cohort is server-assigned per page load and flaps — the
     # documented remediation for exit 28 IS "retry"; the machine flag must
     # agree with the docs.

@@ -753,10 +753,10 @@ async def test_migrated_host_error_crosses_the_queued_path(temp_db: DataStore) -
     """#639: the MCP surface is repaired by the same shared-transport fix as the CLI,
     but only if the envelope survives the queue.
 
-    The reporter's whole benefit is an orchestrator that reads ``retryable`` and
-    re-runs — before v0.66.0 the flag was false, so their retry loop never fired at
-    all. That flag reaches an MCP client only through this persisted queue row, which
-    is different code from the CLI's ``--json`` path.
+    The flag reaches an MCP client only through this persisted queue row, which is
+    different code from the CLI ``--json`` path. The handoff is a one-way per-account
+    flag (settled 2026-09-04), so ``retryable`` is ``False`` here: an orchestrator that
+    re-ran on it would burn a doomed attempt each time.
     """
     from gflow_cli.errors import FlowHostMigratedError, is_retryable
 
@@ -782,6 +782,6 @@ async def test_migrated_host_error_crosses_the_queued_path(temp_db: DataStore) -
     assert updated.status == "failed"
     assert updated.error is not None
     assert updated.error["exit_code"] == 36
-    assert updated.error["retryable"] is True
+    assert updated.error["retryable"] is False
     assert updated.error["retryable"] is is_retryable(exc)
     worker.close()

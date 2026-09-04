@@ -49,20 +49,6 @@ class _FlippingPage:
         self._present = present or set()
         self._flip = flip
         self.locator_calls: list[str] = []
-        self._listeners: dict[str, list[Any]] = {}
-
-    def on(self, event: str, handler: Any) -> None:
-        self._listeners.setdefault(event, []).append(handler)
-
-    def fire_navigation(self, url: str) -> None:
-        """Model `location.replace(...)` landing: the URL changes AND Playwright
-        emits `framenavigated` for the main frame."""
-        self.url = url
-        frame = MagicMock()
-        frame.url = url
-        frame.parent_frame = None
-        for handler in self._listeners.get("framenavigated", []):
-            handler(frame)
 
     def locator(self, selector: str) -> Any:
         self.locator_calls.append(selector)
@@ -174,58 +160,6 @@ async def test_guard_reads_the_page_it_is_about_to_drive() -> None:
         await detect_ui_mode(migrating, timeout_s=1.0, poll_interval_s=0.01)  # type: ignore[arg-type]
 
     assert await detect_ui_mode(healthy, timeout_s=0.5, poll_interval_s=0.01) == "classic"  # type: ignore[arg-type]
-
-
-# --- the event-driven watch --------------------------------------------------
-#
-# The handoff is `window.location.replace('https://flow.google.com' + path)`,
-# executed by the labs.google app from a useEffect after a fully authenticated
-# load (spike 2026-09-04-migrated-host-handoff-mechanism). That is a real
-# navigation, so Playwright emits `framenavigated` on the main frame the instant
-# it lands. Recording it closes the window in which `page.url` still reads the
-# pre-hop labs.google URL -- deterministically, with no wait.
-
-
-async def test_watch_records_the_hop_and_the_guard_fires_from_the_record() -> None:
-    from gflow_cli.api.transports._common import raise_if_migrated, watch_for_migrated_host
-
-    page = _FlippingPage(flip=False)
-    watch_for_migrated_host(page)  # type: ignore[arg-type]
-    page.fire_navigation(_MIGRATED)
-    # Simulate the cached-property lag the field timeline showed: the record is
-    # authoritative even if the URL attribute lies.
-    page.url = _LABS
-
-    with pytest.raises(FlowHostMigratedError):
-        raise_if_migrated(page, at="test")  # type: ignore[arg-type]
-
-
-async def test_watch_is_idempotent_per_page() -> None:
-    from gflow_cli.api.transports._common import watch_for_migrated_host
-
-    page = _FlippingPage(flip=False)
-    watch_for_migrated_host(page)  # type: ignore[arg-type]
-    watch_for_migrated_host(page)  # type: ignore[arg-type]
-    assert len(page._listeners.get("framenavigated", [])) == 1
-
-
-async def test_watch_ignores_navigations_that_stay_on_labs() -> None:
-    from gflow_cli.api.transports._common import raise_if_migrated, watch_for_migrated_host
-
-    page = _FlippingPage(flip=False)
-    watch_for_migrated_host(page)  # type: ignore[arg-type]
-    page.fire_navigation(_LABS + "?hl=pt")
-    raise_if_migrated(page, at="test")  # type: ignore[arg-type]  # must not raise
-
-
-async def test_watch_adds_no_wait_navigation_or_script() -> None:
-    """Same merge gate as the old-host test: attaching the watch must cost the
-    working host nothing. `goto`, `wait_for_url` and `evaluate` all raise."""
-    from gflow_cli.api.transports._common import watch_for_migrated_host
-
-    page = _FlippingPage(present={_CROP}, flip=False)
-    watch_for_migrated_host(page)  # type: ignore[arg-type]
-    assert page.url == _LABS
 
 
 async def test_unreadable_url_is_never_migrated() -> None:

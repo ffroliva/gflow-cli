@@ -37,7 +37,6 @@ from gflow_cli.api.transports._common import (
     flow_host_kind,
     generation_error,
     offered_menu_labels,
-    watch_for_migrated_host,
 )
 from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
@@ -949,7 +948,6 @@ class UiAutomationTransport(VideoGenerationMixin):
         if page is not None:
             # Shared-page path: caller owns Playwright lifecycle.
             self._page = page
-            watch_for_migrated_host(page)
             self._owns_playwright = False
             self._setup_done = True
             log.info("ui_automation.setup_shared_page")
@@ -1027,9 +1025,6 @@ class UiAutomationTransport(VideoGenerationMixin):
             self._ctx = ctx
             page = cast("Page", ctx.pages[0] if ctx.pages else await ctx.new_page())
             self._page = page
-            # Before the first goto: the hop is a post-load navigation event and
-            # the watch has to be listening when it fires.
-            watch_for_migrated_host(page)
             try:
                 await page.goto(FLOW_URL, wait_until="networkidle", timeout=45_000)
             except Exception as e:

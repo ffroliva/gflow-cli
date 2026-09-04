@@ -59,8 +59,8 @@ def mint_batch_id() -> str:
 # flow.google.com (issue #639). The handoff is a server-assigned per-account
 # boolean that the labs.google app acts on client-side after a fully
 # authenticated load (spike 2026-09-04-migrated-host-handoff-mechanism) -- it is
-# a one-way rollout, not a flap: 5/5 and 7/7 on a flagged account, 68/68 on an
-# unflagged one. Both hosts stay in this map because the fleet is mid-rollout.
+# a one-way rollout, not a flap (5/5 and 7/7 on a flagged account). Both hosts
+# stay in this map because the fleet is mid-rollout.
 _FLOW_HOSTS: dict[str, str] = {
     "labs.google": "labs",
     "flow.google.com": "migrated",
@@ -89,40 +89,6 @@ def flow_host_kind(url: object) -> str | None:
     return _FLOW_HOSTS.get(host)
 
 
-_WATCH_ATTR = "_gflow_migrated_host_url"
-
-
-def watch_for_migrated_host(page: object) -> None:
-    """Record the labs.google -> flow.google.com hop the instant it lands (#639).
-
-    The handoff is ``window.location.replace('https://flow.google.com' + path)``
-    from a ``useEffect`` in the labs.google app, i.e. a real main-frame
-    navigation, so Playwright emits ``framenavigated`` for it. Recording that
-    event on the page object closes the window in which ``page.url`` still reads
-    the pre-hop labs URL -- the gap v0.66.1 fell into and v0.66.2 papered over by
-    re-reading ``page.url`` at five call sites. :func:`raise_if_migrated` consults
-    this record first, so the first guard after the hop fires deterministically,
-    with no wait and no extra navigation on either host.
-
-    Idempotent: attach once per page. State lives ON the page because two pooled
-    pages can legitimately be on different hosts in one run.
-    """
-    if isinstance(getattr(page, _WATCH_ATTR, None), str) or not hasattr(page, "on"):
-        return
-    setattr(page, _WATCH_ATTR, "")
-
-    def _on_frame_navigated(frame: object) -> None:
-        # Main frame only -- an iframe on the migrated origin proves nothing.
-        if getattr(frame, "parent_frame", None) is not None:
-            return
-        url = getattr(frame, "url", None)
-        if flow_host_kind(url) == "migrated":
-            setattr(page, _WATCH_ATTR, url)
-            log.info("ui_driver.migrated_host_observed", url=url)
-
-    page.on("framenavigated", _on_frame_navigated)  # type: ignore[attr-defined]
-
-
 def raise_if_migrated(page: object, *, at: str) -> None:
     """Abort now if this page is on the migrated ``flow.google.com`` origin (#639).
 
@@ -130,7 +96,11 @@ def raise_if_migrated(page: object, *, at: str) -> None:
     after this point is doomed. Call it wherever the run is **about to spend time**,
     and never behind a wait of its own: ``page.url`` is a cached property and
     :func:`flow_host_kind` is one parse plus a dict lookup, so a call costs the host
-    that still works nothing at all.
+    that still works nothing at all. Playwright assigns ``frame._url`` *before* it
+    emits ``framenavigated`` for the hop and ``page.url`` is ``main_frame.url``, so
+    the property is never behind the event: a listener cannot see the hop earlier
+    than a read at the same instant can. The fix is *where* the URL is read, not
+    *how* -- a first cut of #663 shipped a ``framenavigated`` watch for nothing.
 
     **Once, at entry, is not enough** — that was v0.66.1's defect.
     ``routes.project_editor_url`` only ever builds a ``labs.google`` URL, and the hop
@@ -146,10 +116,7 @@ def raise_if_migrated(page: object, *, at: str) -> None:
     host became knowable instead of leaving it to be inferred — which is exactly how
     a fast path that never fired survived a release.
     """
-    # The watch record wins: it is set by the navigation event itself, so it is
-    # never behind the URL the way a cached `page.url` can be mid-hop.
-    recorded = getattr(page, _WATCH_ATTR, None)
-    url = recorded if isinstance(recorded, str) and recorded else getattr(page, "url", None)
+    url = getattr(page, "url", None)
     if flow_host_kind(url) != "migrated":
         return
     log.info("ui_driver.migrated_host_bail", at=at, url=url)
@@ -159,7 +126,8 @@ def raise_if_migrated(page: object, *, at: str) -> None:
             "migrating accounts onto — whose frontend renders none of the controls "
             "gflow drives. This is not selector drift, and it is not transient: the "
             "handoff is a per-account setting the labs.google app applies on every "
-            "load, so retrying cannot land the old frontend."
+            "load, so once your account is flagged, retrying will not land the old "
+            "frontend."
         )
     )
 
