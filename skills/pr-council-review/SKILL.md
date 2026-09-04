@@ -213,31 +213,38 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 
 ### Dimension → mandatory memory slugs table
 
-> **⚠️ Slug names are conceptual anchors, not filenames.** The auto-memory store uses
-> descriptive filenames (`feedback_*.md`, `project_*.md`, `reference_*.md`, plus
-> `MEMORY.md`), **not** files named after these `[[kebab-slug]]`s. To consult a slug:
-> read `MEMORY.md` and open the file whose topic matches (e.g. `[[rest-transports-drop-ui-fields]]`
-> → whichever `project_*`/`feedback_*` entry covers transport field-drop). **If no memory
-> entry matches a referenced slug, state that explicitly in your report and move on — do
-> NOT fabricate its contents.** (Backlog: reconcile this table with the real filenames, or
-> alias memory files to their slugs, so citations resolve directly.)
+> **Slugs resolve directly: `[[<slug>]]` → `docs/superpowers/memory/<slug>.md`.** Open
+> exactly the files your dimension's row names — no searching, no judgement call about
+> what is relevant. The directory is in the repo, so it is available to every agent that
+> can read the tree, including the sandboxed autonomous runs that have no access to a
+> maintainer's local store.
+>
+> `scripts/ci/check_council_memory.py` enforces the round trip both ways: a citation with
+> no file fails CI, and a file no dimension cites fails CI too. So a gap announces itself
+> instead of quietly degrading routing back into a search — which is what this table
+> previously did, when the slugs were "conceptual anchors" that resolved to nothing.
+>
+> These files are a **published subset** of the maintainer's working memory, not a mirror
+> of it: review-relevant facts only, with private identifiers stripped. If a slug's file
+> is missing, say so in your report and move on — never fabricate its contents.
 
 | Dim | Mandatory memory slugs |
 |---|---|
-| D1 | `[[pr-must-verify-on-affected-surface]]` |
-| D2 | (none mandatory; consult surrounding code style) |
+| D1 | `[[pr-must-verify-on-affected-surface]]`, `[[video-model-capability-matrix]]`, `[[flow-capabilities-are-cohort-dependent]]` |
+| D2 | `[[ruff-format-scope-is-src-tests]]`, `[[git-add-all-sweeps-scratch-files]]` |
 | D3 | `[[real-browser-auth-mandatory]]`, `[[release-signing]]` |
-| D4 | `[[pr-must-verify-on-affected-surface]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]` |
+| D4 | `[[force-color-breaks-cli-tests]]`, `[[pr-must-verify-on-affected-surface]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]` |
 | D5 | `[[release-spec-plan-memory-consolidation]]`, `[[pr-council-review-stale-tree-reads]]` (this very bug, as the council should self-improve) |
-| D6 | `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]` |
+| D6 | `[[credit-free-route-abort-verification]]`, `[[flow-credits-videos-only]]`, `[[flow-recon-must-run-on-denon82-ffroliva-migrated]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]` |
 | D7 | `[[on-started-callback-recorder-safety]]`, `[[data-layer-test-pollution-trap]]`, `[[exit-code-16-data-store]]`, `[[data-layer-v0.9.0-bugs]]` |
-| D8 | (none mandatory) |
-| D9 | `[[readme-hybrid-router-pattern]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]`, `[[llm-council-doc-review-v0.9.0]]` |
+| D8 | `[[ui-selector-drift-error-exit-23]]` |
+| D9 | `[[doc-examples-are-untested-fixtures]]`, `[[readme-hybrid-router-pattern]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]`, `[[llm-council-doc-review-v0.9.0]]` |
 | D10 | `[[real-browser-auth-mandatory]]` |
 | D11 | `[[release-back-merge-gap-recovery]]`, `[[wheel-build-sanity-gate]]`, `[[pypi-rejected-filename-reusable]]`, `[[draft-pr-merge-trap]]` |
 | D12 | `[[bdd-stubs-mirror-runtime-signatures]]` |
 | D13 | `[[wheel-build-sanity-gate]]` |
 | D14 | (none mandatory; apply the YAGNI rubric below) |
+| D15 | `[[cli-param-changes-need-mcp-parity]]`, `[[mcp-is-first-class-across-skill-chain]]` |
 
 ### Per-dimension specifics
 

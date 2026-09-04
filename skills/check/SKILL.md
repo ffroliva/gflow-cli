@@ -20,6 +20,7 @@ PYTHONUTF8=1 uv run python scripts/ci/check_repo_hygiene.py
 PYTHONUTF8=1 uv run python scripts/ci/check_doc_links.py
 PYTHONUTF8=1 uv run python scripts/ci/check_website_docs_pii.py
 PYTHONUTF8=1 uv run python scripts/ci/generate_website_docs.py --check
+PYTHONUTF8=1 uv run python scripts/ci/check_council_memory.py
 ```
 
 The last check fails on either half of the published-site contract:
