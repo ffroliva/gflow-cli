@@ -62,10 +62,10 @@ HOST_MEMORY=$(cd "$HOST_MEMORY" && pwd)
 # `docker network rm` refuses a network with attached containers, so this can
 # never disturb a concurrent review.
 for stale_net in $(docker network ls --filter "name=triage-net-" --format '{{.Name}}' 2>/dev/null); do
-  docker network rm "$stale_net" &>/dev/null && echo "Swept stale network $stale_net" || true
+  docker network rm "$stale_net" &>/dev/null && echo "Swept stale network $stale_net" >&2 || true
 done
 
-echo "Building Docker sandbox image..."
+echo "Building Docker sandbox image..." >&2
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 docker build -t gflow-triage:latest -f "$SCRIPT_DIR/Dockerfile.triage" "$SCRIPT_DIR"
 
@@ -75,14 +75,14 @@ docker build -t gflow-triage:latest -f "$SCRIPT_DIR/Dockerfile.triage" "$SCRIPT_
 docker image prune -f --filter "label=app=gflow-triage" &>/dev/null || true
 
 NET_NAME="triage-net-$PR_NUM"
-echo "Creating network $NET_NAME..."
-docker network create "$NET_NAME" || true
+echo "Creating network $NET_NAME..." >&2
+docker network create "$NET_NAME" >/dev/null || true
 
 SUBNET=$(docker network inspect "$NET_NAME" -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null || true)
 
 # Cleanup trap
 cleanup() {
-  echo "Cleaning up network rules and Docker network..."
+  echo "Cleaning up network rules and Docker network..." >&2
   if [ -n "$SUBNET" ] && command -v iptables &> /dev/null; then
     sudo iptables -D FORWARD -s "$SUBNET" -j DROP &>/dev/null || true
     for ip in $(getent ahostsv4 github.com | awk '{print $1}' | sort -u); do
@@ -100,7 +100,7 @@ trap cleanup EXIT
 
 # Apply host iptables firewall restrictions if run with sudo/iptables access
 if [ -n "$SUBNET" ] && command -v iptables &> /dev/null; then
-  echo "Hardening network isolation for subnet $SUBNET via iptables..."
+  echo "Hardening network isolation for subnet $SUBNET via iptables..." >&2
   # Allow DNS
   sudo iptables -I FORWARD -s "$SUBNET" -p udp --dport 53 -j ACCEPT
   sudo iptables -I FORWARD -s "$SUBNET" -p tcp --dport 53 -j ACCEPT
@@ -124,10 +124,10 @@ if [ -n "$SUBNET" ] && command -v iptables &> /dev/null; then
   # Drop everything else from this subnet
   sudo iptables -A FORWARD -s "$SUBNET" -j DROP
 else
-  echo "Warning: iptables or network subnet lookup not available. Firewall rules skipped."
+  echo "Warning: iptables or network subnet lookup not available. Firewall rules skipped." >&2
 fi
 
-echo "Launching sandboxed review for PR $PR_NUM..."
+echo "Launching sandboxed review for PR $PR_NUM..." >&2
 COUNCIL_TOOLS="Bash(gh auth status:*) Bash(gh pr view:*) Bash(gh pr diff:*) Bash(gh pr checks:*) Bash(gh pr list:*) Bash(git show:*) Bash(git rev-parse:*) Bash(git diff:*) Bash(git log:*) Bash(git ls-remote:*) Bash(grep:*) Bash(sort:*) Bash(head:*) Bash(tail:*) Bash(wc:*) Bash(awk:*) Bash(jq:*) Bash(cat:*) Bash(ls:*) Bash(comm:*) Bash(cut:*) Bash(uniq:*) Bash(tr:*) Read Grep Glob Task TodoWrite"
 COUNCIL_MEMORY_DIR="/home/nonroot/.claude/projects/C--development-github-gflow-cli/memory"
 # The council memory mount target is not arbitrary: SKILL.md D5 tells the
