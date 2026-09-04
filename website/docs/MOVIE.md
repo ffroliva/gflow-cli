@@ -70,7 +70,9 @@ duration = 6
 ```
 
 > **Scene `duration` values depend on the model** (issue #634). Veo 3.1 models
-> support `4`, `6`, and `8`; `omni-flash` also supports `10`. Values are checked
+> support `4`, `6`, and `8`; `omni-flash` also supports `10`. Whether your account
+> renders a duration control at all is cohort-dependent — where it does not, the run
+> aborts pre-submit with no credits spent. Values are checked
 > at parse time, before any scene generates. A scene with no named model inherits
 > Flow's default and cannot receive a model-specific duration check at parse time;
 > name the model whenever the exact length matters.

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`--duration` now accepts 4s/6s/8s on the Veo 3.1 models** (#650, @stgmt); `10`
+  stays `omni-flash`-only. Flow's duration control turns out to be account/cohort-
+  dependent — some accounts render the row for Veo, some render none, on the same
+  frontend — so the static table that refused it everywhere was wrong for part of
+  the userbase. `supports_duration()` is gone; one shared
+  `validate_duration_for_model()` now backs the DTO, CLI, chain, movie manifest and
+  MCP surfaces. On an account **without** the control the run now reaches the browser
+  and aborts pre-submit with exit 23 and no credits spent, instead of refusing
+  instantly at the CLI edge — a deliberate trade, since a static per-model table
+  cannot express a per-account capability.
+
 ## [0.66.3] — 2026-09-03
 
 ### Fixed
@@ -47,7 +60,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Veo 3.1 duration selection now follows Flow's live controls.** Accepts 4s/6s/8s for Veo and 4s/6s/8s/10s for omni-flash, validates model defaults before work starts, and keeps chain pre-flight fail-closed.
 
 - **v0.66.1's migrated-origin fast-fail never fired on a real run
   ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** The guard read `page.url` once,

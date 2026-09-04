@@ -273,23 +273,22 @@ has not landed yet stay nameless until the next sync sweep.
   [#289](https://github.com/ffroliva/gflow-cli/pull/289).
   [#288](https://github.com/ffroliva/gflow-cli/issues/288) and
   [#451](https://github.com/ffroliva/gflow-cli/issues/451) are closed; the
-  Flow-side behaviour is unresolved and untracked upstream. Relaxing gflow's own
-  gate is tracked in [#650](https://github.com/ffroliva/gflow-cli/pull/650).
+  Flow-side behaviour is unresolved and untracked upstream. gflow's own static
+  gate was relaxed in [#650](https://github.com/ffroliva/gflow-cli/pull/650).
 - **Severity:** Medium · **Affected:** `gflow video` with an explicit
   `--duration` (3/3 miss on a live 2026-07-11 run; re-confirmed by a $0
   capability capture 2026-09-03)
 
-**Workaround:** omit `--duration` and accept Flow's default clip length, or pass
-`--model omni-flash`, the only model gflow currently allows a duration on.
+**Workaround:** omit `--duration` and accept Flow's default clip length.
 
-**What actually happens today.** gflow refuses `--duration` on every *named* Veo
-3.1 model at the CLI edge — `click.UsageError`, exit 2, before any browser
-launch — from a static capability table that does not consult your account. Only
-`--model omni-flash`, or `t2v`/`r2v` with `--model` omitted (nothing resolves, so
-the guard passes), reach Flow's settings popover. On that path a missing duration
-row fails fast with `UiSelectorDriftError` (exit 23) and a
-`debug_no_duration_tab.png` screenshot, aborting pre-submit so no credits are
-spent — live-verified 2026-07-11 on the denon82 profile.
+**What actually happens today.** gflow accepts `--duration 4`, `6` or `8` on the
+Veo 3.1 models and `10` on `omni-flash` only — the CLI no longer refuses a
+duration it cannot know your account supports. What it still cannot do is tell
+your cohort apart before opening the browser, so on an account that renders no
+duration row the run reaches Flow's settings popover and fails there with
+`UiSelectorDriftError` (exit 23) and a `debug_no_duration_tab.png` screenshot.
+That abort is **pre-submit**, so no credits are spent — live-verified 2026-07-11
+on the denon82 profile.
 
 **Root cause (confirmed live 2026-07-11, screenshot evidence on #288): the
 duration control is ABSENT from this cohort's settings popover** — the panel
@@ -305,8 +304,13 @@ selectable Veo 3.1 models, at different credit prices, in a credit-free capture
 whose count tabs came back on every model. (`veo_3_1_lite_lower_priority` missed
 its picker, so it is unmeasured either way.) Some accounts have the control, some
 do not; the cohort key — region, account age, experiment bucket — is unknown.
-So on an unaffected cohort Flow offers the row and gflow still refuses it: the
-flag is unavailable on every cohort today, for two different reasons.
+
+Because the gate is a static per-model table rather than a read of your session,
+gflow cannot express that difference: it now allows `4/6/8` on every Veo 3.1
+model, and an account without the control discovers this in the browser rather
+than at the CLI edge. Trading an instant, wrong rejection for a slower, correct
+attempt was the deliberate call in #650. A session-level capability probe would
+remove the trade entirely and nobody has written one.
 
 **Reporting.** If Flow's UI shows a duration row for a Veo model on your account,
 that is useful — it narrows the cohort key. Attach the exact `--model` /
