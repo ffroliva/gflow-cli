@@ -15,7 +15,8 @@ This skill is the canonical body. The Claude Code slash command at `.claude/comm
 2. **`PR#` argument** → run the full council on that PR. (See § 2 onward.)
 3. **Branch mode** → run the full council on the current local feature branch (no PR yet). Invoked via the `/gflow:branch-review` wrapper. See § 8 for the PR→branch translation table and pre-flight.
 
-Treat **YELLOW as soft block** (per memory `[[llm-council-data-layer-fixes]]`).
+Treat **YELLOW as soft block** — it is advisory in name only; clear it or dismiss it
+with a logged justification (§ 5 step 8).
 
 ---
 
@@ -96,15 +97,15 @@ Pull in parallel via `ctx_batch_execute`:
 - `CLAUDE.md`, `AGENTS.md`, `docs/INDEX.md`
 
 **Memory traversal:** for each `TOUCHED_PATH`, look up relevant slugs:
-- `transports/` → `[[pr-must-verify-on-affected-surface]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[video-generation-spec]]`, `[[image-generation-401-next]]`
-- `data/` → `[[data-layer-overview]]`, `[[data-layer-test-pollution-trap]]`, `[[data-layer-v0.9.0-bugs]]`, `[[exit-code-16-data-store]]`, `[[on-started-callback-recorder-safety]]`
+- `transports/` → `[[pr-must-verify-on-affected-surface]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[ui-selector-drift-error-exit-23]]`
+- `data/` → `[[data-layer-overview]]`, `[[data-layer-test-pollution-trap]]`, `[[exit-code-16-data-store]]`, `[[on-started-callback-recorder-safety]]`
 - `auth/` → `[[real-browser-auth-mandatory]]`, `[[release-signing]]`
 - `cli` → `[[release-back-merge-gap-recovery]]`, `[[wheel-build-sanity-gate]]`
 - `tests/` (any) → `[[bdd-stubs-mirror-runtime-signatures]]`, `[[background-e2e-pytest-pattern]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]`
 - `tests/features/` (BDD) → also `[[bdd-stubs-mirror-runtime-signatures]]`
 - `scripts/` → `[[wheel-build-sanity-gate]]`, `[[release-back-merge-gap-recovery]]`
 - `.planning/`, `docs/superpowers/` → `[[release-spec-plan-memory-consolidation]]`
-- `docs/`, `*.md` → `[[readme-hybrid-router-pattern]]`, `[[llm-council-doc-review-v0.9.0]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]`
+- `docs/`, `*.md` → `[[readme-hybrid-router-pattern]]`, `[[doc-examples-are-untested-fixtures]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]`
 - `pyproject.toml`, `.github/` → `[[release-spec-plan-memory-consolidation]]`, `[[pr-hygiene-revert-and-multi-commit]]`, `[[draft-pr-merge-trap]]`, `[[pypi-rejected-filename-reusable]]`
 
 ---
@@ -235,16 +236,16 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 | D3 | `[[real-browser-auth-mandatory]]`, `[[release-signing]]` |
 | D4 | `[[force-color-breaks-cli-tests]]`, `[[pr-must-verify-on-affected-surface]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]` |
 | D5 | `[[release-spec-plan-memory-consolidation]]`, `[[pr-council-review-stale-tree-reads]]` (this very bug, as the council should self-improve) |
-| D6 | `[[credit-free-route-abort-verification]]`, `[[flow-credits-videos-only]]`, `[[flow-recon-must-run-on-denon82-ffroliva-migrated]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]` |
-| D7 | `[[on-started-callback-recorder-safety]]`, `[[data-layer-test-pollution-trap]]`, `[[exit-code-16-data-store]]`, `[[data-layer-v0.9.0-bugs]]` |
-| D8 | `[[ui-selector-drift-error-exit-23]]` |
-| D9 | `[[doc-examples-are-untested-fixtures]]`, `[[readme-hybrid-router-pattern]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]`, `[[llm-council-doc-review-v0.9.0]]` |
+| D6 | `[[ui-selector-drift-error-exit-23]]`, `[[credit-free-route-abort-verification]]`, `[[flow-credits-videos-only]]`, `[[flow-recon-must-run-on-denon82-ffroliva-migrated]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]` |
+| D7 | `[[on-started-callback-recorder-safety]]`, `[[data-layer-test-pollution-trap]]`, `[[exit-code-16-data-store]]` |
+| D8 | (none mandatory) |
+| D9 | `[[doc-examples-are-untested-fixtures]]`, `[[readme-hybrid-router-pattern]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]` |
 | D10 | `[[real-browser-auth-mandatory]]` |
 | D11 | `[[release-back-merge-gap-recovery]]`, `[[wheel-build-sanity-gate]]`, `[[pypi-rejected-filename-reusable]]`, `[[draft-pr-merge-trap]]` |
 | D12 | `[[bdd-stubs-mirror-runtime-signatures]]` |
 | D13 | `[[wheel-build-sanity-gate]]` |
 | D14 | (none mandatory; apply the YAGNI rubric below) |
-| D15 | `[[cli-param-changes-need-mcp-parity]]`, `[[mcp-is-first-class-across-skill-chain]]` |
+| D15 | `[[mcp-is-first-class-across-skill-chain]]` |
 
 ### Per-dimension specifics
 
@@ -295,7 +296,7 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 3. **Consensus rule:**
    - **`D0` (mechanical CI gate, Pre-flight step 6) RED or UNVERIFIED → the overall verdict cannot be GREEN.** A D0 RED forces **RED** even if every LLM dimension is GREEN — CI will reject the tree. A D0 UNVERIFIED caps the verdict at **YELLOW** with an explicit "confirm CI green before merge" action.
    - Any RED → **RED** (block merge).
-   - Any YELLOW → **YELLOW** (soft block per `[[llm-council-data-layer-fixes]]`).
+   - Any YELLOW → **YELLOW** (soft block; dismissal requires a logged justification).
    - All GREEN (including D0) → **GREEN** (mergeable).
 4. **Deduplicate must-fix AND confirmed-good** — same finding from two dimensions = list once + credit both.
 5. **False-positive filter + SHA divergence check (NEW v2, refined v2.1):**
@@ -363,7 +364,7 @@ Upon completing a Branch / Council Review:
 - The command is **stateless** and **read-only** — concurrent invocations on different PRs don't share data. No `gh pr merge`, no `git push`, no `gh pr close`.
 - **Idempotence:** same PR SHA → comparable verdicts on different days. Drift usually means memory grew new precedents or the mandatory-slug table needs an update.
 - **Sibling commands.** `/review` is the single-agent Claude-Code built-in (one-pass, cheap) — use for spot-checks or draft iteration. `/gflow:pr-council-review` is the council version for pre-merge audits and high-risk surfaces.
-- **Cross-tool portability.** This SKILL.md is the canonical body. The Claude Code slash command at `.claude/commands/gflow/pr-council-review.md` is a thin wrapper. Other tools (Antigravity / Codex / Cursor / Aider) consume this file directly via their own skill-loading mechanism. See `[[pr-council-review-portability-backlog]]` for the cross-tool playbook.
+- **Cross-tool portability.** This SKILL.md is the canonical body. The Claude Code slash command at `.claude/commands/gflow/pr-council-review.md` is a thin wrapper. Other tools (Antigravity / Codex / Cursor / Aider) consume this file directly via their own skill-loading mechanism.
 
 ---
 

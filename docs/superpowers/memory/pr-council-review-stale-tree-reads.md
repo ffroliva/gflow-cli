@@ -30,6 +30,6 @@ This is a serious quality bug — false RED verdicts erode trust in the council.
 - Dimension → specialized agent/skill mapping (current `general-purpose` for all 7 agents misses `security-review`, `code-review`, `review`, `verify` built-ins). See [[pr-council-review-portability-backlog]] Phase A.
 - Skill extraction to `skills/pr-council-review/SKILL.md` so the body is reusable across tools. Same backlog Phase A.
 
-After the fix lands, re-run the PR #95 council (Hybrid sequencing per Flavio 2026-05-27) to validate the false-positive rate drops.
+After the fix lands, re-run the PR #95 council (Hybrid sequencing, per the maintainer, 2026-05-27) to validate the false-positive rate drops.
 
 Related: [[llm-council-code-review-pr93]], [[pr-council-review-portability-backlog]], [[pr-must-verify-on-affected-surface]].
