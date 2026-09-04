@@ -126,12 +126,16 @@ against; that host is being replaced under them
 [@maipmacrothorax-75](https://github.com/maipmacrothorax-75) with measurements from both
 sides of the rollout).
 
-The rollout **flaps per page load** — the same account, profile and project land on the old
-host on one navigation and the migrated one on the next — so a re-run frequently succeeds,
-which `retryable: false` was throwing away. gflow now recognises the migrated origin and
-raises a distinct, **retryable** `FlowHostMigratedError` (exit 36). CLI and MCP both inherit
-it: they share the raise site, and `is_retryable` is a single source of truth for the
-`--json`, MCP and worker envelopes.
+v0.66.0 read the rollout as **flapping per page load** — the same account landing on the old
+host on one navigation and the migrated one on the next — and on that reading made
+`FlowHostMigratedError` (exit 36) **retryable**. The reading was wrong: the handoff is a
+server-assigned per-account flag that the labs.google app applies client-side with
+`window.location.replace`, one-way and not transient (settled 2026-09-04 —
+[spike](superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md)), so exit 36 is
+**non-retryable** since that fix. What v0.66.0 got right stands: gflow recognises the migrated
+origin and raises a distinct error, and CLI and MCP both inherit it — they share the raise
+site, and `is_retryable` is a single source of truth for the `--json`, MCP and worker
+envelopes.
 
 Tracing the same root cause turned up three things the report did not name. `_check_logged_in`
 hard-required `labs.google` in the URL, so a valid authenticated session on the migrated host
@@ -142,12 +146,13 @@ bundle capture for exactly the failure whose evidence is most wanted; a test now
 invariant across all four arms of the raise site rather than a list of names.
 
 **This does not add support for the migrated frontend.** It converts a confusing hard failure
-into a clear retryable one. Once the rollout completes for an account, no retry will help —
-#639 stays open for that work, with the anchor recon it needs already recorded.
+into a clearly named one. No retry helps — the flag is per account — and #639 stays open for
+the driver work, with the anchor recon it needs already recorded.
 
 Verification: [LIVE_VERIFICATION_v0.66.0](LIVE_VERIFICATION_v0.66.0.md) — proven against the
 **real** migrated frontend at zero credits (`i_total: 0`, `flow_host_kind: "migrated"`,
-`check_logged_in: true`, exit 36, `retryable: true`), with a credit-free `image t2i` on the
+`check_logged_in: true`, exit 36, `retryable: true` as designed then — `false` since the
+2026-09-04 fix), with a credit-free `image t2i` on the
 old host minutes earlier completing exit 0 to prove no regression.
 
 </details>
@@ -600,7 +605,7 @@ reporter-verified e2e on macOS).
 | Milestone | Status |
 |---|---|
 | Migrated-origin runs fail instantly (0 ms) and keep their learned locale | ✅ done (v0.66.1) |
-| Flow `flow.google.com` migration named as its own retryable failure (exit 36) | ✅ done (v0.66.0) |
+| Flow `flow.google.com` migration named as its own failure class (exit 36; retryable in v0.66.0, non-retryable since 2026-09-04) | ✅ done (v0.66.0) |
 | Repo scaffold, CI, license, README, disclaimer | ✅ done |
 | Auth login flow (one-time browser capture) | ✅ done |
 | Video: `t2v` / `i2v` / `batch` (Veo 3.1) | ✅ done (v0.2.0a1) |

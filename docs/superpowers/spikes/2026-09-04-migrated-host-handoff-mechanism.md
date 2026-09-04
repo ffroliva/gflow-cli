@@ -121,7 +121,9 @@ The six radiogroups, verbatim, map straight onto the settings DTO gflow already 
 [imageImage, videocamVideo]                     mode
 [crop_freeFrames, chrome_extensionIngredients]  submode
 [crop_16_916:9, crop_9_169:16]                  aspect
-[360pinfo, 720p]                                resolution   <- NEW axis, not on labs.google
+[360pinfo, 720p]                                resolution   (cohort-keyed, NOT host-keyed:
+                                                              a labs.google cohort shows it
+                                                              too — video-model-capability-matrix)
 [4s, 6s, 8s, 10s]                               duration     (Omni 1.1 Flash was selected)
 [x1, x2, x3, x4]                                count
 ```
@@ -138,7 +140,8 @@ class `_dismiss_blocking_overlays` already handles. The #639 locale probe timed 
 
 **So "make flow.google.com the frontend gflow drives" decomposes to:** a `mat-icon`
 carrier in the ligature cascades, a `cdk-overlay` + `radiogroup`/`radio` open/select
-protocol replacing `menu`/`tab`, the settings-trigger anchor, and a resolution axis.
+protocol replacing `menu`/`tab`, the settings-trigger anchor, and the resolution group
+(cohort-keyed on both hosts — gate on "control rendered?", never on the host).
 Generation is not reCAPTCHA-blocked on this path: the page mints its own token in a
 real browser, as labs.google does today — the token gate is a *headless HTTP*
 problem, not a UI-automation one. Route it through `/gflow:predict` as a new driver.
