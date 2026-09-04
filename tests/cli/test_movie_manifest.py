@@ -542,15 +542,17 @@ _SCENE_HEAD = 'title = "T"\nproject = "p"\n\n[[scenes]]\nid = "s"\naction = "x"\
 def test_movie_duration_10_with_veo_model_raises(tmp_path: Path) -> None:
     """10s duration is only available for omni-flash — Veo models cap at 8s."""
     path = _write_toml(tmp_path, _SCENE_HEAD + 'model = "veo-lite"\nduration = 10\n')
-    with pytest.raises(ConfigurationError, match="duration 10 is only available for model"):
+    with pytest.raises(ConfigurationError, match="caps at 8s"):
         MovieManifest.from_toml_path(path)
 
 
 def test_movie_duration_with_veo_lite_is_accepted(tmp_path: Path) -> None:
     """Veo 3.1 models support 4s, 6s, and 8s durations."""
-    for dur in (4, 6, 8):
-        path = _write_toml(tmp_path, _SCENE_HEAD + f'model = "veo-lite"\nduration = {dur}\n')
+    for model in ("veo-lite", "veo-lite-lp"):
+        for dur in (4, 6, 8):
+            path = _write_toml(tmp_path, _SCENE_HEAD + f'model = "{model}"\nduration = {dur}\n')
         assert MovieManifest.from_toml_path(path).scenes[0].duration == dur
+
 
 def test_movie_duration_with_omni_flash_is_accepted(tmp_path: Path) -> None:
     """Negative control: omni-flash DOES render a duration control, so the guard

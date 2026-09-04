@@ -50,7 +50,7 @@ class VideoModel(StrEnum):
     which presumed they render a duration control. They render **none at all** —
     only ``OMNI_FLASH`` shows the 4s/6s/8s/10s row. That mistaken assumption is
     the root cause of issues #451/#288, where ``--duration`` failures looked like
-    selector drift. See :meth:`supports_duration`.
+    selector drift.
     """
 
     OMNI_FLASH = "omni_flash"
@@ -75,14 +75,6 @@ class VideoModel(StrEnum):
                 msg,
             )
         return _VIDEO_MODEL_FROM_CLI[key]
-
-    def supports_duration(self) -> bool:
-        """Whether this model renders a duration control in Flow's UI.
-
-        Google Flow renders duration tabs (4s / 6s / 8s) for all Veo 3.1 models,
-        and (4s / 6s / 8s / 10s) for Omni Flash.
-        """
-        return True
 
 
 # Default model for ``gflow video i2v`` and direct ``FlowApiClient.generate_video``
@@ -181,14 +173,30 @@ def model_aliases(model: VideoModel) -> list[str]:
     return sorted(alias for alias, m in _VIDEO_MODEL_FROM_CLI.items() if m is model)
 
 
-def max_duration_for(model: VideoModel) -> int:
-    """Maximum selectable clip length in seconds.
+VIDEO_DURATION_CHOICES: tuple[int, ...] = (4, 6, 8, 10)
 
-    ``omni_flash`` = 10. The ``VEO_3_1_*`` models cap at 8s.
-    """
-    if model is VideoModel.OMNI_FLASH:
-        return 10
-    return 8 if model.supports_duration() else 0
+
+def max_duration_for(model: VideoModel) -> int:
+    """Maximum selectable clip length in seconds for *model*."""
+    return 10 if model is VideoModel.OMNI_FLASH else 8
+
+
+def validate_duration_for_model(model: VideoModel, duration: int | str | None) -> None:
+    """Validate one duration against the canonical Flow model limits."""
+    if duration is None:
+        return
+    try:
+        seconds = int(duration)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"duration must be one of 4/6/8/10 seconds, got {duration}") from exc
+    if seconds not in VIDEO_DURATION_CHOICES:
+        raise ValueError(f"duration must be one of 4/6/8/10 seconds, got {duration}")
+    maximum = max_duration_for(model)
+    if seconds > maximum:
+        raise ValueError(
+            f"model {model.value!r} caps at {maximum}s; duration {seconds} is only available "
+            f"for omni_flash"
+        )
 
 
 # Case-insensitive 8-4-4-4-12 hex with hyphens — Flow's media UUIDs (the same
@@ -315,15 +323,7 @@ class GenerateVideoRequest:
             effective = I2V_DEFAULT_MODEL
         if effective is None:
             return
-        if self.duration is not None and not effective.supports_duration():
-            msg = (
-                f"model {effective.value!r} has no duration control in Flow's UI, so "
-                f"--duration {self.duration} cannot be applied. Only "
-                f"{VideoModel.OMNI_FLASH.value!r} exposes a duration (4/6/8/10s); the "
-                f"Veo 3.1 models render no duration row at all. Drop --duration to accept "
-                f"Flow's default length, or use --model omni-flash."
-            )
-            raise ValueError(msg)
+        validate_duration_for_model(effective, self.duration)
         # NOTE: the ingredient x model case is deliberately NOT re-checked here.
         # ``_validate_r2v_caps`` already rejects it via ``reference_cap_for() == 0``
         # (VEO_3_1_QUALITY), with a cap-aware message. A second guard would be a
@@ -392,21 +392,9 @@ class GenerateVideoRequest:
             raise ValueError(msg)
 
     def _validate_duration(self) -> None:
-        if self.duration is not None and self.duration not in (4, 6, 8, 10):
+        if self.duration is not None and self.duration not in VIDEO_DURATION_CHOICES:
             msg = f"duration must be one of 4/6/8/10 seconds, got {self.duration}"
             raise ValueError(msg)
-        if (
-            self.duration == 10
-            and self.model is not None
-            and self.model is not VideoModel.OMNI_FLASH
-        ):
-            msg = (
-                f"10s duration is only available for the omni_flash model; "
-                f"{self.model.value} caps at 8s"
-            )
-            raise ValueError(
-                msg,
-            )
 
     def _validate_count(self) -> None:
         if not (1 <= self.count <= 4):

@@ -562,6 +562,7 @@ def test_chain_dry_run_rejects_a_manifest_duration(tmp_path: Path) -> None:
 
     assert result.exit_code != 0, result.output
     assert "duration" in result.output.lower()
+    assert "only available" in result.output.lower()
     mock_run.assert_not_awaited()
     mock_client_init.assert_not_called()
 

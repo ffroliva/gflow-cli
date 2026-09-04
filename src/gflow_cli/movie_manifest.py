@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from gflow_cli.api.video import VideoModel
+from gflow_cli.api.video import VideoModel, validate_duration_for_model
 from gflow_cli.composition import (
     FRAMING,
     Character,
@@ -553,16 +553,12 @@ def _validate_scene_model(model: object, idx: int, duration: int | None) -> None
             f"scenes[{idx}].model {model!r} is not a known model alias: {exc}"
         ) from exc
     if duration is not None and resolved is not None:
-        if not resolved.supports_duration():
+        try:
+            validate_duration_for_model(resolved, duration)
+        except ValueError as exc:
             raise ConfigurationError(
-                f"scenes[{idx}].duration {duration} cannot be applied to model "
-                f"{model!r} — Flow renders no duration control for it."
-            )
-        if duration == 10 and resolved is not VideoModel.OMNI_FLASH:
-            raise ConfigurationError(
-                f"scenes[{idx}].duration 10 is only available for model "
-                f'"omni-flash" — {model!r} supports 4s, 6s, or 8s.'
-            )
+                f"scenes[{idx}].duration {duration} is invalid for {model!r}: {exc}"
+            ) from exc
 
 
 def _validate_scene_style_variant(

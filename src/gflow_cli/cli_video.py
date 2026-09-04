@@ -33,6 +33,7 @@ from gflow_cli.api.video import (
     VideoModel,
     is_media_uuid,
     reference_cap_for,
+    validate_duration_for_model,
 )
 from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.models import AssetKind, OperationKind
@@ -174,7 +175,7 @@ def _reject_duration_without_control(
     *,
     default_model: VideoModel | None = None,
 ) -> None:
-    """#451/#288: reject ``--duration`` on a model that renders no duration control.
+    """Validate ``--duration`` when this command has a known model.
 
     The DTO guards this too (defence in depth for API callers), but a bare
     ``ValueError`` surfaces through the CLI as "Unexpected error." (exit 1) and
@@ -202,16 +203,13 @@ def _reject_duration_without_control(
             # real validation report it rather than dying as "Unexpected error."
             return
     if resolved is not None:
-        named = f"--model {model}" if model is not None else f"the default model {resolved.value}"
-        if not resolved.supports_duration():
-            msg = f"--duration is not supported by {named}."
-            raise click.UsageError(msg)
-        if duration in ("10", 10) and resolved is not VideoModel.OMNI_FLASH:
-            msg = (
-                f"--duration 10 is only available for --model omni-flash — "
-                f"{named} supports 4s, 6s, or 8s."
+        try:
+            validate_duration_for_model(resolved, duration)
+        except ValueError as exc:
+            named = (
+                f"--model {model}" if model is not None else f"the default model {resolved.value}"
             )
-            raise click.UsageError(msg)
+            raise click.UsageError(f"{named}: {exc}") from exc
 
 
 def _relocate_single_video(item: Any, target: Path) -> Any:

@@ -1613,13 +1613,10 @@ class TestUiModeOption:
 
 
 class TestDurationCapabilityGuard:
-    """#451/#288: --duration on a model that renders no duration control must
-    exit 2 with the reason, at the CLI edge. A bare DTO ValueError surfaces as
-    "Unexpected error." exit 1 and the explanation is lost — that regression is
-    what this pins, and it is why the guard is duplicated at the CLI."""
+    """Duration caps fail at the CLI edge before browser work."""
 
     @pytest.mark.parametrize("command", ["t2v", "i2v", "r2v"])
-    @pytest.mark.parametrize("model", ["veo-lite", "veo-fast", "veo-quality"])
+    @pytest.mark.parametrize("model", ["veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"])
     def test_duration_10_on_a_veo_model_exits_2_with_the_reason(
         self, command: str, model: str, tmp_path: Path
     ) -> None:
@@ -1634,19 +1631,37 @@ class TestDurationCapabilityGuard:
             video, [command, "a prompt", "--model", model, "--duration", "10", *extra]
         )
         assert result.exit_code == 2, result.output
-        assert "only available for --model omni-flash" in result.output
+        assert "caps at 8s" in result.output
+        assert "duration 10 is only available for omni_flash" in result.output
+        assert "Unexpected error" not in result.output
         assert model in result.output
 
-    def test_duration_10_on_i2v_without_model_exits_2(
-        self, tmp_path: Path
-    ) -> None:
+    def test_duration_10_on_i2v_without_model_exits_2(self, tmp_path: Path) -> None:
         ref = tmp_path / "ref.png"
         ref.write_bytes(b"\x89PNG\r\n\x1a\n")
         result = CliRunner().invoke(
             video, ["i2v", "a prompt", "--initial-frame", str(ref), "--duration", "10"]
         )
         assert result.exit_code == 2, result.output
-        assert "only available for --model omni-flash" in result.output
+        assert "caps at 8s" in result.output
+        assert "duration 10 is only available for omni_flash" in result.output
+        assert "Unexpected error" not in result.output
+
+    @pytest.mark.parametrize("duration", [4, 6, 8])
+    def test_veo_duration_is_accepted_by_cli_preflight(self, duration: int, tmp_path: Path) -> None:
+        with (
+            patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+            patch("gflow_cli.cli_video._run_t2v", new_callable=AsyncMock) as mock_run,
+        ):
+            result = CliRunner().invoke(
+                video,
+                ["t2v", "a prompt", "--model", "veo-lite", "--duration", str(duration)],
+            )
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_args.kwargs["duration"] == duration
+        assert "Unexpected error" not in result.output
+
     def test_duration_on_t2v_without_model_is_left_alone(self, tmp_path: Path) -> None:
         """Negative control: t2v with no ``--model`` must NOT be rejected here.
 
@@ -1656,12 +1671,12 @@ class TestDurationCapabilityGuard:
         resolve. Without this, "resolve the default" could quietly grow into
         "assume veo-lite everywhere".
         """
-        result = CliRunner().invoke(video, ["t2v", "a prompt", "--duration", "8", "--dry-run"])
-        assert "no duration control" not in result.output
+        result = CliRunner().invoke(video, ["t2v", "a prompt", "--duration", "8"])
+        assert "caps at" not in result.output
 
     def test_duration_on_omni_flash_passes_the_guard(self, tmp_path: Path) -> None:
-        """Negative control: the guard must not over-reject the one model that
-        DOES render a duration row. It should get past the guard and fail later
+        """Negative control: the guard must not over-reject omni-flash, whose
+        10s duration is valid. It should get past the guard and fail later
         on the missing frame instead."""
         result = CliRunner().invoke(
             video,
@@ -1676,4 +1691,4 @@ class TestDurationCapabilityGuard:
                 "8",
             ],
         )
-        assert "no duration control" not in result.output
+        assert "caps at" not in result.output

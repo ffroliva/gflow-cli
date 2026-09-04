@@ -186,7 +186,7 @@ naming the model instead of exit 1 `"Unexpected error"`.
 
 **Breaking:** a `movie.toml` scene pairing a Veo model with a `duration` now fails at parse
 (exit 11). That combination could never have rendered; it previously failed later and more
-expensively. Scene `duration` requires `model = "omni-flash"`.
+expensively. Scene `duration` accepts 4/6/8 for Veo 3.1 and 4/6/8/10 for omni-flash; invalid values are rejected during parsing.
 
 **Known limitation:** the guard covers browser-driven generation only. Direct-wire routes
 issued through Playwright's `APIRequestContext` are not routable at all and bypass it
@@ -314,9 +314,9 @@ detector matched nothing. Recovery hinged on a close button scoped to the
 sidebar's `edit_square` affordance, so a cohort lacking that ligature could never
 recover; `ensure_media_mode` now falls back to an unscoped close from the
 demonstrably stuck state, A/B-proven live. #451/#288 were never selector drift
-either: Flow's settings popover is **model-conditional** — only `omni-flash`
-renders a duration row — so `--duration` on a Veo model hunted a control that is
-never drawn. It now fails at the CLI edge with exit 2 before any browser work.
+either: Flow's settings popover is **model-conditional by cohort**. The current matrix
+shows 4/6/8s controls for Veo 3.1 and 4/6/8/10s for `omni-flash`; the CLI now
+validates the model cap at the edge with exit 2 before any browser work.
 Also: `--reference-entity` no longer advertised on `video i2v` (its DTO always
 rejected it), a typed `ReferenceNotFoundError` (exit 32) replaces a bare
 Playwright timeout, and `gflow models` stops advertising a duration users cannot

@@ -1039,7 +1039,7 @@ async def gflow_generate_video(  # NOSONAR
                 "or 'auto'.",
             )
 
-    from gflow_cli.api.video import I2V_DEFAULT_MODEL, VideoModel
+    from gflow_cli.api.video import I2V_DEFAULT_MODEL, VideoModel, validate_duration_for_model
 
     # Validate the model alias up front (mirrors the CLI's pre-spend check) so an
     # unknown model fails fast with a 400 instead of dying deep in the worker.
@@ -1061,11 +1061,12 @@ async def gflow_generate_video(  # NOSONAR
         if effective is None and mode == "i2v" and (initial_frame or end_frame):
             effective = I2V_DEFAULT_MODEL
         if effective is not None:
-            if not effective.supports_duration():
+            try:
+                validate_duration_for_model(effective, duration)
+            except ValueError as exc:
                 return _bad_param(
                     "Unsupported duration for model",
-                    f"model {effective.value!r} renders no duration control in Flow, so "
-                    f"duration={duration} cannot be applied.",
+                    str(exc),
                 )
             if duration in (10, "10") and effective is not VideoModel.OMNI_FLASH:
                 return _bad_param(

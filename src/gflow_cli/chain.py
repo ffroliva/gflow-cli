@@ -42,6 +42,7 @@ from gflow_cli.api.video import (
     GenerateVideoRequest,
     Mode,
     VideoModel,
+    validate_duration_for_model,
 )
 from gflow_cli.errors import (
     ChainPartialError,
@@ -230,13 +231,13 @@ def reject_unusable_links(*, model: VideoModel, links: Sequence[ChainLinkSpec]) 
                 f"model override, or use a Veo 3.1 model."
             )
             raise ModelModeIncompatibilityError(msg)
-        if spec.duration is not None and spec.duration == 10:
-            msg = (
-                f"links[{index}] sets duration 10, which is only available for "
-                f"omni_flash — and chains reject omni_flash (refs #125, #451, #288, #634). "
-                f"Veo 3.1 models support 4s, 6s, or 8s."
-            )
-            raise ModelModeIncompatibilityError(msg)
+        if spec.duration is not None:
+            effective_model = spec.model or model
+            try:
+                validate_duration_for_model(effective_model, spec.duration)
+            except ValueError as exc:
+                msg = f"links[{index}].duration is invalid for {effective_model.value!r}: {exc}"
+                raise ModelModeIncompatibilityError(msg) from exc
 
 
 async def _generate_link(

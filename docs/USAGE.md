@@ -496,8 +496,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 
 > **Shared video flags** (`t2v` / `i2v` / `r2v`):
 > `--model [omni-flash|veo-lite|veo-fast|veo-quality|veo-lite-lp]` (omit → Flow's
-> current UI default), `--duration [4|6|8|10]` (**requires `--model omni-flash`** —
-> see below),
+> current UI default), `--duration [4|6|8|10]` (4/6/8 for Veo 3.1;
+> 4/6/8/10 for omni-flash),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
 > **`--duration` support across models**: Flow's settings

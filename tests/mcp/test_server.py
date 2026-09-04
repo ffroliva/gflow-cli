@@ -833,6 +833,7 @@ class TestUiModeEnvelopeShape:
         assert result["status"] == "error"
         assert result["error"]["status"] == 400
         assert "duration" in result["error"]["title"].lower()
+        assert "omni_flash" in result["error"]["detail"]
 
     @pytest.mark.asyncio
     async def test_duration_10_on_i2v_without_model_is_a_400(self) -> None:
@@ -845,6 +846,18 @@ class TestUiModeEnvelopeShape:
         assert result["status"] == "error"
         assert result["error"]["status"] == 400
         assert "duration" in result["error"]["title"].lower()
+        assert "caps at 8s" in result["error"]["detail"]
+        assert "omni_flash" in result["error"]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_duration_8_on_veo_lite_is_not_rejected(self) -> None:
+        from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
+
+        with patch("gflow_cli.mcp.tools._rate_limiter", _TokenBucket(capacity=8, refill_rate=0.0)):
+            result = await gflow_generate_video(prompt="x", model="veo_lite", duration=8)
+        title = (result.get("error") or {}).get("title", "")
+        assert "duration" not in title.lower(), result
+
     @pytest.mark.asyncio
     async def test_duration_on_omni_flash_is_not_rejected(self) -> None:
         """Negative control: the one model that DOES render a duration row must

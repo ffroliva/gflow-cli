@@ -57,7 +57,7 @@ from gflow_cli.api.video import (
     VideoResult,
     VideoStatus,
 )
-from gflow_cli.chain import ChainLinkSpec, run_chain
+from gflow_cli.chain import ChainLinkSpec, reject_unusable_links, run_chain
 from gflow_cli.errors import (
     ChainPartialError,
     ModelModeIncompatibilityError,
@@ -293,6 +293,13 @@ async def test_rejects_non_interpolation_model_up_front(tmp_path: Path) -> None:
     client.generate_video.assert_not_awaited()
 
 
+async def test_rejects_invalid_per_link_duration_up_front(tmp_path: Path) -> None:
+    links = [ChainLinkSpec(prompt="a cat wakes up", duration=5)]
+
+    with pytest.raises(ModelModeIncompatibilityError, match="unsupported|invalid"):
+        reject_unusable_links(model=VideoModel.VEO_3_1_LITE, links=links)
+
+
 async def test_rejects_per_link_duration_up_front(tmp_path: Path) -> None:
     """#634: duration 10 is rejected BEFORE any spend.
 
@@ -363,7 +370,7 @@ async def test_per_link_veo_model_override_still_allowed(tmp_path: Path) -> None
     client = _make_client(results)
     links = [
         ChainLinkSpec(prompt="a cat wakes up"),
-        ChainLinkSpec(prompt="the cat stretches", model=VideoModel.VEO_3_1_FAST),
+        ChainLinkSpec(prompt="the cat stretches", model=VideoModel.VEO_3_1_FAST, duration=8),
     ]
 
     out = await run_chain(
@@ -380,6 +387,7 @@ async def test_per_link_veo_model_override_still_allowed(tmp_path: Path) -> None
     # count would pass an implementation that silently dropped spec.model.
     link1_req = client.generate_video.await_args_list[1].kwargs["req"]
     assert link1_req.model is VideoModel.VEO_3_1_FAST
+    assert link1_req.duration == 8
     link0_req = client.generate_video.await_args_list[0].kwargs["req"]
     assert link0_req.model is VideoModel.VEO_3_1_LITE, "link 0 inherits the chain default"
 
