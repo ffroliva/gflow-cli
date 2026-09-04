@@ -35,6 +35,65 @@ def test_parse_summary_verdict_rejects_non_allowlisted():
     assert count == 0
 
 
+# The container's stdout used to be posted verbatim inside a <details> block, so
+# the sandbox wrapper's Docker/iptables progress lines and the agent's own
+# preamble landed in a public reply to an external contributor (PR #650).
+_NOISY_OUTPUT = """Building Docker sandbox image...
+Creating network triage-net-650...
+a8458414d885f96791b57d645ebd9051693fff736e787be9a01c85ee12a06cd6
+Hardening network isolation for subnet 172.20.0.0/16 via iptables...
+Launching sandboxed review for PR 650...
+All 11 dimension reports are in. Synthesizing the final verdict now.
+
+# PR #650 - Council Review Verdict
+
+## Consensus: RED
+
+## Must-fix (1)
+1. Something concrete.
+
+SUMMARY_VERDICT: RED | MUST_FIX_COUNT: 1 | PR_URL: https://example.invalid/pull/650
+Cleaning up network rules and Docker network...
+"""
+
+
+def test_extract_report_drops_wrapper_noise_and_preamble():
+    report = pr_triage_autopilot.extract_report(_NOISY_OUTPUT)
+
+    assert report.startswith("# PR #650")
+    assert report.endswith("1. Something concrete.")
+    for leaked in (
+        "Building Docker sandbox image",
+        "triage-net-650",
+        "a8458414d885",
+        "172.20.0.0/16",
+        "iptables",
+        "All 11 dimension reports are in",
+        "SUMMARY_VERDICT:",
+        "Cleaning up network rules",
+    ):
+        assert leaked not in report, leaked
+
+
+def test_extract_report_still_parses_the_verdict_from_the_raw_output():
+    # Slicing is for the comment only; the machine marker must stay parseable.
+    assert pr_triage_autopilot.parse_summary_verdict(_NOISY_OUTPUT) == ("RED", 1)
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "no markers at all, just prose",
+        "# PR #7 heading but no machine marker",
+        "SUMMARY_VERDICT: RED | MUST_FIX_COUNT: 0 | PR_URL: x",  # marker before heading
+    ],
+)
+def test_extract_report_falls_back_to_full_output_when_markers_are_missing(output):
+    # A malformed report is still worth posting; silently truncating one would
+    # be worse than a noisy comment.
+    assert pr_triage_autopilot.extract_report(output) == output.strip()
+
+
 def test_get_pr_failures_count():
     entries = [
         {"pr": 101, "head_sha": "sha1", "status": "FAILED"},

@@ -82,6 +82,15 @@ Pull in parallel via `ctx_batch_execute`:
 - `PR_CHECKS` → `gh pr checks <N>`
 - `TOUCHED_PATHS` → `gh pr view <N> --json files --jq '.files[].path' | sort -u`
 - `RECENT_COMMITS` → `gh pr view <N> --json commits --jq '.commits[-5:] | .[] | "\(.oid[:7]) \(.messageHeadline)"'`
+- `PR_COMMENTS` → `gh pr view <N> --json comments --jq '.comments[] | "\(.createdAt) \(.author.login): \(.body)"'`
+
+> **Read the thread before you flag "no evidence".** `PR_COMMENTS` is not optional colour:
+> a prior council verdict, a maintainer's counter-capture, and the contributor's reply all
+> live there and none of them appear in the diff. On PR #650 the autonomous run posted
+> *"reverses a confirmed-live finding with no live evidence attached"* as its headline
+> must-fix — 50 minutes after the contributor had posted a machine-generated capability
+> matrix with a SHA-256 and a screenshot in that same thread. Truncate long bodies if you
+> must, but never review a contested PR without reading what has already been said on it.
 
 **Reference files** (read via `git show origin/$head_branch:<path>` — NOT local `Read`, because the working tree is on `develop`):
 - `CLAUDE.md`, `AGENTS.md`, `docs/INDEX.md`
@@ -241,6 +250,14 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 - **D5 Memory hygiene & consolidation (NEW v2, refined v2.1):**
   - Inspect `~/.claude/projects/C--development-github-gflow-cli/memory/` (file-based memory — primary source).
   - **Concrete MCP memory-server probe (v2.1):** in the current session, look at the tool list for any tool whose name matches `mcp__*memory*`, `mcp__*mempalace*`, `mcp__*mem0*`, `mcp__*context-mode*` (for indexed KB), or any tool the user explicitly mentioned. If found, invoke its "list" / "search" / "stats" tool to enumerate stored items. If no such tool is loaded in-session, state explicitly "no MCP memory server loaded; D5 scope = file-based memory only".
+  - **An empty or absent memory directory is `UNAVAILABLE`, never GREEN.** Verify you can
+    actually read it (`ls` the path, quote the file count) before any verdict. Memory is keyed
+    by *working-directory path*, not repo identity, so a fresh clone — every autonomous
+    sandbox run — starts with an empty namespace unless the store was synced to that host.
+    Reporting "no memory entry contradicts this PR" from a directory you could not read is a
+    false negative dressed as a pass: it is the assumed-not-verified failure this dimension
+    already forbids, and it happened on PR #650, where `video-model-capability-matrix.md`
+    recorded that exact PR as REJECTED while D5 reported GREEN from an empty mount.
   - For each memory entry potentially relevant to the PR's surface: does the PR's content CONTRADICT or SUPERSEDE it? If so, the PR must include a memory edit/delete in the same change. Flag missing edits.
   - Does the PR introduce a new durable pattern / failure mode / decision that should be captured as a NEW memory entry? Flag missing additions.
   - Is `MEMORY.md` index still in sync (entries listed correspond to existing files)? Flag drift.

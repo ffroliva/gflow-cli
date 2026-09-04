@@ -86,6 +86,12 @@ def check_claude_auth() -> str | None:
 # set is treated as unparseable (None) rather than interpolated downstream.
 VALID_VERDICTS = ("GREEN", "YELLOW", "RED")
 
+# Markers the council report is sliced on before it is posted publicly.
+# The heading opens the report; the machine line closes it and is parsed for
+# the verdict, so everything outside the pair is preamble or wrapper logging.
+REPORT_HEADING_PREFIX = "# PR #"
+SUMMARY_VERDICT_MARKER = "SUMMARY_VERDICT:"
+
 # Imports for cross-platform file locking
 try:
     import fcntl
@@ -358,12 +364,35 @@ def run_docker_sandbox(pr_num: int, repo_dir: Path, memory_dir: Path, gh_token: 
     return proc.stdout
 
 
+def extract_report(container_output: str) -> str:
+    """Return just the council report from the container's stdout.
+
+    The container's stdout also carries the reviewing agent's own preamble, and
+    historically the sandbox wrapper's Docker/iptables progress lines. Posting
+    all of it put the build steps, a raw Docker network id, and the bridge
+    subnet into a public reply to an external contributor (PR #650). The
+    wrapper now logs to stderr; this is the second half of that fix, and it
+    also drops the agent preamble.
+
+    Slice to the report proper: the first ``# PR #`` heading through the line
+    before the ``SUMMARY_VERDICT:`` machine marker. Falls back to the whole
+    output when either marker is missing -- a malformed report is still worth
+    posting, and silently truncating one would be worse than a noisy comment.
+    """
+    lines = container_output.splitlines()
+    start = next((i for i, ln in enumerate(lines) if ln.startswith(REPORT_HEADING_PREFIX)), None)
+    end = next((i for i, ln in enumerate(lines) if SUMMARY_VERDICT_MARKER in ln), None)
+    if start is None or end is None or end <= start:
+        return container_output.strip()
+    return "\n".join(lines[start:end]).strip()
+
+
 def parse_summary_verdict(container_output: str) -> tuple[str | None, int]:
     """Parse SUMMARY_VERDICT and MUST_FIX_COUNT from stdout."""
     verdict = None
     must_fixes = 0
     for line in container_output.splitlines():
-        if "SUMMARY_VERDICT:" in line:
+        if SUMMARY_VERDICT_MARKER in line:
             # Parse line e.g.: SUMMARY_VERDICT: YELLOW | MUST_FIX_COUNT: 5 | PR_URL: ...
             parts = [p.strip() for p in line.split("|")]
             for p in parts:
@@ -410,6 +439,13 @@ def resolve_memory_dir(cli_value: str | None = None) -> Path:
             f"  Create it:            mkdir -p {memory_dir}\n"
             f"  Or point elsewhere:   --memory-dir <path>  |  export {MEMORY_DIR_ENV}=<path>\n"
             "An empty directory is valid — D5 then reports that no memory is available."
+        )
+    if not any(memory_dir.glob("*.md")):
+        logger.warning(
+            "Council memory directory is empty; D5 must report UNAVAILABLE, not GREEN. "
+            "Memory is keyed by working-directory path and is not synced to this host "
+            "by default — see docs/superpowers/specs/2026-07-04-pr-triage-autopilot-design.md.",
+            memory_dir=str(memory_dir),
         )
     return memory_dir
 
@@ -592,10 +628,7 @@ def run_triage_cycle(
             else:
                 comment_body += "🟢 All checks passed! No must-fix items identified.\n\n"
 
-            comment_body += (
-                "<details>\n<summary>View Sandboxed Review Output</summary>\n\n"
-                f"{output}\n</details>"
-            )
+            comment_body += extract_report(output)
 
             post_gh_comment(pr_num, comment_body, repo, token=gh_token)
 
