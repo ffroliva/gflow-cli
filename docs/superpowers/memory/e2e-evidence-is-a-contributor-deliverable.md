@@ -5,7 +5,11 @@ description: "E2E is the decisive test layer; a PR touching a Flow surface owes 
 
 **Rule (since PR #675, merged 2026-09-05):** a behavior change **that touches a Flow surface**
 owes e2e evidence — the `tests/e2e/` test the author ran, with its result, or a new one they
-wrote. Not a nice-to-have: a reviewer treats its absence as a must-fix, and D4 scores YELLOW.
+wrote. Not a nice-to-have: **absent with no reason given, D4 scores RED** and consensus is RED.
+It is deliberately not YELLOW — a YELLOW is dismissable with a one-line logged justification,
+and *"the live runs in the PR body are good enough"* is precisely the justification that would
+be written, reopening the substitution below through the escape valve. If the author states why
+they could not run it, that is the documented exemption: YELLOW, blocked on a maintainer run.
 A change touching no Flow surface (docs, help text, exit-code plumbing) is out of scope, and
 the PR says that rather than leaving the box blank.
 
@@ -31,10 +35,15 @@ objection: `e2e_auth` and `e2e_image` spend zero credits, and read-only or inspe
 belong under `e2e_auth`.
 
 **How to apply (reviewer):**
-- Ask which `tests/e2e/` test covers the change. No answer and no new test on a Flow surface
-  → D4 must-fix, not a nice-to-have.
+- Ask which `tests/e2e/` test covers the change. No answer, no new test, and no stated reason
+  on a Flow surface → D4 RED, not YELLOW (see above for why the colour matters).
 - A PR body full of live runs does not close it. Ask for the test.
-- Do not hold a PR opened before 2026-09-05 to this rule retroactively; flag it forward-looking.
+- When a test *is* named, verify it: cite its file:line, confirm it exists at `REVIEWED_SHA`,
+  and confirm it exercises the changed surface. A passing e2e test that never touches the
+  changed path is [[pr-must-verify-on-affected-surface]] wearing an e2e label.
+- Do not hold a PR opened before #675 merged (`e7a09d8`, 2026-09-05 19:15Z) to this rule
+  retroactively; flag it forward-looking. Anchor on the merge, not the day — #669 and #671
+  were both opened hours earlier that same date.
 - The rule lives in `CONTRIBUTING.md` (lifecycle table + § Test categories), `AGENTS.md`
   (§ Testing instructions), and `.github/PULL_REQUEST_TEMPLATE.md`. `tests/test_documentation_gate.py`
   pins all three, so deleting one fails CI rather than passing quietly.

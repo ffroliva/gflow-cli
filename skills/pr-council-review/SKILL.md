@@ -254,11 +254,16 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 - **D3 Security:** injection vectors? Env-var trust boundary? Shell interpolation? Path traversal? Secret-shaped literals? `--no-verify` / signature-bypass?
 - **D4 Tests:**
   - **Mandatory affected-surface check:** identify the runtime surface (T2V / I2V / data / CLI / auth / etc.). If the suite doesn't exercise that exact surface → **automatically YELLOW**. Cite the test file:line proving coverage, or state explicitly no such test exists.
-  - **Mandatory e2e-evidence check (since PR #675).** If the PR touches a **Flow surface**, it owes an e2e test — one the author ran, with its result, or a new one under `tests/e2e/`. Absent → **must-fix**, not a nice-to-have; offline-green is structurally incapable of proving a blackbox still behaves as captured (`[[e2e-evidence-is-a-contributor-deliverable]]`). Three traps to avoid:
+  - **Mandatory e2e-evidence check (since PR #675).** If the PR touches a **Flow surface**, it owes an e2e test — one the author ran, with its result, or a new one under `tests/e2e/`. Offline-green is structurally incapable of proving a blackbox still behaves as captured (`[[e2e-evidence-is-a-contributor-deliverable]]`). Score it:
+    - **Absent, with no reason given → D4 RED**, which forces consensus RED under § 5 step 3. **Deliberately not YELLOW:** a YELLOW is dismissable under § 5 step 8 with a one-line justification, and *"the live runs in the PR body are good enough"* is exactly the justification someone will write — which reopens the substitution this check exists to close, through the escape valve rather than through the wording.
+    - **Absent, but the author states why they could not run it** (no Flow account, no credits for a video path) → **YELLOW**, blocked on a maintainer run. That is the documented exemption, not an evasion; name it in the report so the maintainer knows what to run.
+    - **Present → verify it, do not take it on trust.** Cite the `tests/e2e/` **file:line**, confirm it exists at `REVIEWED_SHA` (`git show $REVIEWED_SHA:<path>`), and confirm it exercises the surface this PR changed. A named test that passes but never touches the changed code path is the `[[pr-must-verify-on-affected-surface]]` failure with an e2e label on it.
+
+    Three traps to avoid:
     - **A live-verify ledger is not an e2e test.** A PR body describing live runs satisfies `[[verification-ledger-5-layer]]`, not this. It is a narrative record of one run; an e2e test is a re-runnable regression. Never record live evidence as satisfying the e2e rule — that substitution was attempted on #669 within an hour of the rule landing.
     - **A BDD `.feature` file is not an e2e test.** It runs offline against fakes.
     - **Scope it honestly.** Docs-only, help-text and exit-code changes touch no Flow surface and are exempt; say so rather than demanding an impossible run.
-    - PRs opened before 2026-09-05 predate the rule — flag it forward-looking, do not hold it against them.
+    - **PRs opened before #675 merged** (`e7a09d8`, 2026-09-05 19:15Z) predate the rule — flag it forward-looking, do not hold it against them. Anchor on the merge, not the calendar day: #669 (11:28Z) and #671 (13:38Z) were both opened that same day, hours before the rule existed, and are exactly the PRs this clause protects.
   - Test pyramid placement? Behavior vs shape? Coverage delta meaningful vs dead?
 - **D5 Memory hygiene & consolidation (NEW v2, refined v2.1):**
   - Inspect `~/.claude/projects/C--development-github-gflow-cli/memory/` (file-based memory — primary source).
