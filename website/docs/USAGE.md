@@ -555,6 +555,13 @@ Options:
                         supported for video. Also on `video i2v`.
 ```
 
+> **Two Flow frontends (#639).** Under the default `GFLOW_CLI_FLOW_HOST=auto`, `t2v` with
+> `--project <id>` runs on Flow's migrated `flow.google.com` host on every account; without
+> `--project` an unmoved account falls back to the labs driver, and a moved account exits 11
+> (`--project` is required there — project creation is not ported). Everything except `t2v`
+> still exits 36 on a moved account. `flow.google.com` forces the migrated composer,
+> `labs.google` switches it off — see [CONFIGURATION § GFLOW_CLI_FLOW_HOST](CONFIGURATION.md#gflow_cli_flow_host).
+
 ```bash
 gflow video t2v "Slow cinematic push-in toward a candle flame"
 gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 --out-dir ./out

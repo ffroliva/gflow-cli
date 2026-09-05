@@ -159,13 +159,13 @@ async def get_ui_driver(
       * ``AGENTIC`` — switch the composer to agentic, verify, and raise
         ``UiModeUnavailableError`` if the arm can't be reached.
 
-    Call per generation — the cohort flaps per page load, so a cached driver
-    goes stale on the next navigation / batch item.
+    Call per generation — the UI arm can change between page loads, so a cached
+    driver goes stale on the next navigation / batch item.
     """
     # #639: the migrated flow.google.com frontend renders none of the controls
     # gflow drives, so every probe below is doomed before it starts. Finding that
-    # out the slow way costs ~54 s per attempt -- and because the rollout flaps and
-    # callers retry on exit 36, that is paid on every attempt of a retry loop.
+    # out the slow way costs ~54 s per attempt, paid on every run until the caller
+    # reads the (non-retryable) exit 36 and switches route.
     #
     # This entry check catches the case where the page ALREADY sits on the migrated
     # origin. It is deliberately not the only one: the hop to flow.google.com is a
