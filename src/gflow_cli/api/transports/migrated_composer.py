@@ -1,4 +1,5 @@
-"""Drive Flow's migrated ``flow.google.com`` editor (Angular Material) — t2v first.
+"""Drive Flow's migrated ``flow.google.com`` editor (Angular Material) — t2v, and i2v
+from a local start frame.
 
 Google is moving accounts from ``labs.google/fx/tools/flow`` onto
 ``flow.google.com`` (issue #639). The migrated app is the same product on a
@@ -7,10 +8,12 @@ the settings popover is a ``cdk-overlay`` pane of ``[role=radiogroup]`` /
 ``[role=radio]`` buttons instead of ``role=menu`` tabs, the model picker is a
 ``[role=menu]`` of ``[role=menuitem]``s, and the composer is a ``contenteditable``
 (the ``textarea`` next to it is not clickable). On the wire it is ``batchexecute``,
-not aisandbox REST: submit is rpcid ``YhhmEf``, the app then polls ``jwpduf`` every
-5 s by itself and fetches the result with ``as29s`` — so this driver **observes**
-the page's own traffic and adds none. Recon with measurements:
-``docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md``.
+not aisandbox REST: submit is rpcid ``YhhmEf`` (t2v) or ``eb1hJf`` (i2v), the app
+then polls ``jwpduf`` every 5 s by itself and fetches the result with ``as29s`` — so
+this driver **observes** the page's own traffic and adds none. A start frame goes in
+through the editor's own upload (``maseQ``) and its library picker. Recon with
+measurements: ``docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md``
+and ``docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md``.
 
 Every anchor here is structural or a Material Symbols ligature; the only text
 matched is a numeric token (``8s``, ``x2``) or a product name (``Veo 3.1 - Lite``).
@@ -43,6 +46,8 @@ from gflow_cli.api.video import Aspect, Mode, VideoModel, VideoResult, VideoStar
 from gflow_cli.errors import (
     ConfigurationError,
     FlowHostMigratedError,
+    MediaUploadRejectedError,
+    ReferenceNotFoundError,
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
@@ -75,8 +80,32 @@ DIALOG = "[role='dialog']"
 DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
 DIALOG_DISMISS_S = 3.0
 
-SUBMIT_RPC = "YhhmEf"
+#: ``YhhmEf`` is the text-to-video submit; ``eb1hJf`` the image-to-video one (a bound
+#: Start chip switches the app between them — 2026-09-05 frames spike).
+SUBMIT_RPCS = ("YhhmEf", "eb1hJf")
 STATUS_RPCS = ("jwpduf", "as29s")
+UPLOAD_RPC = "maseQ"
+I2V_KEY = re.compile(r"_i2v_")
+T2V_KEY = re.compile(r"_t2v_")
+MODEL_KEY = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*_(?:t2v|i2v)_[a-z0-9_]+")
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+
+# --- i2v: the toolbar upload path and the Frames picker ---------------------------
+#: The toolbar `+` — the only add affordance OUTSIDE the prompt box (the box has its
+#: own `add` icons). XPath because CSS cannot express "no such ancestor".
+TOOLBAR_ADD = "xpath=//button[.//mat-icon[normalize-space()='add']][not(ancestor::flow-prompt-box)]"
+UPLOAD_MENU_ITEM = f"{OVERLAY} {MENU_ITEM}:has(mat-icon:text-is('upload'))"
+EMPTY_CHIP = "flow-prompt-box button.empty-chip"
+BOUND_CHIP = "flow-prompt-box button.chip-container:has(img)"
+PICKER = "flow-add-menu-popover-content"
+PICKER_SEARCH = "input[type='text']"
+PICKER_OPTION = "button.asset-item[role='option']"
+FRAME_PICKER_OPEN_S = 8.0
+#: ``maseQ`` answered in 1–3 s for a 120 KB PNG; a 20 MB file on a slow link needs more.
+FRAME_UPLOAD_S = 60.0
+FRAME_COMMIT_HIDDEN_S = 15.0
+FRAME_THUMB_VISIBLE_S = 5.0
+ATTACH_STAGE_S = 90.0
 #: The submit reply arrived 4.0–4.6 s after the click in both measured runs.
 SUBMIT_REPLY_BUDGET_S = 60.0
 # Angular enables the arrow_forward button ~100 ms after `insert_text` lands in the
@@ -202,6 +231,54 @@ def _ligature(page: Any, name: str) -> Any:
 def _rpcid(url: str) -> str | None:
     m = re.search(r"[?&]rpcids=([A-Za-z0-9]+)", url)
     return m.group(1) if m else None
+
+
+def _first_uuid(text: str) -> str | None:
+    """The first UUID in a ``batchexecute`` reply — for ``maseQ`` that is the new
+    media id (``[media_id, project_id, …]``, measured 2026-09-05)."""
+    for rid, payload in parse_frames(text):
+        if rid != UPLOAD_RPC:
+            continue
+        m = UUID_RE.search(str(payload))
+        if m:
+            return m.group(0)
+    return None
+
+
+def _post_data(request: Any) -> str:
+    """The POST body as text; a binary body (an upload) decodes lossily rather than
+    raising out of a listener."""
+    try:
+        body = request.post_data
+    except Exception:  # noqa: BLE001 - Playwright raises on undecodable bodies
+        try:
+            raw = request.post_data_buffer
+        except Exception:  # noqa: BLE001
+            return ""
+        return raw.decode("utf-8", "replace") if raw else ""
+    return str(body or "")
+
+
+def _i2v_body_problem(body: str, rpcid: str, media_id: str) -> str | None:
+    """Why this submit body is NOT the image-to-video generation the user asked for,
+    or ``None``. A t2v key means the chip was empty at submit time; a body without
+    the uploaded id means the picker bound some other asset."""
+    key = MODEL_KEY.search(body)
+    key_text = key.group(0) if key else "no model key"
+    if T2V_KEY.search(body) or not I2V_KEY.search(body):
+        return (
+            f"migrated host: the submit went out on {rpcid} with a text-to-video model key "
+            f"({key_text}) for an image-to-video (i2v) request — the start frame was not "
+            "bound when the app submitted (the labs #125 shape on this host)"
+        )
+    if media_id not in body:
+        other = [u for u in UUID_RE.findall(body) if u.lower() != media_id.lower()]
+        return (
+            f"migrated host: the {rpcid} submit body does not carry the uploaded start "
+            f"frame {media_id} (ids in the body: {', '.join(other[:4]) or 'none'}) — the "
+            "picker bound a different asset"
+        )
+    return None
 
 
 class MigratedComposer:
@@ -495,6 +572,216 @@ class MigratedComposer:
         await items.nth(hits[0]).click(timeout=4000)
         log.info("migrated.model_selected", model=offered[hits[0]], requested=model.value)
 
+    # --- start frame (i2v) ------------------------------------------------------
+
+    async def attach_start_frame(self, page: Page, project_id: str, image_path: Path) -> str:
+        """Upload ``image_path`` through the editor's own Upload entry, bind it on the
+        Start chip by file name, and return the media id the app's ``maseQ`` reply
+        named for it — the id the submit body is then asserted to carry.
+
+        The upload is permanent in the Flow project (it lands in the library like any
+        other asset). The picker is library-only and searched by display name; an
+        upload is listed under its file name, and two uploads of one file list twice —
+        the picker's default sort puts the newest first, and the submit-body check is
+        what catches a wrong pick.
+        """
+        await self._preflight_image(image_path)
+        try:
+            return await asyncio.wait_for(self._attach(page, image_path), timeout=ATTACH_STAGE_S)
+        except TimeoutError:
+            raise TransportTimeoutError(
+                detail=(
+                    f"migrated host: attaching the start frame did not finish within "
+                    f"{ATTACH_STAGE_S:.0f}s (project {project_id})"
+                ),
+            ) from None
+
+    async def _attach(self, page: Page, image_path: Path) -> str:
+        media_id = await self._upload_via_toolbar(page, image_path)
+        await self._pick_frame_by_name(page, image_path.name, media_id)
+        return media_id
+
+    @staticmethod
+    async def _preflight_image(image_path: Path) -> None:
+        """The labs upload's own checks, before any click: exists, under the size
+        cap, and a real image by its header (so a resolved path never exfiltrates
+        an arbitrary local file into a Flow project)."""
+        from gflow_cli.api.client import (  # noqa: PLC0415 - cycle
+            MAX_IMAGE_BYTES,
+            _is_supported_image_header,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        if not image_path.exists():
+            raise FileNotFoundError(image_path)
+        size = image_path.stat().st_size
+        if size > MAX_IMAGE_BYTES:
+            msg = (
+                f"Image too large: {size / 1_048_576:.1f} MB exceeds "
+                f"{MAX_IMAGE_BYTES // 1_048_576} MB limit"
+            )
+            raise ValueError(msg)
+
+        def _read_header(p: Path) -> bytes:
+            with p.open("rb") as fh:
+                return fh.read(12)
+
+        if not _is_supported_image_header(await asyncio.to_thread(_read_header, image_path)):
+            msg = f"Not a supported image format: {image_path.name}"
+            raise ValueError(msg)
+
+    async def _upload_via_toolbar(self, page: Page, image_path: Path) -> str:
+        """Toolbar ``+`` → the ``upload`` menu item → the file chooser → the app's own
+        ``maseQ`` upload, observed for the media id it returns. Nothing is replayed."""
+        loop = asyncio.get_running_loop()
+        reply: asyncio.Future[tuple[int, str]] = loop.create_future()
+        route = f"batchexecute:{UPLOAD_RPC}"
+
+        async def on_response(response: Any) -> None:
+            url = str(getattr(response, "url", ""))
+            if "batchexecute" not in url or _rpcid(url) != UPLOAD_RPC or reply.done():
+                return
+            status = int(getattr(response, "status", 0) or 0)
+            text = ""
+            if status == 200:
+                try:
+                    text = await response.text()
+                except Exception:  # noqa: BLE001 - an aborted body is a rejected upload
+                    text = ""
+            if not reply.done():
+                reply.set_result((status, text))
+
+        page.on("response", on_response)
+        try:
+            add = page.locator(TOOLBAR_ADD).first
+            if not await add.count():
+                raise UiSelectorDriftError(
+                    detail=(
+                        "migrated host: the toolbar add button (mat-icon 'add' outside "
+                        "flow-prompt-box) is missing (host=migrated)"
+                    ),
+                )
+            await add.click(timeout=5000)
+            item = page.locator(UPLOAD_MENU_ITEM).first
+            try:
+                await item.wait_for(state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000))
+            except Exception as e:
+                raise UiSelectorDriftError(
+                    detail=(
+                        "migrated host: the toolbar menu rendered no upload entry "
+                        f"({MENU_ITEM} with the 'upload' ligature) within "
+                        f"{FRAME_PICKER_OPEN_S:.0f}s (host=migrated)"
+                    ),
+                ) from e
+            try:
+                async with page.expect_file_chooser(
+                    timeout=int(FRAME_PICKER_OPEN_S * 1000)
+                ) as fc_info:
+                    await item.click(timeout=4000)
+                chooser = await fc_info.value
+            except Exception as e:
+                raise UiSelectorDriftError(
+                    detail=(
+                        "migrated host: the upload entry opened no file chooser within "
+                        f"{FRAME_PICKER_OPEN_S:.0f}s (host=migrated)"
+                    ),
+                ) from e
+            await chooser.set_files(str(image_path))
+            try:
+                status, text = await asyncio.wait_for(reply, timeout=FRAME_UPLOAD_S)
+            except TimeoutError:
+                raise MediaUploadRejectedError(
+                    detail=(
+                        f"migrated host: no {UPLOAD_RPC} reply within {FRAME_UPLOAD_S:.0f}s "
+                        "of choosing the file — the upload never reached Flow or was dropped"
+                    ),
+                    route=route,
+                ) from None
+            if status != 200:
+                raise MediaUploadRejectedError(
+                    detail=f"migrated host: the upload rpc {UPLOAD_RPC} answered HTTP {status}",
+                    status=status,
+                    route=route,
+                )
+            media_id = _first_uuid(text)
+            if media_id is None:
+                raise MediaUploadRejectedError(
+                    detail=f"migrated host: {UPLOAD_RPC} answered 200 without a media id",
+                    status=status,
+                    route=route,
+                )
+            log.info("migrated.frame_uploaded", media_id=media_id, status=status)
+            return media_id
+        finally:
+            page.remove_listener("response", on_response)
+
+    async def _pick_frame_by_name(self, page: Page, name: str, media_id: str) -> None:
+        """Start chip → the library picker → search by display name → first option →
+        the chip must now hold a thumbnail. An unbound chip is refused here: an empty
+        Frames submit goes out as text-to-video (the labs #125 shape on this host)."""
+        chip = page.locator(EMPTY_CHIP).first
+        if not await chip.count():
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: no empty Start chip ({EMPTY_CHIP}) to bind the frame "
+                    "on — is the Frames submode selected? (host=migrated)"
+                ),
+            )
+        await chip.click(timeout=4000)
+        picker = page.locator(OVERLAY).filter(has=page.locator(PICKER)).last
+        search = picker.locator(PICKER_SEARCH).first
+        try:
+            await search.wait_for(state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000))
+        except Exception as e:
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: the frame picker ({PICKER}) did not open within "
+                    f"{FRAME_PICKER_OPEN_S:.0f}s of clicking the Start chip (host=migrated)"
+                ),
+            ) from e
+        await search.click(timeout=4000)
+        await page.keyboard.insert_text(name)
+        options = picker.locator(PICKER_OPTION).filter(has_text=_exact(name))
+        try:
+            await options.first.wait_for(state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000))
+        except Exception as e:
+            await page.keyboard.press("Escape")
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: the frame picker lists no asset named {name!r} within "
+                    f"{FRAME_PICKER_OPEN_S:.0f}s of the upload — uploads are listed under "
+                    "their file name, and the picker search returned nothing"
+                ),
+            ) from e
+        await options.first.click(timeout=4000)
+        try:
+            # Re-queried: the picker overlay is detached after the pick, and the
+            # hidden-wait must see the DOM as it is now, not the pane resolved above.
+            await (
+                page.locator(OVERLAY)
+                .filter(has=page.locator(PICKER))
+                .first.wait_for(state="hidden", timeout=int(FRAME_COMMIT_HIDDEN_S * 1000))
+            )
+        except Exception as e:
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: the frame picker stayed open {FRAME_COMMIT_HIDDEN_S:.0f}s "
+                    f"after picking {name!r} (host=migrated)"
+                ),
+            ) from e
+        try:
+            await page.locator(BOUND_CHIP).first.wait_for(
+                state="visible", timeout=int(FRAME_THUMB_VISIBLE_S * 1000)
+            )
+        except Exception as e:
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: the Start chip did not bind {name!r} — no "
+                    f"{BOUND_CHIP} within {FRAME_THUMB_VISIBLE_S:.0f}s of the pick; "
+                    "refusing to submit what would go out as text-to-video (host=migrated)"
+                ),
+            ) from e
+        log.info("migrated.frame_bound", media_id=media_id)
+
     # --- prompt + submit --------------------------------------------------------
 
     async def send_prompt(self, page: Page, prompt: str) -> None:
@@ -516,12 +803,31 @@ class MigratedComposer:
         poll_timeout_s: float,
         on_started: VideoStartedCallback | None,
         project_id: str | None,
+        expect_media_id: str | None = None,
     ) -> GenerationRecord:
-        """Click submit, then read the page's own ``YhhmEf`` / ``jwpduf`` / ``as29s``
-        replies until the record is terminal. Fires ``on_started`` as soon as the
-        submit reply names the media id — before the poll, as the labs path does."""
+        """Click submit, then read the page's own ``YhhmEf``/``eb1hJf`` / ``jwpduf`` /
+        ``as29s`` replies until the record is terminal. Fires ``on_started`` as soon
+        as the submit reply names the media id — before the poll, as the labs path does.
+
+        ``expect_media_id`` (i2v) inspects the submit *request* the app sends: its body
+        must carry that id and an ``_i2v_`` model key, else the run is a
+        :class:`WireFormatError` — the generation the user asked for is not the one
+        Flow is billing."""
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
+        route_error: asyncio.Future[WireFormatError] = loop.create_future()
+
+        def on_request(request: Any) -> None:
+            url = str(getattr(request, "url", ""))
+            rpcid = _rpcid(url) if "batchexecute" in url else None
+            if rpcid not in SUBMIT_RPCS or route_error.done() or expect_media_id is None:
+                return
+            problem = _i2v_body_problem(_post_data(request), rpcid, expect_media_id)
+            if problem is not None:
+                route_error.set_result(
+                    WireFormatError(detail=problem, route=f"batchexecute:{rpcid}")
+                )
+
         # ``terminal``: failed, or done WITH the signed URL. ``done_no_url``: the
         # first status-3 record that has no URL yet (a poll beats the result RPC).
         terminal: asyncio.Future[GenerationRecord] = loop.create_future()
@@ -538,14 +844,14 @@ class MigratedComposer:
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
             rpcid = _rpcid(url) if "batchexecute" in url else None
-            if rpcid != SUBMIT_RPC and rpcid not in STATUS_RPCS:
+            if rpcid not in SUBMIT_RPCS and rpcid not in STATUS_RPCS:
                 return
             try:
                 text = await response.text()
             except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
                 return
             for rid, payload in parse_frames(text):
-                if rid == SUBMIT_RPC and not submitted.done():
+                if rid in SUBMIT_RPCS and not submitted.done():
                     try:
                         rec = generation_record(rid, payload)
                     except WireFormatError as exc:
@@ -572,6 +878,8 @@ class MigratedComposer:
                     _settle(rec)
 
         page.on("response", on_response)
+        if expect_media_id is not None:
+            page.on("request", on_request)
         try:
             submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
             if not await submit.count():
@@ -595,17 +903,22 @@ class MigratedComposer:
             deadline = time.monotonic() + poll_timeout_s
             await submit.click(timeout=5000)
             log.info("migrated.submit_clicked")
-            try:
-                first = await asyncio.wait_for(
-                    submitted, timeout=min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s)
-                )
-            except TimeoutError:
+            budget = min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s)
+            await asyncio.wait(
+                {submitted, route_error}, timeout=budget, return_when=asyncio.FIRST_COMPLETED
+            )
+            if route_error.done():
+                # The request is inspected before its reply lands, so a wrong body is
+                # named as such and not as whatever the reply then says.
+                raise route_error.result()
+            if not submitted.done():
                 raise TransportTimeoutError(
                     detail=(
-                        f"migrated host: no {SUBMIT_RPC} reply within "
-                        f"{min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s):.0f}s of clicking submit"
+                        f"migrated host: no {'/'.join(SUBMIT_RPCS)} reply within "
+                        f"{budget:.0f}s of clicking submit"
                     ),
-                ) from None
+                )
+            first = submitted.result()
             started = VideoStarted(
                 media_id=first.media_id,
                 project_id=project_id or first.project_id,
@@ -628,6 +941,8 @@ class MigratedComposer:
             return final
         finally:
             page.remove_listener("response", on_response)
+            if expect_media_id is not None:
+                page.remove_listener("request", on_request)
 
     @staticmethod
     async def _await_terminal(
@@ -778,9 +1093,17 @@ async def run_video(
     composer = MigratedComposer()
     await composer.ensure_editor(page, pid)
     await composer.apply_video_settings(page, request)
+    media_id: str | None = None
+    frame = request.start_image
+    if request.mode is Mode.I2V and frame is not None:
+        media_id = await composer.attach_start_frame(page, pid, frame)
     await composer.send_prompt(page, request.prompt)
     record = await composer.submit_and_observe(
-        page, poll_timeout_s=poll_timeout_s, on_started=on_started, project_id=pid
+        page,
+        poll_timeout_s=poll_timeout_s,
+        on_started=on_started,
+        project_id=pid,
+        expect_media_id=media_id,
     )
     status = VideoStatus(
         media_id=record.media_id,
