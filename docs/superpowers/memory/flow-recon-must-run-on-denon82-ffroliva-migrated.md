@@ -1,6 +1,6 @@
 ---
 name: flow-recon-must-run-on-denon82-ffroliva-migrated
-description: "The ffroliva account is FULLY migrated to flow.google.com (7/7 loads, not a flap) — every UI-automation spike on it dies with FlowHostMigratedError. Run live DOM recon on denon82. Also: a capability claim without the frontend named is meaningless now."
+description: "Both maintainer accounts are FULLY migrated to flow.google.com (one-way, not a flap) — there is no labs.google account left, so labs-side behaviour is cohort-external. Recon and live-verification run on either account through the migrated composer, which drives t2v and i2v-from-a-local-frame; unported forms still exit 36. Also: a capability claim without the frontend AND profile named is meaningless."
 ---
 
 **Measured 2026-09-03.** Running `scripts/dev/capture_video_model_capability_matrix.py`
@@ -29,19 +29,36 @@ Two things NOT to re-derive: the `has_labs_next_auth: false` in the headless-htt
 property of that experiment's cookie filter, not of the account; and `pinhole` is Flow's i18n
 namespace (`pinhole_about_flow` → "About Flow"), not a migration codename.
 
-**How to apply:**
-- Any live DOM / UI-automation recon or live-verification → **use `denon82`**
-  (pt-BR; expect localized text, ligature-keyed selectors still work — see
-  [[flow-locale-leak-icon-ligatures]]). Do not burn attempts on `ffroliva`.
-- `ffroliva` is still fine for REST-path work (`gflow project list` etc. returned
-  50 projects normally) — the migration kills the *frontend gflow drives*, not the
-  aisandbox REST surface. See [[rest-path-capability-matrix]].
-- If a spike must run on `ffroliva`, expect exit 36 immediately and treat it as
-  environmental, not selector drift.
+**How to apply** (rewritten 2026-09-05 after #679 — the original bullets predate gflow
+having a migrated driver at all, and read as "the new host cannot be driven"):
+- Live DOM recon and live-verification run on **either** account, through the migrated
+  composer — that is *browser-driven* work; the REST bullet below is where a moved
+  account still fails. Prefer `denon82` (pt-BR) when the question is locale invariance — localized
+  text with ligature-keyed selectors is the point of that account (see
+  [[flow-locale-leak-icon-ligatures]]); prefer `ffroliva` (en-GB) for a first capture.
+  Verify a generation path on **both** before calling it done.
+- A **video** spike on either account exits 36 only for a form the migrated composer has
+  not ported (today: an end frame, a frame by media UUID or `@Name`, r2v). For a ported
+  form, exit 36 is a real regression to investigate, not the environment. Every other
+  surface — image, characters, scenes, extend, instructions, tools — has no migrated
+  driver at all; how each one *fails* there is the next bullet, not this one.
+- Both accounts are fine for **mint-free** REST-path work (`gflow project list`,
+  `gflow data …`) — the migration changed the *frontend*, not the aisandbox REST
+  surface. See [[rest-path-capability-matrix]]. A REST path that **mints a reCAPTCHA
+  token first** (image t2i/i2i, upscale, extend) is *not* fine on a moved account: the
+  mint runs on the pool's bootstrap page, which is the `flow.google.com` grid there, so
+  it fails before any transport guard can classify it — surfacing as a bare exit-1
+  `RecaptchaError` through v0.68.0 (#673). Measured by the session that fixed it; PR
+  #678 turns that into the exit 36 it should always have been.
+- **Labs-side** behaviour is what is now unreachable: no maintainer account is left on
+  `labs.google`, so a labs-only claim is cohort-external — verify via a contributor or
+  record it NOT verified.
 
 **The bigger consequence — name the frontend, or the claim is meaningless.**
-There are now two Flow frontends with different capability matrices: the
-`labs.google` one gflow drives, and the migrated `flow.google.com` one it cannot.
+There are two Flow frontends with different capability matrices, and gflow now drives
+**both**: `labs.google` through `ui_automation`, and `flow.google.com` through the
+migrated composer (text-to-video since #664, image-to-video from a local start frame
+since #679; the rest of the matrix still exits 36 there).
 "Flow's UI shows X" no longer identifies a fact. This is exactly how external
 PR #650 was first misread. It asserted Veo 3.1 gained 4s/6s/8s duration tabs and
 relaxed `supports_duration()` to a constant `True`, and the migrated frontend looked
@@ -56,3 +73,11 @@ first question is *"which host were you on?"*, before any code discussion. See
 [[unreproducible-bug-hand-to-reporter]] and [[pr-must-verify-on-affected-surface]].
 
 **2026-09-05 08:14Z — denon82 is moved too (3/3 loads land on flow.google.com, still authenticated). Both maintainer accounts are on the new host; there is NO labs.google account left for labs-side recon or verification. Labs-only behaviour (the labs duration guard, labs selectors) is now cohort-external — verify via a contributor or record NOT verified. The migrated composer (#664) is the driven path for both accounts.
+
+**2026-09-05 20:43Z — this file's advice was over-broad and is corrected above.** It told
+agents to expect exit 36 "immediately" on `ffroliva` and described the migrated frontend as
+one gflow "cannot" drive. Both were true when written (2026-09-03/04, before #664) and false
+after it: v0.67.0 drove t2v there, and #679 drove i2v from a local start frame — live-verified
+on **both** accounts, `docs/LIVE_VERIFICATION_v0.69.0.md`. What survives unchanged is the
+measurement this file exists for: the handoff is one-way per account, and naming the host
+without naming the profile still does not identify a fact.
