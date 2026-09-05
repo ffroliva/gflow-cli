@@ -49,7 +49,8 @@ having a migrated driver at all, and read as "the new host cannot be driven"):
   mint runs on the pool's bootstrap page, which is the `flow.google.com` grid there, so
   it fails before any transport guard can classify it — surfacing as a bare exit-1
   `RecaptchaError` through v0.68.0 (#673). Measured by the session that fixed it; PR
-  #678 turns that into the exit 36 it should always have been.
+  #678 turned that into the exit 36 it should always have been — the guard now runs at
+  the mint too, so the failure is classified before `discover_site_key` is reached.
 - **Labs-side** behaviour is what is now unreachable: no maintainer account is left on
   `labs.google`, so a labs-only claim is cohort-external — verify via a contributor or
   record it NOT verified.
