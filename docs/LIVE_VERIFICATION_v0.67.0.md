@@ -60,6 +60,34 @@ resolved (ligatures, roles, class, numeric tokens) — no text label was matched
 - `DETAILS[10]` is the poster JPEG, `MEDIA_INFO[0][8]` the mp4 → mapping swapped,
   magic verified.
 
+## #650 — `--duration` on the Veo 3.1 models (verified on the migrated host, $0)
+
+Both maintainer accounts are on `flow.google.com` as of 2026-09-05 (the second one
+moved overnight: 3/3 loads), so the labs-side duration guard is **cohort-external**.
+Per model on the new host, measured with `scripts/dev/spike_migrated_duration_by_model.py`
+(read-only):
+
+| Model | Duration row | Resolution row | Credits (8 s, x1) |
+|---|---|---|---|
+| Omni 1.1 Flash | `4s 6s 8s 10s` | `360p 720p` | 12 |
+| Veo 3.1 – Lite | — | — | 10 |
+| Veo 3.1 – Fast | — | — | 20 |
+| Veo 3.1 – Quality | — | — | 100 |
+
+Entrypoint run: `gflow video t2v "…" --model veo-fast --duration 6 --aspect 16:9 --project <id> --json`
+on the flagged profile → **exit 11** in 9.7 s, `ConfigurationError`:
+*"the migrated Flow host renders no 'duration' control offering '6s' on this account
+and model (4 option groups shown) — drop the option or pick a model that offers it"*,
+`retryable: false`, `migrated.dispatch → editor_ready` and nothing after — no submit, no
+credits, no file. That is the #650 contract ("control rendered?" decides, pre-submit,
+at zero cost). The **positive** Veo 4/6/8 path remains NOT verified here: no maintainer
+cohort renders it on either host.
+
+The first attempt of this run exposed a driver bug on the `--model` path (the settings
+pane resolved to a detached menu overlay after the model switch, reporting "no 'aspect'
+control … 0 option groups"); fixed in the same change and pinned by
+`test_axes_still_resolve_after_a_model_switch`.
+
 ## NOT verified (recorded, not omitted)
 
 - `gflow image t2i` and every other command on the migrated host — not ported;

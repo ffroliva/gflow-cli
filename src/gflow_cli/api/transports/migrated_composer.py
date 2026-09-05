@@ -169,7 +169,11 @@ class MigratedComposer:
                 detail=f"migrated host: settings trigger ({READY_ANCHOR}) missing (host=migrated)"
             )
         await trigger.click(timeout=5000)
-        pane = page.locator(OVERLAY).last
+        # THE overlay that holds the option groups — not `.last`: once the model
+        # menu (a second overlay) has opened and closed, a detached menu pane can
+        # still be the last one in the DOM, and every axis after `--model` then
+        # reads "0 option groups" (measured 2026-09-05, $0 run).
+        pane = page.locator(OVERLAY).filter(has=page.locator(RADIOGROUP)).last
         try:
             await pane.locator(RADIOGROUP).first.wait_for(state="visible", timeout=8000)
         except Exception as e:
