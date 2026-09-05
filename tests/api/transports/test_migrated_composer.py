@@ -88,6 +88,10 @@ class Dom:
         default_factory=lambda: ["01-pre-submit.png", "Blue sphere on table"]
     )
     picker_query: str = ""
+    picker_searches: int = 0
+    # A fresh upload is indexed server-side: the picker listed it only on a later search
+    # on a project with 30+ assets (denon82, 2026-09-05). 0 = listed at once.
+    picker_lists_after_searches: int = 0
     picked: list[str] = field(default_factory=list)
     chip_binds: bool = True  # the option click flips the Start chip to a bound one
     chip_bound: bool = False
@@ -318,6 +322,7 @@ class FakeKeyboard:
         dom = self.page.dom
         if dom.picker_open:
             dom.picker_query += text
+            dom.picker_searches += 1
         else:
             dom.prompt += text
 
@@ -397,8 +402,9 @@ class FakePage:
         if css == "button.asset-item[role='option']":
             inside = scope is not None and scope.items == ["picker"]
             q = dom.picker_query.casefold()
+            indexed = dom.picker_searches > dom.picker_lists_after_searches
             opts = [o for o in dom.picker_options if q in o.casefold()] if inside else []
-            return FakeLocator(self, "picker_option", opts)
+            return FakeLocator(self, "picker_option", opts if indexed else [])
         if css == "[role='dialog']":
             return FakeLocator(self, "dialog", ["dialog"] if dom.dialog_present else [])
         if css == "[role='dialog'] button:has(mat-icon:text-is('close'))":
@@ -1323,6 +1329,38 @@ async def test_attach_is_selector_drift_when_the_chip_stays_empty_after_the_pick
     with pytest.raises(UiSelectorDriftError, match="chip"):
         await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
     assert page.dom.picked == ["01-pre-submit.png"]  # the pick happened; the bind did not
+
+
+async def test_attach_searches_again_when_the_upload_is_not_indexed_yet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """denon82, 2026-09-05: two runs missed the fresh upload within 8 s on a project
+    with 30+ assets and a third listed it — the picker search is server-side. A
+    miss is re-searched from a fresh popover before it is a refusal."""
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.05)
+    monkeypatch.setattr(migrated_composer, "FRAME_SEARCH_RETRY_PAUSE_S", 0.01)
+    page = FakePage()
+    page.dom.picker_lists_after_searches = 1  # listed on the second search only
+    media_id = await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert media_id == MEDIA_UP and page.dom.picker_searches == 2 and page.dom.chip_bound
+
+
+async def test_attach_gives_up_after_the_search_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.05)
+    monkeypatch.setattr(migrated_composer, "FRAME_SEARCH_RETRY_PAUSE_S", 0.01)
+    page = FakePage()
+    page.dom.picker_lists_after_searches = 99
+    with pytest.raises(ReferenceNotFoundError, match="nothing"):
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert page.dom.picker_searches == migrated_composer.FRAME_SEARCH_ATTEMPTS
 
 
 async def test_attach_picks_the_first_option_when_names_repeat(tmp_path: Path) -> None:

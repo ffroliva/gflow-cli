@@ -101,6 +101,11 @@ PICKER = "flow-add-menu-popover-content"
 PICKER_SEARCH = "input[type='text']"
 PICKER_OPTION = "button.asset-item[role='option']"
 FRAME_PICKER_OPEN_S = 8.0
+#: The picker search is server-side (``UpteDb``) and a fresh upload is not always
+#: indexed by the first query: on 2026-09-05 a project holding 30+ assets missed it
+#: twice within 8 s and listed it on the third search. Each attempt reopens the popover.
+FRAME_SEARCH_ATTEMPTS = 3
+FRAME_SEARCH_RETRY_PAUSE_S = 2.0
 #: ``maseQ`` answered in 1–3 s for a 120 KB PNG; a 20 MB file on a slow link needs more.
 FRAME_UPLOAD_S = 60.0
 FRAME_COMMIT_HIDDEN_S = 15.0
@@ -714,10 +719,9 @@ class MigratedComposer:
         finally:
             page.remove_listener("response", on_response)
 
-    async def _pick_frame_by_name(self, page: Page, name: str, media_id: str) -> None:
-        """Start chip → the library picker → search by display name → first option →
-        the chip must now hold a thumbnail. An unbound chip is refused here: an empty
-        Frames submit goes out as text-to-video (the labs #125 shape on this host)."""
+    @staticmethod
+    async def _open_frame_picker(page: Page) -> Any:
+        """Click the empty Start chip and wait for the library picker's search box."""
         chip = page.locator(EMPTY_CHIP).first
         if not await chip.count():
             raise UiSelectorDriftError(
@@ -728,9 +732,10 @@ class MigratedComposer:
             )
         await chip.click(timeout=4000)
         picker = page.locator(OVERLAY).filter(has=page.locator(PICKER)).last
-        search = picker.locator(PICKER_SEARCH).first
         try:
-            await search.wait_for(state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000))
+            await picker.locator(PICKER_SEARCH).first.wait_for(
+                state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000)
+            )
         except Exception as e:
             raise UiSelectorDriftError(
                 detail=(
@@ -738,20 +743,45 @@ class MigratedComposer:
                     f"{FRAME_PICKER_OPEN_S:.0f}s of clicking the Start chip (host=migrated)"
                 ),
             ) from e
-        await search.click(timeout=4000)
-        await page.keyboard.insert_text(name)
-        options = picker.locator(PICKER_OPTION).filter(has_text=_exact(name))
-        try:
-            await options.first.wait_for(state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000))
-        except Exception as e:
-            await page.keyboard.press("Escape")
-            raise ReferenceNotFoundError(
-                detail=(
-                    f"migrated host: the frame picker lists no asset named {name!r} within "
-                    f"{FRAME_PICKER_OPEN_S:.0f}s of the upload — uploads are listed under "
-                    "their file name, and the picker search returned nothing"
-                ),
-            ) from e
+        return picker
+
+    async def _pick_frame_by_name(self, page: Page, name: str, media_id: str) -> None:
+        """Start chip → the library picker → search by display name → first option →
+        the chip must now hold a thumbnail. An unbound chip is refused here: an empty
+        Frames submit goes out as text-to-video (the labs #125 shape on this host)."""
+        options: Any = None
+        for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
+            picker = await self._open_frame_picker(page)
+            search = picker.locator(PICKER_SEARCH).first
+            await search.click(timeout=4000)
+            await page.keyboard.insert_text(name)
+            options = picker.locator(PICKER_OPTION).filter(has_text=_exact(name))
+            try:
+                await options.first.wait_for(
+                    state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000)
+                )
+                break
+            except Exception as e:
+                # What the picker DID list is the diagnostic: the display name an upload
+                # gets is an observation per account, not a contract.
+                listed = [
+                    t.strip() for t in await picker.locator(PICKER_OPTION).all_text_contents()
+                ]
+                await page.keyboard.press("Escape")
+                if attempt < FRAME_SEARCH_ATTEMPTS:
+                    log.info("migrated.frame_search_miss", attempt=attempt, listed=len(listed))
+                    await asyncio.sleep(FRAME_SEARCH_RETRY_PAUSE_S)
+                    continue
+                raise ReferenceNotFoundError(
+                    detail=(
+                        f"migrated host: the frame picker lists no asset named {name!r} after "
+                        f"{FRAME_SEARCH_ATTEMPTS} searches of {FRAME_PICKER_OPEN_S:.0f}s (media "
+                        f"{media_id}) — uploads are expected under their file name; the "
+                        "picker listed for that search: "
+                        f"{', '.join(repr(t) for t in listed[:8]) or 'nothing'}"
+                    ),
+                ) from e
+        assert options is not None  # the loop either broke with options or raised
         await options.first.click(timeout=4000)
         try:
             # Re-queried: the picker overlay is detached after the pick, and the
