@@ -153,7 +153,13 @@ Upon completing Live Verification:
 
 ## Notes
 
-- This gate does not replace `/gflow:check` (offline gates before commit) or
-  `/gflow:doc-review` (release-time doc council) — it fills the gap between them.
+- This gate does not replace `/gflow:check` (offline gates before commit), nor
+  `pytest -m e2e` (the e2e suite against a live profile), nor `/gflow:doc-review`
+  (release-time doc council) — it fills the gap between them.
+- **This skill is not the e2e suite, and does not satisfy the e2e-evidence rule.** It drives
+  commands by hand and writes a narrative ledger to a gitignored `tmp/live-verify/` note; it
+  never runs `pytest -m e2e`. A PR touching a Flow surface owes BOTH: the e2e test is the
+  re-runnable regression, this ledger is the record of what was observed once, live. See
+  `[[e2e-evidence-is-a-contributor-deliverable]]` and CONTRIBUTING § *Test categories*.
 - Testing this skill itself means dry-running it on the next real feature that touches a
   generation path — there is no synthetic self-test for a live-Flow gate.
