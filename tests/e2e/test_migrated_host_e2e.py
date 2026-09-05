@@ -1,0 +1,146 @@
+"""E2E: Flow's migrated ``flow.google.com`` host through the real transport.
+
+Google is moving accounts from labs.google onto flow.google.com (#639). Under the
+default ``GFLOW_CLI_FLOW_HOST=auto`` the new host is where every ``video t2v`` with
+an existing project runs — on moved and unmoved accounts alike — so these tests
+hold for any logged-in profile. They need a project id on that host::
+
+    GFLOW_CLI_E2E_PROFILE=<profile> GFLOW_CLI_E2E_PROJECT=<project-uuid> \\
+        uv run pytest -m e2e tests/e2e/test_migrated_host_e2e.py -v
+
+Cost: the ``e2e_video`` test bills ONE 8 s clip (12 credits at the measured cohort
+rate). The ``e2e_auth`` tests spend nothing — they stop before any submit.
+Live evidence for the shipped build: ``docs/LIVE_VERIFICATION_v0.67.0.md``.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+import structlog
+
+from gflow_cli.api.transports._common import flow_host_kind
+from gflow_cli.api.transports.migrated_composer import MigratedComposer
+from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoResult
+from gflow_cli.config import reset_settings
+from gflow_cli.errors import FlowHostMigratedError
+
+pytestmark = pytest.mark.e2e
+
+_PROJECT_ENV = "GFLOW_CLI_E2E_PROJECT"
+_PROMPT = "a teal origami crane on a wooden table, slow push in"
+_POLL_TIMEOUT_S = 600.0
+
+
+def _project_id() -> str:
+    pid = os.environ.get(_PROJECT_ENV, "").strip()
+    if not pid:
+        pytest.skip(f"{_PROJECT_ENV} must name an existing Flow project id (see module doc)")
+    return pid
+
+
+def _set_flow_host(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
+    if value is None:
+        monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
+    else:
+        monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", value)
+    reset_settings()
+
+
+def _events(capture: structlog.testing.LogCapture, prefix: str) -> list[str]:
+    return [str(e["event"]) for e in capture.entries if str(e["event"]).startswith(prefix)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_auth
+async def test_e2e_migrated_host_serves_this_account(
+    e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """$0: a direct load of flow.google.com/project/<id> renders the migrated
+    editor for this account — moved or not (measured on both kinds 2026-09-05)."""
+    project = _project_id()
+    _set_flow_host(monkeypatch, None)
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(e2e_profile_dir)
+        page = transport._page  # noqa: SLF001 - the e2e reads the live page
+        assert page is not None
+        await MigratedComposer().ensure_editor(page, project, timeout_s=45.0)
+        assert flow_host_kind(page.url) == "migrated", page.url
+        assert await page.locator(".settings-trigger-button").first.count() == 1
+    finally:
+        await transport.teardown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_auth
+async def test_e2e_kill_switch_keeps_exit_36_on_a_moved_account(
+    e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """$0: with GFLOW_CLI_FLOW_HOST=labs.google a MOVED account must still get the
+    distinct exit-36 error (never a selector-drift 23), before any submit.
+    Skips on an unmoved account — there is nothing to switch off there."""
+    project = _project_id()
+    _set_flow_host(monkeypatch, "labs.google")
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(e2e_profile_dir)
+        page = transport._page  # noqa: SLF001
+        assert page is not None
+        if flow_host_kind(page.url) != "migrated":
+            pytest.skip("profile is not on the migrated host; the kill switch has nothing to block")
+        req = GenerateVideoRequest(prompt=_PROMPT, mode=Mode.T2V, aspect=Aspect.LANDSCAPE)
+        with pytest.raises(FlowHostMigratedError) as exc_info:
+            await transport.generate_video(request=req, project_id=project, download=False)
+        assert "GFLOW_CLI_FLOW_HOST" in exc_info.value.remediation_hint
+    finally:
+        await transport.teardown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_video
+async def test_e2e_t2v_runs_on_flow_google_com_by_default(
+    e2e_profile_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """Bills one clip. Under the default routing a t2v with a project is served by
+    the new host on ANY account: the migrated composer must dispatch, observe the
+    submit/status/result replies, and land a real mp4 — the five-layer ledger."""
+    project = _project_id()
+    _set_flow_host(monkeypatch, os.environ.get("GFLOW_CLI_E2E_FLOW_HOST") or None)
+    req = GenerateVideoRequest(
+        prompt=_PROMPT,
+        mode=Mode.T2V,
+        aspect=Aspect.LANDSCAPE,
+        duration=int(os.environ.get("GFLOW_CLI_E2E_VIDEO_DURATION", "8")),
+    )
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(e2e_profile_dir)
+        result: VideoResult = await transport.generate_video(
+            request=req, project_id=project, out_dir=tmp_path, poll_timeout_s=_POLL_TIMEOUT_S
+        )
+    finally:
+        await transport.teardown()
+
+    # 1. The migrated composer handled it — not the labs driver.
+    seen = _events(install_log_capture, "migrated.")
+    for required in ("migrated.dispatch", "migrated.submit_observed", "migrated.result"):
+        assert required in seen, f"{required} missing; migrated events: {seen}"
+    assert not _events(install_log_capture, "ui_driver.migrated_host_bail")
+
+    # 2. Terminal-success contract, same as the labs path.
+    assert result.status.succeeded, result.status
+    assert result.status.media_id and result.flow_operation_id
+    assert result.project_id == project
+
+    # 3. File-on-disk: an mp4 with its container magic, not a poster JPEG.
+    assert result.local_path is not None and result.local_path.exists()
+    body = result.local_path.read_bytes()
+    assert body[4:8] == b"ftyp", body[:12]
+    assert len(body) > 100_000, len(body)

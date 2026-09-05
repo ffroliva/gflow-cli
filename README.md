@@ -123,7 +123,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 **Current transport:** `ui_automation` drives Flow through a persistent Playwright Chromium profile. It is production-stable and verified end-to-end every release (see the per-release `LIVE_VERIFICATION_*` evidence files).
 
-**Two Flow frontends:** Google is moving accounts from `labs.google` onto `flow.google.com` ([#639](https://github.com/ffroliva/gflow-cli/issues/639)) — same product, different widget toolkit and wire protocol (`batchexecute` instead of `aisandbox-pa`). gflow routes a moved account to its migrated composer automatically (`GFLOW_CLI_FLOW_HOST`, see [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)); text-to-video is ported, the rest of the matrix is in progress.
+**Two Flow frontends:** Google is moving accounts from `labs.google` onto `flow.google.com` ([#639](https://github.com/ffroliva/gflow-cli/issues/639)) — same product, different widget toolkit and wire protocol (`batchexecute` instead of `aisandbox-pa`). `flow.google.com` is the default host for what gflow has ported to it — text-to-video today — on every account; the rest of the matrix keeps the labs driver until ported (`GFLOW_CLI_FLOW_HOST`, see [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)).
 
 **What's blocked:** a pure HTTP transport for video generation. The video upload endpoint returns HTTP 401 under non-Chrome browsers plus a reCAPTCHA mint we cannot reproduce headlessly. Three earlier HTTP strategies (`evaluate_fetch`, `bearer`, `sapisidhash`) live under `src/gflow_cli/api/transports/experimental/` for research, off the production path.
 

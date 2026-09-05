@@ -19,23 +19,28 @@ _MIGRATED = "https://flow.google.com/project/abc"
 
 
 @pytest.mark.parametrize(
-    ("url", "flow_host", "expected"),
+    ("url", "flow_host", "prefer", "expected"),
     [
-        (_LABS, "auto", "labs"),
-        (_MIGRATED, "auto", "migrated"),
-        (_LABS, "flow.google.com", "migrated"),
-        (_MIGRATED, "flow.google.com", "migrated"),
-        (_LABS, "labs.google", "labs"),
-        (_MIGRATED, "labs.google", "blocked"),
-        # unreadable / blank URL: nothing to route on — the labs path keeps probing
-        (None, "auto", "labs"),
-        ("about:blank", "auto", "labs"),
+        # auto: the served host decides for requests the new host cannot serve …
+        (_LABS, "auto", False, "labs"),
+        # … and flow.google.com is the default for what it CAN serve, on any account
+        (_LABS, "auto", True, "migrated"),
+        ("about:blank", "auto", True, "migrated"),
+        (_MIGRATED, "auto", False, "migrated"),
+        (_LABS, "flow.google.com", False, "migrated"),
+        (_MIGRATED, "flow.google.com", False, "migrated"),
+        (_LABS, "labs.google", False, "labs"),
+        (_LABS, "labs.google", True, "labs"),  # kill switch beats preference
+        (_MIGRATED, "labs.google", False, "blocked"),
+        # unreadable / blank URL with nothing to prefer: the labs path keeps probing
+        (None, "auto", False, "labs"),
+        ("about:blank", "auto", False, "labs"),
     ],
 )
-def test_migrated_route(url: str | None, flow_host: str, expected: str) -> None:
+def test_migrated_route(url: str | None, flow_host: str, prefer: bool, expected: str) -> None:
     from gflow_cli.api.transports._common import migrated_route
 
-    assert migrated_route(url, flow_host) == expected
+    assert migrated_route(url, flow_host, prefer_migrated=prefer) == expected
 
 
 def test_settings_flow_host_defaults_to_auto_and_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:

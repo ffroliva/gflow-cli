@@ -548,12 +548,12 @@ class Settings(BaseSettings):
     flow_host: Literal["auto", "flow.google.com", "labs.google"] = Field(
         default="auto",
         description=(
-            "Which Flow frontend gflow drives. 'auto' (default): the host Flow serves "
-            "decides — labs.google keeps the labs driver, an account Google has moved to "
-            "flow.google.com gets the migrated composer (t2v/t2i). 'flow.google.com': "
-            "force the migrated composer for every account. 'labs.google': never use the "
-            "migrated composer — a moved account fails with exit 36 (kill switch). "
-            "Override via GFLOW_CLI_FLOW_HOST."
+            "Which Flow frontend gflow drives. 'auto' (default): flow.google.com is the "
+            "default host for every request it can serve today (text-to-video in an "
+            "existing project), on moved and unmoved accounts alike; requests it cannot "
+            "serve yet keep the labs driver on an unmoved account. 'flow.google.com': force "
+            "the migrated composer for everything. 'labs.google': never use it — a moved "
+            "account fails with exit 36 (kill switch). Override via GFLOW_CLI_FLOW_HOST."
         ),
     )
     ui_mode: UiMode | None = Field(

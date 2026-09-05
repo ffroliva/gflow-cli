@@ -20,7 +20,12 @@ from typing import Any
 import pytest
 
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
-from gflow_cli.errors import ConfigurationError, UiSelectorDriftError, WireFormatError
+from gflow_cli.errors import (
+    ConfigurationError,
+    TransportTimeoutError,
+    UiSelectorDriftError,
+    WireFormatError,
+)
 
 # --- a tiny DOM -------------------------------------------------------------
 
@@ -602,6 +607,18 @@ async def test_download_refuses_when_no_url_is_an_mp4(tmp_path: Any) -> None:
         await MigratedComposer().download(page, rec, tmp_path, transport=object())
 
 
+def test_migrated_can_serve_decides_what_the_new_host_takes() -> None:
+    from gflow_cli.api.transports.migrated_composer import migrated_can_serve
+
+    assert migrated_can_serve(_t2v(), "p1")
+    assert migrated_can_serve(_t2v(model=VideoModel.VEO_3_1_FAST), "p1")
+    assert not migrated_can_serve(_t2v(), None)  # project creation not ported
+    assert not migrated_can_serve(_t2v(model=VideoModel.VEO_3_1_LITE_LOWER_PRIORITY), "p1")
+    assert not migrated_can_serve(
+        GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image_ref_name="a"), "p1"
+    )
+
+
 async def test_unknown_status_ends_the_wait_as_failed() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -623,7 +640,7 @@ async def test_no_submit_frame_within_budget_is_a_timeout() -> None:
     page = FakePage()
     page.dom.prompt = "a crane"
     page.scripted_responses = []
-    with pytest.raises(TimeoutError):
+    with pytest.raises(TransportTimeoutError):
         await MigratedComposer().submit_and_observe(
             page, poll_timeout_s=0.3, on_started=None, project_id=PROJ
         )

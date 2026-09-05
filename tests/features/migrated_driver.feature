@@ -13,6 +13,12 @@ Feature: migrated-host driver
     And a reply with status 3 yields a flow-content.google URL
     And the result reports success with that workflow id
 
+  Scenario: an unmoved account is routed to flow.google.com by default for t2v
+    Given the account has not been moved and a project is given
+    When gflow video t2v runs with an 8 s request
+    Then the migrated composer applies the settings and submits
+    And the result reports success with that workflow id
+
   Scenario: the requested axis has no control on this host
     Given the settings pane renders no duration radiogroup
     When a 10 s duration is requested

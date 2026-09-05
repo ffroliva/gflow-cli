@@ -3959,22 +3959,25 @@ class VideoGenerationMixin:
         # here, when the bootstrap page already hopped or the host is forced, and
         # again after entering the project, because the hop is a client-side
         # navigation the labs app performs AFTER the project page has loaded.
+        from gflow_cli.api.transports.migrated_composer import (  # noqa: PLC0415
+            migrated_can_serve,
+            run_video,
+        )
         from gflow_cli.config import get_settings  # noqa: PLC0415
 
         flow_host = get_settings().flow_host
-        route = migrated_route(page.url, flow_host)
+        prefer = migrated_can_serve(request, project_id)
+        route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
         if route == "labs":
             await self._enter_editor(page, out_dir, project_id=project_id)
             await VideoGenerationMixin._wait_video_editor_ready(page)
             # Dismiss any Flow changelog / "What's new" overlay that may be on top
             # of the editor before we click into mode-switch / settings / submit (#26).
             await self._dismiss_blocking_overlays(page, out_dir)
-            route = migrated_route(page.url, flow_host)
+            route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
         if route == "blocked":
             raise_if_migrated(page, at="flow_host_kill_switch")
         if route == "migrated":
-            from gflow_cli.api.transports.migrated_composer import run_video  # noqa: PLC0415
-
             return await run_video(
                 self,
                 page,

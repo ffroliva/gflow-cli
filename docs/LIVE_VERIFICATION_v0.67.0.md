@@ -14,7 +14,7 @@ cohort rate; nothing else in this verification spent credits.
 | # | Profile (account state, locale) | Route | Command | Exit | Wall-clock | Output |
 |---|---|---|---|---|---|---|
 | 1 | flagged, en-GB | `auto` (default) → migrated composer | `gflow video t2v "…" --project <id> --duration 8 --aspect 16:9 --json --out-dir tmp/…` | **0** | **49.9 s** | `684649e9-….mp4`, `ftyp`, **1,792,457 B** (= size the record reported) |
-| 2 | **unflagged, pt** | `GFLOW_CLI_FLOW_HOST=flow.google.com` (forced) | same shape, own project | **0** | **50.5 s** | `f080c0c5-….mp4`, `ftyp`, **2,143,562 B** (= record size) |
+| 2 | **unflagged, pt** | `GFLOW_CLI_FLOW_HOST=flow.google.com` (forced; under `auto` this request now takes the identical `route == "migrated"` path, since t2v-with-project is served by the new host by default) | same shape, own project | **0** | **50.5 s** | `f080c0c5-….mp4`, `ftyp`, **2,143,562 B** (= record size) |
 
 Run 2 is the locale-invariance proof: a Portuguese-locale account, every anchor
 resolved (ligatures, roles, class, numeric tokens) — no text label was matched.

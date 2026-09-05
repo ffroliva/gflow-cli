@@ -452,6 +452,27 @@ This work is tracked in the project backlog.
 
 ---
 
+## Migrated host (`flow.google.com`) — `tests/e2e/test_migrated_host_e2e.py`
+
+Google is moving accounts onto `flow.google.com` (#639). Under the default
+`GFLOW_CLI_FLOW_HOST=auto` every `video t2v` with an existing project runs on the
+new host, on moved and unmoved accounts alike, so these tests hold for any
+logged-in profile. They need a project id on that host:
+
+```bash
+GFLOW_CLI_E2E_PROFILE=<profile> GFLOW_CLI_E2E_PROJECT=<project-uuid> \
+    uv run pytest -m e2e tests/e2e/test_migrated_host_e2e.py -v
+```
+
+| Test | Marker | Cost | Proves |
+|---|---|---|---|
+| `test_e2e_migrated_host_serves_this_account` | `e2e_auth` | 0 | a direct load of `flow.google.com/project/<id>` renders the migrated editor for this account |
+| `test_e2e_kill_switch_keeps_exit_36_on_a_moved_account` | `e2e_auth` | 0 | `GFLOW_CLI_FLOW_HOST=labs.google` still yields the distinct exit 36 on a moved account (skips on an unmoved one) |
+| `test_e2e_t2v_runs_on_flow_google_com_by_default` | `e2e_video` | 1 clip (12 credits measured) | `migrated.dispatch` → `submit_observed` → `result`, a real mp4 (`ftyp`), recorder-visible ids |
+
+`GFLOW_CLI_E2E_FLOW_HOST` overrides the routing for the paid test (e.g.
+`flow.google.com` to force it); `GFLOW_CLI_E2E_VIDEO_DURATION` applies as elsewhere.
+
 ## See also
 
 - [CONTRIBUTING.md § Test categories](../CONTRIBUTING.md#test-categories)

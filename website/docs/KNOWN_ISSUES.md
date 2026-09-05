@@ -49,10 +49,10 @@ different origin serving different markup.
 drives the migrated editor directly (settings through its option groups, prompt,
 submit, then it observes the app's own `batchexecute` status replies and downloads
 the clip). Two real clips were generated this way on 2026-09-05 — spike
-`docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md`. Routing is
-automatic for a moved account (`GFLOW_CLI_FLOW_HOST=auto`); any account can opt in
-with `GFLOW_CLI_FLOW_HOST=flow.google.com`, and `labs.google` switches the migrated
-composer off. Limits today: `--project` is required (project creation from the
+`docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md`. Routing
+(`GFLOW_CLI_FLOW_HOST=auto`): flow.google.com is the **default** host for that
+command on every account — moved or not; `flow.google.com` forces it for
+everything, and `labs.google` switches the migrated composer off. Limits today: `--project` is required (project creation from the
 migrated editor is not ported), and only `t2v` — everything else still exits 36.
 
 **Workaround for the rest:** none client-side. The handoff

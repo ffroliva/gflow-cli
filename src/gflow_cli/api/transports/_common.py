@@ -89,20 +89,24 @@ def flow_host_kind(url: object) -> str | None:
     return _FLOW_HOSTS.get(host)
 
 
-def migrated_route(url: object, flow_host: str) -> str:
+def migrated_route(url: object, flow_host: str, *, prefer_migrated: bool = False) -> str:
     """Which driver a page gets: ``"labs"``, ``"migrated"`` or ``"blocked"``.
 
-    ``flow_host`` is ``Settings.flow_host``: ``auto`` lets the served host decide;
-    ``flow.google.com`` forces the migrated composer; ``labs.google`` refuses it,
-    so a moved account keeps exit 36 (``blocked``). An unreadable URL routes to the
-    labs driver — it keeps probing, exactly as before this setting existed.
+    ``flow_host`` is ``Settings.flow_host``. ``flow.google.com`` forces the migrated
+    composer; ``labs.google`` refuses it, so a moved account keeps exit 36
+    (``blocked``). ``auto`` — the default — makes flow.google.com the default host
+    for every request it can serve (``prefer_migrated``, decided by the caller from
+    the request: t2v with a project today), on moved and unmoved accounts alike;
+    anything else follows the served host, so an unmoved account keeps the labs
+    driver for the features the new host has not been ported for. An unreadable
+    URL with nothing to prefer routes to the labs driver, exactly as before.
     """
     if flow_host == "flow.google.com":
         return "migrated"
     kind = flow_host_kind(url)
-    if kind != "migrated":
-        return "labs"
-    return "blocked" if flow_host == "labs.google" else "migrated"
+    if kind == "migrated":
+        return "blocked" if flow_host == "labs.google" else "migrated"
+    return "migrated" if prefer_migrated and flow_host == "auto" else "labs"
 
 
 def raise_if_migrated(page: object, *, at: str) -> None:

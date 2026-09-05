@@ -96,15 +96,61 @@ def _req(**kw: Any) -> GenerateVideoRequest:
 async def test_flagged_account_is_routed_to_the_composer_after_the_hop(
     harness: dict[str, Any],
 ) -> None:
+    """A request the new host cannot take at first sight (no project → the labs
+    gallery would create one) goes through labs project entry; when that entry
+    hops to flow.google.com, the second route decision hands it to the composer
+    (which then reports the missing project itself — stubbed here)."""
     harness["hop_on_enter"] = True
-    result = await harness["transport"].generate_video(request=_req(), project_id="p1")
+    result = await harness["transport"].generate_video(request=_req(), project_id=None)
     assert result.flow_operation_id == "wf1"
-    assert harness["entered"] == "p1"
+    assert "entered" in harness  # labs entry ran (project_id None)
     assert len(harness["run_video"]) == 1
-    assert harness["run_video"][0][1]["project_id"] == "p1"
+    assert harness["run_video"][0][1]["project_id"] is None
 
 
-async def test_labs_account_keeps_the_labs_driver(harness: dict[str, Any]) -> None:
+async def test_unmoved_account_with_a_project_goes_to_flow_google_com_by_default(
+    harness: dict[str, Any],
+) -> None:
+    """The new host is the default for what it can serve — t2v in an existing
+    project — on an UNMOVED account too (proven live on the pt profile)."""
+    await harness["transport"].generate_video(request=_req(), project_id="p1")
+    assert "entered" not in harness  # the composer navigates directly
+    assert len(harness["run_video"]) == 1
+
+
+async def test_unmoved_account_without_a_project_keeps_the_labs_driver(
+    harness: dict[str, Any],
+) -> None:
+    """Project creation is not ported to the new host, so the labs gallery does it."""
+    with pytest.raises(_LabsDriverTouchedError):
+        await harness["transport"].generate_video(request=_req(), project_id=None)
+    assert harness["run_video"] == []
+
+
+async def test_unmoved_account_i2v_keeps_the_labs_driver(harness: dict[str, Any]) -> None:
+    with pytest.raises(_LabsDriverTouchedError):
+        await harness["transport"].generate_video(
+            request=_req(mode=Mode.I2V, start_image_ref_name="asset"), project_id="p1"
+        )
+    assert harness["run_video"] == []
+
+
+async def test_unmoved_account_labs_only_model_keeps_the_labs_driver(
+    harness: dict[str, Any],
+) -> None:
+    from gflow_cli.api.video import VideoModel
+
+    with pytest.raises(_LabsDriverTouchedError):
+        await harness["transport"].generate_video(
+            request=_req(model=VideoModel.VEO_3_1_LITE_LOWER_PRIORITY), project_id="p1"
+        )
+    assert harness["run_video"] == []
+
+
+async def test_kill_switch_keeps_the_labs_driver_on_an_unmoved_account(
+    harness: dict[str, Any],
+) -> None:
+    harness["set_flow_host"]("labs.google")
     with pytest.raises(_LabsDriverTouchedError):
         await harness["transport"].generate_video(request=_req(), project_id="p1")
     assert harness["run_video"] == []

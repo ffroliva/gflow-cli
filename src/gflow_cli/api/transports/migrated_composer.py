@@ -38,7 +38,12 @@ from gflow_cli.api.transports.batchexecute import (
     parse_frames,
 )
 from gflow_cli.api.video import Aspect, VideoModel, VideoStarted
-from gflow_cli.errors import ConfigurationError, UiSelectorDriftError, WireFormatError
+from gflow_cli.errors import (
+    ConfigurationError,
+    TransportTimeoutError,
+    UiSelectorDriftError,
+    WireFormatError,
+)
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -75,6 +80,20 @@ ASPECT_LIGATURE: dict[Aspect, str] = {
     Aspect.LANDSCAPE: "crop_16_9",
     Aspect.PORTRAIT: "crop_9_16",
 }
+
+
+def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) -> bool:
+    """Can the migrated composer take this request as it stands? Text-to-video in an
+    existing project, with a model the new host offers (or none). Everything else —
+    i2v/r2v media, character references, a fresh project, a labs-only model — is
+    not ported yet, so an unmoved account keeps the labs driver for it."""
+    from gflow_cli.api.video import Mode  # noqa: PLC0415
+
+    if request.mode is not Mode.T2V or not project_id:
+        return False
+    if request.reference_entities:
+        return False
+    return request.model is None or request.model in VIDEO_MODEL_MENU_LABELS
 
 
 def _exact(label: str) -> re.Pattern[str]:
@@ -354,11 +373,12 @@ class MigratedComposer:
                     submitted, timeout=min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s)
                 )
             except TimeoutError:
-                msg = (
-                    f"migrated host: no {SUBMIT_RPC} reply within "
-                    f"{min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s):.0f}s of clicking submit"
-                )
-                raise TimeoutError(msg) from None
+                raise TransportTimeoutError(
+                    detail=(
+                        f"migrated host: no {SUBMIT_RPC} reply within "
+                        f"{min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s):.0f}s of clicking submit"
+                    ),
+                ) from None
             started = VideoStarted(
                 media_id=first.media_id,
                 project_id=project_id or first.project_id,
@@ -399,10 +419,12 @@ class MigratedComposer:
         if terminal.done():
             return terminal.result()
         if not done:
-            msg = (
-                f"migrated host: generation {workflow_id} was not terminal within the poll timeout"
+            raise TransportTimeoutError(
+                detail=(
+                    f"migrated host: generation {workflow_id} was not terminal within the "
+                    f"poll timeout"
+                ),
             )
-            raise TimeoutError(msg)
         grace = min(RESULT_URL_GRACE_S, max(deadline - time.monotonic(), 0.01))
         try:
             return await asyncio.wait_for(terminal, timeout=grace)
@@ -433,7 +455,9 @@ class MigratedComposer:
                     ),
                     route="batchexecute:as29s",
                 )
-            resp = await page.request.get(url, timeout=180_000)
+            # No redirects: an open redirect on the CDN must not rebound the
+            # request elsewhere (same posture as the labs image download).
+            resp = await page.request.get(url, timeout=180_000, max_redirects=0)
             if resp.status >= 400:
                 raise WireFormatError(
                     detail=f"migrated host: signed media URL returned HTTP {resp.status}",

@@ -73,6 +73,11 @@ def _hop(world: dict[str, Any]) -> None:
     world["hop"] = True
 
 
+@given("the account has not been moved and a project is given")
+def _unmoved(world: dict[str, Any]) -> None:
+    world["hop"] = False  # the labs bootstrap URL stays; the composer navigates itself
+
+
 @given("GFLOW_CLI_FLOW_HOST is labs.google")
 def _kill_switch(world: dict[str, Any]) -> None:
     world["set_flow_host"]("labs.google")
