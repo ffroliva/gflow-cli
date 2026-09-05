@@ -33,6 +33,7 @@ from gflow_cli.api.transports._common import (
     extract_project_id,
     flow_host_kind,
     generation_error,
+    migrated_route,
     offered_menu_labels,
     raise_if_migrated,
 )
@@ -3953,11 +3954,40 @@ class VideoGenerationMixin:
 
         page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
 
-        await self._enter_editor(page, out_dir, project_id=project_id)
-        await VideoGenerationMixin._wait_video_editor_ready(page)
-        # Dismiss any Flow changelog / "What's new" overlay that may be on top
-        # of the editor before we click into mode-switch / settings / submit (#26).
-        await self._dismiss_blocking_overlays(page, out_dir)
+        # #639: an account Google moved to flow.google.com (or GFLOW_CLI_FLOW_HOST
+        # forcing that host) is driven by the migrated composer. Decided twice —
+        # here, when the bootstrap page already hopped or the host is forced, and
+        # again after entering the project, because the hop is a client-side
+        # navigation the labs app performs AFTER the project page has loaded.
+        from gflow_cli.api.transports.migrated_composer import (  # noqa: PLC0415
+            migrated_can_serve,
+            run_video,
+        )
+        from gflow_cli.config import get_settings  # noqa: PLC0415
+
+        flow_host = get_settings().flow_host
+        prefer = migrated_can_serve(request, project_id)
+        route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
+        if route == "labs":
+            await self._enter_editor(page, out_dir, project_id=project_id)
+            await VideoGenerationMixin._wait_video_editor_ready(page)
+            # Dismiss any Flow changelog / "What's new" overlay that may be on top
+            # of the editor before we click into mode-switch / settings / submit (#26).
+            await self._dismiss_blocking_overlays(page, out_dir)
+            route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
+        if route == "blocked":
+            raise_if_migrated(page, at="flow_host_kill_switch")
+        if route == "migrated":
+            return await run_video(
+                self,
+                page,
+                request,
+                project_id=project_id,
+                out_dir=out_dir,
+                poll_timeout_s=poll_timeout_s,
+                download=download,
+                on_started=on_started,
+            )
 
         # #299: the video path binds through the mode policy like images do —
         # get_ui_driver switches to the required arm, VERIFIES via a DOM

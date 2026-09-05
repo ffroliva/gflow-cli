@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Text-to-video on Flow's migrated `flow.google.com` host** (#639). An account
+  Google has moved off labs.google no longer exits 36 on `gflow video t2v`: the new
+  migrated composer drives the Angular editor (option-group radios, model menu,
+  `contenteditable` composer, `arrow_forward` submit) and then *observes* the app's
+  own `batchexecute` replies — `YhhmEf` submit, `jwpduf` status, `as29s` result —
+  before downloading the clip. Under the default
+  `GFLOW_CLI_FLOW_HOST=auto`, flow.google.com is now the **default host for every
+  request it can serve** — t2v with `--project`, on moved and unmoved accounts
+  alike (the new host serves both); what it cannot serve yet keeps the labs
+  driver on an unmoved account. `flow.google.com` forces it for everything,
+  `labs.google` is the kill switch. `--project` is required on
+  that host for now; everything except t2v still exits 36 there. Recon with two
+  real generations: `docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md`.
+
 ### Changed
 
 - **Exit 36 (`FlowHostMigratedError`) is no longer retryable** (#639). Two $0 spikes

@@ -356,6 +356,16 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 **Video commands:** `gflow video t2v`/`i2v` joined the policy in [#299](https://github.com/ffroliva/gflow-cli/issues/299) PR-A. The video pipeline only has a classic driver, so `auto` ≡ `classic` there: both verify the classic editor pre-submit and abort with exit 28 if it is unreachable. An env-sourced `agentic` **degrades to classic with a logged warning** (so a value set for image workflows can't hard-fail your video runs); only an explicit agentic *request* errors — the `--ui-mode agentic` flag immediately at the CLI edge (exit 2), or the MCP `ui_mode="agentic"` param with a 400 envelope — because no agentic video driver exists yet. `video r2v` and `video chain` have no flag and follow the env-only path.
 **Supersedes:** `GFLOW_CLI_PREFER_CLASSIC` and `GFLOW_CLI_FORCE_AGENT_UI` (below).
 
+### `GFLOW_CLI_FLOW_HOST`
+
+**What:** Which Flow frontend gflow drives. Google is moving accounts from `labs.google/fx/tools/flow` onto `flow.google.com` one at a time ([#639](https://github.com/ffroliva/gflow-cli/issues/639)); the two are the same product on different widget toolkits and different wire protocols, so each has its own driver.
+**Values:**
+- `auto` (default) — **`flow.google.com` is the default host for every request it can serve today** (`video t2v` with `--project`), on moved and unmoved accounts alike — the new host serves both. A request the new host cannot serve yet (other modes, a fresh project, a labs-only model) keeps the labs driver on an unmoved account; a moved account has no labs to fall back to and exits 36 for it.
+- `flow.google.com` — force the migrated composer for everything, including what it cannot serve yet (those requests then exit 36/11 instead of falling back).
+- `labs.google` — never use the migrated composer; a moved account fails with exit 36 (kill switch).
+**Default:** `auto`
+**Scope today:** the migrated composer covers `gflow video t2v` with `--project <id>` (settings via the option groups, model picker, submit, status observed on the page's own `batchexecute` replies, download from the signed CDN URL). Image, i2v/r2v, characters, scenes, extend, instructions and tools are not ported yet and exit 36 on a moved account. MCP inherits the setting from the server/daemon environment, not per call.
+
 ### `GFLOW_CLI_PREFER_CLASSIC` *(deprecated — use `GFLOW_CLI_UI_MODE=classic`)*
 
 **Deprecated** in favor of [`GFLOW_CLI_UI_MODE`](#gflow_cli_ui_mode). `true` now maps to `ui_mode=classic` (emits a `DeprecationWarning`). **Behavior change:** the old silent fallback to agentic when the toggle was unavailable is gone — a classic-required run now **aborts with exit 28** instead of producing an agentic-cohort result. `GFLOW_CLI_UI_MODE` (and `--ui-mode`) take precedence when both are set.
