@@ -695,13 +695,15 @@ class FlowHostMigratedError(GFlowError):
     problem_type = "https://gflow-cli.dev/errors/flow-host-migrated"
     title = "Flow served the migrated flow.google.com frontend"
     _default_remediation = (
-        "Google has moved this account's Flow from labs.google to flow.google.com, "
-        "and gflow-cli cannot drive the migrated frontend yet — it ships none of the "
-        "UI controls gflow automates. This is a per-account setting applied on "
-        "every load, so retrying will not land the old frontend. The REST surface "
-        "(gflow project list, gflow data ...) still works. Follow "
-        "https://github.com/ffroliva/gflow-cli/issues/639 for migrated-frontend "
-        "support status."
+        "Google has moved this account's Flow from labs.google to flow.google.com. "
+        "gflow drives that frontend for text-to-video and text-to-image "
+        "(GFLOW_CLI_FLOW_HOST=auto, the default, or flow.google.com); you see this "
+        "error because GFLOW_CLI_FLOW_HOST=labs.google switched the migrated composer "
+        "off, or because this request type is not ported to the migrated host yet. "
+        "This is a per-account setting applied on every load, so retrying will not "
+        "land the old frontend. The REST surface (gflow project list, gflow data ...) "
+        "still works. Follow https://github.com/ffroliva/gflow-cli/issues/639 for "
+        "the migrated-frontend feature matrix."
     )
 
 

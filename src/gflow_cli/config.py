@@ -545,6 +545,17 @@ class Settings(BaseSettings):
             "stays playwright and is unaffected. Override via GFLOW_CLI_BROWSER_ENGINE."
         ),
     )
+    flow_host: Literal["auto", "flow.google.com", "labs.google"] = Field(
+        default="auto",
+        description=(
+            "Which Flow frontend gflow drives. 'auto' (default): the host Flow serves "
+            "decides — labs.google keeps the labs driver, an account Google has moved to "
+            "flow.google.com gets the migrated composer (t2v/t2i). 'flow.google.com': "
+            "force the migrated composer for every account. 'labs.google': never use the "
+            "migrated composer — a moved account fails with exit 36 (kill switch). "
+            "Override via GFLOW_CLI_FLOW_HOST."
+        ),
+    )
     ui_mode: UiMode | None = Field(
         default=None,
         description=(

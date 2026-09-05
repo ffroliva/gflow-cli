@@ -14,9 +14,9 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
-### Flow is migrating to `flow.google.com`; the migrated frontend is not drivable
+### Flow is migrating to `flow.google.com`; gflow drives the migrated frontend for t2v (rest of the matrix pending)
 
-- **Status:** Open · **Severity:** High (every generation command fails on a migrated page load) · **Affected:** all `gflow image` / `gflow video` generation, CLI and MCP alike, on accounts the rollout has reached
+- **Status:** Open (partially resolved) · **Severity:** High for everything except text-to-video · **Affected:** on accounts the rollout has reached, `gflow video t2v` now runs on the migrated host (with `--project`); `image`, i2v/r2v, characters, scenes, extend, instructions and tools are not ported yet and still exit 36
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
 - **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
 
@@ -45,7 +45,17 @@ This is **not** selector rot, not [#493](https://github.com/ffroliva/gflow-cli/i
 and not the agentic cohort — the agentic indicators are absent too. It is a
 different origin serving different markup.
 
-**Workaround:** there is no client-side workaround for generation. The handoff
+**What works now — text-to-video on the migrated host.** `gflow video t2v … --project <id>`
+drives the migrated editor directly (settings through its option groups, prompt,
+submit, then it observes the app's own `batchexecute` status replies and downloads
+the clip). Two real clips were generated this way on 2026-09-05 — spike
+`docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md`. Routing is
+automatic for a moved account (`GFLOW_CLI_FLOW_HOST=auto`); any account can opt in
+with `GFLOW_CLI_FLOW_HOST=flow.google.com`, and `labs.google` switches the migrated
+composer off. Limits today: `--project` is required (project creation from the
+migrated editor is not ported), and only `t2v` — everything else still exits 36.
+
+**Workaround for the rest:** none client-side. The handoff
 is a per-account setting the labs.google app applies on every load (measured
 5/5 and 7/7 with no flap, 2026-09-04 — spike
 `docs/superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md`), so

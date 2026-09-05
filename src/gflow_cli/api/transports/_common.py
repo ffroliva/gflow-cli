@@ -89,6 +89,22 @@ def flow_host_kind(url: object) -> str | None:
     return _FLOW_HOSTS.get(host)
 
 
+def migrated_route(url: object, flow_host: str) -> str:
+    """Which driver a page gets: ``"labs"``, ``"migrated"`` or ``"blocked"``.
+
+    ``flow_host`` is ``Settings.flow_host``: ``auto`` lets the served host decide;
+    ``flow.google.com`` forces the migrated composer; ``labs.google`` refuses it,
+    so a moved account keeps exit 36 (``blocked``). An unreadable URL routes to the
+    labs driver — it keeps probing, exactly as before this setting existed.
+    """
+    if flow_host == "flow.google.com":
+        return "migrated"
+    kind = flow_host_kind(url)
+    if kind != "migrated":
+        return "labs"
+    return "blocked" if flow_host == "labs.google" else "migrated"
+
+
 def raise_if_migrated(page: object, *, at: str) -> None:
     """Abort now if this page is on the migrated ``flow.google.com`` origin (#639).
 
