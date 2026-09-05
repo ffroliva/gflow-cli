@@ -68,7 +68,7 @@ class TestVideoRequestNewFields:
             GenerateVideoRequest(prompt="x", duration=5)
 
     def test_10s_requires_omni_flash(self) -> None:
-        with pytest.raises(ValueError, match="10s duration"):
+        with pytest.raises(ValueError, match="only available for omni_flash"):
             GenerateVideoRequest(prompt="x", duration=10, model=VideoModel.VEO_3_1_FAST)
         # omni_flash + 10s, and model-less 10s (default unknown), are both OK
         GenerateVideoRequest(prompt="x", duration=10, model=VideoModel.OMNI_FLASH)

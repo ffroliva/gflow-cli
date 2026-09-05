@@ -44,6 +44,31 @@ An **empty** directory is a valid deployment — D5 then reports that no memory 
 >
 > The orchestrator validates the resolved path on the host and refuses to start with an actionable error if it is missing, rather than failing later inside the container.
 
+> **The memory namespace is NOT synced to this host, and that is currently the
+> autopilot's biggest blind spot.** Claude Code keys memory by working-directory
+> path, not repo identity, so `/opt/gflow-cli` starts empty — see
+> `docs/superpowers/specs/2026-07-04-pr-triage-autopilot-design.md` (the one-way
+> local-to-VPS sync it describes was never implemented). The orchestrator now logs
+> a warning when the resolved directory holds no `*.md`, and D5 must report
+> `UNAVAILABLE` rather than GREEN. On PR #650 it reported "no memory entry
+> contradicts this PR" from an empty mount while the local store recorded that
+> exact PR as REJECTED. Until a sync exists, read every autonomous D5 verdict as
+> "not checked".
+
+## 2b. What lands in the public PR comment
+
+The container's stdout is **sliced** before posting: from the first `# PR #`
+heading to the line before `SUMMARY_VERDICT:`. Everything else — the wrapper's
+Docker/iptables progress, the agent's preamble, the machine marker — is dropped.
+The wrapper logs operationally to **stderr**, which the orchestrator keeps for
+`RuntimeError` context and the log file but never posts. Both halves exist
+because a triage comment on PR #650 published the build steps, a raw Docker
+network id, and the bridge subnet to an external contributor.
+
+Adding a new operational `echo` to `run_sandboxed_review.sh`? Send it to `>&2`.
+Anything on stdout outside the two markers is silently discarded from the
+comment; anything between them is published verbatim.
+
 ---
 
 ## 3. Ephemeral Sandbox Firewall Hardening

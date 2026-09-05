@@ -496,23 +496,18 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 
 > **Shared video flags** (`t2v` / `i2v` / `r2v`):
 > `--model [omni-flash|veo-lite|veo-fast|veo-quality|veo-lite-lp]` (omit → Flow's
-> current UI default), `--duration [4|6|8|10]` (**requires `--model omni-flash`** —
-> see below),
+> current UI default), `--duration [4|6|8|10]` (4/6/8 for Veo 3.1;
+> 4/6/8/10 for omni-flash),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
-> **`--duration` only works on `omni-flash`** (issues #451/#288). Flow's settings
-> popover is model-conditional: `omni-flash` renders a `4s/6s/8s/10s` row, and the
-> Veo 3.1 models render **no duration control at all** — verified live on two
-> accounts and two locales. Passing `--duration` with a Veo model now fails fast
-> with a message naming the model, before any browser work; it used to burn ~30 s
-> of selector timeouts and die with exit 23 as if Flow's UI had drifted. Omit
-> `--duration` to accept Flow's default length for those models.
-> On `i2v` this applies **even with no `--model`** (#630): omitting the flag binds
-> the `veo-lite` default, which has no duration control, so that combination is
-> rejected with exit 2 naming the default rather than dying as "Unexpected error".
-> `t2v`/`r2v` with no `--model` inherit Flow's sticky UI default, which gflow
-> cannot know, so they are not pre-checked. The MCP `gflow_generate_video` tool
-> applies the same rule and answers with a 400 envelope.
+> **`--duration` support across models**: Flow's settings
+> popover is model- and cohort-conditional: `omni-flash` renders a `4s/6s/8s/10s` row,
+> while Veo 3.1 models accept `4s/6s/8s` where the current Flow account/cohort exposes
+> those controls (positive capture: a third, contributor-owned account on `labs.google`, 2026-09-04, PR #650;
+> the historical negative matrix on `denon82` remains valid for its cohort).
+> 10s is reserved exclusively for `omni-flash`. Passing `--duration 10` with a Veo model
+> fails fast with exit 2 before any browser work. On a cohort where Flow renders no
+> duration control for Veo, omit `--duration` to accept Flow's default.
 > `--count` is enforced **fail-closed**: if Flow's count control cannot be
 > located (selector drift), the run refuses with exit 23 *before* submitting
 > instead of proceeding on Flow's sticky default (typically x2) and silently
@@ -559,6 +554,13 @@ Options:
                         unreachable; agentic is rejected (exit 2) — not yet
                         supported for video. Also on `video i2v`.
 ```
+
+> **Two Flow frontends (#639).** Under the default `GFLOW_CLI_FLOW_HOST=auto`, `t2v` with
+> `--project <id>` runs on Flow's migrated `flow.google.com` host on every account; without
+> `--project` an unmoved account falls back to the labs driver, and a moved account exits 11
+> (`--project` is required there — project creation is not ported). Everything except `t2v`
+> still exits 36 on a moved account. `flow.google.com` forces the migrated composer,
+> `labs.google` switches it off — see [CONFIGURATION § GFLOW_CLI_FLOW_HOST](CONFIGURATION.md#gflow_cli_flow_host).
 
 ```bash
 gflow video t2v "Slow cinematic push-in toward a candle flame"
@@ -845,18 +847,17 @@ Options:
 
 ### JSONL manifest format
 
-One JSON object per line. Only `prompt` is required; `model` and `aspect` are
-optional per-link overrides (omit to inherit the chain default). Blank lines and
-`#`-prefixed comment lines are skipped.
+One JSON object per line. Only `prompt` is required; `model`, `aspect`, and
+`duration` are optional per-link overrides (omit to inherit the chain default).
+Blank lines and `#`-prefixed comment lines are skipped.
 
-> **`duration` is not supported in a chain** (issue #634). Flow renders a
-> duration control for `omni-flash` alone, and chains reject `omni-flash` (see
-> the note above) — so no model a chain can use can apply one. A manifest
-> carrying `duration` is now rejected **before the first link is submitted**;
-> previously it crashed partway through, after earlier links had already
-> rendered and spent credits. Chain links use Flow's default clip length. A
-> per-link `"model": "omni-flash"` override is rejected up front for the same
-> reason.
+> **`duration` in a chain**: per-link `duration` accepts `4`, `6`, or `8`
+> seconds for Veo models, while `10` and non-standard durations are rejected
+> during pre-flight before the first link is submitted (issue #634).
+> Successful application of explicit duration depends on whether the active Flow
+> account/cohort renders the duration control. A per-link `"model": "omni-flash"`
+> override is rejected up front because omni-flash is not supported at chain
+> scale (refs #125).
 
 ```jsonl
 {"prompt": "a lone wolf on a snowy ridge at dawn, cinematic", "model": "veo-lite", "aspect": "16:9"}
@@ -1617,7 +1618,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
 | `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287; or a wedged submission stage — the error names the stage and your Playwright version) | Retry; raise the relevant timeout — for a frame-UUID miss verify the UUID belongs to the `--project` passed; for a `stage_stalled` abort check your Playwright is in range (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
 | `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |
-| `11` | `ConfigurationError`  | Local configuration or browser mode is invalid — includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile) and `ProfileEngineDowngradeError` (the profile was last written by a newer Chromium major than the bundled engine about to open it — see [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)) | Fix the option/env var shown in the error; for lease contention wait, use a different `--profile`, or set `GFLOW_CLI_LEASE_WAIT_SECONDS=N` to wait bounded; upgrade gflow-cli/Playwright or re-run `gflow auth login` for a downgrade refusal |
+| `11` | `ConfigurationError`  | Local configuration or browser mode is invalid — on the migrated `flow.google.com` host also a request the host cannot take as given (no `--project`, a model its menu does not offer, a `--duration` its settings pane renders no control for); includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile) and `ProfileEngineDowngradeError` (the profile was last written by a newer Chromium major than the bundled engine about to open it — see [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)) | Fix the option/env var shown in the error; for lease contention wait, use a different `--profile`, or set `GFLOW_CLI_LEASE_WAIT_SECONDS=N` to wait bounded; upgrade gflow-cli/Playwright or re-run `gflow auth login` for a downgrade refusal |
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
 | `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
@@ -1642,7 +1643,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
-| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` — the origin Google is migrating the app onto — whose frontend renders none of the controls gflow drives. Not selector drift (23) | **Retryable while the rollout flaps**: the same account lands on the old host on one page load and the new one on the next, so re-running often succeeds. If every attempt now lands on `flow.google.com`, the migration has completed for your account and retrying will not help — see [#639](https://github.com/ffroliva/gflow-cli/issues/639) |
+| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` (the origin Google is migrating accounts onto) and the request could not be routed to the migrated composer: `GFLOW_CLI_FLOW_HOST=labs.google` switched it off, or the request type is not ported to that host yet (today only `video t2v` with `--project` is). Not selector drift (23) | **Not retryable.** The handoff is a per-account setting applied on every load. Use `gflow video t2v --project <id>` on that host, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the rest of the matrix |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

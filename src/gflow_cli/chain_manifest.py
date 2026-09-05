@@ -10,11 +10,10 @@ Each object is one chain link, in order. ``prompt`` is required and non-empty;
 means "inherit the chain default"). Blank lines and ``#``-prefixed comment lines
 are skipped. At least one valid link is required.
 
-``duration`` parses here but **no chain can apply it** (#634).
-:func:`gflow_cli.chain.run_chain` rejects any link carrying one before the first
-link is submitted. It stays parseable rather than being rejected at this layer so
-the rule is enforced once, in the place that owns it — and so a programmatic
-caller building specs directly hits the identical guard.
+``duration`` is validated before the first link is submitted (#634). Valid
+values are 4, 6, and 8 for chain-compatible Veo models; 10 belongs to
+``omni_flash``, which chains reject. A programmatic caller building specs directly
+hits the same pre-flight guard.
 
 **Why JSONL, not a headered TSV?** The chain's per-link overrides are sparse —
 most links carry a prompt alone. A positional TSV would force empty sentinel

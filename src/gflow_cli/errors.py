@@ -676,29 +676,35 @@ class FlowHostMigratedError(GFlowError):
     """Raised when Flow served the project from ``flow.google.com`` — the origin
     Google is migrating the app onto (issue #639) — instead of ``labs.google``.
 
-    The migrated frontend is a different build: it renders none of the Material
-    Symbols ligature elements every gflow selector anchors on, so cohort
-    detection and every mode control miss at once. That is NOT selector rot, and
-    reporting it as :class:`UiSelectorDriftError` (exit 23, "file a bug about the
-    selector") sent operators hunting for the wrong cause.
+    The migrated frontend is a different build (Angular Material over
+    ``batchexecute``): the labs drivers' ligature selectors miss there at once. The
+    migrated composer drives it for text-to-video; every other request still lands
+    here. That is NOT selector rot, and reporting it as
+    :class:`UiSelectorDriftError` (exit 23, "file a bug about the selector") sent
+    operators hunting for the wrong cause.
 
-    **Retryable** (exit code 36): the migration flaps per page load — the same
-    account, profile and project land on the old host on one navigation and the
-    new one on the next — so a re-run frequently succeeds. This error does NOT
-    mean gflow supports the migrated frontend; it names the situation and lets
-    callers retry into it.
+    **Not retryable** (exit code 36). The handoff is a server-assigned
+    per-account boolean that the labs.google app acts on client-side after a fully
+    authenticated load -- measured 5/5 and 7/7 on a flagged account with no flap
+    (spike 2026-09-04-migrated-host-handoff-mechanism). Earlier text said the
+    migration "flaps per page load" and invited a retry; that was an observation
+    straddling the account's one-time rollout, and a retry into a flagged account
+    cannot succeed. This error does NOT mean gflow supports the migrated
+    frontend; it names the situation so nobody hunts for selector drift.
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-host-migrated"
     title = "Flow served the migrated flow.google.com frontend"
     _default_remediation = (
-        "Google is moving Flow from labs.google to flow.google.com, and gflow-cli "
-        "cannot drive the migrated frontend yet — it ships none of the UI controls "
-        "gflow automates. The migration currently flaps per page load, so retrying "
-        "often lands the old frontend and succeeds. If EVERY attempt now lands on "
-        "flow.google.com, the rollout has completed for your account and retrying "
-        "will not help — follow "
-        "https://github.com/ffroliva/gflow-cli/issues/639 for support status."
+        "Google has moved this account's Flow from labs.google to flow.google.com. "
+        "gflow drives that frontend for text-to-video "
+        "(GFLOW_CLI_FLOW_HOST=auto, the default, or flow.google.com); you see this "
+        "error because GFLOW_CLI_FLOW_HOST=labs.google switched the migrated composer "
+        "off, or because this request type is not ported to the migrated host yet. "
+        "This is a per-account setting applied on every load, so retrying will not "
+        "land the old frontend. The REST surface (gflow project list, gflow data ...) "
+        "still works. Follow https://github.com/ffroliva/gflow-cli/issues/639 for "
+        "the migrated-frontend feature matrix."
     )
 
 
@@ -1184,10 +1190,10 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     FlowAgentUiError: 25,
     FlowAppError: 31,
     # FlowHostMigratedError (#639): Flow served the migrated
-    # flow.google.com frontend, whose DOM gflow cannot drive. Direct
+    # flow.google.com frontend for a request not ported to it yet. Direct
     # GFlowError subclass; exit 36 lets scripts distinguish "wrong Flow
-    # frontend, retry" from genuine selector drift (23), which it used to
-    # masquerade as.
+    # frontend" (per-account, not retryable) from genuine selector drift
+    # (23), which it used to masquerade as.
     FlowHostMigratedError: 36,
     # UiModeUnavailableError (issue #299): a command's required arm (--ui-mode /
     # inferred) couldn't be reached after a best-effort switch. Direct GFlowError
@@ -1245,9 +1251,10 @@ RETRYABLE_ERRORS: tuple[type[GFlowError], ...] = (
     BrowserSessionClosedError,
     FlowAppError,
     FlowAgentUiError,
-    # #639: the labs.google / flow.google.com migration flaps per page
-    # load, so re-navigating often lands the drivable frontend.
-    FlowHostMigratedError,
+    # #639 is deliberately NOT here. FlowHostMigratedError used to be listed on
+    # the belief that the migration "flaps per page load"; it is a server-assigned
+    # per-account boolean (5/5, 7/7 measured 2026-09-04), so a retry into it is
+    # a doomed attempt. Exit 36 stays; the machine flag no longer invites the loop.
     # #299: the cohort is server-assigned per page load and flaps — the
     # documented remediation for exit 28 IS "retry"; the machine flag must
     # agree with the docs.

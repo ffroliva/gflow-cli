@@ -126,7 +126,7 @@ async def test_e2e_r2v_ref_resolved_from_catalog_uuid_display_name(
         mode=Mode.R2V,
         aspect=Aspect.PORTRAIT,
         model=VideoModel.VEO_3_1_LITE,
-        duration=None,  # #537: Veo 3.1 models expose no duration control
+        duration=None,  # Duration is optional and omitted for this fixture
         count=1,
         ref_names=(display_name,),
     )

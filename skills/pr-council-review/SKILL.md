@@ -15,7 +15,8 @@ This skill is the canonical body. The Claude Code slash command at `.claude/comm
 2. **`PR#` argument** → run the full council on that PR. (See § 2 onward.)
 3. **Branch mode** → run the full council on the current local feature branch (no PR yet). Invoked via the `/gflow:branch-review` wrapper. See § 8 for the PR→branch translation table and pre-flight.
 
-Treat **YELLOW as soft block** (per memory `[[llm-council-data-layer-fixes]]`).
+Treat **YELLOW as soft block** — it is advisory in name only; clear it or dismiss it
+with a logged justification (§ 5 step 8).
 
 ---
 
@@ -82,20 +83,29 @@ Pull in parallel via `ctx_batch_execute`:
 - `PR_CHECKS` → `gh pr checks <N>`
 - `TOUCHED_PATHS` → `gh pr view <N> --json files --jq '.files[].path' | sort -u`
 - `RECENT_COMMITS` → `gh pr view <N> --json commits --jq '.commits[-5:] | .[] | "\(.oid[:7]) \(.messageHeadline)"'`
+- `PR_COMMENTS` → `gh pr view <N> --json comments --jq '.comments[] | "\(.createdAt) \(.author.login): \(.body)"'`
+
+> **Read the thread before you flag "no evidence".** `PR_COMMENTS` is not optional colour:
+> a prior council verdict, a maintainer's counter-capture, and the contributor's reply all
+> live there and none of them appear in the diff. On PR #650 the autonomous run posted
+> *"reverses a confirmed-live finding with no live evidence attached"* as its headline
+> must-fix — 50 minutes after the contributor had posted a machine-generated capability
+> matrix with a SHA-256 and a screenshot in that same thread. Truncate long bodies if you
+> must, but never review a contested PR without reading what has already been said on it.
 
 **Reference files** (read via `git show origin/$head_branch:<path>` — NOT local `Read`, because the working tree is on `develop`):
 - `CLAUDE.md`, `AGENTS.md`, `docs/INDEX.md`
 
 **Memory traversal:** for each `TOUCHED_PATH`, look up relevant slugs:
-- `transports/` → `[[pr-must-verify-on-affected-surface]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[video-generation-spec]]`, `[[image-generation-401-next]]`
-- `data/` → `[[data-layer-overview]]`, `[[data-layer-test-pollution-trap]]`, `[[data-layer-v0.9.0-bugs]]`, `[[exit-code-16-data-store]]`, `[[on-started-callback-recorder-safety]]`
+- `transports/` → `[[migrated-host-driver-wire-lessons]]`, `[[pr-must-verify-on-affected-surface]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[ui-selector-drift-error-exit-23]]`
+- `data/` → `[[data-layer-overview]]`, `[[data-layer-test-pollution-trap]]`, `[[exit-code-16-data-store]]`, `[[on-started-callback-recorder-safety]]`
 - `auth/` → `[[real-browser-auth-mandatory]]`, `[[release-signing]]`
 - `cli` → `[[release-back-merge-gap-recovery]]`, `[[wheel-build-sanity-gate]]`
 - `tests/` (any) → `[[bdd-stubs-mirror-runtime-signatures]]`, `[[background-e2e-pytest-pattern]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]`
 - `tests/features/` (BDD) → also `[[bdd-stubs-mirror-runtime-signatures]]`
 - `scripts/` → `[[wheel-build-sanity-gate]]`, `[[release-back-merge-gap-recovery]]`
 - `.planning/`, `docs/superpowers/` → `[[release-spec-plan-memory-consolidation]]`
-- `docs/`, `*.md` → `[[readme-hybrid-router-pattern]]`, `[[llm-council-doc-review-v0.9.0]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]`
+- `docs/`, `*.md` → `[[readme-hybrid-router-pattern]]`, `[[doc-examples-are-untested-fixtures]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]`
 - `pyproject.toml`, `.github/` → `[[release-spec-plan-memory-consolidation]]`, `[[pr-hygiene-revert-and-multi-commit]]`, `[[draft-pr-merge-trap]]`, `[[pypi-rejected-filename-reusable]]`
 
 ---
@@ -204,31 +214,38 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 
 ### Dimension → mandatory memory slugs table
 
-> **⚠️ Slug names are conceptual anchors, not filenames.** The auto-memory store uses
-> descriptive filenames (`feedback_*.md`, `project_*.md`, `reference_*.md`, plus
-> `MEMORY.md`), **not** files named after these `[[kebab-slug]]`s. To consult a slug:
-> read `MEMORY.md` and open the file whose topic matches (e.g. `[[rest-transports-drop-ui-fields]]`
-> → whichever `project_*`/`feedback_*` entry covers transport field-drop). **If no memory
-> entry matches a referenced slug, state that explicitly in your report and move on — do
-> NOT fabricate its contents.** (Backlog: reconcile this table with the real filenames, or
-> alias memory files to their slugs, so citations resolve directly.)
+> **Slugs resolve directly: `[[<slug>]]` → `docs/superpowers/memory/<slug>.md`.** Open
+> exactly the files your dimension's row names — no searching, no judgement call about
+> what is relevant. The directory is in the repo, so it is available to every agent that
+> can read the tree, including the sandboxed autonomous runs that have no access to a
+> maintainer's local store.
+>
+> `scripts/ci/check_council_memory.py` enforces the round trip both ways: a citation with
+> no file fails CI, and a file no dimension cites fails CI too. So a gap announces itself
+> instead of quietly degrading routing back into a search — which is what this table
+> previously did, when the slugs were "conceptual anchors" that resolved to nothing.
+>
+> These files are a **published subset** of the maintainer's working memory, not a mirror
+> of it: review-relevant facts only, with private identifiers stripped. If a slug's file
+> is missing, say so in your report and move on — never fabricate its contents.
 
 | Dim | Mandatory memory slugs |
 |---|---|
-| D1 | `[[pr-must-verify-on-affected-surface]]` |
-| D2 | (none mandatory; consult surrounding code style) |
+| D1 | `[[pr-must-verify-on-affected-surface]]`, `[[video-model-capability-matrix]]`, `[[flow-capabilities-are-cohort-dependent]]` |
+| D2 | `[[ruff-format-scope-is-src-tests]]`, `[[git-add-all-sweeps-scratch-files]]` |
 | D3 | `[[real-browser-auth-mandatory]]`, `[[release-signing]]` |
-| D4 | `[[pr-must-verify-on-affected-surface]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]` |
-| D5 | `[[release-spec-plan-memory-consolidation]]`, `[[pr-council-review-stale-tree-reads]]` (this very bug, as the council should self-improve) |
-| D6 | `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]` |
-| D7 | `[[on-started-callback-recorder-safety]]`, `[[data-layer-test-pollution-trap]]`, `[[exit-code-16-data-store]]`, `[[data-layer-v0.9.0-bugs]]` |
+| D4 | `[[force-color-breaks-cli-tests]]`, `[[pr-must-verify-on-affected-surface]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]` |
+| D5 | `[[memory-is-working-dir-keyed]]`, `[[release-spec-plan-memory-consolidation]]`, `[[pr-council-review-stale-tree-reads]]` (this very bug, as the council should self-improve) |
+| D6 | `[[ui-selector-drift-error-exit-23]]`, `[[credit-free-route-abort-verification]]`, `[[flow-credits-videos-only]]`, `[[flow-recon-must-run-on-denon82-ffroliva-migrated]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]`, `[[migrated-host-driver-wire-lessons]]` |
+| D7 | `[[on-started-callback-recorder-safety]]`, `[[data-layer-test-pollution-trap]]`, `[[exit-code-16-data-store]]` |
 | D8 | (none mandatory) |
-| D9 | `[[readme-hybrid-router-pattern]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]`, `[[llm-council-doc-review-v0.9.0]]` |
+| D9 | `[[prose-conflicts-hide-in-disjoint-files]]`, `[[doc-examples-are-untested-fixtures]]`, `[[readme-hybrid-router-pattern]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]` |
 | D10 | `[[real-browser-auth-mandatory]]` |
 | D11 | `[[release-back-merge-gap-recovery]]`, `[[wheel-build-sanity-gate]]`, `[[pypi-rejected-filename-reusable]]`, `[[draft-pr-merge-trap]]` |
 | D12 | `[[bdd-stubs-mirror-runtime-signatures]]` |
 | D13 | `[[wheel-build-sanity-gate]]` |
 | D14 | (none mandatory; apply the YAGNI rubric below) |
+| D15 | `[[mcp-is-first-class-across-skill-chain]]` |
 
 ### Per-dimension specifics
 
@@ -241,6 +258,14 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 - **D5 Memory hygiene & consolidation (NEW v2, refined v2.1):**
   - Inspect `~/.claude/projects/C--development-github-gflow-cli/memory/` (file-based memory — primary source).
   - **Concrete MCP memory-server probe (v2.1):** in the current session, look at the tool list for any tool whose name matches `mcp__*memory*`, `mcp__*mempalace*`, `mcp__*mem0*`, `mcp__*context-mode*` (for indexed KB), or any tool the user explicitly mentioned. If found, invoke its "list" / "search" / "stats" tool to enumerate stored items. If no such tool is loaded in-session, state explicitly "no MCP memory server loaded; D5 scope = file-based memory only".
+  - **An empty or absent memory directory is `UNAVAILABLE`, never GREEN.** Verify you can
+    actually read it (`ls` the path, quote the file count) before any verdict. Memory is keyed
+    by *working-directory path*, not repo identity, so a fresh clone — every autonomous
+    sandbox run — starts with an empty namespace unless the store was synced to that host.
+    Reporting "no memory entry contradicts this PR" from a directory you could not read is a
+    false negative dressed as a pass: it is the assumed-not-verified failure this dimension
+    already forbids, and it happened on PR #650, where `video-model-capability-matrix.md`
+    recorded that exact PR as REJECTED while D5 reported GREEN from an empty mount.
   - For each memory entry potentially relevant to the PR's surface: does the PR's content CONTRADICT or SUPERSEDE it? If so, the PR must include a memory edit/delete in the same change. Flag missing edits.
   - Does the PR introduce a new durable pattern / failure mode / decision that should be captured as a NEW memory entry? Flag missing additions.
   - Is `MEMORY.md` index still in sync (entries listed correspond to existing files)? Flag drift.
@@ -271,7 +296,7 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 3. **Consensus rule:**
    - **`D0` (mechanical CI gate, Pre-flight step 6) RED or UNVERIFIED → the overall verdict cannot be GREEN.** A D0 RED forces **RED** even if every LLM dimension is GREEN — CI will reject the tree. A D0 UNVERIFIED caps the verdict at **YELLOW** with an explicit "confirm CI green before merge" action.
    - Any RED → **RED** (block merge).
-   - Any YELLOW → **YELLOW** (soft block per `[[llm-council-data-layer-fixes]]`).
+   - Any YELLOW → **YELLOW** (soft block; dismissal requires a logged justification).
    - All GREEN (including D0) → **GREEN** (mergeable).
 4. **Deduplicate must-fix AND confirmed-good** — same finding from two dimensions = list once + credit both.
 5. **False-positive filter + SHA divergence check (NEW v2, refined v2.1):**
@@ -339,7 +364,7 @@ Upon completing a Branch / Council Review:
 - The command is **stateless** and **read-only** — concurrent invocations on different PRs don't share data. No `gh pr merge`, no `git push`, no `gh pr close`.
 - **Idempotence:** same PR SHA → comparable verdicts on different days. Drift usually means memory grew new precedents or the mandatory-slug table needs an update.
 - **Sibling commands.** `/review` is the single-agent Claude-Code built-in (one-pass, cheap) — use for spot-checks or draft iteration. `/gflow:pr-council-review` is the council version for pre-merge audits and high-risk surfaces.
-- **Cross-tool portability.** This SKILL.md is the canonical body. The Claude Code slash command at `.claude/commands/gflow/pr-council-review.md` is a thin wrapper. Other tools (Antigravity / Codex / Cursor / Aider) consume this file directly via their own skill-loading mechanism. See `[[pr-council-review-portability-backlog]]` for the cross-tool playbook.
+- **Cross-tool portability.** This SKILL.md is the canonical body. The Claude Code slash command at `.claude/commands/gflow/pr-council-review.md` is a thin wrapper. Other tools (Antigravity / Codex / Cursor / Aider) consume this file directly via their own skill-loading mechanism.
 
 ---
 

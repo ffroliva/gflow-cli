@@ -4,6 +4,39 @@
 
 ## Current release
 
+**v0.67.0 — alpha.** **Flow's migrated `flow.google.com` host is driven for text-to-video,
+and it is now the default host for every request it can serve.**
+
+Google is moving accounts off `labs.google` one at a time
+([#639](https://github.com/ffroliva/gflow-cli/issues/639)); both maintainer accounts moved
+during this cycle. The migrated frontend is the same product on Angular Material over a
+different wire (`batchexecute`, not `aisandbox-pa`): three $0 spikes and two real clips settled
+the DOM and the protocol
+([spike](superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md)), and the new
+migrated composer drives it — option-group radios, model menu, `contenteditable` composer,
+`arrow_forward` submit — then **observes** the app's own `YhhmEf` / `jwpduf` / `as29s` replies
+and downloads the clip from its signed CDN URL. Routing (`GFLOW_CLI_FLOW_HOST`): under the
+default `auto`, `flow.google.com` takes every `video t2v --project` on moved and unmoved
+accounts alike; what it cannot serve yet (image, i2v/r2v, characters, scenes, extend,
+instructions, tools, project creation) keeps the labs driver on an unmoved account and exits
+36 on a moved one. `flow.google.com` forces it, `labs.google` is the kill switch.
+
+Also in this release: exit 36 is **non-retryable** — the handoff is a server-assigned
+per-account flag applied client-side, one-way, not the per-page-load flap the error text
+claimed ([spike](superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md)); and
+`--duration` accepts 4/6/8 s on the Veo 3.1 models where the account's cohort renders the
+control ([#650](https://github.com/ffroliva/gflow-cli/pull/650), @stgmt).
+
+Verification: [LIVE_VERIFICATION_v0.67.0](LIVE_VERIFICATION_v0.67.0.md) — `gflow video t2v`
+on the moved account (default route) **exit 0 in 49.9 s**, on the unmoved Portuguese-locale
+account (forced route) **exit 0 in 50.5 s**, both mp4s byte-exact with the size Flow reported,
+recorder rows present; `--model veo-fast --duration 6` aborts pre-submit with exit 11 at zero
+credits because this cohort renders no duration row for Veo. The positive Veo 4/6/8 path is
+recorded as NOT verified (cohort-external), and the labs-side guard can no longer be verified
+here at all — there is no labs account left.
+
+<details><summary>v0.66.3 — the `&lt;html lang&gt;` hydration race</summary>
+
 **v0.66.3 — alpha.** **gflow was reading Flow's locale off the `en` shell it serves before the
 app rewrites it, so every account whose URL could not answer came back English.**
 
@@ -35,6 +68,8 @@ the helper captures the flip live (`en` → `pt`, +638 ms) and a real bootstrap 
 resolves correctly at the cost of the 4 s bound. Those two are reported **separately**, because
 collapsing a component measurement into a user-facing claim is the mistake v0.66.1 made and
 v0.66.2 corrected.
+
+</details>
 
 <details><summary>v0.66.2 — the fast-fail that had never fired, and a locale cache answering the wrong question</summary>
 
@@ -73,7 +108,7 @@ pure dead time), and caching "this profile is migrated" to navigate straight to
 `flow.google.com` (it would have locked both maintainer accounts out of a working frontend the
 day it shipped).
 
-Still not drivable — #639 stays open for that.
+Drivable for text-to-video since v0.67.0; #639 stays open for the rest of the matrix.
 
 Verification: [LIVE_VERIFICATION_v0.66.2](LIVE_VERIFICATION_v0.66.2.md). The old host is proven
 live at zero credits (**exit 0**, real 768x1376 JPEG, twice). The **migrated** path — which no
@@ -126,12 +161,16 @@ against; that host is being replaced under them
 [@maipmacrothorax-75](https://github.com/maipmacrothorax-75) with measurements from both
 sides of the rollout).
 
-The rollout **flaps per page load** — the same account, profile and project land on the old
-host on one navigation and the migrated one on the next — so a re-run frequently succeeds,
-which `retryable: false` was throwing away. gflow now recognises the migrated origin and
-raises a distinct, **retryable** `FlowHostMigratedError` (exit 36). CLI and MCP both inherit
-it: they share the raise site, and `is_retryable` is a single source of truth for the
-`--json`, MCP and worker envelopes.
+v0.66.0 read the rollout as **flapping per page load** — the same account landing on the old
+host on one navigation and the migrated one on the next — and on that reading made
+`FlowHostMigratedError` (exit 36) **retryable**. The reading was wrong: the handoff is a
+server-assigned per-account flag that the labs.google app applies client-side with
+`window.location.replace`, one-way and not transient (settled 2026-09-04 —
+[spike](superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md)), so exit 36 is
+**non-retryable** since that fix. What v0.66.0 got right stands: gflow recognises the migrated
+origin and raises a distinct error, and CLI and MCP both inherit it — they share the raise
+site, and `is_retryable` is a single source of truth for the `--json`, MCP and worker
+envelopes.
 
 Tracing the same root cause turned up three things the report did not name. `_check_logged_in`
 hard-required `labs.google` in the URL, so a valid authenticated session on the migrated host
@@ -142,12 +181,13 @@ bundle capture for exactly the failure whose evidence is most wanted; a test now
 invariant across all four arms of the raise site rather than a list of names.
 
 **This does not add support for the migrated frontend.** It converts a confusing hard failure
-into a clear retryable one. Once the rollout completes for an account, no retry will help —
-#639 stays open for that work, with the anchor recon it needs already recorded.
+into a clearly named one. No retry helps — the flag is per account — and #639 stays open for
+the driver work, with the anchor recon it needs already recorded.
 
 Verification: [LIVE_VERIFICATION_v0.66.0](LIVE_VERIFICATION_v0.66.0.md) — proven against the
 **real** migrated frontend at zero credits (`i_total: 0`, `flow_host_kind: "migrated"`,
-`check_logged_in: true`, exit 36, `retryable: true`), with a credit-free `image t2i` on the
+`check_logged_in: true`, exit 36, `retryable: true` as designed then — `false` since the
+2026-09-04 fix), with a credit-free `image t2i` on the
 old host minutes earlier completing exit 0 to prove no regression.
 
 </details>
@@ -174,19 +214,18 @@ it fired and passed — same account, same prompt, one variable. That also settl
 question that had held the fix for two days (Flow delegates to a **dedicated Web Worker**,
 so `context.route` suffices) and proved the request rewrite does not corrupt the body.
 
-Separately, `gflow video chain` and `gflow movie run` died **mid-spend** on
+Separately, `gflow video chain` and `gflow movie run` historically died **mid-spend** on
 `duration` × `model` ([#634](https://github.com/ffroliva/gflow-cli/issues/634)) — after
-earlier links or scenes had already rendered and billed. For chains it was a guaranteed
-crash: no model a chain can use has a duration control, so *every* manifest `duration` was
-unsatisfiable — including the one shipped as the documented example, which a test pinned as
-valid ([#635](https://github.com/ffroliva/gflow-cli/issues/635)). Both surfaces now refuse
-before the first submit, and `--dry-run` refuses what the real run refuses. The same defect
-on single-clip i2v ([#630](https://github.com/ffroliva/gflow-cli/issues/630)) now exits 2
-naming the model instead of exit 1 `"Unexpected error"`.
+earlier links or scenes had already rendered and billed. Historically, manifests pairing
+unsupported durations or models caused late crashes — including an example manifest
+tested against obsolete assumptions ([#635](https://github.com/ffroliva/gflow-cli/issues/635)).
+Both surfaces now share the canonical duration check: Veo accepts 4/6/8s, omni-flash accepts
+4/6/8/10s, and invalid combinations are refused before the first submit (and `--dry-run`
+refuses what the real run refuses). Single-clip i2v ([#630](https://github.com/ffroliva/gflow-cli/issues/630))
+similarly exits 2 naming the model instead of exit 1 `"Unexpected error"`.
 
-**Breaking:** a `movie.toml` scene pairing a Veo model with a `duration` now fails at parse
-(exit 11). That combination could never have rendered; it previously failed later and more
-expensively. Scene `duration` requires `model = "omni-flash"`.
+**Validation:** a `movie.toml` scene `duration` accepts 4/6/8 for Veo 3.1 and 4/6/8/10 for
+omni-flash; invalid values are rejected during parsing (exit 11) before any spending occurs.
 
 **Known limitation:** the guard covers browser-driven generation only. Direct-wire routes
 issued through Playwright's `APIRequestContext` are not routable at all and bypass it
@@ -314,12 +353,17 @@ detector matched nothing. Recovery hinged on a close button scoped to the
 sidebar's `edit_square` affordance, so a cohort lacking that ligature could never
 recover; `ensure_media_mode` now falls back to an unscoped close from the
 demonstrably stuck state, A/B-proven live. #451/#288 were never selector drift
-either: Flow's settings popover is **model-conditional** — only `omni-flash`
-renders a duration row — so `--duration` on a Veo model hunted a control that is
-never drawn. It now fails at the CLI edge with exit 2 before any browser work.
+either: Flow's settings popover is **model-conditional by cohort**. While the historical
+negative matrix (denon82, 2026-08-14) found no duration row for Veo, a subsequent live
+capture (presentation-reels-google, labs.google, 2026-09-04, PR #650) confirmed that
+cohorts exposing duration controls offer 4/6/8s for Veo 3.1 and 4/6/8/10s for `omni-flash`.
+Both matrices remain valid for their respective cohorts. The CLI now validates the
+canonical model cap at the edge with exit 2 before any browser work.
 Also: `--reference-entity` no longer advertised on `video i2v` (its DTO always
 rejected it), a typed `ReferenceNotFoundError` (exit 32) replaces a bare
-Playwright timeout, and `gflow models` stops advertising a duration users cannot
+Playwright timeout. (`gflow models` reported `max_duration` 0 for the Veo models
+under that rule; since #650 it reports 8, because the cohorts that render the row
+genuinely accept it.) The v0.64.0 note below described a duration users cannot
 set. Everything verified at **zero credits**. See
 [LIVE_VERIFICATION_v0.57.1.md](LIVE_VERIFICATION_v0.57.1.md).
 
@@ -595,8 +639,9 @@ reporter-verified e2e on macOS).
 
 | Milestone | Status |
 |---|---|
-| Migrated-origin runs fail instantly (0 ms) and keep their learned locale | ✅ done (v0.66.1) |
-| Flow `flow.google.com` migration named as its own retryable failure (exit 36) | ✅ done (v0.66.0) |
+| Flow's migrated `flow.google.com` host driven for text-to-video; the default host for what it can serve (`GFLOW_CLI_FLOW_HOST`) | ✅ done (v0.67.0) |
+| Migrated-origin runs fail fast and keep their learned locale (v0.66.1's fast-fail never fired in the field; corrected in v0.66.2) | ✅ done (v0.66.2) |
+| Flow `flow.google.com` migration named as its own failure class (exit 36; retryable in v0.66.0, non-retryable since 2026-09-04) | ✅ done (v0.66.0) |
 | Repo scaffold, CI, license, README, disclaimer | ✅ done |
 | Auth login flow (one-time browser capture) | ✅ done |
 | Video: `t2v` / `i2v` / `batch` (Veo 3.1) | ✅ done (v0.2.0a1) |

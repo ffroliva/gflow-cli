@@ -14,9 +14,9 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
-### Flow is migrating to `flow.google.com`; the migrated frontend is not drivable
+### Flow is migrating to `flow.google.com`; gflow drives the migrated frontend for t2v (rest of the matrix pending)
 
-- **Status:** Open · **Severity:** High (every generation command fails on a migrated page load) · **Affected:** all `gflow image` / `gflow video` generation, CLI and MCP alike, on accounts the rollout has reached
+- **Status:** Open (partially resolved) · **Severity:** High for everything except text-to-video · **Affected:** on accounts the rollout has reached, `gflow video t2v` now runs on the migrated host (with `--project`); `image`, i2v/r2v, characters, scenes, extend, instructions and tools are not ported yet and still exit 36
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
 - **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
 
@@ -27,9 +27,10 @@ contains **zero `<i>` elements**. Every gflow selector anchors on Material
 Symbols ligatures (`i.google-symbols:text-is(...)`), so cohort detection and
 every mode control miss at once.
 
-**The rollout flaps per page load.** The same account, profile and project land
-on the old host on one navigation and the migrated one on the next, minutes
-apart, with no client change. Measured on one account ~35 minutes apart:
+**v0.66.0 read the rollout as flapping per page load** — the same account, profile
+and project landing on the old host on one navigation and the migrated one on the
+next, minutes apart. Those two captures straddled the account's one-time switch
+(see the 2026-09-04 note under Workaround). Measured on one account ~35 minutes apart:
 
 ```
 old host       labs.google/fx/<locale>/tools/flow/...   i=55  i.google-symbols=49  crop_* present   -> exit 0
@@ -44,19 +45,35 @@ This is **not** selector rot, not [#493](https://github.com/ffroliva/gflow-cli/i
 and not the agentic cohort — the agentic indicators are absent too. It is a
 different origin serving different markup.
 
-**Workaround:** re-run the command. While the rollout flaps, a fresh navigation
-frequently lands the old frontend and the run completes normally. Automated
-callers get this for free: the failure is `FlowHostMigratedError` (exit 36) with
-`retryable: true`, so retry loops driven by the `--json` / MCP / worker error
-envelope will keep trying.
+**What works now — text-to-video on the migrated host.** `gflow video t2v … --project <id>`
+drives the migrated editor directly (settings through its option groups, prompt,
+submit, then it observes the app's own `batchexecute` status replies and downloads
+the clip). Two real clips were generated this way on 2026-09-05 — spike
+`docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md`. Routing
+(`GFLOW_CLI_FLOW_HOST=auto`): flow.google.com is the **default** host for that
+command on every account — moved or not; `flow.google.com` forces it for
+everything, and `labs.google` switches the migrated composer off. Limits today: `--project` is required (project creation from the
+migrated editor is not ported), and only `t2v` — everything else still exits 36.
 
-**What gflow does today (v0.66.2):** recognises the migrated origin and fails
-with the distinct, retryable exit 36 instead of the misleading
+**Workaround for the rest:** none client-side. The handoff
+is a per-account setting the labs.google app applies on every load (measured
+5/5 and 7/7 with no flap, 2026-09-04 — spike
+`docs/superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md`), so
+once the account is flagged, re-running will not land the old frontend. Earlier text here said the rollout
+"flaps" and told you to retry; that observation straddled the account's one-time
+switch and is withdrawn. The REST surface (`gflow project list`, `gflow data …`)
+is unaffected. Automated callers now receive `retryable: false` so retry loops
+stop instead of burning a doomed attempt each time.
+
+**What gflow does today for the rest of the matrix:** recognises the migrated
+origin — `page.url` is re-checked at every point the run is about to spend time,
+which Playwright updates in the same tick as the hand-off navigation — and fails
+with the distinct, non-retryable exit 36 instead of the misleading
 `UiSelectorDriftError` (exit 23, "file a selector bug"). `_check_logged_in` also
 accepts the migrated host, so a migrated load is no longer misread as a
-logged-out session. **Support for driving the new frontend is separate work and
-is not implemented** — once the rollout completes for an account, no retry will
-help until then.
+logged-out session. Text-to-video is driven (above); image, i2v/r2v, characters,
+scenes, extend, instructions, tools and project creation are the remaining work
+tracked here — no retry helps for those until each is ported.
 
 > **v0.66.1's fast-fail did not fire in the field, and v0.66.2 is the correction.**
 > The guard read `page.url` once, at `get_ui_driver` entry — before the hop to
@@ -267,31 +284,59 @@ listing endpoint (privacy-gated to `store` history mode), and `gflow doctor`
 (#542) surfaces the affected-row count. Freshly generated rows whose caption
 has not landed yet stay nameless until the next sync sweep.
 
-### Video duration tab probe misses on the current Frames-submode DOM
+### Video duration control is absent on some account cohorts
 
-- **Status:** Open ([#288](https://github.com/ffroliva/gflow-cli/issues/288))
-- **Severity:** Medium · **Affected:** `gflow video` with an explicit `--duration`
-  on at least some Classic-profile cohorts (3/3 miss on a live 2026-07-11 run)
+- **Status:** Mitigated — fail-fast shipped in
+  [#289](https://github.com/ffroliva/gflow-cli/pull/289).
+  [#288](https://github.com/ffroliva/gflow-cli/issues/288) and
+  [#451](https://github.com/ffroliva/gflow-cli/issues/451) are closed; the
+  Flow-side behaviour is unresolved and untracked upstream. gflow's own static
+  gate was relaxed in [#650](https://github.com/ffroliva/gflow-cli/pull/650).
+- **Severity:** Medium · **Affected:** `gflow video` with an explicit
+  `--duration` (3/3 miss on a live 2026-07-11 run; re-confirmed by a $0
+  capability capture 2026-09-03)
 
-The `duration_tab` selector cascade (`[role='tab']:text-is('4s')` /
-`:has-text('4s')`) fails to match on Flow's current Frames-submode settings
-panel. Pre-fix this silently produced a clip of Flow's default length; since
-the #289 fix the run fails fast with `UiSelectorDriftError` (exit 23) and a
-`debug_no_duration_tab.png` screenshot — live-verified 2026-07-11 on the
-my-profile profile (aborted pre-submit, saving the 10-credit generation).
-**Workaround:** omit `--duration` to accept Flow's default.
+**Workaround:** omit `--duration` and accept Flow's default clip length.
+
+**What actually happens today.** gflow accepts `--duration 4`, `6` or `8` on the
+Veo 3.1 models and `10` on `omni-flash` only — the CLI no longer refuses a
+duration it cannot know your account supports. What it still cannot do is tell
+your cohort apart before opening the browser, so on an account that renders no
+duration row the run reaches Flow's settings popover and fails there — on the
+labs driver as `UiSelectorDriftError` (exit 23) with a `debug_no_duration_tab.png`
+screenshot, on the migrated `flow.google.com` host as `ConfigurationError` (exit 11)
+naming the duration axis (the maintainer cohort renders the row for Omni 1.1 Flash
+only there, measured 2026-09-05).
+That abort is **pre-submit**, so no credits are spent — live-verified 2026-07-11
+on the my-profile profile.
 
 **Root cause (confirmed live 2026-07-11, screenshot evidence on #288): the
 duration control is ABSENT from this cohort's settings popover** — the panel
 renders mode tabs (Imagem/Video), sub-mode (Frames/Elementos), aspect
 (9:16/16:9), count (1x–x4; labels renamed to xN since — see #404), and the
-model dropdown (Veo 3.1 - Lite), and
-nothing else. The earlier locale hypothesis is refuted: the UI renders in
-Portuguese and the sibling count tabs (`1x`/`x2`) match fine; there is simply
-no duration row to click. Whether Flow removed clip-length selection for this
-cohort/model or moved it elsewhere is unknown — until that's answered,
-`--duration` cannot be honored on affected cohorts and the fail-fast is the
-correct behavior, not a selector bug to patch.
+model dropdown (Veo 3.1 - Lite), and nothing else. The earlier locale hypothesis
+is refuted: the UI renders in Portuguese and the sibling count tabs (`1x`/`x2`)
+match fine; there is simply no duration row to click.
+
+**Updated 2026-09-04 — it is a cohort difference, not a removal.** A third
+profile on the *same* `labs.google` frontend renders `4s/6s/8s` on all three
+selectable Veo 3.1 models, at different credit prices, in a credit-free capture
+whose count tabs came back on every model. (`veo_3_1_lite_lower_priority` missed
+its picker, so it is unmeasured either way.) Some accounts have the control, some
+do not; the cohort key — region, account age, experiment bucket — is unknown.
+
+Because the gate is a static per-model table rather than a read of your session,
+gflow cannot express that difference: it now allows `4/6/8` on every Veo 3.1
+model, and an account without the control discovers this in the browser rather
+than at the CLI edge. Trading an instant, wrong rejection for a slower, correct
+attempt was the deliberate call in #650. A session-level capability probe would
+remove the trade entirely and nobody has written one.
+
+**Reporting.** If Flow's UI shows a duration row for a Veo model on your account,
+that is useful — it narrows the cohort key. Attach the exact `--model` /
+`--duration` invocation and the error text; a `--model omni-flash` run
+additionally yields the probe name and `debug_no_duration_tab.png`. No tokens or
+signed URLs.
 
 ### macOS: generation runs logged-out → HTTP 401, even with `--browser chrome`
 

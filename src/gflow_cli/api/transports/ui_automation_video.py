@@ -33,6 +33,7 @@ from gflow_cli.api.transports._common import (
     extract_project_id,
     flow_host_kind,
     generation_error,
+    migrated_route,
     offered_menu_labels,
     raise_if_migrated,
 )
@@ -1463,8 +1464,8 @@ class VideoGenerationMixin:
                     "Flow served this project from flow.google.com — the origin Google "
                     "is migrating the app onto — whose frontend renders none of the "
                     f"controls gflow drives, so there is no {media} generation control "
-                    "here. This is not selector drift. The migration currently flaps "
-                    "per page load, so retrying often lands the old frontend."
+                    "here. This is not selector drift, and it is not transient: the handoff is a "
+                    "per-account setting, so retrying will not land the old frontend."
                     f"{diag_clause}"
                 )
             )
@@ -3953,11 +3954,49 @@ class VideoGenerationMixin:
 
         page: Page = self._page  # type: ignore[assignment]  # guarded in generate_video
 
-        await self._enter_editor(page, out_dir, project_id=project_id)
-        await VideoGenerationMixin._wait_video_editor_ready(page)
-        # Dismiss any Flow changelog / "What's new" overlay that may be on top
-        # of the editor before we click into mode-switch / settings / submit (#26).
-        await self._dismiss_blocking_overlays(page, out_dir)
+        # #639: an account Google moved to flow.google.com (or GFLOW_CLI_FLOW_HOST
+        # forcing that host) is driven by the migrated composer. Decided twice —
+        # here, when the bootstrap page already hopped or the host is forced, and
+        # again after entering the project, because the hop is a client-side
+        # navigation the labs app performs AFTER the project page has loaded.
+        from gflow_cli.api.transports.migrated_composer import (  # noqa: PLC0415
+            migrated_can_serve,
+            run_video,
+        )
+        from gflow_cli.config import get_settings  # noqa: PLC0415
+
+        flow_host = get_settings().flow_host
+        prefer = migrated_can_serve(request, project_id)
+        route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
+        if route == "labs":
+            await self._enter_editor(page, out_dir, project_id=project_id)
+            await VideoGenerationMixin._wait_video_editor_ready(page)
+            # Dismiss any Flow changelog / "What's new" overlay that may be on top
+            # of the editor before we click into mode-switch / settings / submit (#26).
+            await self._dismiss_blocking_overlays(page, out_dir)
+            route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
+        if route == "blocked":
+            raise_if_migrated(page, at="flow_host_kill_switch")
+        if route == "migrated":
+            try:
+                return await run_video(
+                    page,
+                    request,
+                    project_id=project_id,
+                    out_dir=out_dir,
+                    poll_timeout_s=poll_timeout_s,
+                    download=download,
+                    on_started=on_started,
+                )
+            finally:
+                # The pooled page would otherwise stay on flow.google.com/project/<id>,
+                # and the NEXT request on this client would be routed by that URL
+                # instead of by its own shape (an unmoved account's i2v → exit 36,
+                # or a silently reused project). Park it; the next run navigates.
+                try:
+                    await page.goto("about:blank", wait_until="commit", timeout=5_000)
+                except Exception as exc:  # noqa: BLE001 - parking is best-effort
+                    log.warning("migrated.page_park_failed", error=str(exc)[:120])
 
         # #299: the video path binds through the mode policy like images do —
         # get_ui_driver switches to the required arm, VERIFIES via a DOM

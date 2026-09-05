@@ -155,6 +155,9 @@ _ALLOWED_DOWNLOAD_HOST_SUFFIXES: tuple[str, ...] = (
     # Agentic cohort: the tRPC redirect URL (media.getMediaUrlRedirect) is
     # same-origin with labs.google — session cookies authorise the download.
     "labs.google",
+    # Migrated flow.google.com host: results are signed CDN URLs on this host
+    # (Expires + KeyName=labs-flow-prod-cdn-key + Signature), measured 2026-09-05.
+    "flow-content.google",
 )
 
 

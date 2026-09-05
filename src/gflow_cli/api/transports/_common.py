@@ -55,9 +55,12 @@ def mint_batch_id() -> str:
     return str(uuid.uuid4())
 
 
-# Flow's own origins. Google is migrating the app off labs.google onto
-# flow.google.com (issue #639) and the two FLAP per page load, so both are live
-# and every host gate has to accept both.
+# Flow's own origins. Google is migrating accounts off labs.google onto
+# flow.google.com (issue #639). The handoff is a server-assigned per-account
+# boolean that the labs.google app acts on client-side after a fully
+# authenticated load (spike 2026-09-04-migrated-host-handoff-mechanism) -- it is
+# a one-way rollout, not a flap (5/5 and 7/7 on a flagged account). Both hosts
+# stay in this map because the fleet is mid-rollout.
 _FLOW_HOSTS: dict[str, str] = {
     "labs.google": "labs",
     "flow.google.com": "migrated",
@@ -86,28 +89,40 @@ def flow_host_kind(url: object) -> str | None:
     return _FLOW_HOSTS.get(host)
 
 
+def migrated_route(url: object, flow_host: str, *, prefer_migrated: bool = False) -> str:
+    """Which driver a page gets: ``"labs"``, ``"migrated"`` or ``"blocked"``.
+
+    ``flow_host`` is ``Settings.flow_host``. ``flow.google.com`` forces the migrated
+    composer; ``labs.google`` refuses it, so a moved account keeps exit 36
+    (``blocked``). ``auto`` — the default — makes flow.google.com the default host
+    for every request it can serve (``prefer_migrated``, decided by the caller from
+    the request: t2v with a project today), on moved and unmoved accounts alike;
+    anything else follows the served host, so an unmoved account keeps the labs
+    driver for the features the new host has not been ported for. An unreadable
+    URL with nothing to prefer routes to the labs driver, exactly as before.
+    """
+    if flow_host == "flow.google.com":
+        return "migrated"
+    kind = flow_host_kind(url)
+    if kind == "migrated":
+        return "blocked" if flow_host == "labs.google" else "migrated"
+    return "migrated" if prefer_migrated and flow_host == "auto" else "labs"
+
+
 def raise_if_migrated(page: object, *, at: str) -> None:
     """Abort now if this page is on the migrated ``flow.google.com`` origin (#639).
 
-    The migrated frontend renders none of the controls gflow drives, so every probe
-    after this point is doomed. Call it wherever the run is **about to spend time**,
-    and never behind a wait of its own: ``page.url`` is a cached property and
-    :func:`flow_host_kind` is one parse plus a dict lookup, so a call costs the host
-    that still works nothing at all.
+    The labs drivers render none of their controls there, so every probe after this
+    point is doomed. Call it wherever the run is **about to spend time**, never behind
+    a wait of its own: ``page.url`` is a cached property that Playwright updates in
+    the same tick it emits the hop's ``framenavigated``, and :func:`flow_host_kind`
+    is one parse plus a dict lookup — the working host pays nothing. Once, at entry,
+    is not enough (v0.66.1's defect: the hop is a post-``goto`` client-side
+    navigation); re-check at every blocking point instead. History and measurements:
+    ``docs/superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md``.
 
-    **Once, at entry, is not enough** — that was v0.66.1's defect.
-    ``routes.project_editor_url`` only ever builds a ``labs.google`` URL, and the hop
-    to the migrated origin is a *post-``goto``* redirect that neither settle path
-    waits for (no locale → ``_settle_if_redirecting`` returns immediately; a known
-    locale → :func:`await_url_settled` short-circuits because the labs URL already
-    matches :data:`FLOW_LOCALISED_URL_RE`). An entry-only check therefore reads a
-    pre-redirect URL and declines. Measured in the field on three consecutive runs:
-    exit 36 arrived at ~57 s, through the slow selector-probe path, with the bail
-    event absent from the timeline entirely.
-
-    ``at`` names the call site in the log event, so a field timeline SHOWS where the
-    host became knowable instead of leaving it to be inferred — which is exactly how
-    a fast path that never fired survived a release.
+    ``at`` names the call site in the log event so a field timeline shows where the
+    host became knowable.
     """
     url = getattr(page, "url", None)
     if flow_host_kind(url) != "migrated":
@@ -115,10 +130,13 @@ def raise_if_migrated(page: object, *, at: str) -> None:
     log.info("ui_driver.migrated_host_bail", at=at, url=url)
     raise FlowHostMigratedError(
         detail=(
-            "Flow served this project from flow.google.com — the origin Google is "
-            "migrating the app onto — whose frontend renders none of the controls "
-            "gflow drives. This is not selector drift. The migration flaps per page "
-            "load, so retrying often lands the old frontend."
+            "Flow handed this session to flow.google.com — the origin Google is "
+            "migrating accounts onto — and this request is not ported to the migrated "
+            "composer yet (or GFLOW_CLI_FLOW_HOST=labs.google switched it off), so the "
+            "labs driver cannot proceed. This is not selector drift, and it is not "
+            "transient: the handoff is a per-account setting the labs.google app "
+            "applies on every load, so once your account is flagged, retrying will not "
+            "land the old frontend."
         )
     )
 

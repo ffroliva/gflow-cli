@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.67.0] — 2026-09-05
+
+### Added
+
+- **Text-to-video on Flow's migrated `flow.google.com` host** (#639). An account
+  Google has moved off labs.google no longer exits 36 on `gflow video t2v`: the new
+  migrated composer drives the Angular editor (option-group radios, model menu,
+  `contenteditable` composer, `arrow_forward` submit) and then *observes* the app's
+  own `batchexecute` replies — `YhhmEf` submit, `jwpduf` status, `as29s` result —
+  before downloading the clip. Under the default
+  `GFLOW_CLI_FLOW_HOST=auto`, flow.google.com is now the **default host for every
+  request it can serve** — t2v with `--project`, on moved and unmoved accounts
+  alike (the new host serves both); what it cannot serve yet keeps the labs
+  driver on an unmoved account. `flow.google.com` forces it for everything,
+  `labs.google` is the kill switch. `--project` is required on
+  that host for now; everything except t2v still exits 36 there. Recon with two
+  real generations: `docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md`.
+
+### Changed
+
+- **Exit 36 (`FlowHostMigratedError`) is no longer retryable** (#639). Two $0 spikes
+  settled the mechanism: labs.google serves a normal 200 to a fully authenticated
+  session, then the app itself runs `location.replace('https://flow.google.com' +
+  path)` from a `useEffect`, gated on a server-assigned per-account config boolean.
+  It is a one-way rollout — 5/5 and 7/7 on a flagged account — not the per-page-load
+  flap the error text claimed, so once an account is flagged a retry never lands the
+  old frontend. The remediation, the `_mode_switch_error` fallback, `docs/USAGE.md`,
+  `docs/MCP.md`, `KNOWN_ISSUES.md` and `docs/PROJECT_STATUS.md` no longer invite a
+  retry, and the MCP, worker and `--json` envelopes carry `retryable: false`.
+  Detection is unchanged from v0.66.2: Playwright updates `page.url` in the same
+  tick it emits the hop's `framenavigated`, so re-checking it wherever the run is
+  about to spend time — the shape the reporter measured at 4.1 s — was already right
+  (maintainer A/B on the same machine and profile: 16.0 s vs 16.6 s on unmodified
+  `develop`, Chrome launch included).
+
+- **`--duration` now accepts 4s/6s/8s on the Veo 3.1 models** (#650, @stgmt); `10`
+  stays `omni-flash`-only. Flow's duration control turns out to be account/cohort-
+  dependent — some accounts render the row for Veo, some render none, on the same
+  frontend — so the static table that refused it everywhere was wrong for part of
+  the userbase. `supports_duration()` is gone; one shared
+  `validate_duration_for_model()` now backs the DTO, CLI, chain, movie manifest and
+  MCP surfaces. On an account **without** the control the run now reaches the browser
+  and aborts pre-submit with no credits spent — exit 23 on the labs driver, exit 11
+  on the migrated `flow.google.com` host, where the maintainer cohort renders the
+  duration row for Omni 1.1 Flash only (measured 2026-09-05) — instead of refusing
+  instantly at the CLI edge — a deliberate trade, since a static per-model table
+  cannot express a per-account capability.
+
+### Fixed
+
+- **`--model` on the migrated host selected the model and then lost the settings pane**
+  (#665). After the model menu — a second overlay — opened and closed, the driver
+  resolved `.cdk-overlay-pane.last` to the detached menu pane, so every axis after the
+  switch read "0 option groups". The pane is now the overlay that contains the option
+  groups; a regression test keeps a stale menu pane as the last overlay.
+- **MCP `gflow_generate_video` accepted any `duration` when `model` was omitted**
+  (#659): `duration=99` queued and burned a browser run. The tool now validates the
+  value against the supported set regardless of model, like the CLI's choice list.
+
 ## [0.66.3] — 2026-09-03
 
 ### Fixed
@@ -46,6 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.66.2] — 2026-09-03
 
 ### Fixed
+
 
 - **v0.66.1's migrated-origin fast-fail never fired on a real run
   ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** The guard read `page.url` once,
@@ -3820,7 +3880,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.66.3...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...HEAD
+[0.67.0]: https://github.com/ffroliva/gflow-cli/compare/v0.66.3...v0.67.0
 [0.66.3]: https://github.com/ffroliva/gflow-cli/compare/v0.66.2...v0.66.3
 [0.66.2]: https://github.com/ffroliva/gflow-cli/compare/v0.66.1...v0.66.2
 [0.66.1]: https://github.com/ffroliva/gflow-cli/compare/v0.66.0...v0.66.1

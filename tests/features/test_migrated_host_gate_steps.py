@@ -143,9 +143,10 @@ def _fails_with_36(gate_state: dict[str, Any]) -> None:
     assert EXIT_CODE_MAP[FlowHostMigratedError] == 36
 
 
-@then("the error is retryable")
-def _is_retryable(gate_state: dict[str, Any]) -> None:
-    assert is_retryable(gate_state["error"])
+@then("the error is not retryable")
+def _is_not_retryable(gate_state: dict[str, Any]) -> None:
+    # A server-assigned handoff does not clear on retry (5/5, 7/7 measured).
+    assert not is_retryable(gate_state["error"])
 
 
 @then("the error names flow.google.com rather than selector drift")

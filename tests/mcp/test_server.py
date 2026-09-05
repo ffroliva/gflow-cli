@@ -825,36 +825,38 @@ class TestUiModeEnvelopeShape:
         assert result["error"]["title"] == "Unsupported ui_mode for video"
 
     @pytest.mark.asyncio
-    async def test_duration_on_a_model_without_a_duration_control_is_a_400(self) -> None:
-        """#630 / #451: the MCP surface must reject this like the CLI does.
-
-        Only omni-flash renders a duration control. Without an up-front check the
-        request reaches the worker, where the DTO raises a bare ``ValueError`` —
-        an agent gets an opaque worker failure instead of an actionable 400,
-        after the task has already been queued.
-        """
+    async def test_duration_10_on_veo_lite_is_a_400(self) -> None:
+        """#630 / #451: duration 10 is only available for omni-flash."""
         from gflow_cli.mcp.tools import gflow_generate_video
 
-        result = await gflow_generate_video(prompt="x", model="veo_lite", duration=8)
+        result = await gflow_generate_video(prompt="x", model="veo_lite", duration=10)
         assert result["status"] == "error"
         assert result["error"]["status"] == 400
         assert "duration" in result["error"]["title"].lower()
+        assert "omni_flash" in result["error"]["detail"]
 
     @pytest.mark.asyncio
-    async def test_duration_on_i2v_without_model_is_a_400(self) -> None:
-        """The no-``model`` i2v path needs the same treatment as the CLI (#630).
-
-        i2v binds ``I2V_DEFAULT_MODEL`` (veo-lite, no duration control) when the
-        caller omits ``model``, so "no model" is not "no opinion" here.
-        """
+    async def test_duration_10_on_i2v_without_model_is_a_400(self) -> None:
+        """The no-``model`` i2v path binds I2V_DEFAULT_MODEL (veo-lite), capping at 8s."""
         from gflow_cli.mcp.tools import gflow_generate_video
 
         result = await gflow_generate_video(
-            prompt="x", mode="i2v", initial_frame="a.png", duration=8
+            prompt="x", mode="i2v", initial_frame="a.png", duration=10
         )
         assert result["status"] == "error"
         assert result["error"]["status"] == 400
         assert "duration" in result["error"]["title"].lower()
+        assert "caps at 8s" in result["error"]["detail"]
+        assert "omni_flash" in result["error"]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_duration_8_on_veo_lite_is_not_rejected(self) -> None:
+        from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
+
+        with patch("gflow_cli.mcp.tools._rate_limiter", _TokenBucket(capacity=8, refill_rate=0.0)):
+            result = await gflow_generate_video(prompt="x", model="veo_lite", duration=8)
+        title = (result.get("error") or {}).get("title", "")
+        assert "duration" not in title.lower(), result
 
     @pytest.mark.asyncio
     async def test_duration_on_omni_flash_is_not_rejected(self) -> None:
@@ -894,3 +896,14 @@ class TestUiModeEnvelopeShape:
 
         result = await gflow_generate_image(prompt="x", ui_mode="BOGUS")
         assert "'bogus'" in result["error"]["detail"]
+
+
+async def test_generate_video_rejects_unsupported_duration_without_model() -> None:
+    """#659: with `model` omitted the tool used to skip duration validation, so
+    duration=99 queued a browser run that died at claim (exit 30). The CLI never
+    accepted it (click.Choice); the MCP surface now matches."""
+    from gflow_cli.mcp.tools import gflow_generate_video
+
+    result = await gflow_generate_video(prompt="a crane", duration=99)
+    assert result["status"] == "error"
+    assert "Unsupported duration" in str(result)

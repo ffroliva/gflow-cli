@@ -35,7 +35,7 @@ from gflow_cli._cli_helpers import _FLOW_ID_RE
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
-from gflow_cli.api.video import is_media_uuid
+from gflow_cli.api.video import VIDEO_DURATION_CHOICES, is_media_uuid
 from gflow_cli.auth import verification
 from gflow_cli.cli_instructions import classify_refs
 from gflow_cli.config import UiMode, get_settings
@@ -985,7 +985,9 @@ async def gflow_generate_video(  # NOSONAR
             with a start frame and with an end frame; 'omni_flash' was the last
             exception and its end-frame route was wire-verified 2026-09-02
             (refs #125, #626).
-        duration: Optional clip length in seconds (mirrors the CLI ``--duration``).
+        duration: Optional clip length in seconds (mirrors the CLI ``--duration``):
+            4/6/8 on the Veo 3.1 models, 4/6/8/10 on ``omni_flash``; whether the
+            account's cohort renders the control is decided pre-submit at zero cost.
             When omitted, Flow's per-model default applies.
         count: Number of videos to generate (mirrors the CLI ``--count``; default 1).
         tools: Optional list of prompt tools to apply before generation.
@@ -1002,7 +1004,10 @@ async def gflow_generate_video(  # NOSONAR
             auto-select if exactly one profile exists.
         project: Optional existing Flow project id to generate into (mirrors the
             CLI ``--project`` flag on ``video t2v``/``i2v``/``r2v``). When
-            omitted, a scratch project is created as before.
+            omitted, a scratch project is created on labs.google. On an account
+            Google has moved to flow.google.com (``GFLOW_CLI_FLOW_HOST``, read from
+            the server/daemon environment, not per call) ``project`` is required —
+            omitting it returns the exit-11-equivalent envelope.
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
             ``video t2v``/``i2v``; applies to every mode of this tool,
             including 'r2v'). Video generation only has a classic driver:
@@ -1039,7 +1044,7 @@ async def gflow_generate_video(  # NOSONAR
                 "or 'auto'.",
             )
 
-    from gflow_cli.api.video import I2V_DEFAULT_MODEL, VideoModel
+    from gflow_cli.api.video import I2V_DEFAULT_MODEL, VideoModel, validate_duration_for_model
 
     # Validate the model alias up front (mirrors the CLI's pre-spend check) so an
     # unknown model fails fast with a 400 instead of dying deep in the worker.
@@ -1049,26 +1054,31 @@ async def gflow_generate_video(  # NOSONAR
         except ValueError as exc:
             return _bad_param("Invalid Video Model", str(exc))
 
-    # Only omni-flash renders a duration control (#451/#288). Without this the
-    # request is queued and the DTO raises a bare ValueError inside the worker,
-    # so the agent gets an opaque failure for a plain parameter mistake. Mirrors
-    # the CLI's `_reject_duration_without_control` (#630) — including its
-    # default-model resolution: i2v binds I2V_DEFAULT_MODEL when `model` is
-    # omitted, so "no model" is not "no opinion" there. t2v/r2v inherit Flow's
-    # sticky UI default, which is unknowable here, so they stay unguarded.
+    # Centralized duration validation: validate_duration_for_model rejects an
+    # invalid duration before queuing the job so the agent gets a clean 400
+    # instead of a ValueError inside the worker. Mirrors the CLI's pre-spend
+    # checks: i2v binds I2V_DEFAULT_MODEL when `model` is omitted (so "no model"
+    # is not "no opinion" there), while t2v/r2v inherit Flow's sticky UI default,
+    # which is unknowable here and left unguarded by design.
     if duration is not None:
+        # #659: the CLI's --duration is a click.Choice, so 99 never reaches the
+        # transport there; here it did, and queued a browser run that died at claim.
+        if duration not in VIDEO_DURATION_CHOICES:
+            return _bad_param(
+                "Unsupported duration",
+                f"duration must be one of {list(VIDEO_DURATION_CHOICES)} seconds; got {duration}",
+            )
         effective = VideoModel.from_cli(model) if model is not None else None
         if effective is None and mode == "i2v" and (initial_frame or end_frame):
             effective = I2V_DEFAULT_MODEL
-        if effective is not None and not effective.supports_duration():
-            return _bad_param(
-                "Unsupported duration for model",
-                f"model {effective.value!r} renders no duration control in Flow, so "
-                f"duration={duration} cannot be applied. Only "
-                f"{VideoModel.OMNI_FLASH.value!r} exposes a duration (4/6/8/10s). "
-                f"Omit 'duration' to accept Flow's default length, or pass "
-                f"model='{VideoModel.OMNI_FLASH.value}'.",
-            )
+        if effective is not None:
+            try:
+                validate_duration_for_model(effective, duration)
+            except ValueError as exc:
+                return _bad_param(
+                    "Unsupported duration for model",
+                    str(exc),
+                )
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_video")
