@@ -15,19 +15,30 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
+    EXIT_CODE_MAP,
     ConfigurationError,
+    MediaUploadRejectedError,
+    ReferenceNotFoundError,
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
 )
 
 # --- a tiny DOM -------------------------------------------------------------
+
+#: The toolbar `+` — the only add affordance OUTSIDE the prompt box (the box has its own
+#: `add` icons for chips). XPath, because CSS cannot say "no such ancestor".
+TOOLBAR_ADD_XPATH = (
+    "xpath=//button[.//mat-icon[normalize-space()='add']][not(ancestor::flow-prompt-box)]"
+)
 
 
 @dataclass
@@ -62,6 +73,26 @@ class Dom:
     escapes_ignored: bool = False  # a pane that refuses to close at all
     toast_visible: bool = False  # an unrelated CDK overlay (snackbar/tooltip)
     events: list[str] = field(default_factory=list)
+    # --- i2v: the toolbar upload path and the Frames picker (2026-09-05 frames spike) ---
+    add_button_present: bool = True  # the toolbar `+` outside flow-prompt-box
+    add_menu_open: bool = False
+    upload_item_present: bool = True  # `[role=menuitem]` with the `upload` ligature
+    chooser_opens: bool = True  # clicking the upload item fires `filechooser`
+    chooser_pending: bool = False
+    chosen_files: list[str] = field(default_factory=list)
+    # "ok" → 200 frame `[media_id, project_id, …]`; "none" → the app never answers;
+    # an int → that HTTP status with an empty body
+    maseq_reply: Any = "ok"
+    picker_open: bool = False
+    picker_options: list[str] = field(
+        default_factory=lambda: ["01-pre-submit.png", "Blue sphere on table"]
+    )
+    picker_query: str = ""
+    picked: list[str] = field(default_factory=list)
+    chip_binds: bool = True  # the option click flips the Start chip to a bound one
+    chip_bound: bool = False
+    dialog_present: bool = False  # a `[role=dialog]` (the changelog modal) on load
+    dialog_closed: int = 0
 
 
 def _default_dom() -> Dom:
@@ -112,6 +143,8 @@ class FakeLocator:
             items = [i for i in items if i in ("pane", "menu", "lingering-menu")]
         elif has is not None and has.kind == "group":  # pane.filter(has=<radiogroup>)
             items = [i for i in items if i == "pane" and self.page.dom.pane_open]
+        elif has is not None and has.kind == "picker_marker":  # OVERLAY.filter(has=<picker>)
+            items = [i for i in items if i == "picker"]
         elif has is not None:  # `has=page.locator("mat-icon").filter(has_text=re)` → ligature match
             pat = has.page._pending_lig
             items = [
@@ -153,8 +186,9 @@ class FakeLocator:
         return [str(i) for i in self.items]
 
     async def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:
-        if not self.items:
-            await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        present = bool(self.items)
+        if (state == "hidden") == present:
             msg = f"waiting for {self.kind} to be {state}"
             raise PlaywrightTimeoutError(msg)
 
@@ -189,10 +223,75 @@ class FakeLocator:
         elif self.kind == "submit":
             dom.submit_clicked += 1
             self.page._fire_submit()
+        elif self.kind == "toolbar_add":
+            dom.add_menu_open = True
+            dom.events.append("add_menu_opened")
+        elif self.kind == "upload_item":
+            dom.add_menu_open = False
+            dom.chooser_pending = dom.chooser_opens
+        elif self.kind == "empty_chip":
+            dom.picker_open = True
+            dom.picker_query = ""
+        elif self.kind == "picker_search":
+            dom.events.append("picker_search_focused")
+        elif self.kind == "picker_option":
+            dom.picked.append(str(target))
+            dom.picker_open = False
+            if dom.chip_binds:
+                dom.chip_bound = True
+        elif self.kind == "dialog_close":
+            dom.dialog_present = False
+            dom.dialog_closed += 1
 
 
 class PlaywrightTimeoutError(Exception):
     pass
+
+
+class FakeFileChooser:
+    def __init__(self, page: FakePage) -> None:
+        self.page = page
+
+    async def set_files(self, files: Any) -> None:
+        dom = self.page.dom
+        dom.chosen_files.append(str(files))
+        if dom.maseq_reply == "none":
+            return
+        status = 200 if dom.maseq_reply == "ok" else int(dom.maseq_reply)
+        text = _frame("maseQ", [MEDIA_UP, PROJ, "44444444-4444-4444-8444-444444444444", "CAE"])
+        self.page._fire_response(
+            FakeResponse(_batch_url("maseQ"), text if status == 200 else "", status)
+        )
+
+
+class FakeChooserContext:
+    """`async with page.expect_file_chooser() as fc: … ; await fc.value`."""
+
+    def __init__(self, page: FakePage) -> None:
+        self.page = page
+        self._value: asyncio.Future[FakeFileChooser] = asyncio.get_event_loop().create_future()
+
+    async def __aenter__(self) -> FakeChooserContext:
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        dom = self.page.dom
+        if exc[0] is not None:
+            return
+        if dom.chooser_pending:
+            dom.chooser_pending = False
+            self._value.set_result(FakeFileChooser(self.page))
+            return
+        raise PlaywrightTimeoutError('Timeout while waiting for event "filechooser"')
+
+    @property
+    def value(self) -> asyncio.Future[FakeFileChooser]:
+        return self._value
+
+
+class FakeRequest:
+    def __init__(self, url: str, post_data: str | None) -> None:
+        self.url, self.post_data = url, post_data
 
 
 class FakeKeyboard:
@@ -216,12 +315,16 @@ class FakeKeyboard:
         self.page.dom.prompt += text
 
     async def insert_text(self, text: str) -> None:
-        self.page.dom.prompt += text
+        dom = self.page.dom
+        if dom.picker_open:
+            dom.picker_query += text
+        else:
+            dom.prompt += text
 
 
 class FakeResponse:
-    def __init__(self, url: str, text: str) -> None:
-        self.url, self._text, self.status = url, text, 200
+    def __init__(self, url: str, text: str, status: int = 200) -> None:
+        self.url, self._text, self.status = url, text, status
 
     async def text(self) -> str:
         return self._text
@@ -237,36 +340,77 @@ class FakePage:
         self.url = url
         self.keyboard = FakeKeyboard(self)
         self.gotos: list[str] = []
-        self._handlers: list[Any] = []
+        self._handlers: dict[str, list[Any]] = {"response": [], "request": []}
         self._pending_lig: re.Pattern[str] | None = None
         self.scripted_responses: list[tuple[str, str]] = []  # fired on submit click
+        self.scripted_request: tuple[str, str] | None = None  # (rpcid, POST body) on submit
 
     async def goto(self, url: str, **_: Any) -> None:
         self.gotos.append(url)
         self.url = url
 
     def on(self, event: str, handler: Any) -> None:
-        assert event == "response"
-        self._handlers.append(handler)
+        self._handlers[event].append(handler)
 
     def remove_listener(self, event: str, handler: Any) -> None:
-        self._handlers = [h for h in self._handlers if h is not handler]
+        self._handlers[event] = [h for h in self._handlers[event] if h is not handler]
+
+    def listeners(self, event: str) -> list[Any]:
+        return list(self._handlers[event])
+
+    def _fire_response(self, response: FakeResponse) -> None:
+        for h in list(self._handlers["response"]):
+            asyncio.get_event_loop().create_task(_maybe_await(h(response)))
 
     def _fire_submit(self) -> None:
+        if self.scripted_request is not None:
+            rpcid, body = self.scripted_request
+            for h in list(self._handlers["request"]):
+                asyncio.get_event_loop().create_task(
+                    _maybe_await(h(FakeRequest(_batch_url(rpcid), body)))
+                )
         for url, text in self.scripted_responses:
-            for h in list(self._handlers):
-                asyncio.get_event_loop().create_task(_maybe_await(h(FakeResponse(url, text))))
+            self._fire_response(FakeResponse(url, text))
+
+    def expect_file_chooser(self, **_: Any) -> FakeChooserContext:
+        return FakeChooserContext(self)
 
     def locator(self, css: str, *, scope: FakeLocator | None = None) -> FakeLocator:
         dom = self.dom
         if css == ".settings-trigger-button":
             return FakeLocator(self, "trigger", ["trigger"] if dom.trigger_present else [])
+        if css == TOOLBAR_ADD_XPATH:
+            return FakeLocator(self, "toolbar_add", ["add"] if dom.add_button_present else [])
+        if css == ".cdk-overlay-pane [role='menuitem']:has(mat-icon:text-is('upload'))":
+            present = dom.add_menu_open and dom.upload_item_present
+            return FakeLocator(self, "upload_item", ["upload"] if present else [])
+        if css == "flow-prompt-box button.empty-chip":
+            chips = ["End"] if dom.chip_bound else ["Start", "End"]
+            return FakeLocator(self, "empty_chip", chips)
+        if css == "flow-prompt-box button.chip-container:has(img)":
+            return FakeLocator(self, "bound_chip", ["Start"] if dom.chip_bound else [])
+        if css == "flow-add-menu-popover-content":
+            return FakeLocator(self, "picker_marker", ["picker"])
+        if css == "input[type='text']":
+            inside = scope is not None and scope.items == ["picker"]
+            return FakeLocator(self, "picker_search", ["search"] if inside else [])
+        if css == "button.asset-item[role='option']":
+            inside = scope is not None and scope.items == ["picker"]
+            q = dom.picker_query.casefold()
+            opts = [o for o in dom.picker_options if q in o.casefold()] if inside else []
+            return FakeLocator(self, "picker_option", opts)
+        if css == "[role='dialog']":
+            return FakeLocator(self, "dialog", ["dialog"] if dom.dialog_present else [])
+        if css == "[role='dialog'] button:has(mat-icon:text-is('close'))":
+            return FakeLocator(self, "dialog_close", ["close"] if dom.dialog_present else [])
         if css in (".cdk-overlay-pane", ".cdk-overlay-pane:visible"):
             panes = (["pane"] if dom.pane_open else []) + (["menu"] if dom.menu_open else [])
             if dom.menu_overlay_lingering:
                 panes.append("lingering-menu")
             if dom.toast_visible:
                 panes.append("toast")
+            if dom.picker_open:
+                panes.append("picker")
             if css.endswith(":visible"):
                 # The detached menu pane is in the DOM but NOT visible — which is exactly
                 # why the old `OVERLAY.first` read-back stayed silent.
@@ -340,6 +484,7 @@ async def _maybe_await(value: Any) -> None:
 WF = "11111111-1111-4111-8111-111111111111"
 PROJ = "p1"
 MEDIA = "33333333-3333-4333-8333-333333333333"
+MEDIA_UP = "55555555-5555-4555-8555-555555555555"  # what `maseQ` answers for an upload
 VIDEO_URL = "https://flow-content.google/v/abc.mp4?Expires=1&KeyName=k&Signature=s"
 
 
@@ -1016,3 +1161,275 @@ async def test_ensure_editor_without_trigger_is_selector_drift() -> None:
     page.dom.trigger_present = False
     with pytest.raises(UiSelectorDriftError, match="migrated"):
         await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+
+
+# --- i2v: Frames submode, start-frame attach, submit body -------------------
+# Measured 2026-09-05 ($0 frames spike): the toolbar `+` opens a menu whose `upload`
+# item fires the file chooser; the app uploads through rpc `maseQ` and answers
+# `[media_id, project_id, …]`; the Start chip opens a library-only picker searched
+# by display name (uploads list under their file name, no UUID in the DOM); the i2v
+# submit is rpc `eb1hJf` with the bound media id in the body.
+
+
+def _png(tmp_path: Path, name: str = "01-pre-submit.png") -> Path:
+    path = tmp_path / name
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 24)
+    return path
+
+
+def _i2v(path: Path, **kw: Any) -> GenerateVideoRequest:
+    base: dict[str, Any] = {
+        "prompt": "a crane",
+        "mode": Mode.I2V,
+        "start_image": path,
+        "aspect": Aspect.LANDSCAPE,
+    }
+    base.update(kw)
+    return GenerateVideoRequest(**base)
+
+
+def _ingredients_default(page: FakePage) -> list[Radio]:
+    sub = page.dom.groups["submode"]
+    sub[0].checked, sub[1].checked = False, True  # Flow remembers Ingredients
+    return sub
+
+
+async def test_i2v_settings_select_the_frames_submode(tmp_path: Path) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    sub = _ingredients_default(page)
+    await MigratedComposer().apply_video_settings(page, _i2v(_png(tmp_path)))
+    assert sub[0].checked and not sub[1].checked  # crop_free = Frames
+    assert not page.dom.pane_open
+
+
+async def test_t2v_settings_leave_the_submode_alone() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    sub = _ingredients_default(page)
+    await MigratedComposer().apply_video_settings(page, _t2v())
+    assert sub[1].checked  # untouched: t2v never needs the chips
+
+
+async def test_attach_uploads_then_binds_the_frame_by_file_name(tmp_path: Path) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    path = _png(tmp_path)
+    with capture_logs() as logs:
+        media_id = await MigratedComposer().attach_start_frame(page, PROJ, path)
+    assert media_id == MEDIA_UP
+    assert page.dom.chosen_files == [str(path)]
+    assert page.dom.picker_query == path.name
+    assert page.dom.picked == [path.name]
+    assert page.dom.chip_bound and not page.dom.picker_open
+    events = [e["event"] for e in logs]
+    assert "migrated.frame_uploaded" in events and "migrated.frame_bound" in events
+    uploaded = next(e for e in logs if e["event"] == "migrated.frame_uploaded")
+    assert uploaded["media_id"] == MEDIA_UP
+    assert path.name not in json.dumps(uploaded)  # never the file name in a log line
+    assert page.listeners("response") == []  # listener removed
+
+
+async def test_attach_refuses_a_non_image_before_any_click(tmp_path: Path) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    path = tmp_path / "notes.txt"
+    path.write_text("hello")
+    with pytest.raises(ValueError, match="supported image"):
+        await MigratedComposer().attach_start_frame(page, PROJ, path)
+    assert "add_menu_opened" not in page.dom.events and page.dom.chosen_files == []
+
+
+async def test_attach_refuses_when_the_add_menu_has_no_upload_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.05)
+    page = FakePage()
+    page.dom.upload_item_present = False
+    with pytest.raises(UiSelectorDriftError, match="upload"):
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert page.dom.chosen_files == []
+
+
+async def test_attach_refuses_when_no_file_chooser_opens(tmp_path: Path) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.chooser_opens = False
+    with pytest.raises(UiSelectorDriftError, match="file chooser"):
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert page.dom.chosen_files == [] and page.listeners("response") == []
+
+
+async def test_attach_is_upload_rejected_when_maseq_does_not_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
+    page = FakePage()
+    page.dom.maseq_reply = "none"
+    with pytest.raises(MediaUploadRejectedError) as ei:
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert ei.value.route == "batchexecute:maseQ"
+    assert EXIT_CODE_MAP[MediaUploadRejectedError] == 27
+    assert page.dom.picked == [] and not page.dom.picker_open
+
+
+async def test_attach_is_upload_rejected_on_a_non_200_maseq(tmp_path: Path) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.maseq_reply = 400
+    with pytest.raises(MediaUploadRejectedError, match="400") as ei:
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert ei.value.route == "batchexecute:maseQ" and ei.value.status == 400
+    assert page.dom.picked == []
+
+
+async def test_attach_is_reference_not_found_when_the_picker_lists_no_such_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.1)
+    page = FakePage()
+    page.dom.picker_options = ["Blue sphere on table"]  # the upload never listed
+    path = _png(tmp_path)
+    with pytest.raises(ReferenceNotFoundError, match=re.escape(path.name)):
+        await MigratedComposer().attach_start_frame(page, PROJ, path)
+    assert EXIT_CODE_MAP[ReferenceNotFoundError] == 32
+    assert page.dom.picked == [] and not page.dom.chip_bound
+
+
+async def test_attach_is_selector_drift_when_the_chip_stays_empty_after_the_pick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_THUMB_VISIBLE_S", 0.1)
+    page = FakePage()
+    page.dom.chip_binds = False
+    with pytest.raises(UiSelectorDriftError, match="chip"):
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert page.dom.picked == ["01-pre-submit.png"]  # the pick happened; the bind did not
+
+
+async def test_attach_picks_the_first_option_when_names_repeat(tmp_path: Path) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    name = "01-pre-submit.png"
+    page.dom.picker_options = [name, name, "Blue sphere on table"]  # two uploads of one file
+    media_id = await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path, name))
+    assert media_id == MEDIA_UP and page.dom.picked == [name]
+
+
+def _i2v_body(media_id: str = MEDIA_UP, key: str = "veo_3_1_i2v_lite") -> str:
+    return f'f.req=[[["eb1hJf","[\\"{key}\\",\\"{media_id}\\",\\"{PROJ}\\"]",null,"generic"]]]'
+
+
+async def test_submit_accepts_eb1hjf_as_the_i2v_submit_rpc() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("eb1hJf", _i2v_body())
+    page.scripted_responses = [
+        (_batch_url("eb1hJf"), _frame("eb1hJf", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    started: list[Any] = []
+    with capture_logs() as logs:
+        rec = await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=started.append,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+        )
+    assert rec.is_done and rec.media_id == MEDIA and started[0].media_id == MEDIA
+    observed = next(e for e in logs if e["event"] == "migrated.submit_observed")
+    assert observed["rpc"] == "eb1hJf"
+    assert page.listeners("request") == [] and page.listeners("response") == []
+
+
+async def test_submit_body_without_the_bound_media_id_is_wire_format_error() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("eb1hJf", _i2v_body(media_id=MEDIA))  # some other asset
+    page.scripted_responses = [  # the app still answers: the error must win anyway
+        (_batch_url("eb1hJf"), _frame("eb1hJf", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    with pytest.raises(WireFormatError, match=MEDIA_UP) as ei:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, expect_media_id=MEDIA_UP
+        )
+    assert EXIT_CODE_MAP[WireFormatError] == 7 and "eb1hJf" in ei.value.route
+
+
+async def test_submit_body_with_a_t2v_key_is_wire_format_error() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    # the labs #125 twin: chips empty at submit time, the app goes out as t2v
+    page.scripted_request = ("YhhmEf", _i2v_body(key="veo_3_1_t2v_lite"))
+    page.scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    with pytest.raises(WireFormatError, match="t2v"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, expect_media_id=MEDIA_UP
+        )
+
+
+async def test_submit_body_assertion_is_off_for_t2v() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("YhhmEf", _i2v_body(media_id="", key="veo_3_1_t2v_lite"))
+    page.scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and page.listeners("request") == []
+
+
+async def test_ensure_editor_dismisses_a_dialog_before_waiting_for_the_trigger() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.dialog_present = True  # the "Get started" changelog modal on first visit
+    with capture_logs() as logs:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0)
+    assert page.dom.dialog_closed == 1 and not page.dom.dialog_present
+    assert "migrated.dialog_dismissed" in [e["event"] for e in logs]
+
+
+async def test_ensure_editor_without_a_dialog_is_unchanged() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    with capture_logs() as logs:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0)
+    assert page.dom.dialog_closed == 0
+    assert "migrated.dialog_dismissed" not in [e["event"] for e in logs]
