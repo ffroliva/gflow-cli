@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`gflow video r2v` from local `--ref` files runs on the migrated `flow.google.com`
+  host** (#639). Each file is uploaded through the same editor toolbar path i2v already
+  uses, so the app's own `maseQ` reply names the media id, and is then attached as an `@`
+  **mention** in the prompt — references are not a chip slot on this host.
+
+  Three measured details shape it. The Ingredients submit is rpcid **`MZZa6b`** (t2v
+  `YhhmEf`, i2v `eb1hJf`) — watching only the others is why this looked for several rounds
+  of recon like r2v never submitted at all. A mention is committed by **Enter**; a typed
+  query alone leaves the picker open and inserts nothing. And mentions need real key
+  events where prompt text needs `insert_text` (a newline must not submit), so the two
+  cannot share a path.
+
+  The submit body is asserted to carry every uploaded id, and a run whose references have
+  not all attached is refused **before** submit — the failure mode being a full-price clip
+  with none of the user's references on it. References by `@Name` and character entities
+  stay on labs, for the same reason a frame by UUID does: the picker exposes no media id
+  to anchor on. Live-verified end to end with two local refs and `--model veo-lite-lp`;
+  the account owner confirms the presenter in the output is the person from the first
+  reference.
+
+### Added
+
 - **Read-only Flow balance inspection:** `gflow credits user`, `gflow credits list`, and the
   matching `gflow_get_credits` MCP tool report current
   balances and account tiers from saved profiles. Multi-profile inspection preserves partial

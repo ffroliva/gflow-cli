@@ -89,7 +89,10 @@ DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
 
 #: ``YhhmEf`` is the text-to-video submit; ``eb1hJf`` the image-to-video one (a bound
 #: Start chip switches the app between them — 2026-09-05 frames spike).
-SUBMIT_RPCS = ("YhhmEf", "eb1hJf")
+#: t2v submits on ``YhhmEf``, i2v on ``eb1hJf``, and an Ingredients (r2v) run on
+#: ``MZZa6b`` — measured 2026-09-05. Watching only the first is why r2v looked
+#: for several rounds like it never submitted at all.
+SUBMIT_RPCS = ("YhhmEf", "eb1hJf", "MZZa6b")
 STATUS_RPCS = ("jwpduf", "as29s")
 UPLOAD_RPC = "maseQ"
 #: The model key Flow puts in the submit body, e.g. ``veo_3_1_i2v_lite``.
@@ -106,6 +109,11 @@ BOUND_CHIP = "flow-prompt-box button.chip-container:has(img)"
 PICKER = "flow-add-menu-popover-content"
 PICKER_SEARCH = "input[type='text']"
 PICKER_OPTION = "button.asset-item[role='option']"
+#: The Ingredients sub-mode holds references; Frames holds the i2v chips.
+INGREDIENTS_LIGATURE = "chrome_extension"
+#: A mention chip in the prompt document — how a reference is represented once
+#: attached. Its ``data-reference-type`` decides which wire slot carries the id.
+MENTION_CHIP = ".mention-chip"
 FRAME_PICKER_OPEN_S = 8.0
 #: The picker search is server-side (``UpteDb``) and a fresh upload is not always
 #: indexed by the first query: on 2026-09-05 a project holding 30+ assets missed it
@@ -196,8 +204,18 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
     ``@Name`` has nothing to anchor on yet, and the End chip is unmeasured."""
     if request.mode is Mode.T2V:
         return None
+    if request.mode is Mode.R2V:
+        # Local files only, for the same reason i2v is: the picker lists assets by
+        # display name and exposes no media id, so a reference gflow did not upload
+        # itself has nothing to anchor on. Character entities are a different attach
+        # surface (a chip with an entity_id, in a different wire slot) and unported.
+        if request.reference_entities:
+            return "character references"
+        if not request.reference_images:
+            return "references given by name rather than a local file"
+        return None
     if request.mode is not Mode.I2V:
-        return "reference-to-video"
+        return "this mode"
     if request.end_image or request.end_image_ref_id or request.end_image_ref_name:
         return "an end frame"
     if request.start_image_ref_id:
@@ -291,6 +309,38 @@ def _i2v_body_problem(body: str, rpcid: str, media_id: str) -> str | None:
     return None
 
 
+def _r2v_body_problem(body: str, rpcid: str, media_ids: tuple[str, ...]) -> str | None:
+    """Why this submit body is NOT the references run the user asked for, or ``None``.
+
+    The i2v twin of this check exists because a chip that was empty at submit time
+    still submits — just without the frame. References fail the same way: the picker
+    can close having inserted nothing, and the run then generates a clip with none of
+    them, at full price.
+    """
+    if not body:
+        return (
+            f"migrated host: the {rpcid} submit body could not be read, so the "
+            "references could not be confirmed before Flow acted on it"
+        )
+    key = MODEL_KEY.search(body)
+    key_text = key.group(0) if key else "no model key"
+    if "_r2v_" not in body:
+        return (
+            f"migrated host: the submit went out on {rpcid} with {key_text} for a "
+            "references (r2v) request — no reference was bound when the app submitted"
+        )
+    missing = [m for m in media_ids if m not in body]
+    if missing:
+        known = {m.lower() for m in media_ids}
+        other = [u for u in UUID_RE.findall(body) if u.lower() not in known]
+        return (
+            f"migrated host: the {rpcid} submit body is missing {len(missing)} of "
+            f"{len(media_ids)} uploaded reference(s) ({', '.join(missing[:3])}; ids in the "
+            f"body: {', '.join(other[:4]) or 'none'}) — the picker bound different assets"
+        )
+    return None
+
+
 class MigratedComposer:
     """Settings → prompt → submit → observe, against the migrated editor."""
 
@@ -352,6 +402,12 @@ class MigratedComposer:
                 # Frames renders the Start/End chips the attach stage binds to. Flow
                 # remembers the last submode per account, so it is set, not assumed.
                 await self._select(page, pane, axis="submode", lig=FRAMES_LIGATURE)
+            if request.mode is Mode.R2V:
+                # Ingredients is where references live, and the app derives the r2v model
+                # key from this plus the picker choice — the same run sends
+                # veo_3_1_r2v_lite_low_priority here and veo_3_1_lite_low_priority under
+                # Frames — so nothing maps that by hand.
+                await self._select(page, pane, axis="submode", lig=INGREDIENTS_LIGATURE)
             model = request.model
             if model is None and request.mode is Mode.I2V:
                 # #125: a queued MCP payload carries model=None, and without this bind
@@ -711,6 +767,70 @@ class MigratedComposer:
         finally:
             page.remove_listener("response", on_response)
 
+    async def attach_references(
+        self, page: Page, project_id: str, paths: tuple[Path, ...]
+    ) -> tuple[str, ...]:
+        """Upload each local reference, mention it in the prompt, return the media ids.
+
+        Uploading reuses the i2v toolbar path, so the app's own ``maseQ`` reply names the
+        media id — the id :func:`_r2v_body_problem` then asserts the submit carries.
+        Binding is different from i2v though: a reference is not a chip slot but an ``@``
+        mention in the prompt document, committed with **Enter**. A typed query alone
+        leaves the picker open and inserts nothing (measured 2026-09-05), which is the
+        failure that would otherwise generate a clip with no references on it.
+        """
+        media_ids: list[str] = []
+        for path in paths:
+            media_ids.append(await self._upload_via_toolbar(page, project_id, path))
+        # Compose after every upload: the file chooser takes keyboard focus, so mentions
+        # cannot be interleaved with uploading.
+        await self.clear_composer(page)
+        for i, path in enumerate(paths):
+            await self._mention_by_name(page, path.name, expect_chips=i + 1)
+        log.info("migrated.references_attached", count=len(paths), media_ids=media_ids)
+        return tuple(media_ids)
+
+    async def clear_composer(self, page: Page) -> None:
+        await page.locator(COMPOSER).first.click(timeout=5000)
+        await page.keyboard.press("Control+a")
+        await page.keyboard.press("Backspace")
+        await page.wait_for_timeout(600)
+
+    async def read_chips(self, page: Page) -> list[dict[str, str]]:
+        """Every mention now in the prompt, with the kind that decides its wire slot."""
+        return await page.evaluate(
+            """() => [...document.querySelectorAll('.mention-chip')].map(c => ({
+                text: (c.textContent || '').trim(),
+                entity_id: c.getAttribute('data-entity-id') || '',
+                reference_type: c.getAttribute('data-reference-type') || '',
+            }))"""
+        )
+
+    async def _mention_by_name(self, page: Page, name: str, *, expect_chips: int) -> None:
+        """Insert one mention chip for *name*, and verify it landed."""
+        await page.locator(COMPOSER).first.click(timeout=5000)
+        # `keyboard.type`, never `insert_text`: the latter dispatches input events with no
+        # key events, so the mention plugin opens a picker with no query behind it and
+        # every later gesture is a no-op. `send_prompt` keeps insert_text on purpose — a
+        # newline in prompt text must not submit — so the two cannot share a path.
+        await page.keyboard.type("@", delay=120)
+        await page.wait_for_timeout(2200)
+        await page.keyboard.type(name, delay=100)
+        await page.wait_for_timeout(2500)
+        offered = [t.strip() for t in await page.locator(PICKER_OPTION).all_text_contents()]
+        await page.keyboard.press("Enter")
+        await page.wait_for_timeout(2500)
+        chips = await self.read_chips(page)
+        if len(chips) != expect_chips:
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: {name!r} did not attach as a reference "
+                    f"({len(chips)} chip(s), expected {expect_chips}); the picker offered: "
+                    f"{', '.join(offered[:6]) or '<nothing>'}"
+                ),
+            )
+        await page.keyboard.type(" ", delay=80)
+
     @staticmethod
     async def _open_frame_picker(page: Page) -> Any:
         """Click the empty Start chip and wait for the library picker's search box."""
@@ -808,13 +928,17 @@ class MigratedComposer:
 
     # --- prompt + submit --------------------------------------------------------
 
-    async def send_prompt(self, page: Page, prompt: str) -> None:
+    async def send_prompt(self, page: Page, prompt: str, *, append: bool = False) -> None:
+        """Type the prompt. ``append=True`` keeps what is already in the composer — the
+        mention chips an r2v run just attached — and leaves the caret where the last one
+        put it, rather than clicking and moving it."""
         composer = page.locator(COMPOSER).first
         if not await composer.count():
             raise UiSelectorDriftError(
                 detail=f"migrated host: composer ({COMPOSER}) not found (host=migrated)",
             )
-        await composer.click(timeout=5000)
+        if not append:
+            await composer.click(timeout=5000)
         # insert_text dispatches input events without key presses: a newline in the
         # prompt lands as text instead of an Enter that might submit early.
         await page.keyboard.insert_text(prompt)
@@ -828,6 +952,7 @@ class MigratedComposer:
         on_started: VideoStartedCallback | None,
         project_id: str | None,
         expect_media_id: str | None = None,
+        expect_reference_ids: tuple[str, ...] = (),
     ) -> GenerationRecord:
         """Click submit, then read the page's own ``YhhmEf``/``eb1hJf`` / ``jwpduf`` /
         ``as29s`` replies until the record is terminal. Fires ``on_started`` as soon
@@ -844,7 +969,14 @@ class MigratedComposer:
         def on_request(request: Any) -> None:
             url = str(getattr(request, "url", ""))
             rpcid = _rpcid(url) if "batchexecute" in url else None
-            if rpcid not in SUBMIT_RPCS or route_error.done() or expect_media_id is None:
+            if rpcid not in SUBMIT_RPCS or route_error.done():
+                return
+            if expect_reference_ids:
+                problem = _r2v_body_problem(_post_data(request), rpcid, expect_reference_ids)
+                if problem is not None and not route_error.done():
+                    route_error.set_exception(WireFormatError(detail=problem, route=rpcid))
+                return
+            if expect_media_id is None:
                 return
             problem = _i2v_body_problem(_post_data(request), rpcid, expect_media_id)
             if problem is not None:
@@ -1123,16 +1255,32 @@ async def run_video(
     await composer.ensure_editor(page, pid)
     await composer.apply_video_settings(page, request)
     media_id: str | None = None
+    reference_ids: tuple[str, ...] = ()
     frame = request.start_image
     if request.mode is Mode.I2V and frame is not None:
         media_id = await composer.attach_start_frame(page, pid, frame)
-    await composer.send_prompt(page, request.prompt)
+    if request.mode is Mode.R2V:
+        reference_ids = await composer.attach_references(page, pid, request.reference_images)
+    # The prompt is appended for r2v: the mentions are already in the document and
+    # clicking the composer would move the caret away from where the last one left it.
+    await composer.send_prompt(page, request.prompt, append=request.mode is Mode.R2V)
+    if request.mode is Mode.R2V:
+        attached = await composer.read_chips(page)
+        if len(attached) != len(request.reference_images):
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: {len(request.reference_images)} reference(s) requested "
+                    f"but {len(attached)} on the prompt at submit time — refusing to spend "
+                    f"credits on a run that would ignore them"
+                ),
+            )
     record = await composer.submit_and_observe(
         page,
         poll_timeout_s=poll_timeout_s,
         on_started=on_started,
         project_id=pid,
         expect_media_id=media_id,
+        expect_reference_ids=reference_ids,
     )
     status = VideoStatus(
         media_id=record.media_id,

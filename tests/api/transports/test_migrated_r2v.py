@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode
-from gflow_cli.errors import ReferenceNotFoundError, TransportTimeoutError, UiSelectorDriftError
+from gflow_cli.errors import ReferenceNotFoundError
 
 pytestmark = pytest.mark.anyio
 
@@ -34,19 +34,39 @@ def _r2v(**kw: Any) -> GenerateVideoRequest:
 # --- routing ----------------------------------------------------------------
 
 
-def test_migrated_can_serve_takes_r2v_only_with_references() -> None:
-    from gflow_cli.api.transports.migrated_composer import migrated_can_serve
+def test_migrated_can_serve_takes_r2v_from_local_files_only() -> None:
+    from gflow_cli.api.transports.migrated_composer import _unported_form, migrated_can_serve
 
     assert migrated_can_serve(_r2v(reference_images=(Path("a.png"),)), "p1")
-    assert migrated_can_serve(_r2v(ref_names=("product1.png",)), "p1")
-    # An r2v request with NOTHING to attach cannot be constructed at all — the DTO's
-    # own _validate_r2v_symmetry rejects it — so the transport needs no guard for it.
-    with pytest.raises(ValueError, match="requires reference_images"):
-        _r2v()
-    # Character entities are a different attach path and stay on labs for now.
+    # By NAME is refused for the same reason i2v refuses a UUID frame: the picker lists
+    # assets by display name with no media id, so a reference gflow did not upload has
+    # nothing to anchor on — and nothing to assert on the submit body.
+    assert _unported_form(_r2v(ref_names=("product1.png",))) is not None
+    assert not migrated_can_serve(_r2v(ref_names=("product1.png",)), "p1")
+    # Character entities are a different attach surface (a chip with an entity_id, in a
+    # different wire slot) and stay on labs.
     assert not migrated_can_serve(_r2v(reference_entities=("abc",)), "p1")
     # A fresh project is still labs-only, so the gate keeps requiring one here.
     assert not migrated_can_serve(_r2v(reference_images=(Path("a.png"),)), None)
+
+
+def test_a_submit_that_lost_the_references_is_a_wire_problem() -> None:
+    """The expensive failure: the picker closes having inserted nothing, the app submits
+    anyway, and Flow bills a clip with none of the user's references on it."""
+    from gflow_cli.api.transports.migrated_composer import _r2v_body_problem
+
+    good = '["veo_3_1_r2v_lite_low_priority", "aaaaaaaa-1111-2222-3333-444444444444"]'
+    assert _r2v_body_problem(good, "MZZa6b", ("aaaaaaaa-1111-2222-3333-444444444444",)) is None
+
+    t2v_key = '["veo_3_1_lite_low_priority", "aaaaaaaa-1111-2222-3333-444444444444"]'
+    problem = _r2v_body_problem(t2v_key, "MZZa6b", ("aaaaaaaa-1111-2222-3333-444444444444",))
+    assert problem is not None and "no reference was bound" in problem
+
+    other_id = '["veo_3_1_r2v_lite_low_priority", "bbbbbbbb-1111-2222-3333-444444444444"]'
+    problem = _r2v_body_problem(other_id, "MZZa6b", ("aaaaaaaa-1111-2222-3333-444444444444",))
+    assert problem is not None and "missing 1 of 1" in problem
+
+    assert "could not be read" in (_r2v_body_problem("", "MZZa6b", ("x",)) or "")
 
 
 def test_submit_rpcs_cover_the_ingredients_submit() -> None:
@@ -83,6 +103,8 @@ class FakeLoc:
     async def click(self, **_: Any) -> None:
         if self.kind == "upload":
             self.page.upload_clicked += 1
+        if self.kind == "composer":
+            self.page.composer_clicks += 1
 
 
 class FakeKeyboard:
@@ -118,6 +140,7 @@ class FakeComposerPage:
         self.chips_per_enter = chips_per_enter
         self.upload_button = upload_button
         self.upload_clicked = 0
+        self.composer_clicks = 0
 
     def on_enter(self) -> None:
         for _ in range(self.chips_per_enter):
@@ -128,7 +151,7 @@ class FakeComposerPage:
     def locator(self, css: str) -> FakeLoc:
         if css == "[contenteditable='true']":
             return FakeLoc(self, "composer", ["composer"])
-        if css == "button.asset-item":
+        if css == "button.asset-item[role='option']":
             return FakeLoc(self, "asset", list(self.assets))
         if css == "button":
             return FakeLoc(self, "button", ["button"])
@@ -150,10 +173,12 @@ async def test_each_reference_must_land_as_its_own_chip() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = FakeComposerPage()
-    chips = await MigratedComposer().attach_references(page, ["me.jpg", "product1.png"])
-    assert len(chips) == 2
+    composer = MigratedComposer()
+    await composer._mention_by_name(page, "me.jpg", expect_chips=1)  # noqa: SLF001
+    await composer._mention_by_name(page, "product1.png", expect_chips=2)  # noqa: SLF001
     # ENTER is what commits a mention — a typed query alone inserts nothing.
     assert page.typed.count("<Enter>") == 2
+    assert len(page.chips) == 2
 
 
 async def test_a_reference_that_does_not_attach_is_refused_before_submit() -> None:
@@ -163,53 +188,18 @@ async def test_a_reference_that_does_not_attach_is_refused_before_submit() -> No
 
     page = FakeComposerPage(assets=["somethingelseImage"], chips_per_enter=0)
     with pytest.raises(ReferenceNotFoundError) as exc_info:
-        await MigratedComposer().attach_references(page, ["me.jpg"])
+        await MigratedComposer()._mention_by_name(page, "me.jpg", expect_chips=1)  # noqa: SLF001
     message = str(exc_info.value)
     assert "me.jpg" in message
     assert "somethingelse" in message  # says what the picker DID offer
 
 
-async def test_upload_needs_the_upload_media_button() -> None:
+async def test_the_prompt_is_appended_so_the_mentions_survive() -> None:
+    """Clicking the composer would move the caret away from the last mention; an r2v run
+    must add its text after the chips, not on top of them."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    page = FakeComposerPage(upload_button=False)
-    with pytest.raises(UiSelectorDriftError, match="Upload media"):
-        await MigratedComposer().upload_reference(page, Path("me.jpg"))
-
-
-async def test_an_upload_that_never_settles_times_out_rather_than_attaching_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An asset is listed as `Uploading<name>` before it is usable. Attaching while it is
-    still in flight silently produces no chip, so the wait is a real timeout."""
-    import gflow_cli.api.transports.migrated_composer as mc
-
-    monkeypatch.setattr(mc, "UPLOAD_APPEAR_TIMEOUT_S", 0.02)
-    monkeypatch.setattr(mc, "UPLOAD_SETTLE_TIMEOUT_S", 0.02)
-
-    page = FakeComposerPage(assets=["Uploadingme.jpgImage"])
-
-    class _Chooser:
-        async def set_files(self, _path: str) -> None:
-            return None
-
-    class _Ctx:
-        async def __aenter__(self) -> _Ctx:
-            return self
-
-        async def __aexit__(self, *_: Any) -> None:
-            return None
-
-        @property
-        def value(self) -> Any:
-            async def _v() -> _Chooser:
-                return _Chooser()
-
-            return _v()
-
-    page.expect_file_chooser = lambda **_: _Ctx()  # type: ignore[attr-defined]
-
-    from gflow_cli.api.transports.migrated_composer import MigratedComposer
-
-    with pytest.raises(TransportTimeoutError, match="still uploading"):
-        await MigratedComposer().upload_reference(page, Path("me.jpg"))
+    page = FakeComposerPage()
+    await MigratedComposer().send_prompt(page, "a woman holding it", append=True)
+    assert page.composer_clicks == 0
+    assert "a woman holding it" in page.typed

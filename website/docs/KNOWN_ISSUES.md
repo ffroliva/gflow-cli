@@ -58,6 +58,18 @@ migrated editor is not ported), and only `t2v` and `i2v` from a local `--initial
 no UUID/`@Name` frame — the migrated Frames picker exposes no media id in its DOM, so a frame is
 found by file name after gflow uploads it through the editor) — everything else still exits 36.
 
+**`r2v` from local `--ref` files also runs there (2026-09-06).** Each file is uploaded
+through the same editor toolbar path i2v uses — so the app's own `maseQ` reply names the
+media id — and then attached as an `@` **mention** in the prompt rather than a chip slot.
+Two details are load-bearing: the Ingredients submit is rpcid **`MZZa6b`** (t2v is
+`YhhmEf`, i2v `eb1hJf`), and a mention is committed by **Enter** — a typed query alone
+leaves the picker open and inserts nothing. The submit body is asserted to carry every
+uploaded id, and a run whose references have not all attached is refused **before**
+submit, because the failure mode is a full-price clip with none of them on it.
+References by `@Name` and character entities stay on labs, for the same reason a frame by
+UUID does: the picker exposes no media id to anchor on. Capture:
+[2026-09-05-migrated-r2v-attach-surface](docs/superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md).
+
 **Models on the migrated host.** Its picker is driven for every tier the account's
 menu actually renders, `veo-lite-lp` included — matched by the `[Lower Priority]`
 tag alone, exactly as on labs.google. That entry was first captured on 2026-09-05
