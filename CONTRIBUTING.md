@@ -39,11 +39,14 @@ Four rules the pipeline enforces that catch first-time contributors most often:
    (AGENTS.md § *Locale-Invariance Discipline*).
 3. **Verified beats claimed.** If a fix cannot be verified on the affected surface in your
    environment, the PR says so and uses `Refs #N`, not a green checkbox.
-4. **E2E is the evidence layer.** A behavior change without an e2e test — run or written —
-   is not reviewable. `tests/e2e/` already covers auth, session, image, video, scene, data
-   and batch; if nothing there represents your use case, add a test that does. Read-only and
-   inspection paths belong under `e2e_auth` and cost zero credits, so "it's expensive" is
-   almost never the reason.
+4. **E2E is the evidence layer.** A behavior change **that touches a Flow surface** needs an
+   e2e test — the one you ran, or the one you wrote. `tests/e2e/` already covers auth,
+   session, image, video, scene, data and batch; if nothing there represents your use case,
+   add a test that does. Read-only and inspection paths belong under `e2e_auth` and cost zero
+   credits, so "it's expensive" is almost never the reason. If you cannot run it, say why in
+   the PR and a maintainer will — a silently unticked box is what stalls a review. Changes
+   that touch no Flow surface at all (docs, help text, exit-code plumbing) are out of scope;
+   say that instead of leaving it blank.
 
 The PR template's *Lifecycle* checklist mirrors this table. Tick what applies, strike what
 does not, and say why — a reviewer can then start from your evidence instead of re-deriving it.
@@ -112,10 +115,10 @@ async def test_full_i2v_roundtrip(): ...
 **E2E is required, not optional.** CI cannot run these — they need a live authenticated
 profile — so the e2e layer is the one gate that only a human, or an agent with credentials,
 can close. That makes it the contributor's job, not the maintainer's. A PR that changes
-behavior must either:
+behavior **on a Flow surface** must either:
 
-- **run an existing test** that already covers the use case (`tests/e2e/` has ~25 of them),
-  and paste the result; or
+- **run an existing test** that already covers the use case — browse `tests/e2e/` — and
+  paste the result (redact account identifiers, emails and any token or cookie value); or
 - **add a new one** when nothing covers it, marked `e2e` plus the cost sub-marker that fits.
 
 Pick the cost sub-marker honestly — most inspection and auth paths are `e2e_auth` and spend
@@ -123,7 +126,8 @@ zero credits. Use the `e2e_profile_dir` / `e2e_env` fixtures in `tests/e2e/conft
 If you genuinely cannot run e2e (no Flow account, no credits for a video path), say so
 explicitly in the PR and a maintainer will run it — but do not leave the box silently unticked.
 
-CI runs `unit` + `integration` on every push. `e2e` tests require a live authenticated profile and are opt-in:
+CI runs `unit` + `integration` on every push. `e2e` tests require a live authenticated profile
+and are excluded from the default run — select them with `-m e2e`:
 
 ```bash
 export GFLOW_CLI_E2E_PROFILE=<profile-name>   # name of a logged-in profile

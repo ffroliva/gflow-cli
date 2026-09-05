@@ -128,7 +128,9 @@ This repo is actively developed with Claude Code (see [CLAUDE.md](../CLAUDE.md))
 
 - Claude branches are renamed to the appropriate `feature/`, `fix/`, `docs/` prefix before the PR is opened. The `claude/` prefix is internal scaffolding.
 - Claude never bumps the version or cuts a release without explicit instruction — use `/release`.
-- Claude opens PRs as **drafts** targeting `develop`. The maintainer reviews, runs e2e if needed, and merges.
+- Claude opens PRs as **drafts** targeting `develop`. E2E evidence for any change touching a
+  Flow surface is part of the PR, not something the maintainer supplies afterwards (CONTRIBUTING
+  § *Test categories*); the maintainer reviews, runs e2e only where the author could not, and merges.
 - Commit messages never carry `Co-Authored-By: Claude` or any AI attribution — author credit is the human maintainer's only.
 
 ---
