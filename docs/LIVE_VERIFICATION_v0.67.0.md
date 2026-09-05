@@ -16,8 +16,9 @@ cohort rate; nothing else in this verification spent credits.
 | 1 | flagged, en-GB | `auto` (default) → migrated composer | `gflow video t2v "…" --project <id> --duration 8 --aspect 16:9 --json --out-dir tmp/…` | **0** | **49.9 s** | `684649e9-….mp4`, `ftyp`, **1,792,457 B** (= size the record reported) |
 | 2 | **unflagged, pt** | `GFLOW_CLI_FLOW_HOST=flow.google.com` (forced; under `auto` this request now takes the identical `route == "migrated"` path, since t2v-with-project is served by the new host by default) | same shape, own project | **0** | **50.5 s** | `f080c0c5-….mp4`, `ftyp`, **2,143,562 B** (= record size) |
 
-Run 2 is the locale-invariance proof: a Portuguese-locale account, every anchor
-resolved (ligatures, roles, class, numeric tokens) — no text label was matched.
+Run 2 is the locale-invariance proof: a Portuguese-locale account (its migrated editor
+served `lang=pt`, captured by the 2026-09-04 landing probe), every anchor resolved
+(ligatures, roles, class, numeric tokens) — no text label was matched.
 
 ## Timeline (run 1; run 2 within ±1 s at every step)
 
@@ -65,7 +66,8 @@ resolved (ligatures, roles, class, numeric tokens) — no text label was matched
 Both maintainer accounts are on `flow.google.com` as of 2026-09-05 (the second one
 moved overnight: 3/3 loads), so the labs-side duration guard is **cohort-external**.
 Per model on the new host, measured with `scripts/dev/spike_migrated_duration_by_model.py`
-(read-only):
+(read-only) on **one profile, one cohort (the flagged en-GB maintainer account, N=1)** —
+other cohorts render other rows (`flow-capabilities-are-cohort-dependent`):
 
 | Model | Duration row | Resolution row | Credits (8 s, x1) |
 |---|---|---|---|
@@ -93,7 +95,9 @@ control … 0 option groups"); fixed in the same change and pinned by
 - `gflow image t2i` and every other command on the migrated host — not ported;
   they still exit 36 there (documented in KNOWN_ISSUES #639).
 - Project creation on the migrated host — `--project` is required.
-- The `GFLOW_CLI_FLOW_HOST=labs.google` kill switch live (unit + BDD only).
+- The `GFLOW_CLI_FLOW_HOST=labs.google` kill switch on an UNMOVED account (no such account
+  remains). On a moved account it was exercised live: `labs.google` + `--project` → exit 36 at
+  8.9 s with `at=flow_host_kill_switch`, no submit.
 - The MCP queued path live (shares the transport; unit-covered by the dispatch
   tests, worker envelope semantics unchanged).
 - A failure status value from the migrated backend (never observed; surfaced raw).

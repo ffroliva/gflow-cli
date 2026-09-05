@@ -15,9 +15,9 @@ The record itself is ``[workflow_id, project_id, media_id, "CAE", null, DETAILS,
 MEDIA_INFO]`` and is located **by that shape**, not by position, so a wrapper change
 does not break the parser. ``DETAILS[8]`` is ``[status]`` (6 submitted, 2 running,
 3 done), ``DETAILS[10]`` the signed **poster** (JPEG) URL once done, ``DETAILS[13]``
-the mp4 byte size; ``MEDIA_INFO[0][8]`` the signed **video** URL and
-``MEDIA_INFO[0][12]`` the model key (e.g. ``abra_t2v_8s`` — model and duration in
-one string). Which URL is which was settled by downloading both on 2026-09-05:
+the mp4 byte size; ``MEDIA_INFO[0][8]`` the signed **video** URL (``MEDIA_INFO[0][12]`` carries
+the model key, e.g. ``abra_t2v_8s`` — model and duration in one string — which the
+driver does not need). Which URL is which was settled by downloading both on 2026-09-05:
 ``DETAILS[10]`` came back as a 37 KB JPEG; the record's byte size matched the other.
 """
 
@@ -28,6 +28,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, cast
 
+from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import WireFormatError
 
 _XSSI_PREFIX = ")]}'"
@@ -50,7 +51,6 @@ class GenerationRecord:
     video_url: str | None = None
     poster_url: str | None = None
     size_bytes: int | None = None
-    model_key: str | None = None
 
     @property
     def is_done(self) -> bool:
@@ -152,7 +152,7 @@ def _discovery_head(payload: Any) -> str:
         head = json.dumps(payload)[:200]
     except (TypeError, ValueError):
         head = repr(payload)[:200]
-    return _TOKEN_RE.sub("<token>", head)
+    return redact_error_detail(_TOKEN_RE.sub("<token>", head))
 
 
 def generation_record(rpcid: str, payload: Any) -> GenerationRecord:
@@ -174,7 +174,6 @@ def generation_record(rpcid: str, payload: Any) -> GenerationRecord:
     status_cell = _as_list(_at(rec, 5, 8))
     status: Any = status_cell[0] if status_cell else None
     size: Any = _at(rec, 5, 13)
-    model_key: Any = _at(rec, 7, 0, 12)
     return GenerationRecord(
         workflow_id=rec[0],
         project_id=rec[1],
@@ -183,5 +182,4 @@ def generation_record(rpcid: str, payload: Any) -> GenerationRecord:
         video_url=_url(_at(rec, 7, 0, 8)),
         poster_url=_url(_at(rec, 5, 10)),
         size_bytes=size if isinstance(size, int) else None,
-        model_key=model_key if isinstance(model_key, str) else None,
     )

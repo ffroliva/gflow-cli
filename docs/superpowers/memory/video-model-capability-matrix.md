@@ -144,3 +144,5 @@ rule held again under `ru`.
 whether `10s` ever appears on Veo, and whether `lower_priority`'s miss is selector or
 absence. See [[flow-capabilities-are-cohort-dependent]] and
 [[flow-recon-must-run-on-denon82-ffroliva-migrated]].
+
+**Migrated host (flow.google.com), ffroliva cohort, measured 2026-09-05 (`scripts/dev/spike_migrated_duration_by_model.py`, $0):** Omni 1.1 Flash renders duration `4s/6s/8s/10s` AND resolution `360p/720p`, 12 credits; Veo 3.1 Lite / Fast / Quality render NO duration row and NO resolution row, 10 / 20 / 100 credits. So on this cohort #650's `--duration` on Veo has no control on the new host either → the migrated composer aborts pre-submit with exit 11 (ConfigurationError naming the axis), $0. The positive Veo 4/6/8 path remains cohort-external (contributor accounts).

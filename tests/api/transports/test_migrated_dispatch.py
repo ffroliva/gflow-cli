@@ -51,6 +51,11 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     transport = UiAutomationTransport()
     page = MagicMock()
     page.url = _LABS
+
+    async def _goto(url: str, **_: Any) -> None:
+        page.url = url
+
+    page.goto = _goto
     transport._page = page  # noqa: SLF001
     transport._setup_done = True  # noqa: SLF001
     state: dict[str, Any] = {"flow_host": "auto", "hop_on_enter": False, "run_video": []}
@@ -78,7 +83,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr("gflow_cli.api.transports.drivers.factory.get_ui_driver", _labs_bind)
 
-    async def _run_video(_t: Any, _p: Any, request: Any, **kw: Any) -> VideoResult:
+    async def _run_video(_p: Any, request: Any, **kw: Any) -> VideoResult:
         state["run_video"].append((request, kw))
         return _result()
 
@@ -115,6 +120,20 @@ async def test_unmoved_account_with_a_project_goes_to_flow_google_com_by_default
     project — on an UNMOVED account too (proven live on the pt profile)."""
     await harness["transport"].generate_video(request=_req(), project_id="p1")
     assert "entered" not in harness  # the composer navigates directly
+    assert len(harness["run_video"]) == 1
+
+
+async def test_a_composer_run_does_not_route_the_next_request_by_its_page(
+    harness: dict[str, Any],
+) -> None:
+    """D1 council: after a composer run the pooled page sat on flow.google.com, so
+    the next request on the same client was routed by that URL. It is parked."""
+    await harness["transport"].generate_video(request=_req(), project_id="p1")
+    assert harness["page"].url == "about:blank"
+    with pytest.raises(_LabsDriverTouchedError):  # i2v on the same client → labs
+        await harness["transport"].generate_video(
+            request=_req(mode=Mode.I2V, start_image_ref_name="asset"), project_id="p1"
+        )
     assert len(harness["run_video"]) == 1
 
 
@@ -184,13 +203,6 @@ async def test_bootstrap_page_already_on_the_migrated_host_routes_before_entry(
 # --- run_video guards (direct) ------------------------------------------------
 
 
-class _NoComposer:
-    """run_video must reject these requests BEFORE touching the page."""
-
-    def __getattr__(self, name: str) -> Any:
-        raise AssertionError(f"composer touched: {name}")
-
-
 async def _run(
     request: GenerateVideoRequest, *, url: str = _MIGRATED, project_id: str | None = "p1"
 ) -> Any:
@@ -199,7 +211,6 @@ async def _run(
     page = MagicMock()
     page.url = url
     return await migrated_composer.run_video(
-        _NoComposer(),
         page,
         request,
         project_id=project_id,

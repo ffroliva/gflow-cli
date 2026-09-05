@@ -676,11 +676,12 @@ class FlowHostMigratedError(GFlowError):
     """Raised when Flow served the project from ``flow.google.com`` — the origin
     Google is migrating the app onto (issue #639) — instead of ``labs.google``.
 
-    The migrated frontend is a different build: it renders none of the Material
-    Symbols ligature elements every gflow selector anchors on, so cohort
-    detection and every mode control miss at once. That is NOT selector rot, and
-    reporting it as :class:`UiSelectorDriftError` (exit 23, "file a bug about the
-    selector") sent operators hunting for the wrong cause.
+    The migrated frontend is a different build (Angular Material over
+    ``batchexecute``): the labs drivers' ligature selectors miss there at once. The
+    migrated composer drives it for text-to-video; every other request still lands
+    here. That is NOT selector rot, and reporting it as
+    :class:`UiSelectorDriftError` (exit 23, "file a bug about the selector") sent
+    operators hunting for the wrong cause.
 
     **Not retryable** (exit code 36). The handoff is a server-assigned
     per-account boolean that the labs.google app acts on client-side after a fully
@@ -696,7 +697,7 @@ class FlowHostMigratedError(GFlowError):
     title = "Flow served the migrated flow.google.com frontend"
     _default_remediation = (
         "Google has moved this account's Flow from labs.google to flow.google.com. "
-        "gflow drives that frontend for text-to-video and text-to-image "
+        "gflow drives that frontend for text-to-video "
         "(GFLOW_CLI_FLOW_HOST=auto, the default, or flow.google.com); you see this "
         "error because GFLOW_CLI_FLOW_HOST=labs.google switched the migrated composer "
         "off, or because this request type is not ported to the migrated host yet. "
@@ -1189,7 +1190,7 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     FlowAgentUiError: 25,
     FlowAppError: 31,
     # FlowHostMigratedError (#639): Flow served the migrated
-    # flow.google.com frontend, whose DOM gflow cannot drive. Direct
+    # flow.google.com frontend for a request not ported to it yet. Direct
     # GFlowError subclass; exit 36 lets scripts distinguish "wrong Flow
     # frontend" (per-account, not retryable) from genuine selector drift
     # (23), which it used to masquerade as.

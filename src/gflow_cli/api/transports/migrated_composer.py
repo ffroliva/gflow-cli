@@ -55,7 +55,6 @@ log = structlog.get_logger(__name__)
 MIGRATED_PROJECT_URL = "https://flow.google.com/project/{project_id}"
 READY_ANCHOR = ".settings-trigger-button"
 OVERLAY = ".cdk-overlay-pane"
-BACKDROP = ".cdk-overlay-backdrop"
 RADIOGROUP = "[role='radiogroup']"
 RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
@@ -186,21 +185,13 @@ class MigratedComposer:
         return pane
 
     async def _close_pane(self, page: Page) -> None:
-        """Escape, else toggle the trigger, else click the backdrop (all measured)."""
+        """Escape closed the pane in every measured run; if it ever does not, the next
+        click on the composer fails loudly rather than a speculative fallback guessing."""
         await page.keyboard.press("Escape")
-        for attempt in ("escape", "trigger", "backdrop"):
-            await asyncio.sleep(0.3)
-            pane = page.locator(OVERLAY).first
-            if not await pane.count() or not await pane.is_visible():
-                log.debug("migrated.pane_closed", by=attempt)
-                return
-            if attempt == "escape":
-                await page.locator(READY_ANCHOR).first.click(timeout=3000)
-            elif attempt == "trigger":
-                backdrop = page.locator(BACKDROP).first
-                if await backdrop.count():
-                    await backdrop.click(timeout=3000, force=True)
-        log.warning("migrated.pane_still_open")
+        await asyncio.sleep(0.3)
+        pane = page.locator(OVERLAY).first
+        if await pane.count() and await pane.is_visible():
+            log.warning("migrated.pane_still_open")
 
     async def _select(
         self,
@@ -222,25 +213,36 @@ class MigratedComposer:
         target = matches.first
         if not await target.count():
             groups = await pane.locator(RADIOGROUP).count()
+            # Only the duration row is a per-account/model capability (#650) — a missing
+            # mode/aspect/count radio, or an empty pane, is the DOM having changed.
+            if axis != "duration" or groups == 0:
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"migrated host: no '{axis}' radio offering {wanted!r} in the settings "
+                        f"pane ({groups} option groups rendered) (host=migrated)"
+                    ),
+                )
             raise ConfigurationError(
                 detail=(
-                    f"the migrated Flow host renders no '{axis}' control offering {wanted!r} "
-                    f"on this account and model ({groups} option groups shown) — drop the "
-                    f"option or pick a model that offers it"
+                    f"the migrated Flow host renders no duration control offering {wanted!r} "
+                    f"for this account and model ({groups} option groups shown)"
+                ),
+                remediation_hint=(
+                    "Drop --duration to accept Flow's default length, or pick a model whose "
+                    "settings pane shows a duration row (on the maintainer cohort only "
+                    "Omni 1.1 Flash does)."
                 ),
             )
         if await target.get_attribute("aria-checked") == "true":
             return
-        for _ in range(2):
-            await target.click(timeout=4000)
-            await asyncio.sleep(0.2)
-            target = matches.first  # re-query: Angular may have re-rendered the row
-            if await target.get_attribute("aria-checked") == "true":
-                return
+        await target.click(timeout=4000)
+        await asyncio.sleep(0.2)
+        if await matches.first.get_attribute("aria-checked") == "true":
+            return
         raise UiSelectorDriftError(
             detail=(
                 f"migrated host: the '{axis}' radio {wanted!r} did not become aria-checked "
-                f"after two clicks (host=migrated)"
+                f"after the click (host=migrated)"
             ),
         )
 
@@ -252,6 +254,7 @@ class MigratedComposer:
                     f"model '{model.value}' is not available on the migrated Flow host; "
                     f"offered: {', '.join(VIDEO_MODEL_MENU_LABELS.values())}"
                 ),
+                remediation_hint="Pass --model with one of the offered names, or omit it.",
             )
         button = pane.locator("button").filter(has=_ligature(page, "arrow_drop_down")).first
         if not await button.count():
@@ -281,6 +284,7 @@ class MigratedComposer:
                     f"model '{label}' is not offered on this account's migrated Flow host; "
                     f"offered: {', '.join(offered)}"
                 ),
+                remediation_hint="Pass --model with one of the offered names, or omit it.",
             )
         await target.click(timeout=4000)
         log.info("migrated.model_selected", model=label)
@@ -294,7 +298,9 @@ class MigratedComposer:
                 detail=f"migrated host: composer ({COMPOSER}) not found (host=migrated)",
             )
         await composer.click(timeout=5000)
-        await page.keyboard.type(prompt, delay=5)
+        # insert_text dispatches input events without key presses: a newline in the
+        # prompt lands as text instead of an Enter that might submit early.
+        await page.keyboard.insert_text(prompt)
         log.info("migrated.prompt_typed", chars=len(prompt))
 
     async def submit_and_observe(
@@ -462,7 +468,7 @@ class MigratedComposer:
             # No redirects: an open redirect on the CDN must not rebound the
             # request elsewhere (same posture as the labs image download).
             resp = await page.request.get(url, timeout=180_000, max_redirects=0)
-            if resp.status >= 400:
+            if resp.status >= 300:
                 raise WireFormatError(
                     detail=f"migrated host: signed media URL returned HTTP {resp.status}",
                     status=resp.status,
@@ -493,24 +499,18 @@ class MigratedComposer:
         page: Page,
         record: GenerationRecord,
         out_dir: Path | None,
-        *,
-        transport: Any,
     ) -> Path | None:
-        """The clip from its signed CDN URL; the labs ``media.getMediaUrlRedirect``
-        route is the fallback (it answered 404 for a migrated media id, measured
-        2026-09-05, so it is tried only when no URL was observed)."""
-        if not record.video_url:
-            try:
-                return await transport._download_video(record.media_id, out_dir, page)  # noqa: SLF001
-            except WireFormatError as exc:
-                raise WireFormatError(
-                    detail=(
-                        "migrated host: no signed video URL was observed and the "
-                        f"media redirect route answered HTTP {exc.status}"
-                    ),
-                    status=exc.status,
-                    route="batchexecute:as29s",
-                ) from exc
+        """The clip from its signed CDN URL. The labs ``media.getMediaUrlRedirect``
+        route answers 404 for a migrated media id (measured 2026-09-05), so there is
+        no second source: a record with no URL is a wire-format failure."""
+        if not record.video_url and not record.poster_url:
+            raise WireFormatError(
+                detail=(
+                    "migrated host: the generation finished but no signed media URL was "
+                    f"observed within the {RESULT_URL_GRACE_S:.0f}s grace"
+                ),
+                route="batchexecute:as29s",
+            )
         body = await self._fetch_mp4(page, record)
         target_dir = out_dir or Path.cwd()
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -521,7 +521,6 @@ class MigratedComposer:
 
 
 async def run_video(
-    transport: Any,
     page: Page,
     request: GenerateVideoRequest,
     *,
@@ -577,7 +576,7 @@ async def run_video(
     )
     local_path: Path | None = None
     if download and record.is_done:
-        local_path = await composer.download(page, record, out_dir, transport=transport)
+        local_path = await composer.download(page, record, out_dir)
     from gflow_cli.api.video import VideoResult as _VideoResult  # noqa: PLC0415
 
     return _VideoResult(

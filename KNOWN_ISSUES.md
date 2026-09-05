@@ -65,14 +65,15 @@ switch and is withdrawn. The REST surface (`gflow project list`, `gflow data …
 is unaffected. Automated callers now receive `retryable: false` so retry loops
 stop instead of burning a doomed attempt each time.
 
-**What gflow does today:** recognises the migrated origin — `page.url` is
-re-checked at every point the run is about to spend time, which Playwright updates
-in the same tick as the hand-off navigation — and fails with the distinct, non-retryable exit 36 instead of the misleading
+**What gflow does today for the rest of the matrix:** recognises the migrated
+origin — `page.url` is re-checked at every point the run is about to spend time,
+which Playwright updates in the same tick as the hand-off navigation — and fails
+with the distinct, non-retryable exit 36 instead of the misleading
 `UiSelectorDriftError` (exit 23, "file a selector bug"). `_check_logged_in` also
 accepts the migrated host, so a migrated load is no longer misread as a
-logged-out session. **Support for driving the new frontend is separate work and
-is not implemented** — once the rollout completes for an account, no retry will
-help until then.
+logged-out session. Text-to-video is driven (above); image, i2v/r2v, characters,
+scenes, extend, instructions, tools and project creation are the remaining work
+tracked here — no retry helps for those until each is ported.
 
 > **v0.66.1's fast-fail did not fire in the field, and v0.66.2 is the correction.**
 > The guard read `page.url` once, at `get_ui_driver` entry — before the hop to
@@ -301,8 +302,11 @@ has not landed yet stay nameless until the next sync sweep.
 Veo 3.1 models and `10` on `omni-flash` only — the CLI no longer refuses a
 duration it cannot know your account supports. What it still cannot do is tell
 your cohort apart before opening the browser, so on an account that renders no
-duration row the run reaches Flow's settings popover and fails there with
-`UiSelectorDriftError` (exit 23) and a `debug_no_duration_tab.png` screenshot.
+duration row the run reaches Flow's settings popover and fails there — on the
+labs driver as `UiSelectorDriftError` (exit 23) with a `debug_no_duration_tab.png`
+screenshot, on the migrated `flow.google.com` host as `ConfigurationError` (exit 11)
+naming the duration axis (the maintainer cohort renders the row for Omni 1.1 Flash
+only there, measured 2026-09-05).
 That abort is **pre-submit**, so no credits are spent — live-verified 2026-07-11
 on the denon82 profile.
 

@@ -3978,16 +3978,25 @@ class VideoGenerationMixin:
         if route == "blocked":
             raise_if_migrated(page, at="flow_host_kill_switch")
         if route == "migrated":
-            return await run_video(
-                self,
-                page,
-                request,
-                project_id=project_id,
-                out_dir=out_dir,
-                poll_timeout_s=poll_timeout_s,
-                download=download,
-                on_started=on_started,
-            )
+            try:
+                return await run_video(
+                    page,
+                    request,
+                    project_id=project_id,
+                    out_dir=out_dir,
+                    poll_timeout_s=poll_timeout_s,
+                    download=download,
+                    on_started=on_started,
+                )
+            finally:
+                # The pooled page would otherwise stay on flow.google.com/project/<id>,
+                # and the NEXT request on this client would be routed by that URL
+                # instead of by its own shape (an unmoved account's i2v → exit 36,
+                # or a silently reused project). Park it; the next run navigates.
+                try:
+                    await page.goto("about:blank", wait_until="commit", timeout=5_000)
+                except Exception as exc:  # noqa: BLE001 - parking is best-effort
+                    log.warning("migrated.page_park_failed", error=str(exc)[:120])
 
         # #299: the video path binds through the mode policy like images do —
         # get_ui_driver switches to the required arm, VERIFIES via a DOM
