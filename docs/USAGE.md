@@ -1369,8 +1369,8 @@ The installer is read off the install itself, never guessed from `PATH`:
 | `pipx_metadata.json` | `pipx` | `pipx upgrade gflow-cli` |
 | neither | plain venv | `<that venv's python> -m pip install --upgrade gflow-cli` |
 
-`gflow update` first asks PyPI for the latest version (this refreshes the
-once-a-day notice cache too). If you are already current it says so and runs
+`gflow update` first asks PyPI for the latest version (when PyPI answers, this
+refreshes the once-a-day notice cache too). If you are already current it says so and runs
 nothing. Otherwise it runs the manager with its output shown, then re-reads the
 venv's Playwright version: when the upgrade moved it, a hint gives you the exact
 `<that venv's python> -m playwright install chromium` so the browser build matches. If PyPI is

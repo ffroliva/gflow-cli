@@ -7,18 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Migrated host: `video t2v` no longer fails on the submit-enable race (#670).**
-  The Angular composer on `flow.google.com` flips the `arrow_forward` button
-  from `disabled` roughly 100 ms after `insert_text` lands, and the composer
-  read it synchronously, so a fully migrated account got
-  `UiSelectorDriftError` ("missing or disabled after the prompt was typed",
-  exit 23) on every run before anything was submitted. The composer now waits
-  up to 5 s (100 ms polls) for the button to enable; a button that never
-  enables is still selector drift, now worded as "stayed disabled for 5s".
-  Measured on a moved account: `insert_text` → enabled at the 107 ms sample;
-  with the wait, veo-lite t2v completed in 62 s.
+## [0.68.0] — 2026-09-05
 
 ### Added
 
@@ -58,6 +47,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   have gone through and what it leaves behind for the reviewer; the PR template
   gains a matching *Lifecycle* checklist; the quality-gate list is now identical to
   AGENTS.md's (it had drifted to six of nine commands).
+
+### Fixed
+
+- **Migrated host: `video t2v` no longer fails on the submit-enable race (#670,
+  @ChandraLiuswanto).** The Angular composer on `flow.google.com` flips the
+  `arrow_forward` button from `disabled` roughly 100 ms after `insert_text`
+  lands, and the composer read it synchronously, so a fully migrated account got
+  `UiSelectorDriftError` ("missing or disabled after the prompt was typed",
+  exit 23) on every run before anything was submitted. The composer now waits
+  up to 5 s (100 ms polls) for the button to enable; a button that never
+  enables is still selector drift, now worded as "stayed disabled for 5s".
+  Measured on a moved account: `insert_text` → enabled at the 107 ms sample;
+  with the wait, veo-lite t2v completed in 62 s.
 
 ## [0.67.0] — 2026-09-05
 
@@ -3932,7 +3934,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...HEAD
+[0.68.0]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...v0.68.0
 [0.67.0]: https://github.com/ffroliva/gflow-cli/compare/v0.66.3...v0.67.0
 [0.66.3]: https://github.com/ffroliva/gflow-cli/compare/v0.66.2...v0.66.3
 [0.66.2]: https://github.com/ffroliva/gflow-cli/compare/v0.66.1...v0.66.2
