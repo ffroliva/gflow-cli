@@ -336,6 +336,12 @@ Saved: manual-test/79ad1fb7-….mp4            exit 0
 
 `ffprobe`: 8.000000 s, 720x1280, h264 + aac, 3 599 828 bytes.
 
+**Run twice, deliberately.** Almost every gesture in this spike worked once and then did
+not, so a single green run proves little. The second run reproduced it end to end —
+uploads settling in 16 s / 10 s (vs 14 s / 8 s), 2/2 chips, `MZZa6b`, downloaded — which
+is what makes the upload waits and the chip-by-chip verification look like the right
+shape rather than a lucky ordering.
+
 ## What this does NOT settle
 
 - **Whether the model actually USED both references.** The run generated and both ids are
