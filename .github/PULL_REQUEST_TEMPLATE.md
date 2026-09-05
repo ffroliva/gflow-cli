@@ -12,6 +12,7 @@
 - [ ] `scenario` + `plan` written under `docs/superpowers/plans/<date>-<slug>/` and linked here
 - [ ] `check` green, including the step 1b CLI↔MCP mirror sweep
 - [ ] MCP twin added, or a reasoned exemption in `tests/mcp/test_cli_parity.py`
+- [ ] **E2E evidence provided** — name the `tests/e2e/` test you ran and paste its result, or point at the new test this PR adds. If you could not run it, say why here:
 - [ ] Live-verified against real Flow where a generation path changed; what could NOT be verified is stated below
 - [ ] Council review run (`pr-council-review` / `branch-review`) and must-fix items addressed
 
