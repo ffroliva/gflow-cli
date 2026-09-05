@@ -246,12 +246,66 @@ Four things this settles, none of which could be assumed:
 
 Verified $0: the catalog's newest video predates the probe by ~2 h, so nothing generated.
 
+## Round 6 — SETTLED: local files, and the three reference kinds
+
+`scripts/dev/capture_migrated_upload_flow.py`. No submit path reaches the network (the
+in-page fetch/XHR block again), so no generation; it does add assets to the library.
+
+### The upload flow works
+
+`Upload media` in the `@` picker opens a **native file chooser** — Playwright's
+`expect_file_chooser` catches it and `set_files()` is accepted. No `input[type=file]`
+exists in the DOM before or after; the chooser is the only route in.
+
+The asset appears in the list immediately as `Uploading<name>` and is **not attachable
+until that prefix clears**. Measured: appears ~1 s after `set_files`, settles ~10 s later
+(1.1 MB png). Two separate waits are needed — polling "is it done?" once answers *yes*
+before the entry has appeared, which silently attached nothing.
+
+**Attach as a separate mention, not by continuing the picker that uploaded.** The native
+chooser costs keyboard focus, so ArrowDown lands nowhere. Escape out, clear the composer,
+then a fresh `@` + the filename prefix + Enter attaches it — which is also the shape a port
+wants: upload, then reference by name.
+
+### Three reference kinds, and they are NOT interchangeable on the wire
+
+| kind | chip `reference_type` | chip `entity_id` | wire slot |
+|---|---|---|---|
+| character | `entity` | the id | trailing array, `[["<entity id>"]]` |
+| avatar | `likeness` | **null** | not yet captured |
+| uploaded image | `media` | **null** | **second element**, `[[null, "<media id>"]]` |
+
+A character and an uploaded image ride in **different positions** of the `MZZa6b` payload:
+
+```json
+["MZZa6b", [[[[null,null,[[[null,[["ae3c560f-…","product1.png"]]],
+   ["  a woman holding the product"]]]],
+   [[null,"ae3c560f-dc0e-4399-815e-b7225456fa6b"]],        <- media slot
+   "veo_3_1_r2v_lite_low_priority", 1, null, […]]],
+ [null,22,null,null,null,"<project id>", …]]
+```
+
+versus the character capture in Round 5, where that second element was `null` and the id
+appeared in a trailing `[["c68767a5-…"]]` instead. So a port cannot treat "a reference" as
+one thing: the chip's `reference_type` decides which wire slot the id belongs in, and
+`entity_id` being null does **not** mean nothing was attached.
+
+In both cases the id also appears inline in the prompt segments alongside its display name.
+
+### What the reported command needs
+
+`gflow video r2v --ref me.jpg --ref …png` maps onto: upload each file, wait out its
+`Uploading` state, then compose one prompt with a mention per file. Every mechanism that
+requires is now captured — except attaching **two** references in one prompt, which has
+never been exercised.
+
 ## What this does NOT settle
 
-- **Local files (`--ref <path>`).** Still the biggest gap: everything above attaches an
-  asset that already exists in the library. `--ref me.jpg` needs the library's
-  `Upload media` flow, which has been seen but never driven, and no `input[type=file]`
-  exists until it is.
+- **Multiple references in one prompt.** Every capture attached exactly ONE. The reported
+  command passes two, so this is now the largest untested step — ordering, whether a second
+  `@` behaves like the first, and how two ids sit in the payload.
+- **The avatar wire slot.** A `likeness` chip was produced but never submitted, so which
+  slot carries it is unknown.
 - **Selecting a SPECIFIC asset.** ArrowDown+Enter takes whatever is highlighted, and the
   typed-query path resolved to a name that was not an obvious match for the query. How the
   picker matches (caption? filename? fuzzy?) is untested, and exit 32
