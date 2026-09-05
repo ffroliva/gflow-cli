@@ -143,13 +143,62 @@ dismisses on blur. **Untried and next in line:** `ArrowDown` then `Enter` (the c
 mention-picker gesture, never attempted), hovering before clicking, and dispatching
 `mousedown` rather than `click`.
 
+## Round 4 — a mention chip, and what it carries
+
+The account owner confirmed the human gesture: **ArrowDown + Enter**, and a mouse click
+also works *for a human*. That last part is the tell — a synthetic Playwright click reads
+as a click-away and dismisses the overlay, which is why every earlier click failed.
+
+`ArrowDown` alone behaves correctly: the `@` survives, `.asset-item-active` stays 1, and
+`UpteDb` fires (the highlighted asset's detail load). `Enter` after it still cleared the
+composer, with or without waiting for that load — so the gesture was not the whole story.
+
+What did produce an attachment was **typing a query** after the `@`:
+
+```html
+<span class="mention-chip"
+      data-mention-id="c68767a5-afdd-46f1-a31d-fcc32daba716"
+      data-reference-type="entity"
+      data-entity-id="c68767a5-afdd-46f1-a31d-fcc32daba716"
+      contenteditable="false">aloha</span>
+```
+
+Verified as genuinely created, not pre-existing: a clean editor load reads
+`chips: []` with an empty placeholder composer, so the chip came from the typing.
+
+**This settles the shape of the mechanism.** A reference is a **chip in the prompt
+document** carrying an entity id — consistent with Round 3's finding that no rpc fires on
+attach. Whatever the port does, it builds a prompt containing chips and can verify them by
+reading `.mention-chip[data-entity-id]` out of the composer before submitting.
+
+### Not reliable yet, and not to be built on as-is
+
+The chip was reproduced **once**. Two later runs with the same query produced `chips: 0`.
+Both failed the same way — the picker stayed open, and the *next* composer click died on
+`<div class="cdk-overlay-backdrop …"> intercepts pointer events`. So the insert is
+timing- or query-dependent in a way that is not yet characterised, and the gesture cannot
+be called solved.
+
+### A production-relevant side finding
+
+`_close_pane` counts `.cdk-overlay-pane` only. A `.cdk-overlay-backdrop` can outlive it and
+still intercept pointer events — measured here twice, blocking a composer click after the
+pane was considered closed. That is the same class as the #669 overlay bug and the same
+symptom (a click that cannot land). No shipped t2v path opens a picker, so it is not known
+to be reachable in production, but the guard's scope is worth revisiting when the port
+lands.
+
 ## What this does NOT settle
 
-- **The confirm semantics.** Narrowed, not settled: it is **not** a server-side rpc
-  (Round 3), so it must write into the prompt document — but no gesture has yet produced
-  that write, so the resulting node shape, and whether the submit then carries reference
-  ids, remain unobserved. This still decides whether a run can silently generate an
-  unreferenced clip.
+- **Whether the chip reaches the wire.** SETTLED that attachment is a prompt-document
+  chip with an entity id (Round 4), and that no rpc fires on attach (Round 3). NOT settled
+  whether the `YhhmEf` submit then carries that id: no run has yet produced both a chip
+  and a submit, because the chip insert is not reproducible on demand. Until it is, the
+  port cannot know whether to assert reference ids on the wire or to verify chips in the
+  DOM before submitting — and that is exactly the check that stops a run generating
+  silently without its references.
+- **How the picker is driven deterministically.** ArrowDown navigates; Enter clears;
+  a typed query worked once in three attempts. The reliable gesture is still unknown.
 - **Search vs Recent.** Only a Recent list was observed. Whether the search box is required
   for an asset outside it, and how it matches (caption? filename? — labs indexes a short
   auto-caption, not the prompt, per exit 32 `ReferenceNotFoundError`), is untested.

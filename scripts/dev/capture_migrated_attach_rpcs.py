@@ -127,6 +127,11 @@ async def _probe(page: Any, project_id: str) -> dict[str, Any]:
     _stage("typing @ with real key events")
     await page.locator(COMPOSER).first.click(timeout=5000)
     await page.keyboard.type("@", delay=120)
+    await page.wait_for_timeout(2000)
+    # Every asset the Recent list offers here is a Video (this project has generated
+    # nothing else) plus one Avatar. If Ingredients rejects a video, Enter clearing the
+    # picker is a REJECTION, not a broken gesture — so filter to the Avatar and retry.
+    await page.keyboard.type("Me", delay=120)
     await page.wait_for_timeout(2500)
     report_at = await _composer_state(page)
 
@@ -141,14 +146,24 @@ async def _probe(page: Any, project_id: str) -> dict[str, Any]:
     # A mention picker is normally keyboard-driven, and the confirm click turned out to
     # be a no-op (no rpc, no composer change). Try the standard ProseMirror interaction
     # before concluding anything about the mechanism.
-    # Enter cleared the `@` in the previous run. With the character now genuinely in the
-    # doc, retry the gesture that failed while the plugin had no query: click the asset.
-    phase["now"] = "after_asset_click"
-    _stage("clicking the asset (with a real @ in the doc)")
-    items = page.locator("button.asset-item")
-    if await items.count():
-        await items.first.click(timeout=5000)
-        await page.wait_for_timeout(2500)
+    # ArrowDown then Enter — the gesture the account owner confirmed works by hand. A
+    # mouse click works for a human too, but a synthetic Playwright click reads as a
+    # click-away and dismisses the overlay, which is what every earlier attempt hit.
+    phase["now"] = "after_arrowdown"
+    _stage("ArrowDown")
+    await page.keyboard.press("ArrowDown")
+    # ArrowDown fires UpteDb — the highlighted asset's detail load. Enter sent before that
+    # settles was the previous run's failure, so wait it out rather than racing it.
+    await page.wait_for_timeout(3500)
+    report["active_after_arrowdown"] = await page.locator(
+        "button.asset-item.asset-item-active"
+    ).count()
+    report["composer_after_arrowdown"] = await _composer_state(page)
+
+    phase["now"] = "after_arrowdown_enter"
+    _stage("Enter")
+    await page.keyboard.press("Enter")
+    await page.wait_for_timeout(3500)
     report["composer_after_asset_click"] = await _composer_state(page)
     report["active_after_click"] = await page.locator(
         "button.asset-item.asset-item-active"

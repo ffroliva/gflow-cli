@@ -49,6 +49,8 @@ from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
 from _spike_common import build_client, resolve_profile_dir  # noqa: E402, isort: skip
 
 PROMPT = "a man crying"
+#: Filters the mention picker. "Me" resolved to a real entity on the probe account.
+QUERY = "Me"
 
 
 def _stage(msg: str) -> None:
@@ -56,46 +58,34 @@ def _stage(msg: str) -> None:
 
 
 async def _pick_first_reference(page: Any) -> dict[str, Any]:
-    """Type `@`, take the first offered item, confirm with "Add to prompt"."""
+    """Insert a mention chip, using the gesture that actually works.
+
+    Two things had to be right, both learned the hard way:
+      * `keyboard.type`, NOT `insert_text` — the latter dispatches input events with no
+        real keystrokes, so the ProseMirror mention plugin opens a picker with no query
+        behind it and every later gesture operates on dead state.
+      * a typed query, not a click — a synthetic click on an asset reads as a click-away
+        and dismisses the overlay (a human mouse works; Playwright's does not).
+    """
     out: dict[str, Any] = {}
-    _stage("typing @ in composer")
     await page.locator(COMPOSER).first.click(timeout=5000)
-    await page.keyboard.insert_text("@")
-    await page.wait_for_timeout(1500)
+    await page.keyboard.type("@", delay=120)
+    await page.wait_for_timeout(2000)
+    await page.keyboard.type(QUERY, delay=120)
+    await page.wait_for_timeout(3000)
 
-    # Selectors from the phase-4 structure dump, not guessed: an asset is a
-    # `button[role=option].asset-item`, and selecting one reveals a detail pane whose
-    # confirm is `button.detail-add-to-prompt-btn`. The earlier attempt scoped items to
-    # the last visible overlay and clicked something else, which closed the picker.
-    items = page.locator("button.asset-item")
-    out["offered"] = [t.strip()[:60] for t in await items.all_text_contents()][:10]
-    if not await items.count():
-        out["picked"] = None
-        return out
-
-    # Do NOT click the asset: measured, that dismisses the picker and leaves the composer
-    # empty. The first asset is already `.asset-item-active` with its detail pane shown,
-    # so the confirm is reachable directly — which is what the structure dump captured.
-    out["picked"] = (await items.first.text_content() or "").strip()[:60]
-    out["item_active_before_any_click"] = await page.locator(
-        "button.asset-item.asset-item-active"
-    ).count()
-    _stage(f"picker offered {len(out['offered'])} assets; active without clicking: "
-           f"{out['item_active_before_any_click']}")
-
-    confirm = page.locator("button.detail-add-to-prompt-btn")
-    out["confirm_button_found"] = bool(await confirm.count())
-    if await confirm.count():
-        _stage("clicking 'Add to prompt'")
-        await confirm.first.click(timeout=4000)
-        await page.wait_for_timeout(1200)
-
-    out["composer_after_pick"] = await page.evaluate(
-        "() => (document.querySelector(\"[contenteditable='true']\") || {}).textContent || ''"
+    out["chips"] = await page.evaluate(
+        """() => [...document.querySelectorAll('.mention-chip')].map(c => ({
+            text: (c.textContent || '').trim(),
+            mention_id: c.getAttribute('data-mention-id'),
+            entity_id: c.getAttribute('data-entity-id'),
+            reference_type: c.getAttribute('data-reference-type'),
+        }))"""
     )
-    out["composer_html_after_pick"] = await page.evaluate(
+    _stage(f"chips in composer: {len(out['chips'])}")
+    out["composer_html"] = await page.evaluate(
         "() => ((document.querySelector(\"[contenteditable='true']\") || {}).innerHTML || '')"
-        ".slice(0, 600)"
+        ".slice(0, 1200)"
     )
     return out
 
@@ -141,6 +131,16 @@ async def _probe(page: Any, project_id: str) -> dict[str, Any]:
     await composer._select(page, pane, axis="mode", lig="videocam")  # noqa: SLF001
     await composer._select(page, pane, axis="submode", lig="chrome_extension")  # noqa: SLF001
     await composer._close_pane(page, strict=False)  # noqa: SLF001
+    # `_close_pane` counts `.cdk-overlay-pane` only. A `.cdk-overlay-backdrop` can outlive
+    # it and still intercept pointer events — one run died with "backdrop ... intercepts
+    # pointer events" on the composer click. Same class as the #669 overlay bug; worked
+    # around here, worth a look in production.
+    for _ in range(10):
+        if not await page.locator(".cdk-overlay-backdrop").count():
+            break
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(400)
+    _stage(f"backdrops left: {await page.locator('.cdk-overlay-backdrop').count()}")
 
     _stage("submode set; picking reference")
     report: dict[str, Any] = {"reference": await _pick_first_reference(page)}
