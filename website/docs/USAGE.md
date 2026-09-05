@@ -559,8 +559,10 @@ Options:
 > **Two Flow frontends (#639).** Under the default `GFLOW_CLI_FLOW_HOST=auto`, `t2v` with
 > `--project <id>` runs on Flow's migrated `flow.google.com` host on every account; without
 > `--project` an unmoved account falls back to the labs driver, and a moved account exits 11
-> (`--project` is required there — project creation is not ported). Everything except `t2v`
-> still exits 36 on a moved account. `flow.google.com` forces the migrated composer,
+> (`--project` is required there — project creation is not ported). `i2v` with a local
+> `--initial-frame` and no `--end-frame` runs there too (see [`gflow video i2v`](#gflow-video-i2v));
+> an end frame, a frame given by UUID or `@Name`, and everything else still exit 36 on a moved
+> account. `flow.google.com` forces the migrated composer,
 > `labs.google` switches it off — see [CONFIGURATION § GFLOW_CLI_FLOW_HOST](CONFIGURATION.md#gflow_cli_flow_host).
 
 ```bash
@@ -584,6 +586,16 @@ so the UUID's project is the one being generated in). A local file is bound into
 the editor's frame slot via the media dialog, then Flow fires
 `batchAsyncGenerateVideoStartImage` (initial only) or `…StartAndEndImage`
 (initial+end interpolation).
+
+> **On Flow's migrated `flow.google.com` host (#639)** — a moved account, or
+> `GFLOW_CLI_FLOW_HOST=flow.google.com` — only a **local** `--initial-frame` is served, with
+> `--project <id>`: gflow uploads the file through the editor's own Upload entry (it stays in
+> the project's library like any upload — a second run uploads it again), finds it in the
+> Start-frame picker under its file name, and refuses to submit unless the app's own
+> submit body carries that upload's media id with an image-to-video model key (exit 7
+> otherwise: the labs #125 shape, where an unbound frame silently goes out as text-to-video).
+> `--end-frame`, a UUID or `@Name` frame exit 36 there; an unmoved account keeps the labs
+> driver for those.
 
 ```text
 gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [--ui-mode] [...]
@@ -1705,7 +1717,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
-| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` (the origin Google is migrating accounts onto) and the request could not be routed to the migrated composer: `GFLOW_CLI_FLOW_HOST=labs.google` switched it off, or the request type is not ported to that host yet (today only `video t2v` with `--project` is). Not selector drift (23) | **Not retryable.** The handoff is a per-account setting applied on every load. Use `gflow video t2v --project <id>` on that host, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the rest of the matrix |
+| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` (the origin Google is migrating accounts onto) and the request could not be routed to the migrated composer: `GFLOW_CLI_FLOW_HOST=labs.google` switched it off, or the request type is not ported to that host yet (today `video t2v`, and `video i2v` from a local `--initial-frame` with no end frame, both with `--project`). Not selector drift (23) | **Not retryable.** The handoff is a per-account setting applied on every load. Use `gflow video t2v --project <id>` or `gflow video i2v --initial-frame <file> --project <id>` on that host, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the rest of the matrix |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Image-to-video from a local start frame on the migrated `flow.google.com` host**
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639), slice 1). `gflow video i2v
+  --initial-frame <local file> --project <id>` now runs on the new host — on a moved
+  account, and by default (`GFLOW_CLI_FLOW_HOST=auto`) on an unmoved one too. The port
+  is UI-driven and observed, never replayed: the composer selects the Frames submode,
+  uploads the file through the editor's own toolbar Upload entry and reads the media id
+  off the app's `maseQ` reply, finds the upload in the Start-frame picker under its file
+  name (the picker exposes no media id in its DOM), and only then submits. Two refusals
+  guard the credits: an unbound chip is exit 23 before the click, and the submit
+  *request* the app sends must carry that media id with an `_i2v_` model key — a
+  text-to-video key (the labs #125 shape, an empty Frames submit silently goes out as
+  t2v) or a foreign id is `WireFormatError` (exit 7). An upload Flow refuses is exit 27
+  on route `batchexecute:maseQ`; a file the picker never lists is exit 32. The submit
+  rpc for i2v is `eb1hJf` (t2v stays `YhhmEf`). Not ported in this slice and named in
+  the exit-36 detail: `--end-frame`, a frame given by media UUID or `@Name`, and r2v.
+  A "Get started" modal over a fresh migrated editor is now dismissed before the run.
+  Recon: `docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md`.
+
 - **`--model veo-lite-lp` is drivable on the migrated `flow.google.com` host.** It was
   the one tier the migrated model map omitted, so an account Google has already moved
   could not select it at all: `_select_model` refused with `ConfigurationError` (exit
