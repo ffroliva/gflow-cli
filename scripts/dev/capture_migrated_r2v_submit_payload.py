@@ -69,9 +69,14 @@ async def _pick_first_reference(page: Any) -> dict[str, Any]:
     """
     out: dict[str, Any] = {}
     await page.locator(COMPOSER).first.click(timeout=5000)
+    # ArrowDown + Enter — the gesture matrix's reliable winner, and the one the account
+    # owner uses by hand. Enter is what COMMITS: a typed query alone leaves the picker
+    # open and inserts nothing, which is why earlier runs saw chips: 0.
     await page.keyboard.type("@", delay=120)
-    await page.wait_for_timeout(2000)
-    await page.keyboard.type(QUERY, delay=120)
+    await page.wait_for_timeout(2200)
+    await page.keyboard.press("ArrowDown")
+    await page.wait_for_timeout(1500)
+    await page.keyboard.press("Enter")
     await page.wait_for_timeout(3000)
 
     out["chips"] = await page.evaluate(
@@ -118,6 +123,16 @@ async def _probe(page: Any, project_id: str) -> dict[str, Any]:
     # attempted, recorded, and fails locally without ever reaching Google.
     captured: list[dict[str, Any]] = []
 
+    async def _on_route_abort(route: Any) -> None:
+        """Abort EVERY batchexecute once armed — a missed rpcid filter costs a real
+        generation, and nothing after the submit click needs to succeed."""
+        try:
+            captured.append(
+                {"url": route.request.url[:120], "decoded": _decode(route.request.post_data)}
+            )
+        finally:
+            await route.abort()
+
     def _on_request(request: Any) -> None:
         if "data/batchexecute" not in request.url or request.method != "POST":
             return
@@ -141,6 +156,18 @@ async def _probe(page: Any, project_id: str) -> dict[str, Any]:
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(400)
     _stage(f"backdrops left: {await page.locator('.cdk-overlay-backdrop').count()}")
+    # The ONE run that inserted a chip had a 6 s idle here; both runs that typed straight
+    # after closing the pane got chips: 0 with the picker wedged open. Settle explicitly:
+    # wait the overlays out, then hold. Cheap, and the difference is the only one between
+    # the runs that worked and the ones that did not.
+    for _ in range(20):
+        panes = await page.locator(".cdk-overlay-pane").count()
+        backs = await page.locator(".cdk-overlay-backdrop").count()
+        if not panes and not backs:
+            break
+        await page.wait_for_timeout(400)
+    await page.wait_for_timeout(5000)
+    _stage("settled; composer should be clear to type into")
 
     _stage("submode set; picking reference")
     report: dict[str, Any] = {"reference": await _pick_first_reference(page)}
@@ -152,14 +179,58 @@ async def _probe(page: Any, project_id: str) -> dict[str, Any]:
     # Resolve the submit button BEFORE arming: with every batchexecute aborted the page
     # is degraded, and a locator resolved in that state was where the previous two runs
     # stopped producing output.
+    report["composer_before_submit"] = await page.evaluate(
+        "() => ((document.querySelector(\"[contenteditable='true']\") || {}).innerHTML || '')"
+        ".slice(0, 400)"
+    )
+    report["backdrops_before_submit"] = await page.locator(".cdk-overlay-backdrop").count()
     _stage("resolving submit button (pre-arm)")
     submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
     report["submit_found"] = bool(await asyncio.wait_for(submit.count(), timeout=20))
+    if report["submit_found"]:
+        report["submit_enabled"] = await submit.is_enabled()
     _stage(f"submit_found={report['submit_found']}; ARMING route abort")
 
-    context = page.context
-    await context.set_offline(True)
-    _stage("context OFFLINE; clicking submit (request cannot reach Google)")
+    # set_offline suppressed the submit entirely (chip + prompt present, button enabled,
+    # zero YhhmEf) — the app evidently checks navigator.onLine and never fires. So the
+    # request has to be allowed to LEAVE and be killed in flight instead.
+    # `page.route` hangs on this page; `context.route` is untried.
+    # Neither `page.route` nor `context.route` returns on this page (25 s), and
+    # set_offline makes the app skip the request entirely. So intercept INSIDE the page:
+    # wrap fetch and XHR, record the body, and never call through. The request is
+    # therefore never created at the network layer at all — strictly safer than aborting
+    # one in flight, and it does not depend on Playwright's interception working.
+    await page.evaluate(
+        """() => {
+            window.__captured = [];
+            const isTarget = (u) => String(u).includes('data/batchexecute');
+            const of = window.fetch;
+            window.fetch = function (input, init) {
+                const url = (input && input.url) || input;
+                const body = (init && init.body) || (input && input.body) || null;
+                if (isTarget(url)) {
+                    window.__captured.push({via: 'fetch', url: String(url),
+                                            body: body ? String(body) : null});
+                    return Promise.reject(new Error('blocked by probe'));
+                }
+                return of.apply(this, arguments);
+            };
+            const oo = XMLHttpRequest.prototype.open;
+            const os = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function (m, u) {
+                this.__url = u; return oo.apply(this, arguments);
+            };
+            XMLHttpRequest.prototype.send = function (b) {
+                if (isTarget(this.__url)) {
+                    window.__captured.push({via: 'xhr', url: String(this.__url),
+                                            body: b ? String(b) : null});
+                    return;  // never sent
+                }
+                return os.apply(this, arguments);
+            };
+        }"""
+    )
+    _stage("in-page fetch/XHR blocked; clicking submit (request cannot be created)")
     try:
         if report["submit_found"]:
             await asyncio.wait_for(submit.click(timeout=5000), timeout=25)
@@ -168,11 +239,20 @@ async def _probe(page: Any, project_id: str) -> dict[str, Any]:
     finally:
         # unroute can block on in-flight handlers; the capture is already in `captured`
         # and is written out by the caller before teardown, so a hang here costs nothing.
-        await context.set_offline(False)
-        _stage("back online")
+        in_page = await page.evaluate("() => window.__captured || []")
+        for c in in_page:
+            captured.append({"url": c.get("url", "")[:120], "decoded": _decode(c.get("body"))})
+        _stage(f"in-page captures: {len(in_page)}")
 
     report["captured_requests"] = len(captured)
+    # YhhmEf is the T2V submit. Do not assume an ingredients run uses it — record every
+    # in-page capture so a different submit rpc is visible rather than filtered away.
     report["submits"] = [c for c in captured if (c["decoded"] or {}).get("rpcid") == "YhhmEf"]
+    report["in_page_captures"] = [
+        {"rpcid": (c["decoded"] or {}).get("rpcid"), "decoded": c["decoded"]}
+        for c in captured
+        if c.get("url") and "batchexecute" in c["url"]
+    ][-6:]
     report["other_rpcids"] = sorted(
         {(c["decoded"] or {}).get("rpcid") for c in captured} - {"YhhmEf", None}
     )

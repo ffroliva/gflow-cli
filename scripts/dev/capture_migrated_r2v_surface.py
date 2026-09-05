@@ -216,7 +216,8 @@ async def _probe(page: Any, project_id: str) -> dict[str, Any]:
                         .filter(e => /add to prompt/i.test((e.textContent || '').trim())
                                      && e.children.length === 0)
                         .map(desc),
-                    grid_items: [...pane.querySelectorAll('[class*=item], [class*=card], [class*=tile]')]
+                    grid_items: [...pane.querySelectorAll(
+                        '[class*=item], [class*=card], [class*=tile]')]
                         .map(desc).slice(0, 15),
                 };
             }"""

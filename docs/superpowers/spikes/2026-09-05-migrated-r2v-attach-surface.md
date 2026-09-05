@@ -188,17 +188,81 @@ symptom (a click that cannot land). No shipped t2v path opens a picker, so it is
 to be reachable in production, but the guard's scope is worth revisiting when the port
 lands.
 
+## Round 5 — SETTLED: the gesture, and the r2v submit payload
+
+### The gesture, from a matrix rather than another guess
+
+`scripts/dev/capture_migrated_mention_gestures.py` tries every candidate in one session,
+clearing the composer between attempts:
+
+| gesture | chip | note |
+|---|---|---|
+| `@` → **ArrowDown → Enter** | ✅ | `reference_type=entity`, real `entity_id` |
+| `@` → query | ❌ | picker stays open — this is why earlier runs saw `chips: 0` |
+| `@` → query → **Enter** | ✅ | an Avatar: `reference_type=likeness`, `entity_id` **null** |
+| `@` → query → ArrowDown → **Enter** | ✅ | same |
+| `@` → query typed slowly | ❌ | |
+
+**Enter is what commits.** The one earlier "success" from a bare query was a fluke, and the
+failures were not flakiness — they were a missing Enter. Note the two reference kinds:
+a character carries an `entity_id`, an avatar is a `likeness` with a **null** id, so a port
+cannot assume every chip has an entity id.
+
+### Capturing the payload: three levers, one works
+
+* `page.route` — **hangs**, >20 s, idle or busy.
+* `context.route` — **hangs** the same way. Playwright interception is unusable here.
+* `set_offline(True)` — suppresses the submit entirely: chip and prompt present, button
+  enabled, and **no request at all**. The app evidently checks `navigator.onLine`.
+* **Wrapping `fetch` and `XMLHttpRequest.send` inside the page** — works. The body is
+  recorded and never passed through, so the request is never created at the network layer.
+  Strictly safer than aborting one in flight.
+
+### The r2v submit, captured at $0
+
+```json
+["MZZa6b", [[[[null,null,[[[null,[null,null,["c68767a5-…","aloha"]]],["  a man crying"]]]],
+   null, "veo_3_1_r2v_lite_low_priority", 1, null,
+   [null,null,null,null,"A2D760AB-…","394F970B-…"], null,null,null,
+   [["c68767a5-afdd-46f1-a31d-fcc32daba716"]]]],
+ [null,22,null,null,null,"66324c59-… (project id)", …]]
+```
+
+Four things this settles, none of which could be assumed:
+
+1. **The r2v submit is rpcid `MZZa6b`, not `YhhmEf`.** `YhhmEf` is the *t2v* submit. A port
+   that watched for `YhhmEf` would never see an ingredients run — and every earlier probe
+   in this spike reported `submits: 0` for exactly that reason.
+2. **The entity id rides the wire, twice** — inline in the prompt structure *and* in a
+   trailing array of its own, which is the `referenceEntities` analogue. So the run IS
+   assertable the way labs' `_assert_entities_attached` asserts it; a silent unreferenced
+   generation can be caught.
+3. **The prompt is segmented, not a string.** Mentions are `[entity_id, name]` nodes
+   interleaved with text segments (`["  a man crying"]`). Building it means composing
+   segments, not concatenating a prompt.
+4. **The model key is mode-specific:** `veo_3_1_r2v_lite_low_priority`, not the
+   `veo_3_1_lite_lower_priority` a t2v run sends. Mode and tier are encoded together, so
+   the existing `VideoModel` → wire-key mapping does not carry over to r2v unchanged.
+
+Verified $0: the catalog's newest video predates the probe by ~2 h, so nothing generated.
+
 ## What this does NOT settle
 
-- **Whether the chip reaches the wire.** SETTLED that attachment is a prompt-document
-  chip with an entity id (Round 4), and that no rpc fires on attach (Round 3). NOT settled
-  whether the `YhhmEf` submit then carries that id: no run has yet produced both a chip
-  and a submit, because the chip insert is not reproducible on demand. Until it is, the
-  port cannot know whether to assert reference ids on the wire or to verify chips in the
-  DOM before submitting — and that is exactly the check that stops a run generating
-  silently without its references.
-- **How the picker is driven deterministically.** ArrowDown navigates; Enter clears;
-  a typed query worked once in three attempts. The reliable gesture is still unknown.
+- **Local files (`--ref <path>`).** Still the biggest gap: everything above attaches an
+  asset that already exists in the library. `--ref me.jpg` needs the library's
+  `Upload media` flow, which has been seen but never driven, and no `input[type=file]`
+  exists until it is.
+- **Selecting a SPECIFIC asset.** ArrowDown+Enter takes whatever is highlighted, and the
+  typed-query path resolved to a name that was not an obvious match for the query. How the
+  picker matches (caption? filename? fuzzy?) is untested, and exit 32
+  `ReferenceNotFoundError` exists on labs precisely because that matching is not obvious.
+- **Multiple references.** Every capture attached exactly one. Ordering, the per-model caps
+  (omni 7, veo lite/fast/lite_lp 3), and whether a second `@` behaves like the first are
+  all unknown.
+- **The response shape.** The submit was blocked, so no `MZZa6b` reply has ever been seen —
+  and the labs lesson [[credit-free-route-abort-verification]] is explicit that request and
+  response shapes differ. A backstop must be written against a real captured response, not
+  inferred from this request.
 - **Search vs Recent.** Only a Recent list was observed. Whether the search box is required
   for an asset outside it, and how it matches (caption? filename? — labs indexes a short
   auto-caption, not the prompt, per exit 32 `ReferenceNotFoundError`), is untested.
