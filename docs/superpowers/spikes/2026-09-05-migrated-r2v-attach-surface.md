@@ -92,17 +92,63 @@ an empty prompt, the submit was inert, and **zero `YhhmEf` requests were ever ma
 That is why the wire question below is still open: no submit payload has been produced to
 read.
 
-**Lead worth following first:** `UpteDb` and `DTaVef` appear in the captured traffic and
-are unaccounted for. If one of them fires on "Add to prompt", the attach is **server-side**
-and the answer is already in the traffic — no submit needed. The probe currently discards
-non-`YhhmEf` payloads; recording them is the cheapest next step.
+**That lead was followed and came back negative — see Round 3 below.**
+
+## Round 3 — the rpc lead, answered (negative), and the `insert_text` trap
+
+`scripts/dev/capture_migrated_attach_rpcs.py` stamps every `batchexecute` POST with the
+phase it fired in. No submit exists in that probe at all, so there is not even a
+theoretical credit path.
+
+| rpcid | fires | so it is |
+|---|---|---|
+| `DTaVef` | while **idle** | polling noise |
+| `UpteDb` + `as29s` | on **`@`** | the picker loading its asset list |
+| *(none)* | on **"Add to prompt"** | — |
+
+**`confirm_only_rpcids: []`.** The confirm fires no network call whatsoever, so the lead is
+dead: attachment is **not** a server-side rpc on confirm. Anything the port asserts has to
+be observable in the composer or in the submit payload, not in an attach call.
+
+### The `insert_text` trap — a real find
+
+The composer looked empty after `@`, and that was not a measurement artifact: there is
+exactly **one** `[contenteditable]`, it holds focus, and a plain prompt types into it
+correctly (`<p>a man crying</p>`). The `@` genuinely was not landing.
+
+Cause: `page.keyboard.insert_text("@")` dispatches input events **without real
+keystrokes**. The ProseMirror mention plugin opens its picker on the character but has no
+query to track, so every subsequent gesture is operating on a picker with no state behind
+it. Switching to `page.keyboard.type("@", delay=120)` makes the character land —
+`<p>@</p>` — and the picker opens with a live query.
+
+This matters beyond the probe: production's `send_prompt` uses `insert_text` **on purpose**
+(a newline in a prompt must not submit early), so a port that reuses it for mentions
+inherits exactly this failure. Mentions need real key events; prompt text must not.
+
+### Still blocked: selecting an asset
+
+With a real `@` in the doc, every gesture tried still **dismisses** the picker and clears
+the character — the composer reverts to its placeholder, `.asset-item-active` drops to 0
+and the confirm disappears:
+
+| gesture | result |
+|---|---|
+| `Enter` on the active asset | picker gone, `@` cleared |
+| click `button.asset-item` | picker gone, `@` cleared, active 0 |
+| click `button.detail-add-to-prompt-btn` | no-op, then gone |
+
+The shape of that — a synthetic click reading as a click-away — suggests the overlay
+dismisses on blur. **Untried and next in line:** `ArrowDown` then `Enter` (the canonical
+mention-picker gesture, never attempted), hovering before clicking, and dispatching
+`mousedown` rather than `click`.
 
 ## What this does NOT settle
 
-- **The confirm semantics.** Whether "Add to prompt" inserts a token into the prompt text,
-  attaches an entity out of band, or both, is unknown. That distinction decides whether the
-  submit carries `referenceEntities` (which the labs backstop `_assert_entities_attached`
-  checks) or just prompt text — and therefore whether a run can silently generate an
+- **The confirm semantics.** Narrowed, not settled: it is **not** a server-side rpc
+  (Round 3), so it must write into the prompt document — but no gesture has yet produced
+  that write, so the resulting node shape, and whether the submit then carries reference
+  ids, remain unobserved. This still decides whether a run can silently generate an
   unreferenced clip.
 - **Search vs Recent.** Only a Recent list was observed. Whether the search box is required
   for an asset outside it, and how it matches (caption? filename? — labs indexes a short
