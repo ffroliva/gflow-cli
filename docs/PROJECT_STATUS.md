@@ -4,6 +4,39 @@
 
 ## Current release
 
+**v0.67.0 — alpha.** **Flow's migrated `flow.google.com` host is driven for text-to-video,
+and it is now the default host for every request it can serve.**
+
+Google is moving accounts off `labs.google` one at a time
+([#639](https://github.com/ffroliva/gflow-cli/issues/639)); both maintainer accounts moved
+during this cycle. The migrated frontend is the same product on Angular Material over a
+different wire (`batchexecute`, not `aisandbox-pa`): three $0 spikes and two real clips settled
+the DOM and the protocol
+([spike](superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md)), and the new
+migrated composer drives it — option-group radios, model menu, `contenteditable` composer,
+`arrow_forward` submit — then **observes** the app's own `YhhmEf` / `jwpduf` / `as29s` replies
+and downloads the clip from its signed CDN URL. Routing (`GFLOW_CLI_FLOW_HOST`): under the
+default `auto`, `flow.google.com` takes every `video t2v --project` on moved and unmoved
+accounts alike; what it cannot serve yet (image, i2v/r2v, characters, scenes, extend,
+instructions, tools, project creation) keeps the labs driver on an unmoved account and exits
+36 on a moved one. `flow.google.com` forces it, `labs.google` is the kill switch.
+
+Also in this release: exit 36 is **non-retryable** — the handoff is a server-assigned
+per-account flag applied client-side, one-way, not the per-page-load flap the error text
+claimed ([spike](superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md)); and
+`--duration` accepts 4/6/8 s on the Veo 3.1 models where the account's cohort renders the
+control ([#650](https://github.com/ffroliva/gflow-cli/pull/650), @stgmt).
+
+Verification: [LIVE_VERIFICATION_v0.67.0](LIVE_VERIFICATION_v0.67.0.md) — `gflow video t2v`
+on the moved account (default route) **exit 0 in 49.9 s**, on the unmoved Portuguese-locale
+account (forced route) **exit 0 in 50.5 s**, both mp4s byte-exact with the size Flow reported,
+recorder rows present; `--model veo-fast --duration 6` aborts pre-submit with exit 11 at zero
+credits because this cohort renders no duration row for Veo. The positive Veo 4/6/8 path is
+recorded as NOT verified (cohort-external), and the labs-side guard can no longer be verified
+here at all — there is no labs account left.
+
+<details><summary>v0.66.3 — the `&lt;html lang&gt;` hydration race</summary>
+
 **v0.66.3 — alpha.** **gflow was reading Flow's locale off the `en` shell it serves before the
 app rewrites it, so every account whose URL could not answer came back English.**
 
@@ -35,6 +68,8 @@ the helper captures the flip live (`en` → `pt`, +638 ms) and a real bootstrap 
 resolves correctly at the cost of the 4 s bound. Those two are reported **separately**, because
 collapsing a component measurement into a user-facing claim is the mistake v0.66.1 made and
 v0.66.2 corrected.
+
+</details>
 
 <details><summary>v0.66.2 — the fast-fail that had never fired, and a locale cache answering the wrong question</summary>
 
@@ -604,7 +639,8 @@ reporter-verified e2e on macOS).
 
 | Milestone | Status |
 |---|---|
-| Migrated-origin runs fail instantly (0 ms) and keep their learned locale | ✅ done (v0.66.1) |
+| Flow's migrated `flow.google.com` host driven for text-to-video; the default host for what it can serve (`GFLOW_CLI_FLOW_HOST`) | ✅ done (v0.67.0) |
+| Migrated-origin runs fail fast and keep their learned locale (v0.66.1's fast-fail never fired in the field; corrected in v0.66.2) | ✅ done (v0.66.2) |
 | Flow `flow.google.com` migration named as its own failure class (exit 36; retryable in v0.66.0, non-retryable since 2026-09-04) | ✅ done (v0.66.0) |
 | Repo scaffold, CI, license, README, disclaimer | ✅ done |
 | Auth login flow (one-time browser capture) | ✅ done |

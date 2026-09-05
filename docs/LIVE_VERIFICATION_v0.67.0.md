@@ -2,7 +2,7 @@
 
 **Feature:** text-to-video on Flow's migrated `flow.google.com` host (#639) — the
 migrated composer (`src/gflow_cli/api/transports/migrated_composer.py`), routed by
-`GFLOW_CLI_FLOW_HOST`. Plan: `docs/superpowers/plans/2026-09-05-migrated-host-driver/`.
+`GFLOW_CLI_FLOW_HOST`. Recon: `docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md` (the implementation plan was folded into project memory at release time, per the doc-review skill).
 
 Every number below was measured from the **user entrypoint** — the `gflow` CLI — not
 from a component in isolation (`[[live-verify-must-name-the-entrypoint]]`). Wall-clock
@@ -89,6 +89,24 @@ The first attempt of this run exposed a driver bug on the `--model` path (the se
 pane resolved to a detached menu overlay after the model switch, reporting "no 'aspect'
 control … 0 option groups"); fixed in the same change and pinned by
 `test_axes_still_resolve_after_a_model_switch`.
+
+## Pre-tag gates
+
+| Gate | Result |
+|---|---|
+| `/gflow:check` (hygiene · doc-links · PII · mirror · council-memory · ruff · format · pyright · pytest) | ✅ 2026-09-05 on the release tree: 940 tracked files clean, 29 doc files' links resolve, 25 mirror files PII-clean, mirror in sync (20 files), 46 council memories resolve, ruff + format clean (426 files), pyright 0/0/0, pytest **3764 passed, 7 skipped** (coverage run, 10 min 21 s). 53 setup errors in that run were a `tmp/pytest` collision with a concurrent scoped run — the same files re-ran green in isolation (172 passed); one deadline-based agentic test flaked under load and passed 3/3 alone, including on the unmodified tree. CI on the `develop` head this branch was cut from (`6680344`) is green. |
+| `/gflow:live-verify` | this document (runs 1–2 + the #650 negative path) |
+| `/gflow:pr-council-review` (branch mode on `develop`) | ✅ pre-release council on `develop`, fixes merged as PR #666 (`6680344`) — exit-code truth on the migrated host, #659, dead code, doc drift |
+| `/gflow:doc-review` (mechanical + 3-auditor council) | ✅ mechanical §1–7 PASS. _Council verdict: YELLOW across all 3 auditors (no RED). 12 findings; 0 Tier 1; 9 Tier 2 fixed in the release-prep commit (`AGENTS.md` exit range 3–36; `llms.txt`, `docs/USAGE.md` t2v, `docs/INDEX.md`, `docs/ARCHITECTURE.md`, `skills/gflow-cli/SKILL.md` now name the migrated host + `--project`; `docs/MCP.md` exit-11 equivalent; `docs/PROJECT_STATUS.md` v0.66.1 "0 ms" row re-credited to v0.66.2; stale "flaps / callers retry" comments in `drivers/factory.py`); 3 Tier 3 deferred (MCP.md naming `FlowHostMigratedError` in its terminal list, exit codes in the USAGE duration note, dangling `[[wikilinks]]` into the private memory store). Council reports at `tmp/council/0{1,2,3}-*.md` (local-only)._ |
+| `scripts/ci/check_release_artifacts.py` | ✅ `release artifacts OK — /gflow:release protocol satisfied.` |
+
+## Post-tag evidence
+
+- Signed tag `v0.67.0` (SSH signature, `git tag -v` good) on `f92978e`, pushed 2026-09-05.
+- Release workflow run [33955032750](https://github.com/ffroliva/gflow-cli/actions/runs/33955032750) — `completed / success`.
+- GitHub Release: <https://github.com/ffroliva/gflow-cli/releases/tag/v0.67.0> (published 2026-09-05T08:22:07Z, 5 assets, not a prerelease).
+- PyPI: `pip index versions gflow-cli` → `gflow-cli (0.67.0)`.
+- Release PR: [#667](https://github.com/ffroliva/gflow-cli/pull/667) `chore/release-v0.67.0 → main`, merged with a merge commit, then back-merged into `develop`.
 
 ## NOT verified (recorded, not omitted)
 

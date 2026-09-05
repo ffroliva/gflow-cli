@@ -32,14 +32,16 @@ from urllib.parse import urlsplit
 
 import structlog
 
+from gflow_cli.api.transports._common import extract_project_id
 from gflow_cli.api.transports.batchexecute import (
     GenerationRecord,
     generation_record,
     parse_frames,
 )
-from gflow_cli.api.video import Aspect, VideoModel, VideoStarted
+from gflow_cli.api.video import Aspect, Mode, VideoModel, VideoResult, VideoStarted, VideoStatus
 from gflow_cli.errors import (
     ConfigurationError,
+    FlowHostMigratedError,
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
@@ -48,7 +50,7 @@ from gflow_cli.errors import (
 if TYPE_CHECKING:
     from playwright.async_api import Page
 
-    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
+    from gflow_cli.api.video import GenerateVideoRequest, VideoStartedCallback
 
 log = structlog.get_logger(__name__)
 
@@ -86,8 +88,6 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     existing project, with a model the new host offers (or none). Everything else —
     i2v/r2v media, character references, a fresh project, a labs-only model — is
     not ported yet, so an unmoved account keeps the labs driver for it."""
-    from gflow_cli.api.video import Mode  # noqa: PLC0415
-
     if request.mode is not Mode.T2V or not project_id:
         return False
     if request.reference_entities:
@@ -537,10 +537,6 @@ async def run_video(
     not been recon'd on this host, and a fresh project can only be created through
     the labs gallery, so the caller must name one (``--project``).
     """
-    from gflow_cli.api.transports._common import extract_project_id  # noqa: PLC0415
-    from gflow_cli.api.video import Mode, VideoStatus  # noqa: PLC0415
-    from gflow_cli.errors import FlowHostMigratedError  # noqa: PLC0415
-
     if request.mode is not Mode.T2V:
         raise FlowHostMigratedError(
             detail=(
@@ -577,9 +573,7 @@ async def run_video(
     local_path: Path | None = None
     if download and record.is_done:
         local_path = await composer.download(page, record, out_dir)
-    from gflow_cli.api.video import VideoResult as _VideoResult  # noqa: PLC0415
-
-    return _VideoResult(
+    return VideoResult(
         status=status,
         local_path=Path(local_path) if local_path is not None else None,
         project_id=pid,
