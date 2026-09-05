@@ -60,7 +60,7 @@ from gflow_cli.api.transports import (
     make_transport,
     resolve_transport_name,
 )
-from gflow_cli.api.transports._common import await_url_settled
+from gflow_cli.api.transports._common import await_url_settled, raise_if_migrated
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
     SupportsTransportSetup,
@@ -2383,6 +2383,13 @@ class FlowApiClient:
         """
         page = await self._checkout_page()
         try:
+            # #673: this runs BEFORE the UI transport, so none of its migration
+            # guards can fire first. On a moved account the pool page is the
+            # flow.google.com grid (client-side handoff) with no
+            # recaptcha/enterprise.js — bail to exit 36 here instead of a bare
+            # RecaptchaError. (/project/<id> on that host does carry the script,
+            # but no path that mints is ported there yet.)
+            raise_if_migrated(page, at="mint_recaptcha_token")
             # Patchright evaluates in an isolated world by default, where the
             # page's main-world ``grecaptcha`` global is undefined; the resolver
             # supplies ``isolated_context=False`` for patchright ({} for playwright).
