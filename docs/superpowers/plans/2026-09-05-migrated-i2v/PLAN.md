@@ -82,34 +82,34 @@ stages can be driven offline, then write the red tests that pin every Critical/H
 - `tests/api/transports/test_migrated_composer.py` — fake DOM + new tests
 
 **Steps:**
-- [ ] Fake DOM: toolbar `add` button (outside `flow-prompt-box`), an add-menu overlay with an
+- [x] Fake DOM: toolbar `add` button (outside `flow-prompt-box`), an add-menu overlay with an
       `upload`-ligature `[role='menuitem']`, `page.expect_file_chooser()` yielding a fake chooser
       whose `set_files` records the path and (configurably) fires a `maseQ` response frame with
       `[media_id, project_id, …]`, or a non-200 / no reply
-- [ ] Fake DOM: Start chip (`button.empty-chip`) → picker overlay (`flow-add-menu-popover-content`
+- [x] Fake DOM: Start chip (`button.empty-chip`) → picker overlay (`flow-add-menu-popover-content`
       with `input[type=text]` and `button.asset-item[role=option]` items with configurable texts);
       option click flips the chip to `button.chip-container` with an `img` (configurable no-op for
       the "did not bind" case); picker hidden after the click
-- [ ] Fake page: `on("request", …)` support with a fake request carrying `url` (batchexecute rpcid)
+- [x] Fake page: `on("request", …)` support with a fake request carrying `url` (batchexecute rpcid)
       and `post_data`, fired by `_fire_submit(rpcid, body)`
-- [ ] Fake DOM: an optional `[role=dialog]` with a `close`-ligature button on load
+- [x] Fake DOM: an optional `[role=dialog]` with a `close`-ligature button on load
 
 **Tests created (red):**
-- [ ] `test_i2v_settings_select_the_frames_submode` — `apply_video_settings` with `Mode.I2V` checks `crop_free`
-- [ ] `test_attach_uploads_then_binds_the_frame_by_file_name` — returns the `maseQ` media id; chip bound; events `migrated.frame_uploaded`, `migrated.frame_bound`
-- [ ] `test_attach_refuses_when_the_add_menu_has_no_upload_entry` — `UiSelectorDriftError`, no chooser
-- [ ] `test_attach_refuses_when_no_file_chooser_opens` — `UiSelectorDriftError`
-- [ ] `test_attach_is_upload_rejected_when_maseq_does_not_answer` — `MediaUploadRejectedError` exit 27, route `batchexecute:maseQ`
-- [ ] `test_attach_is_upload_rejected_on_a_non_200_maseq` — same class, status in detail
-- [ ] `test_attach_is_reference_not_found_when_the_picker_lists_no_such_name` — `ReferenceNotFoundError` (32)
-- [ ] `test_attach_is_selector_drift_when_the_chip_stays_empty_after_the_pick` — `UiSelectorDriftError`, no submit possible
-- [ ] `test_attach_picks_the_first_option_when_names_repeat` — two identical names, first clicked
-- [ ] `test_submit_accepts_eb1hjf_as_the_i2v_submit_rpc` — record parsed, `on_started` fired
-- [ ] `test_submit_body_without_the_bound_media_id_is_wire_format_error` — exit 7, both ids in detail
-- [ ] `test_submit_body_with_a_t2v_key_is_wire_format_error` — exit 7 naming the key
-- [ ] `test_submit_body_assertion_is_off_for_t2v` — `expect_media_id=None` keeps today's behaviour
-- [ ] `test_ensure_editor_dismisses_a_dialog_before_waiting_for_the_trigger`
-- [ ] `test_ensure_editor_without_a_dialog_is_unchanged`
+- [x] `test_i2v_settings_select_the_frames_submode` — `apply_video_settings` with `Mode.I2V` checks `crop_free`
+- [x] `test_attach_uploads_then_binds_the_frame_by_file_name` — returns the `maseQ` media id; chip bound; events `migrated.frame_uploaded`, `migrated.frame_bound`
+- [x] `test_attach_refuses_when_the_add_menu_has_no_upload_entry` — `UiSelectorDriftError`, no chooser
+- [x] `test_attach_refuses_when_no_file_chooser_opens` — `UiSelectorDriftError`
+- [x] `test_attach_is_upload_rejected_when_maseq_does_not_answer` — `MediaUploadRejectedError` exit 27, route `batchexecute:maseQ`
+- [x] `test_attach_is_upload_rejected_on_a_non_200_maseq` — same class, status in detail
+- [x] `test_attach_is_reference_not_found_when_the_picker_lists_no_such_name` — `ReferenceNotFoundError` (32)
+- [x] `test_attach_is_selector_drift_when_the_chip_stays_empty_after_the_pick` — `UiSelectorDriftError`, no submit possible
+- [x] `test_attach_picks_the_first_option_when_names_repeat` — two identical names, first clicked
+- [x] `test_submit_accepts_eb1hjf_as_the_i2v_submit_rpc` — record parsed, `on_started` fired
+- [x] `test_submit_body_without_the_bound_media_id_is_wire_format_error` — exit 7, both ids in detail
+- [x] `test_submit_body_with_a_t2v_key_is_wire_format_error` — exit 7 naming the key
+- [x] `test_submit_body_assertion_is_off_for_t2v` — `expect_media_id=None` keeps today's behaviour
+- [x] `test_ensure_editor_dismisses_a_dialog_before_waiting_for_the_trigger`
+- [x] `test_ensure_editor_without_a_dialog_is_unchanged`
 
 ---
 
@@ -122,21 +122,21 @@ stages can be driven offline, then write the red tests that pin every Critical/H
 - `tests/features/migrated_i2v.feature`, `tests/features/test_migrated_i2v_steps.py` — Gherkin from SCENARIO.md
 
 **Steps:**
-- [ ] Dispatch tests: `migrated_can_serve` True for I2V + local `start_image` + project; False for
+- [x] Dispatch tests: `migrated_can_serve` True for I2V + local `start_image` + project; False for
       end frame, `start_image_ref_id`, `start_image_ref_name`, reference entities, labs-only model
-- [ ] Dispatch tests: `run_video` on the forced host with an end frame → exit 36, detail contains
+- [x] Dispatch tests: `run_video` on the forced host with an end frame → exit 36, detail contains
       "end frame"; with a UUID → exit 36, detail contains "UUID"; never 2 or 11
-- [ ] Rewrite `test_run_video_rejects_modes_not_yet_ported_with_exit_36` to use R2V (I2V is now served)
-- [ ] BDD feature: the six scenarios from SCENARIO.md § Suggested BDD scenarios, verbatim titles
-- [ ] Steps file: reuse `test_migrated_driver_steps.py`'s harness (fake page, frames, exit-code capture)
+- [x] Rewrite `test_run_video_rejects_modes_not_yet_ported_with_exit_36` to use R2V (I2V is now served)
+- [x] BDD feature: the six scenarios from SCENARIO.md § Suggested BDD scenarios, verbatim titles
+- [x] Steps file: reuse `test_migrated_driver_steps.py`'s harness (fake page, frames, exit-code capture)
 
 **Tests created (red):**
-- [ ] `test_i2v_with_a_local_start_frame_is_served_by_the_migrated_host`
-- [ ] `test_i2v_with_an_end_frame_keeps_the_labs_driver_on_an_unmoved_account`
-- [ ] `test_i2v_by_uuid_keeps_the_labs_driver_on_an_unmoved_account`
-- [ ] `test_run_video_names_the_end_frame_in_the_exit_36_detail`
-- [ ] `test_run_video_names_the_uuid_form_in_the_exit_36_detail`
-- [ ] BDD: 6 scenarios (moved account generates from a local start frame · frame did not bind ·
+- [x] `test_i2v_with_a_local_start_frame_is_served_by_the_migrated_host`
+- [x] `test_i2v_with_an_end_frame_keeps_the_labs_driver_on_an_unmoved_account`
+- [x] `test_i2v_by_uuid_keeps_the_labs_driver_on_an_unmoved_account`
+- [x] `test_run_video_names_the_end_frame_in_the_exit_36_detail`
+- [x] `test_run_video_names_the_uuid_form_in_the_exit_36_detail`
+- [x] BDD: 6 scenarios (moved account generates from a local start frame · frame did not bind ·
       t2v body for an i2v request · upload rejected · end frame not ported on a moved account ·
       unmoved account with an end frame keeps labs)
 
@@ -150,18 +150,18 @@ stages can be driven offline, then write the red tests that pin every Critical/H
 - `src/gflow_cli/api/transports/migrated_composer.py`
 
 **Steps:**
-- [ ] `migrated_can_serve`: `T2V` as today; `I2V` only when `start_image` is a `Path` and every
+- [x] `migrated_can_serve`: `T2V` as today; `I2V` only when `start_image` is a `Path` and every
       end-frame / ref-id / ref-name field is `None`; keep the model and entity checks
-- [ ] `run_video`: replace the `mode is not T2V` refusal with a helper `_unported_form(request)`
+- [x] `run_video`: replace the `mode is not T2V` refusal with a helper `_unported_form(request)`
       returning `None` or a noun ("an end frame", "a frame given by Flow media UUID", "a frame
       given by @Name", "reference-to-video") → `FlowHostMigratedError` whose detail names it and
       points at `--initial-frame <local file>`
-- [ ] `apply_video_settings`: after the mode radio, `_select(axis="submode", lig="crop_free")`
+- [x] `apply_video_settings`: after the mode radio, `_select(axis="submode", lig="crop_free")`
       when `request.mode is Mode.I2V` (`chrome_extension` stays the default for t2v — do not touch)
-- [ ] `ensure_editor`: before waiting on `READY_ANCHOR`, if a `[role='dialog']` is visible click its
+- [x] `ensure_editor`: before waiting on `READY_ANCHOR`, if a `[role='dialog']` is visible click its
       `button:has(mat-icon:text-is('close'))` (fallback `Escape`), log `migrated.dialog_dismissed`;
       bounded to one attempt, 3 s
-- [ ] Constants block (after #669's): `FRAMES_LIGATURE = "crop_free"`, `DIALOG = "[role='dialog']"`
+- [x] Constants block (after #669's): `FRAMES_LIGATURE = "crop_free"`, `DIALOG = "[role='dialog']"`
 
 **Tests (green):** Task 1 settings/dialog tests · Task 2 dispatch tests · existing suite unchanged
 
@@ -175,10 +175,10 @@ stages can be driven offline, then write the red tests that pin every Critical/H
 - `src/gflow_cli/api/transports/migrated_composer.py`
 
 **Steps:**
-- [ ] Pre-flight in `attach_start_frame(page, project_id, image_path) -> str`: file exists, size ≤
+- [x] Pre-flight in `attach_start_frame(page, project_id, image_path) -> str`: file exists, size ≤
       `MAX_IMAGE_BYTES` (import from `client`), header is a supported image (reuse the client's
       header check) — refuse with the same errors the labs upload raises, before any click
-- [ ] `_upload_via_toolbar(page, image_path) -> str`: register a URL-filtered `response` listener
+- [x] `_upload_via_toolbar(page, image_path) -> str`: register a URL-filtered `response` listener
       for `batchexecute` rpcid `maseQ` (parse with `parse_frames`, take the first UUID-shaped
       string as the media id); click the toolbar `add` (`button:has(mat-icon:text-is('add'))` not
       inside `flow-prompt-box`); wait for `OVERLAY [role='menuitem']:has(mat-icon:text-is('upload'))`
@@ -187,7 +187,7 @@ stages can be driven offline, then write the red tests that pin every Critical/H
       wait ≤ `FRAME_UPLOAD_S = 60` for the reply: none / non-200 / no id → `MediaUploadRejectedError`
       with `route="batchexecute:maseQ"`; log `migrated.frame_uploaded {media_id, status}` (never the
       file name); remove the listener in `finally`
-- [ ] `_pick_frame_by_name(page, name, media_id) -> None`: click `flow-prompt-box button.empty-chip`
+- [x] `_pick_frame_by_name(page, name, media_id) -> None`: click `flow-prompt-box button.empty-chip`
       (first); picker = `OVERLAY.filter(has=flow-add-menu-popover-content)`, wait visible ≤ 8 s;
       click its `input[type='text']`, `insert_text(name)`; wait ≤ 8 s for
       `button.asset-item[role='option']` filtered by `has_text=re.compile(rf"^\s*{re.escape(name)}\s*$")`
@@ -195,9 +195,9 @@ stages can be driven offline, then write the red tests that pin every Critical/H
       wait the picker hidden ≤ `FRAME_COMMIT_HIDDEN_S = 15`; assert
       `flow-prompt-box button.chip-container:has(img)` count ≥ 1 within `FRAME_THUMB_VISIBLE_S = 5`
       else `UiSelectorDriftError`; log `migrated.frame_bound {media_id}`
-- [ ] Wrap upload+pick in `asyncio.wait_for(…, ATTACH_STAGE_S = 90)` → `TransportTimeoutError`
+- [x] Wrap upload+pick in `asyncio.wait_for(…, ATTACH_STAGE_S = 90)` → `TransportTimeoutError`
       naming the stage
-- [ ] Do NOT touch `_select_model` / `_close_pane` (#669's territory)
+- [x] Do NOT touch `_select_model` / `_close_pane` (#669's territory)
 
 **Tests (green):** the eight `test_attach_*` tests from Task 1
 
@@ -211,18 +211,18 @@ stages can be driven offline, then write the red tests that pin every Critical/H
 - `src/gflow_cli/api/transports/migrated_composer.py`
 
 **Steps:**
-- [ ] `SUBMIT_RPC` → `SUBMIT_RPCS = ("YhhmEf", "eb1hJf")`; the response listener treats either as
+- [x] `SUBMIT_RPC` → `SUBMIT_RPCS = ("YhhmEf", "eb1hJf")`; the response listener treats either as
       the submit; `I2V_KEY = re.compile(r"_i2v_")`, `T2V_KEY = re.compile(r"_t2v_")`
-- [ ] `submit_and_observe(..., expect_media_id: str | None = None)`: when set, register a
+- [x] `submit_and_observe(..., expect_media_id: str | None = None)`: when set, register a
       `request` listener before the click that inspects the first batchexecute POST whose rpcid is in
       `SUBMIT_RPCS`: body must contain `expect_media_id` and match `I2V_KEY`; a `T2V_KEY` or a
       missing id resolves a `route_error` future → raise `WireFormatError` (7) with both ids / the key
       in `detail`, discovery head redacted through the existing `_redact`-style helper; listener
       removed in `finally`
-- [ ] `run_video`: for I2V, `media_id = await composer.attach_start_frame(page, pid, request.start_image)`
+- [x] `run_video`: for I2V, `media_id = await composer.attach_start_frame(page, pid, request.start_image)`
       between `apply_video_settings` and `send_prompt`; pass `expect_media_id=media_id` to
       `submit_and_observe`; log `migrated.dispatch mode=i2v`
-- [ ] Docstrings: module header lists `eb1hJf`; `run_video` docstring drops "t2v only"
+- [x] Docstrings: module header lists `eb1hJf`; `run_video` docstring drops "t2v only"
 
 **Tests (green):** the four `test_submit_*` tests from Task 1 · BDD scenarios from Task 2
 
@@ -239,13 +239,13 @@ stages can be driven offline, then write the red tests that pin every Critical/H
 - `tests/mcp/test_server.py` (or new `tests/mcp/test_migrated_i2v_parity.py`)
 
 **Steps:**
-- [ ] Docstring + `docs/MCP.md`: "on flow.google.com … text-to-video is the only ported mode" →
+- [x] Docstring + `docs/MCP.md`: "on flow.google.com … text-to-video is the only ported mode" →
       "text-to-video and image-to-video with a local `initial_frame`; a Flow media UUID as
       `initial_frame`, `end_frame` and `r2v` return the exit-36-equivalent envelope there"
-- [ ] Test: build the payload the tool writes for `mode="i2v", initial_frame="<tmp png>"`, decode it
+- [x] Test: build the payload the tool writes for `mode="i2v", initial_frame="<tmp png>"`, decode it
       through `worker/codec.py`, assert `migrated_can_serve(request, "p") is True`; and the UUID form
       decodes to a request `migrated_can_serve` rejects (routing stays deterministic on the queued path)
-- [ ] Run check § 1b mirror sweep with `text-to-video` and `i2v` as the grep symbols; tick each axis
+- [x] Run check § 1b mirror sweep with `text-to-video` and `i2v` as the grep symbols; tick each axis
 
 **Tests created:** the two parity assertions above
 
@@ -263,13 +263,13 @@ row), `docs/CONFIGURATION.md:368`, `README.md:127`, `llms.txt:3`, `KNOWN_ISSUES.
 `[Unreleased] ### Added`, `website/docs/` via `generate_website_docs.py`
 
 **Steps:**
-- [ ] Sweep with `grep -rn "text-to-video only\|only t2v\|only \`t2v\`\|not ported" …` and fix each hit
-- [ ] `docs/USAGE.md` i2v section: the migrated-host paragraph — local file only, the upload is
+- [x] Sweep with `grep -rn "text-to-video only\|only t2v\|only \`t2v\`\|not ported" …` and fix each hit
+- [x] `docs/USAGE.md` i2v section: the migrated-host paragraph — local file only, the upload is
       permanent in the Flow project (scenario #24), end frame / UUID exit 36 there
-- [ ] `CHANGELOG.md`: Added entry with the mechanism (toolbar upload → `maseQ`, picker by file
+- [x] `CHANGELOG.md`: Added entry with the mechanism (toolbar upload → `maseQ`, picker by file
       name, `eb1hJf` body assertion) and the exit-36 forms that remain
-- [ ] `docs/ARCHITECTURE.md`: `migrated.frame_uploaded`, `migrated.frame_bound`, `migrated.dialog_dismissed`
-- [ ] Regenerate the mirror; `check_doc_links`, `check_website_docs_pii`, `generate_website_docs --check` green
+- [x] `docs/ARCHITECTURE.md`: `migrated.frame_uploaded`, `migrated.frame_bound`, `migrated.dialog_dismissed`
+- [x] Regenerate the mirror; `check_doc_links`, `check_website_docs_pii`, `generate_website_docs --check` green
 
 ---
 
@@ -283,26 +283,26 @@ row), `docs/CONFIGURATION.md:368`, `README.md:127`, `llms.txt:3`, `KNOWN_ISSUES.
 - `docs/LIVE_VERIFICATION_v<next>.md` (or an `[Unreleased]` section the release folds in)
 
 **Steps:**
-- [ ] `e2e_auth` ($0): `attach_start_frame` on the real editor — upload a probe PNG, bind it, assert
+- [x] `e2e_auth` ($0): `attach_start_frame` on the real editor — upload a probe PNG, bind it, assert
       the chip holds an image and the returned id is a UUID; no submit
-- [ ] `e2e_video` (bills one Veo Lite clip): full `run_video` with a local start frame; five-layer
+- [x] `e2e_video` (bills one Veo Lite clip): full `run_video` with a local start frame; five-layer
       ledger (file count, `ftyp` magic, dimensions, structlog invariants incl.
       `migrated.submit_observed rpc=eb1hJf`, user-openable mp4); assert `result.status.media_id`
-- [ ] Run on `ffroliva` (en-GB, moved) and `denon82` (pt, moved) — record both in the verification doc
-- [ ] `/gflow:check` green; `pytest tests/api/transports tests/features tests/mcp` green; coverage ≥ 80 %
-- [ ] Push `feature/639-migrated-i2v`, open the PR to `develop` with `Closes` nothing (#639 stays
+- [x] Run on `ffroliva` (en-GB, moved) and `denon82` (pt, moved) — record both in the verification doc
+- [x] `/gflow:check` green; `pytest tests/api/transports tests/features tests/mcp` green; coverage ≥ 80 %
+- [x] Push `feature/639-migrated-i2v`, open the PR to `develop` with `Closes` nothing (#639 stays
       open; body says "i2v local-file slice"), then `/gflow:pr-council-review`
 
 ---
 
 ## Definition of done
 
-- [ ] All task steps checked off
-- [ ] `/gflow:check` green (ruff / format / pyright / pytest ≥ 80% coverage)
-- [ ] `CHANGELOG.md` `[Unreleased]` section updated
-- [ ] Docs updated (`USAGE.md`, `CONFIGURATION.md`, `MCP.md`, `KNOWN_ISSUES.md`, mirror regenerated)
-- [ ] BDD feature file covers all Critical + High scenarios from `SCENARIO.md`
-- [ ] E2E test run live on both moved accounts and recorded (#675 bar)
-- [ ] No `# TODO` in diff without a tracked issue link
-- [ ] Deferred to slice 2 (tracked in #639): `--initial-frame <uuid>` / `@Name` by name mapping,
+- [x] All task steps checked off
+- [x] `/gflow:check` green (ruff / format / pyright / pytest ≥ 80% coverage)
+- [x] `CHANGELOG.md` `[Unreleased]` section updated
+- [x] Docs updated (`USAGE.md`, `CONFIGURATION.md`, `MCP.md`, `KNOWN_ISSUES.md`, mirror regenerated)
+- [x] BDD feature file covers all Critical + High scenarios from `SCENARIO.md`
+- [x] E2E test run live on both moved accounts and recorded (#675 bar)
+- [x] No `# TODO` in diff without a tracked issue link
+- [x] Deferred to slice 2 (tracked in #639): `--initial-frame <uuid>` / `@Name` by name mapping,
       `--end-frame`, cataloguing the upload as a media row (scenario #21)
