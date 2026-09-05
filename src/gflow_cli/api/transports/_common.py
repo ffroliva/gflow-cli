@@ -112,29 +112,17 @@ def migrated_route(url: object, flow_host: str, *, prefer_migrated: bool = False
 def raise_if_migrated(page: object, *, at: str) -> None:
     """Abort now if this page is on the migrated ``flow.google.com`` origin (#639).
 
-    The migrated frontend renders none of the controls gflow drives, so every probe
-    after this point is doomed. Call it wherever the run is **about to spend time**,
-    and never behind a wait of its own: ``page.url`` is a cached property and
-    :func:`flow_host_kind` is one parse plus a dict lookup, so a call costs the host
-    that still works nothing at all. Playwright assigns ``frame._url`` *before* it
-    emits ``framenavigated`` for the hop and ``page.url`` is ``main_frame.url``, so
-    the property is never behind the event: a listener cannot see the hop earlier
-    than a read at the same instant can. The fix is *where* the URL is read, not
-    *how* -- a first cut of #663 shipped a ``framenavigated`` watch for nothing.
+    The labs drivers render none of their controls there, so every probe after this
+    point is doomed. Call it wherever the run is **about to spend time**, never behind
+    a wait of its own: ``page.url`` is a cached property that Playwright updates in
+    the same tick it emits the hop's ``framenavigated``, and :func:`flow_host_kind`
+    is one parse plus a dict lookup — the working host pays nothing. Once, at entry,
+    is not enough (v0.66.1's defect: the hop is a post-``goto`` client-side
+    navigation); re-check at every blocking point instead. History and measurements:
+    ``docs/superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md``.
 
-    **Once, at entry, is not enough** — that was v0.66.1's defect.
-    ``routes.project_editor_url`` only ever builds a ``labs.google`` URL, and the hop
-    to the migrated origin is a *post-``goto``* redirect that neither settle path
-    waits for (no locale → ``_settle_if_redirecting`` returns immediately; a known
-    locale → :func:`await_url_settled` short-circuits because the labs URL already
-    matches :data:`FLOW_LOCALISED_URL_RE`). An entry-only check therefore reads a
-    pre-redirect URL and declines. Measured in the field on three consecutive runs:
-    exit 36 arrived at ~57 s, through the slow selector-probe path, with the bail
-    event absent from the timeline entirely.
-
-    ``at`` names the call site in the log event, so a field timeline SHOWS where the
-    host became knowable instead of leaving it to be inferred — which is exactly how
-    a fast path that never fired survived a release.
+    ``at`` names the call site in the log event so a field timeline shows where the
+    host became knowable.
     """
     url = getattr(page, "url", None)
     if flow_host_kind(url) != "migrated":
@@ -143,11 +131,12 @@ def raise_if_migrated(page: object, *, at: str) -> None:
     raise FlowHostMigratedError(
         detail=(
             "Flow handed this session to flow.google.com — the origin Google is "
-            "migrating accounts onto — whose frontend renders none of the controls "
-            "gflow drives. This is not selector drift, and it is not transient: the "
-            "handoff is a per-account setting the labs.google app applies on every "
-            "load, so once your account is flagged, retrying will not land the old "
-            "frontend."
+            "migrating accounts onto — and this request is not ported to the migrated "
+            "composer yet (or GFLOW_CLI_FLOW_HOST=labs.google switched it off), so the "
+            "labs driver cannot proceed. This is not selector drift, and it is not "
+            "transient: the handoff is a per-account setting the labs.google app "
+            "applies on every load, so once your account is flagged, retrying will not "
+            "land the old frontend."
         )
     )
 

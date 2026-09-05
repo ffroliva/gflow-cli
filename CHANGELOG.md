@@ -47,9 +47,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the userbase. `supports_duration()` is gone; one shared
   `validate_duration_for_model()` now backs the DTO, CLI, chain, movie manifest and
   MCP surfaces. On an account **without** the control the run now reaches the browser
-  and aborts pre-submit with exit 23 and no credits spent, instead of refusing
+  and aborts pre-submit with no credits spent — exit 23 on the labs driver, exit 11
+  on the migrated `flow.google.com` host, where the maintainer cohort renders the
+  duration row for Omni 1.1 Flash only (measured 2026-09-05) — instead of refusing
   instantly at the CLI edge — a deliberate trade, since a static per-model table
   cannot express a per-account capability.
+
+### Fixed
+
+- **`--model` on the migrated host selected the model and then lost the settings pane**
+  (#665). After the model menu — a second overlay — opened and closed, the driver
+  resolved `.cdk-overlay-pane.last` to the detached menu pane, so every axis after the
+  switch read "0 option groups". The pane is now the overlay that contains the option
+  groups; a regression test keeps a stale menu pane as the last overlay.
+- **MCP `gflow_generate_video` accepted any `duration` when `model` was omitted**
+  (#659): `duration=99` queued and burned a browser run. The tool now validates the
+  value against the supported set regardless of model, like the CLI's choice list.
 
 ## [0.66.3] — 2026-09-03
 

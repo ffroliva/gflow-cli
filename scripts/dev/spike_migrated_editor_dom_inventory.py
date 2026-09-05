@@ -43,9 +43,6 @@ from _spike_common import (  # noqa: E402, isort: skip
     step,
 )
 
-# A project on this account, taken from the 2026-09-03 flip captures. The
-# migrated app serves /project/<id> with no locale segment.
-DEFAULT_PROJECT = "c5550ed7-7b6e-43db-8cd3-4d56a74b1244"
 
 _INVENTORY_JS = r"""() => {
   const count = (sel) => document.querySelectorAll(sel).length;
@@ -230,6 +227,6 @@ async def _main(profile: str, project: str) -> int:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--profile", default="ffroliva")
-    ap.add_argument("--project", default=DEFAULT_PROJECT)
+    ap.add_argument("--project", required=True)
     args = ap.parse_args()
     raise SystemExit(asyncio.run(_main(args.profile, args.project)))

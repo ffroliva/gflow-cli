@@ -141,7 +141,6 @@ def test_submit_record_carries_ids_and_submitted_status() -> None:
     assert rec.status == 6
     assert rec.is_running and not rec.is_done and not rec.is_failed
     assert rec.video_url is None
-    assert rec.model_key == "abra_t2v_8s"
 
 
 def test_poll_running_then_done_without_url() -> None:

@@ -73,7 +73,7 @@ pure dead time), and caching "this profile is migrated" to navigate straight to
 `flow.google.com` (it would have locked both maintainer accounts out of a working frontend the
 day it shipped).
 
-Still not drivable — #639 stays open for that.
+Drivable for text-to-video since v0.67.0; #639 stays open for the rest of the matrix.
 
 Verification: [LIVE_VERIFICATION_v0.66.2](LIVE_VERIFICATION_v0.66.2.md). The old host is proven
 live at zero credits (**exit 0**, real 768x1376 JPEG, twice). The **migrated** path — which no

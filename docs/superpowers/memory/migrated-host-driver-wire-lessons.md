@@ -1,0 +1,46 @@
+---
+name: migrated-host-driver-wire-lessons
+description: "What the first flow.google.com (migrated) driver build got wrong and how each was pinned — poster vs mp4 URL slots, status-3-before-URL, labs redirect route 404s for migrated media ids, CSS :text-matches escaping, direct load works for unflagged accounts"
+metadata: 
+  type: project
+---
+
+Built and live-verified 2026-09-05 (`docs/LIVE_VERIFICATION_v0.67.0.md`, recon
+`docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md`). Each of these
+cost a real run to learn; each is now a unit test in `tests/api/transports/`.
+
+- **Record slots:** in the shared `YhhmEf`/`jwpduf`/`as29s` record, `DETAILS[10]` is the
+  **poster JPEG** signed URL and `MEDIA_INFO[0][8]` is the **mp4** — the first build
+  had them swapped and downloaded a 37 KB JPEG named `.mp4`. `download()` now checks
+  `ftyp` at offset 4 and falls back to the other URL; never trust the slot alone.
+- **Status 3 arrives before the URL:** the app's `jwpduf` poll reports 3 first; the
+  record with the signed URLs (`as29s`) follows 2–8 s later. Treating the first 3 as
+  terminal loses the URL — wait a grace (20 s) for the URL-carrying record.
+- **Labs redirect route is dead for migrated media:** `media.getMediaUrlRedirect?name=<id>`
+  answers **404** for a migrated media id — the signed CDN URL (`flow-content.google`,
+  `KeyName=labs-flow-prod-cdn-key`) is the download path; the host is in the allowlist.
+- **`:text-matches('^\s*8s\s*$')` is silently wrong:** Playwright's CSS string escaping
+  turns `\s` into `s`. Use `locator.filter(has_text=re.compile(...))`; ligature anchors
+  (`mat-icon:text-is('videocam')`) carry no backslash and are fine.
+- **Composer is the `contenteditable`,** the sibling `textarea` times out on click.
+- **Direct load works for everyone:** `https://flow.google.com/project/<id>` served the
+  Angular editor to the UNFLAGGED `denon82` (pt) account too — the new host IS the
+  default (since #664's round-7 commit) for every request it can serve — t2v with a project —
+  on moved and unmoved accounts alike under `auto`; `flow.google.com` forces everything,
+  `labs.google` is the kill switch. denon82 itself moved on 2026-09-05.
+- **The settings pane is not `.cdk-overlay-pane.last`** (#665): after the model menu — a second
+  overlay — opens and closes, a detached menu pane can still be the LAST overlay, so every axis
+  after `--model` read "0 option groups". Resolve the pane as the overlay that CONTAINS a
+  `[role='radiogroup']`; the fake page keeps a stale menu pane as `.last` so the regression
+  cannot pass vacuously. Found by the $0 #650 check, not by any test.
+- **Dispatch timing:** on a flagged account the bootstrap page has already hopped when
+  `_generate_video_locked` starts (`migrated.dispatch` at ~6.8 s), so the composer is
+  chosen BEFORE any labs project entry; the after-entry check exists for the case where
+  the hop lands during project navigation.
+- **Session hook + heredoc apostrophes, reconfirmed:** a bash heredoc whose body carries
+  apostrophes in prose fails with "unexpected EOF while looking for matching quote" —
+  write edit scripts to a file with the Write tool and run them.
+
+Related: [[flow-recon-must-run-on-denon82-ffroliva-migrated]],
+[[flow-google-com-batchexecute-headless-proven]], [[predict-2026-09-04-migrated-host-driver]],
+[[credit-free-route-abort-verification]].

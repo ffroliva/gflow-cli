@@ -208,11 +208,12 @@ async def _main(
                     }
                 )
                 rpc = _url_facts(req.url).get("rpcids")
-                step("ABORT", f"marker request rpcids={rpc} aborted at +{rel()}s")
                 seen.set()
                 if spend:
+                    step("SEEN", f"marker request rpcids={rpc} continued at +{rel()}s (spend)")
                     await route.continue_()
                     return
+                step("ABORT", f"marker request rpcids={rpc} aborted at +{rel()}s")
                 await route.abort()
                 return
             await route.continue_()
@@ -304,8 +305,10 @@ async def _main(
                     " roles: [...p.querySelectorAll('[role]')].map(e => e.getAttribute('role'))"
                     ".reduce((m, r) => (m[r] = (m[r] || 0) + 1, m), {}),"
                     " options: [...p.querySelectorAll(\"[role='option'], [role='menuitem'], "
-                    "[role='radio'], mat-option, button\")].map(e => ({tag: e.tagName.toLowerCase(),"
-                    " role: e.getAttribute('role'), text: (e.textContent || '').replace(/\s+/g, ' ')"
+                    "[role='radio'], mat-option, button\")].map(e => ({"
+                    "tag: e.tagName.toLowerCase(),"
+                    r" role: e.getAttribute('role'),"
+                    r" text: (e.textContent || '').replace(/\s+/g, ' ')"
                     ".trim().slice(0, 60), selected: e.getAttribute('aria-selected') ||"
                     " e.getAttribute('aria-checked')})).slice(0, 40)}))"
                 )
@@ -396,10 +399,12 @@ async def _main(
                 t_watch = time.monotonic()
                 while time.monotonic() - t_watch < 300:
                     dom = await page.evaluate(
-                        "() => ({video: document.querySelectorAll('video').length,"
-                        " progress: document.querySelectorAll(\"[role='progressbar'], mat-progress-bar, mat-progress-spinner\").length,"
+                        r"() => ({video: document.querySelectorAll('video').length,"
+                        " progress: document.querySelectorAll("
+                        "\"[role='progressbar'], mat-progress-bar, mat-progress-spinner\").length,"
                         " marker_tiles: [...document.querySelectorAll('[aria-label]')]"
-                        ".filter(e => (e.getAttribute('aria-label')||'').includes('gflowcanary')).length})"
+                        ".filter(e => (e.getAttribute('aria-label')||'')"
+                        ".includes('gflowcanary')).length})"
                     )
                     rp = [r["rpcids"] for r in responses if r["t"] > tc_watch_from(t_click, t0)]
                     watch.append({"t": rel(), **dom, "rpc_since_click": len(rp)})

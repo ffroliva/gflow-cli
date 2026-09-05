@@ -52,7 +52,6 @@ class Dom:
     menu_open: bool = False
     prompt: str = ""
     submit_clicked: int = 0
-    escape_closes: bool = True
     menu_lingers: bool = False  # Angular keeps a detached menu pane as the LAST overlay
     events: list[str] = field(default_factory=list)
 
@@ -181,10 +180,13 @@ class FakeKeyboard:
         if key == "Escape":
             if self.page.dom.menu_open:
                 self.page.dom.menu_open = False
-            elif self.page.dom.escape_closes:
+            else:
                 self.page.dom.pane_open = False
 
     async def type(self, text: str, **_: Any) -> None:
+        self.page.dom.prompt += text
+
+    async def insert_text(self, text: str) -> None:
         self.page.dom.prompt += text
 
 
@@ -235,8 +237,6 @@ class FakePage:
             if dom.menu_lingers and dom.pane_open and not dom.menu_open:
                 panes.append("stale-menu")  # what `.last` sees after a model switch
             return FakeLocator(self, "pane", panes)
-        if css == ".cdk-overlay-backdrop":
-            return FakeLocator(self, "backdrop", ["backdrop"] if dom.pane_open else [])
         if css == "[role='radiogroup']":
             if scope is not None and scope.items and scope.items[0] != "pane":
                 return FakeLocator(self, "group", [])  # a menu pane has no option groups
@@ -435,15 +435,6 @@ async def test_model_not_offered_lists_the_menu() -> None:
     assert page.dom.submit_clicked == 0
 
 
-async def test_panel_closes_via_backdrop_when_escape_is_ignored() -> None:
-    from gflow_cli.api.transports.migrated_composer import MigratedComposer
-
-    page = FakePage()
-    page.dom.escape_closes = False
-    await MigratedComposer().apply_video_settings(page, _t2v())
-    assert not page.dom.pane_open
-
-
 # --- prompt + submit --------------------------------------------------------
 
 
@@ -561,7 +552,7 @@ async def test_download_uses_the_signed_url_before_the_redirect_route(tmp_path: 
     rec = GenerationRecord(
         workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
     )
-    path = await MigratedComposer().download(page, rec, tmp_path, transport=transport)
+    path = await MigratedComposer().download(page, rec, tmp_path)
     assert path is not None and path.read_bytes()[4:8] == b"ftyp"
     assert page.request.urls == [VIDEO_URL]
 
@@ -603,9 +594,60 @@ async def test_download_falls_back_to_the_other_url_when_the_first_is_a_jpeg(
         video_url="https://flow-content.google/p/x.jpg?Signature=a",  # mislabelled on purpose
         poster_url="https://flow-content.google/v/x.mp4?Signature=b",
     )
-    path = await MigratedComposer().download(page, rec, tmp_path, transport=object())
+    path = await MigratedComposer().download(page, rec, tmp_path)
     assert path is not None and path.read_bytes()[4:8] == b"ftyp"
     assert len(page.request.urls) == 2
+
+
+async def test_download_refuses_a_foreign_host_before_any_request(tmp_path: Any) -> None:
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    calls: list[str] = []
+
+    class _Req:
+        async def get(self, url: str, **_: Any) -> Any:
+            calls.append(url)
+            raise AssertionError("must not be reached")
+
+    page = FakePage()
+    page.request = _Req()
+    rec = GenerationRecord(
+        workflow_id=WF,
+        project_id=PROJ,
+        media_id=MEDIA,
+        status=3,
+        video_url="https://evil.example/v.mp4?Signature=s",
+    )
+    with pytest.raises(WireFormatError, match="evil.example"):
+        await MigratedComposer().download(page, rec, tmp_path)
+    assert calls == []
+
+
+async def test_download_never_follows_redirects(tmp_path: Any) -> None:
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    seen: dict[str, Any] = {}
+
+    class _Resp:
+        status = 200
+
+        async def body(self) -> bytes:
+            return b"\x00\x00\x00\x18ftypmp42"
+
+    class _Req:
+        async def get(self, url: str, **kw: Any) -> _Resp:
+            seen.update(kw)
+            return _Resp()
+
+    page = FakePage()
+    page.request = _Req()
+    rec = GenerationRecord(
+        workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
+    )
+    await MigratedComposer().download(page, rec, tmp_path)
+    assert seen.get("max_redirects") == 0
 
 
 async def test_download_refuses_when_no_url_is_an_mp4(tmp_path: Any) -> None:
@@ -628,7 +670,7 @@ async def test_download_refuses_when_no_url_is_an_mp4(tmp_path: Any) -> None:
         workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
     )
     with pytest.raises(WireFormatError, match="ftyp"):
-        await MigratedComposer().download(page, rec, tmp_path, transport=object())
+        await MigratedComposer().download(page, rec, tmp_path)
 
 
 def test_migrated_can_serve_decides_what_the_new_host_takes() -> None:

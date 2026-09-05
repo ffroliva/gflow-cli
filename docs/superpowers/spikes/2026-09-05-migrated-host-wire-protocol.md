@@ -10,7 +10,8 @@ account loaded directly on `flow.google.com/project/<id>` is served the same
 Angular editor.
 
 Script: `scripts/dev/spike_migrated_submit_capture.py` (modes: `--no-submit`
-landing probe, default $0 aborted submit, `--spend` real generation). Outputs and
+landing probe, default $0 aborted submit, `--spend` real generation, `--probe-models`
+dumps the model menu, `--via-labs` bootstraps through labs.google instead of direct). Outputs and
 screenshots in `scripts/dev/_spike_out/` (gitignored). Companion recon of the
 handoff mechanism and DOM inventory:
 `2026-09-04-migrated-host-handoff-mechanism.md`.

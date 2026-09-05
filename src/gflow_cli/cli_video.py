@@ -1142,7 +1142,8 @@ def video() -> None:
     type=click.Choice(["4", "6", "8", "10"]),
     help=(
         "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
-        "Omit for Flow's default length."
+        "Omit for Flow's default length. Refused pre-submit (no credits) when your "
+        "account's cohort renders no duration control for the model."
     ),
 )
 @click.option(
@@ -1321,7 +1322,8 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     type=click.Choice(["4", "6", "8", "10"]),
     help=(
         "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
-        "Omit for Flow's default length."
+        "Omit for Flow's default length. Refused pre-submit (no credits) when your "
+        "account's cohort renders no duration control for the model."
     ),
 )
 @click.option(
@@ -1465,7 +1467,8 @@ def i2v(  # NOSONAR
     type=click.Choice(["4", "6", "8", "10"]),
     help=(
         "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
-        "Omit for Flow's default length."
+        "Omit for Flow's default length. Refused pre-submit (no credits) when your "
+        "account's cohort renders no duration control for the model."
     ),
 )
 @click.option(

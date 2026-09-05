@@ -37,7 +37,8 @@ from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
 )
 
 _GROUPS_JS = r"""() => {
-  const pane = [...document.querySelectorAll('.cdk-overlay-pane')].find(p => p.querySelector("[role='radiogroup']"));
+  const panes = [...document.querySelectorAll('.cdk-overlay-pane')];
+  const pane = panes.find(p => p.querySelector("[role='radiogroup']"));
   if (!pane) return {groups: [], cost: null, model: null};
   const groups = [...pane.querySelectorAll("[role='radiogroup']")].map(g =>
     [...g.querySelectorAll("[role='radio']")].map(r => ({
@@ -46,8 +47,10 @@ _GROUPS_JS = r"""() => {
     })));
   const text = (pane.innerText || '').replace(/\s+/g, ' ');
   const cost = (text.match(/(\d+)\s*credits?/i) || [null, null])[1];
-  const btn = [...pane.querySelectorAll('button')].find(b => (b.textContent || '').includes('arrow_drop_down'));
-  return {groups, cost: cost ? Number(cost) : null, model: btn ? (btn.textContent || '').replace('arrow_drop_down', '').trim() : null};
+  const btn = [...pane.querySelectorAll('button')]
+    .find(b => (b.textContent || '').includes('arrow_drop_down'));
+  const model = btn ? (btn.textContent || '').replace('arrow_drop_down', '').trim() : null;
+  return {groups, cost: cost ? Number(cost) : null, model};
 }"""
 
 

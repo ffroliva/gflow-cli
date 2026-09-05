@@ -896,3 +896,14 @@ class TestUiModeEnvelopeShape:
 
         result = await gflow_generate_image(prompt="x", ui_mode="BOGUS")
         assert "'bogus'" in result["error"]["detail"]
+
+
+async def test_generate_video_rejects_unsupported_duration_without_model() -> None:
+    """#659: with `model` omitted the tool used to skip duration validation, so
+    duration=99 queued a browser run that died at claim (exit 30). The CLI never
+    accepted it (click.Choice); the MCP surface now matches."""
+    from gflow_cli.mcp.tools import gflow_generate_video
+
+    result = await gflow_generate_video(prompt="a crane", duration=99)
+    assert result["status"] == "error"
+    assert "Unsupported duration" in str(result)

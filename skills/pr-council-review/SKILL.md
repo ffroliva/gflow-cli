@@ -97,7 +97,7 @@ Pull in parallel via `ctx_batch_execute`:
 - `CLAUDE.md`, `AGENTS.md`, `docs/INDEX.md`
 
 **Memory traversal:** for each `TOUCHED_PATH`, look up relevant slugs:
-- `transports/` → `[[pr-must-verify-on-affected-surface]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[ui-selector-drift-error-exit-23]]`
+- `transports/` → `[[migrated-host-driver-wire-lessons]]`, `[[pr-must-verify-on-affected-surface]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[ui-selector-drift-error-exit-23]]`
 - `data/` → `[[data-layer-overview]]`, `[[data-layer-test-pollution-trap]]`, `[[exit-code-16-data-store]]`, `[[on-started-callback-recorder-safety]]`
 - `auth/` → `[[real-browser-auth-mandatory]]`, `[[release-signing]]`
 - `cli` → `[[release-back-merge-gap-recovery]]`, `[[wheel-build-sanity-gate]]`
@@ -236,7 +236,7 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 | D3 | `[[real-browser-auth-mandatory]]`, `[[release-signing]]` |
 | D4 | `[[force-color-breaks-cli-tests]]`, `[[pr-must-verify-on-affected-surface]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]` |
 | D5 | `[[memory-is-working-dir-keyed]]`, `[[release-spec-plan-memory-consolidation]]`, `[[pr-council-review-stale-tree-reads]]` (this very bug, as the council should self-improve) |
-| D6 | `[[ui-selector-drift-error-exit-23]]`, `[[credit-free-route-abort-verification]]`, `[[flow-credits-videos-only]]`, `[[flow-recon-must-run-on-denon82-ffroliva-migrated]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]` |
+| D6 | `[[ui-selector-drift-error-exit-23]]`, `[[credit-free-route-abort-verification]]`, `[[flow-credits-videos-only]]`, `[[flow-recon-must-run-on-denon82-ffroliva-migrated]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]`, `[[migrated-host-driver-wire-lessons]]` |
 | D7 | `[[on-started-callback-recorder-safety]]`, `[[data-layer-test-pollution-trap]]`, `[[exit-code-16-data-store]]` |
 | D8 | (none mandatory) |
 | D9 | `[[prose-conflicts-hide-in-disjoint-files]]`, `[[doc-examples-are-untested-fixtures]]`, `[[readme-hybrid-router-pattern]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]` |

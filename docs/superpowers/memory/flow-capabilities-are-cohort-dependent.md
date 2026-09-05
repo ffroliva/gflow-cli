@@ -42,3 +42,5 @@ checks.
 Applies to duration, ingredients, resolution tabs, count tabs, and aspect. See
 [[video-model-capability-matrix]], [[flow-recon-must-run-on-denon82-ffroliva-migrated]],
 [[pr-must-verify-on-affected-surface]].
+
+**OUTCOME 2026-09-04/05:** `supports_duration()` is gone (#650): one shared `validate_duration_for_model()` backs DTO, CLI, chain, movie and MCP; whether the control is rendered is decided pre-submit at zero cost (exit 23 on labs, exit 11 on the migrated host). The line above describing the static refusal is history.
