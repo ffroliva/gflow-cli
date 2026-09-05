@@ -19,7 +19,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
 import time
+from dataclasses import dataclass, replace
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from threading import Thread
@@ -34,7 +38,9 @@ log = structlog.get_logger(__name__)
 
 _CHECK_INTERVAL_SECONDS = 86_400.0
 _PYPI_JSON_URL = "https://pypi.org/pypi/gflow-cli/json"
-_FETCH_TIMEOUT_SECONDS = 3.0
+_RELEASE_URL_BASE = "https://github.com/ffroliva/gflow-cli/releases/tag/"
+_FETCH_TIMEOUT_SECONDS = 3.0  # background notice poll — must never be felt
+_COMMAND_FETCH_TIMEOUT_SECONDS = 10.0  # explicit `gflow update` — the user is waiting for it
 
 
 def _installed_from_index() -> bool:
@@ -96,24 +102,50 @@ def _write_cache(cache_path: Path, payload: dict[str, object]) -> None:
         log.debug("update_check.cache_write_failed", error=type(exc).__name__)
 
 
+def fetch_latest(timeout: float) -> str | None:
+    """The newest gflow-cli version on PyPI, or None on any failure."""
+    try:
+        import httpx  # lazy — keeps CLI startup free of the httpx import chain
+
+        response = httpx.get(_PYPI_JSON_URL, timeout=timeout, follow_redirects=True)
+        response.raise_for_status()
+        return str(response.json()["info"]["version"])
+    except Exception as exc:  # noqa: BLE001 — best-effort by contract
+        log.debug("update_check.fetch_failed", error=type(exc).__name__)
+        return None
+
+
 def _refresh_cache(cache_path: Path) -> None:
     """Fetch the latest version from PyPI and rewrite the cache. The caller
     already stamped ``checked_at``, so a failed fetch writes nothing and the
     once-a-day cap still holds."""
-    try:
-        import httpx  # lazy — keeps CLI startup free of the httpx import chain
-
-        response = httpx.get(_PYPI_JSON_URL, timeout=_FETCH_TIMEOUT_SECONDS, follow_redirects=True)
-        response.raise_for_status()
-        latest = str(response.json()["info"]["version"])
-    except Exception as exc:  # noqa: BLE001 — best-effort by contract
-        log.debug("update_check.fetch_failed", error=type(exc).__name__)
-        return
-    _write_cache(cache_path, {"checked_at": time.time(), "latest": latest})
+    latest = fetch_latest(_FETCH_TIMEOUT_SECONDS)
+    if latest is not None:
+        _write_cache(cache_path, {"checked_at": time.time(), "latest": latest})
 
 
-def maybe_notify_update() -> str | None:
-    """The one-line update notice to show the user, or None. Never raises."""
+@dataclass(frozen=True)
+class UpdateNotice:
+    """A newer release is on PyPI. ``text`` is the one-line form; the CLI
+    renders a panel from the fields when stderr is a terminal."""
+
+    installed: str
+    latest: str
+
+    @property
+    def release_url(self) -> str:
+        return f"{_RELEASE_URL_BASE}v{self.latest}"
+
+    @property
+    def text(self) -> str:
+        return (
+            f"A newer gflow-cli is available: {self.latest} (installed {self.installed}). "
+            "Run `gflow update` to upgrade. Set GFLOW_CLI_UPDATE_CHECK=0 to silence."
+        )
+
+
+def maybe_notify_update() -> UpdateNotice | None:
+    """The update notice to show the user, or None. Never raises."""
     try:
         settings = get_settings()
         if not settings.update_check or _in_ci():
@@ -140,12 +172,140 @@ def maybe_notify_update() -> str | None:
             )
             Thread(target=_refresh_cache, args=(cache_path,), daemon=True).start()
         if isinstance(latest, str) and _is_newer(latest, __version__):
-            return (
-                f"A newer gflow-cli is available: {latest} (installed {__version__}). "
-                "Upgrade: `uv tool upgrade gflow-cli` (or `pipx upgrade gflow-cli` / "
-                "`pip install -U gflow-cli`). Set GFLOW_CLI_UPDATE_CHECK=0 to silence."
-            )
+            return UpdateNotice(installed=__version__, latest=latest)
         return None
     except Exception as exc:  # noqa: BLE001 — the notice must never break a command
         log.debug("update_check.skipped", error=type(exc).__name__)
         return None
+
+
+# --- `gflow update` — self-update through the installer that put us here ------
+
+
+@dataclass(frozen=True)
+class Installer:
+    name: str  # "uv" | "pipx" | "pip"
+    command: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class UpdateReport:
+    installed: str
+    latest: str | None  # None: PyPI unreachable
+    installer: str
+    command: tuple[str, ...]
+    update_available: bool | None  # None: unknown (latest is None)
+    upgraded: bool
+    notes: tuple[str, ...] = ()  # post-upgrade caveats: stale launcher, Playwright bump
+
+
+def installer() -> Installer | None:
+    """Which package manager owns this install, and the command that upgrades
+    it. None for anything that is not an index install (editable, local path,
+    VCS, bare source run) — there is no safe "upgrade" for those.
+
+    The manager is read off the venv root: ``uv tool`` writes
+    ``uv-receipt.toml`` there and pipx writes ``pipx_metadata.json``. Anything
+    else is a plain venv, upgraded through its OWN interpreter — never a bare
+    ``pip`` from PATH, which may belong to another Python."""
+    if not _installed_from_index():
+        return None
+    prefix = Path(sys.prefix)
+    if (prefix / "uv-receipt.toml").is_file():
+        return Installer("uv", ("uv", "tool", "upgrade", "gflow-cli"))
+    if (prefix / "pipx_metadata.json").is_file():
+        return Installer("pipx", ("pipx", "upgrade", "gflow-cli"))
+    return Installer("pip", (sys.executable, "-m", "pip", "install", "--upgrade", "gflow-cli"))
+
+
+def _run_command(command: tuple[str, ...]) -> int:
+    """Run the manager with inherited stdio so the user sees its own output."""
+    return subprocess.run(list(command), check=False).returncode  # noqa: S603 — fixed argv
+
+
+def _version_in_venv(dist: str) -> str | None:
+    """``dist``'s version as the venv sees it NOW — asked of a fresh
+    interpreter, because this process imported the pre-upgrade modules."""
+    probe = f"import importlib.metadata as m; print(m.version({dist!r}))"
+    try:
+        result = subprocess.run(  # noqa: S603 — fixed argv
+            [sys.executable, "-c", probe], capture_output=True, text=True, timeout=30, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() or None
+
+
+def run_update(*, check: bool) -> UpdateReport:
+    """Upgrade gflow-cli in place, or with ``check`` only report.
+
+    Raises :class:`~gflow_cli.errors.ConfigurationError` (exit 11) for a
+    non-index install, a manager binary missing from PATH, or a manager that
+    exits non-zero. A failed PyPI pre-check is NOT fatal: the manager is the
+    authority on what is installable, so it still runs."""
+    from gflow_cli.errors import ConfigurationError
+
+    inst = installer()
+    if inst is None:
+        raise ConfigurationError(
+            "gflow-cli here is not a PyPI install (editable, local-path, VCS or source run)",
+            remediation_hint=(
+                "Update it the way it was installed — `git pull` / reinstall from the "
+                "checkout. `gflow update` only manages index installs (uv tool / pipx / pip)."
+            ),
+        )
+    log.info("update.installer_detected", installer=inst.name)
+    latest = fetch_latest(_COMMAND_FETCH_TIMEOUT_SECONDS)
+    if latest is not None:
+        _write_cache(
+            Path(get_settings().home) / "update_check.json",
+            {"checked_at": time.time(), "latest": latest},
+        )
+    available = _is_newer(latest, __version__) if latest is not None else None
+    report = UpdateReport(
+        installed=__version__,
+        latest=latest,
+        installer=inst.name,
+        command=inst.command,
+        update_available=available,
+        upgraded=False,
+    )
+    if check or available is False:
+        return report
+    shown = " ".join(inst.command)
+    if inst.name != "pip" and shutil.which(inst.command[0]) is None:
+        raise ConfigurationError(
+            f"`{inst.command[0]}` is not on PATH, so gflow cannot run `{shown}` for you",
+            remediation_hint=f"Run `{shown}` from a shell where `{inst.command[0]}` is available.",
+        )
+    playwright_before = _version_in_venv("playwright")
+    returncode = _run_command(inst.command)
+    # The venv is the truth, not the manager's exit code: on Windows `uv tool
+    # upgrade` installs the new wheel and THEN fails copying `gflow.exe` over
+    # the launcher running this very command (os error 32 — the trampoline
+    # holds its own file open, so it cannot be renamed aside either). The
+    # stale launcher keeps working: it only points at the venv's python.
+    after = _version_in_venv("gflow-cli")
+    log.info("update.command_finished", installer=inst.name, returncode=returncode, after=after)
+    if after is None or after == __version__:
+        if returncode == 0 and available is None:
+            return report  # PyPI was unreachable and the manager found nothing newer
+        raise ConfigurationError(
+            f"`{shown}` exited {returncode} and gflow-cli is still {__version__}",
+            remediation_hint=f"Read its output above, then run `{shown}` yourself.",
+        )
+    notes: list[str] = []
+    if returncode != 0:
+        notes.append(
+            f"`{shown}` exited {returncode} AFTER installing {after} — see its output above. "
+            "On Windows this is the running `gflow.exe` launcher, which cannot be replaced "
+            "while in use; it keeps working, and the next update from another shell "
+            "refreshes it."
+        )
+    playwright_after = _version_in_venv("playwright")
+    if playwright_before != playwright_after:
+        notes.append(
+            f"Playwright changed ({playwright_before} -> {playwright_after}); its browser "
+            f"build must match: run `{sys.executable} -m playwright install chromium`."
+        )
+    return replace(report, latest=after, upgraded=True, notes=tuple(notes))

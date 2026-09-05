@@ -54,6 +54,7 @@ Commands:
   run       Config-driven generation run.
   mcp       MCP server over stdio (run) + client-config generator (setup).
   serve     MCP server over Streamable HTTP at /mcp.
+  update    Upgrade gflow-cli in place via uv tool / pipx / pip (--check to only report).
 ```
 
 Global flags:
@@ -1352,6 +1353,65 @@ UUID only (never display-name values), and paths are sanitized. Under
 reports `info` instead of `warn` — name backfill is deliberately suppressed by
 that privacy setting, so missing names are expected, not a defect.
 
+## `gflow update`
+
+Upgrade gflow-cli in place, through the package manager that installed it.
+
+```text
+gflow update [--check] [--json]
+```
+
+The installer is read off the install itself, never guessed from `PATH`:
+
+| Marker in the install's venv root | Installer | Command run |
+|---|---|---|
+| `uv-receipt.toml` | `uv tool` | `uv tool upgrade gflow-cli` |
+| `pipx_metadata.json` | `pipx` | `pipx upgrade gflow-cli` |
+| neither | plain venv | `<that venv's python> -m pip install --upgrade gflow-cli` |
+
+`gflow update` first asks PyPI for the latest version (this refreshes the
+once-a-day notice cache too). If you are already current it says so and runs
+nothing. Otherwise it runs the manager with its output shown, then re-reads the
+venv's Playwright version: when the upgrade moved it, a hint tells you to run
+`playwright install chromium` so the browser build matches. If PyPI is
+unreachable the manager still runs — it is the authority on what is installable.
+
+`--check` only reports installed vs latest plus the command that *would* run;
+`--json` returns `{installed, latest, update_available, installer, command,
+upgraded, notes}` (`latest` / `update_available` are `null` when PyPI could not
+be reached; after an upgrade `latest` is the version the venv actually reports;
+`notes` carries the Playwright hint and the Windows launcher caveat below).
+
+Refused with `ConfigurationError` (exit 11), nothing spawned:
+
+- an editable / local-path / VCS / source install (PEP 610 `direct_url.json`
+  present) — update those the way they were installed (`git pull`, reinstall
+  from the checkout);
+- `uv` / `pipx` detected but not on `PATH` — the message carries the exact
+  command to run yourself;
+- the manager ran but the venv still reports the old version afterwards — its
+  own output is above the error (a receipt pinned to one version makes
+  `uv tool upgrade` a silent no-op, for instance).
+
+The venv is the truth, not the manager's exit code: after the manager runs,
+`gflow update` re-reads the installed gflow-cli version from a fresh interpreter
+and reports *that*. **Windows:** the `gflow.exe` launcher you are running holds
+its own file open, so it can be neither overwritten nor renamed while it runs.
+Measured on `uv tool upgrade`: the new wheel installs, then uv exits 1 copying
+the launcher ("os error 32"). The upgrade *did* happen — the launcher only
+points at the venv's python — so `gflow update` reports it as upgraded with a
+note quoting the manager's exit code; the next update from another shell
+refreshes the launcher.
+
+Restart any running `gflow serve` / MCP server afterwards; a long-lived process
+keeps the old code until it restarts. There is deliberately no MCP twin of this
+command: a server must not replace its own code underneath itself.
+
+Every command also prints an **update banner** on stderr (a one-line notice when
+stderr is not a terminal) when a newer release is known — see
+[CONFIGURATION § GFLOW_CLI_UPDATE_CHECK](CONFIGURATION.md#gflow_cli_update_check)
+for the once-a-day cache and how to silence it.
+
 ## `gflow models`
 
 Print the image and video model catalog — the source of truth for what
@@ -1596,9 +1656,9 @@ gflow image batch ./batch-b.tsv --profile personal
 GFLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
 ```
 
-> Piping stderr into `jq`? Set `GFLOW_CLI_UPDATE_CHECK=0` too — the once-a-day
-> update notice (v0.56.0) is a plain-text stderr line and would break the parse
-> the day a newer version publishes.
+> Piping stderr into `jq`? Set `GFLOW_CLI_UPDATE_CHECK=0` too — the update
+> notice (v0.56.0; a banner on a terminal, one plain-text stderr line when piped)
+> would break the parse the day a newer version publishes.
 
 ## Exit codes
 
