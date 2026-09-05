@@ -299,13 +299,56 @@ In both cases the id also appears inline in the prompt segments alongside its di
 requires is now captured — except attaching **two** references in one prompt, which has
 never been exercised.
 
+## Round 7 — SHIPPED, and live-verified end to end
+
+Two references in one prompt work (the last untested step): both chips land, and the
+`MZZa6b` payload carries both. Worth recording from that capture — filtering the picker on
+`"me"` matched the **avatar named "Me"**, not the uploaded `me.jpg`. Name matching is
+loose, so the port queries the **full filename**.
+
+The port is implemented on that basis:
+
+* `run_video` accepts `Mode.R2V`; `migrated_can_serve` routes it when references are
+  present (character entities still stay on labs).
+* Local `--ref` files upload through the picker's `Upload media` chooser, with the
+  two-stage wait the timing measurements demanded.
+* Each reference is attached as its own `@` mention, verified chip-by-chip.
+* `SUBMIT_RPCS` covers `MZZa6b` alongside `YhhmEf`.
+* A run whose references have not ALL attached is refused **before** submit — the whole
+  point of the exercise, since the failure mode is a clip that generates and bills without
+  them.
+* `client.generate_video` creates a project over REST when a moved account passes none,
+  since the migrated editor cannot create one. Labs is untouched.
+
+**Live, the reported command exactly** — two local refs, `--model veo-lite-lp`, no
+`--project`:
+
+```
+migrated.project_autocreated   e9a9b344-…
+migrated.reference_uploaded    me.jpg                      settle 14.0s
+migrated.reference_uploaded    ref_00ca69a3-….png          settle  8.0s
+migrated.references_attached   count=2
+migrated.references_ready      requested=2 attached=2 kinds=['media']
+migrated.submit_observed       rpc=MZZa6b
+migrated.result                done=true bytes=3599828
+Saved: manual-test/79ad1fb7-….mp4            exit 0
+```
+
+`ffprobe`: 8.000000 s, 720x1280, h264 + aac, 3 599 828 bytes.
+
 ## What this does NOT settle
 
-- **Multiple references in one prompt.** Every capture attached exactly ONE. The reported
-  command passes two, so this is now the largest untested step — ordering, whether a second
-  `@` behaves like the first, and how two ids sit in the payload.
+- **Whether the model actually USED both references.** The run generated and both ids are
+  on the wire, but nobody has watched the clip to confirm the presenter is from the first
+  reference and the product from the second. That is a semantic check no log can make —
+  and on labs it is exactly the check that caught a dropped end frame (v0.64.0).
 - **The avatar wire slot.** A `likeness` chip was produced but never submitted, so which
-  slot carries it is unknown.
+  slot carries it is unknown; only `media` has been exercised end to end.
+- **Character entities on this host.** The attach works (a chip with a real `entity_id`),
+  but `migrated_can_serve` still routes `--reference-entity` to labs, and no entity run
+  has been submitted.
+- **More than two references, and the per-model caps.** Two is the most ever attached.
+- **`i2v`.** Frames are a different sub-mode with its own slots; nothing has been recon'd.
 - **Selecting a SPECIFIC asset.** ArrowDown+Enter takes whatever is highlighted, and the
   typed-query path resolved to a name that was not an obvious match for the query. How the
   picker matches (caption? filename? fuzzy?) is untested, and exit 32

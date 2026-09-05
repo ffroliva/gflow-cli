@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`gflow video r2v` runs on the migrated `flow.google.com` host** (#639). An account
+  Google has moved no longer exits 36 on a references run. Local `--ref` files are
+  uploaded through the mention picker's `Upload media` chooser — the only route in, since
+  no `input[type=file]` exists in the DOM — and each reference is then attached as an `@`
+  mention. `--project` is optional: a moved account without one gets a project created
+  over REST first, because the migrated editor cannot create one itself.
+
+  Three measured details shape the implementation. The Ingredients submit is rpcid
+  **`MZZa6b`**, not t2v's `YhhmEf` — watching only the latter is why this looked like "no
+  submit happens" for several rounds of recon. A reference is a **chip in the prompt
+  document**, and its `reference_type` decides the wire slot (`media` rides the second
+  element, `entity` a trailing array), so a null `entity_id` does **not** mean nothing
+  attached. And mentions need real key events (`keyboard.type`) where prompt text needs
+  `insert_text` — a newline in a prompt must not submit — so the two cannot share a path.
+
+  An uploaded asset is listed as `Uploading<name>` before it is usable and attaching
+  early silently produces no chip, so the upload is waited out in two stages and a run
+  whose references have not all attached is **refused before submit** rather than
+  generating a clip that ignores them. Live-verified end to end: two local refs,
+  `--model veo-lite-lp`, no `--project` → 8.0 s 720x1280 h264+aac clip, exit 0.
+
 - **`--model veo-lite-lp` is drivable on the migrated `flow.google.com` host.** It was
   the one tier the migrated model map omitted, so an account Google has already moved
   could not select it at all: `_select_model` refused with `ConfigurationError` (exit

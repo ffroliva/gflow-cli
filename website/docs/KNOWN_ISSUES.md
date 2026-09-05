@@ -53,7 +53,20 @@ the clip). Two real clips were generated this way on 2026-09-05 — spike
 (`GFLOW_CLI_FLOW_HOST=auto`): flow.google.com is the **default** host for that
 command on every account — moved or not; `flow.google.com` forces it for
 everything, and `labs.google` switches the migrated composer off. Limits today: `--project` is required (project creation from the
-migrated editor is not ported), and only `t2v` — everything else still exits 36.
+migrated editor is not ported for t2v), and — until now — only `t2v`.
+
+**`r2v` works on the migrated host too (2026-09-05).** `gflow video r2v --ref <file>`
+uploads each local file through the picker's `Upload media` chooser, attaches one `@`
+mention per reference, and submits. Two differences from labs are load-bearing: the
+Ingredients submit is rpcid **`MZZa6b`**, not t2v's `YhhmEf`, and a reference is a **chip
+in the prompt** whose `reference_type` decides which wire slot carries its id (`media` in
+the second element, `entity` in a trailing array) — so `entity_id` being null does not
+mean nothing attached. A run whose references do not all attach is refused **before**
+submit rather than generating a clip that ignores them. `--project` is optional here: a
+moved account with none gets one created over REST first. Still not ported: `i2v`,
+character entities on this host, avatar, scenes, extend and the image commands — all
+still exit 36. Capture:
+[2026-09-05-migrated-r2v-attach-surface](docs/superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md).
 
 **Models on the migrated host.** Its picker is driven for every tier the account's
 menu actually renders, `veo-lite-lp` included — matched by the `[Lower Priority]`

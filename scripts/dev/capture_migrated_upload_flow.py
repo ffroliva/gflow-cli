@@ -63,7 +63,9 @@ async def _chips(page: Any) -> list[dict[str, Any]]:
     )
 
 
-async def _probe(page: Any, project_id: str, image: Path) -> dict[str, Any]:
+async def _probe(
+    page: Any, project_id: str, image: Path, second: str | None = None
+) -> dict[str, Any]:
     composer = MigratedComposer()
     phase = {"now": "startup"}
     calls: list[dict[str, Any]] = []
@@ -176,6 +178,22 @@ async def _probe(page: Any, project_id: str, image: Path) -> dict[str, Any]:
     ][:5]
     await page.keyboard.press("Enter")
     await page.wait_for_timeout(3000)
+
+    # A SECOND reference in the same prompt — never exercised, and the reported command
+    # passes two. Same gesture again, from wherever the first one left the caret.
+    if second:
+        _stage(f"second mention, filtering on {second!r}")
+        await page.keyboard.type(" ", delay=80)
+        await page.keyboard.type("@", delay=120)
+        await page.wait_for_timeout(2200)
+        await page.keyboard.type(second, delay=100)
+        await page.wait_for_timeout(3000)
+        report["assets_matching_second"] = [
+            t.strip()[:40] for t in await page.locator("button.asset-item").all_text_contents()
+        ][:5]
+        await page.keyboard.press("Enter")
+        await page.wait_for_timeout(3000)
+
     report["chips"] = await _chips(page)
 
     # If it attached, take the payload too — the same in-page fetch/XHR block the submit
@@ -232,7 +250,9 @@ async def _probe(page: Any, project_id: str, image: Path) -> dict[str, Any]:
     return report
 
 
-async def _main(profile: str, project_id: str, image: str, out_path: str) -> int:
+async def _main(
+    profile: str, project_id: str, image: str, out_path: str, second: str | None = None
+) -> int:
     path = Path(image).expanduser().resolve()
     if not path.is_file():
         print(f"no such image: {path}", file=sys.stderr)
@@ -240,7 +260,7 @@ async def _main(profile: str, project_id: str, image: str, out_path: str) -> int
     async with build_client(resolve_profile_dir(profile)) as client:
         page = client._page  # noqa: SLF001 — dev instrument
         assert page is not None
-        report = await _probe(page, project_id, path)
+        report = await _probe(page, project_id, path, second)
         Path(out_path).write_text(
             json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -253,9 +273,12 @@ def main() -> int:
     parser.add_argument("profile")
     parser.add_argument("project_id")
     parser.add_argument("image")
+    parser.add_argument("--second", default=None, help="attach a SECOND existing asset by name prefix")
     parser.add_argument("--out", default="upload_flow.json")
     args = parser.parse_args()
-    return asyncio.run(_main(args.profile, args.project_id, args.image, args.out))
+    return asyncio.run(
+        _main(args.profile, args.project_id, args.image, args.out, args.second)
+    )
 
 
 if __name__ == "__main__":

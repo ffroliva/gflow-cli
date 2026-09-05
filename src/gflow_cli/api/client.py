@@ -60,7 +60,7 @@ from gflow_cli.api.transports import (
     make_transport,
     resolve_transport_name,
 )
-from gflow_cli.api.transports._common import await_url_settled
+from gflow_cli.api.transports._common import await_url_settled, flow_host_kind
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
     SupportsTransportSetup,
@@ -2640,6 +2640,16 @@ class FlowApiClient:
             resolver_kw: dict[str, Any] = (
                 {} if name_resolver is None else {"name_resolver": name_resolver}
             )
+            if project_id is None and flow_host_kind(getattr(self._page, "url", None)) == (
+                "migrated"
+            ):
+                # The migrated editor cannot create a project (that is still labs-only),
+                # and its driver refuses without one — but the REST create works fine on
+                # a moved account, so a run with no --project is served rather than
+                # refused. Labs is untouched: it creates through the gallery as before.
+                created = await self.create_project()
+                project_id = created.project_id
+                logger.info("migrated.project_autocreated", project_id=project_id)
             return await self.transport.generate_video(
                 request=req,
                 project_id=project_id,

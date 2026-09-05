@@ -1,0 +1,215 @@
+"""R2V on the migrated host: routing, upload, mention attach, and the submit rpc.
+
+Deliberately NOT built on `test_migrated_composer.py`'s fake DOM. That fake models the
+settings pane and the model menu; the reference path needs a mention picker, an upload
+chooser and chips, and bolting those onto it would make one fake serve two very different
+surfaces. These are small purpose-built doubles instead, each modelling exactly one
+measured behaviour from
+`docs/superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md`.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode
+from gflow_cli.errors import ReferenceNotFoundError, TransportTimeoutError, UiSelectorDriftError
+
+pytestmark = pytest.mark.anyio
+
+
+def _r2v(**kw: Any) -> GenerateVideoRequest:
+    base: dict[str, Any] = {
+        "prompt": "a woman holding the product",
+        "mode": Mode.R2V,
+        "aspect": Aspect.PORTRAIT,
+    }
+    base.update(kw)
+    return GenerateVideoRequest(**base)
+
+
+# --- routing ----------------------------------------------------------------
+
+
+def test_migrated_can_serve_takes_r2v_only_with_references() -> None:
+    from gflow_cli.api.transports.migrated_composer import migrated_can_serve
+
+    assert migrated_can_serve(_r2v(reference_images=(Path("a.png"),)), "p1")
+    assert migrated_can_serve(_r2v(ref_names=("product1.png",)), "p1")
+    # An r2v request with NOTHING to attach cannot be constructed at all — the DTO's
+    # own _validate_r2v_symmetry rejects it — so the transport needs no guard for it.
+    with pytest.raises(ValueError, match="requires reference_images"):
+        _r2v()
+    # Character entities are a different attach path and stay on labs for now.
+    assert not migrated_can_serve(_r2v(reference_entities=("abc",)), "p1")
+    # A fresh project is still labs-only, so the gate keeps requiring one here.
+    assert not migrated_can_serve(_r2v(reference_images=(Path("a.png"),)), None)
+
+
+def test_submit_rpcs_cover_the_ingredients_submit() -> None:
+    """An Ingredients run submits on MZZa6b, not YhhmEf. Watching only the latter is why
+    every early capture reported "no submit" while the request was plainly being made."""
+    from gflow_cli.api.transports.migrated_composer import SUBMIT_RPCS
+
+    assert "YhhmEf" in SUBMIT_RPCS  # t2v
+    assert "MZZa6b" in SUBMIT_RPCS  # r2v / ingredients
+
+
+# --- a tiny composer double -------------------------------------------------
+
+
+class FakeLoc:
+    def __init__(self, page: FakeComposerPage, kind: str, items: list[Any]) -> None:
+        self.page, self.kind, self.items = page, kind, items
+
+    @property
+    def first(self) -> FakeLoc:
+        return FakeLoc(self.page, self.kind, self.items[:1])
+
+    def filter(self, *, has: Any = None, has_text: Any = None) -> FakeLoc:
+        if has_text == "Upload media":
+            return FakeLoc(self.page, "upload", ["upload"] if self.page.upload_button else [])
+        return self
+
+    async def count(self) -> int:
+        return len(self.items)
+
+    async def all_text_contents(self) -> list[str]:
+        return [str(i) for i in self.items]
+
+    async def click(self, **_: Any) -> None:
+        if self.kind == "upload":
+            self.page.upload_clicked += 1
+
+
+class FakeKeyboard:
+    def __init__(self, page: FakeComposerPage) -> None:
+        self.page = page
+
+    async def type(self, text: str, **_: Any) -> None:
+        self.page.typed.append(text)
+
+    async def press(self, key: str) -> None:
+        self.page.typed.append(f"<{key}>")
+        if key == "Enter":
+            self.page.on_enter()
+
+    async def insert_text(self, text: str) -> None:
+        self.page.typed.append(text)
+
+
+class FakeComposerPage:
+    """Only what the reference path touches: a composer, an asset list, chips."""
+
+    def __init__(
+        self,
+        *,
+        assets: list[str] | None = None,
+        chips_per_enter: int = 1,
+        upload_button: bool = True,
+    ) -> None:
+        self.keyboard = FakeKeyboard(self)
+        self.typed: list[str] = []
+        self.chips: list[dict[str, str]] = []
+        self.assets = assets if assets is not None else ["me.jpgImage"]
+        self.chips_per_enter = chips_per_enter
+        self.upload_button = upload_button
+        self.upload_clicked = 0
+
+    def on_enter(self) -> None:
+        for _ in range(self.chips_per_enter):
+            self.chips.append(
+                {"text": f"asset{len(self.chips)}", "entity_id": "", "reference_type": "media"}
+            )
+
+    def locator(self, css: str) -> FakeLoc:
+        if css == "[contenteditable='true']":
+            return FakeLoc(self, "composer", ["composer"])
+        if css == "button.asset-item":
+            return FakeLoc(self, "asset", list(self.assets))
+        if css == "button":
+            return FakeLoc(self, "button", ["button"])
+        if css == ".cdk-overlay-backdrop":
+            return FakeLoc(self, "backdrop", [])
+        raise AssertionError(f"unmodelled selector: {css!r}")
+
+    async def wait_for_timeout(self, _ms: float) -> None:
+        return None
+
+    async def evaluate(self, _script: str) -> Any:
+        return self.chips
+
+
+# --- attach -----------------------------------------------------------------
+
+
+async def test_each_reference_must_land_as_its_own_chip() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeComposerPage()
+    chips = await MigratedComposer().attach_references(page, ["me.jpg", "product1.png"])
+    assert len(chips) == 2
+    # ENTER is what commits a mention — a typed query alone inserts nothing.
+    assert page.typed.count("<Enter>") == 2
+
+
+async def test_a_reference_that_does_not_attach_is_refused_before_submit() -> None:
+    """The picker silently inserting nothing is the failure mode that would otherwise
+    generate — and bill — a clip with none of the user's references on it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeComposerPage(assets=["somethingelseImage"], chips_per_enter=0)
+    with pytest.raises(ReferenceNotFoundError) as exc_info:
+        await MigratedComposer().attach_references(page, ["me.jpg"])
+    message = str(exc_info.value)
+    assert "me.jpg" in message
+    assert "somethingelse" in message  # says what the picker DID offer
+
+
+async def test_upload_needs_the_upload_media_button() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeComposerPage(upload_button=False)
+    with pytest.raises(UiSelectorDriftError, match="Upload media"):
+        await MigratedComposer().upload_reference(page, Path("me.jpg"))
+
+
+async def test_an_upload_that_never_settles_times_out_rather_than_attaching_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An asset is listed as `Uploading<name>` before it is usable. Attaching while it is
+    still in flight silently produces no chip, so the wait is a real timeout."""
+    import gflow_cli.api.transports.migrated_composer as mc
+
+    monkeypatch.setattr(mc, "UPLOAD_APPEAR_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(mc, "UPLOAD_SETTLE_TIMEOUT_S", 0.02)
+
+    page = FakeComposerPage(assets=["Uploadingme.jpgImage"])
+
+    class _Chooser:
+        async def set_files(self, _path: str) -> None:
+            return None
+
+    class _Ctx:
+        async def __aenter__(self) -> _Ctx:
+            return self
+
+        async def __aexit__(self, *_: Any) -> None:
+            return None
+
+        @property
+        def value(self) -> Any:
+            async def _v() -> _Chooser:
+                return _Chooser()
+
+            return _v()
+
+    page.expect_file_chooser = lambda **_: _Ctx()  # type: ignore[attr-defined]
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    with pytest.raises(TransportTimeoutError, match="still uploading"):
+        await MigratedComposer().upload_reference(page, Path("me.jpg"))

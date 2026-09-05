@@ -43,6 +43,7 @@ from gflow_cli.api.video import Aspect, Mode, VideoModel, VideoResult, VideoStar
 from gflow_cli.errors import (
     ConfigurationError,
     FlowHostMigratedError,
+    ReferenceNotFoundError,
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
@@ -70,8 +71,21 @@ RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
 COMPOSER = "[contenteditable='true']"
 
-SUBMIT_RPC = "YhhmEf"
+#: T2V submits on ``YhhmEf``; an Ingredients (R2V) run submits on ``MZZa6b`` instead.
+#: Watching only the former is why every early r2v capture reported "no submit" — the
+#: request was there, under a different rpcid (measured 2026-09-05).
+SUBMIT_RPCS = ("YhhmEf", "MZZa6b")
+SUBMIT_RPC = SUBMIT_RPCS[0]  # kept for the t2v log/error text
 STATUS_RPCS = ("jwpduf", "as29s")
+#: The `@` mention picker, from the structure dump in the attach spike.
+ASSET_ITEM = "button.asset-item"
+UPLOAD_MEDIA_BUTTON = "Upload media"
+MENTION_CHIP = ".mention-chip"
+#: An uploaded asset is listed immediately, prefixed, and is not attachable until the
+#: prefix clears. Measured: appears ~1 s after the file is set, settles ~10 s later.
+UPLOADING_PREFIX = "Uploading"
+UPLOAD_APPEAR_TIMEOUT_S = 20.0
+UPLOAD_SETTLE_TIMEOUT_S = 180.0
 #: The submit reply arrived 4.0–4.6 s after the click in both measured runs.
 SUBMIT_REPLY_BUDGET_S = 60.0
 #: A ``jwpduf`` poll reports status 3 first; the record that carries the signed
@@ -152,7 +166,7 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     would trade a working driver for an unverified one. An account Flow has already
     moved is routed by its URL and never reaches this question — for it,
     ``--model veo-lite-lp`` is driven by its matcher instead of refused outright."""
-    if request.mode is not Mode.T2V or not project_id:
+    if request.mode not in (Mode.T2V, Mode.R2V) or not project_id:
         return False
     if request.reference_entities:
         return False
@@ -209,6 +223,12 @@ class MigratedComposer:
         pane = await self._open_pane(page)
         try:
             await self._select(page, pane, axis="mode", lig="videocam")
+            if request.mode is Mode.R2V:
+                # References live under the Ingredients sub-mode. The app derives the
+                # r2v model key from this plus the picker choice — a t2v run sends
+                # veo_3_1_lite_low_priority where this one sends
+                # veo_3_1_r2v_lite_low_priority — so nothing maps it by hand.
+                await self._select(page, pane, axis="submode", lig="chrome_extension")
             if request.model is not None:
                 await self._select_model(page, pane, request.model)
             await self._select(page, pane, axis="aspect", lig=ASPECT_LIGATURE[request.aspect])
@@ -441,17 +461,147 @@ class MigratedComposer:
 
     # --- prompt + submit --------------------------------------------------------
 
-    async def send_prompt(self, page: Page, prompt: str) -> None:
+    # --- references (R2V) -------------------------------------------------------
+
+    async def _open_mention_picker(self, page: Page) -> None:
+        """Focus the composer and open the `@` picker with a REAL keystroke.
+
+        `keyboard.type`, never `insert_text`: the latter dispatches input events without
+        key events, so the ProseMirror mention plugin opens a picker with no query behind
+        it and every later gesture is a no-op. :meth:`send_prompt` keeps `insert_text` on
+        purpose — a newline in prompt text must not submit — so the two cannot share a
+        path (measured 2026-09-05).
+        """
+        await page.locator(COMPOSER).first.click(timeout=5000)
+        await page.keyboard.type("@", delay=120)
+        await page.wait_for_timeout(2200)
+
+    async def clear_composer(self, page: Page) -> None:
+        await page.locator(COMPOSER).first.click(timeout=5000)
+        await page.keyboard.press("Control+a")
+        await page.keyboard.press("Backspace")
+        await page.wait_for_timeout(600)
+
+    async def _dismiss_overlays(self, page: Page) -> None:
+        for _ in range(4):
+            if not await page.locator(".cdk-overlay-backdrop").count():
+                return
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(400)
+
+    async def upload_reference(self, page: Page, path: Path) -> str:
+        """Upload one local file into the account library; return its display name.
+
+        The only way in is the picker's `Upload media` button, which opens a **native
+        file chooser** — there is no ``input[type=file]`` in the DOM before or after.
+        """
+        await self._open_mention_picker(page)
+        upload = page.locator("button").filter(has_text=UPLOAD_MEDIA_BUTTON)
+        if not await upload.count():
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: no {UPLOAD_MEDIA_BUTTON!r} button in the mention "
+                    f"picker, so a local --ref cannot be uploaded (host=migrated)"
+                ),
+            )
+        try:
+            async with page.expect_file_chooser(timeout=15_000) as chooser_info:
+                await upload.first.click(timeout=5000)
+            chooser = await chooser_info.value
+            await chooser.set_files(str(path))
+        except Exception as exc:
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: {UPLOAD_MEDIA_BUTTON!r} did not open a file chooser "
+                    f"for {path.name} (host=migrated): {exc}"
+                ),
+            ) from exc
+
+        async def _uploading() -> bool:
+            labels = await page.locator(ASSET_ITEM).all_text_contents()
+            return any(t.strip().startswith(UPLOADING_PREFIX) for t in labels)
+
+        # TWO waits, not one. The list does not update the instant the file is set, so a
+        # single "is it finished?" poll answers yes before the entry exists and the run
+        # goes on to attach nothing.
+        waited = 0.0
+        while waited < UPLOAD_APPEAR_TIMEOUT_S and not await _uploading():
+            await asyncio.sleep(1.0)
+            waited += 1.0
+        waited = 0.0
+        while waited < UPLOAD_SETTLE_TIMEOUT_S and await _uploading():
+            await asyncio.sleep(2.0)
+            waited += 2.0
+        if await _uploading():
+            raise TransportTimeoutError(
+                detail=(
+                    f"migrated host: {path.name} was still uploading after "
+                    f"{UPLOAD_SETTLE_TIMEOUT_S:.0f}s (host=migrated)"
+                ),
+            )
+        log.info("migrated.reference_uploaded", name=path.name, settle_s=waited)
+        # The native chooser costs keyboard focus, so the picker that did the upload
+        # cannot be driven further; the caller opens a fresh mention per reference.
+        await self._dismiss_overlays(page)
+        await self.clear_composer(page)
+        return path.name
+
+    async def attach_references(self, page: Page, names: list[str]) -> list[dict[str, str]]:
+        """Insert one mention chip per name, verifying each landed."""
+        chips: list[dict[str, str]] = []
+        for i, name in enumerate(names):
+            await self._open_mention_picker(page)
+            await page.keyboard.type(name, delay=100)
+            await page.wait_for_timeout(2500)
+            offered = [t.strip() for t in await page.locator(ASSET_ITEM).all_text_contents()]
+            # ENTER is what commits. A typed query alone leaves the picker open and
+            # inserts nothing — the single most expensive thing learned here.
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(2500)
+            chips = await self.read_chips(page)
+            if len(chips) != i + 1:
+                await self._dismiss_overlays(page)
+                raise ReferenceNotFoundError(
+                    detail=(
+                        f"migrated host: {name!r} did not attach as a reference "
+                        f"({len(chips)} chip(s) after {i + 1} attempt(s)); the picker "
+                        f"offered: {', '.join(offered[:6]) or '<nothing>'}"
+                    ),
+                )
+            await page.keyboard.type(" ", delay=80)
+        log.info("migrated.references_attached", count=len(chips), chips=[c["text"] for c in chips])
+        return chips
+
+    async def read_chips(self, page: Page) -> list[dict[str, str]]:
+        """Every mention currently in the prompt, with the kind that decides its wire slot."""
+        return await page.evaluate(
+            """() => [...document.querySelectorAll('.mention-chip')].map(c => ({
+                text: (c.textContent || '').trim(),
+                entity_id: c.getAttribute('data-entity-id') || '',
+                reference_type: c.getAttribute('data-reference-type') || '',
+            }))"""
+        )
+
+    async def send_prompt(self, page: Page, prompt: str, *, append: bool = False) -> None:
+        """Type the prompt text.
+
+        ``append=True`` keeps whatever is already in the composer — the mention chips an
+        R2V run has just attached — and adds the text after them. Clicking the composer
+        would move the caret, so on that path the caret is left where the last mention
+        put it.
+        """
         composer = page.locator(COMPOSER).first
         if not await composer.count():
             raise UiSelectorDriftError(
                 detail=f"migrated host: composer ({COMPOSER}) not found (host=migrated)",
             )
-        await composer.click(timeout=5000)
+        if not append:
+            await composer.click(timeout=5000)
         # insert_text dispatches input events without key presses: a newline in the
-        # prompt lands as text instead of an Enter that might submit early.
+        # prompt lands as text instead of an Enter that might submit early. Mentions
+        # need the opposite (see _open_mention_picker) — the two cannot share a path.
         await page.keyboard.insert_text(prompt)
-        log.info("migrated.prompt_typed", chars=len(prompt))
+        log.info("migrated.prompt_typed", chars=len(prompt), append=append)
 
     async def submit_and_observe(
         self,
@@ -482,14 +632,14 @@ class MigratedComposer:
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
             rpcid = _rpcid(url) if "batchexecute" in url else None
-            if rpcid != SUBMIT_RPC and rpcid not in STATUS_RPCS:
+            if rpcid not in SUBMIT_RPCS and rpcid not in STATUS_RPCS:
                 return
             try:
                 text = await response.text()
             except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
                 return
             for rid, payload in parse_frames(text):
-                if rid == SUBMIT_RPC and not submitted.done():
+                if rid in SUBMIT_RPCS and not submitted.done():
                     try:
                         rec = generation_record(rid, payload)
                     except WireFormatError as exc:
@@ -687,11 +837,12 @@ async def run_video(
     not been recon'd on this host, and a fresh project can only be created through
     the labs gallery, so the caller must name one (``--project``).
     """
-    if request.mode is not Mode.T2V:
+    if request.mode not in (Mode.T2V, Mode.R2V):
         raise FlowHostMigratedError(
             detail=(
                 f"this account's Flow lives on flow.google.com, where gflow drives "
-                f"text-to-video only for now; {request.mode.value} is not ported yet (#639)"
+                f"text-to-video and references-to-video for now; {request.mode.value} is "
+                f"not ported yet (#639)"
             ),
         )
     pid = project_id or extract_project_id(page.url)
@@ -707,7 +858,44 @@ async def run_video(
     composer = MigratedComposer()
     await composer.ensure_editor(page, pid)
     await composer.apply_video_settings(page, request)
-    await composer.send_prompt(page, request.prompt)
+
+    if request.mode is Mode.R2V:
+        # Upload every local --ref first: an asset is only mentionable once it exists in
+        # the library, and the upload steals keyboard focus, so it cannot be interleaved
+        # with composing the prompt.
+        names: list[str] = []
+        for path in request.reference_images:
+            names.append(await composer.upload_reference(page, Path(path)))
+        names.extend(request.ref_names)
+        if not names:
+            raise ConfigurationError(
+                detail=(
+                    "references-to-video on the migrated host needs at least one "
+                    "--ref (local file or asset name)"
+                ),
+            )
+        await composer.clear_composer(page)
+        chips = await composer.attach_references(page, names)
+        await composer.send_prompt(page, request.prompt, append=True)
+        # The submit is about to spend credits, so verify the references are actually
+        # on the prompt rather than trusting that the gestures worked.
+        after = await composer.read_chips(page)
+        if len(after) != len(names):
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: {len(names)} reference(s) requested but "
+                    f"{len(after)} attached at submit time — refusing to spend credits "
+                    f"on a run that would ignore them"
+                ),
+            )
+        log.info(
+            "migrated.references_ready",
+            requested=len(names),
+            attached=[c["text"] for c in after],
+            kinds=sorted({c["reference_type"] for c in chips}),
+        )
+    else:
+        await composer.send_prompt(page, request.prompt)
     record = await composer.submit_and_observe(
         page, poll_timeout_s=poll_timeout_s, on_started=on_started, project_id=pid
     )
