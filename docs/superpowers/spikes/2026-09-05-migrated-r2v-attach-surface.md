@@ -344,10 +344,11 @@ shape rather than a lucky ordering.
 
 ## What this does NOT settle
 
-- **Whether the model actually USED both references.** The run generated and both ids are
-  on the wire, but nobody has watched the clip to confirm the presenter is from the first
-  reference and the product from the second. That is a semantic check no log can make —
-  and on labs it is exactly the check that caught a dropped end frame (v0.64.0).
+- **Whether the model used the SECOND reference.** The account owner watched the output on
+  2026-09-06 and confirms the presenter is the person from the first reference
+  (`me.jpg`) — so a reference is genuinely bound, not merely accepted, which is the
+  semantic check no log can make. Whether the *product* comes from the second reference
+  was not separately confirmed, so multi-reference binding is attested for one of two.
 - **The avatar wire slot.** A `likeness` chip was produced but never submitted, so which
   slot carries it is unknown; only `media` has been exercised end to end.
 - **Character entities on this host.** The attach works (a chip with a real `entity_id`),
