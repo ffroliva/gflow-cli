@@ -69,6 +69,11 @@ RADIOGROUP = "[role='radiogroup']"
 RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
 COMPOSER = "[contenteditable='true']"
+#: The submode radio that renders the Start/End frame chips (i2v).
+FRAMES_LIGATURE = "crop_free"
+DIALOG = "[role='dialog']"
+DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
+DIALOG_DISMISS_S = 3.0
 
 SUBMIT_RPC = "YhhmEf"
 STATUS_RPCS = ("jwpduf", "as29s")
@@ -144,11 +149,33 @@ ASPECT_LIGATURE: dict[Aspect, str] = {
 }
 
 
+def _unported_form(request: GenerateVideoRequest) -> str | None:
+    """The noun for what this request asks of the new host that slice 1 does not
+    drive, or ``None`` when the composer takes it. i2v is ported for a **local**
+    start frame only: the Frames picker on this host lists assets by display name
+    with no UUID in its DOM (2026-09-05 spike), so a frame given by media UUID or
+    ``@Name`` has nothing to anchor on yet, and the End chip is unmeasured."""
+    if request.mode is Mode.T2V:
+        return None
+    if request.mode is not Mode.I2V:
+        return "reference-to-video"
+    if request.end_image or request.end_image_ref_id or request.end_image_ref_name:
+        return "an end frame"
+    if request.start_image_ref_id:
+        return "a frame given by Flow media UUID"
+    if request.start_image_ref_name:
+        return "a frame given by @Name"
+    if not isinstance(request.start_image, Path):
+        return "image-to-video without a local start frame"
+    return None
+
+
 def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) -> bool:
-    """Can the migrated composer take this request as it stands? Text-to-video in an
-    existing project, with a model the new host offers (or none). Everything else —
-    i2v/r2v media, character references, a fresh project, a labs-only model — is
-    not ported yet, so an unmoved account keeps the labs driver for it.
+    """Can the migrated composer take this request as it stands? Text-to-video, or
+    image-to-video from a **local** start frame, in an existing project, with a model
+    the new host offers (or none). Everything else — an end frame, a frame by UUID or
+    ``@Name``, r2v media, character references, a fresh project, a labs-only model —
+    is not ported yet, so an unmoved account keeps the labs driver for it.
 
     Gated on :data:`VIDEO_MODEL_MENU_LABELS`, not on the wider
     :data:`VIDEO_MODEL_MENU_MATCHERS`: this decides whether to *move* a request off
@@ -156,7 +183,7 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     would trade a working driver for an unverified one. An account Flow has already
     moved is routed by its URL and never reaches this question — for it,
     ``--model veo-lite-lp`` is driven by its matcher instead of refused outright."""
-    if request.mode is not Mode.T2V or not project_id:
+    if _unported_form(request) is not None or not project_id:
         return False
     if request.reference_entities:
         return False
@@ -190,6 +217,7 @@ class MigratedComposer:
         if not current.startswith(target):
             log.info("migrated.navigate", url=target)
             await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
+        await self._dismiss_dialog(page)
         try:
             await page.locator(READY_ANCHOR).first.wait_for(
                 state="visible", timeout=int(timeout_s * 1000)
@@ -203,6 +231,26 @@ class MigratedComposer:
             ) from e
         log.info("migrated.editor_ready", url=page.url)
 
+    @staticmethod
+    async def _dismiss_dialog(page: Page) -> None:
+        """One attempt at the modal the host shows over a fresh editor (the "Get
+        started" changelog on a first visit, #593's twin): its ``close`` icon button,
+        else Escape. Best-effort — a dialog that stays is reported by whichever
+        click it blocks next, with the overlay named there."""
+        dialog = page.locator(DIALOG).first
+        try:
+            if not await dialog.is_visible():
+                return
+            close = page.locator(DIALOG_CLOSE).first
+            via = "close" if await close.count() else "escape"
+            if via == "close":
+                await close.click(timeout=DIALOG_DISMISS_S * 1000)
+            else:
+                await page.keyboard.press("Escape")
+            log.info("migrated.dialog_dismissed", via=via)
+        except Exception as e:  # noqa: BLE001 - best-effort, never the failure itself
+            log.warning("migrated.dialog_not_dismissed", error=str(e)[:200])
+
     # --- settings ---------------------------------------------------------------
 
     async def apply_video_settings(self, page: Page, request: GenerateVideoRequest) -> None:
@@ -213,6 +261,10 @@ class MigratedComposer:
         pane = await self._open_pane(page)
         try:
             await self._select(page, pane, axis="mode", lig="videocam")
+            if request.mode is Mode.I2V:
+                # Frames renders the Start/End chips the attach stage binds to. Flow
+                # remembers the last submode per account, so it is set, not assumed.
+                await self._select(page, pane, axis="submode", lig=FRAMES_LIGATURE)
             if request.model is not None:
                 await self._select_model(page, pane, request.model)
             await self._select(page, pane, axis="aspect", lig=ASPECT_LIGATURE[request.aspect])
@@ -698,15 +750,19 @@ async def run_video(
     """The migrated-host twin of the labs ``_generate_video_locked`` tail: same
     inputs, same ``VideoResult``, so recorder, CLI, MCP and worker are untouched.
 
-    t2v only for now — i2v/r2v attach media through labs-shaped slots that have
-    not been recon'd on this host, and a fresh project can only be created through
-    the labs gallery, so the caller must name one (``--project``).
+    t2v, and i2v from a local start frame (uploaded through the editor and bound on
+    the Start chip by file name). An end frame, a frame by UUID / ``@Name`` and r2v
+    are not ported yet; a fresh project can only be created through the labs
+    gallery, so the caller must name one (``--project``).
     """
-    if request.mode is not Mode.T2V:
+    unported = _unported_form(request)
+    if unported is not None:
         raise FlowHostMigratedError(
             detail=(
                 f"this account's Flow lives on flow.google.com, where gflow drives "
-                f"text-to-video only for now; {request.mode.value} is not ported yet (#639)"
+                f"text-to-video and image-to-video from a local start frame; {unported} "
+                f"is not ported yet (#639) — pass --initial-frame <local file> without "
+                f"an end frame"
             ),
         )
     pid = project_id or extract_project_id(page.url)
