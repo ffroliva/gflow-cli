@@ -86,12 +86,26 @@ which is why it is now an explicit gate. If a feature genuinely cannot be verifi
 this cycle, record that and the reason in the doc; never silently omit it. Stage
 the doc into the release-prep commit (step 11).
 
-**5. Create a release branch off `develop`.**
+**5. Create a release branch off `develop` — in its own worktree, after telling every
+other session.**
 
 ```bash
-git checkout develop                          # ensure the base is develop, not main
-git checkout -b chore/release-v<NEW_VERSION>
+git worktree add -b chore/release-v<NEW_VERSION> ../gflow-cli-release-v<NEW_VERSION> origin/develop
+cd ../gflow-cli-release-v<NEW_VERSION>
 ```
+
+Before cutting, run `ListAgents` (or the equivalent in your harness) and message every
+other session working on this repo: *"Cutting v<NEW_VERSION> from develop@<sha>; do not
+push to develop until the back-merge lands."* Then cut in a **dedicated worktree**, never
+in the shared checkout.
+
+> **Why.** On 2026-09-05 the v0.68.0 release branch was cut in the shared checkout and
+> then switched out from under the release runner by another session's `git checkout`,
+> costing a recovery; separately, an unrelated PR landed on `develop` between the cut and
+> the tag, so the signed tag had to be deleted and re-signed on a merged head (nothing
+> had been pushed, so no public tag moved — step 12 now checks for this). A worktree
+> makes the branch immune to sibling checkouts; the announcement makes the `develop`
+> race visible instead of discovered at tag time.
 
 This branch now contains all of `develop` (⊇ `main`) plus your release prep. All
 release prep commits live here; the PR into `main` (step 14) carries the full
@@ -185,6 +199,21 @@ git commit -m "chore(release): v<NEW_VERSION>"
 - The release-prep commit must NOT carry a `Co-Authored-By` trailer (see reminders).
 
 **12. Tag the release commit.** Use `-s` for a signed annotated tag so GitHub shows **"Verified"** AND `.github/workflows/release.yml` passes the signed-tag gate (unsigned or lightweight tags are rejected by CI).
+
+First confirm `develop` has not moved since step 5 — anything merged there in the
+meantime is not in this branch and would ship in the *next* release while its
+CHANGELOG entry sits under a heading that no longer exists:
+
+```bash
+git fetch origin
+git rev-list --count HEAD..origin/develop   # expect 0
+```
+
+If it is non-zero: `git merge origin/develop`, move the newcomers' `[Unreleased]`
+entries under `## [<NEW_VERSION>]`, re-run steps 4 and 10, amend or add to the step 11
+commit, and only then tag. If a tag was already created locally, `git tag -d
+v<NEW_VERSION>` and re-sign it on the merged head — this is safe only while the tag is
+unpushed (see the **NEVER force-push a release tag** reminder below).
 
 ```bash
 git tag -s v<NEW_VERSION> -m "v<NEW_VERSION>"

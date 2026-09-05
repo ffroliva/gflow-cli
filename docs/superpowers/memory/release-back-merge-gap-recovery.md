@@ -1,6 +1,6 @@
 ---
 name: release-back-merge-gap-recovery
-description: "If a prior release skipped main → develop back-merge, the NEXT release branch (cut from develop) will conflict with main on version bump + CHANGELOG — resolve by taking 'ours' on the bump files and re-adding the missing [previous-version] CHANGELOG footer"
+description: "Two release-time drifts: (1) a skipped main → develop back-merge makes the NEXT release branch conflict on bump + CHANGELOG (take ours, re-add the footer); (2) develop moving between cut and tag in a shared checkout — cut in a worktree, announce via ListAgents, check rev-list before signing"
 ---
 
 Rule: Always do the **main → develop back-merge** as the LAST step of every release. If you didn't, the next release branch will hit predictable conflicts because main has a version bump + CHANGELOG section that develop never received.
@@ -43,3 +43,23 @@ The v0.7.0 release skipped this; the v0.8.0 release (PR #42) had to merge main i
 **Reference:** PR #42 commit `08c081e` is the canonical conflict-resolution commit. `phase-b-followups` memory item D documents the original v0.7.0 skip.
 
 **See also:** [[branch-workflow]], [[release-signing]].
+
+## Shared-checkout race at cut time (2026-09-05, v0.68.0)
+
+The mirror-image failure: `develop` moving *after* the release branch is cut but *before*
+the tag. Two things went wrong in one evening, both in a checkout shared by four sessions:
+
+- The release branch was checked out in the shared working tree and another session's
+  `git checkout` switched it away mid-prep. Recovery cost real time. **Cut the release
+  branch in a dedicated worktree** (`git worktree add -b chore/release-vX ../gflow-cli-release-vX origin/develop`)
+  and announce the cut to every session (`ListAgents` + message) before doing it.
+- PR #672 merged into `develop` between the cut and the tag. The local signed tag then
+  pointed one commit before the fix the release notes claimed. Because nothing had been
+  pushed, the fix was `git merge origin/develop` on the release branch, re-home the
+  newcomer's `[Unreleased]` CHANGELOG entry under the new version, `git tag -d` +
+  re-sign. **Step 12 of the release skill now runs `git rev-list --count HEAD..origin/develop`
+  before signing** — expect 0.
+
+Same root cause as the gap above (two branches that must agree drifting between two
+steps), opposite direction: there `main` ran ahead of `develop`; here `develop` ran
+ahead of the release branch.
