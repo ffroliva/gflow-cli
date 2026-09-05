@@ -1,7 +1,9 @@
 # The migrated model menu, and the first capture of `[Lower Priority]`
 
-**Date:** 2026-09-05 · **Profile:** `kittinansr2` (an account Google has already moved to
-`flow.google.com`) · **Project:** `66324c59-6e68-4988-a91b-26896c9ebd0b` ·
+**Date:** 2026-09-05 · **Account:** a contributor profile Google has already moved to
+`flow.google.com`, and which Flow is **throttling** (its picker defaults to the
+lower-priority tier) — the property that matters here; the profile name and project id
+are deliberately omitted. ·
 **Cost:** two Veo generations — one unintended (see below), one an authorised end-to-end
 check of the switch fix. Every measurement in between is $0.
 

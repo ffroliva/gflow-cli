@@ -61,9 +61,10 @@ OVERLAY = ".cdk-overlay-pane"
 #: Playwright's own visibility engine — the detached overlays Angular leaves behind are
 #: in the DOM but not visible, and only the visible ones can cover the composer.
 VISIBLE_OVERLAY = f"{OVERLAY}:visible"
-#: Escapes `_close_pane` will spend. A model switch needs 2 (menu, then pane); the
-#: headroom is for a future third stacked overlay, not for hope.
-PANE_CLOSE_ESCAPES = 4
+#: Escapes `_close_pane` will spend: exactly the stack depth measured after a model
+#: switch (the menu, then the settings pane). No headroom — a third stacked overlay is
+#: not something to absorb quietly, and `strict=True` turns it into a named failure.
+PANE_CLOSE_ESCAPES = 2
 RADIOGROUP = "[role='radiogroup']"
 RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
@@ -221,8 +222,15 @@ class MigratedComposer:
                 count=request.count,
                 model=request.model.value if request.model else None,
             )
-        finally:
-            await self._close_pane(page)
+        except BaseException:
+            # A close failure must never replace the error that is already travelling.
+            # `_close_pane` in a bare `finally` did exactly that: a `--model` Flow does
+            # not offer raises ConfigurationError (exit 11) naming the offered models,
+            # and a stuck pane then overwrote it with UiSelectorDriftError (exit 23),
+            # losing the list the user needed. On this path the pane is best-effort.
+            await self._close_pane(page, strict=False)
+            raise
+        await self._close_pane(page, strict=True)
 
     async def _open_pane(self, page: Page) -> Any:
         trigger = page.locator(READY_ANCHOR).first
@@ -247,8 +255,23 @@ class MigratedComposer:
             ) from e
         return pane
 
-    async def _close_pane(self, page: Page) -> None:
-        """Dismiss every visible overlay, and verify that none is left.
+    def _blocking_overlays(self, page: Page) -> Any:
+        """Visible overlays that are ours to dismiss — the settings pane and the model
+        menu, identified by what they contain.
+
+        Scoped rather than every ``.cdk-overlay-pane``: those classes are generic CDK
+        and Flow mounts snackbars, tooltips and dialogs in the same container, none of
+        which cover the composer or answer to Escape. An unrelated toast visible at the
+        wrong moment would otherwise burn both escapes and abort a run that was fine.
+        """
+        return page.locator(VISIBLE_OVERLAY).filter(has=page.locator(f"{RADIOGROUP}, {MENU_ITEM}"))
+
+    async def _close_pane(self, page: Page, *, strict: bool = True) -> None:
+        """Dismiss every visible settings/menu overlay, and verify that none is left.
+
+        ``strict=False`` downgrades a stuck pane to a warning. It is passed on the path
+        where an exception is already in flight, so a close failure cannot mask the
+        error the caller actually needs — see :meth:`apply_video_settings`.
 
         One Escape is not enough after ``--model``. Selecting from the menu leaves
         Angular with **two** stacked overlays — the settings pane and the menu opened
@@ -280,14 +303,16 @@ class MigratedComposer:
             # Re-queried every pass rather than held: the count has to be re-read after
             # each Escape, and a locator built once is only re-evaluated because
             # Playwright's are lazy — not a property worth depending on here.
-            if not await page.locator(VISIBLE_OVERLAY).count():
+            if not await self._blocking_overlays(page).count():
                 return
             await page.keyboard.press("Escape")
             await asyncio.sleep(0.3)
-        remaining = await page.locator(VISIBLE_OVERLAY).count()
+        remaining = await self._blocking_overlays(page).count()
         if not remaining:
             return
-        log.warning("migrated.pane_still_open", visible_overlays=remaining)
+        log.warning("migrated.pane_still_open", visible_overlays=remaining, strict=strict)
+        if not strict:
+            return
         raise UiSelectorDriftError(
             detail=(
                 f"migrated host: {remaining} overlay(s) still visible after "

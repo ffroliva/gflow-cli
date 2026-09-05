@@ -59,6 +59,7 @@ class Dom:
     # one pass.
     menu_overlay_lingering: bool = False
     escapes_ignored: bool = False  # a pane that refuses to close at all
+    toast_visible: bool = False  # an unrelated CDK overlay (snackbar/tooltip)
     events: list[str] = field(default_factory=list)
 
 
@@ -106,7 +107,9 @@ class FakeLocator:
 
     def filter(self, *, has: FakeLocator | None = None, has_text: Any = None) -> FakeLocator:
         items = self.items
-        if has is not None and has.kind == "group":  # pane.filter(has=<radiogroup>)
+        if has is not None and has.kind == "ours":  # overlays we are allowed to dismiss
+            items = [i for i in items if i in ("pane", "menu", "lingering-menu")]
+        elif has is not None and has.kind == "group":  # pane.filter(has=<radiogroup>)
             items = [i for i in items if i == "pane" and self.page.dom.pane_open]
         elif has is not None:  # `has=page.locator("mat-icon").filter(has_text=re)` → ligature match
             pat = has.page._pending_lig
@@ -257,6 +260,8 @@ class FakePage:
             panes = (["pane"] if dom.pane_open else []) + (["menu"] if dom.menu_open else [])
             if dom.menu_overlay_lingering:
                 panes.append("lingering-menu")
+            if dom.toast_visible:
+                panes.append("toast")
             if css.endswith(":visible"):
                 # The detached menu pane is in the DOM but NOT visible — which is exactly
                 # why the old `OVERLAY.first` read-back stayed silent.
@@ -288,6 +293,11 @@ class FakePage:
         if css == "button":
             # only ever narrowed by a ligature: arrow_drop_down (model) or arrow_forward (submit)
             return _ButtonLocator(self)
+        if css == "[role='radiogroup'], [role='menuitem']":
+            # `_close_pane` narrows to overlays that are OURS — the settings pane and the
+            # model menu — so a snackbar or tooltip in the same CDK container is left
+            # alone. Marker locator; the pane filter below decides per overlay.
+            return FakeLocator(self, "ours", ["ours"])
         if css == "[role='menuitem']":
             return FakeLocator(self, "menuitem", list(dom.models) if dom.menu_open else [])
         if css == "textarea":
@@ -580,6 +590,46 @@ async def test_a_pane_that_refuses_to_close_is_named_not_left_to_the_composer() 
     message = str(exc_info.value)
     assert "still visible" in message and "migrated" in message
     assert page.dom.submit_clicked == 0
+
+
+async def test_a_stuck_pane_never_masks_the_error_already_travelling() -> None:
+    """Review D1: `_close_pane` in a bare `finally` replaced the caller's error. A model
+    Flow does not offer raises ConfigurationError (exit 11) naming what IS offered; a
+    pane that then refuses to close turned that into UiSelectorDriftError (exit 23) and
+    the list was gone."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.escapes_ignored = True  # the pane will not close
+    with pytest.raises(ConfigurationError) as exc_info:
+        await MigratedComposer().apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_QUALITY))
+    message = str(exc_info.value)
+    assert "Veo 3.1 - Lite" in message  # the offered-models list survived
+    assert "still visible" not in message
+
+
+async def test_an_unrelated_overlay_is_not_ours_to_dismiss() -> None:
+    """Review D2: `.cdk-overlay-pane` is generic CDK — Flow mounts snackbars and tooltips
+    in the same container. One visible at the wrong moment must not burn the escapes and
+    abort a run that was fine."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.toast_visible = True
+    composer = MigratedComposer()
+    await composer.apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    assert page.dom.toast_visible  # left alone, not escaped at
+    assert not page.dom.pane_open and not page.dom.menu_overlay_lingering
+    await composer.send_prompt(page, "a man crying")
+    assert page.dom.prompt == "a man crying"
+
+
+def test_pane_close_escapes_matches_the_measured_stack_depth() -> None:
+    """Review D14: the constant is evidence, not headroom — a switch stacks exactly two
+    overlays (the menu, then the pane) and each Escape dismisses one."""
+    from gflow_cli.api.transports.migrated_composer import PANE_CLOSE_ESCAPES
+
+    assert PANE_CLOSE_ESCAPES == 2
 
 
 def test_matcher_excludes_the_lower_priority_suffix_by_default() -> None:
