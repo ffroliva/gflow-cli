@@ -37,9 +37,11 @@ having a migrated driver at all, and read as "the new host cannot be driven"):
   text with ligature-keyed selectors is the point of that account (see
   [[flow-locale-leak-icon-ligatures]]); prefer `ffroliva` (en-GB) for a first capture.
   Verify a generation path on **both** before calling it done.
-- A spike on either account only exits 36 for a form the composer has not ported
-  (today: an end frame, a frame by media UUID or `@Name`, r2v, image, characters,
-  scenes, extend). For a ported form, exit 36 is a real regression, not the environment.
+- A **video** spike on either account exits 36 only for a form the migrated composer has
+  not ported (today: an end frame, a frame by media UUID or `@Name`, r2v). For a ported
+  form, exit 36 is a real regression to investigate, not the environment. Every other
+  surface — image, characters, scenes, extend, instructions, tools — has no migrated
+  driver at all; how each one *fails* there is the next bullet, not this one.
 - Both accounts are fine for **mint-free** REST-path work (`gflow project list`,
   `gflow data …`) — the migration changed the *frontend*, not the aisandbox REST
   surface. See [[rest-path-capability-matrix]]. A REST path that **mints a reCAPTCHA
