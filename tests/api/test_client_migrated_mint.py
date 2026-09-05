@@ -33,6 +33,9 @@ class _NeverMint:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    # `/project/<id>` DOES serve enterprise.js, so bailing there is the conservative
+    # choice, not a necessity: no minting path is ported to the migrated host today.
+    # This case is the tripwire for the day one is.
     "url",
     ["https://flow.google.com/", "https://flow.google.com/project/abc-123?pli=1"],
 )
@@ -52,10 +55,8 @@ async def test_mint_on_migrated_host_exits_36_before_touching_recaptcha(
 
 @pytest.mark.asyncio
 async def test_mint_on_labs_host_still_mints(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        client_mod,
-        "TokenMinter",
-        lambda page, **_: SimpleNamespace(mint=AsyncMock(return_value="tok")),
-    )
+    mint = AsyncMock(return_value="tok")
+    monkeypatch.setattr(client_mod, "TokenMinter", lambda page, **_: SimpleNamespace(mint=mint))
     c = _client_on("https://labs.google/fx/en/tools/flow")
     assert await c._mint_recaptcha_token("IMAGE_GENERATION") == "tok"
+    mint.assert_awaited_once_with("IMAGE_GENERATION")  # the action is threaded through
