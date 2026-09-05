@@ -30,7 +30,11 @@ Same cache, same gates (`GFLOW_CLI_UPDATE_CHECK=0`, CI, non-index installs).
 Also in this release: `CONTRIBUTING.md` routes contributors — and their coding agents —
 through the same lifecycle `AGENTS.md` defines (phase → skill → artifact), the PR template
 carries a matching *Lifecycle* checklist, and the contributor quality-gate list is identical
-to `AGENTS.md`'s again.
+to `AGENTS.md`'s again. And a contributor fix on the migrated host
+([#670](https://github.com/ffroliva/gflow-cli/issues/670), @ChandraLiuswanto): the composer
+now waits up to 5 s for the `arrow_forward` submit button to enable after the prompt is
+inserted — it flips roughly 100 ms after `insert_text` lands, and reading it synchronously
+made every `video t2v` on a fully migrated account exit 23 before submitting.
 
 Verification: [LIVE_VERIFICATION_v0.68.0](LIVE_VERIFICATION_v0.68.0.md) — a wheel lowered
 to 0.60.1 installed through `uv tool` and through `pipx`, then `gflow update` run from each

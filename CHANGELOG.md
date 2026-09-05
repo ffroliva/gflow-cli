@@ -48,6 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gains a matching *Lifecycle* checklist; the quality-gate list is now identical to
   AGENTS.md's (it had drifted to six of nine commands).
 
+### Fixed
+
+- **Migrated host: `video t2v` no longer fails on the submit-enable race (#670,
+  @ChandraLiuswanto).** The Angular composer on `flow.google.com` flips the
+  `arrow_forward` button from `disabled` roughly 100 ms after `insert_text`
+  lands, and the composer read it synchronously, so a fully migrated account got
+  `UiSelectorDriftError` ("missing or disabled after the prompt was typed",
+  exit 23) on every run before anything was submitted. The composer now waits
+  up to 5 s (100 ms polls) for the button to enable; a button that never
+  enables is still selector drift, now worded as "stayed disabled for 5s".
+  Measured on a moved account: `insert_text` → enabled at the 107 ms sample;
+  with the wait, veo-lite t2v completed in 62 s.
+
 ## [0.67.0] — 2026-09-05
 
 ### Added
