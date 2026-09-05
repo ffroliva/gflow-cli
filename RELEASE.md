@@ -60,9 +60,13 @@ python -m pip install --pre gflow-cli
    git branch --show-current
    git rev-list HEAD..origin/main
    ```
-3. Run quality gates:
+3. Run quality gates (`/gflow:check` — the same nine commands AGENTS.md lists):
    ```bash
    uv run python scripts/ci/check_repo_hygiene.py
+   uv run python scripts/ci/check_doc_links.py
+   uv run python scripts/ci/check_website_docs_pii.py
+   uv run python scripts/ci/generate_website_docs.py --check
+   uv run python scripts/ci/check_council_memory.py
    uv run ruff check src tests
    uv run ruff format --check src tests
    uv run pyright src
@@ -87,12 +91,13 @@ python -m pip install --pre gflow-cli
    - `pyproject.toml`
    - `.codex-plugin/plugin.json`
    - `src/gflow_cli/__init__.py`
+   - `uv.lock` (run `uv lock` — the editable package version is pinned there)
    - any tests that assert the package version
 7. Move user-visible changes from `CHANGELOG.md` `[Unreleased]` into a dated
    release section.
 8. Commit the release prep:
    ```bash
-   git add pyproject.toml .codex-plugin/plugin.json src/gflow_cli/__init__.py CHANGELOG.md tests docs
+   git add pyproject.toml .codex-plugin/plugin.json src/gflow_cli/__init__.py uv.lock CHANGELOG.md tests docs
    git commit -m "chore(release): vX.Y.Z"
    ```
 9. Tag and push. **Must be a signed annotated tag** (`-s`) — `.github/workflows/release.yml` rejects unsigned or lightweight tags. Requires a GPG or SSH signing key registered with your GitHub account.

@@ -274,10 +274,11 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 
 ### `GFLOW_CLI_UPDATE_CHECK`
 
-**What:** Once-a-day best-effort PyPI check that prints a one-line stderr notice when a newer gflow-cli exists. The notice is always served from a local cache (`<GFLOW_CLI_HOME>/update_check.json`); a stale cache refreshes on a background daemon thread whose result feeds the *next* invocation — the check never blocks or fails a command, and a failed poll still counts toward the once-a-day cap.
+**What:** Once-a-day best-effort PyPI check that shows an update banner on stderr when a newer gflow-cli exists — a bordered panel with the new version, `gflow update`, and the release-notes link when stderr is a terminal; one plain yellow line when piped. The notice is always served from a local cache (`<GFLOW_CLI_HOME>/update_check.json`); a stale cache refreshes on a background daemon thread whose result feeds the *next* invocation — the check never blocks or fails a command, and a failed poll still counts toward the once-a-day cap. `gflow update` / `gflow update --check` refresh the same cache synchronously.
 **Values:** `1` (default) | `0` to disable
-**Skipped automatically:** in CI (`CI` env var set) and for editable/local-source installs (PEP 610 `direct_url.json` detection) — "upgrade" advice is wrong there.
-**Shipped in:** #479.
+**Skipped automatically:** in CI (`CI` set to anything but `0` / `false`) and for editable/local-source installs (PEP 610 `direct_url.json` detection) — "upgrade" advice is wrong there.
+**Upgrading:** [`gflow update`](USAGE.md#gflow-update) runs the installer that put gflow-cli here (`uv tool` / `pipx` / the venv's own `pip`).
+**Shipped in:** #479 (notice); `gflow update` + banner in #668.
 
 ### `GFLOW_CLI_LEASE_WAIT_SECONDS`
 

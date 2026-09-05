@@ -37,6 +37,15 @@ cost a real run to learn; each is now a unit test in `tests/api/transports/`.
   `_generate_video_locked` starts (`migrated.dispatch` at ~6.8 s), so the composer is
   chosen BEFORE any labs project entry; the after-entry check exists for the case where
   the hop lands during project navigation.
+- **Submit-enable race after `insert_text`** (#670, PR #672): Angular flips the
+  `arrow_forward` button from `disabled` ~100 ms AFTER `keyboard.insert_text` lands (measured
+  107 ms; `keyboard.type` never shows it). A synchronous `is_enabled()` read straight after
+  typing gets the stale state and raised exit 23 on every run for a slow account, while the
+  maintainer accounts submitted at ~200 ms and never saw it — a green release ledger is not
+  proof the race is absent. `submit_and_observe` now polls up to 5 s at 100 ms; a button that
+  never enables is still selector drift ("stayed disabled for 5s"). Note `is_enabled()` with no
+  `timeout=` retry-polls until the locator resolves (Playwright 1.61 `_callOnElementOnceMatches`),
+  so a button that detaches mid-loop waits out the default timeout — pre-existing, not fixed.
 - **Session hook + heredoc apostrophes, reconfirmed:** a bash heredoc whose body carries
   apostrophes in prose fails with "unexpected EOF while looking for matching quote" —
   write edit scripts to a file with the Write tool and run them.

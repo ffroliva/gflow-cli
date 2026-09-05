@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.68.0] — 2026-09-05
+
+### Added
+
+- **`gflow update` — self-update in place.** Runs the package manager that
+  installed gflow-cli, read off the install itself rather than guessed from
+  `PATH`: `uv-receipt.toml` in the venv root → `uv tool upgrade gflow-cli`,
+  `pipx_metadata.json` → `pipx upgrade gflow-cli`, otherwise that venv's own
+  `python -m pip install --upgrade gflow-cli`. Asks PyPI first and runs nothing
+  when already current; if PyPI is unreachable the manager still runs. After an
+  upgrade it re-reads the venv's Playwright version and prints the
+  `playwright install chromium` hint only when it moved. `--check` reports
+  installed vs latest plus the command that would run; `--json` returns the
+  same as a document. The outcome is verified against the venv, not the
+  manager's exit code: on Windows the running `gflow.exe` launcher holds its
+  own file open, so `uv tool upgrade` installs the new wheel and then exits 1
+  copying the launcher — measured — and that is reported as an upgrade with a
+  note, because the launcher only points at the venv's python and keeps
+  working. Editable / local / VCS / source installs, a manager binary missing
+  from `PATH`, a `uv venv` with no `pip` module, and a manager run that leaves
+  the version unchanged all surface as `ConfigurationError` (exit 11) — except
+  the one honest no-op: PyPI unreachable, manager exit 0, nothing changed, which
+  is exit 0. Deliberately no MCP twin (a server must not replace its own code under a live
+  session) — recorded as a reasoned exemption in the parity test.
+
+### Changed
+
+- **The once-a-day update notice (#479) is now a banner.** On a terminal it is
+  a bordered panel on stderr naming the new version, `gflow update`, and the
+  release-notes link; when stderr is piped it stays one plain yellow line so
+  logs and `2>&1 | jq` pipelines see one line per event. Same cache, same
+  gates (`GFLOW_CLI_UPDATE_CHECK=0`, CI, non-index installs). The notice text
+  points at `gflow update` instead of listing three manager commands.
+- **CONTRIBUTING.md now routes contributors — and their coding agents — through the
+  same lifecycle AGENTS.md defines.** A phase → skill → artifact table (issue
+  assessment, predict, scenario/plan, check with the step 1b mirror sweep,
+  live-verify, council review, sonar, known-issues) says what a PR is expected to
+  have gone through and what it leaves behind for the reviewer; the PR template
+  gains a matching *Lifecycle* checklist; the quality-gate list is now identical to
+  AGENTS.md's (it had drifted to six of nine commands).
+
+### Fixed
+
+- **Migrated host: `video t2v` no longer fails on the submit-enable race (#670,
+  @ChandraLiuswanto).** The Angular composer on `flow.google.com` flips the
+  `arrow_forward` button from `disabled` roughly 100 ms after `insert_text`
+  lands, and the composer read it synchronously, so a fully migrated account got
+  `UiSelectorDriftError` ("missing or disabled after the prompt was typed",
+  exit 23) on every run before anything was submitted. The composer now waits
+  up to 5 s (100 ms polls) for the button to enable; a button that never
+  enables is still selector drift, now worded as "stayed disabled for 5s".
+  Measured on a moved account: `insert_text` → enabled at the 107 ms sample;
+  with the wait, veo-lite t2v completed in 62 s.
+
 ## [0.67.0] — 2026-09-05
 
 ### Added
@@ -3880,7 +3934,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...HEAD
+[0.68.0]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...v0.68.0
 [0.67.0]: https://github.com/ffroliva/gflow-cli/compare/v0.66.3...v0.67.0
 [0.66.3]: https://github.com/ffroliva/gflow-cli/compare/v0.66.2...v0.66.3
 [0.66.2]: https://github.com/ffroliva/gflow-cli/compare/v0.66.1...v0.66.2

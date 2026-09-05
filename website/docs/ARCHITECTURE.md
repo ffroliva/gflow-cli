@@ -118,7 +118,8 @@ When the project converges on the hexagonal target above, modules graduate to la
 > `chain*.py`, `composition.py`, `config.py`, `diagnostics.py`, `errors.py`,
 > `image_batch.py`, `json_output.py`, `media.py`, `movie_manifest.py`,
 > `observability.py`, `paths.py`, `profile_lease.py`, `profile_store.py`,
-> `storage.py`, `update_check.py`, and `winsec.py` (inventory refreshed for
+> `storage.py`, `update_check.py` (the once-a-day notice and `gflow update`'s
+> `run_update`; its Click surface is `cli_update.py`), and `winsec.py` (inventory refreshed for
 > v0.56.0, #507 — it had drifted a dozen modules behind).
 > The DDD layout below was deferred indefinitely; converge toward it incrementally
 > if/when a second `Provider` justifies the split (`gflow serve` shipped as a
