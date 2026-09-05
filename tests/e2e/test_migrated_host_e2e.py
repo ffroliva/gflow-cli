@@ -180,6 +180,6 @@ async def test_e2e_image_on_a_moved_account_exits_36_not_recaptcha(
         e for e in install_log_capture.entries if e.get("event") == "ui_driver.migrated_host_bail"
     ]
     assert bails and bails[0].get("at") == "mint_recaptcha_token", bails
-    assert not any(
-        "recaptcha" in str(e.get("event", "")).lower() for e in install_log_capture.entries
-    )
+    # The page the mint saw is the migrated origin (the grid, route "/", in the
+    # reporter's bundle) — not a labs page that merely lost its script.
+    assert flow_host_kind(str(bails[0].get("url"))) == "migrated", bails[0]

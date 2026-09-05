@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -30,14 +31,6 @@ class _NeverMint:
         pytest.fail("TokenMinter must not be constructed on the migrated host")
 
 
-class _FakeMinter:
-    def __init__(self, page: Any, **_: Any) -> None:
-        self.page = page
-
-    async def mint(self, action: str) -> str:
-        return f"tok-{action}"
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "url",
@@ -48,27 +41,21 @@ async def test_mint_on_migrated_host_exits_36_before_touching_recaptcha(
 ) -> None:
     monkeypatch.setattr(client_mod, "TokenMinter", _NeverMint)
     c = _client_on(url)
+    # The bail raises inside the checkout/checkin bracket; the pool page must not leak.
+    returned: list[Any] = []
+    monkeypatch.setattr(c, "_checkin_page", returned.append)
     with pytest.raises(FlowHostMigratedError) as info:
         await c._mint_recaptcha_token("IMAGE_GENERATION")
     assert "flow.google.com" in info.value.detail
+    assert returned == [c._page]
 
 
 @pytest.mark.asyncio
 async def test_mint_on_labs_host_still_mints(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(client_mod, "TokenMinter", _FakeMinter)
+    monkeypatch.setattr(
+        client_mod,
+        "TokenMinter",
+        lambda page, **_: SimpleNamespace(mint=AsyncMock(return_value="tok")),
+    )
     c = _client_on("https://labs.google/fx/en/tools/flow")
-    assert await c._mint_recaptcha_token("IMAGE_GENERATION") == "tok-IMAGE_GENERATION"
-
-
-@pytest.mark.asyncio
-async def test_mint_checks_the_page_back_in_after_the_bail(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The bail raises inside the checkout/checkin bracket; the page must not leak."""
-    monkeypatch.setattr(client_mod, "TokenMinter", _NeverMint)
-    c = _client_on("https://flow.google.com/")
-    returned: list[Any] = []
-    monkeypatch.setattr(c, "_checkin_page", lambda page: returned.append(page))
-    with pytest.raises(FlowHostMigratedError):
-        await c._mint_recaptcha_token("IMAGE_GENERATION")
-    assert returned == [c._page]
+    assert await c._mint_recaptcha_token("IMAGE_GENERATION") == "tok"

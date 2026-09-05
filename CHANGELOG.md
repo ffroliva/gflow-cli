@@ -96,15 +96,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the pool's bootstrap page *before* the UI transport runs, so none of the transport's
   migration guards could fire; on a moved account that page is the `flow.google.com`
   project grid after the client-side handoff, which loads no
-  `recaptcha/enterprise.js`, and site-key discovery raised an unmapped
-  `RuntimeError` — exit 1 "unexpected", with a remediation about headless Chrome.
-  `_mint_recaptcha_token` now runs the same one-line `raise_if_migrated` guard the
-  transport uses, so the distinct, non-retryable exit 36 and its migration
-  remediation come back in ~13 s. Reproduced and re-verified on a moved maintainer
-  account at zero credits (exit 1 → exit 36); the new
+  `recaptcha/enterprise.js`, so site-key discovery raised `RecaptchaError` — a
+  `RuntimeError` unmapped in `EXIT_CODE_MAP`: exit 1 "unexpected", with a remediation
+  about headless Chrome. `_mint_recaptcha_token` now runs the same one-line
+  `raise_if_migrated` guard the transport uses, so the distinct, non-retryable exit
+  36 and its migration remediation come back within seconds, before any submit.
+  Reproduced and re-verified on a moved maintainer account at zero credits (exit 1 →
+  exit 36); the new
   `tests/e2e/test_migrated_host_e2e.py::test_e2e_image_on_a_moved_account_exits_36_not_recaptcha`
-  (`e2e_auth`, $0) is the regression. Shape 1 of the report — a labs logged-out landing
-  page after a cookie-fallback login — is #644 and is unchanged here.
+  (`e2e_auth`, $0) is the regression.
 - **The migrated model picker could bind a tier the user did not ask for.** The port
   matched menu entries by case-insensitive *substring* and took `.first`, so on an
   account whose menu carries a lower-priority sibling, `--model veo-lite` also matched

@@ -2383,13 +2383,12 @@ class FlowApiClient:
         """
         page = await self._checkout_page()
         try:
-            # #673: this runs BEFORE the UI transport and therefore before every
-            # migration guard it carries. On a moved account the pool page is the
-            # flow.google.com project grid (the bootstrap goto's client-side
-            # handoff), which loads no recaptcha/enterprise.js — so without this
-            # check the mint died as a bare RecaptchaError (exit 1, "unexpected")
-            # instead of the distinct exit 36. Same one-line guard the transport
-            # uses at every point it is about to spend time.
+            # #673: this runs BEFORE the UI transport, so none of its migration
+            # guards can fire first. On a moved account the pool page is the
+            # flow.google.com grid (client-side handoff) with no
+            # recaptcha/enterprise.js — bail to exit 36 here instead of a bare
+            # RecaptchaError. (/project/<id> on that host does carry the script,
+            # but no path that mints is ported there yet.)
             raise_if_migrated(page, at="mint_recaptcha_token")
             # Patchright evaluates in an isolated world by default, where the
             # page's main-world ``grecaptcha`` global is undefined; the resolver

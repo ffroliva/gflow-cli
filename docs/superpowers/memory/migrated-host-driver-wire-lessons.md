@@ -63,6 +63,17 @@ cost a real run to learn; each is now a unit test in `tests/api/transports/`.
   (`//button[.//mat-icon[normalize-space()='add']][not(ancestor::flow-prompt-box)]`) — the
   prompt box carries its own `add` icons and CSS cannot exclude an ancestor.
 
+**The reCAPTCHA mint sits one layer ABOVE the transport (#673, PR #678).**
+`FlowApiClient._mint_recaptcha_token` mints on the pool's bootstrap page before
+`transport.generate_images` / upscale / extend ever run, so transport-level
+`raise_if_migrated` guards never cover it. On a moved account that page is the
+`flow.google.com` grid (client-side handoff), which loads no `recaptcha/enterprise.js`,
+so `discover_site_key` raised `RecaptchaError` — a `RuntimeError` unmapped in
+`EXIT_CODE_MAP` — as exit 1 "unexpected" instead of exit 36. The guard now runs at the
+mint too (`client.py`, `at="mint_recaptcha_token"`); `git grep raise_if_migrated` is
+the current list of sites. Reviewing anything that adds a pre-transport step: ask
+"which page is the pool holding at that moment on a moved account?"
+
 Related: [[flow-recon-must-run-on-denon82-ffroliva-migrated]],
 [[flow-google-com-batchexecute-headless-proven]], [[predict-2026-09-04-migrated-host-driver]],
 [[credit-free-route-abort-verification]].
