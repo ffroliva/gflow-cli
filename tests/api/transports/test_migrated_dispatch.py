@@ -222,10 +222,85 @@ async def _run(
 
 
 async def test_run_video_rejects_modes_not_yet_ported_with_exit_36() -> None:
-    with pytest.raises(FlowHostMigratedError, match="i2v"):
-        await _run(_req(mode=Mode.I2V, start_image_ref_name="asset"))
+    with pytest.raises(FlowHostMigratedError, match="reference-to-video"):
+        await _run(_req(mode=Mode.R2V, ref_names=("asset",)))
 
 
 async def test_run_video_needs_a_project_on_the_migrated_host() -> None:
     with pytest.raises(ConfigurationError, match="--project"):
         await _run(_req(), url="https://flow.google.com/", project_id=None)
+
+
+# --- i2v (slice 1: a local start frame) ---------------------------------------
+
+
+def _png(tmp_path: Path, name: str = "hero.png") -> Path:
+    path = tmp_path / name
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 24)
+    return path
+
+
+_UUID = "33333333-3333-4333-8333-333333333333"
+
+
+def test_migrated_can_serve_takes_i2v_only_with_a_local_start_frame(tmp_path: Path) -> None:
+    from gflow_cli.api.transports.migrated_composer import migrated_can_serve
+    from gflow_cli.api.video import VideoModel
+
+    png = _png(tmp_path)
+    assert migrated_can_serve(_req(mode=Mode.I2V, start_image=png), "p1")
+    assert migrated_can_serve(
+        _req(mode=Mode.I2V, start_image=png, model=VideoModel.VEO_3_1_LITE), "p1"
+    )
+    assert not migrated_can_serve(_req(mode=Mode.I2V, start_image=png), None)
+    assert not migrated_can_serve(_req(mode=Mode.I2V, start_image=png, end_image=png), "p1")
+    assert not migrated_can_serve(_req(mode=Mode.I2V, start_image_ref_id=_UUID), "p1")
+    assert not migrated_can_serve(_req(mode=Mode.I2V, start_image_ref_name="hero"), "p1")
+    assert not migrated_can_serve(
+        _req(mode=Mode.I2V, start_image=png, model=VideoModel.VEO_3_1_LITE_LOWER_PRIORITY), "p1"
+    )
+
+
+async def test_i2v_with_a_local_start_frame_is_served_by_the_migrated_host(
+    harness: dict[str, Any], tmp_path: Path
+) -> None:
+    await harness["transport"].generate_video(
+        request=_req(mode=Mode.I2V, start_image=_png(tmp_path)), project_id="p1"
+    )
+    assert "entered" not in harness  # the composer navigates directly
+    assert len(harness["run_video"]) == 1
+
+
+async def test_i2v_with_an_end_frame_keeps_the_labs_driver_on_an_unmoved_account(
+    harness: dict[str, Any], tmp_path: Path
+) -> None:
+    png = _png(tmp_path)
+    with pytest.raises(_LabsDriverTouchedError):
+        await harness["transport"].generate_video(
+            request=_req(mode=Mode.I2V, start_image=png, end_image=png), project_id="p1"
+        )
+    assert harness["run_video"] == []
+
+
+async def test_i2v_by_uuid_keeps_the_labs_driver_on_an_unmoved_account(
+    harness: dict[str, Any],
+) -> None:
+    with pytest.raises(_LabsDriverTouchedError):
+        await harness["transport"].generate_video(
+            request=_req(mode=Mode.I2V, start_image_ref_id=_UUID), project_id="p1"
+        )
+    assert harness["run_video"] == []
+
+
+async def test_run_video_names_the_end_frame_in_the_exit_36_detail(tmp_path: Path) -> None:
+    png = _png(tmp_path)
+    with pytest.raises(FlowHostMigratedError, match="end frame") as ei:
+        await _run(_req(mode=Mode.I2V, start_image=png, end_image=png))
+    assert "--initial-frame" in str(ei.value)
+
+
+async def test_run_video_names_the_uuid_form_in_the_exit_36_detail() -> None:
+    with pytest.raises(FlowHostMigratedError, match="UUID"):
+        await _run(_req(mode=Mode.I2V, start_image_ref_id=_UUID))
+    with pytest.raises(FlowHostMigratedError, match="@Name"):
+        await _run(_req(mode=Mode.I2V, start_image_ref_name="hero"))
