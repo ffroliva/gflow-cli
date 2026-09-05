@@ -256,12 +256,6 @@ async def validate_image_file(image_path: Path) -> None:
     bytes — the header check is what stops a resolved path (a symlink, a typo)
     from laundering ``~/.ssh/id_rsa`` into a Flow project. Raises the same
     ``FileNotFoundError`` / ``ValueError`` the REST upload has always raised.
-
-    Shared, not copied: both upload surfaces call it — the REST
-    :meth:`FlowApiClient.upload_image` and the migrated composer's start-frame
-    attach (``migrated_composer.attach_start_frame``), which uploads through the
-    editor's own file chooser and so cannot reuse the request path. A second
-    copy of a security guard is a guard that drifts.
     """
     if not image_path.exists():
         raise FileNotFoundError(image_path)

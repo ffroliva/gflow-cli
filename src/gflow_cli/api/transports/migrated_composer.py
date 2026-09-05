@@ -354,11 +354,9 @@ class MigratedComposer:
                 await self._select(page, pane, axis="submode", lig=FRAMES_LIGATURE)
             model = request.model
             if model is None and request.mode is Mode.I2V:
-                # #125: for i2v, "no --model" is not "no opinion". The labs path binds
-                # I2V_DEFAULT_MODEL before submitting; without the same bind here the
-                # editor submits on whichever tier it last remembered — which on a
-                # queued MCP request (its payload carries model=None) can be a
-                # 100-credit tier for a run the caller expected to cost 10.
+                # #125: a queued MCP payload carries model=None, and without this bind
+                # the editor submits on whatever tier it last remembered — possibly a
+                # 100-credit one for a run the caller expected to cost 10.
                 model = I2V_DEFAULT_MODEL
                 log.info("migrated.i2v_model_defaulted", model=model.value, issue_ref="#125")
             if model is not None:
@@ -606,15 +604,11 @@ class MigratedComposer:
         the picker's default sort puts the newest first, and the submit-body check is
         what catches a wrong pick.
         """
-        # The same guard the REST upload runs, from the same function: exists,
-        # under the size cap, a real image by its header. Shared rather than
-        # copied — it is a security check, and two copies drift.
         from gflow_cli.api.client import validate_image_file  # noqa: PLC0415 - cycle
 
         await validate_image_file(image_path)
-        # No outer budget: every leg below has its own bounded wait, and an outer
-        # one that fires first would replace the stage-named failure (which frame,
-        # which rpc, what the picker listed) with a generic "attach timed out".
+        # No outer budget: each leg is bounded, and an outer one firing first would
+        # replace the stage-named failure with a generic "attach timed out".
         media_id = await self._upload_via_toolbar(page, project_id, image_path)
         await self._pick_frame_by_name(page, image_path.name, media_id)
         return media_id

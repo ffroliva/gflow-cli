@@ -80,7 +80,9 @@ found by `input[type=text]` inside the picker, never by its translated `aria-lab
   requested one.
 - **The attach stage had an outer 90 s budget smaller than the sum of the waits it
   wrapped**, so a slow upload plus one picker miss would have replaced the stage-named
-  failure with a generic timeout. Removed: every leg is bounded on its own.
+  failure with a generic timeout. Removed: every leg is bounded on its own. Worst case
+  is now ~3.5 min (a 60 s upload plus three 8 s picker searches and their pauses)
+  against the ~10 s measured here — a slow attach is not a hang.
 
 ## Not verified (recorded, not omitted)
 

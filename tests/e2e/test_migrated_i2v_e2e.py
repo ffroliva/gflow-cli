@@ -136,7 +136,9 @@ async def test_e2e_start_frame_uploads_and_binds_on_the_migrated_host(
         install_log_capture, "migrated.model_already_selected"
     )
     assert selected, "the model picker was never touched for an i2v run with no --model"
-    assert "Lite" in str(selected[0]["model"]), selected[0]
+    # `requested` is the enum value, not the menu label: the label is a product name
+    # this account renders, and the assertion must hold on a non-English profile too.
+    assert selected[0]["requested"] == "veo_3_1_lite", selected[0]
 
 
 @pytest.mark.asyncio

@@ -269,10 +269,8 @@ class FakeFileChooser:
             "project_first": [PROJ_UUID, MEDIA_UP, "CAE"],
         }
         status = 200 if reply in payloads else int(reply)
-        text = _frame("maseQ", payloads.get(str(reply), []))
-        self.page._fire_response(
-            FakeResponse(_batch_url("maseQ"), text if status == 200 else "", status)
-        )
+        text = _frame("maseQ", payloads[str(reply)]) if status == 200 else ""
+        self.page._fire_response(FakeResponse(_batch_url("maseQ"), text, status))
 
 
 class FakeChooserContext:
@@ -1477,6 +1475,24 @@ async def test_submit_body_without_the_bound_media_id_is_wire_format_error() -> 
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, expect_media_id=MEDIA_UP
         )
     assert EXIT_CODE_MAP[WireFormatError] == 7 and "eb1hJf" in ei.value.route
+
+
+async def test_submit_body_that_cannot_be_read_is_named_as_such() -> None:
+    """An unreadable body must not be reported as "a text-to-video key" — that is a
+    different fault with a different fix."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("eb1hJf", None)  # Playwright's post_data raised
+    page.scripted_responses = [
+        (_batch_url("eb1hJf"), _frame("eb1hJf", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    with pytest.raises(WireFormatError, match="could not be read"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, expect_media_id=MEDIA_UP
+        )
 
 
 async def test_submit_body_with_a_t2v_key_is_wire_format_error() -> None:
