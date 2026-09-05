@@ -278,7 +278,7 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 **Values:** `1` (default) | `0` to disable
 **Skipped automatically:** in CI (`CI` env var set) and for editable/local-source installs (PEP 610 `direct_url.json` detection) — "upgrade" advice is wrong there.
 **Upgrading:** [`gflow update`](USAGE.md#gflow-update) runs the installer that put gflow-cli here (`uv tool` / `pipx` / the venv's own `pip`).
-**Shipped in:** #479 (notice), `gflow update` + banner in the release after v0.67.0.
+**Shipped in:** #479 (notice); `gflow update` + banner in #668.
 
 ### `GFLOW_CLI_LEASE_WAIT_SECONDS`
 

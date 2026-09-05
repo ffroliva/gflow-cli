@@ -16,6 +16,7 @@ source, VCS, and direct-URL installs must not get index "upgrade" advice).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -39,6 +40,7 @@ log = structlog.get_logger(__name__)
 _CHECK_INTERVAL_SECONDS = 86_400.0
 _PYPI_JSON_URL = "https://pypi.org/pypi/gflow-cli/json"
 _RELEASE_URL_BASE = "https://github.com/ffroliva/gflow-cli/releases/tag/"
+_VERSION_CHARS = re.compile(r"[0-9A-Za-z.!+-]+")
 _FETCH_TIMEOUT_SECONDS = 3.0  # background notice poll — must never be felt
 _COMMAND_FETCH_TIMEOUT_SECONDS = 10.0  # explicit `gflow update` — the user is waiting for it
 
@@ -109,10 +111,16 @@ def fetch_latest(timeout: float) -> str | None:
 
         response = httpx.get(_PYPI_JSON_URL, timeout=timeout, follow_redirects=True)
         response.raise_for_status()
-        return str(response.json()["info"]["version"])
+        latest = str(response.json()["info"]["version"])
     except Exception as exc:  # noqa: BLE001 — best-effort by contract
         log.debug("update_check.fetch_failed", error=type(exc).__name__)
         return None
+    # Trust boundary: this string is cached and later rendered as Rich markup
+    # and interpolated into a URL. PEP 440 needs nothing outside this set.
+    if not _VERSION_CHARS.fullmatch(latest):
+        log.debug("update_check.fetch_rejected", reason="not a version string")
+        return None
+    return latest
 
 
 def _refresh_cache(cache_path: Path) -> None:
@@ -248,7 +256,7 @@ def run_update(*, check: bool) -> UpdateReport:
     inst = installer()
     if inst is None:
         raise ConfigurationError(
-            "gflow-cli here is not a PyPI install (editable, local-path, VCS or source run)",
+            "This gflow-cli is not a PyPI install (editable, local-path, VCS or source run)",
             remediation_hint=(
                 "Update it the way it was installed — `git pull` / reinstall from the "
                 "checkout. `gflow update` only manages index installs (uv tool / pipx / pip)."
@@ -278,6 +286,16 @@ def run_update(*, check: bool) -> UpdateReport:
             f"`{inst.command[0]}` is not on PATH, so gflow cannot run `{shown}` for you",
             remediation_hint=f"Run `{shown}` from a shell where `{inst.command[0]}` is available.",
         )
+    if inst.name == "pip" and importlib.util.find_spec("pip") is None:
+        # A `uv venv` ships no pip module: `python -m pip` would fail and the
+        # remediation would then recommend the same broken command.
+        raise ConfigurationError(
+            "This venv has no `pip` module, so gflow cannot upgrade itself here",
+            remediation_hint=(
+                f"Run `uv pip install --upgrade gflow-cli --python {sys.executable}` "
+                "(or reinstall the way you installed it)."
+            ),
+        )
     playwright_before = _version_in_venv("playwright")
     returncode = _run_command(inst.command)
     # The venv is the truth, not the manager's exit code: on Windows `uv tool
@@ -287,7 +305,13 @@ def run_update(*, check: bool) -> UpdateReport:
     # stale launcher keeps working: it only points at the venv's python.
     after = _version_in_venv("gflow-cli")
     log.info("update.command_finished", installer=inst.name, returncode=returncode, after=after)
-    if after is None or after == __version__:
+    if after is None:
+        raise ConfigurationError(
+            f"`{shown}` exited {returncode}, and the installed version could not be re-read "
+            "afterwards",
+            remediation_hint="Run `gflow --version` to see what is installed now.",
+        )
+    if after == __version__:
         if returncode == 0 and available is None:
             return report  # PyPI was unreachable and the manager found nothing newer
         raise ConfigurationError(

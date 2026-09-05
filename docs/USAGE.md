@@ -1323,7 +1323,7 @@ Ten checks run on every invocation:
 | `catalog.display_name_missing` | Assets with no recorded display name (the picker search key) | `gflow data sync --names` |
 | `catalog.local_file_missing` | Cataloged local files that no longer exist on disk | `gflow data prune --dry-run` |
 | `catalog.sha256_null` | Local files with no recorded sha256 | `gflow data sync` |
-| `db.migration_drift` | Schema does not match the packaged migrations, or was written by a newer gflow-cli | `gflow data sync` / `uv tool upgrade gflow-cli` |
+| `db.migration_drift` | Schema does not match the packaged migrations, or was written by a newer gflow-cli | `gflow data sync` / `gflow update` |
 | `db.wal_state` | Stale `-wal`/`-shm` sidecars next to a non-WAL database; `PRAGMA quick_check` anomalies | Close other gflow processes and re-run; restore from backup on quick_check failures |
 | `operations.stuck_started` | Operations in `started` for over 24h with no completion | `gflow data errors prune` |
 | `queue.stuck_processing` | Queue tasks claimed as `processing` for over 24h | `gflow data prune --dry-run` |
@@ -1372,26 +1372,28 @@ The installer is read off the install itself, never guessed from `PATH`:
 `gflow update` first asks PyPI for the latest version (this refreshes the
 once-a-day notice cache too). If you are already current it says so and runs
 nothing. Otherwise it runs the manager with its output shown, then re-reads the
-venv's Playwright version: when the upgrade moved it, a hint tells you to run
-`playwright install chromium` so the browser build matches. If PyPI is
+venv's Playwright version: when the upgrade moved it, a hint gives you the exact
+`<that venv's python> -m playwright install chromium` so the browser build matches. If PyPI is
 unreachable the manager still runs — it is the authority on what is installable.
 
 `--check` only reports installed vs latest plus the command that *would* run;
-`--json` returns `{installed, latest, update_available, installer, command,
-upgraded, notes}` (`latest` / `update_available` are `null` when PyPI could not
+`--json` returns `{status: "ok", installed, latest, update_available, installer,
+command, upgraded, notes}` (`latest` / `update_available` are `null` when PyPI could not
 be reached; after an upgrade `latest` is the version the venv actually reports;
 `notes` carries the Playwright hint and the Windows launcher caveat below).
 
-Refused with `ConfigurationError` (exit 11), nothing spawned:
+`ConfigurationError` (exit 11) cases:
 
-- an editable / local-path / VCS / source install (PEP 610 `direct_url.json`
-  present) — update those the way they were installed (`git pull`, reinstall
-  from the checkout);
-- `uv` / `pipx` detected but not on `PATH` — the message carries the exact
-  command to run yourself;
-- the manager ran but the venv still reports the old version afterwards — its
-  own output is above the error (a receipt pinned to one version makes
-  `uv tool upgrade` a silent no-op, for instance).
+- **before anything is spawned** — an editable / local-path / VCS / source
+  install (PEP 610 `direct_url.json` present): update those the way they were
+  installed (`git pull`, reinstall from the checkout); `uv` / `pipx` detected
+  but not on `PATH`, or a plain venv with no `pip` module (a `uv venv`): the
+  message carries the exact command to run yourself;
+- **after the manager ran** — the venv still reports the old version (a receipt
+  pinned to one version makes `uv tool upgrade` a silent no-op, for instance),
+  or the version could not be re-read at all. The manager's own output is above
+  the error. One carve-out: when PyPI was unreachable *and* the manager exited 0
+  *and* nothing changed, the manager simply found nothing newer — exit 0.
 
 The venv is the truth, not the manager's exit code: after the manager runs,
 `gflow update` re-reads the installed gflow-cli version from a fresh interpreter
@@ -1712,7 +1714,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 - A migration fails or the migration checksum drifts from what the installed version expects.
 - The database has a **newer schema** than the installed gflow-cli (i.e. you downgraded after a migration already ran).
 
-Recovery for the "newer schema" case: upgrade gflow-cli to a version that understands the schema (`uv tool upgrade gflow-cli`), OR point `GFLOW_CLI_DB_PATH` to a different database location (a fresh path creates a new empty database automatically).
+Recovery for the "newer schema" case: upgrade gflow-cli to a version that understands the schema (`gflow update`), OR point `GFLOW_CLI_DB_PATH` to a different database location (a fresh path creates a new empty database automatically).
 
 All errors emit a structured `error_raised` event (or `error_unhandled` for
 exit code 1) with stable fields — `error_class`, `problem` (RFC 9457 Problem

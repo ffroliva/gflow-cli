@@ -12,6 +12,7 @@ import click
 import structlog
 from pydantic import ValidationError as PydanticValidationError
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -37,22 +38,33 @@ from gflow_cli.update_check import UpdateNotice, maybe_notify_update
 console = Console()
 
 
+def _stderr_is_terminal() -> bool:
+    # The literal gate the docs promise ("one line when piped"). Rich's own
+    # `is_terminal` says True under FORCE_COLOR even when piped, which would
+    # put a 6-line panel into a `2>&1 | jq` stream.
+    return sys.stderr.isatty()
+
+
 def _print_update_notice(notice: UpdateNotice) -> None:
     """Claude-Code-style banner on stderr when it is a terminal; the one-line
     form when piped, so a log file or a `2>&1 | jq` stays one line per event.
     Rich substitutes ASCII box glyphs where the console codec cannot draw
     them (Windows cp1252), so this is safe without PYTHONUTF8."""
-    err = Console(stderr=True)
-    if not err.is_terminal:
+    if not _stderr_is_terminal():
         click.secho(notice.text, err=True, fg="yellow")
         return
+    # `latest` is a PyPI-fetched string; fetch_latest() admits only version
+    # characters, and escape() keeps a stray `[` from becoming Rich markup.
+    latest, installed = escape(notice.latest), escape(notice.installed)
     body = (
-        f"[bold]gflow-cli {notice.latest}[/bold] is available (installed {notice.installed}).\n"
+        f"[bold]gflow-cli {latest}[/bold] is available (installed {installed}).\n"
         "Run [bold cyan]gflow update[/bold cyan] to upgrade.\n"
-        f"[dim]Release notes: {notice.release_url}\n"
+        f"[dim]Release notes: {escape(notice.release_url)}\n"
         "Set GFLOW_CLI_UPDATE_CHECK=0 to silence this notice.[/dim]"
     )
-    err.print(Panel(body, title="Update available", border_style="yellow", expand=False))
+    Console(stderr=True).print(
+        Panel(body, title="Update available", border_style="yellow", expand=False)
+    )
 
 
 def _default_marker_glyph(encoding: str | None) -> str:

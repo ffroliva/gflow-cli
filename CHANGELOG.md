@@ -24,8 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copying the launcher — measured — and that is reported as an upgrade with a
   note, because the launcher only points at the venv's python and keeps
   working. Editable / local / VCS / source installs, a manager binary missing
-  from `PATH`, and a manager run that leaves the version unchanged all surface
-  as `ConfigurationError` (exit 11). Deliberately no MCP twin (a server must not replace its own code under a live
+  from `PATH`, a `uv venv` with no `pip` module, and a manager run that leaves
+  the version unchanged all surface as `ConfigurationError` (exit 11) — except
+  the one honest no-op: PyPI unreachable, manager exit 0, nothing changed, which
+  is exit 0. Deliberately no MCP twin (a server must not replace its own code under a live
   session) — recorded as a reasoned exemption in the parity test.
 
 ### Changed
@@ -36,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logs and `2>&1 | jq` pipelines see one line per event. Same cache, same
   gates (`GFLOW_CLI_UPDATE_CHECK=0`, CI, non-index installs). The notice text
   points at `gflow update` instead of listing three manager commands.
+- **CONTRIBUTING.md now routes contributors — and their coding agents — through the
+  same lifecycle AGENTS.md defines.** A phase → skill → artifact table (issue
+  assessment, predict, scenario/plan, check with the step 1b mirror sweep,
+  live-verify, council review, sonar, known-issues) says what a PR is expected to
+  have gone through and what it leaves behind for the reviewer; the PR template
+  gains a matching *Lifecycle* checklist; the quality-gate list is now identical to
+  AGENTS.md's (it had drifted to six of nine commands).
 
 ## [0.67.0] — 2026-09-05
 

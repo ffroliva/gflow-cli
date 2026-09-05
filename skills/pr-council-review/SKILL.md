@@ -234,14 +234,14 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 | D1 | `[[pr-must-verify-on-affected-surface]]`, `[[video-model-capability-matrix]]`, `[[flow-capabilities-are-cohort-dependent]]` |
 | D2 | `[[ruff-format-scope-is-src-tests]]`, `[[git-add-all-sweeps-scratch-files]]` |
 | D3 | `[[real-browser-auth-mandatory]]`, `[[release-signing]]` |
-| D4 | `[[force-color-breaks-cli-tests]]`, `[[pr-must-verify-on-affected-surface]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]` |
+| D4 | `[[force-color-breaks-cli-tests]]`, `[[pr-must-verify-on-affected-surface]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]`, `[[windows-running-launcher-blocks-uv-upgrade]]` |
 | D5 | `[[memory-is-working-dir-keyed]]`, `[[release-spec-plan-memory-consolidation]]`, `[[pr-council-review-stale-tree-reads]]` (this very bug, as the council should self-improve) |
 | D6 | `[[ui-selector-drift-error-exit-23]]`, `[[credit-free-route-abort-verification]]`, `[[flow-credits-videos-only]]`, `[[flow-recon-must-run-on-denon82-ffroliva-migrated]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]`, `[[migrated-host-driver-wire-lessons]]` |
 | D7 | `[[on-started-callback-recorder-safety]]`, `[[data-layer-test-pollution-trap]]`, `[[exit-code-16-data-store]]` |
 | D8 | (none mandatory) |
 | D9 | `[[prose-conflicts-hide-in-disjoint-files]]`, `[[doc-examples-are-untested-fixtures]]`, `[[readme-hybrid-router-pattern]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]` |
 | D10 | `[[real-browser-auth-mandatory]]` |
-| D11 | `[[release-back-merge-gap-recovery]]`, `[[wheel-build-sanity-gate]]`, `[[pypi-rejected-filename-reusable]]`, `[[draft-pr-merge-trap]]` |
+| D11 | `[[release-back-merge-gap-recovery]]`, `[[wheel-build-sanity-gate]]`, `[[pypi-rejected-filename-reusable]]`, `[[draft-pr-merge-trap]]`, `[[windows-running-launcher-blocks-uv-upgrade]]` |
 | D12 | `[[bdd-stubs-mirror-runtime-signatures]]` |
 | D13 | `[[wheel-build-sanity-gate]]` |
 | D14 | (none mandatory; apply the YAGNI rubric below) |

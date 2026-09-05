@@ -480,3 +480,43 @@ class TestFetchLatest:
 
         monkeypatch.setattr(httpx, "get", _fail)
         assert uc.fetch_latest(timeout=1.0) is None
+
+    @pytest.mark.parametrize("bad", ["99.0[bold red]x", "0.99.0\x1b]8;;http://evil", "", "1 2"])
+    def test_non_version_strings_are_rejected(
+        self, monkeypatch: pytest.MonkeyPatch, bad: str
+    ) -> None:
+        """The string is cached, then rendered as Rich markup and put in a URL."""
+
+        class _Resp:
+            def raise_for_status(self) -> None: ...
+
+            def json(self) -> dict[str, dict[str, str]]:
+                return {"info": {"version": bad}}
+
+        monkeypatch.setattr(httpx, "get", lambda *a, **k: _Resp())
+        assert uc.fetch_latest(timeout=1.0) is None
+
+
+class TestPipWithoutPipModule:
+    def test_uv_venv_without_pip_is_refused_before_spawning(
+        self, index_install: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.errors import ConfigurationError
+
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc.importlib.util, "find_spec", lambda name: None)
+        monkeypatch.setattr(uc, "_run_command", lambda cmd: pytest.fail("must not spawn"))
+        with pytest.raises(ConfigurationError, match="no `pip` module") as info:
+            uc.run_update(check=False)
+        # The remediation must not recommend the very `python -m pip` that failed.
+        assert "uv pip install --upgrade gflow-cli" in (info.value.remediation_hint or "")
+
+    def test_probe_failure_after_run_is_reported_as_unverified(
+        self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.errors import ConfigurationError
+
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_version_in_venv", lambda dist: None)
+        with pytest.raises(ConfigurationError, match="could not be re-read"):
+            uc.run_update(check=False)

@@ -41,6 +41,7 @@ async def _run(check: bool, as_json: bool) -> None:
     if as_json:
         json_output.emit(
             {
+                "status": "ok",
                 "installed": report.installed,
                 "latest": report.latest,
                 "update_available": report.update_available,
@@ -72,4 +73,6 @@ def _render(report: UpdateReport) -> list[str]:
     ]
     if report.update_available:
         lines.append("Run `gflow update` to upgrade.")
+    elif report.update_available is None:
+        lines.append("Run `gflow update` to let the installer decide.")
     return lines

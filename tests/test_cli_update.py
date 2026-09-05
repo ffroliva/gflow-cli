@@ -11,10 +11,10 @@ import json
 import pytest
 from click.testing import CliRunner
 
-from gflow_cli import __version__, cli_update
+from gflow_cli import __version__, cli, cli_update
 from gflow_cli.cli import main
 from gflow_cli.errors import ConfigurationError
-from gflow_cli.update_check import UpdateReport
+from gflow_cli.update_check import UpdateNotice, UpdateReport
 
 
 def _report(**overrides: object) -> UpdateReport:
@@ -52,6 +52,7 @@ def test_check_json(monkeypatch: pytest.MonkeyPatch) -> None:
     res = CliRunner().invoke(main, ["update", "--check", "--json"])
     assert res.exit_code == 0, res.output
     payload = json.loads(res.output)
+    assert payload["status"] == "ok"
     assert payload["installed"] == __version__
     assert payload["latest"] == "999.0.0"
     assert payload["update_available"] is True
@@ -81,6 +82,44 @@ def test_upgraded_text_with_notes(monkeypatch: pytest.MonkeyPatch) -> None:
     assert res.exit_code == 0, res.output
     assert "999.0.0" in res.output
     assert "Playwright changed: run X" in res.output
+
+
+def test_check_pypi_unreachable_names_next_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cli_update,
+        "run_update",
+        lambda *, check: _report(latest=None, update_available=None),
+    )
+    res = CliRunner().invoke(main, ["update", "--check"])
+    assert res.exit_code == 0, res.output
+    assert "PyPI unreachable" in res.output
+    assert "gflow update" in res.output
+
+
+def _notice() -> UpdateNotice:
+    return UpdateNotice(installed="0.1.0", latest="999.0.0")
+
+
+def test_banner_one_line_when_stderr_is_piped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "maybe_notify_update", _notice)
+    monkeypatch.setattr(cli, "_stderr_is_terminal", lambda: False)
+    res = CliRunner().invoke(main, ["models", "--json"])
+    assert res.exit_code == 0, res.output
+    json.loads(res.stdout)  # stdout stays a single JSON document
+    assert res.stderr.count("\n") == 1
+    assert "999.0.0" in res.stderr
+    assert "gflow update" in res.stderr
+
+
+def test_banner_panel_when_stderr_is_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "maybe_notify_update", _notice)
+    monkeypatch.setattr(cli, "_stderr_is_terminal", lambda: True)
+    res = CliRunner().invoke(main, ["models", "--json"])
+    assert res.exit_code == 0, res.output
+    json.loads(res.stdout)
+    assert "Update available" in res.stderr
+    assert "gflow-cli 999.0.0" in res.stderr
+    assert "releases/tag/v999.0.0" in res.stderr
 
 
 def test_source_install_exits_11(monkeypatch: pytest.MonkeyPatch) -> None:
