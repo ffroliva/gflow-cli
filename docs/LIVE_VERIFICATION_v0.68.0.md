@@ -73,6 +73,32 @@ working, and the next update from another shell refreshes it.
   both branches (`tests/test_cli_update.py`). A real interactive-terminal screenshot was
   **not** taken this cycle.
 
+## #670 — migrated submit-enable race (PR #672, @ChandraLiuswanto), verified on the flagged maintainer account
+
+Folded into v0.68.0 from develop after the release branch was cut. The fix changes a real
+generation path (`migrated_composer.submit_and_observe` now polls `is_enabled()` for up to
+5 s after `insert_text`), so it was run for real on this machine at PR head `e3c3220`
+(0.67.0 + the PR diff, built in a detached worktree), one veo-lite clip:
+
+| # | Command | Profile / cohort | Result |
+|---|---|---|---|
+| 1 | `gflow video t2v "a paper crane unfolding on a wooden desk, soft morning light" --model veo-lite --aspect 16:9 --project c5550ed7-… --json` | ffroliva (flagged, en-GB), route `migrated` under `auto` | **exit 0, 60 s wall**, `MEDIA_GENERATION_STATUS_SUCCESSFUL` |
+
+Five-layer ledger: one new mp4 (`44f890db-….mp4`); `ftyp` at offset 4; **1,578,650 B** =
+the size the `jwpduf` / `as29s` records reported, ffprobe `h264 1280x720 8.000 s`; structlog
+`migrated.dispatch → navigate → editor_ready → settings_applied → prompt_typed (17:51:15.810)
+→ submit_clicked (17:51:16.165) → submit_observed (YhhmEf) → status ×7 → status 3 (bytes) →
+as29s → download`, no `error_raised`; the media id and workflow id are in the run's
+`result.json`. `prompt_typed → submit_clicked` = **355 ms**: the new poll ran through at least
+one disabled read. On stock 0.67.0 this account submitted at ~200 ms and never hit the race,
+which is why the v0.67.0 ledger was green while the reporter's account failed every run. A
+first attempt with `--duration 8` on veo-lite aborted pre-submit with exit 11 at $0 — this
+cohort renders no duration row for veo-lite (the v0.67.0 ledger's #650 finding, unrelated).
+
+NOT verified: the reporter's account (only they can run it; their patched-wheel run in the
+PR body covers it), an unmigrated account (none remains on this machine), and the MCP queued
+path (no payload key changed; it reaches the identical `submit_and_observe`).
+
 ## Pre-tag gates (filled before signing)
 
 | Gate | Result |
@@ -87,8 +113,17 @@ working, and the next update from another shell refreshes it.
 
 ## Post-tag evidence
 
-To be appended after the tag push: release workflow run URL, `gh release view v0.68.0`,
-PyPI page, and one `pip index versions gflow-cli` read showing 0.68.0.
+| Item | Evidence |
+|---|---|
+| Tag | `v0.68.0` on `16ed7e2` (release branch head after folding #672), SSH-signed, `git tag -v` → "Good git signature" |
+| Release workflow | https://github.com/ffroliva/gflow-cli/actions/runs/33984171793 — completed, success |
+| GitHub Release | https://github.com/ffroliva/gflow-cli/releases/tag/v0.68.0 — published 2026-09-05T18:29:12Z, not a prerelease, 5 assets |
+| PyPI | `pip index versions gflow-cli` → `gflow-cli (0.68.0)` |
+| Release PR | #674 `chore/release-v0.68.0 → main`, 16 checks passing at the tagged head (SonarCloud included) |
+
+Note for the next cycle: the tag was first created on 14f5742, then deleted locally and
+re-signed on 16ed7e2 after PR #672 landed on develop during the doc-review pass. Nothing
+had been pushed in between, so no published tag ever moved.
 
 ## NOT verified this cycle (recorded, not omitted)
 
