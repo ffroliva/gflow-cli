@@ -77,7 +77,9 @@ Model → refs, never refs → model. **Paid calls in the foreground, two beats 
 
 Before spend: prompt length; no ages; one face ref; words/second; text-free frame; the beat has motion for its whole length.
 
-After each clip: `ffprobe` duration; 1 fps frames viewed by eye (faces match canon, wardrobe token, geometry matches the setup, no text, no third person, no border); local speech-to-text transcript (faster-whisper `base.en`) word-hit ≥ 70 %; mean volume > −40 dB; opening clip motion (ffmpeg `tblend` median > 1.0).
+After each clip: `ffprobe` duration; 1 fps frames viewed by eye (faces match canon, wardrobe token, geometry matches the setup, no text, no third person, no border); local speech-to-text transcript (faster-whisper `base.en`) word-hit ≥ 70 %; mean volume > −40 dB.
+
+Fluidity for dialogue shots: the whole-frame `tblend` median (calibrated on moving scenes, > 1.0) is blind to a locked-off talking head and reads 0.3–0.9 on perfectly live clips. Gate instead on **speech onset ≤ 1.6 s** (`silencedetect`) and **face-region motion**: crop the centre-top 60 % × 75 %, `tblend` median, 10th percentile > 0.15 (a held frame sits near 0). Inspect the two lowest clips at 2 fps by eye before re-rolling anything.
 
 Fail → delete the clip, change ONE thing, re-check. Second identical failure → restage or delete the beat.
 
