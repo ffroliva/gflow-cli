@@ -32,16 +32,22 @@ namespace (`pinhole_about_flow` → "About Flow"), not a migration codename.
 **How to apply** (rewritten 2026-09-05 after #679 — the original bullets predate gflow
 having a migrated driver at all, and read as "the new host cannot be driven"):
 - Live DOM recon and live-verification run on **either** account, through the migrated
-  composer. Prefer `denon82` (pt-BR) when the question is locale invariance — localized
+  composer — that is *browser-driven* work; the REST bullet below is where a moved
+  account still fails. Prefer `denon82` (pt-BR) when the question is locale invariance — localized
   text with ligature-keyed selectors is the point of that account (see
   [[flow-locale-leak-icon-ligatures]]); prefer `ffroliva` (en-GB) for a first capture.
   Verify a generation path on **both** before calling it done.
 - A spike on either account only exits 36 for a form the composer has not ported
   (today: an end frame, a frame by media UUID or `@Name`, r2v, image, characters,
   scenes, extend). For a ported form, exit 36 is a real regression, not the environment.
-- Both accounts are fine for REST-path work (`gflow project list` etc.) — the migration
-  changed the *frontend*, not the aisandbox REST surface. See
-  [[rest-path-capability-matrix]].
+- Both accounts are fine for **mint-free** REST-path work (`gflow project list`,
+  `gflow data …`) — the migration changed the *frontend*, not the aisandbox REST
+  surface. See [[rest-path-capability-matrix]]. A REST path that **mints a reCAPTCHA
+  token first** (image t2i/i2i, upscale, extend) is *not* fine on a moved account: the
+  mint runs on the pool's bootstrap page, which is the `flow.google.com` grid there, so
+  it fails before any transport guard can classify it — surfacing as a bare exit-1
+  `RecaptchaError` through v0.68.0 (#673). Measured by the session that fixed it; PR
+  #678 turns that into the exit 36 it should always have been.
 - **Labs-side** behaviour is what is now unreachable: no maintainer account is left on
   `labs.google`, so a labs-only claim is cohort-external — verify via a contributor or
   record it NOT verified.
