@@ -6,37 +6,35 @@ import json
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
+import structlog
 
 from gflow_cli.api import routes
 from gflow_cli.api.dto import CreditsInfo
-from gflow_cli.auth.cookies import get_chrome_cookie_snapshot
-from gflow_cli.auth.verification import SESSION_API_URL
+from gflow_cli.auth.verification import fetch_flow_session_httpx
 from gflow_cli.errors import AisandboxAuthError, AuthExpiredError, FlowApiError, WireFormatError
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-_SESSION_HEADERS = {
-    "accept": "*/*",
-    "cache-control": "no-cache",
-    "pragma": "no-cache",
-    "referer": "https://labs.google/fx/tools/flow",
-}
+log = structlog.get_logger(__name__)
+_CREDITS_RESPONSE_KEYS = frozenset(
+    {"credits", "subscriptionCredits", "userPaygateTier", "serviceTier", "sku"}
+)
 
 
-def _json_object(response: httpx.Response, *, route: str) -> dict[str, Any]:
+def _json_object(body: str, *, status: int, route: str) -> dict[str, Any]:
     try:
-        value: Any = response.json()
+        value: Any = json.loads(body)
     except json.JSONDecodeError as exc:
         raise WireFormatError(
             detail="non-JSON response",
-            status=response.status_code,
+            status=status,
             route=route,
         ) from exc
     if not isinstance(value, dict):
         raise WireFormatError(
             detail="unexpected response shape: expected an object",
-            status=response.status_code,
+            status=status,
             route=route,
         )
     return cast("dict[str, Any]", value)
@@ -50,33 +48,30 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
     is returned, persisted, or logged.
     """
 
-    snapshot = await get_chrome_cookie_snapshot(profile_dir)
-    async with httpx.AsyncClient(
-        cookies=snapshot.httpx_cookies,
-        follow_redirects=False,
-        timeout=15.0,
-    ) as client:
-        session = await client.get(SESSION_API_URL, headers=_SESSION_HEADERS)
-        if session.status_code in {401, 403}:
-            raise AuthExpiredError(
-                detail=f"HTTP {session.status_code}",
-                status=session.status_code,
-                route="auth/session",
-            )
-        if session.status_code != 200:
-            raise FlowApiError(
-                detail=f"HTTP {session.status_code}",
-                status=session.status_code,
-                route="auth/session",
-            )
-        token = _json_object(session, route="auth/session").get("access_token")
-        if not isinstance(token, str) or not token:
-            raise AisandboxAuthError(
-                detail="no access_token in Flow session",
-                status=session.status_code,
-                route="auth/session",
-            )
+    session_status, session_body, _ = await fetch_flow_session_httpx(profile_dir)
+    if session_status in {401, 403}:
+        raise AuthExpiredError(
+            detail=f"HTTP {session_status}",
+            status=session_status,
+            route="auth/session",
+        )
+    if session_status != 200:
+        raise FlowApiError(
+            detail=f"HTTP {session_status}",
+            status=session_status,
+            route="auth/session",
+        )
+    token = _json_object(session_body, status=session_status, route="auth/session").get(
+        "access_token"
+    )
+    if not isinstance(token, str) or not token:
+        raise AisandboxAuthError(
+            detail="no access_token in Flow session",
+            status=session_status,
+            route="auth/session",
+        )
 
+    async with httpx.AsyncClient(follow_redirects=False, timeout=15.0) as client:
         response = await client.get(
             routes.CREDITS,
             headers={
@@ -99,6 +94,23 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
                 route="credits",
             )
         try:
-            return CreditsInfo.from_response(_json_object(response, route="credits"))
+            payload = _json_object(
+                response.text,
+                status=response.status_code,
+                route="credits",
+            )
+            info = CreditsInfo.from_response(payload)
         except ValueError as exc:
-            raise WireFormatError(detail=str(exc), route="credits") from exc
+            raise WireFormatError(
+                detail=str(exc),
+                status=response.status_code,
+                route="credits",
+            ) from exc
+        response_keys = sorted(_CREDITS_RESPONSE_KEYS.intersection(payload))
+        log.info(
+            "credits.http_fast_path_succeeded",
+            status_code=response.status_code,
+            response_keys=response_keys,
+            unknown_key_count=len(payload) - len(response_keys),
+        )
+        return info

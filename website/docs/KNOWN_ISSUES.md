@@ -719,7 +719,8 @@ A block that survives dismissal now aborts pre-submit with exit 23 (probe `overl
 Use `gflow credits user` for the selected profile or `gflow credits list` for all saved
 profiles. Both commands query Flow's current read-only credits endpoint with the saved browser
 session; `--json` provides a stable automation contract. The equivalent MCP surface is
-`gflow_get_credits`.
+`gflow_get_credits`. The reported balance funds Veo video generation; image generation consumes
+separate per-model daily quotas.
 
 ---
 

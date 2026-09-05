@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from gflow_cli.api.dto import CreditsInfo
+from gflow_cli.errors import AisandboxAuthError, SecurityError
 from gflow_cli.profile_store import ProfileMeta
 
 
@@ -115,3 +116,68 @@ async def test_browser_client_is_fallback_only(monkeypatch: pytest.MonkeyPatch) 
     result = await credits.inspect_profile(None)
 
     assert result["credits"] == 9
+
+
+async def test_security_error_never_falls_back_to_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.services import credits
+
+    async def fast(profile_dir: Path) -> CreditsInfo:
+        raise SecurityError("outside home")
+
+    monkeypatch.setattr(credits, "fetch_credits_http", fast)
+    monkeypatch.setattr(credits, "FlowApiClient", _FakeClient)
+    monkeypatch.setattr(credits.profile_store, "resolve_profile", lambda value: "one")
+    monkeypatch.setattr(credits.profile_store, "list_profiles", lambda: [_meta("one")])
+
+    with pytest.raises(SecurityError):
+        await credits.inspect_profile(None)
+
+    monkeypatch.setattr(credits.profile_store, "list_profiles", lambda: [_meta("one")])
+    with pytest.raises(SecurityError):
+        await credits.inspect_all_profiles()
+
+
+async def test_fallback_log_includes_safe_gflow_error_metadata_only(
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture,
+) -> None:
+    from gflow_cli.services import credits
+
+    async def fast(profile_dir: Path) -> CreditsInfo:
+        raise AisandboxAuthError(
+            detail="secret response body",
+            status=403,
+            route="credits",
+        )
+
+    _FakeClient.responses = {"one": CreditsInfo(credits=9)}
+    monkeypatch.setattr(credits, "fetch_credits_http", fast)
+    monkeypatch.setattr(credits, "FlowApiClient", _FakeClient)
+    monkeypatch.setattr(credits.profile_store, "resolve_profile", lambda value: "one")
+    monkeypatch.setattr(credits.profile_store, "list_profiles", lambda: [_meta("one")])
+
+    result = await credits.inspect_profile(None)
+
+    assert result["credits"] == 9
+    event = install_log_capture.entries[0]
+    assert event["event"] == "credits.http_fallback_to_browser"
+    assert event["error_type"] == "AisandboxAuthError"
+    assert event["status_code"] == 403
+    assert event["route"] == "credits"
+    assert "secret response body" not in str(event)
+
+
+def test_failure_uses_gflow_error_title_and_all_dto_fields() -> None:
+    from dataclasses import fields
+
+    from gflow_cli.services import credits
+
+    error = AisandboxAuthError(status=401, route="credits")
+
+    result = credits._failure(_meta("one"), error)
+
+    assert result["error"] == error.title
+    assert result["error_type"] == "AisandboxAuthError"
+    assert all(result[field.name] is None for field in fields(CreditsInfo))

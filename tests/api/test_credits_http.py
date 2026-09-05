@@ -1,90 +1,194 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 from gflow_cli.api import credits as credits_api
+from gflow_cli.auth import verification
 from gflow_cli.auth.cookies import ChromeCookieSnapshot
-from gflow_cli.errors import AisandboxAuthError, WireFormatError
+from gflow_cli.errors import (
+    AisandboxAuthError,
+    AuthExpiredError,
+    FlowApiError,
+    SecurityError,
+    WireFormatError,
+)
 
 
-class _FakeClient:
-    calls: list[tuple[str, dict[str, str] | None]] = []
-
-    def __init__(self, **kwargs: object) -> None:
-        assert kwargs["cookies"] == {"session": "cookie"}
-
-    async def __aenter__(self) -> _FakeClient:
-        return self
-
-    async def __aexit__(self, *exc: object) -> None:
-        return None
-
-    async def get(self, url: str, *, headers: dict[str, str]) -> httpx.Response:
-        self.calls.append((url, headers))
-        request = httpx.Request("GET", url)
-        if url == credits_api.SESSION_API_URL:
-            return httpx.Response(200, json={"access_token": "ya29.test"}, request=request)
-        return httpx.Response(
-            200,
-            json={"credits": 12, "subscriptionCredits": 20, "sku": "G1_PRO"},
-            request=request,
-        )
+@pytest.fixture
+def profile_dir(tmp_path: Path) -> Path:
+    profile = tmp_path / "gflow_home" / "profile_demo"
+    profile.mkdir(parents=True)
+    return profile
 
 
-async def test_http_fast_path_uses_cookie_session_then_bearer(monkeypatch) -> None:
-    async def cookies(profile_dir: Path) -> ChromeCookieSnapshot:
-        assert profile_dir == Path("/profile")
-        return ChromeCookieSnapshot(httpx_cookies={"session": "cookie"}, google_session=True)
+def _install_http(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    session_responses: list[tuple[int, object]],
+    credits_response: tuple[int, object] = (
+        200,
+        {"credits": 12, "subscriptionCredits": 20, "sku": "G1_PRO"},
+    ),
+) -> tuple[list[httpx.Request], list[dict[str, object]]]:
+    requests: list[httpx.Request] = []
+    client_kwargs: list[dict[str, object]] = []
+    real_async_client = httpx.AsyncClient
 
-    _FakeClient.calls = []
-    monkeypatch.setattr(credits_api, "get_chrome_cookie_snapshot", cookies)
-    monkeypatch.setattr(credits_api.httpx, "AsyncClient", _FakeClient)
+    def response(request: httpx.Request, status: int, payload: object) -> httpx.Response:
+        if isinstance(payload, str):
+            return httpx.Response(status, text=payload, request=request)
+        return httpx.Response(status, json=payload, request=request)
 
-    result = await credits_api.fetch_credits_http(Path("/profile"))
+    remaining_sessions = list(session_responses)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url == httpx.URL(verification.SESSION_API_URL):
+            status, payload = remaining_sessions.pop(0)
+        else:
+            status, payload = credits_response
+        return response(request, status, payload)
+
+    def client_factory(**kwargs: object) -> httpx.AsyncClient:
+        client_kwargs.append(dict(kwargs))
+        return real_async_client(transport=httpx.MockTransport(handler), **kwargs)
+
+    snapshot = ChromeCookieSnapshot(
+        httpx_cookies={"SIDCC": "session-secret"},
+        google_session=True,
+    )
+    monkeypatch.setattr(
+        verification,
+        "get_chrome_cookie_snapshot",
+        AsyncMock(return_value=snapshot),
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", client_factory)
+    return requests, client_kwargs
+
+
+async def test_http_fast_path_scopes_cookies_to_session_host(
+    monkeypatch: pytest.MonkeyPatch,
+    profile_dir: Path,
+    install_log_capture,
+) -> None:
+    requests, client_kwargs = _install_http(
+        monkeypatch,
+        session_responses=[(200, {"access_token": "ya29.test"})],
+    )
+
+    result = await credits_api.fetch_credits_http(profile_dir)
 
     assert result.credits == 12
-    assert [call[0] for call in _FakeClient.calls] == [
-        credits_api.SESSION_API_URL,
-        credits_api.routes.CREDITS,
-    ]
-    session_headers = _FakeClient.calls[0][1]
-    credits_headers = _FakeClient.calls[1][1]
-    assert session_headers is not None and "authorization" not in session_headers
-    assert credits_headers is not None and credits_headers["authorization"] == "Bearer ya29.test"
-    assert "key=" not in _FakeClient.calls[1][0]
+    assert len(client_kwargs) == 2
+    assert client_kwargs[0]["cookies"] == {"SIDCC": "session-secret"}
+    assert "cookies" not in client_kwargs[1]
+    assert client_kwargs[0]["follow_redirects"] is False
+    assert client_kwargs[1]["follow_redirects"] is False
+    assert requests[0].headers["cookie"] == "SIDCC=session-secret"
+    assert "authorization" not in requests[0].headers
+    assert "cookie" not in requests[1].headers
+    assert requests[1].headers["authorization"] == "Bearer ya29.test"
+    assert "key=" not in str(requests[1].url)
+    event = install_log_capture.entries[0]
+    assert event["event"] == "credits.http_fast_path_succeeded"
+    assert event["status_code"] == 200
+    assert event["response_keys"] == ["credits", "sku", "subscriptionCredits"]
+    assert event["unknown_key_count"] == 0
+    assert "ya29.test" not in str(event)
+    assert "session-secret" not in str(event)
 
 
-async def test_http_fast_path_rejects_session_without_token(monkeypatch) -> None:
-    class MissingTokenClient(_FakeClient):
-        async def get(self, url: str, *, headers: dict[str, str]) -> httpx.Response:
-            request = httpx.Request("GET", url)
-            return httpx.Response(200, json={"user": {}}, request=request)
+async def test_http_fast_path_reuses_session_retry_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    profile_dir: Path,
+) -> None:
+    requests, _ = _install_http(
+        monkeypatch,
+        session_responses=[
+            (503, {}),
+            (200, {"access_token": "ya29.test"}),
+        ],
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr(verification.asyncio, "sleep", sleep)
 
-    async def cookies(profile_dir: Path) -> ChromeCookieSnapshot:
-        return ChromeCookieSnapshot(httpx_cookies={"session": "cookie"}, google_session=True)
+    result = await credits_api.fetch_credits_http(profile_dir)
 
-    monkeypatch.setattr(credits_api, "get_chrome_cookie_snapshot", cookies)
-    monkeypatch.setattr(credits_api.httpx, "AsyncClient", MissingTokenClient)
-
-    with pytest.raises(AisandboxAuthError, match="no access_token"):
-        await credits_api.fetch_credits_http(Path("/profile"))
+    assert result.credits == 12
+    assert [request.url.host for request in requests].count("labs.google") == 2
+    sleep.assert_awaited_once_with(1.0)
 
 
-async def test_http_fast_path_rejects_malformed_credits(monkeypatch) -> None:
-    class MalformedCreditsClient(_FakeClient):
-        async def get(self, url: str, *, headers: dict[str, str]) -> httpx.Response:
-            request = httpx.Request("GET", url)
-            payload = {"access_token": "ya29.test"} if url == credits_api.SESSION_API_URL else {}
-            return httpx.Response(200, json=payload, request=request)
+@pytest.mark.parametrize(
+    ("session_status", "session_payload", "expected_type"),
+    [
+        (401, {}, AuthExpiredError),
+        (403, {}, AuthExpiredError),
+        (500, {}, FlowApiError),
+        (200, "not-json", WireFormatError),
+        (200, [], WireFormatError),
+        (200, {"user": {}}, AisandboxAuthError),
+    ],
+)
+async def test_http_fast_path_rejects_bad_session_responses(
+    monkeypatch: pytest.MonkeyPatch,
+    profile_dir: Path,
+    session_status: int,
+    session_payload: object,
+    expected_type: type[Exception],
+) -> None:
+    _install_http(
+        monkeypatch,
+        session_responses=[(session_status, session_payload)],
+    )
 
-    async def cookies(profile_dir: Path) -> ChromeCookieSnapshot:
-        return ChromeCookieSnapshot(httpx_cookies={"session": "cookie"}, google_session=True)
+    with pytest.raises(expected_type) as caught:
+        await credits_api.fetch_credits_http(profile_dir)
 
-    monkeypatch.setattr(credits_api, "get_chrome_cookie_snapshot", cookies)
-    monkeypatch.setattr(credits_api.httpx, "AsyncClient", MalformedCreditsClient)
+    assert type(caught.value) is expected_type
 
-    with pytest.raises(WireFormatError, match="credits"):
-        await credits_api.fetch_credits_http(Path("/profile"))
+
+@pytest.mark.parametrize(
+    ("credits_status", "credits_payload", "expected_type"),
+    [
+        (401, {}, AisandboxAuthError),
+        (403, {}, AisandboxAuthError),
+        (500, {}, FlowApiError),
+        (200, "not-json", WireFormatError),
+        (200, [], WireFormatError),
+        (200, {}, WireFormatError),
+    ],
+)
+async def test_http_fast_path_rejects_bad_credits_responses(
+    monkeypatch: pytest.MonkeyPatch,
+    profile_dir: Path,
+    credits_status: int,
+    credits_payload: object,
+    expected_type: type[Exception],
+) -> None:
+    _install_http(
+        monkeypatch,
+        session_responses=[(200, {"access_token": "ya29.test"})],
+        credits_response=(credits_status, credits_payload),
+    )
+
+    with pytest.raises(expected_type) as caught:
+        await credits_api.fetch_credits_http(profile_dir)
+
+    assert type(caught.value) is expected_type
+
+
+async def test_http_fast_path_rejects_profile_outside_home_before_cookie_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cookie_snapshot = AsyncMock()
+    monkeypatch.setattr(verification, "get_chrome_cookie_snapshot", cookie_snapshot)
+
+    with pytest.raises(SecurityError):
+        await credits_api.fetch_credits_http(Path("/outside-gflow-home"))
+
+    cookie_snapshot.assert_not_awaited()

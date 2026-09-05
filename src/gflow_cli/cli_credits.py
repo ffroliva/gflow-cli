@@ -46,42 +46,32 @@ def _render_many(payload: dict[str, Any]) -> None:
 
 async def _show_one(profile: str | None, as_json: bool) -> None:
     payload = await inspect_profile(profile)
-    json_output.emit(payload) if as_json else _render_one(payload)
+    if as_json:
+        json_output.emit(payload)
+    else:
+        _render_one(payload)
 
 
 async def _show_all(as_json: bool) -> None:
     payload = await inspect_all_profiles()
-    json_output.emit(payload) if as_json else _render_many(payload)
+    if as_json:
+        json_output.emit(payload)
+    else:
+        _render_many(payload)
 
 
-@click.group(invoke_without_command=True)
-@click.option("--profile", default=None, help="Profile name.")
-@click.option("--all", "all_profiles", is_flag=True, help="Inspect every saved profile.")
-@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
-@click.pass_context
-def credits(ctx: click.Context, profile: str | None, all_profiles: bool, as_json: bool) -> None:
+@click.group()
+def credits() -> None:
     """Show current Google Flow credit balances."""
-
-    if ctx.invoked_subcommand is not None:
-        return
-    if all_profiles:
-        run_with_handlers(lambda: _show_all(as_json), cli_command="credits", as_json=as_json)
-        return
-    resolved = _resolve_profile(profile)
-    _make_provider_dir(resolved)
-    run_with_handlers(lambda: _show_one(resolved, as_json), cli_command="credits", as_json=as_json)
 
 
 @credits.command("user")
-@click.argument("profile_name", required=False)
-@click.option("--profile", "profile_option", default=None, help="Profile name.")
+@click.option("--profile", default=None, help="Profile name.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
-def user(profile_name: str | None, profile_option: str | None, as_json: bool) -> None:
+def user(profile: str | None, as_json: bool) -> None:
     """Show the credit balance for one profile."""
 
-    if profile_name and profile_option and profile_name != profile_option:
-        raise click.UsageError("PROFILE and --profile name different profiles")
-    selected = _resolve_profile(profile_option or profile_name)
+    selected = _resolve_profile(profile)
     _make_provider_dir(selected)
     run_with_handlers(
         lambda: _show_one(selected, as_json), cli_command="credits user", as_json=as_json

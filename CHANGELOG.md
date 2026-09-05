@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Read-only Flow balance inspection:** `gflow credits user`, `gflow credits list`, and the
+  matching `gflow_get_credits` MCP tool report current
+  balances and account tiers from saved profiles. Multi-profile inspection preserves partial
+  successes and emits stable JSON for automation. Saved cookies + ordinary HTTP are the primary
+  path, with browser-backed retrieval only as a fallback; cookies remain scoped to `labs.google`,
+  and no copied bearer token or browser API key is stored. The reported balance funds Veo video;
+  image generation uses separate per-model daily quotas.
+
 - **Image-to-video from a local start frame on the migrated `flow.google.com` host**
   ([#639](https://github.com/ffroliva/gflow-cli/issues/639), slice 1). `gflow video i2v
   --initial-frame <local file> --project <id>` now runs on the new host — on a moved
@@ -154,12 +162,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the one honest no-op: PyPI unreachable, manager exit 0, nothing changed, which
   is exit 0. Deliberately no MCP twin (a server must not replace its own code under a live
   session) — recorded as a reasoned exemption in the parity test.
-- **Read-only Flow balance inspection:** `gflow credits user`, `gflow credits list`, the bare
-  `gflow credits [--all]` form, and the matching `gflow_get_credits` MCP tool report current
-  balances and account tiers from saved profiles. Multi-profile inspection preserves partial
-  successes and emits stable JSON for automation. Saved cookies + ordinary HTTP are the primary
-  path, with browser-backed retrieval only as a fallback; no copied bearer token or browser API
-  key is stored.
 
 ### Changed
 

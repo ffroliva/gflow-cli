@@ -79,12 +79,12 @@ See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
 ## `gflow credits`
 
 Read the current Google Flow balance through an existing authenticated profile. This is a
-read-only request: it does not generate media or spend credits.
+read-only request: it does not generate media or spend credits. The displayed balance funds Veo
+video generation; image generation uses separate per-model daily quotas.
 
 ```text
-gflow credits user [PROFILE] [--profile NAME] [--json]
+gflow credits user [--profile NAME] [--json]
 gflow credits list [--json]
-gflow credits [--profile NAME] [--all] [--json]
 ```
 
 `credits user` applies the normal profile precedence chain. `credits list` inspects every saved
@@ -94,9 +94,11 @@ includes `authenticated`, `credits`, `subscription_credits`, `user_paygate_tier`
 and `sku`. Failed profiles have `authenticated: false`, a safe error name, and a null balance.
 
 The command first reads the saved Chrome cookies and uses ordinary HTTP requests (the equivalent
-of a `curl` session request followed by the credits request). A browser opens only when cookie
-decryption or the HTTP path cannot complete. The short-lived OAuth token remains in memory and is
-never printed or stored; no copied bearer token or browser API key is accepted.
+of a `curl` session request followed by the credits request). The cookie-bearing client is closed
+before a separate, Bearer-only client contacts the credits host, so `labs.google` cookies never
+cross that host boundary. A browser opens only when cookie decryption or the HTTP path cannot
+complete. The short-lived OAuth token remains in memory and is never printed or stored; no copied
+bearer token or browser API key is accepted.
 
 ## `gflow image upload`
 

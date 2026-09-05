@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from typing import Any
 
 import structlog
@@ -12,7 +12,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credits import fetch_credits_http
 from gflow_cli.api.dto import CreditsInfo
 from gflow_cli.config import get_settings
-from gflow_cli.errors import GFlowError
+from gflow_cli.errors import GFlowError, SecurityError
 
 log = structlog.get_logger(__name__)
 
@@ -44,13 +44,19 @@ def _success(meta: profile_store.ProfileMeta, info: CreditsInfo) -> dict[str, An
 async def _fetch(meta: profile_store.ProfileMeta) -> dict[str, Any]:
     try:
         return _success(meta, await fetch_credits_http(meta.profile_dir))
+    except SecurityError:
+        raise
     except Exception as exc:  # noqa: BLE001 — browser fallback is the recovery boundary
         # Log only the class and profile label. Exception messages can include
         # upstream response material and are intentionally excluded.
+        error_metadata: dict[str, object] = {}
+        if isinstance(exc, GFlowError):
+            error_metadata = {"status_code": exc.status, "route": exc.route}
         log.info(
             "credits.http_fallback_to_browser",
             profile=meta.name,
             error_type=type(exc).__name__,
+            **error_metadata,
         )
     async with FlowApiClient(
         profile_dir=meta.profile_dir,
@@ -79,11 +85,7 @@ def _failure(meta: profile_store.ProfileMeta, exc: BaseException) -> dict[str, A
         "is_default": meta.is_default,
         "email": meta.google_account,
         "authenticated": False,
-        "credits": None,
-        "subscription_credits": None,
-        "user_paygate_tier": None,
-        "service_tier": None,
-        "sku": None,
+        **{field.name: None for field in fields(CreditsInfo)},
         "error": error,
         "error_type": error_type,
     }
@@ -96,6 +98,8 @@ async def inspect_all_profiles() -> dict[str, Any]:
     for meta in profile_store.list_profiles():
         try:
             snapshots.append(await _fetch(meta))
+        except SecurityError:
+            raise
         except Exception as exc:  # noqa: BLE001 — preserve partial cross-profile results
             snapshots.append(_failure(meta, exc))
     successful = [item for item in snapshots if item["authenticated"]]
