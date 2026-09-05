@@ -45,6 +45,8 @@ Commands:
     list {projects,images,videos,profiles}  Browse the catalog.
     prune                       Remove stale local file entries.
 
+  credits   Inspect current Flow balances (user / list).
+
   models    Print the image/video model catalog (Rich table or --json).
 
   project   Manage Flow projects (create / rename / list).
@@ -63,7 +65,8 @@ Global flags:
 - `-v`, `--verbose` — log at DEBUG level.
 
 Machine-readable output: the generation commands (`image t2i` / `image i2i`,
-`video t2v` / `i2v` / `r2v`), `auth list`, and `gflow models` accept `--json` to
+`video t2v` / `i2v` / `r2v`), `auth list`, `credits user` / `credits list`, and
+`gflow models` accept `--json` to
 emit a single parseable object on stdout instead of Rich tables. See
 [§ JSON output](#json-output---json).
 
@@ -72,6 +75,28 @@ Note: `--profile NAME` is **per-subcommand**, not global — pass it after the s
 ## `gflow auth`
 
 See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
+
+## `gflow credits`
+
+Read the current Google Flow balance through an existing authenticated profile. This is a
+read-only request: it does not generate media or spend credits.
+
+```text
+gflow credits user [PROFILE] [--profile NAME] [--json]
+gflow credits list [--json]
+gflow credits [--profile NAME] [--all] [--json]
+```
+
+`credits user` applies the normal profile precedence chain. `credits list` inspects every saved
+profile sequentially and returns successful balances even when another profile is expired or
+unavailable. Its JSON envelope contains `profiles`, `total_credits`, and `count`; each profile
+includes `authenticated`, `credits`, `subscription_credits`, `user_paygate_tier`, `service_tier`,
+and `sku`. Failed profiles have `authenticated: false`, a safe error name, and a null balance.
+
+The command first reads the saved Chrome cookies and uses ordinary HTTP requests (the equivalent
+of a `curl` session request followed by the credits request). A browser opens only when cookie
+decryption or the HTTP path cannot complete. The short-lived OAuth token remains in memory and is
+never printed or stored; no copied bearer token or browser API key is accepted.
 
 ## `gflow image upload`
 

@@ -43,6 +43,7 @@ from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
 from gflow_cli.api.dto import (
     AssetInfo,
+    CreditsInfo,
     GeneratedImage,
     GenerationCheckpoint,
     GenerationCheckpointObserver,
@@ -1664,6 +1665,25 @@ class FlowApiClient:
         body = {"json": {"projectTitle": title, "toolName": "PINHOLE"}}
         data = await self._post_json(routes.CREATE_PROJECT, body, content_type=_APPLICATION_JSON)
         return ProjectInfo.from_create_response(data)
+
+    async def get_credits(self) -> CreditsInfo:
+        """Return the authenticated profile's current Flow credit balance."""
+
+        data = await self._get_json(routes.CREDITS, route_name="credits")
+        if not isinstance(data, dict):
+            raise WireFormatError(
+                detail="unexpected credits response shape: expected an object",
+                instance=_make_instance(),
+                route="credits",
+            )
+        try:
+            return CreditsInfo.from_response(cast("JsonObject", data))
+        except ValueError as exc:
+            raise WireFormatError(
+                detail=str(exc),
+                instance=_make_instance(),
+                route="credits",
+            ) from exc
 
     async def rename_project(self, project_id: str, new_title: str) -> JsonObject:
         """Rename an existing Flow project.

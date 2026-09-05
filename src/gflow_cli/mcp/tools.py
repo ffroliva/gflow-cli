@@ -51,6 +51,8 @@ from gflow_cli.profile_store import (
     account_locale_for,
     resolve_profile,
 )
+from gflow_cli.services.credits import inspect_all_profiles as inspect_all_credit_profiles
+from gflow_cli.services.credits import inspect_profile as inspect_credit_profile
 from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
@@ -1183,6 +1185,29 @@ async def gflow_list_tools() -> dict[str, Any]:
             for s in iter_tools()
         ]
     }
+
+
+@server.tool(
+    name="gflow_get_credits",
+    description=(
+        "Read the current Google Flow credit balance for one saved profile or all profiles. "
+        "This is read-only and spends no credits. Set all_profiles=true when choosing an "
+        "account for generation; partial profile failures remain visible in the result."
+    ),
+)
+@_guarded
+async def gflow_get_credits(
+    profile: str = _DEFAULT_PROFILE,
+    all_profiles: bool = False,
+) -> dict[str, Any]:
+    """Inspect current Flow credits through the shared CLI service."""
+
+    if all_profiles:
+        return await inspect_all_credit_profiles()
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved
+    return await inspect_credit_profile(resolved)
 
 
 @server.tool(

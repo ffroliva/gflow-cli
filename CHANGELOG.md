@@ -154,6 +154,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the one honest no-op: PyPI unreachable, manager exit 0, nothing changed, which
   is exit 0. Deliberately no MCP twin (a server must not replace its own code under a live
   session) — recorded as a reasoned exemption in the parity test.
+- **Read-only Flow balance inspection:** `gflow credits user`, `gflow credits list`, the bare
+  `gflow credits [--all]` form, and the matching `gflow_get_credits` MCP tool report current
+  balances and account tiers from saved profiles. Multi-profile inspection preserves partial
+  successes and emits stable JSON for automation. Saved cookies + ordinary HTTP are the primary
+  path, with browser-backed retrieval only as a fallback; no copied bearer token or browser API
+  key is stored.
 
 ### Changed
 

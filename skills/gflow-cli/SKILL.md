@@ -59,6 +59,10 @@ gflow auth status                                         # confirms session
 gflow auth                                                # bare: list profiles or trigger first login
 gflow auth logout                                         # delete a saved session
 
+# Credit balance (read-only, no generation spend)
+gflow credits user [--profile NAME] [--json]
+gflow credits list [--json]                               # all saved profiles
+
 # Image generation (Imagen / Nano Banana)
 gflow image upload <path>                                 # → asset UUID + dimensions
 gflow image t2i "<prompt>" [--model {nano2|nano-pro|image4}] \
