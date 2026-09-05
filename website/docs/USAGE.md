@@ -54,6 +54,7 @@ Commands:
   run       Config-driven generation run.
   mcp       MCP server over stdio (run) + client-config generator (setup).
   serve     MCP server over Streamable HTTP at /mcp.
+  update    Upgrade gflow-cli in place via uv tool / pipx / pip (--check to only report).
 ```
 
 Global flags:
@@ -1322,7 +1323,7 @@ Ten checks run on every invocation:
 | `catalog.display_name_missing` | Assets with no recorded display name (the picker search key) | `gflow data sync --names` |
 | `catalog.local_file_missing` | Cataloged local files that no longer exist on disk | `gflow data prune --dry-run` |
 | `catalog.sha256_null` | Local files with no recorded sha256 | `gflow data sync` |
-| `db.migration_drift` | Schema does not match the packaged migrations, or was written by a newer gflow-cli | `gflow data sync` / `uv tool upgrade gflow-cli` |
+| `db.migration_drift` | Schema does not match the packaged migrations, or was written by a newer gflow-cli | `gflow data sync` / `gflow update` |
 | `db.wal_state` | Stale `-wal`/`-shm` sidecars next to a non-WAL database; `PRAGMA quick_check` anomalies | Close other gflow processes and re-run; restore from backup on quick_check failures |
 | `operations.stuck_started` | Operations in `started` for over 24h with no completion | `gflow data errors prune` |
 | `queue.stuck_processing` | Queue tasks claimed as `processing` for over 24h | `gflow data prune --dry-run` |
@@ -1351,6 +1352,67 @@ UUID only (never display-name values), and paths are sanitized. Under
 `GFLOW_CLI_HISTORY_PROMPTS=redacted` the `catalog.display_name_missing` check
 reports `info` instead of `warn` — name backfill is deliberately suppressed by
 that privacy setting, so missing names are expected, not a defect.
+
+## `gflow update`
+
+Upgrade gflow-cli in place, through the package manager that installed it.
+
+```text
+gflow update [--check] [--json]
+```
+
+The installer is read off the install itself, never guessed from `PATH`:
+
+| Marker in the install's venv root | Installer | Command run |
+|---|---|---|
+| `uv-receipt.toml` | `uv tool` | `uv tool upgrade gflow-cli` |
+| `pipx_metadata.json` | `pipx` | `pipx upgrade gflow-cli` |
+| neither | plain venv | `<that venv's python> -m pip install --upgrade gflow-cli` |
+
+`gflow update` first asks PyPI for the latest version (this refreshes the
+once-a-day notice cache too). If you are already current it says so and runs
+nothing. Otherwise it runs the manager with its output shown, then re-reads the
+venv's Playwright version: when the upgrade moved it, a hint gives you the exact
+`<that venv's python> -m playwright install chromium` so the browser build matches. If PyPI is
+unreachable the manager still runs — it is the authority on what is installable.
+
+`--check` only reports installed vs latest plus the command that *would* run;
+`--json` returns `{status: "ok", installed, latest, update_available, installer,
+command, upgraded, notes}` (`latest` / `update_available` are `null` when PyPI could not
+be reached; after an upgrade `latest` is the version the venv actually reports;
+`notes` carries the Playwright hint and the Windows launcher caveat below).
+
+`ConfigurationError` (exit 11) cases:
+
+- **before anything is spawned** — an editable / local-path / VCS / source
+  install (PEP 610 `direct_url.json` present): update those the way they were
+  installed (`git pull`, reinstall from the checkout); `uv` / `pipx` detected
+  but not on `PATH`, or a plain venv with no `pip` module (a `uv venv`): the
+  message carries the exact command to run yourself;
+- **after the manager ran** — the venv still reports the old version (a receipt
+  pinned to one version makes `uv tool upgrade` a silent no-op, for instance),
+  or the version could not be re-read at all. The manager's own output is above
+  the error. One carve-out: when PyPI was unreachable *and* the manager exited 0
+  *and* nothing changed, the manager simply found nothing newer — exit 0.
+
+The venv is the truth, not the manager's exit code: after the manager runs,
+`gflow update` re-reads the installed gflow-cli version from a fresh interpreter
+and reports *that*. **Windows:** the `gflow.exe` launcher you are running holds
+its own file open, so it can be neither overwritten nor renamed while it runs.
+Measured on `uv tool upgrade`: the new wheel installs, then uv exits 1 copying
+the launcher ("os error 32"). The upgrade *did* happen — the launcher only
+points at the venv's python — so `gflow update` reports it as upgraded with a
+note quoting the manager's exit code; the next update from another shell
+refreshes the launcher.
+
+Restart any running `gflow serve` / MCP server afterwards; a long-lived process
+keeps the old code until it restarts. There is deliberately no MCP twin of this
+command: a server must not replace its own code underneath itself.
+
+Every command also prints an **update banner** on stderr (a one-line notice when
+stderr is not a terminal) when a newer release is known — see
+[CONFIGURATION § GFLOW_CLI_UPDATE_CHECK](CONFIGURATION.md#gflow_cli_update_check)
+for the once-a-day cache and how to silence it.
 
 ## `gflow models`
 
@@ -1596,9 +1658,9 @@ gflow image batch ./batch-b.tsv --profile personal
 GFLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
 ```
 
-> Piping stderr into `jq`? Set `GFLOW_CLI_UPDATE_CHECK=0` too — the once-a-day
-> update notice (v0.56.0) is a plain-text stderr line and would break the parse
-> the day a newer version publishes.
+> Piping stderr into `jq`? Set `GFLOW_CLI_UPDATE_CHECK=0` too — the update
+> notice (v0.56.0; a banner on a terminal, one plain-text stderr line when piped)
+> would break the parse the day a newer version publishes.
 
 ## Exit codes
 
@@ -1652,7 +1714,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 - A migration fails or the migration checksum drifts from what the installed version expects.
 - The database has a **newer schema** than the installed gflow-cli (i.e. you downgraded after a migration already ran).
 
-Recovery for the "newer schema" case: upgrade gflow-cli to a version that understands the schema (`uv tool upgrade gflow-cli`), OR point `GFLOW_CLI_DB_PATH` to a different database location (a fresh path creates a new empty database automatically).
+Recovery for the "newer schema" case: upgrade gflow-cli to a version that understands the schema (`gflow update`), OR point `GFLOW_CLI_DB_PATH` to a different database location (a fresh path creates a new empty database automatically).
 
 All errors emit a structured `error_raised` event (or `error_unhandled` for
 exit code 1) with stable fields — `error_class`, `problem` (RFC 9457 Problem

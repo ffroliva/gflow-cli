@@ -86,6 +86,12 @@ _MCP_EXEMPT: dict[str, str] = {
     "mcp run": "the MCP server bootstrap itself",
     "mcp setup": "client-config generator for the MCP server itself",
     "serve": "HTTP/SSE service bootstrap",
+    "update": (
+        "self-update of the running install — the manager would replace the venv "
+        "under a live `gflow mcp run` and write its output onto the JSON-RPC stdout "
+        "channel; the operator runs `gflow update`. A read-only twin of `--check` "
+        "would be harmless and is the upgrade path if agents ever need it"
+    ),
     "models": "informational; models are enumerated in the generate tools' descriptions",
     "run": "chain-manifest runner — not yet ported",
     "character create": "character mutations — not yet ported",

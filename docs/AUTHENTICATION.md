@@ -391,7 +391,7 @@ but the installed Playwright bundled Chromium is older (149.x). ...
 ```
 
 Remedies: upgrade so the bundled Chromium is at least the profile's version
-(`uv tool upgrade gflow-cli`, then `playwright install chromium`), or re-create
+(`gflow update`, then `playwright install chromium`), or re-create
 the profile with `gflow auth login` — login is deliberately *not* guarded, it
 re-mints the session and rewrites the profile, making it the recovery path.
 The guard is best-effort: profiles under the `chrome` strategy (real Google

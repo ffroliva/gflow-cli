@@ -34,4 +34,4 @@ description: "Windows-specific dev environment quirks for gflow-cli — uv pytes
 
 **Edge case:** if a future session sees `uv run pytest` work, drop the workaround (and probably this memory). It's an environment quirk, not a permanent rule.
 
-**Related:** [[real-browser-auth-mandatory]] (the Chrome-strategy profile + `channel="chrome"` requirement that adds to the Windows-specific Playwright pain), [[full-test-suite-ooms]] (different but related local-vs-CI testing constraint), [[background-e2e-pytest-pattern]] (the working e2e backgrounding pattern that uses ctx_execute + nohup + Monitor).
+**Related:** [[windows-running-launcher-blocks-uv-upgrade]] (a running gflow.exe cannot be overwritten or renamed; what that means for self-update), [[real-browser-auth-mandatory]] (the Chrome-strategy profile + `channel="chrome"` requirement that adds to the Windows-specific Playwright pain), [[full-test-suite-ooms]] (different but related local-vs-CI testing constraint), [[background-e2e-pytest-pattern]] (the working e2e backgrounding pattern that uses ctx_execute + nohup + Monitor).

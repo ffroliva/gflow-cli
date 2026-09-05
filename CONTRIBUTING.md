@@ -2,6 +2,46 @@
 
 Thanks for considering a contribution! The repo is public and PRs are welcome. Pre-1.0 means APIs may shift between minor versions; check [PLAN.md](PLAN.md) for the active phase before starting a non-trivial change.
 
+## The development lifecycle — how a PR gets in without back-and-forth
+
+This project is developed through a fixed pipeline, and every PR is reviewed against it.
+The pipeline is written down once, in [AGENTS.md](AGENTS.md) — the **Skill Routing**
+table (which skill to load for which situation) and the **Standard Workflow Sequence**
+(the ten phases, their artifacts, and the gates between them). The skills themselves are
+plain Markdown under [`skills/<name>/SKILL.md`](skills/): agent-agnostic by design, so
+Claude Code (`/gflow:<name>`), Codex (`$gflow:<name>`), Cursor, Aider, Antigravity, or a
+human reading the file all follow the same protocol.
+
+**If you use a coding agent, point it at [AGENTS.md](AGENTS.md) first.** Most tools
+auto-discover it; if yours does not, paste the Skill Routing table into its context. A PR
+whose agent skipped the pipeline is the single biggest source of review churn here.
+
+What a contributor PR is expected to have gone through, phase by phase:
+
+| Phase | Skill (`skills/<name>/SKILL.md`) | What it leaves behind for the reviewer |
+|---|---|---|
+| Touching a GitHub issue | [`issue-assessment`](skills/issue-assessment/SKILL.md) | A verdict (CONFIRMED / LIKELY / NEEDS-INFO …) and which surfaces reproduce it — CLI, MCP, or both |
+| Transport / auth / selector / schema change | [`predict`](skills/predict/SKILL.md) | A GO / CAUTION / STOP verdict **before** code exists; STOP means open an issue instead |
+| Any feature | [`scenario`](skills/scenario/SKILL.md) → [`plan`](skills/plan/SKILL.md) | `docs/superpowers/plans/<date>-<slug>/SCENARIO.md` + `PLAN.md` — the edge-case table and the task list; link them from the PR |
+| Every commit | [`check`](skills/check/SKILL.md) | The Impeccable Routine green (it is the exact CI gate), plus the **step 1b** CLI↔MCP mirror sweep no CI gate can see |
+| Anything on a generation path | [`live-verify`](skills/live-verify/SKILL.md) | Evidence against real Flow, not just green offline tests — this project drives a black box; say plainly what you could **not** verify |
+| Opening the PR | [`pr-council-review`](skills/pr-council-review/SKILL.md) / [`branch-review`](.claude/commands/gflow/branch-review.md) | The multi-dimension council (correctness, quality, security, tests, memory, YAGNI, parity …); maintainers run it on every PR, so running it yourself first removes a round trip |
+| Red SonarCloud check | [`sonar`](skills/sonar/SKILL.md) | Zero new issues — the gate measures *new* code |
+| Auth or reCAPTCHA | [`known-issues`](skills/known-issues/SKILL.md) | Known-broken surfaces have documented workarounds; rediscovering them costs days |
+
+Three rules the pipeline enforces that catch first-time contributors most often:
+
+1. **Ship each capability twice, or say why not.** Every CLI command has an MCP twin or a
+   reasoned exemption in `tests/mcp/test_cli_parity.py` — and options, payload keys and tool
+   docstrings must stay mirrored (AGENTS.md § *MCP & CLI Schema Symmetry*).
+2. **Locale-invariant selectors only.** No `has-text(...)` on Flow's DOM, ever
+   (AGENTS.md § *Locale-Invariance Discipline*).
+3. **Verified beats claimed.** If a fix cannot be verified on the affected surface in your
+   environment, the PR says so and uses `Refs #N`, not a green checkbox.
+
+The PR template's *Lifecycle* checklist mirrors this table. Tick what applies, strike what
+does not, and say why — a reviewer can then start from your evidence instead of re-deriving it.
+
 ## Development setup
 
 ```bash
@@ -96,16 +136,24 @@ cost table, and run commands.
 
 ## Quality gates (run before commit)
 
+Prefer the skill — [`skills/check/SKILL.md`](skills/check/SKILL.md) (`/gflow:check` in
+Claude Code, `$gflow:check` in Codex) — because it also carries the step 1b CLI↔MCP mirror
+sweep that no command below can check. The mechanical subset it runs, in order:
+
 ```bash
-uv run python scripts/ci/check_repo_hygiene.py  # artefact + path hygiene
-uv run python scripts/ci/check_doc_links.py     # internal Markdown links
+uv run python scripts/ci/check_repo_hygiene.py        # artefact + path hygiene
+uv run python scripts/ci/check_doc_links.py           # internal Markdown links
+uv run python scripts/ci/check_website_docs_pii.py    # no private identifiers in website/docs
+uv run python scripts/ci/generate_website_docs.py --check  # website mirror in sync
+uv run python scripts/ci/check_council_memory.py      # council memory slugs resolve both ways
 uv run ruff check src tests          # lint
-uv run ruff format src tests         # auto-format
+uv run ruff format --check src tests # formatting
 uv run pyright src                   # type-check (strict on src/gflow_cli/)
 uv run pytest -q --cov=gflow_cli      # tests + coverage
 ```
 
-CI runs all six on every push. Documentation is part of the merge gate: update
+CI runs all of them on every push (this list is kept identical to AGENTS.md's; a shorter
+copy once shipped a stale website mirror to a green local run and a red CI). Documentation is part of the merge gate: update
 the relevant docs for behavior, workflow, configuration, architecture, or
 operator-facing changes. If no documentation change is needed, state that in
 the PR validation checklist.
