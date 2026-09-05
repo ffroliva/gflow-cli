@@ -57,8 +57,9 @@ migrated editor is not ported), and only `t2v` — everything else still exits 3
 
 **Models on the migrated host.** Its picker is driven for every tier the account's
 menu actually renders, `veo-lite-lp` included — matched by the `[Lower Priority]`
-tag alone, exactly as on labs.google, because no capture has ever rendered that
-entry and its full label is therefore unknown. A tier whose matcher hits more than
+tag alone, exactly as on labs.google. That entry was first captured on 2026-09-05
+(`Veo 3.1 - Lite [Lower Priority]`, on an account whose picker was already defaulted
+to it); matching stays on the tag, which survives Flow throttling a different tier. A tier whose matcher hits more than
 one live entry is refused (exit 11) naming both, rather than bound by DOM order
 ([#539](https://github.com/ffroliva/gflow-cli/issues/539)). `veo-lite-lp` is
 deliberately **not** a routing trigger: an account Flow has not moved keeps the

@@ -482,6 +482,22 @@ async def test_lower_priority_button_readback_does_not_pass_for_plain_lite() -> 
     assert page.dom.model_label == "Veo 3.1 - Lite"
 
 
+async def test_a_matching_button_readback_never_opens_the_menu() -> None:
+    """Live 2026-09-05: the account's picker was already on the lower-priority tier, so
+    the run bound it without touching the menu — and emitted no model event at all,
+    which is why `migrated.model_already_selected` now marks the path."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.models = ["Omni 1.1 Flash", "Veo 3.1 - Lite", LP_LITE]
+    page.dom.model_label = LP_LITE
+    await MigratedComposer().apply_video_settings(
+        page, _t2v(model=VideoModel.VEO_3_1_LITE_LOWER_PRIORITY)
+    )
+    assert page.dom.model_label == LP_LITE
+    assert not page.dom.menu_open
+
+
 async def test_an_ambiguous_menu_refuses_instead_of_guessing() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 

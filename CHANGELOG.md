@@ -18,11 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   two-account capability matrix, #650's duration capture and v0.61.0's refusal A/B all
   recorded a picker MISS), and the migrated map is keyed by label. It is now matched
   the way the labs driver has matched it since #539 — by the `[Lower Priority]` tag
-  alone — so no label is invented and nothing is asserted about an entry no capture has
-  produced. Routing is deliberately unchanged: `veo-lite-lp` still does not make
-  `migrated_can_serve` pull an **unmoved** account onto the new host, because moving a
-  request there for a tier nobody has seen rendered would trade a working driver for an
-  unverified one.
+  alone. **The entry has now been captured** (2026-09-05, a migrated account): the menu
+  renders `Veo 3.1 - Lite [Lower Priority]`, and that account's picker was already
+  *defaulted* to it — presumably why every earlier capture missed the entry, having been
+  taken on accounts Flow was not throttling. Matching stays on the tag rather than the
+  newly-known label: one account's rendering, and a tag Flow appends to whichever tier it
+  throttles survives that tier changing. Verified live at $0 by driving `_select_model`
+  for all five tiers and reading the picker back after each switch — including the
+  lower-priority tier reached through the menu — plus one real 8 s generation on it.
+  Routing is deliberately unchanged: `veo-lite-lp` still does not make
+  `migrated_can_serve` pull an **unmoved** account onto the new host, since Flow appears
+  not to offer the tier to accounts it is not throttling.
+  Capture: `docs/superpowers/spikes/2026-09-05-migrated-model-menu-lower-priority.md`.
 
 - **`gflow update` — self-update in place.** Runs the package manager that
   installed gflow-cli, read off the install itself rather than guessed from
@@ -74,7 +81,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `:not(:has-text('[Lower Priority]'))`) and which this port had dropped. Ordinary
   tiers now exclude the tag on both paths, and a matcher hitting more than one live
   entry **refuses** (exit 11) naming every candidate rather than guessing which one
-  Flow would bill.
+  Flow would bill. Confirmed against the real button text on a throttled account:
+  `"Veo 3.1 - Lite [Lower Priority] arrow_drop_down".lower().startswith("veo 3.1 - lite")`
+  is `True`, so pre-fix `--model veo-lite` there generated on the throttled tier without
+  ever opening the menu.
+
+- **A migrated run that short-circuited model selection logged nothing.** `_select_model`
+  returning at its button read-back emitted no event, so a field timeline could not tell
+  "bound the tier you asked for" from "never touched the picker" — answering that for the
+  2026-09-05 run took a separate probe. It now logs `migrated.model_already_selected`
+  with the observed button text.
 
 ## [0.67.0] — 2026-09-05
 

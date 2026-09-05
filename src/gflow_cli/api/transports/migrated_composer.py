@@ -84,10 +84,17 @@ VIDEO_MODEL_MENU_LABELS: dict[VideoModel, str] = {
 
 #: The suffix Flow appends to a tier it is serving at lower priority. The labs driver
 #: has matched ``veo_3_1_lite_lower_priority`` by this tag alone since #539
-#: (``[role='menuitem']:has-text('[Lower Priority]')``) for one reason: no capture has
-#: ever rendered that entry, so its full label is unknown — the 2026-08-14 two-account
-#: capability matrix, #650's duration capture and v0.61.0's refusal A/B all recorded a
-#: picker MISS. This port inherits the same tag rather than inventing a label.
+#: (``[role='menuitem']:has-text('[Lower Priority]')``), because through v0.67.0 no
+#: capture had ever rendered the entry — the 2026-08-14 two-account capability matrix,
+#: #650's duration capture and v0.61.0's refusal A/B all recorded a picker MISS.
+#:
+#: It has since been captured: on 2026-09-05 a migrated account rendered
+#: ``Veo 3.1 - Lite [Lower Priority]``, and its picker was *defaulted* to that tier —
+#: which is presumably why the labs captures missed it, having been taken on accounts
+#: Flow was not throttling. Matching stays on the tag rather than moving to that label:
+#: it is one account's rendering, the labs driver keys off the same tag, and a tag that
+#: Flow appends to whichever tier it throttles survives it moving to another one.
+#: Capture: ``docs/superpowers/spikes/2026-09-05-migrated-model-menu-lower-priority.md``.
 LOWER_PRIORITY_TAG = "[Lower Priority]"
 
 
@@ -316,6 +323,11 @@ class MigratedComposer:
             )
         current = (await button.text_content() or "").strip()
         if matcher.matches(current):
+            # Logged, because otherwise this path is invisible: a run that short-circuits
+            # here emits no model event at all, and a field timeline cannot tell "bound
+            # the tier you asked for" from "never touched the picker". The 2026-09-05
+            # live run needed a separate $0 probe to answer exactly that.
+            log.info("migrated.model_already_selected", model=current, requested=model.value)
             return
         await button.click(timeout=4000)
         items = page.locator(MENU_ITEM)
