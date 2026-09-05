@@ -16,15 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is UI-driven and observed, never replayed: the composer selects the Frames submode,
   uploads the file through the editor's own toolbar Upload entry and reads the media id
   off the app's `maseQ` reply, finds the upload in the Start-frame picker under its file
-  name (the picker exposes no media id in its DOM), and only then submits. Two refusals
-  guard the credits: an unbound chip is exit 23 before the click, and the submit
-  *request* the app sends must carry that media id with an `_i2v_` model key — a
-  text-to-video key (the labs #125 shape, an empty Frames submit silently goes out as
-  t2v) or a foreign id is `WireFormatError` (exit 7). An upload Flow refuses is exit 27
-  on route `batchexecute:maseQ`; a file the picker never lists is exit 32. The submit
-  rpc for i2v is `eb1hJf` (t2v stays `YhhmEf`). Not ported in this slice and named in
-  the exit-36 detail: `--end-frame`, a frame given by media UUID or `@Name`, and r2v.
-  A "Get started" modal over a fresh migrated editor is now dismissed before the run.
+  name (the picker exposes no media id in its DOM), and only then submits. **An unbound
+  chip is refused before the click** — exit 23, zero credits — because an empty Frames
+  submit silently goes out as text-to-video (the labs #125 shape). The app's submit
+  *request* is then inspected as it leaves: a body without that media id, or carrying a
+  `_t2v_` model key, fails the run with `WireFormatError` (exit 7) naming what Flow was
+  actually asked to make. That one is an observer, not a block — the request is already
+  on the wire — so it names a wrong generation rather than preventing it; the chip check
+  is what guards the credits. An upload Flow refuses is exit 27 on route
+  `batchexecute:maseQ`; a file the picker never lists after three searches is exit 32
+  (its search is server-side and a fresh upload is not always indexed on the first try).
+  For i2v the submit rpc is `eb1hJf` (t2v stays `YhhmEf`), and an i2v request with no
+  `--model` binds the veo-lite default here exactly as it has always done on labs
+  (#125) — without it a queued MCP request, whose payload carries no model, would have
+  submitted on whichever tier the editor last remembered. Not ported in this slice and
+  named in the exit-36 detail: `--end-frame`, a frame given by media UUID or `@Name`,
+  and r2v. A "Get started" modal over a fresh migrated editor is now dismissed before
+  the run (best-effort; neither verification account raised one).
   Recon: `docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md`.
 
 - **`--model veo-lite-lp` is drivable on the migrated `flow.google.com` host.** It was

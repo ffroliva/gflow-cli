@@ -94,8 +94,11 @@ def world(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
     monkeypatch.setattr("gflow_cli.api.transports.drivers.factory.get_ui_driver", _labs_bind)
     # Wait budgets that the fake page can never satisfy are shortened, not skipped.
-    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.1, raising=False)
-    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2, raising=False)
+    # `raising` stays on: a renamed constant must fail loudly here rather than leave
+    # the real 8 s/60 s budgets in place and surface as a slow test.
+    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.1)
+    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
+    monkeypatch.setattr(migrated_composer, "FRAME_SEARCH_RETRY_PAUSE_S", 0.01)
     monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
     reset_settings()
     return w

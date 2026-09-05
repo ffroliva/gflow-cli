@@ -304,3 +304,32 @@ async def test_run_video_names_the_uuid_form_in_the_exit_36_detail() -> None:
         await _run(_req(mode=Mode.I2V, start_image_ref_id=_UUID))
     with pytest.raises(FlowHostMigratedError, match="@Name"):
         await _run(_req(mode=Mode.I2V, start_image_ref_name="hero"))
+
+
+# --- `gflow video chain` on the new host (SCENARIO row 11) ---------------------
+# A chain link is an i2v request whose start frame is the previous clip's extracted
+# last frame — the served form — but `chain.py` calls `generate_video(req=...)`
+# WITHOUT a project id (`_build_link_request`, `_generate_one`). Both halves of that
+# are pinned here: the shape routes to labs on an unmoved account, and on a moved one
+# it aborts naming `--project` instead of silently generating somewhere else.
+
+
+async def test_a_chain_shaped_link_keeps_the_labs_driver_on_an_unmoved_account(
+    harness: dict[str, Any], tmp_path: Path
+) -> None:
+    with pytest.raises(_LabsDriverTouchedError):
+        await harness["transport"].generate_video(
+            request=_req(mode=Mode.I2V, start_image=_png(tmp_path, "link-1.png")), project_id=None
+        )
+    assert harness["run_video"] == []
+
+
+async def test_a_chain_shaped_link_on_a_moved_account_names_the_missing_project(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ConfigurationError, match="--project"):
+        await _run(
+            _req(mode=Mode.I2V, start_image=_png(tmp_path, "link-1.png")),
+            url="https://flow.google.com/",
+            project_id=None,
+        )

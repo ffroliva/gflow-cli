@@ -69,6 +69,22 @@ def _events(capture: structlog.testing.LogCapture, prefix: str) -> list[dict[str
     return [dict(e) for e in capture.entries if str(e["event"]).startswith(prefix)]
 
 
+def _dump_events(capture: structlog.testing.LogCapture, out_dir: Path) -> None:
+    """The captured timeline is the verification evidence; the LogCapture processor
+    keeps it off stdout, so write it next to the run's other artifacts."""
+    (out_dir / "migrated-events.json").write_text(
+        json.dumps(
+            [
+                {k: str(v) for k, v in e.items()}
+                for e in capture.entries
+                if str(e["event"]).startswith(("migrated.", "ui_driver."))
+            ],
+            indent=1,
+        ),
+        encoding="utf-8",
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.e2e_auth
 async def test_e2e_start_frame_uploads_and_binds_on_the_migrated_host(
@@ -79,7 +95,10 @@ async def test_e2e_start_frame_uploads_and_binds_on_the_migrated_host(
 ) -> None:
     """$0: on the real migrated editor the attach stage uploads a probe PNG (the
     app's ``maseQ`` reply names a media id), finds it in the Frames picker under its
-    file name and binds it on the Start chip — measured, not submitted."""
+    file name and binds it on the Start chip — measured, not submitted.
+
+    Also proves the #125 default live: the request carries no model, and the editor
+    must be driven to veo-lite rather than left on whatever tier it remembered."""
     project = _project_id()
     _set_flow_host(monkeypatch, None)
     frame = _probe_png(tmp_path, f"gflow-e2e-probe-{os.getpid()}.png")
@@ -103,11 +122,21 @@ async def test_e2e_start_frame_uploads_and_binds_on_the_migrated_host(
     finally:
         await transport.teardown()
 
+    _dump_events(install_log_capture, tmp_path)
     uploaded = _events(install_log_capture, "migrated.frame_uploaded")
     bound = _events(install_log_capture, "migrated.frame_bound")
     assert uploaded and uploaded[0]["media_id"] == media_id
     assert bound and bound[0]["media_id"] == media_id
     assert frame.name not in str(uploaded)  # the file name never reaches a log line
+
+    # #125 live: no model was requested, so the composer must have bound the i2v
+    # default and driven the picker to it (or read it back as already selected).
+    assert _events(install_log_capture, "migrated.i2v_model_defaulted")
+    selected = _events(install_log_capture, "migrated.model_selected") or _events(
+        install_log_capture, "migrated.model_already_selected"
+    )
+    assert selected, "the model picker was never touched for an i2v run with no --model"
+    assert "Lite" in str(selected[0]["model"]), selected[0]
 
 
 @pytest.mark.asyncio
@@ -142,19 +171,7 @@ async def test_e2e_i2v_from_a_local_start_frame_runs_on_flow_google_com(
         )
     finally:
         await transport.teardown()
-        # The captured timeline is the verification evidence; the LogCapture processor
-        # swallows it from stdout, so it is written next to the clip.
-        (tmp_path / "migrated-events.json").write_text(
-            json.dumps(
-                [
-                    {k: str(v) for k, v in e.items()}
-                    for e in install_log_capture.entries
-                    if str(e["event"]).startswith(("migrated.", "ui_driver."))
-                ],
-                indent=1,
-            ),
-            encoding="utf-8",
-        )
+        _dump_events(install_log_capture, tmp_path)
 
     # 1. The migrated composer handled it as i2v — upload, bind, then the i2v submit.
     events = [str(e["event"]) for e in install_log_capture.entries]

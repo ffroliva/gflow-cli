@@ -42,7 +42,15 @@ from gflow_cli.api.transports.batchexecute import (
     generation_record,
     parse_frames,
 )
-from gflow_cli.api.video import Aspect, Mode, VideoModel, VideoResult, VideoStarted, VideoStatus
+from gflow_cli.api.video import (
+    I2V_DEFAULT_MODEL,
+    Aspect,
+    Mode,
+    VideoModel,
+    VideoResult,
+    VideoStarted,
+    VideoStatus,
+)
 from gflow_cli.errors import (
     ConfigurationError,
     FlowHostMigratedError,
@@ -78,15 +86,13 @@ COMPOSER = "[contenteditable='true']"
 FRAMES_LIGATURE = "crop_free"
 DIALOG = "[role='dialog']"
 DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
-DIALOG_DISMISS_S = 3.0
 
 #: ``YhhmEf`` is the text-to-video submit; ``eb1hJf`` the image-to-video one (a bound
 #: Start chip switches the app between them — 2026-09-05 frames spike).
 SUBMIT_RPCS = ("YhhmEf", "eb1hJf")
 STATUS_RPCS = ("jwpduf", "as29s")
 UPLOAD_RPC = "maseQ"
-I2V_KEY = re.compile(r"_i2v_")
-T2V_KEY = re.compile(r"_t2v_")
+#: The model key Flow puts in the submit body, e.g. ``veo_3_1_i2v_lite``.
 MODEL_KEY = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*_(?:t2v|i2v)_[a-z0-9_]+")
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 
@@ -110,7 +116,6 @@ FRAME_SEARCH_RETRY_PAUSE_S = 2.0
 FRAME_UPLOAD_S = 60.0
 FRAME_COMMIT_HIDDEN_S = 15.0
 FRAME_THUMB_VISIBLE_S = 5.0
-ATTACH_STAGE_S = 90.0
 #: The submit reply arrived 4.0–4.6 s after the click in both measured runs.
 SUBMIT_REPLY_BUDGET_S = 60.0
 # Angular enables the arrow_forward button ~100 ms after `insert_text` lands in the
@@ -251,26 +256,26 @@ def _first_uuid(text: str) -> str | None:
 
 
 def _post_data(request: Any) -> str:
-    """The POST body as text; a binary body (an upload) decodes lossily rather than
-    raising out of a listener."""
+    """The POST body as text, or ``""`` when Playwright cannot decode it —
+    a listener must not raise."""
     try:
-        body = request.post_data
-    except Exception:  # noqa: BLE001 - Playwright raises on undecodable bodies
-        try:
-            raw = request.post_data_buffer
-        except Exception:  # noqa: BLE001
-            return ""
-        return raw.decode("utf-8", "replace") if raw else ""
-    return str(body or "")
+        return str(request.post_data or "")
+    except Exception:  # noqa: BLE001 - Playwright's post_data raises on undecodable bytes
+        return ""
 
 
 def _i2v_body_problem(body: str, rpcid: str, media_id: str) -> str | None:
     """Why this submit body is NOT the image-to-video generation the user asked for,
     or ``None``. A t2v key means the chip was empty at submit time; a body without
     the uploaded id means the picker bound some other asset."""
+    if not body:
+        return (
+            f"migrated host: the {rpcid} submit body could not be read, so the "
+            "image-to-video request could not be confirmed before Flow acted on it"
+        )
     key = MODEL_KEY.search(body)
     key_text = key.group(0) if key else "no model key"
-    if T2V_KEY.search(body) or not I2V_KEY.search(body):
+    if "_t2v_" in body or "_i2v_" not in body:
         return (
             f"migrated host: the submit went out on {rpcid} with a text-to-video model key "
             f"({key_text}) for an image-to-video (i2v) request — the start frame was not "
@@ -326,7 +331,7 @@ class MigratedComposer:
             close = page.locator(DIALOG_CLOSE).first
             via = "close" if await close.count() else "escape"
             if via == "close":
-                await close.click(timeout=DIALOG_DISMISS_S * 1000)
+                await close.click(timeout=3000)
             else:
                 await page.keyboard.press("Escape")
             log.info("migrated.dialog_dismissed", via=via)
@@ -347,8 +352,17 @@ class MigratedComposer:
                 # Frames renders the Start/End chips the attach stage binds to. Flow
                 # remembers the last submode per account, so it is set, not assumed.
                 await self._select(page, pane, axis="submode", lig=FRAMES_LIGATURE)
-            if request.model is not None:
-                await self._select_model(page, pane, request.model)
+            model = request.model
+            if model is None and request.mode is Mode.I2V:
+                # #125: for i2v, "no --model" is not "no opinion". The labs path binds
+                # I2V_DEFAULT_MODEL before submitting; without the same bind here the
+                # editor submits on whichever tier it last remembered — which on a
+                # queued MCP request (its payload carries model=None) can be a
+                # 100-credit tier for a run the caller expected to cost 10.
+                model = I2V_DEFAULT_MODEL
+                log.info("migrated.i2v_model_defaulted", model=model.value, issue_ref="#125")
+            if model is not None:
+                await self._select_model(page, pane, model)
             await self._select(page, pane, axis="aspect", lig=ASPECT_LIGATURE[request.aspect])
             if request.duration is not None:
                 await self._select(page, pane, axis="duration", text=f"{request.duration}s")
@@ -358,7 +372,9 @@ class MigratedComposer:
                 aspect=request.aspect.value,
                 duration=request.duration,
                 count=request.count,
-                model=request.model.value if request.model else None,
+                # The EFFECTIVE model — `request.model` is None on an i2v run that
+                # took the #125 default, and logging that read as "no model bound".
+                model=model.value if model else None,
             )
         except BaseException:
             # A close failure must never replace the error that is already travelling.
@@ -590,51 +606,20 @@ class MigratedComposer:
         the picker's default sort puts the newest first, and the submit-body check is
         what catches a wrong pick.
         """
-        await self._preflight_image(image_path)
-        try:
-            return await asyncio.wait_for(self._attach(page, image_path), timeout=ATTACH_STAGE_S)
-        except TimeoutError:
-            raise TransportTimeoutError(
-                detail=(
-                    f"migrated host: attaching the start frame did not finish within "
-                    f"{ATTACH_STAGE_S:.0f}s (project {project_id})"
-                ),
-            ) from None
+        # The same guard the REST upload runs, from the same function: exists,
+        # under the size cap, a real image by its header. Shared rather than
+        # copied — it is a security check, and two copies drift.
+        from gflow_cli.api.client import validate_image_file  # noqa: PLC0415 - cycle
 
-    async def _attach(self, page: Page, image_path: Path) -> str:
-        media_id = await self._upload_via_toolbar(page, image_path)
+        await validate_image_file(image_path)
+        # No outer budget: every leg below has its own bounded wait, and an outer
+        # one that fires first would replace the stage-named failure (which frame,
+        # which rpc, what the picker listed) with a generic "attach timed out".
+        media_id = await self._upload_via_toolbar(page, project_id, image_path)
         await self._pick_frame_by_name(page, image_path.name, media_id)
         return media_id
 
-    @staticmethod
-    async def _preflight_image(image_path: Path) -> None:
-        """The labs upload's own checks, before any click: exists, under the size
-        cap, and a real image by its header (so a resolved path never exfiltrates
-        an arbitrary local file into a Flow project)."""
-        from gflow_cli.api.client import (  # noqa: PLC0415 - cycle
-            MAX_IMAGE_BYTES,
-            _is_supported_image_header,  # pyright: ignore[reportPrivateUsage]
-        )
-
-        if not image_path.exists():
-            raise FileNotFoundError(image_path)
-        size = image_path.stat().st_size
-        if size > MAX_IMAGE_BYTES:
-            msg = (
-                f"Image too large: {size / 1_048_576:.1f} MB exceeds "
-                f"{MAX_IMAGE_BYTES // 1_048_576} MB limit"
-            )
-            raise ValueError(msg)
-
-        def _read_header(p: Path) -> bytes:
-            with p.open("rb") as fh:
-                return fh.read(12)
-
-        if not _is_supported_image_header(await asyncio.to_thread(_read_header, image_path)):
-            msg = f"Not a supported image format: {image_path.name}"
-            raise ValueError(msg)
-
-    async def _upload_via_toolbar(self, page: Page, image_path: Path) -> str:
+    async def _upload_via_toolbar(self, page: Page, project_id: str, image_path: Path) -> str:
         """Toolbar ``+`` → the ``upload`` menu item → the file chooser → the app's own
         ``maseQ`` upload, observed for the media id it returns. Nothing is replayed."""
         loop = asyncio.get_running_loop()
@@ -714,6 +699,19 @@ class MigratedComposer:
                     status=status,
                     route=route,
                 )
+            if media_id.lower() == project_id.lower():
+                # The measured reply is ``[media_id, project_id, …]``. If the first
+                # UUID is the project's, the shape moved under us — and the submit-body
+                # assertion could not catch it, since the project id is in every body.
+                raise MediaUploadRejectedError(
+                    detail=(
+                        f"migrated host: the first id in the {UPLOAD_RPC} reply is the "
+                        f"project id ({project_id}), not a new media id — the reply "
+                        "shape changed and the upload cannot be bound safely"
+                    ),
+                    status=status,
+                    route=route,
+                )
             log.info("migrated.frame_uploaded", media_id=media_id, status=status)
             return media_id
         finally:
@@ -749,7 +747,6 @@ class MigratedComposer:
         """Start chip → the library picker → search by display name → first option →
         the chip must now hold a thumbnail. An unbound chip is refused here: an empty
         Frames submit goes out as text-to-video (the labs #125 shape on this host)."""
-        options: Any = None
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
             picker = await self._open_frame_picker(page)
             search = picker.locator(PICKER_SEARCH).first
@@ -760,7 +757,6 @@ class MigratedComposer:
                 await options.first.wait_for(
                     state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000)
                 )
-                break
             except Exception as e:
                 # What the picker DID list is the diagnostic: the display name an upload
                 # gets is an observation per account, not a contract.
@@ -781,15 +777,19 @@ class MigratedComposer:
                         f"{', '.join(repr(t) for t in listed[:8]) or 'nothing'}"
                     ),
                 ) from e
-        assert options is not None  # the loop either broke with options or raised
-        await options.first.click(timeout=4000)
+            else:
+                # Outside the except above on purpose: a click that fails here is not
+                # "the picker never listed it", and must not be reported as one.
+                await options.first.click(timeout=4000)
+                break
         try:
-            # Re-queried: the picker overlay is detached after the pick, and the
-            # hidden-wait must see the DOM as it is now, not the pane resolved above.
+            # Re-queried, and `.last` like the open: the picker overlay is detached
+            # after the pick, and a detached-but-hidden earlier pane would let a
+            # `.first` hidden-wait pass while the live picker is still up.
             await (
                 page.locator(OVERLAY)
                 .filter(has=page.locator(PICKER))
-                .first.wait_for(state="hidden", timeout=int(FRAME_COMMIT_HIDDEN_S * 1000))
+                .last.wait_for(state="hidden", timeout=int(FRAME_COMMIT_HIDDEN_S * 1000))
             )
         except Exception as e:
             raise UiSelectorDriftError(
@@ -970,6 +970,11 @@ class MigratedComposer:
             )
             return final
         finally:
+            # A submit reply that failed to parse sets an exception on `submitted`;
+            # when the body assertion raised first, nobody read it, and asyncio would
+            # log "Future exception was never retrieved" at GC. Consume it.
+            if submitted.done() and not submitted.cancelled():
+                submitted.exception()
             page.remove_listener("response", on_response)
             if expect_media_id is not None:
                 page.remove_listener("request", on_request)

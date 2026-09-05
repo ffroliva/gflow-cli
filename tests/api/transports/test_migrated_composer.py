@@ -81,7 +81,8 @@ class Dom:
     chooser_pending: bool = False
     chosen_files: list[str] = field(default_factory=list)
     # "ok" → 200 frame `[media_id, project_id, …]`; "none" → the app never answers;
-    # an int → that HTTP status with an empty body
+    # "no_id" → 200 carrying no UUID; "project_first" → 200 whose first UUID is the
+    # project id (a reply-shape change); an int → that HTTP status with an empty body
     maseq_reply: Any = "ok"
     picker_open: bool = False
     picker_options: list[str] = field(
@@ -259,10 +260,16 @@ class FakeFileChooser:
     async def set_files(self, files: Any) -> None:
         dom = self.page.dom
         dom.chosen_files.append(str(files))
-        if dom.maseq_reply == "none":
+        reply = dom.maseq_reply
+        if reply == "none":
             return
-        status = 200 if dom.maseq_reply == "ok" else int(dom.maseq_reply)
-        text = _frame("maseQ", [MEDIA_UP, PROJ, "44444444-4444-4444-8444-444444444444", "CAE"])
+        payloads: dict[str, list[Any]] = {
+            "ok": [MEDIA_UP, PROJ_UUID, "44444444-4444-4444-8444-444444444444", "CAE"],
+            "no_id": ["CAE", 1],
+            "project_first": [PROJ_UUID, MEDIA_UP, "CAE"],
+        }
+        status = 200 if reply in payloads else int(reply)
+        text = _frame("maseQ", payloads.get(str(reply), []))
         self.page._fire_response(
             FakeResponse(_batch_url("maseQ"), text if status == 200 else "", status)
         )
@@ -491,6 +498,7 @@ WF = "11111111-1111-4111-8111-111111111111"
 PROJ = "p1"
 MEDIA = "33333333-3333-4333-8333-333333333333"
 MEDIA_UP = "55555555-5555-4555-8555-555555555555"  # what `maseQ` answers for an upload
+PROJ_UUID = "66666666-6666-4666-8666-666666666666"  # the project id in the same reply
 VIDEO_URL = "https://flow-content.google/v/abc.mp4?Expires=1&KeyName=k&Signature=s"
 
 
@@ -1219,6 +1227,33 @@ async def test_t2v_settings_leave_the_submode_alone() -> None:
     assert sub[1].checked  # untouched: t2v never needs the chips
 
 
+async def test_i2v_without_a_model_binds_the_i2v_default(tmp_path: Path) -> None:
+    """#125: a queued MCP request carries no model, and the editor would otherwise
+    submit on whatever tier it last remembered — possibly a 100-credit one."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.model_label = "Veo 3.1 - Quality"  # what the account last used
+    with capture_logs() as logs:
+        await MigratedComposer().apply_video_settings(page, _i2v(_png(tmp_path), model=None))
+    assert page.dom.model_label == "Veo 3.1 - Lite"
+    defaulted = [e for e in logs if e["event"] == "migrated.i2v_model_defaulted"]
+    assert defaulted and defaulted[0]["model"] == "veo_3_1_lite"
+    # the timeline must name the EFFECTIVE model, not the (absent) requested one
+    applied = [e for e in logs if e["event"] == "migrated.settings_applied"]
+    assert applied and applied[0]["model"] == "veo_3_1_lite"
+
+
+async def test_t2v_without_a_model_leaves_the_picker_alone() -> None:
+    """Flow's sticky t2v default is unknowable here; only i2v gets a bound default."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.model_label = "Veo 3.1 - Quality"
+    await MigratedComposer().apply_video_settings(page, _t2v())
+    assert page.dom.model_label == "Veo 3.1 - Quality"
+
+
 async def test_attach_uploads_then_binds_the_frame_by_file_name(tmp_path: Path) -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -1298,6 +1333,31 @@ async def test_attach_is_upload_rejected_on_a_non_200_maseq(tmp_path: Path) -> N
     with pytest.raises(MediaUploadRejectedError, match="400") as ei:
         await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
     assert ei.value.route == "batchexecute:maseQ" and ei.value.status == 400
+    assert page.dom.picked == []
+
+
+async def test_attach_is_upload_rejected_when_maseq_names_no_media_id(tmp_path: Path) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.maseq_reply = "no_id"
+    with pytest.raises(MediaUploadRejectedError, match="without a media id"):
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert page.dom.picked == []
+
+
+async def test_attach_refuses_when_the_first_id_in_the_reply_is_the_project(
+    tmp_path: Path,
+) -> None:
+    """The measured reply is ``[media_id, project_id, …]``. If that order ever flips,
+    binding the project id would sail through the submit-body check — every body
+    carries the project id — so the shape change is refused here instead."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.maseq_reply = "project_first"
+    with pytest.raises(MediaUploadRejectedError, match="project id"):
+        await MigratedComposer().attach_start_frame(page, PROJ_UUID, _png(tmp_path))
     assert page.dom.picked == []
 
 

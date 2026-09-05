@@ -249,6 +249,41 @@ def _is_supported_image_header(header: bytes) -> bool:
     return header[:6] in (b"GIF87a", b"GIF89a")
 
 
+async def validate_image_file(image_path: Path) -> None:
+    """Reject a file that must not be uploaded to Flow, before any bytes leave.
+
+    Exists, within :data:`MAX_IMAGE_BYTES`, and a real image by its first 12
+    bytes — the header check is what stops a resolved path (a symlink, a typo)
+    from laundering ``~/.ssh/id_rsa`` into a Flow project. Raises the same
+    ``FileNotFoundError`` / ``ValueError`` the REST upload has always raised.
+
+    Shared, not copied: both upload surfaces call it — the REST
+    :meth:`FlowApiClient.upload_image` and the migrated composer's start-frame
+    attach (``migrated_composer.attach_start_frame``), which uploads through the
+    editor's own file chooser and so cannot reuse the request path. A second
+    copy of a security guard is a guard that drifts.
+    """
+    if not image_path.exists():
+        raise FileNotFoundError(image_path)
+    size = image_path.stat().st_size
+    if size > MAX_IMAGE_BYTES:
+        msg = (
+            f"Image too large: {size / 1_048_576:.1f} MB exceeds "
+            f"{MAX_IMAGE_BYTES // 1_048_576} MB limit"
+        )
+        raise ValueError(msg)
+
+    # Staged read: validate magic bytes first (12 B) before loading the full
+    # file. Run both reads in a worker thread to keep the event loop free.
+    def _read_header(p: Path) -> bytes:
+        with p.open("rb") as fh:
+            return fh.read(12)
+
+    if not _is_supported_image_header(await asyncio.to_thread(_read_header, image_path)):
+        msg = f"Not a supported image format: {image_path.name}"
+        raise ValueError(msg)
+
+
 def _unwrap_trpc(data: Any) -> JsonObject:
     """Unwrap the tRPC envelope ``result.data.json`` and return the inner dict.
 
@@ -1729,28 +1764,7 @@ class FlowApiClient:
         Both validations run before ``image_path.read_bytes()`` so a hostile
         path is never fully loaded into memory.
         """
-        if not image_path.exists():
-            raise FileNotFoundError(image_path)
-        size = image_path.stat().st_size
-        if size > MAX_IMAGE_BYTES:
-            msg = (
-                f"Image too large: {size / 1_048_576:.1f} MB exceeds "
-                f"{MAX_IMAGE_BYTES // 1_048_576} MB limit"
-            )
-            raise ValueError(
-                msg,
-            )
-
-        # Staged read: validate magic bytes first (12 B) before loading the full
-        # file. Run both reads in a worker thread to keep the event loop free.
-        def _read_header(p: Path) -> bytes:
-            with p.open("rb") as fh:
-                return fh.read(12)
-
-        header = await asyncio.to_thread(_read_header, image_path)
-        if not _is_supported_image_header(header):
-            msg = f"Not a supported image format: {image_path.name}"
-            raise ValueError(msg)
+        await validate_image_file(image_path)
         full_bytes = await asyncio.to_thread(image_path.read_bytes)
         b64 = base64.b64encode(full_bytes).decode()
         body = {

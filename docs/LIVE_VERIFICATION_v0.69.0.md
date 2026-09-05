@@ -19,6 +19,7 @@ any submit — the probe upload stays in the project's library, like any upload)
 | # | Profile (account state, locale) | Entrypoint | Command | Exit | Wall-clock | Output |
 |---|---|---|---|---|---|---|
 | 1 | flagged, en-GB (`ffroliva`, project `300f5260…`, empty) | `tests/e2e/…::test_e2e_start_frame_uploads_and_binds_on_the_migrated_host` (`e2e_auth`, $0) | upload probe PNG → picker by file name → Start chip bound, no submit | **PASS** | 19.4 s | media id UUID from `maseQ`; `flow-prompt-box button.chip-container:has(img)` count ≥ 1 |
+| 1b | flagged, en-GB (`ffroliva`, same project) | same test after the council fixes (`e2e_auth`, $0) | as run 1, plus the #125 model default | **PASS** | 17.5 s | `migrated.i2v_model_defaulted model=veo_3_1_lite` → `migrated.model_already_selected model="Veo 3.1 - Lite"`, then `frame_uploaded`/`frame_bound` on `6406df81…` |
 | 2 | flagged, en-GB (`ffroliva`, same project) | `…::test_e2e_i2v_from_a_local_start_frame_runs_on_flow_google_com` (`e2e_video`, bills one clip) | full `transport.generate_video` with a 256×256 probe PNG, no `--duration` | **PASS** | 61.0 s | `77291283-….mp4`, `ftypisom`, **777,004 B** |
 | 3 | **flagged, pt** (`denon82`, project `f7ed2765…`, 32 videos) | `…::test_e2e_start_frame_uploads_and_binds_on_the_migrated_host` (`e2e_auth`, $0) | as run 1 | **PASS** (on the third attempt — see below) | 16.0 s | media id from `maseQ`, chip bound |
 | 4 | **flagged, pt** (`denon82`, same project) | **`gflow video i2v --initial-frame tmp/…/orange-sphere.png "…" --project <id> --profile denon82 --aspect 16:9 --json --out-dir tmp/…`** | the user command | **0** | **64 s** | `f0b9378d-….mp4`, `ftypisom`, **632,755 B** (= bytes the status record reported) |
@@ -69,11 +70,28 @@ found by `input[type=text]` inside the picker, never by its translated `aria-lab
 - **Forcing `--duration` in the Frames submode is a $0 exit 11 on this cohort** (the #650
   shape: the pane rendered 4 option groups and no duration row for Veo 3.1 Lite). The e2e
   no longer forces a duration; the user command in run 4 passed none.
+- **An i2v request with no model never touched the picker** (found by the PR council, not
+  by a run). Runs 1–2 built the request directly, so `request.model` was `None` and the
+  composer left the editor on whatever tier it remembered — on `ffroliva` that reads
+  `Veo 3.1 - Lite`, so run 2 did bill the 10-credit tier, but a queued MCP request (whose
+  payload also carries no model) could have inherited a 100-credit one. The composer now
+  binds `I2V_DEFAULT_MODEL` for i2v exactly as the labs path does; run 1b is the live
+  proof, and `migrated.settings_applied` now reports the effective model, not the
+  requested one.
+- **The attach stage had an outer 90 s budget smaller than the sum of the waits it
+  wrapped**, so a slow upload plus one picker miss would have replaced the stage-named
+  failure with a generic timeout. Removed: every leg is bounded on its own.
 
 ## Not verified (recorded, not omitted)
 
 - The `e2e_video` test on `denon82` — the billed run there was the CLI entrypoint (run 4),
   not the pytest path; the pytest path is proven on `ffroliva` (run 2).
+- Run 2 carries ledger layers 1–4 only: no catalog row is asserted there (the e2e drives
+  the transport directly, below the recorder) and its size is checked as `> 100 KB`, not
+  byte-exact. Run 4 carries all five.
+- A billed run *after* the council fixes. Runs 2 and 4 were made on the pre-fix build;
+  what changed since is covered at $0 by run 1b and by unit tests, and none of it alters
+  the submit path that produced those two clips.
 - A submit whose body is a t2v key or a foreign media id (the `WireFormatError` guard) —
   reproducible offline only; every live submit carried the right id and an `_i2v_` key.
 - `--duration` on a model whose pane renders the row (Omni 1.1 Flash) in the Frames submode.
