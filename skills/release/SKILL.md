@@ -98,8 +98,9 @@ Before cutting, run `ListAgents` (or the equivalent in your harness) and message
 other session working on this repo: *"Cutting v<NEW_VERSION> from develop@<sha>; do not
 push to develop until the back-merge lands."* Then cut in a **dedicated worktree** (the
 repo convention is `.claude/worktrees/<slug>`), never in the shared checkout. The cut is
-from `origin/develop`, which step 3 just verified local `develop` matches — a local
-`develop` that goes stale later no longer matters. Steps 6–13 run inside this worktree;
+from `origin/develop`, which step 3 just verified local `develop` is not behind — a local
+`develop` that goes stale later no longer matters (unpushed local commits on `develop`
+are deliberately NOT in the release; push them first if they should be). Steps 6–13 run inside this worktree;
 step 14 returns to the main checkout and removes it.
 
 > **Why.** On 2026-09-05 the v0.68.0 release branch was cut in the shared checkout and
@@ -284,12 +285,21 @@ git worktree remove --force .claude/worktrees/release-v<NEW_VERSION>
 git worktree prune
 ```
 
-On Windows the removal can fail on the worktree's `.venv` file lock; `git worktree prune`
-now and a manual delete later is fine (CLAUDE.md § Worktrees). Then merge with a
-**merge commit** — never squash:
+Then merge with a **merge commit** — never squash:
 
 ```bash
 gh pr merge <N> --merge --delete-branch
+```
+
+On Windows the removal can fail on the worktree's `.venv` file lock. `git worktree prune`
+does **not** help — it only forgets worktrees whose directory is already gone, so the
+branch stays held and `--delete-branch` still fails. In that case merge without it and
+delete the remote ref explicitly; remove the directory and the local branch later
+(CLAUDE.md § Worktrees):
+
+```bash
+gh pr merge <N> --merge
+git push origin --delete chore/release-v<NEW_VERSION>
 ```
 
 > **NEVER `--squash` this PR.** Because the branch was cut from `develop`, the PR
