@@ -1,6 +1,6 @@
 ---
 name: release-back-merge-gap-recovery
-description: "Two release-time drifts: (1) a skipped main → develop back-merge makes the NEXT release branch conflict on bump + CHANGELOG (take ours, re-add the footer); (2) develop moving between cut and tag in a shared checkout — cut in a worktree, announce via ListAgents, check rev-list before signing"
+description: "Release-time drift in both directions: main ahead of develop (skipped back-merge → next release branch conflicts on bump + CHANGELOG; take ours, re-add the footer) and develop ahead of the release branch (moved between cut and tag; merge, re-home CHANGELOG, re-run 4b, re-sign while unpushed)"
 ---
 
 Rule: Always do the **main → develop back-merge** as the LAST step of every release. If you didn't, the next release branch will hit predictable conflicts because main has a version bump + CHANGELOG section that develop never received.

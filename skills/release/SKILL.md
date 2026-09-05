@@ -90,14 +90,17 @@ the doc into the release-prep commit (step 11).
 other session.**
 
 ```bash
-git worktree add -b chore/release-v<NEW_VERSION> ../gflow-cli-release-v<NEW_VERSION> origin/develop
-cd ../gflow-cli-release-v<NEW_VERSION>
+git worktree add -b chore/release-v<NEW_VERSION> .claude/worktrees/release-v<NEW_VERSION> origin/develop
+cd .claude/worktrees/release-v<NEW_VERSION>
 ```
 
 Before cutting, run `ListAgents` (or the equivalent in your harness) and message every
 other session working on this repo: *"Cutting v<NEW_VERSION> from develop@<sha>; do not
-push to develop until the back-merge lands."* Then cut in a **dedicated worktree**, never
-in the shared checkout.
+push to develop until the back-merge lands."* Then cut in a **dedicated worktree** (the
+repo convention is `.claude/worktrees/<slug>`), never in the shared checkout. The cut is
+from `origin/develop`, which step 3 just verified local `develop` matches — a local
+`develop` that goes stale later no longer matters. Steps 6–13 run inside this worktree;
+step 14 returns to the main checkout and removes it.
 
 > **Why.** On 2026-09-05 the v0.68.0 release branch was cut in the shared checkout and
 > then switched out from under the release runner by another session's `git checkout`,
@@ -210,10 +213,15 @@ git rev-list --count HEAD..origin/develop   # expect 0
 ```
 
 If it is non-zero: `git merge origin/develop`, move the newcomers' `[Unreleased]`
-entries under `## [<NEW_VERSION>]`, re-run steps 4 and 10, amend or add to the step 11
-commit, and only then tag. If a tag was already created locally, `git tag -d
-v<NEW_VERSION>` and re-sign it on the merged head — this is safe only while the tag is
-unpushed (see the **NEVER force-push a release tag** reminder below).
+entries under `## [<NEW_VERSION>]`, re-run steps 4, **4b** and 10 — 4b because the
+newcomers are user-facing features that just entered this release and each needs its
+`LIVE_VERIFICATION_v<NEW_VERSION>.md` row (v0.68.0 shipped #672 this way and the ledger
+had no row until a reviewer supplied one) — amend or add to the step 11 commit, and only
+then tag. If a tag was already created locally, `git tag -d v<NEW_VERSION>` and re-sign
+it on the merged head — this is safe only while the tag is unpushed (see the **NEVER
+force-push a release tag** reminder below). `develop` can still move between this check
+and the step 13 push; that cannot corrupt the tag, it only means a late commit ships in
+the next release — re-run the `rev-list` immediately before pushing if you care.
 
 ```bash
 git tag -s v<NEW_VERSION> -m "v<NEW_VERSION>"
@@ -263,8 +271,22 @@ gh pr create --base main --head chore/release-v<NEW_VERSION> \
 
 Wait for PR CI to go green (`gh pr checks <N> --watch`). **The `SonarCloud analysis`
 check must be green (gate passed) — not just the test matrix.** If it is red or you
-want the verdict, run `/gflow:sonar <N>` and drive it to zero before merging. Then
-merge with a **merge commit** — never squash:
+want the verdict, run `/gflow:sonar <N>` and drive it to zero before merging.
+
+Before merging, leave the release worktree and remove it — `--delete-branch` deletes the
+local branch too, and git refuses to delete a branch a worktree has checked out
+(`error: cannot delete branch … used by worktree`). The branch is pushed, so nothing is
+lost:
+
+```bash
+cd <main checkout>                                   # e.g. C:/development/github/gflow-cli
+git worktree remove --force .claude/worktrees/release-v<NEW_VERSION>
+git worktree prune
+```
+
+On Windows the removal can fail on the worktree's `.venv` file lock; `git worktree prune`
+now and a manual delete later is fine (CLAUDE.md § Worktrees). Then merge with a
+**merge commit** — never squash:
 
 ```bash
 gh pr merge <N> --merge --delete-branch
@@ -278,9 +300,13 @@ gh pr merge <N> --merge --delete-branch
 
 **15. Back-merge `main` into `develop`.**
 
-After the release PR is merged, bring the bump commit back to `develop` so branches stay aligned:
+After the release PR is merged, bring the bump commit back to `develop` so branches stay aligned.
+This runs in the **main checkout** (step 14 already returned you there) — `develop` is
+checked out there, and git refuses `git checkout develop` from any other worktree
+(`fatal: 'develop' is already used by worktree at …`):
 
 ```bash
+cd <main checkout>
 git checkout develop
 git pull origin develop
 git fetch origin main
@@ -298,6 +324,10 @@ Tell the user:
 - On success: PyPI publish + GitHub Release with auto-generated notes.
 - On failure (most common: PyPI Trusted Publishing not yet configured): point to <https://pypi.org/manage/account/publishing/>.
 - `develop` is now synced with `main` (back-merge done in step 15).
+- The release worktree is gone (step 14); if Windows held its `.venv`, name the directory
+  that still needs a manual delete.
+- Message the sessions you announced to in step 5: the back-merge has landed, `develop` is
+  open again.
 - Next development cycle starts on `develop` — open `## [Unreleased]` in CHANGELOG is ready.
 
 ### Pipeline Continuation (Next Step Handoff)
