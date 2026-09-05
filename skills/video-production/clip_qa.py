@@ -21,6 +21,7 @@ Sync is only measurable where one person is talking and little else moves. On a 
 two-shot sync_r collapses to ~0.1 and the lag is noise — that is why a low sync_r means
 "no opinion", never "in sync". Measured 2026-09-05: singles r=0.6-0.8, two-shot r=0.1.
 """
+
 import json
 import re
 import statistics
@@ -44,13 +45,28 @@ def run(args: list[str], cwd: Path) -> str:
 
 
 def probe_fps(clip: Path) -> float:
-    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-                          "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", clip.name],
-                         capture_output=True, text=True, cwd=clip.parent).stdout.strip()
+    out = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=r_frame_rate",
+            "-of",
+            "csv=p=0",
+            clip.name,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=clip.parent,
+    ).stdout.strip()
     num, _, den = out.partition("/")
     if not num.strip().isdigit():
         raise RuntimeError(
-            f"{clip.name}: ffprobe found no video stream (got {out!r}) — corrupt or not a video")
+            f"{clip.name}: ffprobe found no video stream (got {out!r}) — corrupt or not a video"
+        )
     return float(num) / float(den or 1)
 
 
@@ -59,9 +75,23 @@ def yavg(clip: Path, vf: str) -> list[float]:
     d = clip.parent
     m = d / "_m.txt"
     m.unlink(missing_ok=True)  # never read a stale file if the next call misbehaves
-    run(["ffmpeg", "-v", "error", "-y", "-i", clip.name, "-vf",
-         f"{vf},tblend=all_mode=difference,signalstats,"
-         f"metadata=print:key=lavfi.signalstats.YAVG:file={m.name}", "-f", "null", "-"], d)
+    run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            clip.name,
+            "-vf",
+            f"{vf},tblend=all_mode=difference,signalstats,"
+            f"metadata=print:key=lavfi.signalstats.YAVG:file={m.name}",
+            "-f",
+            "null",
+            "-",
+        ],
+        d,
+    )
     vals = [float(x) for x in re.findall(r"YAVG=([0-9.]+)", m.read_text())]
     m.unlink(missing_ok=True)
     if not vals:
@@ -76,11 +106,27 @@ def audio_envelope(clip: Path, fps: float) -> list[float]:
     d = clip.parent
     a = d / "_a.txt"
     a.unlink(missing_ok=True)
-    run(["ffmpeg", "-v", "error", "-y", "-i", clip.name, "-af",
-         f"aresample=48000,asetnsamples={round(48000 / fps)}:p=0,astats=metadata=1:reset=1,"
-         f"ametadata=print:key=lavfi.astats.Overall.RMS_level:file={a.name}", "-f", "null", "-"], d)
-    db = [-91.0 if x.lstrip("-") == "inf" else float(x)
-          for x in re.findall(r"RMS_level=(-?inf|-?[0-9.]+)", a.read_text())]
+    run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            clip.name,
+            "-af",
+            f"aresample=48000,asetnsamples={round(48000 / fps)}:p=0,astats=metadata=1:reset=1,"
+            f"ametadata=print:key=lavfi.astats.Overall.RMS_level:file={a.name}",
+            "-f",
+            "null",
+            "-",
+        ],
+        d,
+    )
+    db = [
+        -91.0 if x.lstrip("-") == "inf" else float(x)
+        for x in re.findall(r"RMS_level=(-?inf|-?[0-9.]+)", a.read_text())
+    ]
     a.unlink(missing_ok=True)
     return [10 ** (x / 20) for x in db]
 
@@ -90,7 +136,7 @@ def smooth(v: list[float], k: int = 5) -> list[float]:
     envelope; correlating a spike train against a plateau returns ~0 (measured)."""
     out = []
     for i in range(len(v)):
-        w = v[max(0, i - k // 2): i + k // 2 + 1]
+        w = v[max(0, i - k // 2) : i + k // 2 + 1]
         out.append(sum(w) / len(w))
     return out
 
@@ -124,8 +170,8 @@ def sync(motion: list[float], envelope: list[float], fps: float, window_s: float
     span = int(window_s * fps)
     curve = {}
     for lag in range(-span, span + 1):
-        a = mo[-lag:] if lag < 0 else mo[:n - lag]
-        b = en[:n + lag] if lag < 0 else en[lag:]
+        a = mo[-lag:] if lag < 0 else mo[: n - lag]
+        b = en[: n + lag] if lag < 0 else en[lag:]
         k = min(len(a), len(b))
         curve[lag] = pearson(a[:k], b[:k])
     best_lag = max(curve, key=curve.get)
@@ -143,9 +189,20 @@ def av_duration_delta(clip: Path) -> float:
     """Video stream length minus audio stream length. The 25 fps title cards concatenated
     into 24 fps clips produced 164 s of video under 171 s of audio — this is that check."""
     out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration",
-         "-of", "csv=p=0", clip.name],
-        capture_output=True, text=True, cwd=clip.parent).stdout
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,duration",
+            "-of",
+            "csv=p=0",
+            clip.name,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=clip.parent,
+    ).stdout
     rows = (line.partition(",") for line in out.splitlines() if "," in line)
     d = {k: float(v) for k, _, v in rows if v.replace(".", "").isdigit()}
     return round(d.get("video", 0.0) - d.get("audio", 0.0), 3)
@@ -156,18 +213,30 @@ def measure(clip: Path) -> tuple[dict, dict]:
     whole = yavg(clip, "scale=180:320")
     face = yavg(clip, FACE_CROP)
     lag, r, prom, edge = sync(face, audio_envelope(clip, fps), fps)
-    err = run(["ffmpeg", "-i", clip.name, "-af", "silencedetect=n=-35dB:d=0.3",
-               "-f", "null", "-"], clip.parent)
+    err = run(
+        ["ffmpeg", "-i", clip.name, "-af", "silencedetect=n=-35dB:d=0.3", "-f", "null", "-"],
+        clip.parent,
+    )
     starts = [float(x) for x in re.findall(r"silence_start: ([0-9.]+)", err)]
     ends = [float(x) for x in re.findall(r"silence_end: ([0-9.]+)", err)]
     onset = ends[0] if starts and starts[0] < 0.05 and ends else 0.0
-    return ({"median": round(statistics.median(whole), 2),
-             "cut_spikes": sum(v >= 3.0 for v in whole), "fps": round(fps, 2)},
-            {"speech_onset_s": round(onset, 2),
-             "face_motion_median": round(statistics.median(face), 2),
-             "face_motion_p10": round(sorted(face)[len(face) // 10], 2),
-             "sync_lag_s": lag, "sync_r": r, "sync_prominence": prom, "sync_edge": edge,
-             "av_duration_delta_s": av_duration_delta(clip)})
+    return (
+        {
+            "median": round(statistics.median(whole), 2),
+            "cut_spikes": sum(v >= 3.0 for v in whole),
+            "fps": round(fps, 2),
+        },
+        {
+            "speech_onset_s": round(onset, 2),
+            "face_motion_median": round(statistics.median(face), 2),
+            "face_motion_p10": round(sorted(face)[len(face) // 10], 2),
+            "sync_lag_s": lag,
+            "sync_r": r,
+            "sync_prominence": prom,
+            "sync_edge": edge,
+            "av_duration_delta_s": av_duration_delta(clip),
+        },
+    )
 
 
 def verdict(fa: dict, is_beat: bool = True) -> str:
@@ -189,19 +258,36 @@ def selftest(clip: Path, shift_s: float = 0.2) -> None:
     base = measure(clip)[1]
     assert base["sync_r"] >= SYNC_MIN_R, (
         f"{clip.name} correlates at r={base['sync_r']} — too weak to test against. "
-        "Pick a single with one person talking, not a busy two-shot.")
+        "Pick a single with one person talking, not a busy two-shot."
+    )
     shifted = clip.parent / "_selftest.mp4"
-    run(["ffmpeg", "-v", "error", "-y", "-i", clip.name,
-         "-af", f"adelay={int(shift_s * 1000)}:all=1",
-         "-c:v", "copy", shifted.name], clip.parent)
+    run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            clip.name,
+            "-af",
+            f"adelay={int(shift_s * 1000)}:all=1",
+            "-c:v",
+            "copy",
+            shifted.name,
+        ],
+        clip.parent,
+    )
     moved = measure(shifted)[1]
     shifted.unlink(missing_ok=True)
     drift = moved["sync_lag_s"] - base["sync_lag_s"]
-    print(f"baseline {base['sync_lag_s']:+.3f}s (r={base['sync_r']}) -> "
-          f"delayed {moved['sync_lag_s']:+.3f}s "
-          f"(r={moved['sync_r']}); detected {drift:+.3f}s, injected +{shift_s:.3f}s")
+    print(
+        f"baseline {base['sync_lag_s']:+.3f}s (r={base['sync_r']}) -> "
+        f"delayed {moved['sync_lag_s']:+.3f}s "
+        f"(r={moved['sync_r']}); detected {drift:+.3f}s, injected +{shift_s:.3f}s"
+    )
     assert abs(drift - shift_s) <= 0.06, (
-        f"detector missed the injected {shift_s}s shift (saw {drift:+.3f}s)")
+        f"detector missed the injected {shift_s}s shift (saw {drift:+.3f}s)"
+    )
     assert verdict(moved) == "DRIFT", "a clip shifted by 200 ms must not pass the sync gate"
     print("selftest OK")
 
@@ -211,8 +297,11 @@ if __name__ == "__main__":
         selftest(Path(sys.argv[2]))
         raise SystemExit(0)
     target = Path(sys.argv[1])
-    clips = ([target] if target.is_file() else
-             sorted(p for p in target.glob("*.mp4") if re.fullmatch(r"[a-z]{2}\d{2}\.mp4", p.name)))
+    clips = (
+        [target]
+        if target.is_file()
+        else sorted(p for p in target.glob("*.mp4") if re.fullmatch(r"[a-z]{2}\d{2}\.mp4", p.name))
+    )
     if not clips:
         raise SystemExit(f"no clips matched in {target} (expected <xx00>.mp4)")
     out_dir = target if target.is_dir() else target.parent
@@ -221,10 +310,12 @@ if __name__ == "__main__":
         is_beat = bool(re.fullmatch(r"[a-z]{2}\d{2}", clip.stem))
         motion[clip.stem], face[clip.stem] = measure(clip)
         f, m = face[clip.stem], motion[clip.stem]
-        print(f"{verdict(f, is_beat):5} {clip.stem} onset={f['speech_onset_s']:.2f}s "
-              f"face={f['face_motion_median']}/{f['face_motion_p10']} frame={m['median']} "
-              f"sync={f['sync_lag_s']:+.3f}s r={f['sync_r']} prom={f['sync_prominence']:+.3f} "
-              f"a/v={f['av_duration_delta_s']:+.3f}s")
+        print(
+            f"{verdict(f, is_beat):5} {clip.stem} onset={f['speech_onset_s']:.2f}s "
+            f"face={f['face_motion_median']}/{f['face_motion_p10']} frame={m['median']} "
+            f"sync={f['sync_lag_s']:+.3f}s r={f['sync_r']} prom={f['sync_prominence']:+.3f} "
+            f"a/v={f['av_duration_delta_s']:+.3f}s"
+        )
     if target.is_dir():  # a single-file run is a spot check; do not clobber the batch results
         (out_dir / "motion.json").write_text(json.dumps(motion, indent=1))
         (out_dir / "motion_face.json").write_text(json.dumps(face, indent=1))
