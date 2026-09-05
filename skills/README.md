@@ -18,7 +18,7 @@ This directory ships installable agent skill docs for `gflow-cli`. Each `SKILL.m
 | sonar | [`sonar/SKILL.md`](sonar/SKILL.md) | 1.0 |
 | doc-review | [`doc-review/SKILL.md`](doc-review/SKILL.md) | 1.0 |
 | release | [`release/SKILL.md`](release/SKILL.md) | 1.0 |
-| video-production | [`video-production/SKILL.md`](video-production/SKILL.md) | 1.0 |
+| video-production | [`video-production/SKILL.md`](video-production/SKILL.md) + [`clip_qa.py`](video-production/clip_qa.py) | 1.0 |
 
 ## gflow-cli skill
 

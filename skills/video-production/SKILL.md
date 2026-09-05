@@ -8,6 +8,18 @@ description: Use when the user wants a finished multi-shot or dialogue video out
 
 **Core principle:** lock the beat sheet, the room, the cast and the words on paper first; spend video credits only on beats that already passed the free checks. Companion to the `gflow-cli` skill (command surface) and `known-issues`.
 
+## Prerequisites
+
+**Everything gflow** — Python 3.11+, `uv`, an installed `gflow`, Playwright Chromium, a signed-in profile, Flow access — is the [`gflow-cli` skill](../gflow-cli/SKILL.md)'s Prerequisites section. Run its checks; do not restate them. The Step 0 host probe below drives Chrome through Playwright against gflow's own profile directory, so it inherits all of them.
+
+This skill adds three of its own:
+
+1. **`ffmpeg` and `ffprobe` on PATH, 5.0 or newer** — `ffmpeg -version`. The assembler uses `-fps_mode cfr`, which does not exist before 5.0.
+2. **An ffmpeg built with `libass` and `libfreetype`** — the same version banner lists the enabled libraries. Burned subtitles (the `subtitles` filter) and title cards (`drawtext`) are simply absent from minimal or "essentials" builds, which is the usual Windows trip.
+3. **`faster-whisper`, only if you want the transcript gate** — `python -c "import faster_whisper"`. **Nothing in gflow installs it.** `pip install faster-whisper`, then the first run downloads `base.en` (~75 MB, needs network once, cached after). Without it you lose the word-hit check and keep every other gate.
+
+`clip_qa.py`, beside this file, needs **only ffmpeg, ffprobe and the Python standard library** — no numpy, no model, no network — so the fluidity, lip-sync and A/V-drift gates still run on a machine where the transcript gate cannot.
+
 ## Step 0 — check the host, or the whole plan is dead
 
 Open `https://labs.google/fx/tools/flow/project/<id>` in the profile's Chrome and read the final URL.
@@ -87,7 +99,15 @@ Fluidity for dialogue shots: the whole-frame `tblend` median (calibrated on movi
 - **Trust the peak only if it stands up.** Require peak r ≥ 0.3, peak-minus-zero-lag prominence ≥ 0.05, and reject a peak pinned to the window edge. A flat correlation surface still has an argmax: one clip reported a 0.208 s "lag" whose peak stood 0.04 above zero lag, and another peaked at the boundary because it aligned line one's mouth with line two's audio. Both are no-opinion, not drift.
 - **Sync is only measurable where one person talks and little else moves.** Singles give r = 0.6–0.9; a busy two-shot gives r ≈ 0.1. **A low r means the shot cannot be measured, never that it is in sync.**
 
-Pass window: −0.045 s (audio early) to +0.125 s (audio late), the ITU-R BT.1359 detectability limits — the ear tolerates late sound far better than early. **Prove the detector before believing it**: re-encode a known-good clip with `adelay=200:all=1` and confirm it reports +0.2 s. Without that check a silently broken correlation reports every clip as perfect. Reference implementation: `fluidity.py` in the audition project.
+Pass window: −0.045 s (audio early) to +0.125 s (audio late), the ITU-R BT.1359 detectability limits — the ear tolerates late sound far better than early. **Prove the detector before believing it**: re-encode a known-good clip with `adelay=200:all=1` and confirm it reports +0.2 s. Without that check a silently broken correlation reports every clip as perfect.
+
+All of the above is implemented in **[`clip_qa.py`](clip_qa.py)** beside this file — run it rather than rebuilding it:
+
+```bash
+python clip_qa.py <clips_dir>            # every <xx00>.mp4: fluidity, sync, A/V drift
+python clip_qa.py final.mp4              # the assembled cut (skips the per-shot gates)
+python clip_qa.py --selftest <clip.mp4>  # prove the detector on a known-good single
+```
 
 This is worth running: on an 18-clip set where every clip had already passed the transcript, loudness and frame checks, it found two with 0.167 s and 0.333 s of audible audio lag.
 
