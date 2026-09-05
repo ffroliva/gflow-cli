@@ -54,3 +54,5 @@ host is necessary but NOT sufficient; name the profile too
 **Reviewer heuristic that follows:** when a PR relaxes a Flow capability gate, the
 first question is *"which host were you on?"*, before any code discussion. See
 [[unreproducible-bug-hand-to-reporter]] and [[pr-must-verify-on-affected-surface]].
+
+**2026-09-05 08:14Z — denon82 is moved too (3/3 loads land on flow.google.com, still authenticated). Both maintainer accounts are on the new host; there is NO labs.google account left for labs-side recon or verification. Labs-only behaviour (the labs duration guard, labs selectors) is now cohort-external — verify via a contributor or record NOT verified. The migrated composer (#664) is the driven path for both accounts.

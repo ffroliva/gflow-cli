@@ -53,6 +53,7 @@ class Dom:
     prompt: str = ""
     submit_clicked: int = 0
     escape_closes: bool = True
+    menu_lingers: bool = False  # Angular keeps a detached menu pane as the LAST overlay
     events: list[str] = field(default_factory=list)
 
 
@@ -97,7 +98,9 @@ class FakeLocator:
 
     def filter(self, *, has: FakeLocator | None = None, has_text: Any = None) -> FakeLocator:
         items = self.items
-        if has is not None:  # `has=page.locator("mat-icon").filter(has_text=re)` → ligature match
+        if has is not None and has.kind == "group":  # pane.filter(has=<radiogroup>)
+            items = [i for i in items if i == "pane" and self.page.dom.pane_open]
+        elif has is not None:  # `has=page.locator("mat-icon").filter(has_text=re)` → ligature match
             pat = has.page._pending_lig
             items = [
                 r for r in items if isinstance(r, Radio) and pat is not None and pat.search(r.lig)
@@ -229,12 +232,18 @@ class FakePage:
             return FakeLocator(self, "trigger", ["trigger"] if dom.trigger_present else [])
         if css == ".cdk-overlay-pane":
             panes = (["pane"] if dom.pane_open else []) + (["menu"] if dom.menu_open else [])
+            if dom.menu_lingers and dom.pane_open and not dom.menu_open:
+                panes.append("stale-menu")  # what `.last` sees after a model switch
             return FakeLocator(self, "pane", panes)
         if css == ".cdk-overlay-backdrop":
             return FakeLocator(self, "backdrop", ["backdrop"] if dom.pane_open else [])
         if css == "[role='radiogroup']":
+            if scope is not None and scope.items and scope.items[0] != "pane":
+                return FakeLocator(self, "group", [])  # a menu pane has no option groups
             return FakeLocator(self, "group", list(dom.groups) if dom.pane_open else [])
         if css == "[role='radio']":
+            if scope is not None and scope.items and scope.items[0] != "pane":
+                return FakeLocator(self, "radio", [])
             radios = [r for g in dom.groups.values() for r in g] if dom.pane_open else []
             return FakeLocator(self, "radio", radios)
         if css == "mat-icon":
@@ -399,6 +408,21 @@ async def test_model_selected_from_menu_by_product_name() -> None:
     await MigratedComposer().apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
     assert page.dom.model_label == "Veo 3.1 - Lite"
     assert not page.dom.menu_open and not page.dom.pane_open
+
+
+async def test_axes_still_resolve_after_a_model_switch() -> None:
+    """$0 run 2026-09-05: with --model, every axis after the menu switch read
+    "0 option groups" because a detached menu pane was the last overlay."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.menu_lingers = True
+    await MigratedComposer().apply_video_settings(
+        page, _t2v(model=VideoModel.VEO_3_1_LITE, aspect=Aspect.PORTRAIT, duration=6)
+    )
+    assert page.dom.model_label == "Veo 3.1 - Lite"
+    assert page.dom.groups["aspect"][1].checked  # 9:16 selected AFTER the switch
+    assert page.dom.groups["duration"][1].checked
 
 
 async def test_model_not_offered_lists_the_menu() -> None:
