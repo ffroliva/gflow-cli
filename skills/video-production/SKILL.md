@@ -81,6 +81,16 @@ After each clip: `ffprobe` duration; 1 fps frames viewed by eye (faces match can
 
 Fluidity for dialogue shots: the whole-frame `tblend` median (calibrated on moving scenes, > 1.0) is blind to a locked-off talking head and reads 0.3–0.9 on perfectly live clips. Gate instead on **speech onset ≤ 1.6 s** (`silencedetect`) and **face-region motion**: crop the centre-top 60 % × 75 %, `tblend` median, 10th percentile > 0.15 (a held frame sits near 0). Inspect the two lowest clips at 2 fps by eye before re-rolling anything.
 
+**Lip sync, per clip.** Cross-correlate the face-region motion against the audio envelope over ±0.6 s; the lag of the peak is the drift. Three things make the difference between a number and noise, each learned by measuring:
+
+- **Compare like with like.** The motion series is a per-frame difference (spiky); the audio must therefore be an envelope of the same shape. Smooth the motion with a ~5-frame moving average and take audio RMS as **linear amplitude, not dB** — silence in dB is a large negative outlier that dominates the correlation. Raw difference against dB level measured r ≈ 0.0 at every lag; the corrected pair measures r = 0.6–0.9 on a single.
+- **Trust the peak only if it stands up.** Require peak r ≥ 0.3, peak-minus-zero-lag prominence ≥ 0.05, and reject a peak pinned to the window edge. A flat correlation surface still has an argmax: one clip reported a 0.208 s "lag" whose peak stood 0.04 above zero lag, and another peaked at the boundary because it aligned line one's mouth with line two's audio. Both are no-opinion, not drift.
+- **Sync is only measurable where one person talks and little else moves.** Singles give r = 0.6–0.9; a busy two-shot gives r ≈ 0.1. **A low r means the shot cannot be measured, never that it is in sync.**
+
+Pass window: −0.045 s (audio early) to +0.125 s (audio late), the ITU-R BT.1359 detectability limits — the ear tolerates late sound far better than early. **Prove the detector before believing it**: re-encode a known-good clip with `adelay=200:all=1` and confirm it reports +0.2 s. Without that check a silently broken correlation reports every clip as perfect. Reference implementation: `fluidity.py` in the audition project.
+
+This is worth running: on an 18-clip set where every clip had already passed the transcript, loudness and frame checks, it found two with 0.167 s and 0.333 s of audible audio lag.
+
 Fail → delete the clip, change ONE thing, re-check. Second identical failure → restage or delete the beat.
 
 ## Step 7 — assemble and review
