@@ -200,6 +200,7 @@ The `skills/` directory ships installable agent skill docs in plain Markdown wit
 | `check` | [`skills/check/SKILL.md`](skills/check/SKILL.md) | Quality gates (lint/format/types/tests) before every commit |
 | `changelog` | [`skills/changelog/SKILL.md`](skills/changelog/SKILL.md) | Unreleased changes + last tagged version |
 | `known-issues` | [`skills/known-issues/SKILL.md`](skills/known-issues/SKILL.md) | Open/mitigated known issues — before auth/reCAPTCHA work |
+| `video-production` | [`skills/video-production/SKILL.md`](skills/video-production/SKILL.md) | User wants a finished multi-shot or dialogue video (consistent actors, room, several angles, spoken lines), or clips came back with a film border, a drifting room, rushed dialogue, a person-policy refusal or exit 36 |
 | `sonar` | [`skills/sonar/SKILL.md`](skills/sonar/SKILL.md) | Drive the SonarCloud quality gate to zero for a PR/branch |
 | `live-verify` | [`skills/live-verify/SKILL.md`](skills/live-verify/SKILL.md) | Pre-flight state check at start of work; live-verification against real Flow before claiming done |
 | `doc-review` | [`skills/doc-review/SKILL.md`](skills/doc-review/SKILL.md) | Council-driven documentation audit before a release |

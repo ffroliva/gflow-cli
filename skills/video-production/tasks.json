@@ -1,0 +1,498 @@
+[
+  {
+    "id": "host-001",
+    "question": "A free `gflow image t2i` fails after about five seconds with RecaptchaError, exit 1, retryable false. The session was verified minutes ago. What is the cause and what do you check?",
+    "context": "gflow-cli 0.68.0 or earlier — on later builds the same cause surfaces as exit 36 FlowHostMigratedError (#673). Video generation on the same profile has been working.",
+    "expected": {
+      "must_include": [
+        "flow.google.com",
+        "host"
+      ],
+      "must_not_include": [
+        "re-authenticate",
+        "auth login",
+        "headless",
+        "retry the command"
+      ],
+      "partial_credit": [
+        "labs.google",
+        "final URL",
+        "639",
+        "exit 36",
+        "not ported"
+      ]
+    },
+    "tags": [
+      "host",
+      "error-recovery"
+    ],
+    "notes": "Through v0.68.0 the migrated-host guard ran after the reCAPTCHA mint on the image path, so the error named the wrong thing; #673 moved the guard to the mint and it is exit 36 now. The task is kept because the reasoning it scores is unchanged: the cause is the host, and agents reach for re-auth, which is the documented fix for a different symptom (#644)."
+  },
+  {
+    "id": "host-002",
+    "question": "You need a fresh Flow project id to hold every asset for a new production. How do you obtain it?",
+    "context": "Nothing exists yet. The id must be captured for use in later scripted commands.",
+    "expected": {
+      "must_include": [
+        "gflow project create"
+      ],
+      "must_not_include": [
+        "placeholder",
+        "copy the id from the URL",
+        "scrape"
+      ],
+      "partial_credit": [
+        "--json",
+        "redirect",
+        "> ",
+        "never pipe"
+      ]
+    },
+    "tags": [
+      "host",
+      "setup"
+    ],
+    "notes": "A rollout asserted no such command exists and burned an image generation on a placeholder to mint a project. Piping the JSON through head truncates the process before it prints."
+  },
+  {
+    "id": "model-001",
+    "question": "Write the command for an 8-second image-to-video clip from an approved still, portrait, one output.",
+    "context": "The exact length matters because the clip has to match a narration beat.",
+    "expected": {
+      "must_include": [
+        "--model",
+        "--duration"
+      ],
+      "must_not_include": [
+        "--duration 8 --aspect 9:16 --count 1 --project"
+      ],
+      "partial_credit": [
+        "omni-flash",
+        "veo-lite",
+        "exit 2",
+        "no duration control"
+      ]
+    },
+    "tags": [
+      "video",
+      "model"
+    ],
+    "notes": "Omitting --model binds veo-lite, which renders no duration control, and the run exits 2. A rollout wrote five i2v calls with --duration and no --model."
+  },
+  {
+    "id": "model-002",
+    "question": "A close-up needs two reference images attached and the highest available quality. Which model do you pick and why?",
+    "context": "The references are a prop sheet and a location plate.",
+    "expected": {
+      "must_include": [
+        "omni-flash"
+      ],
+      "must_not_include": [
+        "veo-quality"
+      ],
+      "partial_credit": [
+        "accepts no references",
+        "cap",
+        "zero"
+      ]
+    },
+    "tags": [
+      "video",
+      "references"
+    ],
+    "notes": "veo-quality's reference cap is 0, not 3. A rollout chose it for a two-reference shot and annotated it as being under the cap."
+  },
+  {
+    "id": "model-003",
+    "question": "You need to generate twelve location plates as reference images. Which image model, and why?",
+    "context": "Volume work; the plates feed later video generations.",
+    "expected": {
+      "must_include": [
+        "nano2"
+      ],
+      "must_not_include": [
+        "nano-pro for all",
+        "imagen4"
+      ],
+      "partial_credit": [
+        "daily cap",
+        "free",
+        "rate limit"
+      ]
+    },
+    "tags": [
+      "image",
+      "quota"
+    ],
+    "notes": "nano-pro is daily-capped and is the wrong default for bulk plate work."
+  },
+  {
+    "id": "refs-001",
+    "question": "Two recurring actors appear in the same shot and both faces must stay consistent. How do you attach them?",
+    "context": "Both already exist as Flow CHARACTER entities in the project.",
+    "expected": {
+      "must_include": [
+        "one"
+      ],
+      "must_not_include": [
+        "both entities",
+        "two --reference-entity",
+        "--reference-entity A --reference-entity B"
+      ],
+      "partial_credit": [
+        "400",
+        "role noun",
+        "profile",
+        "turned away",
+        "person policy"
+      ]
+    },
+    "tags": [
+      "references",
+      "consistency"
+    ],
+    "notes": "Two face-bearing references in one generation returns HTTP 400 surfaced as a wire-format error. Both baseline rounds proposed stacking two entities."
+  },
+  {
+    "id": "refs-002",
+    "question": "One room, four camera angles across six shots, and it must read as the same room from every angle including the reverse. How do you build the location references?",
+    "context": "No assets exist yet. Image generation is free.",
+    "expected": {
+      "must_include": [
+        "i2i",
+        "anchor"
+      ],
+      "must_not_include": [
+        "unavoidable",
+        "cannot be guaranteed",
+        "manual QC is the only"
+      ],
+      "partial_credit": [
+        "t2i",
+        "--ref",
+        "chain",
+        "geometry",
+        "verbatim"
+      ]
+    },
+    "tags": [
+      "consistency",
+      "environment"
+    ],
+    "notes": "The highest-value gap. A rollout generated angles as independent t2i calls and concluded reverse-angle drift was unavoidable. Chaining every angle off one anchor plate with i2i fixes it, for free."
+  },
+  {
+    "id": "refs-003",
+    "question": "A specific hand tool must look like the same object in three separate shots. How do you guarantee it, and what does the reference sheet need?",
+    "context": "The tool is described as having distinctive wear.",
+    "expected": {
+      "must_include": [
+        "same",
+        "scale"
+      ],
+      "must_not_include": [
+        "regenerate the prop for each shot",
+        "entity for the prop"
+      ],
+      "partial_credit": [
+        "--ref",
+        "anchor",
+        "fills the frame",
+        "no object entity"
+      ]
+    },
+    "tags": [
+      "consistency",
+      "props"
+    ],
+    "notes": "Flow has no object entity. A prop sheet without a scale anchor comes back the wrong size."
+  },
+  {
+    "id": "prompt-001",
+    "question": "Clips are coming back with a dark strip of sprocket holes down one edge. The style block reads 'cinematic, 35mm lens look, shallow depth of field'. What is wrong?",
+    "context": "Every clip in the batch shows it.",
+    "expected": {
+      "must_include": [
+        "35mm"
+      ],
+      "must_not_include": [
+        "crop",
+        "aspect ratio",
+        "resolution"
+      ],
+      "partial_credit": [
+        "full-frame",
+        "edge to edge",
+        "film strip",
+        "avoid",
+        "format"
+      ]
+    },
+    "tags": [
+      "prompt",
+      "artefact"
+    ],
+    "notes": "Naming a film format renders the stock. Cropping the border away leaves the cause in place for every future clip."
+  },
+  {
+    "id": "prompt-002",
+    "question": "A generation is refused with HTTP 400 every time. The prompt describes 'a young woman in her early 20s' waiting in a school corridor, with one character entity attached. What do you change?",
+    "context": "The same scene with the same references succeeded before the description was expanded.",
+    "expected": {
+      "must_include": [
+        "age"
+      ],
+      "must_not_include": [
+        "simplify the prompt and retry",
+        "shorten the prompt"
+      ],
+      "partial_credit": [
+        "role noun",
+        "person policy",
+        "relational",
+        "adult"
+      ]
+    },
+    "tags": [
+      "prompt",
+      "policy"
+    ],
+    "notes": "Age-explicit descriptors trip the person policy on their own. The CLI's own remediation text sends agents to shorten the prompt, which does not help."
+  },
+  {
+    "id": "dialogue-001",
+    "question": "A beat carries 34 words of dialogue and is set to 8 seconds. The actor rushes and the last sentence is cut. Fix it.",
+    "context": "The script is a client deliverable and the lines are fixed.",
+    "expected": {
+      "must_include": [
+        "split"
+      ],
+      "must_not_include": [
+        "shorten the line",
+        "trim the dialogue",
+        "cut the last sentence",
+        "paraphrase"
+      ],
+      "partial_credit": [
+        "2.5",
+        "words per second",
+        "18 words",
+        "two beats"
+      ]
+    },
+    "tags": [
+      "dialogue",
+      "timing"
+    ],
+    "notes": "The words are the deliverable. Roughly 2.5 spoken words per second is the measured ceiling."
+  },
+  {
+    "id": "audio-001",
+    "question": "A 40-second product montage with nobody speaking. A voiceover will be added later in an editor. What do you have to handle about the audio?",
+    "context": "The client wants the montage delivered ready for the voiceover.",
+    "expected": {
+      "must_include": [
+        "audio"
+      ],
+      "must_not_include": [
+        "the clips will be silent",
+        "no audio is generated",
+        "omit sound from the prompt"
+      ],
+      "partial_credit": [
+        "-an",
+        "strip",
+        "always generates",
+        "room tone"
+      ]
+    },
+    "tags": [
+      "audio",
+      "assembly"
+    ],
+    "notes": "Veo always generates audio and there is no silent mode. A rollout planned a silent montage and never accounted for invented room tone under the voiceover."
+  },
+  {
+    "id": "assembly-001",
+    "question": "You are joining three-second title cards and a set of 24 fps clips into one file with ffmpeg. What must you be careful about, and how do you verify the result?",
+    "context": "The cards are generated separately from the clips.",
+    "expected": {
+      "must_include": [
+        "frame rate"
+      ],
+      "must_not_include": [
+        "concat demuxer is fine",
+        "-f concat is the simplest"
+      ],
+      "partial_credit": [
+        "filter",
+        "concat=n=",
+        "ffprobe",
+        "duration",
+        "stream"
+      ]
+    },
+    "tags": [
+      "assembly",
+      "sync"
+    ],
+    "notes": "A 25 fps card among 24 fps clips through the concat demuxer produced 164 s of video under 171 s of audio. The stream lengths must agree within 0.1 s."
+  },
+  {
+    "id": "qa-001",
+    "question": "A clip has come back and looks right in its first frame. What do you check before accepting it?",
+    "context": "It is one of eighteen in a dialogue piece.",
+    "expected": {
+      "must_include": [
+        "transcript"
+      ],
+      "must_not_include": [
+        "it looks correct, accept it",
+        "frame 0 matches, accept"
+      ],
+      "partial_credit": [
+        "ffprobe",
+        "frames",
+        "volume",
+        "sync",
+        "clip_qa",
+        "gate"
+      ]
+    },
+    "tags": [
+      "qa",
+      "gates"
+    ],
+    "notes": "All three baseline rollouts accepted clips on visual impression alone. Two clips in one production carried audible audio lag while passing every other check."
+  },
+  {
+    "id": "qa-002",
+    "question": "You built a tool that reports lip-sync lag by correlating mouth motion against the audio. It says every clip is perfectly in sync. What do you do before trusting it?",
+    "context": "The numbers look plausible and no clip is flagged.",
+    "expected": {
+      "must_include": [
+        "delay"
+      ],
+      "must_not_include": [
+        "the clips are in sync",
+        "trust the numbers"
+      ],
+      "partial_credit": [
+        "adelay",
+        "known",
+        "self-test",
+        "inject",
+        "200"
+      ]
+    },
+    "tags": [
+      "qa",
+      "tooling"
+    ],
+    "notes": "A silently broken correlation reports every clip as perfect. The first implementation returned near-zero correlation at every lag and looked fine."
+  },
+  {
+    "id": "batch-001",
+    "question": "Three clips of fifteen are done and look acceptable. To save time you want to launch the remaining twelve in one detached background job. Is that a good idea?",
+    "context": "Each clip costs credits. The prompt template is shared across all fifteen.",
+    "expected": {
+      "must_include": [
+        "foreground"
+      ],
+      "must_not_include": [
+        "yes, launch them",
+        "that saves time",
+        "run them all in parallel"
+      ],
+      "partial_credit": [
+        "trial",
+        "gate",
+        "one profile",
+        "lost",
+        "template"
+      ]
+    },
+    "tags": [
+      "batch",
+      "cost"
+    ],
+    "notes": "A template bug bills once per clip. A detached run also lost a clip mid-poll after the credit was spent."
+  },
+  {
+    "id": "manifest-001",
+    "question": "A 24-scene manifest is re-run nightly as the script is edited. Tonight three lines changed and you also tweaked one word in the shared style block. What will it cost?",
+    "context": "Resume is by content hash on a sibling state file.",
+    "expected": {
+      "must_include": [
+        "all"
+      ],
+      "must_not_include": [
+        "only the three",
+        "just the changed lines",
+        "three scenes regenerate"
+      ],
+      "partial_credit": [
+        "style",
+        "hash",
+        "every scene",
+        "24"
+      ]
+    },
+    "tags": [
+      "manifest",
+      "cost"
+    ],
+    "notes": "The composed prompt includes the style block, so a style edit re-hashes every scene and silently regenerates the whole manifest."
+  },
+  {
+    "id": "shot-001",
+    "question": "A beat is built around a specific object staged deliberately in frame, and the shot also needs a recurring character. Which video command, and what is the trade?",
+    "context": "The object is the point of the shot.",
+    "expected": {
+      "must_include": [
+        "i2v"
+      ],
+      "must_not_include": [
+        "r2v guarantees the frame",
+        "r2v is always better"
+      ],
+      "partial_credit": [
+        "initial-frame",
+        "composes its own",
+        "no identity",
+        "omitted"
+      ]
+    },
+    "tags": [
+      "video",
+      "shot-choice"
+    ],
+    "notes": "Reference-to-video composes its own frame and has omitted a staged focal object entirely. Image-to-video guarantees the approved frame but carries no identity, so identity must be baked into the still."
+  },
+  {
+    "id": "shot-002",
+    "question": "One continuous camera move needs to run for about 20 seconds with unbroken sound. How do you produce it and what do you watch for when joining?",
+    "context": "A cut would break the effect.",
+    "expected": {
+      "must_include": [
+        "extend"
+      ],
+      "must_not_include": [
+        "chain",
+        "video chain"
+      ],
+      "partial_credit": [
+        "7",
+        "trim",
+        "0-7",
+        "scene create",
+        "audio carries"
+      ]
+    },
+    "tags": [
+      "video",
+      "shot-choice"
+    ],
+    "notes": "extend continues a shot with motion and audio carried across; chain restarts from a still and drops audio continuity. An extend segment holds about 7 s of real content in an 8 s slot."
+  }
+]

@@ -125,6 +125,8 @@ select = ["E", "F", "W", "I", "B", "UP", "N", "T20"]
 "tests/**" = ["T20"]
 "scripts/**" = ["T20"]
 "eval/**" = ["T20"]
+# skills/ ships runnable helper tools alongside each SKILL.md; a CLI helper prints.
+"skills/**" = ["T20"]
 
 [tool.pyright]
 include = ["src", "tests"]
