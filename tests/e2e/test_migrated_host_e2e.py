@@ -21,6 +21,9 @@ from pathlib import Path
 import pytest
 import structlog
 
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.image import Aspect as ImageAspect
+from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.transports._common import flow_host_kind
 from gflow_cli.api.transports.migrated_composer import MigratedComposer
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
@@ -144,3 +147,39 @@ async def test_e2e_t2v_runs_on_flow_google_com_by_default(
     body = result.local_path.read_bytes()
     assert body[4:8] == b"ftyp", body[:12]
     assert len(body) > 100_000, len(body)
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_auth
+async def test_e2e_image_on_a_moved_account_exits_36_not_recaptcha(
+    e2e_profile_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """$0 (#673): ``image t2i --project`` on a MOVED account must fail with the
+    distinct exit-36 error, not a bare RecaptchaError. The labs client mints the
+    reCAPTCHA token on the pool's bootstrap page before the transport runs; on a
+    moved account that page is the flow.google.com grid, which has no
+    recaptcha/enterprise.js. Measured 2026-09-05: exit 1 in 13 s before the fix.
+    Skips on an unmoved account — the labs page carries the script there."""
+    project = _project_id()
+    _set_flow_host(monkeypatch, None)
+    req = GenerateImageRequest(
+        prompt="a teal origami crane on a wooden table", aspect=ImageAspect.LANDSCAPE
+    )
+    async with FlowApiClient(profile_dir=e2e_profile_dir, out_dir=tmp_path) as client:
+        page = client._page  # noqa: SLF001 - the e2e reads the live page
+        assert page is not None
+        if flow_host_kind(page.url) != "migrated":
+            pytest.skip("profile is not on the migrated host; the labs page mints fine")
+        with pytest.raises(FlowHostMigratedError):
+            await client.generate_image(project_id=project, req=req)
+
+    bails = [
+        e for e in install_log_capture.entries if e.get("event") == "ui_driver.migrated_host_bail"
+    ]
+    assert bails and bails[0].get("at") == "mint_recaptcha_token", bails
+    assert not any(
+        "recaptcha" in str(e.get("event", "")).lower() for e in install_log_capture.entries
+    )
