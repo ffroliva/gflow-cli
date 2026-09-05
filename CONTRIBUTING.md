@@ -24,12 +24,13 @@ What a contributor PR is expected to have gone through, phase by phase:
 | Transport / auth / selector / schema change | [`predict`](skills/predict/SKILL.md) | A GO / CAUTION / STOP verdict **before** code exists; STOP means open an issue instead |
 | Any feature | [`scenario`](skills/scenario/SKILL.md) → [`plan`](skills/plan/SKILL.md) | `docs/superpowers/plans/<date>-<slug>/SCENARIO.md` + `PLAN.md` — the edge-case table and the task list; link them from the PR (they live on the branch and in the PR's history; at release the durable facts are folded into `docs/superpowers/memory/` and the plan dir is removed) |
 | Every commit | [`check`](skills/check/SKILL.md) | The Impeccable Routine green (it is the exact CI gate), plus the **step 1b** CLI↔MCP mirror sweep no CI gate can see |
-| Anything on a generation path | [`live-verify`](skills/live-verify/SKILL.md) | Evidence against real Flow, not just green offline tests — this project drives a black box; say plainly what you could **not** verify |
+| Any behavior change | [`tests/e2e/`](tests/e2e/) | The e2e test you ran, or the new one you wrote. E2E is the layer that proves the change works against real Flow — unit + integration + BDD green is never the whole story here. Name the test and paste its result |
+| Anything on a generation path | [`live-verify`](skills/live-verify/SKILL.md) | Evidence against real Flow **on top of** the e2e run — the 5-layer ledger; say plainly what you could **not** verify |
 | Opening the PR | [`pr-council-review`](skills/pr-council-review/SKILL.md) / [`branch-review`](.claude/commands/gflow/branch-review.md) | The multi-dimension council (correctness, quality, security, tests, memory, YAGNI, parity …); maintainers run it on every PR, so running it yourself first removes a round trip |
 | Red SonarCloud check | [`sonar`](skills/sonar/SKILL.md) | Zero new issues — the gate measures *new* code |
 | Auth or reCAPTCHA | [`known-issues`](skills/known-issues/SKILL.md) | Known-broken surfaces have documented workarounds; rediscovering them costs days |
 
-Three rules the pipeline enforces that catch first-time contributors most often:
+Four rules the pipeline enforces that catch first-time contributors most often:
 
 1. **Ship each capability twice, or say why not.** Every CLI command has an MCP twin or a
    reasoned exemption in `tests/mcp/test_cli_parity.py` — and options, payload keys and tool
@@ -38,6 +39,11 @@ Three rules the pipeline enforces that catch first-time contributors most often:
    (AGENTS.md § *Locale-Invariance Discipline*).
 3. **Verified beats claimed.** If a fix cannot be verified on the affected surface in your
    environment, the PR says so and uses `Refs #N`, not a green checkbox.
+4. **E2E is the evidence layer.** A behavior change without an e2e test — run or written —
+   is not reviewable. `tests/e2e/` already covers auth, session, image, video, scene, data
+   and batch; if nothing there represents your use case, add a test that does. Read-only and
+   inspection paths belong under `e2e_auth` and cost zero credits, so "it's expensive" is
+   almost never the reason.
 
 The PR template's *Lifecycle* checklist mirrors this table. Tick what applies, strike what
 does not, and say why — a reviewer can then start from your evidence instead of re-deriving it.
@@ -102,6 +108,20 @@ async def test_full_t2i_roundtrip(): ...
 @pytest.mark.e2e_video         # Cost sub-marker: spends ~1 Veo credit (most expensive).
 async def test_full_i2v_roundtrip(): ...
 ```
+
+**E2E is required, not optional.** CI cannot run these — they need a live authenticated
+profile — so the e2e layer is the one gate that only a human, or an agent with credentials,
+can close. That makes it the contributor's job, not the maintainer's. A PR that changes
+behavior must either:
+
+- **run an existing test** that already covers the use case (`tests/e2e/` has ~25 of them),
+  and paste the result; or
+- **add a new one** when nothing covers it, marked `e2e` plus the cost sub-marker that fits.
+
+Pick the cost sub-marker honestly — most inspection and auth paths are `e2e_auth` and spend
+zero credits. Use the `e2e_profile_dir` / `e2e_env` fixtures in `tests/e2e/conftest.py`.
+If you genuinely cannot run e2e (no Flow account, no credits for a video path), say so
+explicitly in the PR and a maintainer will run it — but do not leave the box silently unticked.
 
 CI runs `unit` + `integration` on every push. `e2e` tests require a live authenticated profile and are opt-in:
 
