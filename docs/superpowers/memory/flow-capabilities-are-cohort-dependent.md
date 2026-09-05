@@ -10,8 +10,7 @@ On 2026-08-14 the video duration matrix was encoded as fact after two accounts i
 two locales agreed, and [[video-model-capability-matrix]] explicitly recorded *"the
 one-cohort caveat is retired."* On 2026-09-04 a third profile on the **same**
 `labs.google` frontend showed the opposite - `4s/6s/8s` on all three
-selectable Veo 3.1 models (`lower_priority` missed its picker, so it stays
-unmeasured) -
+selectable Veo 3.1 models (`lower_priority` missed its picker there too) -
 with different credit prices (5/10/100 vs 10/20/100). The two agreeing accounts were
 one cohort, not two.
 
@@ -44,3 +43,17 @@ Applies to duration, ingredients, resolution tabs, count tabs, and aspect. See
 [[pr-must-verify-on-affected-surface]].
 
 **OUTCOME 2026-09-04/05:** `supports_duration()` is gone (#650): one shared `validate_duration_for_model()` backs DTO, CLI, chain, movie and MCP; whether the control is rendered is decided pre-submit at zero cost (exit 23 on labs, exit 11 on the migrated host). The line above describing the static refusal is history.
+
+
+**A second instance of the same error, in the same file, found 2026-09-05.**
+`lower_priority` missed its picker on every account measured, and
+[[video-model-capability-matrix]] twice concluded from that agreement that *the
+selector is broken*. It was not: a throttled migrated account renders the entry
+(`Veo 3.1 - Lite [Lower Priority]`) and the shipped selector binds it. Flow appears to
+serve that tier only to accounts it is throttling, so the earlier accounts shared a
+cohort in **absence** as well as in duration.
+
+The lesson generalises past capabilities: an **absent menu entry** is cohort evidence
+exactly like a present one, and "missing on N accounts" never by itself indicts the
+selector. Duration and credits for that tier remain unmeasured — it has only ever been
+selected at $0, never generated on.

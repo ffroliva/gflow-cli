@@ -54,6 +54,13 @@ class Dom:
     submit_clicked: int = 0
     submit_enable_after_reads: int = 0  # Angular flips `disabled` a tick after insert_text (#670)
     menu_lingers: bool = False  # Angular keeps a detached menu pane as the LAST overlay
+    # Picking from the model menu closes it logically but leaves its overlay VISIBLE and
+    # eating the next Escape — measured 2026-09-05: after a switch one visible overlay
+    # remains until a second Escape. This is what made a switched run fail and a repeated
+    # one pass.
+    menu_overlay_lingering: bool = False
+    escapes_ignored: bool = False  # a pane that refuses to close at all
+    toast_visible: bool = False  # an unrelated CDK overlay (snackbar/tooltip)
     events: list[str] = field(default_factory=list)
 
 
@@ -96,9 +103,14 @@ class FakeLocator:
     def last(self) -> FakeLocator:
         return FakeLocator(self.page, self.kind, self.items[-1:])
 
+    def nth(self, index: int) -> FakeLocator:
+        return FakeLocator(self.page, self.kind, self.items[index : index + 1])
+
     def filter(self, *, has: FakeLocator | None = None, has_text: Any = None) -> FakeLocator:
         items = self.items
-        if has is not None and has.kind == "group":  # pane.filter(has=<radiogroup>)
+        if has is not None and has.kind == "ours":  # overlays we are allowed to dismiss
+            items = [i for i in items if i in ("pane", "menu", "lingering-menu")]
+        elif has is not None and has.kind == "group":  # pane.filter(has=<radiogroup>)
             items = [i for i in items if i == "pane" and self.page.dom.pane_open]
         elif has is not None:  # `has=page.locator("mat-icon").filter(has_text=re)` → ligature match
             pat = has.page._pending_lig
@@ -164,9 +176,15 @@ class FakeLocator:
         elif self.kind == "menuitem":
             dom.model_label = str(target)
             dom.menu_open = False
+            dom.menu_overlay_lingering = True
         elif self.kind == "textarea":
             raise PlaywrightTimeoutError("Locator.click: Timeout 4000ms exceeded (textarea)")
         elif self.kind == "composer":
+            if dom.pane_open or dom.menu_open or dom.menu_overlay_lingering:
+                raise PlaywrightTimeoutError(
+                    "Locator.click: Timeout 5000ms exceeded. waiting for element to be "
+                    "visible, enabled and stable (an overlay is covering it)"
+                )
             dom.events.append("composer_focused")
         elif self.kind == "submit":
             dom.submit_clicked += 1
@@ -183,10 +201,16 @@ class FakeKeyboard:
 
     async def press(self, key: str) -> None:
         if key == "Escape":
-            if self.page.dom.menu_open:
-                self.page.dom.menu_open = False
+            dom = self.page.dom
+            if dom.escapes_ignored:
+                return
+            # One overlay per press, top of the stack first.
+            if dom.menu_overlay_lingering:
+                dom.menu_overlay_lingering = False
+            elif dom.menu_open:
+                dom.menu_open = False
             else:
-                self.page.dom.pane_open = False
+                dom.pane_open = False
 
     async def type(self, text: str, **_: Any) -> None:
         self.page.dom.prompt += text
@@ -237,8 +261,16 @@ class FakePage:
         dom = self.dom
         if css == ".settings-trigger-button":
             return FakeLocator(self, "trigger", ["trigger"] if dom.trigger_present else [])
-        if css == ".cdk-overlay-pane":
+        if css in (".cdk-overlay-pane", ".cdk-overlay-pane:visible"):
             panes = (["pane"] if dom.pane_open else []) + (["menu"] if dom.menu_open else [])
+            if dom.menu_overlay_lingering:
+                panes.append("lingering-menu")
+            if dom.toast_visible:
+                panes.append("toast")
+            if css.endswith(":visible"):
+                # The detached menu pane is in the DOM but NOT visible — which is exactly
+                # why the old `OVERLAY.first` read-back stayed silent.
+                return FakeLocator(self, "pane", panes)
             if dom.menu_lingers and dom.pane_open and not dom.menu_open:
                 panes.append("stale-menu")  # what `.last` sees after a model switch
             return FakeLocator(self, "pane", panes)
@@ -266,6 +298,11 @@ class FakePage:
         if css == "button":
             # only ever narrowed by a ligature: arrow_drop_down (model) or arrow_forward (submit)
             return _ButtonLocator(self)
+        if css == "[role='radiogroup'], [role='menuitem']":
+            # `_close_pane` narrows to overlays that are OURS — the settings pane and the
+            # model menu — so a snackbar or tooltip in the same CDK container is left
+            # alone. Marker locator; the pane filter below decides per overlay.
+            return FakeLocator(self, "ours", ["ours"])
         if css == "[role='menuitem']":
             return FakeLocator(self, "menuitem", list(dom.models) if dom.menu_open else [])
         if css == "textarea":
@@ -438,6 +475,185 @@ async def test_model_not_offered_lists_the_menu() -> None:
         await MigratedComposer().apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_QUALITY))
     assert "Veo 3.1 - Lite" in str(exc_info.value)
     assert page.dom.submit_clicked == 0
+
+
+# --- the lower-priority tier ------------------------------------------------
+#
+# `veo_3_1_lite_lower_priority` has no captured label — Flow has never rendered the
+# entry on any account gflow has driven — so it is matched by the `[Lower Priority]`
+# tag alone, exactly as the labs driver has since #539. These fixtures therefore
+# describe the menu that tag implies, not one that was measured.
+
+LP_LITE = "Veo 3.1 - Lite [Lower Priority]"
+
+
+async def test_lower_priority_tier_selects_by_its_tag() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.models = ["Omni 1.1 Flash", "Veo 3.1 - Lite", LP_LITE]
+    await MigratedComposer().apply_video_settings(
+        page, _t2v(model=VideoModel.VEO_3_1_LITE_LOWER_PRIORITY)
+    )
+    assert page.dom.model_label == LP_LITE
+
+
+async def test_plain_lite_never_binds_its_lower_priority_sibling() -> None:
+    """`Veo 3.1 - Lite` is a substring of `Veo 3.1 - Lite [Lower Priority]`, so the
+    pre-fix `.first` bound whichever Flow listed first — here, the wrong one."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.models = [LP_LITE, "Veo 3.1 - Lite"]  # LP deliberately first
+    await MigratedComposer().apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    assert page.dom.model_label == "Veo 3.1 - Lite"
+
+
+async def test_lower_priority_button_readback_does_not_pass_for_plain_lite() -> None:
+    """The pane already shows the LP tier: `startswith('Veo 3.1 - Lite')` said "already
+    selected" and returned without touching the menu, silently keeping it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.models = ["Veo 3.1 - Lite", LP_LITE]
+    page.dom.model_label = LP_LITE
+    await MigratedComposer().apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    assert page.dom.model_label == "Veo 3.1 - Lite"
+
+
+async def test_a_matching_button_readback_never_opens_the_menu() -> None:
+    """Live 2026-09-05: the account's picker was already on the lower-priority tier, so
+    the run bound it without touching the menu — and emitted no model event at all,
+    which is why `migrated.model_already_selected` now marks the path."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.models = ["Omni 1.1 Flash", "Veo 3.1 - Lite", LP_LITE]
+    page.dom.model_label = LP_LITE
+    await MigratedComposer().apply_video_settings(
+        page, _t2v(model=VideoModel.VEO_3_1_LITE_LOWER_PRIORITY)
+    )
+    assert page.dom.model_label == LP_LITE
+    assert not page.dom.menu_open
+
+
+async def test_an_ambiguous_menu_refuses_instead_of_guessing() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.models = ["Veo 3.1 - Lite", LP_LITE, "Omni 1.1 Flash [Lower Priority]"]
+    with pytest.raises(ConfigurationError) as exc_info:
+        await MigratedComposer().apply_video_settings(
+            page, _t2v(model=VideoModel.VEO_3_1_LITE_LOWER_PRIORITY)
+        )
+    message = str(exc_info.value)
+    assert "matched 2 entries" in message
+    assert LP_LITE in message and "Omni 1.1 Flash [Lower Priority]" in message
+    assert page.dom.model_label == "Omni 1.1 Flash"  # untouched
+    assert page.dom.submit_clicked == 0
+
+
+async def test_a_model_switch_leaves_no_overlay_covering_the_composer() -> None:
+    """Field report: "switch the model and the run dies; re-run with the same model and
+    it works." A switch stacks TWO overlays and each Escape dismisses one, so the single
+    Escape `_close_pane` used to press left the settings pane over the composer —
+    `send_prompt`'s click then died as a bare Playwright TimeoutError naming
+    `[contenteditable='true']`, pointing nowhere near the pane."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    composer = MigratedComposer()
+    await composer.apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    assert page.dom.model_label == "Veo 3.1 - Lite"  # the switch really happened
+    assert not page.dom.pane_open and not page.dom.menu_overlay_lingering
+
+    await composer.send_prompt(page, "a man crying")
+    assert page.dom.prompt == "a man crying"
+
+
+async def test_repeating_the_same_model_never_stacks_the_second_overlay() -> None:
+    """The other half of the report: a re-run binds at the button read-back, never opens
+    the menu, and so passed even while a switch failed."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.model_label = "Veo 3.1 - Lite"
+    composer = MigratedComposer()
+    await composer.apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    assert not page.dom.menu_overlay_lingering  # the menu was never opened
+    await composer.send_prompt(page, "a man crying")
+    assert page.dom.prompt == "a man crying"
+
+
+async def test_a_pane_that_refuses_to_close_is_named_not_left_to_the_composer() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.escapes_ignored = True
+    with pytest.raises(UiSelectorDriftError) as exc_info:
+        await MigratedComposer().apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    message = str(exc_info.value)
+    assert "still visible" in message and "migrated" in message
+    assert page.dom.submit_clicked == 0
+
+
+async def test_a_stuck_pane_never_masks_the_error_already_travelling() -> None:
+    """Review D1: `_close_pane` in a bare `finally` replaced the caller's error. A model
+    Flow does not offer raises ConfigurationError (exit 11) naming what IS offered; a
+    pane that then refuses to close turned that into UiSelectorDriftError (exit 23) and
+    the list was gone."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.escapes_ignored = True  # the pane will not close
+    with pytest.raises(ConfigurationError) as exc_info:
+        await MigratedComposer().apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_QUALITY))
+    message = str(exc_info.value)
+    assert "Veo 3.1 - Lite" in message  # the offered-models list survived
+    assert "still visible" not in message
+
+
+async def test_an_unrelated_overlay_is_not_ours_to_dismiss() -> None:
+    """Review D2: `.cdk-overlay-pane` is generic CDK — Flow mounts snackbars and tooltips
+    in the same container. One visible at the wrong moment must not burn the escapes and
+    abort a run that was fine."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.toast_visible = True
+    composer = MigratedComposer()
+    await composer.apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    assert page.dom.toast_visible  # left alone, not escaped at
+    assert not page.dom.pane_open and not page.dom.menu_overlay_lingering
+    await composer.send_prompt(page, "a man crying")
+    assert page.dom.prompt == "a man crying"
+
+
+def test_pane_close_escapes_matches_the_measured_stack_depth() -> None:
+    """Review D14: the constant is evidence, not headroom — a switch stacks exactly two
+    overlays (the menu, then the pane) and each Escape dismisses one."""
+    from gflow_cli.api.transports.migrated_composer import PANE_CLOSE_ESCAPES
+
+    assert PANE_CLOSE_ESCAPES == 2
+
+
+def test_matcher_excludes_the_lower_priority_suffix_by_default() -> None:
+    from gflow_cli.api.transports.migrated_composer import (
+        VIDEO_MODEL_MENU_MATCHERS,
+        ModelMenuMatcher,
+    )
+
+    lite = VIDEO_MODEL_MENU_MATCHERS[VideoModel.VEO_3_1_LITE]
+    assert lite.matches("Veo 3.1 - Lite")
+    assert not lite.matches(LP_LITE)
+
+    lp = VIDEO_MODEL_MENU_MATCHERS[VideoModel.VEO_3_1_LITE_LOWER_PRIORITY]
+    assert lp.matches(LP_LITE)
+    assert not lp.matches("Veo 3.1 - Lite")
+
+    # Flow's ligature prefix and casing must not decide the match.
+    assert ModelMenuMatcher("Veo 3.1 - Lite").matches("volume_up veo 3.1 - lite")
+    assert lp.matches("volume_up Veo 3.1 - Lite [LOWER PRIORITY]")
 
 
 # --- prompt + submit --------------------------------------------------------

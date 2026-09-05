@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -57,6 +58,13 @@ log = structlog.get_logger(__name__)
 MIGRATED_PROJECT_URL = "https://flow.google.com/project/{project_id}"
 READY_ANCHOR = ".settings-trigger-button"
 OVERLAY = ".cdk-overlay-pane"
+#: Playwright's own visibility engine — the detached overlays Angular leaves behind are
+#: in the DOM but not visible, and only the visible ones can cover the composer.
+VISIBLE_OVERLAY = f"{OVERLAY}:visible"
+#: Escapes `_close_pane` will spend: exactly the stack depth measured after a model
+#: switch (the menu, then the settings pane). No headroom — a third stacked overlay is
+#: not something to absorb quietly, and `strict=True` turns it into a named failure.
+PANE_CLOSE_ESCAPES = 2
 RADIOGROUP = "[role='radiogroup']"
 RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
@@ -75,11 +83,60 @@ SUBMIT_ENABLE_POLL_S = 0.1
 #: for it before settling for the URL-less record.
 RESULT_URL_GRACE_S = 20.0
 
+#: Product names read back verbatim from the live migrated menu (v0.62.1's refusal
+#: diagnostic, corroborated by the 2026-09-05 spike). These are the tiers a *not yet
+#: moved* account may be routed to the new host for — see :func:`migrated_can_serve`.
 VIDEO_MODEL_MENU_LABELS: dict[VideoModel, str] = {
     VideoModel.OMNI_FLASH: "Omni 1.1 Flash",
     VideoModel.VEO_3_1_LITE: "Veo 3.1 - Lite",
     VideoModel.VEO_3_1_FAST: "Veo 3.1 - Fast",
     VideoModel.VEO_3_1_QUALITY: "Veo 3.1 - Quality",
+}
+
+#: The suffix Flow appends to a tier it is serving at lower priority. The labs driver
+#: has matched ``veo_3_1_lite_lower_priority`` by this tag alone since #539
+#: (``[role='menuitem']:has-text('[Lower Priority]')``), because through v0.67.0 no
+#: capture had ever rendered the entry — the 2026-08-14 two-account capability matrix,
+#: #650's duration capture and v0.61.0's refusal A/B all recorded a picker MISS.
+#:
+#: It has since been captured: on 2026-09-05 a migrated account rendered
+#: ``Veo 3.1 - Lite [Lower Priority]``, and its picker was *defaulted* to that tier —
+#: which is presumably why the labs captures missed it, having been taken on accounts
+#: Flow was not throttling. Matching stays on the tag rather than moving to that label:
+#: it is one account's rendering, the labs driver keys off the same tag, and a tag that
+#: Flow appends to whichever tier it throttles survives it moving to another one.
+#: Capture: ``docs/superpowers/spikes/2026-09-05-migrated-model-menu-lower-priority.md``.
+LOWER_PRIORITY_TAG = "[Lower Priority]"
+
+
+@dataclass(frozen=True)
+class ModelMenuMatcher:
+    """How one model's entry is recognised in the migrated model menu.
+
+    ``contains`` must appear in the entry's text and ``excludes`` must not. Every
+    ordinary tier excludes :data:`LOWER_PRIORITY_TAG`, because Flow's lower-priority
+    entry is its sibling's label plus that suffix: matched as a bare substring,
+    ``Veo 3.1 - Lite`` also matches ``Veo 3.1 - Lite [Lower Priority]``. That is the
+    ambiguity #539 fixed on labs.google (whose selectors carry
+    ``:not(:has-text('[Lower Priority]'))``) and which this port had dropped.
+    """
+
+    contains: str
+    excludes: str | None = LOWER_PRIORITY_TAG
+
+    def matches(self, text: str) -> bool:
+        folded = text.casefold()
+        if self.contains.casefold() not in folded:
+            return False
+        return self.excludes is None or self.excludes.casefold() not in folded
+
+
+#: Every model the migrated menu can be *driven* to, including the lower-priority Lite
+#: tier the routing gate above deliberately does not list.
+VIDEO_MODEL_MENU_MATCHERS: dict[VideoModel, ModelMenuMatcher] = {
+    **{model: ModelMenuMatcher(label) for model, label in VIDEO_MODEL_MENU_LABELS.items()},
+    # No label to exclude a sibling by, and none needed: the tag IS the entry.
+    VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: ModelMenuMatcher(LOWER_PRIORITY_TAG, excludes=None),
 }
 ASPECT_LIGATURE: dict[Aspect, str] = {
     Aspect.LANDSCAPE: "crop_16_9",
@@ -91,7 +148,14 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     """Can the migrated composer take this request as it stands? Text-to-video in an
     existing project, with a model the new host offers (or none). Everything else —
     i2v/r2v media, character references, a fresh project, a labs-only model — is
-    not ported yet, so an unmoved account keeps the labs driver for it."""
+    not ported yet, so an unmoved account keeps the labs driver for it.
+
+    Gated on :data:`VIDEO_MODEL_MENU_LABELS`, not on the wider
+    :data:`VIDEO_MODEL_MENU_MATCHERS`: this decides whether to *move* a request off
+    labs.google, and pulling one there for a tier no capture has ever seen rendered
+    would trade a working driver for an unverified one. An account Flow has already
+    moved is routed by its URL and never reaches this question — for it,
+    ``--model veo-lite-lp`` is driven by its matcher instead of refused outright."""
     if request.mode is not Mode.T2V or not project_id:
         return False
     if request.reference_entities:
@@ -162,8 +226,15 @@ class MigratedComposer:
                 count=request.count,
                 model=request.model.value if request.model else None,
             )
-        finally:
-            await self._close_pane(page)
+        except BaseException:
+            # A close failure must never replace the error that is already travelling.
+            # `_close_pane` in a bare `finally` did exactly that: a `--model` Flow does
+            # not offer raises ConfigurationError (exit 11) naming the offered models,
+            # and a stuck pane then overwrote it with UiSelectorDriftError (exit 23),
+            # losing the list the user needed. On this path the pane is best-effort.
+            await self._close_pane(page, strict=False)
+            raise
+        await self._close_pane(page, strict=True)
 
     async def _open_pane(self, page: Page) -> Any:
         trigger = page.locator(READY_ANCHOR).first
@@ -188,14 +259,71 @@ class MigratedComposer:
             ) from e
         return pane
 
-    async def _close_pane(self, page: Page) -> None:
-        """Escape closed the pane in every measured run; if it ever does not, the next
-        click on the composer fails loudly rather than a speculative fallback guessing."""
-        await page.keyboard.press("Escape")
-        await asyncio.sleep(0.3)
-        pane = page.locator(OVERLAY).first
-        if await pane.count() and await pane.is_visible():
-            log.warning("migrated.pane_still_open")
+    def _blocking_overlays(self, page: Page) -> Any:
+        """Visible overlays that are ours to dismiss — the settings pane and the model
+        menu, identified by what they contain.
+
+        Scoped rather than every ``.cdk-overlay-pane``: those classes are generic CDK
+        and Flow mounts snackbars, tooltips and dialogs in the same container, none of
+        which cover the composer or answer to Escape. An unrelated toast visible at the
+        wrong moment would otherwise burn both escapes and abort a run that was fine.
+        """
+        return page.locator(VISIBLE_OVERLAY).filter(has=page.locator(f"{RADIOGROUP}, {MENU_ITEM}"))
+
+    async def _close_pane(self, page: Page, *, strict: bool = True) -> None:
+        """Dismiss every visible settings/menu overlay, and verify that none is left.
+
+        ``strict=False`` downgrades a stuck pane to a warning. It is passed on the path
+        where an exception is already in flight, so a close failure cannot mask the
+        error the caller actually needs — see :meth:`apply_video_settings`.
+
+        One Escape is not enough after ``--model``. Selecting from the menu leaves
+        Angular with **two** stacked overlays — the settings pane and the menu opened
+        over it — and each Escape dismisses exactly one, so a single press closed only
+        the menu and left the settings pane covering the composer. ``send_prompt``'s
+        click then failed Playwright's actionability check and surfaced ~5 s later as a
+        bare ``TimeoutError`` naming ``[contenteditable='true']``, with nothing pointing
+        at the pane. Field-reported as "switch the model and the run dies; re-run with
+        the same model and it works" — a re-run binds the model at the button read-back,
+        never opens the menu, and so never stacks the second overlay.
+
+        Measured 2026-09-05 at $0 (spike
+        ``2026-09-05-migrated-model-menu-lower-priority.md``): after a switch the
+        composer's bounding box is **identical** for 12 s — it was never unstable — while
+        ``.cdk-overlay-pane:visible`` stays at 1; one more Escape takes it to 0 and the
+        prompt types.
+
+        The old read-back *did* notice — ``migrated.pane_still_open`` fires on the
+        pre-fix source, confirmed by replaying it against the live host. It was a
+        warning: the run continued, the composer click timed out 5 s later, and the
+        error it raised named ``[contenteditable='true']`` with no reference to the
+        warning that had predicted it. The observation was there and only the
+        consequence was missing, so it is now the failure itself.
+
+        A pane that will not close is raised here, pre-submit and at $0, rather than left
+        for the composer click to report as an unattributable timeout.
+        """
+        for _ in range(PANE_CLOSE_ESCAPES):
+            # Re-queried every pass rather than held: the count has to be re-read after
+            # each Escape, and a locator built once is only re-evaluated because
+            # Playwright's are lazy — not a property worth depending on here.
+            if not await self._blocking_overlays(page).count():
+                return
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.3)
+        remaining = await self._blocking_overlays(page).count()
+        if not remaining:
+            return
+        log.warning("migrated.pane_still_open", visible_overlays=remaining, strict=strict)
+        if not strict:
+            return
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated host: {remaining} overlay(s) still visible after "
+                f"{PANE_CLOSE_ESCAPES} Escape presses — the settings pane would cover the "
+                f"composer and the prompt could not be typed (host=migrated)"
+            ),
+        )
 
     async def _select(
         self,
@@ -251,8 +379,8 @@ class MigratedComposer:
         )
 
     async def _select_model(self, page: Page, pane: Any, model: VideoModel) -> None:
-        label = VIDEO_MODEL_MENU_LABELS.get(model)
-        if label is None:
+        matcher = VIDEO_MODEL_MENU_MATCHERS.get(model)
+        if matcher is None:
             raise ConfigurationError(
                 detail=(
                     f"model '{model.value}' is not available on the migrated Flow host; "
@@ -269,7 +397,12 @@ class MigratedComposer:
                 ),
             )
         current = (await button.text_content() or "").strip()
-        if current.lower().startswith(label.lower()):
+        if matcher.matches(current):
+            # Logged, because otherwise this path is invisible: a run that short-circuits
+            # here emits no model event at all, and a field timeline cannot tell "bound
+            # the tier you asked for" from "never touched the picker". The 2026-09-05
+            # live run needed a separate $0 probe to answer exactly that.
+            log.info("migrated.model_already_selected", model=current, requested=model.value)
             return
         await button.click(timeout=4000)
         items = page.locator(MENU_ITEM)
@@ -279,19 +412,36 @@ class MigratedComposer:
             raise UiSelectorDriftError(
                 detail="migrated host: model menu ([role='menuitem']) did not open (host=migrated)",
             ) from e
-        target = items.filter(has_text=re.compile(re.escape(label), re.IGNORECASE)).first
-        if not await target.count():
-            offered = [t.strip() for t in await items.all_text_contents()]
+        # Matched in Python rather than through a `has_text` filter: the menu is read
+        # back for the refusal diagnostic anyway, an *exclusion* is not expressible as
+        # `has_text`, and more than one hit has to REFUSE instead of resolving `.first`
+        # (#539 — the labs A/B that proved a `.first` on an ambiguous selector picks a
+        # tier the user never asked for, and Flow bills for it).
+        offered = [t.strip() for t in await items.all_text_contents()]
+        hits = [i for i, text in enumerate(offered) if matcher.matches(text)]
+        if not hits:
             await page.keyboard.press("Escape")
             raise ConfigurationError(
                 detail=(
-                    f"model '{label}' is not offered on this account's migrated Flow host; "
-                    f"offered: {', '.join(offered)}"
+                    f"model '{model.value}' is not offered on this account's migrated Flow "
+                    f"host; offered: {', '.join(offered)}"
                 ),
                 remediation_hint="Pass --model with one of the offered names, or omit it.",
             )
-        await target.click(timeout=4000)
-        log.info("migrated.model_selected", model=label)
+        if len(hits) > 1:
+            await page.keyboard.press("Escape")
+            raise ConfigurationError(
+                detail=(
+                    f"model '{model.value}' matched {len(hits)} entries in the migrated model "
+                    f"menu ({', '.join(offered[i] for i in hits)}) — refusing rather than "
+                    f"guessing which tier Flow would bill"
+                ),
+                remediation_hint=(
+                    "Pass a --model that names one entry, or omit it to accept Flow's default."
+                ),
+            )
+        await items.nth(hits[0]).click(timeout=4000)
+        log.info("migrated.model_selected", model=offered[hits[0]], requested=model.value)
 
     # --- prompt + submit --------------------------------------------------------
 

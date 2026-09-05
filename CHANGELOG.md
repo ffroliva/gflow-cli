@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--model veo-lite-lp` is drivable on the migrated `flow.google.com` host.** It was
+  the one tier the migrated model map omitted, so an account Google has already moved
+  could not select it at all: `_select_model` refused with `ConfigurationError` (exit
+  11, "not available on the migrated Flow host") before ever reading the live menu.
+  The omission was not an oversight — the tier's full menu label is unknown, because
+  Flow has never rendered the entry on any account gflow has driven (the 2026-08-14
+  two-account capability matrix, #650's duration capture and v0.61.0's refusal A/B all
+  recorded a picker MISS), and the migrated map is keyed by label. It is now matched
+  the way the labs driver has matched it since #539 — by the `[Lower Priority]` tag
+  alone. **The entry has now been captured** (2026-09-05, a migrated account): the menu
+  renders `Veo 3.1 - Lite [Lower Priority]`, and that account's picker was already
+  *defaulted* to it — presumably why every earlier capture missed the entry, having been
+  taken on accounts Flow was not throttling. Matching stays on the tag rather than the
+  newly-known label: one account's rendering, and a tag Flow appends to whichever tier it
+  throttles survives that tier changing. Verified live at $0 by driving `_select_model`
+  for all five tiers and reading the picker back after each switch — including the
+  lower-priority tier reached through the menu — plus one real 8 s generation on it.
+  Routing is deliberately unchanged: `veo-lite-lp` still does not make
+  `migrated_can_serve` pull an **unmoved** account onto the new host, since Flow appears
+  not to offer the tier to accounts it is not throttling.
+  Capture: `docs/superpowers/spikes/2026-09-05-migrated-model-menu-lower-priority.md`.
+
+- **`gflow update` — self-update in place.** Runs the package manager that
+  installed gflow-cli, read off the install itself rather than guessed from
+  `PATH`: `uv-receipt.toml` in the venv root → `uv tool upgrade gflow-cli`,
+  `pipx_metadata.json` → `pipx upgrade gflow-cli`, otherwise that venv's own
+  `python -m pip install --upgrade gflow-cli`. Asks PyPI first and runs nothing
+  when already current; if PyPI is unreachable the manager still runs. After an
+  upgrade it re-reads the venv's Playwright version and prints the
+  `playwright install chromium` hint only when it moved. `--check` reports
+  installed vs latest plus the command that would run; `--json` returns the
+  same as a document. The outcome is verified against the venv, not the
+  manager's exit code: on Windows the running `gflow.exe` launcher holds its
+  own file open, so `uv tool upgrade` installs the new wheel and then exits 1
+  copying the launcher — measured — and that is reported as an upgrade with a
+  note, because the launcher only points at the venv's python and keeps
+  working. Editable / local / VCS / source installs, a manager binary missing
+  from `PATH`, a `uv venv` with no `pip` module, and a manager run that leaves
+  the version unchanged all surface as `ConfigurationError` (exit 11) — except
+  the one honest no-op: PyPI unreachable, manager exit 0, nothing changed, which
+  is exit 0. Deliberately no MCP twin (a server must not replace its own code under a live
+  session) — recorded as a reasoned exemption in the parity test.
+
+### Changed
+
+- **The once-a-day update notice (#479) is now a banner.** On a terminal it is
+  a bordered panel on stderr naming the new version, `gflow update`, and the
+  release-notes link; when stderr is piped it stays one plain yellow line so
+  logs and `2>&1 | jq` pipelines see one line per event. Same cache, same
+  gates (`GFLOW_CLI_UPDATE_CHECK=0`, CI, non-index installs). The notice text
+  points at `gflow update` instead of listing three manager commands.
+- **CONTRIBUTING.md now routes contributors — and their coding agents — through the
+  same lifecycle AGENTS.md defines.** A phase → skill → artifact table (issue
+  assessment, predict, scenario/plan, check with the step 1b mirror sweep,
+  live-verify, council review, sonar, known-issues) says what a PR is expected to
+  have gone through and what it leaves behind for the reviewer; the PR template
+  gains a matching *Lifecycle* checklist; the quality-gate list is now identical to
+  AGENTS.md's (it had drifted to six of nine commands).
+
+### Fixed
+
+- **The migrated model picker could bind a tier the user did not ask for.** The port
+  matched menu entries by case-insensitive *substring* and took `.first`, so on an
+  account whose menu carries a lower-priority sibling, `--model veo-lite` also matched
+  `Veo 3.1 - Lite [Lower Priority]` and Flow billed whichever Angular happened to list
+  first. The same substring ran against the picker button's read-back, where a pane
+  already showing the lower-priority tier satisfied `startswith("Veo 3.1 - Lite")` and
+  returned "already selected" without opening the menu — silently keeping the wrong
+  tier. This is the ambiguity #539 fixed on labs.google (whose selectors carry
+  `:not(:has-text('[Lower Priority]'))`) and which this port had dropped. Ordinary
+  tiers now exclude the tag on both paths, and a matcher hitting more than one live
+  entry **refuses** (exit 11) naming every candidate rather than guessing which one
+  Flow would bill. Confirmed against the real button text on a throttled account:
+  `"Veo 3.1 - Lite [Lower Priority] arrow_drop_down".lower().startswith("veo 3.1 - lite")`
+  is `True`, so pre-fix `--model veo-lite` there generated on the throttled tier without
+  ever opening the menu.
+
+- **Switching `--model` on the migrated host broke the next run** — reported as "run 1
+  with a new model dies, run 2 with the same model works, run 3 with another model dies
+  again". Picking from the model menu leaves Angular with **two** stacked overlays (the
+  settings pane and the menu opened over it) and each Escape dismisses exactly one, so
+  `_close_pane`'s single press closed only the menu and left the settings pane covering
+  the composer. `send_prompt`'s click then failed actionability and surfaced ~5 s later
+  as a bare `TimeoutError` naming `[contenteditable='true']`, pointing nowhere near the
+  pane. A repeat run binds the model at the button read-back, never opens the menu and
+  never stacks the second overlay — which is exactly why re-running the same model
+  worked. Measured at $0: after a switch the composer's bounding box is *identical* for
+  12 s (it was never unstable) while `.cdk-overlay-pane:visible` stays at 1; one more
+  Escape takes it to 0. `_close_pane` now escapes until no overlay is visible, bounded,
+  and raises pre-submit if one will not close rather than leaving the composer click to
+  report it. The old read-back did fire `migrated.pane_still_open` — as a warning the run
+  ignored; the observation was there and only the consequence was missing.
+
+- **A migrated run that short-circuited model selection logged nothing.** `_select_model`
+  returning at its button read-back emitted no event, so a field timeline could not tell
+  "bound the tier you asked for" from "never touched the picker" — answering that for the
+  2026-09-05 run took a separate probe. It now logs `migrated.model_already_selected`
+  with the observed button text.
+
+
 ## [0.68.0] — 2026-09-05
 
 ### Added

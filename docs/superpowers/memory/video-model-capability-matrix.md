@@ -14,7 +14,7 @@ project `5ee3e625-…`; evidence doc
 | `veo_3_1_lite` | **NONE** | x1–x4 | 10 | accepted |
 | `veo_3_1_fast` | **NONE** | x1–x4 | 20 | accepted |
 | `veo_3_1_quality` | **NONE** | x1–x4 | 100 | **REJECTED** |
-| `veo_3_1_lite_lower_priority` | picker MISS (`:not()` form needs re-deriving) | | | |
+| `veo_3_1_lite_lower_priority` | picker MISS — **absence, not a broken selector; settled 2026-09-05, see the end of this file** | | | |
 
 **🎯 ROOT CAUSE of [[#451]]/#288:** `api/video.py:44` claims "the four `VEO_3_1_*`
 models cap at 8s" — presuming they render a duration control. **They render none.**
@@ -52,7 +52,10 @@ separately, via `reference_cap_for(model)` returning 0 for `VEO_3_1_QUALITY`.)
 IDENTICAL. Credits match exactly for lite/fast/quality (10/20/100); omni differs
 only by selected duration (7 @4s, 12 @8s, 15 @10s) → **pricing is
 duration-scaled**. `veo_3_1_lite_lower_priority` missed its picker on **BOTH**
-accounts → that `:not()` selector is genuinely broken, not cohort-specific.
+accounts → ~~that `:not()` selector is genuinely broken, not cohort-specific~~.
+**FALSIFIED 2026-09-05: the selector was always right and the entry was simply not
+served to these accounts.** Two accounts agreeing on an absence is not evidence the
+selector is broken — see the end of this file.
 The one-cohort caveat looked retired here. **It was not — see the 2026-09-04
 re-opening at the end of this file.** Two accounts that agree are evidence of a
 shared cohort, not of universality.
@@ -100,7 +103,7 @@ spike (`denon82`, pt-BR, project `2ddc3a33-…`, capture
 | `veo_3_1_lite` | **NONE** | x1–x4 | 10 |
 | `veo_3_1_fast` | **NONE** | x1–x4 | 20 |
 | `veo_3_1_quality` | **NONE** | x1–x4 | 100 |
-| `veo_3_1_lite_lower_priority` | **PICKER MISS** (still) | — | — |
+| `veo_3_1_lite_lower_priority` | **PICKER MISS** — absence on this cohort; the tier IS rendered to a throttled account (2026-09-05, end of file) | — | — |
 
 Identical to 2026-08-14 **and** to the PR #535 pt-BR run, credits included. Two
 independent DOM signals agree, which is why `NONE` is a real absence and not a
@@ -141,8 +144,46 @@ fidelity fix — the transport's cascade already probed all five roles.
 rule held again under `ru`.
 
 **What is NOT settled:** the cohort key (region? account age? experiment bucket?),
-whether `10s` ever appears on Veo, and whether `lower_priority`'s miss is selector or
-absence. See [[flow-capabilities-are-cohort-dependent]] and
+and whether `10s` ever appears on Veo. ~~Whether `lower_priority`'s miss is selector or
+absence~~ — **settled 2026-09-05: absence.** See the end of this file. See [[flow-capabilities-are-cohort-dependent]] and
 [[flow-recon-must-run-on-denon82-ffroliva-migrated]].
 
 **Migrated host (flow.google.com), ffroliva cohort, measured 2026-09-05 (`scripts/dev/spike_migrated_duration_by_model.py`, $0):** Omni 1.1 Flash renders duration `4s/6s/8s/10s` AND resolution `360p/720p`, 12 credits; Veo 3.1 Lite / Fast / Quality render NO duration row and NO resolution row, 10 / 20 / 100 credits. So on this cohort #650's `--duration` on Veo has no control on the new host either → the migrated composer aborts pre-submit with exit 11 (ConfigurationError naming the axis), $0. The positive Veo 4/6/8 path remains cohort-external (contributor accounts).
+
+
+---
+
+**`veo_3_1_lite_lower_priority` — SETTLED 2026-09-05: the miss was ABSENCE, not a
+broken selector** (`scripts/dev/capture_migrated_model_menu.py`, $0, migrated host).
+
+Every prior capture recorded a picker MISS and this file twice concluded the `:not()`
+selector was broken. It never was. A migrated account renders the entry verbatim:
+
+```
+volume_upOmni 1.1 Flash
+volume_upVeo 3.1 - Lite
+volume_upVeo 3.1 - Fast
+volume_upVeo 3.1 - Quality
+volume_upVeo 3.1 - Lite [Lower Priority]
+```
+
+and its picker button was **already defaulted to that tier**. That is the likely cohort
+key for this row specifically: Flow serves the entry to accounts it is **throttling**,
+and every earlier capture was taken on accounts it was not. The label is now known —
+`Veo 3.1 - Lite [Lower Priority]` — but both drivers still match on the `[Lower Priority]`
+tag, which survives Flow moving the throttle to a different tier.
+
+All five tiers were driven and read back on that account (`_select_model`, then the
+picker button re-read): every one selected, and plain `Veo 3.1 - Lite` did **not** bind
+the throttled sibling.
+
+**The read-validity check in this file did not cover this.** Count tabs and the composer
+chip prove the *popover* was read; neither says anything about a *menu entry that the
+account is not served*. For a picker row, "MISS on two accounts" means absence on that
+cohort and nothing more — do not promote it to "the selector is broken" again.
+
+Duration/credits for this tier remain **unmeasured**: it was selected at $0 and never
+generated on.
+
+Capture: `docs/superpowers/spikes/2026-09-05-migrated-model-menu-lower-priority.md`.
+See [[flow-capabilities-are-cohort-dependent]].
