@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--model veo-lite-lp` is drivable on the migrated `flow.google.com` host.** It was
+  the one tier the migrated model map omitted, so an account Google has already moved
+  could not select it at all: `_select_model` refused with `ConfigurationError` (exit
+  11, "not available on the migrated Flow host") before ever reading the live menu.
+  The omission was not an oversight — the tier's full menu label is unknown, because
+  Flow has never rendered the entry on any account gflow has driven (the 2026-08-14
+  two-account capability matrix, #650's duration capture and v0.61.0's refusal A/B all
+  recorded a picker MISS), and the migrated map is keyed by label. It is now matched
+  the way the labs driver has matched it since #539 — by the `[Lower Priority]` tag
+  alone — so no label is invented and nothing is asserted about an entry no capture has
+  produced. Routing is deliberately unchanged: `veo-lite-lp` still does not make
+  `migrated_can_serve` pull an **unmoved** account onto the new host, because moving a
+  request there for a tier nobody has seen rendered would trade a working driver for an
+  unverified one.
+
 - **`gflow update` — self-update in place.** Runs the package manager that
   installed gflow-cli, read off the install itself rather than guessed from
   `PATH`: `uv-receipt.toml` in the venv root → `uv tool upgrade gflow-cli`,
@@ -45,6 +60,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   have gone through and what it leaves behind for the reviewer; the PR template
   gains a matching *Lifecycle* checklist; the quality-gate list is now identical to
   AGENTS.md's (it had drifted to six of nine commands).
+
+### Fixed
+
+- **The migrated model picker could bind a tier the user did not ask for.** The port
+  matched menu entries by case-insensitive *substring* and took `.first`, so on an
+  account whose menu carries a lower-priority sibling, `--model veo-lite` also matched
+  `Veo 3.1 - Lite [Lower Priority]` and Flow billed whichever Angular happened to list
+  first. The same substring ran against the picker button's read-back, where a pane
+  already showing the lower-priority tier satisfied `startswith("Veo 3.1 - Lite")` and
+  returned "already selected" without opening the menu — silently keeping the wrong
+  tier. This is the ambiguity #539 fixed on labs.google (whose selectors carry
+  `:not(:has-text('[Lower Priority]'))`) and which this port had dropped. Ordinary
+  tiers now exclude the tag on both paths, and a matcher hitting more than one live
+  entry **refuses** (exit 11) naming every candidate rather than guessing which one
+  Flow would bill.
 
 ## [0.67.0] — 2026-09-05
 

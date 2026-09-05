@@ -95,6 +95,9 @@ class FakeLocator:
     def last(self) -> FakeLocator:
         return FakeLocator(self.page, self.kind, self.items[-1:])
 
+    def nth(self, index: int) -> FakeLocator:
+        return FakeLocator(self.page, self.kind, self.items[index : index + 1])
+
     def filter(self, *, has: FakeLocator | None = None, has_text: Any = None) -> FakeLocator:
         items = self.items
         if has is not None and has.kind == "group":  # pane.filter(has=<radiogroup>)
@@ -433,6 +436,85 @@ async def test_model_not_offered_lists_the_menu() -> None:
         await MigratedComposer().apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_QUALITY))
     assert "Veo 3.1 - Lite" in str(exc_info.value)
     assert page.dom.submit_clicked == 0
+
+
+# --- the lower-priority tier ------------------------------------------------
+#
+# `veo_3_1_lite_lower_priority` has no captured label — Flow has never rendered the
+# entry on any account gflow has driven — so it is matched by the `[Lower Priority]`
+# tag alone, exactly as the labs driver has since #539. These fixtures therefore
+# describe the menu that tag implies, not one that was measured.
+
+LP_LITE = "Veo 3.1 - Lite [Lower Priority]"
+
+
+async def test_lower_priority_tier_selects_by_its_tag() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.models = ["Omni 1.1 Flash", "Veo 3.1 - Lite", LP_LITE]
+    await MigratedComposer().apply_video_settings(
+        page, _t2v(model=VideoModel.VEO_3_1_LITE_LOWER_PRIORITY)
+    )
+    assert page.dom.model_label == LP_LITE
+
+
+async def test_plain_lite_never_binds_its_lower_priority_sibling() -> None:
+    """`Veo 3.1 - Lite` is a substring of `Veo 3.1 - Lite [Lower Priority]`, so the
+    pre-fix `.first` bound whichever Flow listed first — here, the wrong one."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.models = [LP_LITE, "Veo 3.1 - Lite"]  # LP deliberately first
+    await MigratedComposer().apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    assert page.dom.model_label == "Veo 3.1 - Lite"
+
+
+async def test_lower_priority_button_readback_does_not_pass_for_plain_lite() -> None:
+    """The pane already shows the LP tier: `startswith('Veo 3.1 - Lite')` said "already
+    selected" and returned without touching the menu, silently keeping it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.models = ["Veo 3.1 - Lite", LP_LITE]
+    page.dom.model_label = LP_LITE
+    await MigratedComposer().apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    assert page.dom.model_label == "Veo 3.1 - Lite"
+
+
+async def test_an_ambiguous_menu_refuses_instead_of_guessing() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.models = ["Veo 3.1 - Lite", LP_LITE, "Omni 1.1 Flash [Lower Priority]"]
+    with pytest.raises(ConfigurationError) as exc_info:
+        await MigratedComposer().apply_video_settings(
+            page, _t2v(model=VideoModel.VEO_3_1_LITE_LOWER_PRIORITY)
+        )
+    message = str(exc_info.value)
+    assert "matched 2 entries" in message
+    assert LP_LITE in message and "Omni 1.1 Flash [Lower Priority]" in message
+    assert page.dom.model_label == "Omni 1.1 Flash"  # untouched
+    assert page.dom.submit_clicked == 0
+
+
+def test_matcher_excludes_the_lower_priority_suffix_by_default() -> None:
+    from gflow_cli.api.transports.migrated_composer import (
+        VIDEO_MODEL_MENU_MATCHERS,
+        ModelMenuMatcher,
+    )
+
+    lite = VIDEO_MODEL_MENU_MATCHERS[VideoModel.VEO_3_1_LITE]
+    assert lite.matches("Veo 3.1 - Lite")
+    assert not lite.matches(LP_LITE)
+
+    lp = VIDEO_MODEL_MENU_MATCHERS[VideoModel.VEO_3_1_LITE_LOWER_PRIORITY]
+    assert lp.matches(LP_LITE)
+    assert not lp.matches("Veo 3.1 - Lite")
+
+    # Flow's ligature prefix and casing must not decide the match.
+    assert ModelMenuMatcher("Veo 3.1 - Lite").matches("volume_up veo 3.1 - lite")
+    assert lp.matches("volume_up Veo 3.1 - Lite [LOWER PRIORITY]")
 
 
 # --- prompt + submit --------------------------------------------------------

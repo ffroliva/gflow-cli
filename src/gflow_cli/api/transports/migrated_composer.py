@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -71,11 +72,53 @@ SUBMIT_REPLY_BUDGET_S = 60.0
 #: for it before settling for the URL-less record.
 RESULT_URL_GRACE_S = 20.0
 
+#: Product names read back verbatim from the live migrated menu (v0.62.1's refusal
+#: diagnostic, corroborated by the 2026-09-05 spike). These are the tiers a *not yet
+#: moved* account may be routed to the new host for — see :func:`migrated_can_serve`.
 VIDEO_MODEL_MENU_LABELS: dict[VideoModel, str] = {
     VideoModel.OMNI_FLASH: "Omni 1.1 Flash",
     VideoModel.VEO_3_1_LITE: "Veo 3.1 - Lite",
     VideoModel.VEO_3_1_FAST: "Veo 3.1 - Fast",
     VideoModel.VEO_3_1_QUALITY: "Veo 3.1 - Quality",
+}
+
+#: The suffix Flow appends to a tier it is serving at lower priority. The labs driver
+#: has matched ``veo_3_1_lite_lower_priority`` by this tag alone since #539
+#: (``[role='menuitem']:has-text('[Lower Priority]')``) for one reason: no capture has
+#: ever rendered that entry, so its full label is unknown — the 2026-08-14 two-account
+#: capability matrix, #650's duration capture and v0.61.0's refusal A/B all recorded a
+#: picker MISS. This port inherits the same tag rather than inventing a label.
+LOWER_PRIORITY_TAG = "[Lower Priority]"
+
+
+@dataclass(frozen=True)
+class ModelMenuMatcher:
+    """How one model's entry is recognised in the migrated model menu.
+
+    ``contains`` must appear in the entry's text and ``excludes`` must not. Every
+    ordinary tier excludes :data:`LOWER_PRIORITY_TAG`, because Flow's lower-priority
+    entry is its sibling's label plus that suffix: matched as a bare substring,
+    ``Veo 3.1 - Lite`` also matches ``Veo 3.1 - Lite [Lower Priority]``. That is the
+    ambiguity #539 fixed on labs.google (whose selectors carry
+    ``:not(:has-text('[Lower Priority]'))``) and which this port had dropped.
+    """
+
+    contains: str
+    excludes: str | None = LOWER_PRIORITY_TAG
+
+    def matches(self, text: str) -> bool:
+        folded = text.casefold()
+        if self.contains.casefold() not in folded:
+            return False
+        return self.excludes is None or self.excludes.casefold() not in folded
+
+
+#: Every model the migrated menu can be *driven* to, including the lower-priority Lite
+#: tier the routing gate above deliberately does not list.
+VIDEO_MODEL_MENU_MATCHERS: dict[VideoModel, ModelMenuMatcher] = {
+    **{model: ModelMenuMatcher(label) for model, label in VIDEO_MODEL_MENU_LABELS.items()},
+    # No label to exclude a sibling by, and none needed: the tag IS the entry.
+    VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: ModelMenuMatcher(LOWER_PRIORITY_TAG, excludes=None),
 }
 ASPECT_LIGATURE: dict[Aspect, str] = {
     Aspect.LANDSCAPE: "crop_16_9",
@@ -87,7 +130,14 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     """Can the migrated composer take this request as it stands? Text-to-video in an
     existing project, with a model the new host offers (or none). Everything else —
     i2v/r2v media, character references, a fresh project, a labs-only model — is
-    not ported yet, so an unmoved account keeps the labs driver for it."""
+    not ported yet, so an unmoved account keeps the labs driver for it.
+
+    Gated on :data:`VIDEO_MODEL_MENU_LABELS`, not on the wider
+    :data:`VIDEO_MODEL_MENU_MATCHERS`: this decides whether to *move* a request off
+    labs.google, and pulling one there for a tier no capture has ever seen rendered
+    would trade a working driver for an unverified one. An account Flow has already
+    moved is routed by its URL and never reaches this question — for it,
+    ``--model veo-lite-lp`` is driven by its matcher instead of refused outright."""
     if request.mode is not Mode.T2V or not project_id:
         return False
     if request.reference_entities:
@@ -247,8 +297,8 @@ class MigratedComposer:
         )
 
     async def _select_model(self, page: Page, pane: Any, model: VideoModel) -> None:
-        label = VIDEO_MODEL_MENU_LABELS.get(model)
-        if label is None:
+        matcher = VIDEO_MODEL_MENU_MATCHERS.get(model)
+        if matcher is None:
             raise ConfigurationError(
                 detail=(
                     f"model '{model.value}' is not available on the migrated Flow host; "
@@ -265,7 +315,7 @@ class MigratedComposer:
                 ),
             )
         current = (await button.text_content() or "").strip()
-        if current.lower().startswith(label.lower()):
+        if matcher.matches(current):
             return
         await button.click(timeout=4000)
         items = page.locator(MENU_ITEM)
@@ -275,19 +325,36 @@ class MigratedComposer:
             raise UiSelectorDriftError(
                 detail="migrated host: model menu ([role='menuitem']) did not open (host=migrated)",
             ) from e
-        target = items.filter(has_text=re.compile(re.escape(label), re.IGNORECASE)).first
-        if not await target.count():
-            offered = [t.strip() for t in await items.all_text_contents()]
+        # Matched in Python rather than through a `has_text` filter: the menu is read
+        # back for the refusal diagnostic anyway, an *exclusion* is not expressible as
+        # `has_text`, and more than one hit has to REFUSE instead of resolving `.first`
+        # (#539 — the labs A/B that proved a `.first` on an ambiguous selector picks a
+        # tier the user never asked for, and Flow bills for it).
+        offered = [t.strip() for t in await items.all_text_contents()]
+        hits = [i for i, text in enumerate(offered) if matcher.matches(text)]
+        if not hits:
             await page.keyboard.press("Escape")
             raise ConfigurationError(
                 detail=(
-                    f"model '{label}' is not offered on this account's migrated Flow host; "
-                    f"offered: {', '.join(offered)}"
+                    f"model '{model.value}' is not offered on this account's migrated Flow "
+                    f"host; offered: {', '.join(offered)}"
                 ),
                 remediation_hint="Pass --model with one of the offered names, or omit it.",
             )
-        await target.click(timeout=4000)
-        log.info("migrated.model_selected", model=label)
+        if len(hits) > 1:
+            await page.keyboard.press("Escape")
+            raise ConfigurationError(
+                detail=(
+                    f"model '{model.value}' matched {len(hits)} entries in the migrated model "
+                    f"menu ({', '.join(offered[i] for i in hits)}) — refusing rather than "
+                    f"guessing which tier Flow would bill"
+                ),
+                remediation_hint=(
+                    "Pass a --model that names one entry, or omit it to accept Flow's default."
+                ),
+            )
+        await items.nth(hits[0]).click(timeout=4000)
+        log.info("migrated.model_selected", model=offered[hits[0]], requested=model.value)
 
     # --- prompt + submit --------------------------------------------------------
 

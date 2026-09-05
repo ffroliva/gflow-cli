@@ -55,6 +55,16 @@ command on every account — moved or not; `flow.google.com` forces it for
 everything, and `labs.google` switches the migrated composer off. Limits today: `--project` is required (project creation from the
 migrated editor is not ported), and only `t2v` — everything else still exits 36.
 
+**Models on the migrated host.** Its picker is driven for every tier the account's
+menu actually renders, `veo-lite-lp` included — matched by the `[Lower Priority]`
+tag alone, exactly as on labs.google, because no capture has ever rendered that
+entry and its full label is therefore unknown. A tier whose matcher hits more than
+one live entry is refused (exit 11) naming both, rather than bound by DOM order
+([#539](https://github.com/ffroliva/gflow-cli/issues/539)). `veo-lite-lp` is
+deliberately **not** a routing trigger: an account Flow has not moved keeps the
+labs driver for it, since pulling a request onto the new host for a tier no
+capture has seen would trade a working driver for an unverified one.
+
 **Workaround for the rest:** none client-side. The handoff
 is a per-account setting the labs.google app applies on every load (measured
 5/5 and 7/7 with no flap, 2026-09-04 — spike
