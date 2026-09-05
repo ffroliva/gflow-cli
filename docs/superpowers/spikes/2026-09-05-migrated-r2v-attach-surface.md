@@ -61,6 +61,42 @@ voices — where labs uses several distinct pickers. It is also the same `@Name`
 gflow already exposes on labs, which means the CLI's existing mention vocabulary may map
 onto it directly rather than needing a new one.
 
+## The picker's real structure (phase 4)
+
+Driving it blind failed twice, so the elements were dumped rather than guessed again:
+
+| part | selector |
+|---|---|
+| category tabs | `mat-list-item[role=tab]` — All / Images / Videos / Voices / Characters / Avatars / Uploads |
+| assets | `button[role=option].asset-item`, the focused one carrying `.asset-item-active` |
+| confirm | `button.detail-add-to-prompt-btn` ("Add to prompt") |
+| local file | `button` "Upload media" |
+
+Two behaviours were measured that a port must not get wrong:
+
+* **Clicking an asset dismisses the picker.** After `items.first.click()` the overlay is
+  gone, `.asset-item-active` count is **0**, and the composer is back to its placeholder.
+  Whatever selects an asset, it is not a plain click.
+* **The first asset is already active** without any click (`.asset-item-active` = 1) and
+  its detail pane — including the confirm — is already rendered. So the confirm is
+  reachable directly; selecting a *specific* asset is the unsolved half.
+
+## Still unattached, after four attempts
+
+Clicking `button.detail-add-to-prompt-btn` directly, with the first asset active, left the
+composer **empty** (`<p><span class="prosemirror-placeholder">What do you want to
+create?</span>…</p>`) — no mention node, no text. Every run therefore reached submit with
+an empty prompt, the submit was inert, and **zero `YhhmEf` requests were ever made** (7-8
+`batchexecute` calls captured per run, all `DTaVef` / `UpteDb` / `as29s` / `jwpduf`).
+
+That is why the wire question below is still open: no submit payload has been produced to
+read.
+
+**Lead worth following first:** `UpteDb` and `DTaVef` appear in the captured traffic and
+are unaccounted for. If one of them fires on "Add to prompt", the attach is **server-side**
+and the answer is already in the traffic — no submit needed. The probe currently discards
+non-`YhhmEf` payloads; recording them is the cheapest next step.
+
 ## What this does NOT settle
 
 - **The confirm semantics.** Whether "Add to prompt" inserts a token into the prompt text,
@@ -79,6 +115,16 @@ onto it directly rather than needing a new one.
 - **Whether Ingredients is even required** when attaching by `@`. The sub-mode was selected
   before probing, so the picker has not been observed in Frames mode; it may be
   sub-mode-independent, in which case the port needs no sub-mode step at all.
+
+## Credit-safety note for the next probe
+
+Playwright request **interception is not usable on this page**: `page.route()` never
+returned within 20 s, whether installed on an idle editor or a busy one (four runs died
+there). The working substitute is `BrowserContext.set_offline(True)` flipped immediately
+before the submit click, with a passive `page.on("request")` listener recording the
+payload — the request is attempted, recorded, and fails locally without reaching Google.
+`scripts/dev/capture_migrated_r2v_submit_payload.py` does it that way, and confirmed $0
+across every run (`submits: 0`).
 
 ## Consequence for the port
 

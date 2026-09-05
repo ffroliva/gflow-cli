@@ -188,6 +188,43 @@ async def _probe(page: Any, project_id: str) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — observation only
         report["at_mention"] = f"{type(exc).__name__}: {str(exc)[:200]}"
 
+    # Phase 4: the `@` picker's real structure. Phase 3 proved the picker opens; driving
+    # it blind then failed (the click did not insert a mention and no "Add to prompt"
+    # button matched), so dump what the elements actually ARE before guessing again.
+    try:
+        await page.locator(COMPOSER).first.click(timeout=5000)
+        await page.keyboard.insert_text("@")
+        await page.wait_for_timeout(1500)
+        report["picker_structure"] = await page.evaluate(
+            """() => {
+                const pane = [...document.querySelectorAll('.cdk-overlay-pane')]
+                    .filter(p => p.offsetParent !== null).pop();
+                if (!pane) return {found: false};
+                const desc = (e) => ({
+                    tag: e.tagName.toLowerCase(),
+                    role: e.getAttribute('role'),
+                    cls: (e.className || '').toString().slice(0, 60),
+                    text: (e.textContent || '').trim().slice(0, 50),
+                    disabled: e.hasAttribute('disabled') || e.getAttribute('aria-disabled'),
+                });
+                return {
+                    found: true,
+                    all_clickables: [...pane.querySelectorAll(
+                        'button, [role=menuitem], [role=option], [role=tab], [role=radio], a')]
+                        .map(desc).slice(0, 40),
+                    add_to_prompt: [...pane.querySelectorAll('*')]
+                        .filter(e => /add to prompt/i.test((e.textContent || '').trim())
+                                     && e.children.length === 0)
+                        .map(desc),
+                    grid_items: [...pane.querySelectorAll('[class*=item], [class*=card], [class*=tile]')]
+                        .map(desc).slice(0, 15),
+                };
+            }"""
+        )
+        await page.keyboard.press("Escape")
+    except Exception as exc:  # noqa: BLE001 — observation only
+        report["picker_structure"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+
     report["note"] = "NOTHING SUBMITTED — no credits spent"
     return report
 
