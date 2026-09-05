@@ -1,4 +1,5 @@
-"""Drive Flow's migrated ``flow.google.com`` editor (Angular Material) — t2v first.
+"""Drive Flow's migrated ``flow.google.com`` editor (Angular Material) — t2v, and i2v
+from a local start frame.
 
 Google is moving accounts from ``labs.google/fx/tools/flow`` onto
 ``flow.google.com`` (issue #639). The migrated app is the same product on a
@@ -7,10 +8,12 @@ the settings popover is a ``cdk-overlay`` pane of ``[role=radiogroup]`` /
 ``[role=radio]`` buttons instead of ``role=menu`` tabs, the model picker is a
 ``[role=menu]`` of ``[role=menuitem]``s, and the composer is a ``contenteditable``
 (the ``textarea`` next to it is not clickable). On the wire it is ``batchexecute``,
-not aisandbox REST: submit is rpcid ``YhhmEf``, the app then polls ``jwpduf`` every
-5 s by itself and fetches the result with ``as29s`` — so this driver **observes**
-the page's own traffic and adds none. Recon with measurements:
-``docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md``.
+not aisandbox REST: submit is rpcid ``YhhmEf`` (t2v) or ``eb1hJf`` (i2v), the app
+then polls ``jwpduf`` every 5 s by itself and fetches the result with ``as29s`` — so
+this driver **observes** the page's own traffic and adds none. A start frame goes in
+through the editor's own upload (``maseQ``) and its library picker. Recon with
+measurements: ``docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md``
+and ``docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md``.
 
 Every anchor here is structural or a Material Symbols ligature; the only text
 matched is a numeric token (``8s``, ``x2``) or a product name (``Veo 3.1 - Lite``).
@@ -39,10 +42,19 @@ from gflow_cli.api.transports.batchexecute import (
     generation_record,
     parse_frames,
 )
-from gflow_cli.api.video import Aspect, Mode, VideoModel, VideoResult, VideoStarted, VideoStatus
+from gflow_cli.api.video import (
+    I2V_DEFAULT_MODEL,
+    Aspect,
+    Mode,
+    VideoModel,
+    VideoResult,
+    VideoStarted,
+    VideoStatus,
+)
 from gflow_cli.errors import (
     ConfigurationError,
     FlowHostMigratedError,
+    MediaUploadRejectedError,
     ReferenceNotFoundError,
     TransportTimeoutError,
     UiSelectorDriftError,
@@ -70,24 +82,46 @@ RADIOGROUP = "[role='radiogroup']"
 RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
 COMPOSER = "[contenteditable='true']"
+#: The submode radio that renders the Start/End frame chips (i2v).
+FRAMES_LIGATURE = "crop_free"
+DIALOG = "[role='dialog']"
+DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
 
-#: T2V submits on ``YhhmEf``; an Ingredients (R2V) run submits on ``MZZa6b`` instead.
-#: Watching only the former is why every early r2v capture reported "no submit" — the
-#: request was there, under a different rpcid (measured 2026-09-05).
-SUBMIT_RPCS = ("YhhmEf", "MZZa6b")
-SUBMIT_RPC = SUBMIT_RPCS[0]  # kept for the t2v log/error text
+#: ``YhhmEf`` is the text-to-video submit; ``eb1hJf`` the image-to-video one (a bound
+#: Start chip switches the app between them — 2026-09-05 frames spike).
+SUBMIT_RPCS = ("YhhmEf", "eb1hJf")
 STATUS_RPCS = ("jwpduf", "as29s")
-#: The `@` mention picker, from the structure dump in the attach spike.
-ASSET_ITEM = "button.asset-item"
-UPLOAD_MEDIA_BUTTON = "Upload media"
-MENTION_CHIP = ".mention-chip"
-#: An uploaded asset is listed immediately, prefixed, and is not attachable until the
-#: prefix clears. Measured: appears ~1 s after the file is set, settles ~10 s later.
-UPLOADING_PREFIX = "Uploading"
-UPLOAD_APPEAR_TIMEOUT_S = 20.0
-UPLOAD_SETTLE_TIMEOUT_S = 180.0
+UPLOAD_RPC = "maseQ"
+#: The model key Flow puts in the submit body, e.g. ``veo_3_1_i2v_lite``.
+MODEL_KEY = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*_(?:t2v|i2v)_[a-z0-9_]+")
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+
+# --- i2v: the toolbar upload path and the Frames picker ---------------------------
+#: The toolbar `+` — the only add affordance OUTSIDE the prompt box (the box has its
+#: own `add` icons). XPath because CSS cannot express "no such ancestor".
+TOOLBAR_ADD = "xpath=//button[.//mat-icon[normalize-space()='add']][not(ancestor::flow-prompt-box)]"
+UPLOAD_MENU_ITEM = f"{OVERLAY} {MENU_ITEM}:has(mat-icon:text-is('upload'))"
+EMPTY_CHIP = "flow-prompt-box button.empty-chip"
+BOUND_CHIP = "flow-prompt-box button.chip-container:has(img)"
+PICKER = "flow-add-menu-popover-content"
+PICKER_SEARCH = "input[type='text']"
+PICKER_OPTION = "button.asset-item[role='option']"
+FRAME_PICKER_OPEN_S = 8.0
+#: The picker search is server-side (``UpteDb``) and a fresh upload is not always
+#: indexed by the first query: on 2026-09-05 a project holding 30+ assets missed it
+#: twice within 8 s and listed it on the third search. Each attempt reopens the popover.
+FRAME_SEARCH_ATTEMPTS = 3
+FRAME_SEARCH_RETRY_PAUSE_S = 2.0
+#: ``maseQ`` answered in 1–3 s for a 120 KB PNG; a 20 MB file on a slow link needs more.
+FRAME_UPLOAD_S = 60.0
+FRAME_COMMIT_HIDDEN_S = 15.0
+FRAME_THUMB_VISIBLE_S = 5.0
 #: The submit reply arrived 4.0–4.6 s after the click in both measured runs.
 SUBMIT_REPLY_BUDGET_S = 60.0
+# Angular enables the arrow_forward button ~100 ms after `insert_text` lands in the
+# composer (measured 2026-09-05, #670); checking it synchronously reads the stale state.
+SUBMIT_ENABLE_BUDGET_S = 5.0
+SUBMIT_ENABLE_POLL_S = 0.1
 #: A ``jwpduf`` poll reports status 3 first; the record that carries the signed
 #: URLs (``as29s``) followed 2–5 s later in every measured run. Wait that long
 #: for it before settling for the URL-less record.
@@ -154,11 +188,33 @@ ASPECT_LIGATURE: dict[Aspect, str] = {
 }
 
 
+def _unported_form(request: GenerateVideoRequest) -> str | None:
+    """The noun for what this request asks of the new host that slice 1 does not
+    drive, or ``None`` when the composer takes it. i2v is ported for a **local**
+    start frame only: the Frames picker on this host lists assets by display name
+    with no UUID in its DOM (2026-09-05 spike), so a frame given by media UUID or
+    ``@Name`` has nothing to anchor on yet, and the End chip is unmeasured."""
+    if request.mode is Mode.T2V:
+        return None
+    if request.mode is not Mode.I2V:
+        return "reference-to-video"
+    if request.end_image or request.end_image_ref_id or request.end_image_ref_name:
+        return "an end frame"
+    if request.start_image_ref_id:
+        return "a frame given by Flow media UUID"
+    if request.start_image_ref_name:
+        return "a frame given by @Name"
+    if not isinstance(request.start_image, Path):
+        return "image-to-video without a local start frame"
+    return None
+
+
 def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) -> bool:
-    """Can the migrated composer take this request as it stands? Text-to-video in an
-    existing project, with a model the new host offers (or none). Everything else —
-    i2v/r2v media, character references, a fresh project, a labs-only model — is
-    not ported yet, so an unmoved account keeps the labs driver for it.
+    """Can the migrated composer take this request as it stands? Text-to-video, or
+    image-to-video from a **local** start frame, in an existing project, with a model
+    the new host offers (or none). Everything else — an end frame, a frame by UUID or
+    ``@Name``, r2v media, character references, a fresh project, a labs-only model —
+    is not ported yet, so an unmoved account keeps the labs driver for it.
 
     Gated on :data:`VIDEO_MODEL_MENU_LABELS`, not on the wider
     :data:`VIDEO_MODEL_MENU_MATCHERS`: this decides whether to *move* a request off
@@ -166,7 +222,7 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     would trade a working driver for an unverified one. An account Flow has already
     moved is routed by its URL and never reaches this question — for it,
     ``--model veo-lite-lp`` is driven by its matcher instead of refused outright."""
-    if request.mode not in (Mode.T2V, Mode.R2V) or not project_id:
+    if _unported_form(request) is not None or not project_id:
         return False
     if request.reference_entities:
         return False
@@ -187,6 +243,54 @@ def _rpcid(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _first_uuid(text: str) -> str | None:
+    """The first UUID in a ``batchexecute`` reply — for ``maseQ`` that is the new
+    media id (``[media_id, project_id, …]``, measured 2026-09-05)."""
+    for rid, payload in parse_frames(text):
+        if rid != UPLOAD_RPC:
+            continue
+        m = UUID_RE.search(str(payload))
+        if m:
+            return m.group(0)
+    return None
+
+
+def _post_data(request: Any) -> str:
+    """The POST body as text, or ``""`` when Playwright cannot decode it —
+    a listener must not raise."""
+    try:
+        return str(request.post_data or "")
+    except Exception:  # noqa: BLE001 - Playwright's post_data raises on undecodable bytes
+        return ""
+
+
+def _i2v_body_problem(body: str, rpcid: str, media_id: str) -> str | None:
+    """Why this submit body is NOT the image-to-video generation the user asked for,
+    or ``None``. A t2v key means the chip was empty at submit time; a body without
+    the uploaded id means the picker bound some other asset."""
+    if not body:
+        return (
+            f"migrated host: the {rpcid} submit body could not be read, so the "
+            "image-to-video request could not be confirmed before Flow acted on it"
+        )
+    key = MODEL_KEY.search(body)
+    key_text = key.group(0) if key else "no model key"
+    if "_t2v_" in body or "_i2v_" not in body:
+        return (
+            f"migrated host: the submit went out on {rpcid} with a text-to-video model key "
+            f"({key_text}) for an image-to-video (i2v) request — the start frame was not "
+            "bound when the app submitted (the labs #125 shape on this host)"
+        )
+    if media_id not in body:
+        other = [u for u in UUID_RE.findall(body) if u.lower() != media_id.lower()]
+        return (
+            f"migrated host: the {rpcid} submit body does not carry the uploaded start "
+            f"frame {media_id} (ids in the body: {', '.join(other[:4]) or 'none'}) — the "
+            "picker bound a different asset"
+        )
+    return None
+
+
 class MigratedComposer:
     """Settings → prompt → submit → observe, against the migrated editor."""
 
@@ -200,6 +304,7 @@ class MigratedComposer:
         if not current.startswith(target):
             log.info("migrated.navigate", url=target)
             await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
+        await self._dismiss_dialog(page)
         try:
             await page.locator(READY_ANCHOR).first.wait_for(
                 state="visible", timeout=int(timeout_s * 1000)
@@ -213,6 +318,26 @@ class MigratedComposer:
             ) from e
         log.info("migrated.editor_ready", url=page.url)
 
+    @staticmethod
+    async def _dismiss_dialog(page: Page) -> None:
+        """One attempt at the modal the host shows over a fresh editor (the "Get
+        started" changelog on a first visit, #593's twin): its ``close`` icon button,
+        else Escape. Best-effort — a dialog that stays is reported by whichever
+        click it blocks next, with the overlay named there."""
+        dialog = page.locator(DIALOG).first
+        try:
+            if not await dialog.is_visible():
+                return
+            close = page.locator(DIALOG_CLOSE).first
+            via = "close" if await close.count() else "escape"
+            if via == "close":
+                await close.click(timeout=3000)
+            else:
+                await page.keyboard.press("Escape")
+            log.info("migrated.dialog_dismissed", via=via)
+        except Exception as e:  # noqa: BLE001 - best-effort, never the failure itself
+            log.warning("migrated.dialog_not_dismissed", error=str(e)[:200])
+
     # --- settings ---------------------------------------------------------------
 
     async def apply_video_settings(self, page: Page, request: GenerateVideoRequest) -> None:
@@ -223,14 +348,19 @@ class MigratedComposer:
         pane = await self._open_pane(page)
         try:
             await self._select(page, pane, axis="mode", lig="videocam")
-            if request.mode is Mode.R2V:
-                # References live under the Ingredients sub-mode. The app derives the
-                # r2v model key from this plus the picker choice — a t2v run sends
-                # veo_3_1_lite_low_priority where this one sends
-                # veo_3_1_r2v_lite_low_priority — so nothing maps it by hand.
-                await self._select(page, pane, axis="submode", lig="chrome_extension")
-            if request.model is not None:
-                await self._select_model(page, pane, request.model)
+            if request.mode is Mode.I2V:
+                # Frames renders the Start/End chips the attach stage binds to. Flow
+                # remembers the last submode per account, so it is set, not assumed.
+                await self._select(page, pane, axis="submode", lig=FRAMES_LIGATURE)
+            model = request.model
+            if model is None and request.mode is Mode.I2V:
+                # #125: a queued MCP payload carries model=None, and without this bind
+                # the editor submits on whatever tier it last remembered — possibly a
+                # 100-credit one for a run the caller expected to cost 10.
+                model = I2V_DEFAULT_MODEL
+                log.info("migrated.i2v_model_defaulted", model=model.value, issue_ref="#125")
+            if model is not None:
+                await self._select_model(page, pane, model)
             await self._select(page, pane, axis="aspect", lig=ASPECT_LIGATURE[request.aspect])
             if request.duration is not None:
                 await self._select(page, pane, axis="duration", text=f"{request.duration}s")
@@ -240,7 +370,9 @@ class MigratedComposer:
                 aspect=request.aspect.value,
                 duration=request.duration,
                 count=request.count,
-                model=request.model.value if request.model else None,
+                # The EFFECTIVE model — `request.model` is None on an i2v run that
+                # took the #125 default, and logging that read as "no model bound".
+                model=model.value if model else None,
             )
         except BaseException:
             # A close failure must never replace the error that is already travelling.
@@ -459,149 +591,234 @@ class MigratedComposer:
         await items.nth(hits[0]).click(timeout=4000)
         log.info("migrated.model_selected", model=offered[hits[0]], requested=model.value)
 
-    # --- prompt + submit --------------------------------------------------------
+    # --- start frame (i2v) ------------------------------------------------------
 
-    # --- references (R2V) -------------------------------------------------------
+    async def attach_start_frame(self, page: Page, project_id: str, image_path: Path) -> str:
+        """Upload ``image_path`` through the editor's own Upload entry, bind it on the
+        Start chip by file name, and return the media id the app's ``maseQ`` reply
+        named for it — the id the submit body is then asserted to carry.
 
-    async def _open_mention_picker(self, page: Page) -> None:
-        """Focus the composer and open the `@` picker with a REAL keystroke.
-
-        `keyboard.type`, never `insert_text`: the latter dispatches input events without
-        key events, so the ProseMirror mention plugin opens a picker with no query behind
-        it and every later gesture is a no-op. :meth:`send_prompt` keeps `insert_text` on
-        purpose — a newline in prompt text must not submit — so the two cannot share a
-        path (measured 2026-09-05).
+        The upload is permanent in the Flow project (it lands in the library like any
+        other asset). The picker is library-only and searched by display name; an
+        upload is listed under its file name, and two uploads of one file list twice —
+        the picker's default sort puts the newest first, and the submit-body check is
+        what catches a wrong pick.
         """
-        await page.locator(COMPOSER).first.click(timeout=5000)
-        await page.keyboard.type("@", delay=120)
-        await page.wait_for_timeout(2200)
+        from gflow_cli.api.client import validate_image_file  # noqa: PLC0415 - cycle
 
-    async def clear_composer(self, page: Page) -> None:
-        await page.locator(COMPOSER).first.click(timeout=5000)
-        await page.keyboard.press("Control+a")
-        await page.keyboard.press("Backspace")
-        await page.wait_for_timeout(600)
+        await validate_image_file(image_path)
+        # No outer budget: each leg is bounded, and an outer one firing first would
+        # replace the stage-named failure with a generic "attach timed out".
+        media_id = await self._upload_via_toolbar(page, project_id, image_path)
+        await self._pick_frame_by_name(page, image_path.name, media_id)
+        return media_id
 
-    async def _dismiss_overlays(self, page: Page) -> None:
-        for _ in range(4):
-            if not await page.locator(".cdk-overlay-backdrop").count():
+    async def _upload_via_toolbar(self, page: Page, project_id: str, image_path: Path) -> str:
+        """Toolbar ``+`` → the ``upload`` menu item → the file chooser → the app's own
+        ``maseQ`` upload, observed for the media id it returns. Nothing is replayed."""
+        loop = asyncio.get_running_loop()
+        reply: asyncio.Future[tuple[int, str]] = loop.create_future()
+        route = f"batchexecute:{UPLOAD_RPC}"
+
+        async def on_response(response: Any) -> None:
+            url = str(getattr(response, "url", ""))
+            if "batchexecute" not in url or _rpcid(url) != UPLOAD_RPC or reply.done():
                 return
-            await page.keyboard.press("Escape")
-            await page.wait_for_timeout(400)
+            status = int(getattr(response, "status", 0) or 0)
+            text = ""
+            if status == 200:
+                try:
+                    text = await response.text()
+                except Exception:  # noqa: BLE001 - an aborted body is a rejected upload
+                    text = ""
+            if not reply.done():
+                reply.set_result((status, text))
 
-    async def upload_reference(self, page: Page, path: Path) -> str:
-        """Upload one local file into the account library; return its display name.
-
-        The only way in is the picker's `Upload media` button, which opens a **native
-        file chooser** — there is no ``input[type=file]`` in the DOM before or after.
-        """
-        await self._open_mention_picker(page)
-        upload = page.locator("button").filter(has_text=UPLOAD_MEDIA_BUTTON)
-        if not await upload.count():
-            raise UiSelectorDriftError(
-                detail=(
-                    f"migrated host: no {UPLOAD_MEDIA_BUTTON!r} button in the mention "
-                    f"picker, so a local --ref cannot be uploaded (host=migrated)"
-                ),
-            )
+        page.on("response", on_response)
         try:
-            async with page.expect_file_chooser(timeout=15_000) as chooser_info:
-                await upload.first.click(timeout=5000)
-            chooser = await chooser_info.value
-            await chooser.set_files(str(path))
-        except Exception as exc:
-            raise UiSelectorDriftError(
-                detail=(
-                    f"migrated host: {UPLOAD_MEDIA_BUTTON!r} did not open a file chooser "
-                    f"for {path.name} (host=migrated): {exc}"
-                ),
-            ) from exc
-
-        async def _uploading() -> bool:
-            labels = await page.locator(ASSET_ITEM).all_text_contents()
-            return any(t.strip().startswith(UPLOADING_PREFIX) for t in labels)
-
-        # TWO waits, not one. The list does not update the instant the file is set, so a
-        # single "is it finished?" poll answers yes before the entry exists and the run
-        # goes on to attach nothing.
-        waited = 0.0
-        while waited < UPLOAD_APPEAR_TIMEOUT_S and not await _uploading():
-            await asyncio.sleep(1.0)
-            waited += 1.0
-        waited = 0.0
-        while waited < UPLOAD_SETTLE_TIMEOUT_S and await _uploading():
-            await asyncio.sleep(2.0)
-            waited += 2.0
-        if await _uploading():
-            raise TransportTimeoutError(
-                detail=(
-                    f"migrated host: {path.name} was still uploading after "
-                    f"{UPLOAD_SETTLE_TIMEOUT_S:.0f}s (host=migrated)"
-                ),
-            )
-        log.info("migrated.reference_uploaded", name=path.name, settle_s=waited)
-        # The native chooser costs keyboard focus, so the picker that did the upload
-        # cannot be driven further; the caller opens a fresh mention per reference.
-        await self._dismiss_overlays(page)
-        await self.clear_composer(page)
-        return path.name
-
-    async def attach_references(self, page: Page, names: list[str]) -> list[dict[str, str]]:
-        """Insert one mention chip per name, verifying each landed."""
-        chips: list[dict[str, str]] = []
-        for i, name in enumerate(names):
-            await self._open_mention_picker(page)
-            await page.keyboard.type(name, delay=100)
-            await page.wait_for_timeout(2500)
-            offered = [t.strip() for t in await page.locator(ASSET_ITEM).all_text_contents()]
-            # ENTER is what commits. A typed query alone leaves the picker open and
-            # inserts nothing — the single most expensive thing learned here.
-            await page.keyboard.press("Enter")
-            await page.wait_for_timeout(2500)
-            chips = await self.read_chips(page)
-            if len(chips) != i + 1:
-                await self._dismiss_overlays(page)
-                raise ReferenceNotFoundError(
+            add = page.locator(TOOLBAR_ADD).first
+            if not await add.count():
+                raise UiSelectorDriftError(
                     detail=(
-                        f"migrated host: {name!r} did not attach as a reference "
-                        f"({len(chips)} chip(s) after {i + 1} attempt(s)); the picker "
-                        f"offered: {', '.join(offered[:6]) or '<nothing>'}"
+                        "migrated host: the toolbar add button (mat-icon 'add' outside "
+                        "flow-prompt-box) is missing (host=migrated)"
                     ),
                 )
-            await page.keyboard.type(" ", delay=80)
-        log.info("migrated.references_attached", count=len(chips), chips=[c["text"] for c in chips])
-        return chips
+            await add.click(timeout=5000)
+            item = page.locator(UPLOAD_MENU_ITEM).first
+            try:
+                await item.wait_for(state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000))
+            except Exception as e:
+                raise UiSelectorDriftError(
+                    detail=(
+                        "migrated host: the toolbar menu rendered no upload entry "
+                        f"({MENU_ITEM} with the 'upload' ligature) within "
+                        f"{FRAME_PICKER_OPEN_S:.0f}s (host=migrated)"
+                    ),
+                ) from e
+            try:
+                async with page.expect_file_chooser(
+                    timeout=int(FRAME_PICKER_OPEN_S * 1000)
+                ) as fc_info:
+                    await item.click(timeout=4000)
+                chooser = await fc_info.value
+            except Exception as e:
+                raise UiSelectorDriftError(
+                    detail=(
+                        "migrated host: the upload entry opened no file chooser within "
+                        f"{FRAME_PICKER_OPEN_S:.0f}s (host=migrated)"
+                    ),
+                ) from e
+            await chooser.set_files(str(image_path))
+            try:
+                status, text = await asyncio.wait_for(reply, timeout=FRAME_UPLOAD_S)
+            except TimeoutError:
+                raise MediaUploadRejectedError(
+                    detail=(
+                        f"migrated host: no {UPLOAD_RPC} reply within {FRAME_UPLOAD_S:.0f}s "
+                        "of choosing the file — the upload never reached Flow or was dropped"
+                    ),
+                    route=route,
+                ) from None
+            if status != 200:
+                raise MediaUploadRejectedError(
+                    detail=f"migrated host: the upload rpc {UPLOAD_RPC} answered HTTP {status}",
+                    status=status,
+                    route=route,
+                )
+            media_id = _first_uuid(text)
+            if media_id is None:
+                raise MediaUploadRejectedError(
+                    detail=f"migrated host: {UPLOAD_RPC} answered 200 without a media id",
+                    status=status,
+                    route=route,
+                )
+            if media_id.lower() == project_id.lower():
+                # The measured reply is ``[media_id, project_id, …]``. If the first
+                # UUID is the project's, the shape moved under us — and the submit-body
+                # assertion could not catch it, since the project id is in every body.
+                raise MediaUploadRejectedError(
+                    detail=(
+                        f"migrated host: the first id in the {UPLOAD_RPC} reply is the "
+                        f"project id ({project_id}), not a new media id — the reply "
+                        "shape changed and the upload cannot be bound safely"
+                    ),
+                    status=status,
+                    route=route,
+                )
+            log.info("migrated.frame_uploaded", media_id=media_id, status=status)
+            return media_id
+        finally:
+            page.remove_listener("response", on_response)
 
-    async def read_chips(self, page: Page) -> list[dict[str, str]]:
-        """Every mention currently in the prompt, with the kind that decides its wire slot."""
-        return await page.evaluate(
-            """() => [...document.querySelectorAll('.mention-chip')].map(c => ({
-                text: (c.textContent || '').trim(),
-                entity_id: c.getAttribute('data-entity-id') || '',
-                reference_type: c.getAttribute('data-reference-type') || '',
-            }))"""
-        )
+    @staticmethod
+    async def _open_frame_picker(page: Page) -> Any:
+        """Click the empty Start chip and wait for the library picker's search box."""
+        chip = page.locator(EMPTY_CHIP).first
+        if not await chip.count():
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: no empty Start chip ({EMPTY_CHIP}) to bind the frame "
+                    "on — is the Frames submode selected? (host=migrated)"
+                ),
+            )
+        await chip.click(timeout=4000)
+        picker = page.locator(OVERLAY).filter(has=page.locator(PICKER)).last
+        try:
+            await picker.locator(PICKER_SEARCH).first.wait_for(
+                state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000)
+            )
+        except Exception as e:
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: the frame picker ({PICKER}) did not open within "
+                    f"{FRAME_PICKER_OPEN_S:.0f}s of clicking the Start chip (host=migrated)"
+                ),
+            ) from e
+        return picker
 
-    async def send_prompt(self, page: Page, prompt: str, *, append: bool = False) -> None:
-        """Type the prompt text.
+    async def _pick_frame_by_name(self, page: Page, name: str, media_id: str) -> None:
+        """Start chip → the library picker → search by display name → first option →
+        the chip must now hold a thumbnail. An unbound chip is refused here: an empty
+        Frames submit goes out as text-to-video (the labs #125 shape on this host)."""
+        for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
+            picker = await self._open_frame_picker(page)
+            search = picker.locator(PICKER_SEARCH).first
+            await search.click(timeout=4000)
+            await page.keyboard.insert_text(name)
+            options = picker.locator(PICKER_OPTION).filter(has_text=_exact(name))
+            try:
+                await options.first.wait_for(
+                    state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000)
+                )
+            except Exception as e:
+                # What the picker DID list is the diagnostic: the display name an upload
+                # gets is an observation per account, not a contract.
+                listed = [
+                    t.strip() for t in await picker.locator(PICKER_OPTION).all_text_contents()
+                ]
+                await page.keyboard.press("Escape")
+                if attempt < FRAME_SEARCH_ATTEMPTS:
+                    log.info("migrated.frame_search_miss", attempt=attempt, listed=len(listed))
+                    await asyncio.sleep(FRAME_SEARCH_RETRY_PAUSE_S)
+                    continue
+                raise ReferenceNotFoundError(
+                    detail=(
+                        f"migrated host: the frame picker lists no asset named {name!r} after "
+                        f"{FRAME_SEARCH_ATTEMPTS} searches of {FRAME_PICKER_OPEN_S:.0f}s (media "
+                        f"{media_id}) — uploads are expected under their file name; the "
+                        "picker listed for that search: "
+                        f"{', '.join(repr(t) for t in listed[:8]) or 'nothing'}"
+                    ),
+                ) from e
+            else:
+                # Outside the except above on purpose: a click that fails here is not
+                # "the picker never listed it", and must not be reported as one.
+                await options.first.click(timeout=4000)
+                break
+        try:
+            # Re-queried, and `.last` like the open: the picker overlay is detached
+            # after the pick, and a detached-but-hidden earlier pane would let a
+            # `.first` hidden-wait pass while the live picker is still up.
+            await (
+                page.locator(OVERLAY)
+                .filter(has=page.locator(PICKER))
+                .last.wait_for(state="hidden", timeout=int(FRAME_COMMIT_HIDDEN_S * 1000))
+            )
+        except Exception as e:
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: the frame picker stayed open {FRAME_COMMIT_HIDDEN_S:.0f}s "
+                    f"after picking {name!r} (host=migrated)"
+                ),
+            ) from e
+        try:
+            await page.locator(BOUND_CHIP).first.wait_for(
+                state="visible", timeout=int(FRAME_THUMB_VISIBLE_S * 1000)
+            )
+        except Exception as e:
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: the Start chip did not bind {name!r} — no "
+                    f"{BOUND_CHIP} within {FRAME_THUMB_VISIBLE_S:.0f}s of the pick; "
+                    "refusing to submit what would go out as text-to-video (host=migrated)"
+                ),
+            ) from e
+        log.info("migrated.frame_bound", media_id=media_id)
 
-        ``append=True`` keeps whatever is already in the composer — the mention chips an
-        R2V run has just attached — and adds the text after them. Clicking the composer
-        would move the caret, so on that path the caret is left where the last mention
-        put it.
-        """
+    # --- prompt + submit --------------------------------------------------------
+
+    async def send_prompt(self, page: Page, prompt: str) -> None:
         composer = page.locator(COMPOSER).first
         if not await composer.count():
             raise UiSelectorDriftError(
                 detail=f"migrated host: composer ({COMPOSER}) not found (host=migrated)",
             )
-        if not append:
-            await composer.click(timeout=5000)
+        await composer.click(timeout=5000)
         # insert_text dispatches input events without key presses: a newline in the
-        # prompt lands as text instead of an Enter that might submit early. Mentions
-        # need the opposite (see _open_mention_picker) — the two cannot share a path.
+        # prompt lands as text instead of an Enter that might submit early.
         await page.keyboard.insert_text(prompt)
-        log.info("migrated.prompt_typed", chars=len(prompt), append=append)
+        log.info("migrated.prompt_typed", chars=len(prompt))
 
     async def submit_and_observe(
         self,
@@ -610,12 +827,31 @@ class MigratedComposer:
         poll_timeout_s: float,
         on_started: VideoStartedCallback | None,
         project_id: str | None,
+        expect_media_id: str | None = None,
     ) -> GenerationRecord:
-        """Click submit, then read the page's own ``YhhmEf`` / ``jwpduf`` / ``as29s``
-        replies until the record is terminal. Fires ``on_started`` as soon as the
-        submit reply names the media id — before the poll, as the labs path does."""
+        """Click submit, then read the page's own ``YhhmEf``/``eb1hJf`` / ``jwpduf`` /
+        ``as29s`` replies until the record is terminal. Fires ``on_started`` as soon
+        as the submit reply names the media id — before the poll, as the labs path does.
+
+        ``expect_media_id`` (i2v) inspects the submit *request* the app sends: its body
+        must carry that id and an ``_i2v_`` model key, else the run is a
+        :class:`WireFormatError` — the generation the user asked for is not the one
+        Flow is billing."""
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
+        route_error: asyncio.Future[WireFormatError] = loop.create_future()
+
+        def on_request(request: Any) -> None:
+            url = str(getattr(request, "url", ""))
+            rpcid = _rpcid(url) if "batchexecute" in url else None
+            if rpcid not in SUBMIT_RPCS or route_error.done() or expect_media_id is None:
+                return
+            problem = _i2v_body_problem(_post_data(request), rpcid, expect_media_id)
+            if problem is not None:
+                route_error.set_result(
+                    WireFormatError(detail=problem, route=f"batchexecute:{rpcid}")
+                )
+
         # ``terminal``: failed, or done WITH the signed URL. ``done_no_url``: the
         # first status-3 record that has no URL yet (a poll beats the result RPC).
         terminal: asyncio.Future[GenerationRecord] = loop.create_future()
@@ -666,29 +902,47 @@ class MigratedComposer:
                     _settle(rec)
 
         page.on("response", on_response)
+        if expect_media_id is not None:
+            page.on("request", on_request)
         try:
             submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
-            if not await submit.count() or not await submit.is_enabled():
+            if not await submit.count():
                 raise UiSelectorDriftError(
                     detail=(
-                        "migrated host: the submit button (arrow_forward) is missing or "
-                        "disabled after the prompt was typed (host=migrated)"
+                        "migrated host: the submit button (arrow_forward) is missing "
+                        "after the prompt was typed (host=migrated)"
                     ),
                 )
+            enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
+            while not await submit.is_enabled():
+                if time.monotonic() >= enable_deadline:
+                    raise UiSelectorDriftError(
+                        detail=(
+                            "migrated host: the submit button (arrow_forward) stayed disabled "
+                            f"for {SUBMIT_ENABLE_BUDGET_S:.0f}s after the prompt was typed "
+                            "(host=migrated)"
+                        ),
+                    )
+                await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
             deadline = time.monotonic() + poll_timeout_s
             await submit.click(timeout=5000)
             log.info("migrated.submit_clicked")
-            try:
-                first = await asyncio.wait_for(
-                    submitted, timeout=min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s)
-                )
-            except TimeoutError:
+            budget = min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s)
+            await asyncio.wait(
+                {submitted, route_error}, timeout=budget, return_when=asyncio.FIRST_COMPLETED
+            )
+            if route_error.done():
+                # The request is inspected before its reply lands, so a wrong body is
+                # named as such and not as whatever the reply then says.
+                raise route_error.result()
+            if not submitted.done():
                 raise TransportTimeoutError(
                     detail=(
-                        f"migrated host: no {SUBMIT_RPC} reply within "
-                        f"{min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s):.0f}s of clicking submit"
+                        f"migrated host: no {'/'.join(SUBMIT_RPCS)} reply within "
+                        f"{budget:.0f}s of clicking submit"
                     ),
-                ) from None
+                )
+            first = submitted.result()
             started = VideoStarted(
                 media_id=first.media_id,
                 project_id=project_id or first.project_id,
@@ -710,7 +964,14 @@ class MigratedComposer:
             )
             return final
         finally:
+            # A submit reply that failed to parse sets an exception on `submitted`;
+            # when the body assertion raised first, nobody read it, and asyncio would
+            # log "Future exception was never retrieved" at GC. Consume it.
+            if submitted.done() and not submitted.cancelled():
+                submitted.exception()
             page.remove_listener("response", on_response)
+            if expect_media_id is not None:
+                page.remove_listener("request", on_request)
 
     @staticmethod
     async def _await_terminal(
@@ -833,16 +1094,19 @@ async def run_video(
     """The migrated-host twin of the labs ``_generate_video_locked`` tail: same
     inputs, same ``VideoResult``, so recorder, CLI, MCP and worker are untouched.
 
-    t2v only for now — i2v/r2v attach media through labs-shaped slots that have
-    not been recon'd on this host, and a fresh project can only be created through
-    the labs gallery, so the caller must name one (``--project``).
+    t2v, and i2v from a local start frame (uploaded through the editor and bound on
+    the Start chip by file name). An end frame, a frame by UUID / ``@Name`` and r2v
+    are not ported yet; a fresh project can only be created through the labs
+    gallery, so the caller must name one (``--project``).
     """
-    if request.mode not in (Mode.T2V, Mode.R2V):
+    unported = _unported_form(request)
+    if unported is not None:
         raise FlowHostMigratedError(
             detail=(
                 f"this account's Flow lives on flow.google.com, where gflow drives "
-                f"text-to-video and references-to-video for now; {request.mode.value} is "
-                f"not ported yet (#639)"
+                f"text-to-video and image-to-video from a local start frame; {unported} "
+                f"is not ported yet (#639) — pass --initial-frame <local file> without "
+                f"an end frame"
             ),
         )
     pid = project_id or extract_project_id(page.url)
@@ -858,46 +1122,17 @@ async def run_video(
     composer = MigratedComposer()
     await composer.ensure_editor(page, pid)
     await composer.apply_video_settings(page, request)
-
-    if request.mode is Mode.R2V:
-        # Upload every local --ref first: an asset is only mentionable once it exists in
-        # the library, and the upload steals keyboard focus, so it cannot be interleaved
-        # with composing the prompt.
-        names: list[str] = []
-        for path in request.reference_images:
-            names.append(await composer.upload_reference(page, Path(path)))
-        names.extend(request.ref_names)
-        if not names:
-            raise ConfigurationError(
-                detail=(
-                    "references-to-video on the migrated host needs at least one "
-                    "--ref (local file or asset name)"
-                ),
-            )
-        await composer.clear_composer(page)
-        chips = await composer.attach_references(page, names)
-        await composer.send_prompt(page, request.prompt, append=True)
-        # The submit is about to spend credits, so verify the references are actually
-        # on the prompt rather than trusting that the gestures worked.
-        after = await composer.read_chips(page)
-        if len(after) != len(names):
-            raise ReferenceNotFoundError(
-                detail=(
-                    f"migrated host: {len(names)} reference(s) requested but "
-                    f"{len(after)} attached at submit time — refusing to spend credits "
-                    f"on a run that would ignore them"
-                ),
-            )
-        log.info(
-            "migrated.references_ready",
-            requested=len(names),
-            attached=[c["text"] for c in after],
-            kinds=sorted({c["reference_type"] for c in chips}),
-        )
-    else:
-        await composer.send_prompt(page, request.prompt)
+    media_id: str | None = None
+    frame = request.start_image
+    if request.mode is Mode.I2V and frame is not None:
+        media_id = await composer.attach_start_frame(page, pid, frame)
+    await composer.send_prompt(page, request.prompt)
     record = await composer.submit_and_observe(
-        page, poll_timeout_s=poll_timeout_s, on_started=on_started, project_id=pid
+        page,
+        poll_timeout_s=poll_timeout_s,
+        on_started=on_started,
+        project_id=pid,
+        expect_media_id=media_id,
     )
     status = VideoStatus(
         media_id=record.media_id,

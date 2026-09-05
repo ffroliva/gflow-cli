@@ -43,6 +43,7 @@ from gflow_cli.api._retry import parse_retry_after, post_with_retry
 from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
 from gflow_cli.api.dto import (
     AssetInfo,
+    CreditsInfo,
     GeneratedImage,
     GenerationCheckpoint,
     GenerationCheckpointObserver,
@@ -60,7 +61,7 @@ from gflow_cli.api.transports import (
     make_transport,
     resolve_transport_name,
 )
-from gflow_cli.api.transports._common import await_url_settled, flow_host_kind
+from gflow_cli.api.transports._common import await_url_settled, raise_if_migrated
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
     SupportsTransportSetup,
@@ -247,6 +248,35 @@ def _is_supported_image_header(header: bytes) -> bool:
     if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
         return True
     return header[:6] in (b"GIF87a", b"GIF89a")
+
+
+async def validate_image_file(image_path: Path) -> None:
+    """Reject a file that must not be uploaded to Flow, before any bytes leave.
+
+    Exists, within :data:`MAX_IMAGE_BYTES`, and a real image by its first 12
+    bytes — the header check is what stops a resolved path (a symlink, a typo)
+    from laundering ``~/.ssh/id_rsa`` into a Flow project. Raises the same
+    ``FileNotFoundError`` / ``ValueError`` the REST upload has always raised.
+    """
+    if not image_path.exists():
+        raise FileNotFoundError(image_path)
+    size = image_path.stat().st_size
+    if size > MAX_IMAGE_BYTES:
+        msg = (
+            f"Image too large: {size / 1_048_576:.1f} MB exceeds "
+            f"{MAX_IMAGE_BYTES // 1_048_576} MB limit"
+        )
+        raise ValueError(msg)
+
+    # Staged read: validate magic bytes first (12 B) before loading the full
+    # file. Run both reads in a worker thread to keep the event loop free.
+    def _read_header(p: Path) -> bytes:
+        with p.open("rb") as fh:
+            return fh.read(12)
+
+    if not _is_supported_image_header(await asyncio.to_thread(_read_header, image_path)):
+        msg = f"Not a supported image format: {image_path.name}"
+        raise ValueError(msg)
 
 
 def _unwrap_trpc(data: Any) -> JsonObject:
@@ -1636,6 +1666,25 @@ class FlowApiClient:
         data = await self._post_json(routes.CREATE_PROJECT, body, content_type=_APPLICATION_JSON)
         return ProjectInfo.from_create_response(data)
 
+    async def get_credits(self) -> CreditsInfo:
+        """Return the authenticated profile's current Flow credit balance."""
+
+        data = await self._get_json(routes.CREDITS, route_name="credits")
+        if not isinstance(data, dict):
+            raise WireFormatError(
+                detail="unexpected credits response shape: expected an object",
+                instance=_make_instance(),
+                route="credits",
+            )
+        try:
+            return CreditsInfo.from_response(cast("JsonObject", data))
+        except ValueError as exc:
+            raise WireFormatError(
+                detail=str(exc),
+                instance=_make_instance(),
+                route="credits",
+            ) from exc
+
     async def rename_project(self, project_id: str, new_title: str) -> JsonObject:
         """Rename an existing Flow project.
 
@@ -1729,28 +1778,7 @@ class FlowApiClient:
         Both validations run before ``image_path.read_bytes()`` so a hostile
         path is never fully loaded into memory.
         """
-        if not image_path.exists():
-            raise FileNotFoundError(image_path)
-        size = image_path.stat().st_size
-        if size > MAX_IMAGE_BYTES:
-            msg = (
-                f"Image too large: {size / 1_048_576:.1f} MB exceeds "
-                f"{MAX_IMAGE_BYTES // 1_048_576} MB limit"
-            )
-            raise ValueError(
-                msg,
-            )
-
-        # Staged read: validate magic bytes first (12 B) before loading the full
-        # file. Run both reads in a worker thread to keep the event loop free.
-        def _read_header(p: Path) -> bytes:
-            with p.open("rb") as fh:
-                return fh.read(12)
-
-        header = await asyncio.to_thread(_read_header, image_path)
-        if not _is_supported_image_header(header):
-            msg = f"Not a supported image format: {image_path.name}"
-            raise ValueError(msg)
+        await validate_image_file(image_path)
         full_bytes = await asyncio.to_thread(image_path.read_bytes)
         b64 = base64.b64encode(full_bytes).decode()
         body = {
@@ -2375,6 +2403,13 @@ class FlowApiClient:
         """
         page = await self._checkout_page()
         try:
+            # #673: this runs BEFORE the UI transport, so none of its migration
+            # guards can fire first. On a moved account the pool page is the
+            # flow.google.com grid (client-side handoff) with no
+            # recaptcha/enterprise.js — bail to exit 36 here instead of a bare
+            # RecaptchaError. (/project/<id> on that host does carry the script,
+            # but no path that mints is ported there yet.)
+            raise_if_migrated(page, at="mint_recaptcha_token")
             # Patchright evaluates in an isolated world by default, where the
             # page's main-world ``grecaptcha`` global is undefined; the resolver
             # supplies ``isolated_context=False`` for patchright ({} for playwright).
@@ -2640,16 +2675,6 @@ class FlowApiClient:
             resolver_kw: dict[str, Any] = (
                 {} if name_resolver is None else {"name_resolver": name_resolver}
             )
-            if project_id is None and flow_host_kind(getattr(self._page, "url", None)) == (
-                "migrated"
-            ):
-                # The migrated editor cannot create a project (that is still labs-only),
-                # and its driver refuses without one — but the REST create works fine on
-                # a moved account, so a run with no --project is served rather than
-                # refused. Labs is untouched: it creates through the gallery as before.
-                created = await self.create_project()
-                project_id = created.project_id
-                logger.info("migrated.project_autocreated", project_id=project_id)
             return await self.transport.generate_video(
                 request=req,
                 project_id=project_id,

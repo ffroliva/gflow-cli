@@ -49,7 +49,9 @@ uvx --from gflow-cli gflow --help
 uv tool install gflow-cli
 ```
 
-Both install `gflow` (and a `flow` alias) globally for your user.
+Both install `gflow` (and a `flow` alias) globally for your user. Later, `gflow update`
+upgrades in place through whichever installer you used, and every command shows a banner
+when a newer release is on PyPI — see [USAGE § `gflow update`](USAGE.md#gflow-update).
 
 ### 1.2 One-time browser dependency
 
@@ -407,12 +409,24 @@ Your Google plan includes a finite Veo credit allowance — the video journeys s
 
 ### 10.1 Check the balance
 
-Flow does not expose a credit-balance API today. Check your remaining quota at:
+Check the current Veo video-credit balance for the selected profile. The normal path uses direct
+HTTP and does not open a browser; a browser remains the fallback when saved-cookie decryption or
+the HTTP path fails:
+
+```bash
+gflow credits user
+
+# Or inspect every saved profile while preserving partial results.
+gflow credits list
+```
+
+Both commands accept `--json` for automation. You can also inspect the balance in Flow directly:
 
 - <https://labs.google/fx/tools/flow> — bottom-right "Credits" badge.
 - <https://gemini.google/subscriptions/> — monthly usage report.
 
-There is no programmatic way to fetch this from `gflow-cli` yet (see [KNOWN_ISSUES § No in-CLI quota visibility](../KNOWN_ISSUES.md#no-in-cli-quota-visibility)).
+This balance is drawn down by Veo video generation only. Image generation uses separate per-model
+daily quotas and is not represented by this number.
 
 ### 10.2 Rule-of-thumb credit cost per call
 
@@ -422,12 +436,12 @@ Costs are not published by Google. The numbers below are **rough observations fr
 |---|---|---|
 | `gflow video t2v "..."` (Veo 3.1 Fast, ~8 s clip) | ~1 credit / clip | Most expensive surface. |
 | `gflow video i2v IMAGE "..."` (Veo 3.1 Fast, ~8 s clip) | ~1 credit / clip | Same as t2v in practice. |
-| `gflow image upload PATH` | 0 credits | Asset upload is free; only generations bill. |
-| `gflow image t2i "..." --model nano2 -n 1` | ~0 credits / image observed | Nano Banana 2 is the cheap tier. |
-| `gflow image t2i "..." --model nano-pro -n 1` | ~low fractional / image | Nano Banana Pro = higher quality, higher cost. |
-| `gflow image t2i "..." --model image4 -n 1` | ~low fractional / image | Imagen 4 = photoreal lean. |
-| `gflow image i2i "..." --ref PATH -n 1` | Same as t2i for the model | Reference uploads are free. |
-| `gflow image t2i "..." -n 4` | 4× the single-shot cost | Fan-out issues N parallel POSTs, one credit-event per shot. |
+| `gflow image upload PATH` | 0 Veo credits | Asset upload is free. |
+| `gflow image t2i "..." --model nano2 -n 1` | Separate image quota | Uses that model's daily image allowance, not the displayed Veo balance. |
+| `gflow image t2i "..." --model nano-pro -n 1` | Separate image quota | Uses that model's daily image allowance. |
+| `gflow image t2i "..." --model image4 -n 1` | Separate image quota | Uses that model's daily image allowance. |
+| `gflow image i2i "..." --ref PATH -n 1` | Separate image quota | Reference upload is free; generation uses the model quota. |
+| `gflow image t2i "..." -n 4` | 4 image-quota operations | Fan-out issues N generation requests. |
 
 **Failed generations may still bill.** Retries inside the tenacity loop are atomic — only the final accepted attempt is what counts — but if Flow accepts a generation and then returns a `ContentPolicyError`, **the credit is generally already gone**.
 

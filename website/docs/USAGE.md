@@ -45,6 +45,8 @@ Commands:
     list {projects,images,videos,profiles}  Browse the catalog.
     prune                       Remove stale local file entries.
 
+  credits   Inspect current Flow balances (user / list).
+
   models    Print the image/video model catalog (Rich table or --json).
 
   project   Manage Flow projects (create / rename / list).
@@ -63,7 +65,8 @@ Global flags:
 - `-v`, `--verbose` — log at DEBUG level.
 
 Machine-readable output: the generation commands (`image t2i` / `image i2i`,
-`video t2v` / `i2v` / `r2v`), `auth list`, and `gflow models` accept `--json` to
+`video t2v` / `i2v` / `r2v`), `auth list`, `credits user` / `credits list`, and
+`gflow models` accept `--json` to
 emit a single parseable object on stdout instead of Rich tables. See
 [§ JSON output](#json-output---json).
 
@@ -72,6 +75,30 @@ Note: `--profile NAME` is **per-subcommand**, not global — pass it after the s
 ## `gflow auth`
 
 See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
+
+## `gflow credits`
+
+Read the current Google Flow balance through an existing authenticated profile. This is a
+read-only request: it does not generate media or spend credits. The displayed balance funds Veo
+video generation; image generation uses separate per-model daily quotas.
+
+```text
+gflow credits user [--profile NAME] [--json]
+gflow credits list [--json]
+```
+
+`credits user` applies the normal profile precedence chain. `credits list` inspects every saved
+profile sequentially and returns successful balances even when another profile is expired or
+unavailable. Its JSON envelope contains `profiles`, `total_credits`, and `count`; each profile
+includes `authenticated`, `credits`, `subscription_credits`, `user_paygate_tier`, `service_tier`,
+and `sku`. Failed profiles have `authenticated: false`, a safe error name, and a null balance.
+
+The command first reads the saved Chrome cookies and uses ordinary HTTP requests (the equivalent
+of a `curl` session request followed by the credits request). The cookie-bearing client is closed
+before a separate, Bearer-only client contacts the credits host, so `labs.google` cookies never
+cross that host boundary. A browser opens only when cookie decryption or the HTTP path cannot
+complete. The short-lived OAuth token remains in memory and is never printed or stored; no copied
+bearer token or browser API key is accepted.
 
 ## `gflow image upload`
 
@@ -559,8 +586,10 @@ Options:
 > **Two Flow frontends (#639).** Under the default `GFLOW_CLI_FLOW_HOST=auto`, `t2v` with
 > `--project <id>` runs on Flow's migrated `flow.google.com` host on every account; without
 > `--project` an unmoved account falls back to the labs driver, and a moved account exits 11
-> (`--project` is required there — project creation is not ported). Everything except `t2v`
-> still exits 36 on a moved account. `flow.google.com` forces the migrated composer,
+> (`--project` is required there — project creation is not ported). `i2v` with a local
+> `--initial-frame` and no `--end-frame` runs there too (see [`gflow video i2v`](#gflow-video-i2v));
+> an end frame, a frame given by UUID or `@Name`, and everything else still exit 36 on a moved
+> account. `flow.google.com` forces the migrated composer,
 > `labs.google` switches it off — see [CONFIGURATION § GFLOW_CLI_FLOW_HOST](CONFIGURATION.md#gflow_cli_flow_host).
 
 ```bash
@@ -584,6 +613,16 @@ so the UUID's project is the one being generated in). A local file is bound into
 the editor's frame slot via the media dialog, then Flow fires
 `batchAsyncGenerateVideoStartImage` (initial only) or `…StartAndEndImage`
 (initial+end interpolation).
+
+> **On Flow's migrated `flow.google.com` host (#639)** — a moved account, or
+> `GFLOW_CLI_FLOW_HOST=flow.google.com` — only a **local** `--initial-frame` is served, with
+> `--project <id>`: gflow uploads the file through the editor's own Upload entry (it stays in
+> the project's library like any upload — a second run uploads it again), finds it in the
+> Start-frame picker under its file name, and refuses to submit unless the app's own
+> submit body carries that upload's media id with an image-to-video model key (exit 7
+> otherwise: the labs #125 shape, where an unbound frame silently goes out as text-to-video).
+> `--end-frame`, a UUID or `@Name` frame exit 36 there; an unmoved account keeps the labs
+> driver for those.
 
 ```text
 gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [--ui-mode] [...]
@@ -1369,8 +1408,8 @@ The installer is read off the install itself, never guessed from `PATH`:
 | `pipx_metadata.json` | `pipx` | `pipx upgrade gflow-cli` |
 | neither | plain venv | `<that venv's python> -m pip install --upgrade gflow-cli` |
 
-`gflow update` first asks PyPI for the latest version (this refreshes the
-once-a-day notice cache too). If you are already current it says so and runs
+`gflow update` first asks PyPI for the latest version (when PyPI answers, this
+refreshes the once-a-day notice cache too). If you are already current it says so and runs
 nothing. Otherwise it runs the manager with its output shown, then re-reads the
 venv's Playwright version: when the upgrade moved it, a hint gives you the exact
 `<that venv's python> -m playwright install chromium` so the browser build matches. If PyPI is
@@ -1705,7 +1744,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
-| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` (the origin Google is migrating accounts onto) and the request could not be routed to the migrated composer: `GFLOW_CLI_FLOW_HOST=labs.google` switched it off, or the request type is not ported to that host yet (today only `video t2v` with `--project` is). Not selector drift (23) | **Not retryable.** The handoff is a per-account setting applied on every load. Use `gflow video t2v --project <id>` on that host, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the rest of the matrix |
+| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` (the origin Google is migrating accounts onto) and the request could not be routed to the migrated composer: `GFLOW_CLI_FLOW_HOST=labs.google` switched it off, or the request type is not ported to that host yet (today `video t2v`, and `video i2v` from a local `--initial-frame` with no end frame, both with `--project`). Not selector drift (23) | **Not retryable.** The handoff is a per-account setting applied on every load. Use `gflow video t2v --project <id>` or `gflow video i2v --initial-frame <file> --project <id>` on that host, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the rest of the matrix |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

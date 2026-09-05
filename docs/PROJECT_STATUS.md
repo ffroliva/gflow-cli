@@ -4,6 +4,47 @@
 
 ## Current release
 
+**v0.68.0 — alpha.** **gflow-cli keeps itself current: `gflow update` upgrades an install in
+place, and every command shows a banner when a newer release is on PyPI.**
+
+`gflow update [--check] [--json]` runs the package manager that installed gflow-cli, read
+off the install itself rather than guessed from `PATH` — `uv-receipt.toml` → `uv tool
+upgrade`, `pipx_metadata.json` → `pipx upgrade`, otherwise that venv's own `python -m pip`
+(a `uv venv` with no `pip` module is refused before anything spawns). It asks PyPI first and
+runs nothing when already current; if PyPI is unreachable the manager still runs. The
+outcome is read back from the venv, not from the manager's exit code: on Windows the running
+`gflow.exe` launcher holds its own file open, so `uv tool upgrade` installs the new wheel and
+*then* exits 1 copying the launcher — measured — and that is reported as an upgrade with a
+note, because the launcher only points at the venv's python and keeps working. After an
+upgrade the venv's Playwright version is re-read and the `playwright install chromium` hint
+appears only when it moved. Editable / local / VCS / source installs, a manager binary
+missing from `PATH`, and a manager run that leaves the version unchanged are exit 11.
+Deliberately no MCP twin: the manager would replace the venv under a live `gflow mcp run`
+and write onto its stdout channel ([#668](https://github.com/ffroliva/gflow-cli/pull/668)).
+
+The once-a-day notice ([#479](https://github.com/ffroliva/gflow-cli/issues/479)) is now a
+bordered stderr panel on a terminal — new version, `gflow update`, release-notes link — and
+stays one plain line when stderr is piped, so `2>&1 | jq` pipelines keep one line per event.
+Same cache, same gates (`GFLOW_CLI_UPDATE_CHECK=0`, CI, non-index installs).
+
+Also in this release: `CONTRIBUTING.md` routes contributors — and their coding agents —
+through the same lifecycle `AGENTS.md` defines (phase → skill → artifact), the PR template
+carries a matching *Lifecycle* checklist, and the contributor quality-gate list is identical
+to `AGENTS.md`'s again. And a contributor fix on the migrated host
+([#670](https://github.com/ffroliva/gflow-cli/issues/670), @ChandraLiuswanto): the composer
+now waits up to 5 s for the `arrow_forward` submit button to enable after the prompt is
+inserted — it flips roughly 100 ms after `insert_text` lands, and reading it synchronously
+made every `video t2v` on a fully migrated account exit 23 before submitting.
+
+Verification: [LIVE_VERIFICATION_v0.68.0](LIVE_VERIFICATION_v0.68.0.md) — a wheel lowered
+to 0.60.1 installed through `uv tool` and through `pipx`, then `gflow update` run from each
+install's own `gflow.exe`: **exit 0 both times, venv at PyPI 0.67.0 afterwards**, the uv run
+carrying the stale-launcher note. Recorded as NOT verified: plain-venv `pip` on Windows,
+macOS / Linux for any manager, a real interactive-terminal screenshot of the panel, and the
+first genuine banner (0.68.0 is the first release after the change).
+
+<details><summary>v0.67.0 — Flow's migrated flow.google.com host driven for text-to-video</summary>
+
 **v0.67.0 — alpha.** **Flow's migrated `flow.google.com` host is driven for text-to-video,
 and it is now the default host for every request it can serve.**
 
@@ -34,6 +75,8 @@ recorder rows present; `--model veo-fast --duration 6` aborts pre-submit with ex
 credits because this cohort renders no duration row for Veo. The positive Veo 4/6/8 path is
 recorded as NOT verified (cohort-external), and the labs-side guard can no longer be verified
 here at all — there is no labs account left.
+
+</details>
 
 <details><summary>v0.66.3 — the `&lt;html lang&gt;` hydration race</summary>
 
@@ -639,6 +682,7 @@ reporter-verified e2e on macOS).
 
 | Milestone | Status |
 |---|---|
+| `gflow update` self-update through the installing manager (uv tool / pipx / pip), venv-verified outcome; the update notice as a stderr banner; CONTRIBUTING routes contributors and agents through the AGENTS.md lifecycle | ✅ done (v0.68.0) |
 | Flow's migrated `flow.google.com` host driven for text-to-video; the default host for what it can serve (`GFLOW_CLI_FLOW_HOST`) | ✅ done (v0.67.0) |
 | Migrated-origin runs fail fast and keep their learned locale (v0.66.1's fast-fail never fired in the field; corrected in v0.66.2) | ✅ done (v0.66.2) |
 | Flow `flow.google.com` migration named as its own failure class (exit 36; retryable in v0.66.0, non-retryable since 2026-09-04) | ✅ done (v0.66.0) |

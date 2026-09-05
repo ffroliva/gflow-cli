@@ -51,6 +51,8 @@ from gflow_cli.profile_store import (
     account_locale_for,
     resolve_profile,
 )
+from gflow_cli.services.credits import inspect_all_profiles as inspect_all_credit_profiles
+from gflow_cli.services.credits import inspect_profile as inspect_credit_profile
 from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
@@ -975,8 +977,12 @@ async def gflow_generate_video(  # NOSONAR
             images. See ``docs/REFERENCE_STRATEGIES.md``.
         mode: Generation mode — 't2v', 'i2v', or 'r2v'.
         aspect: Aspect ratio — '9:16' or '16:9'.
-        initial_frame: Path to start frame image (required for i2v).
-        end_frame: Path to end frame image (optional for i2v).
+        initial_frame: Path to start frame image (required for i2v). On an
+            account Google has moved to flow.google.com a **local file** is the
+            only form served there (uploaded through the editor, bound by file
+            name); a Flow media UUID returns the exit-36-equivalent envelope.
+        end_frame: Path to end frame image (optional for i2v). Not ported to
+            flow.google.com yet — exit-36-equivalent envelope on a moved account.
         reference_images: List of reference image paths (ingredients) for r2v.
         model: Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality',
             'omni_flash' (aliases accepted, mirrors the CLI ``--model``). When
@@ -1007,7 +1013,10 @@ async def gflow_generate_video(  # NOSONAR
             omitted, a scratch project is created on labs.google. On an account
             Google has moved to flow.google.com (``GFLOW_CLI_FLOW_HOST``, read from
             the server/daemon environment, not per call) ``project`` is required —
-            omitting it returns the exit-11-equivalent envelope.
+            omitting it returns the exit-11-equivalent envelope. There the ported
+            modes are 't2v' and 'i2v' with a local ``initial_frame`` and no
+            ``end_frame``; a UUID frame, an end frame and 'r2v' return the
+            exit-36-equivalent envelope.
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
             ``video t2v``/``i2v``; applies to every mode of this tool,
             including 'r2v'). Video generation only has a classic driver:
@@ -1176,6 +1185,29 @@ async def gflow_list_tools() -> dict[str, Any]:
             for s in iter_tools()
         ]
     }
+
+
+@server.tool(
+    name="gflow_get_credits",
+    description=(
+        "Read the current Google Flow credit balance for one saved profile or all profiles. "
+        "This is read-only and spends no credits. Set all_profiles=true when choosing an "
+        "account for generation; partial profile failures remain visible in the result."
+    ),
+)
+@_guarded
+async def gflow_get_credits(
+    profile: str = _DEFAULT_PROFILE,
+    all_profiles: bool = False,
+) -> dict[str, Any]:
+    """Inspect current Flow credits through the shared CLI service."""
+
+    if all_profiles:
+        return await inspect_all_credit_profiles()
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved
+    return await inspect_credit_profile(resolved)
 
 
 @server.tool(

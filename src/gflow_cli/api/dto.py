@@ -46,6 +46,53 @@ GenerationCheckpointObserver = Callable[[GenerationCheckpoint], None]
 
 
 @dataclass(frozen=True)
+class CreditsInfo:
+    """Current Flow balance and account tier returned by ``GET /v1/credits``."""
+
+    credits: int
+    subscription_credits: int | None = None
+    user_paygate_tier: str | None = None
+    service_tier: str | None = None
+    sku: str | None = None
+
+    @classmethod
+    def from_response(cls, data: dict[str, Any]) -> CreditsInfo:
+        """Parse the credits response without coercing malformed values to zero."""
+
+        credits = cls._optional_non_negative_int(data, "credits", required=True)
+        assert credits is not None
+        return cls(
+            credits=credits,
+            subscription_credits=cls._optional_non_negative_int(
+                data, "subscriptionCredits", required=False
+            ),
+            user_paygate_tier=cls._optional_string(data, "userPaygateTier"),
+            service_tier=cls._optional_string(data, "serviceTier"),
+            sku=cls._optional_string(data, "sku"),
+        )
+
+    @staticmethod
+    def _optional_non_negative_int(data: dict[str, Any], key: str, *, required: bool) -> int | None:
+        value = data.get(key)
+        if value is None and not required:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            msg = f"unexpected credits response shape: {key} must be a non-negative integer"
+            raise ValueError(msg)
+        return value
+
+    @staticmethod
+    def _optional_string(data: dict[str, Any], key: str) -> str | None:
+        value = data.get(key)
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            msg = f"unexpected credits response shape: {key} must be a string"
+            raise ValueError(msg)
+        return value
+
+
+@dataclass(frozen=True)
 class ProjectInfo:
     """A Flow project — owns assets, jobs, library entries."""
 

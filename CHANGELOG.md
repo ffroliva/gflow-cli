@@ -9,26 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`gflow video r2v` runs on the migrated `flow.google.com` host** (#639). An account
-  Google has moved no longer exits 36 on a references run. Local `--ref` files are
-  uploaded through the mention picker's `Upload media` chooser — the only route in, since
-  no `input[type=file]` exists in the DOM — and each reference is then attached as an `@`
-  mention. `--project` is optional: a moved account without one gets a project created
-  over REST first, because the migrated editor cannot create one itself.
+- **Read-only Flow balance inspection:** `gflow credits user`, `gflow credits list`, and the
+  matching `gflow_get_credits` MCP tool report current
+  balances and account tiers from saved profiles. Multi-profile inspection preserves partial
+  successes and emits stable JSON for automation. Saved cookies + ordinary HTTP are the primary
+  path, with browser-backed retrieval only as a fallback; cookies remain scoped to `labs.google`,
+  and no copied bearer token or browser API key is stored. The reported balance funds Veo video;
+  image generation uses separate per-model daily quotas.
 
-  Three measured details shape the implementation. The Ingredients submit is rpcid
-  **`MZZa6b`**, not t2v's `YhhmEf` — watching only the latter is why this looked like "no
-  submit happens" for several rounds of recon. A reference is a **chip in the prompt
-  document**, and its `reference_type` decides the wire slot (`media` rides the second
-  element, `entity` a trailing array), so a null `entity_id` does **not** mean nothing
-  attached. And mentions need real key events (`keyboard.type`) where prompt text needs
-  `insert_text` — a newline in a prompt must not submit — so the two cannot share a path.
-
-  An uploaded asset is listed as `Uploading<name>` before it is usable and attaching
-  early silently produces no chip, so the upload is waited out in two stages and a run
-  whose references have not all attached is **refused before submit** rather than
-  generating a clip that ignores them. Live-verified end to end: two local refs,
-  `--model veo-lite-lp`, no `--project` → 8.0 s 720x1280 h264+aac clip, exit 0.
+- **Image-to-video from a local start frame on the migrated `flow.google.com` host**
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639), slice 1). `gflow video i2v
+  --initial-frame <local file> --project <id>` now runs on the new host — on a moved
+  account, and by default (`GFLOW_CLI_FLOW_HOST=auto`) on an unmoved one too. The port
+  is UI-driven and observed, never replayed: the composer selects the Frames submode,
+  uploads the file through the editor's own toolbar Upload entry and reads the media id
+  off the app's `maseQ` reply, finds the upload in the Start-frame picker under its file
+  name (the picker exposes no media id in its DOM), and only then submits. **An unbound
+  chip is refused before the click** — exit 23, zero credits — because an empty Frames
+  submit silently goes out as text-to-video (the labs #125 shape). The app's submit
+  *request* is then inspected as it leaves: a body without that media id, or carrying a
+  `_t2v_` model key, fails the run with `WireFormatError` (exit 7) naming what Flow was
+  actually asked to make — after the fact, since the request is already on the wire.
+  An upload Flow refuses is exit 27 on route `batchexecute:maseQ`; a file the picker
+  never lists after three searches is exit 32. For i2v the submit rpc is `eb1hJf` (t2v
+  stays `YhhmEf`), and an i2v request with no `--model` binds the veo-lite default here
+  exactly as it has always done on labs (#125). Not ported in this slice and named in
+  the exit-36 detail: `--end-frame`, a frame given by media UUID or `@Name`, and r2v.
+  A "Get started" modal over a fresh migrated editor is now dismissed before the run.
+  Recon: `docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md`.
 
 - **`--model veo-lite-lp` is drivable on the migrated `flow.google.com` host.** It was
   the one tier the migrated model map omitted, so an account Google has already moved
@@ -91,6 +99,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Moved accounts: `image t2i` / `i2i` (and `upscale`, `extend`) now exit 36, not a
+  bare `RecaptchaError` exit 1 (#673).** The labs client mints the reCAPTCHA token on
+  the pool's bootstrap page *before* the UI transport runs, so none of the transport's
+  migration guards could fire; on a moved account that page is the `flow.google.com`
+  project grid after the client-side handoff, which loads no
+  `recaptcha/enterprise.js`, so site-key discovery raised `RecaptchaError` — a
+  `RuntimeError` unmapped in `EXIT_CODE_MAP`: exit 1 "unexpected", with a remediation
+  about headless Chrome. `_mint_recaptcha_token` now runs the same one-line
+  `raise_if_migrated` guard the transport uses, so the distinct, non-retryable exit
+  36 and its migration remediation come back within seconds, before any submit.
+  Reproduced and re-verified on a moved maintainer account at zero credits (exit 1 →
+  exit 36); the new
+  `tests/e2e/test_migrated_host_e2e.py::test_e2e_image_on_a_moved_account_exits_36_not_recaptcha`
+  (`e2e_auth`, $0) is the regression.
 - **The migrated model picker could bind a tier the user did not ask for.** The port
   matched menu entries by case-insensitive *substring* and took `.first`, so on an
   account whose menu carries a lower-priority sibling, `--model veo-lite` also matched
@@ -128,6 +150,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "bound the tier you asked for" from "never touched the picker" — answering that for the
   2026-09-05 run took a separate probe. It now logs `migrated.model_already_selected`
   with the observed button text.
+
+
+## [0.68.0] — 2026-09-05
+
+### Added
+
+- **`gflow update` — self-update in place.** Runs the package manager that
+  installed gflow-cli, read off the install itself rather than guessed from
+  `PATH`: `uv-receipt.toml` in the venv root → `uv tool upgrade gflow-cli`,
+  `pipx_metadata.json` → `pipx upgrade gflow-cli`, otherwise that venv's own
+  `python -m pip install --upgrade gflow-cli`. Asks PyPI first and runs nothing
+  when already current; if PyPI is unreachable the manager still runs. After an
+  upgrade it re-reads the venv's Playwright version and prints the
+  `playwright install chromium` hint only when it moved. `--check` reports
+  installed vs latest plus the command that would run; `--json` returns the
+  same as a document. The outcome is verified against the venv, not the
+  manager's exit code: on Windows the running `gflow.exe` launcher holds its
+  own file open, so `uv tool upgrade` installs the new wheel and then exits 1
+  copying the launcher — measured — and that is reported as an upgrade with a
+  note, because the launcher only points at the venv's python and keeps
+  working. Editable / local / VCS / source installs, a manager binary missing
+  from `PATH`, a `uv venv` with no `pip` module, and a manager run that leaves
+  the version unchanged all surface as `ConfigurationError` (exit 11) — except
+  the one honest no-op: PyPI unreachable, manager exit 0, nothing changed, which
+  is exit 0. Deliberately no MCP twin (a server must not replace its own code under a live
+  session) — recorded as a reasoned exemption in the parity test.
+
+### Changed
+
+- **The once-a-day update notice (#479) is now a banner.** On a terminal it is
+  a bordered panel on stderr naming the new version, `gflow update`, and the
+  release-notes link; when stderr is piped it stays one plain yellow line so
+  logs and `2>&1 | jq` pipelines see one line per event. Same cache, same
+  gates (`GFLOW_CLI_UPDATE_CHECK=0`, CI, non-index installs). The notice text
+  points at `gflow update` instead of listing three manager commands.
+- **CONTRIBUTING.md now routes contributors — and their coding agents — through the
+  same lifecycle AGENTS.md defines.** A phase → skill → artifact table (issue
+  assessment, predict, scenario/plan, check with the step 1b mirror sweep,
+  live-verify, council review, sonar, known-issues) says what a PR is expected to
+  have gone through and what it leaves behind for the reviewer; the PR template
+  gains a matching *Lifecycle* checklist; the quality-gate list is now identical to
+  AGENTS.md's (it had drifted to six of nine commands).
+
+### Fixed
+
+- **Migrated host: `video t2v` no longer fails on the submit-enable race (#670,
+  @ChandraLiuswanto).** The Angular composer on `flow.google.com` flips the
+  `arrow_forward` button from `disabled` roughly 100 ms after `insert_text`
+  lands, and the composer read it synchronously, so a fully migrated account got
+  `UiSelectorDriftError` ("missing or disabled after the prompt was typed",
+  exit 23) on every run before anything was submitted. The composer now waits
+  up to 5 s (100 ms polls) for the button to enable; a button that never
+  enables is still selector drift, now worded as "stayed disabled for 5s".
+  Measured on a moved account: `insert_text` → enabled at the 107 ms sample;
+  with the wait, veo-lite t2v completed in 62 s.
 
 ## [0.67.0] — 2026-09-05
 
@@ -4002,7 +4079,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...HEAD
+[0.68.0]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...v0.68.0
 [0.67.0]: https://github.com/ffroliva/gflow-cli/compare/v0.66.3...v0.67.0
 [0.66.3]: https://github.com/ffroliva/gflow-cli/compare/v0.66.2...v0.66.3
 [0.66.2]: https://github.com/ffroliva/gflow-cli/compare/v0.66.1...v0.66.2
