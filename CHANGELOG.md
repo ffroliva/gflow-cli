@@ -86,6 +86,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is `True`, so pre-fix `--model veo-lite` there generated on the throttled tier without
   ever opening the menu.
 
+- **Switching `--model` on the migrated host broke the next run** — reported as "run 1
+  with a new model dies, run 2 with the same model works, run 3 with another model dies
+  again". Picking from the model menu leaves Angular with **two** stacked overlays (the
+  settings pane and the menu opened over it) and each Escape dismisses exactly one, so
+  `_close_pane`'s single press closed only the menu and left the settings pane covering
+  the composer. `send_prompt`'s click then failed actionability and surfaced ~5 s later
+  as a bare `TimeoutError` naming `[contenteditable='true']`, pointing nowhere near the
+  pane. A repeat run binds the model at the button read-back, never opens the menu and
+  never stacks the second overlay — which is exactly why re-running the same model
+  worked. Measured at $0: after a switch the composer's bounding box is *identical* for
+  12 s (it was never unstable) while `.cdk-overlay-pane:visible` stays at 1; one more
+  Escape takes it to 0. `_close_pane` now escapes until no overlay is visible, bounded,
+  and raises pre-submit if one will not close rather than leaving the composer click to
+  report it. The old read-back did fire `migrated.pane_still_open` — as a warning the run
+  ignored; the observation was there and only the consequence was missing.
+
 - **A migrated run that short-circuited model selection logged nothing.** `_select_model`
   returning at its button read-back emitted no event, so a field timeline could not tell
   "bound the tier you asked for" from "never touched the picker" — answering that for the

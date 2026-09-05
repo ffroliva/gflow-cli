@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
     MENU_ITEM,
+    OVERLAY,
     VIDEO_MODEL_MENU_MATCHERS,
     MigratedComposer,
     _ligature,
@@ -120,13 +121,54 @@ async def _drive(page: Any, project_id: str, restore_to: str | None) -> list[dic
     return rows
 
 
-async def _main(profile: str, project_id: str, drive: bool) -> int:
+async def _settings(page: Any, project_id: str, model_value: str) -> dict[str, Any]:
+    """Run the REAL `apply_video_settings` + `send_prompt` for *model_value*, then stop.
+
+    Zero credits: submit is never clicked. This is the whole failing path from a field
+    report — "switch the model and the next run dies, repeat the same model and it
+    works" — which `--drive` cannot see, because that only calls `_select_model` and
+    never touches the axes that follow a switch.
+    """
+    from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
+
+    composer = MigratedComposer()
+    await page.goto("about:blank", wait_until="commit", timeout=10_000)
+    await composer.ensure_editor(page, project_id)
+    request = GenerateVideoRequest(
+        prompt="a man crying",
+        mode=Mode.T2V,
+        aspect=Aspect.PORTRAIT,
+        model=VideoModel.from_cli(model_value),
+    )
+    row: dict[str, Any] = {"requested": model_value}
+    try:
+        await composer.apply_video_settings(page, request)
+        row["settings"] = "applied"
+    except Exception as exc:  # noqa: BLE001 — the failure IS the result
+        row["settings"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+        return row
+    # Recorded on the shipped path, after `_close_pane` has run: a visible overlay
+    # here is one that would cover the composer.
+    row["visible_overlays_after_settings"] = await page.locator(f"{OVERLAY}:visible").count()
+
+    try:
+        await composer.send_prompt(page, request.prompt)
+        row["prompt"] = "typed"
+    except Exception as exc:  # noqa: BLE001 — the failure IS the result
+        row["prompt"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+    row["note"] = "STOPPED BEFORE SUBMIT — no credits spent"
+    return row
+
+
+async def _main(profile: str, project_id: str, drive: bool, settings: list[str]) -> int:
     async with build_client(resolve_profile_dir(profile)) as client:
         page = client._page  # noqa: SLF001 — dev instrument
         assert page is not None
         report = await _probe(page, project_id)
         if drive:
             report["drive"] = await _drive(page, project_id, report.get("model_button_text"))
+        if settings:
+            report["settings_runs"] = [await _settings(page, project_id, m) for m in settings]
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
 
@@ -140,8 +182,16 @@ def main() -> int:
         action="store_true",
         help="also run _select_model for every tier and read the button back (still $0)",
     )
+    parser.add_argument(
+        "--settings",
+        action="append",
+        default=[],
+        metavar="MODEL",
+        help="run the full apply_video_settings + send_prompt for MODEL, stopping before "
+        "submit (still $0). Repeatable — pass it twice to replay a model switch.",
+    )
     args = parser.parse_args()
-    return asyncio.run(_main(args.profile, args.project_id, args.drive))
+    return asyncio.run(_main(args.profile, args.project_id, args.drive, args.settings))
 
 
 if __name__ == "__main__":

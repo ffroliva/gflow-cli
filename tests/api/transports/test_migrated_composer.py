@@ -53,6 +53,12 @@ class Dom:
     prompt: str = ""
     submit_clicked: int = 0
     menu_lingers: bool = False  # Angular keeps a detached menu pane as the LAST overlay
+    # Picking from the model menu closes it logically but leaves its overlay VISIBLE and
+    # eating the next Escape — measured 2026-09-05: after a switch one visible overlay
+    # remains until a second Escape. This is what made a switched run fail and a repeated
+    # one pass.
+    menu_overlay_lingering: bool = False
+    escapes_ignored: bool = False  # a pane that refuses to close at all
     events: list[str] = field(default_factory=list)
 
 
@@ -162,9 +168,15 @@ class FakeLocator:
         elif self.kind == "menuitem":
             dom.model_label = str(target)
             dom.menu_open = False
+            dom.menu_overlay_lingering = True
         elif self.kind == "textarea":
             raise PlaywrightTimeoutError("Locator.click: Timeout 4000ms exceeded (textarea)")
         elif self.kind == "composer":
+            if dom.pane_open or dom.menu_open or dom.menu_overlay_lingering:
+                raise PlaywrightTimeoutError(
+                    "Locator.click: Timeout 5000ms exceeded. waiting for element to be "
+                    "visible, enabled and stable (an overlay is covering it)"
+                )
             dom.events.append("composer_focused")
         elif self.kind == "submit":
             dom.submit_clicked += 1
@@ -181,10 +193,16 @@ class FakeKeyboard:
 
     async def press(self, key: str) -> None:
         if key == "Escape":
-            if self.page.dom.menu_open:
-                self.page.dom.menu_open = False
+            dom = self.page.dom
+            if dom.escapes_ignored:
+                return
+            # One overlay per press, top of the stack first.
+            if dom.menu_overlay_lingering:
+                dom.menu_overlay_lingering = False
+            elif dom.menu_open:
+                dom.menu_open = False
             else:
-                self.page.dom.pane_open = False
+                dom.pane_open = False
 
     async def type(self, text: str, **_: Any) -> None:
         self.page.dom.prompt += text
@@ -235,8 +253,14 @@ class FakePage:
         dom = self.dom
         if css == ".settings-trigger-button":
             return FakeLocator(self, "trigger", ["trigger"] if dom.trigger_present else [])
-        if css == ".cdk-overlay-pane":
+        if css in (".cdk-overlay-pane", ".cdk-overlay-pane:visible"):
             panes = (["pane"] if dom.pane_open else []) + (["menu"] if dom.menu_open else [])
+            if dom.menu_overlay_lingering:
+                panes.append("lingering-menu")
+            if css.endswith(":visible"):
+                # The detached menu pane is in the DOM but NOT visible — which is exactly
+                # why the old `OVERLAY.first` read-back stayed silent.
+                return FakeLocator(self, "pane", panes)
             if dom.menu_lingers and dom.pane_open and not dom.menu_open:
                 panes.append("stale-menu")  # what `.last` sees after a model switch
             return FakeLocator(self, "pane", panes)
@@ -511,6 +535,50 @@ async def test_an_ambiguous_menu_refuses_instead_of_guessing() -> None:
     assert "matched 2 entries" in message
     assert LP_LITE in message and "Omni 1.1 Flash [Lower Priority]" in message
     assert page.dom.model_label == "Omni 1.1 Flash"  # untouched
+    assert page.dom.submit_clicked == 0
+
+
+async def test_a_model_switch_leaves_no_overlay_covering_the_composer() -> None:
+    """Field report: "switch the model and the run dies; re-run with the same model and
+    it works." A switch stacks TWO overlays and each Escape dismisses one, so the single
+    Escape `_close_pane` used to press left the settings pane over the composer —
+    `send_prompt`'s click then died as a bare Playwright TimeoutError naming
+    `[contenteditable='true']`, pointing nowhere near the pane."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    composer = MigratedComposer()
+    await composer.apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    assert page.dom.model_label == "Veo 3.1 - Lite"  # the switch really happened
+    assert not page.dom.pane_open and not page.dom.menu_overlay_lingering
+
+    await composer.send_prompt(page, "a man crying")
+    assert page.dom.prompt == "a man crying"
+
+
+async def test_repeating_the_same_model_never_stacks_the_second_overlay() -> None:
+    """The other half of the report: a re-run binds at the button read-back, never opens
+    the menu, and so passed even while a switch failed."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.model_label = "Veo 3.1 - Lite"
+    composer = MigratedComposer()
+    await composer.apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    assert not page.dom.menu_overlay_lingering  # the menu was never opened
+    await composer.send_prompt(page, "a man crying")
+    assert page.dom.prompt == "a man crying"
+
+
+async def test_a_pane_that_refuses_to_close_is_named_not_left_to_the_composer() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.escapes_ignored = True
+    with pytest.raises(UiSelectorDriftError) as exc_info:
+        await MigratedComposer().apply_video_settings(page, _t2v(model=VideoModel.VEO_3_1_LITE))
+    message = str(exc_info.value)
+    assert "still visible" in message and "migrated" in message
     assert page.dom.submit_clicked == 0
 
 

@@ -2,7 +2,8 @@
 
 **Date:** 2026-09-05 · **Profile:** `kittinansr2` (an account Google has already moved to
 `flow.google.com`) · **Project:** `66324c59-6e68-4988-a91b-26896c9ebd0b` ·
-**Cost:** one 8 s Veo generation (unintended, see below); every measurement below is $0.
+**Cost:** two Veo generations — one unintended (see below), one an authorised end-to-end
+check of the switch fix. Every measurement in between is $0.
 
 **Instrument:** `scripts/dev/capture_migrated_model_menu.py` (`--drive` for the matrix).
 
@@ -75,6 +76,55 @@ The 2026-09-05 t2v run bound the tier correctly but emitted **no model event at 
 "Bound the tier you asked for" and "never touched the picker" were indistinguishable in
 the timeline, and answering it needed this separate probe. The short-circuit now logs
 `migrated.model_already_selected` with the observed button text.
+
+## The switch bug this uncovered
+
+Field report: *"the run before used `veo-lite-lp`; run 1 with `omni-flash` breaks, run 2
+with `omni-flash` works, run 3 with `veo-lite-lp` breaks."* A **switch** fails; a
+**repeat** succeeds.
+
+Reproduced at $0 (`--settings omni-flash --settings omni-flash`, which runs the real
+`apply_video_settings` + `send_prompt` and stops before submit):
+
+```
+run 1 (LP -> omni-flash) : settings applied, prompt -> TimeoutError:
+                           Locator.click: Timeout 5000ms exceeded.
+                           waiting for element to be visible, enabled and stable
+                           locator resolved to <div class="ProseMirror" contenteditable="true">
+run 2 (omni-flash again) : settings applied, prompt typed
+```
+
+The click message points at stability, and that is a red herring. Sampling the composer's
+bounding box every 100 ms for 12 s after a switch:
+
+| | box | `.cdk-overlay-pane:visible` |
+|---|---|---|
+| after a switch | **identical for 12 s** | **1**, for the whole window |
+| after a repeat | identical | 0 |
+
+The composer never moves. What is left is a **visible overlay covering it**, and one more
+Escape takes the count to 0 — after which the prompt types.
+
+**Cause.** Selecting from the model menu leaves Angular with two stacked overlays (the
+settings pane and the menu opened over it) and each Escape dismisses exactly one, so
+`_close_pane`'s single press closed only the menu. A repeat run binds the model at the
+button read-back, never opens the menu, never stacks the second overlay — which is
+precisely why re-running the same model worked.
+
+`_close_pane` now escapes until `.cdk-overlay-pane:visible` is empty (bounded), and
+raises if it cannot be.
+
+**The signal was already there.** `migrated.pane_still_open` *does* fire on the pre-fix
+source — confirmed by replaying it against the live host. It was a warning, so the run
+continued and failed 5 s later with a `TimeoutError` naming `[contenteditable='true']`
+and no reference to the warning that had predicted it. Only the consequence was missing;
+it is now the failure itself.
+
+**Verified after the fix**, live: the reported sequence at $0 —
+`omni-flash` (switch) / `omni-flash` (repeat) / `veo-lite-lp` (switch) — all three apply
+settings and type the prompt with `visible_overlays_after_settings: 0`. One real
+end-to-end run on the switch path (LP -> `omni-flash`, `migrated.model_selected` in the
+timeline) submitted, generated and downloaded a 2.6 MB clip, exit 0.
 
 ## Recorded, not asserted
 

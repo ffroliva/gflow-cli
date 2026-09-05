@@ -58,6 +58,12 @@ log = structlog.get_logger(__name__)
 MIGRATED_PROJECT_URL = "https://flow.google.com/project/{project_id}"
 READY_ANCHOR = ".settings-trigger-button"
 OVERLAY = ".cdk-overlay-pane"
+#: Playwright's own visibility engine — the detached overlays Angular leaves behind are
+#: in the DOM but not visible, and only the visible ones can cover the composer.
+VISIBLE_OVERLAY = f"{OVERLAY}:visible"
+#: Escapes `_close_pane` will spend. A model switch needs 2 (menu, then pane); the
+#: headroom is for a future third stacked overlay, not for hope.
+PANE_CLOSE_ESCAPES = 4
 RADIOGROUP = "[role='radiogroup']"
 RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
@@ -242,13 +248,53 @@ class MigratedComposer:
         return pane
 
     async def _close_pane(self, page: Page) -> None:
-        """Escape closed the pane in every measured run; if it ever does not, the next
-        click on the composer fails loudly rather than a speculative fallback guessing."""
-        await page.keyboard.press("Escape")
-        await asyncio.sleep(0.3)
-        pane = page.locator(OVERLAY).first
-        if await pane.count() and await pane.is_visible():
-            log.warning("migrated.pane_still_open")
+        """Dismiss every visible overlay, and verify that none is left.
+
+        One Escape is not enough after ``--model``. Selecting from the menu leaves
+        Angular with **two** stacked overlays — the settings pane and the menu opened
+        over it — and each Escape dismisses exactly one, so a single press closed only
+        the menu and left the settings pane covering the composer. ``send_prompt``'s
+        click then failed Playwright's actionability check and surfaced ~5 s later as a
+        bare ``TimeoutError`` naming ``[contenteditable='true']``, with nothing pointing
+        at the pane. Field-reported as "switch the model and the run dies; re-run with
+        the same model and it works" — a re-run binds the model at the button read-back,
+        never opens the menu, and so never stacks the second overlay.
+
+        Measured 2026-09-05 at $0 (spike
+        ``2026-09-05-migrated-model-menu-lower-priority.md``): after a switch the
+        composer's bounding box is **identical** for 12 s — it was never unstable — while
+        ``.cdk-overlay-pane:visible`` stays at 1; one more Escape takes it to 0 and the
+        prompt types.
+
+        The old read-back *did* notice — ``migrated.pane_still_open`` fires on the
+        pre-fix source, confirmed by replaying it against the live host. It was a
+        warning: the run continued, the composer click timed out 5 s later, and the
+        error it raised named ``[contenteditable='true']`` with no reference to the
+        warning that had predicted it. The observation was there and only the
+        consequence was missing, so it is now the failure itself.
+
+        A pane that will not close is raised here, pre-submit and at $0, rather than left
+        for the composer click to report as an unattributable timeout.
+        """
+        for _ in range(PANE_CLOSE_ESCAPES):
+            # Re-queried every pass rather than held: the count has to be re-read after
+            # each Escape, and a locator built once is only re-evaluated because
+            # Playwright's are lazy — not a property worth depending on here.
+            if not await page.locator(VISIBLE_OVERLAY).count():
+                return
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.3)
+        remaining = await page.locator(VISIBLE_OVERLAY).count()
+        if not remaining:
+            return
+        log.warning("migrated.pane_still_open", visible_overlays=remaining)
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated host: {remaining} overlay(s) still visible after "
+                f"{PANE_CLOSE_ESCAPES} Escape presses — the settings pane would cover the "
+                f"composer and the prompt could not be typed (host=migrated)"
+            ),
+        )
 
     async def _select(
         self,
