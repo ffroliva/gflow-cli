@@ -59,6 +59,10 @@ gflow auth status                                         # confirms session
 gflow auth                                                # bare: list profiles or trigger first login
 gflow auth logout                                         # delete a saved session
 
+# Veo video-credit balance (read-only; image models use separate daily quotas)
+gflow credits user [--profile NAME] [--json]
+gflow credits list [--json]                               # all saved profiles
+
 # Image generation (Imagen / Nano Banana)
 gflow image upload <path>                                 # → asset UUID + dimensions
 gflow image t2i "<prompt>" [--model {nano2|nano-pro|image4}] \
@@ -248,7 +252,7 @@ The `gflow-cli` supports a 3-layer pipeline for persistent generation context (A
 
 ## Important constraints
 
-- **Costs real money / credits.** Each `gflow video t2v|i2v` and `gflow image t2i|i2i` call burns Flow credits from the user's Google account. Confirm before running batches.
+- **Video costs Flow credits.** Video generation draws down the balance shown by `gflow credits`; image generation uses separate per-model daily quotas. Confirm before running batches.
 - **Not for production-grade SLAs.** gflow-cli reverse-engineers a private Google API. It can break without notice. For production, use the [official Gen AI SDK](https://github.com/googleapis/python-genai).
 - **Don't share auth profiles.** The Playwright profile dir lives at the per-OS user-data location (Windows: `%LOCALAPPDATA%\gflow-cli\profile_*`; macOS: `~/Library/Application Support/gflow-cli/profile_*`; Linux: `~/.local/share/gflow-cli/profile_*`) and contains Google session cookies — treat as secrets.
 - **Same profile can't run in parallel.** Chromium refuses two persistent contexts on the same profile dir; use different `--profile` names for parallel work.

@@ -46,6 +46,12 @@ _REQUEST_TIMEOUT_MS = 15_000
 _MAX_ATTEMPTS = 3
 # HTTP statuses worth retrying — transient server-side conditions only.
 _RETRYABLE_STATUSES = frozenset({429, 503, 504})
+_SESSION_HEADERS = {
+    "accept": "*/*",
+    "cache-control": "no-cache",
+    "pragma": "no-cache",
+    "referer": "https://labs.google/fx/tools/flow",
+}
 
 
 class FlowSessionOutcome(StrEnum):
@@ -207,6 +213,30 @@ async def _fetch_session_httpx(client: Any) -> tuple[int, str]:
     raise last_exc or RuntimeError("session probe produced no response")
 
 
+async def fetch_flow_session_httpx(
+    profile_dir: Path,
+) -> tuple[int, str, bool]:
+    """Read a profile's cookies and probe Flow's session endpoint with retries.
+
+    The client created here is scoped to ``labs.google`` and is closed before
+    the caller receives the response. Callers must use a separate client for
+    any other host so Flow session cookies cannot cross an origin boundary.
+    """
+    _validate_profile_in_home(profile_dir)
+
+    import httpx
+
+    cookie_snapshot = await get_chrome_cookie_snapshot(profile_dir)
+    async with httpx.AsyncClient(
+        cookies=cookie_snapshot.httpx_cookies,
+        headers=_SESSION_HEADERS,
+        follow_redirects=False,
+        timeout=15.0,
+    ) as client:
+        status_code, body = await _fetch_session_httpx(client)
+    return status_code, body, cookie_snapshot.google_session
+
+
 async def verify_flow_session(
     profile_dir: Path,
     *,
@@ -307,23 +337,7 @@ async def verify_flow_profile(
     status_code: int
     body: str
     try:
-        import httpx
-
-        cookie_snapshot = await get_chrome_cookie_snapshot(profile_dir)
-        headers = {
-            "accept": "*/*",
-            "cache-control": "no-cache",
-            "pragma": "no-cache",
-            "referer": "https://labs.google/fx/tools/flow",
-        }
-
-        async with httpx.AsyncClient(
-            cookies=cookie_snapshot.httpx_cookies,
-            headers=headers,
-            follow_redirects=False,
-            timeout=15.0,
-        ) as client:
-            status_code, body = await _fetch_session_httpx(client)
+        status_code, body, google_session = await fetch_flow_session_httpx(profile_dir)
 
     # Fail-closed: any failure here yields VERIFICATION_ERROR, never AUTHENTICATED.
     except Exception as exc:
@@ -337,7 +351,7 @@ async def verify_flow_profile(
     result = evaluate_session_response(
         status_code,
         body,
-        google_session=cookie_snapshot.google_session,
+        google_session=google_session,
         source=source,
     )
     if result.outcome is FlowSessionOutcome.VERIFICATION_ERROR:

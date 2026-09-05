@@ -97,6 +97,11 @@ EDITOR_BOOTSTRAP_URL = "https://labs.google/fx/tools/flow?hl=en"
 CREATE_ENTITY_URL = f"{LABS_TRPC_BASE}/flow.createEntity"
 PROJECT_INITIAL_DATA_URL = f"{LABS_TRPC_BASE}/flow.projectInitialData"
 FLOW_ENTITIES_URL = f"{FLOW_API_BASE}/flow/entities"
+# Current account balance (read-only, Bearer-authenticated, no reCAPTCHA).
+# The SPA currently appends its browser API key, but the endpoint has been
+# live-verified with the existing OAuth Bearer alone; do not embed captured
+# browser credentials in the client.
+CREDITS = f"{FLOW_API_BASE}/credits"
 # Delete CHARACTER entities (aisandbox Bearer REST). Body:
 # ``{"projectId": <pid>, "entityIds": [<id>, ...]}``. FREE — no reCAPTCHA/credit.
 # Reverse-engineered 2026-06-04 from the editor's "Excluir personagem" button

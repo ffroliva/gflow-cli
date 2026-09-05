@@ -46,6 +46,9 @@ uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
 # 2 · Authenticate (one-time, opens a real Chrome window)
 gflow auth login --browser chrome
 
+# Check the current balance (or use `credits list` for every saved profile)
+gflow credits user
+
 # 3 · Generate
 gflow image t2i "a hot air balloon over Tokyo at sunrise"
 # or:

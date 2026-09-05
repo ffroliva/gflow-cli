@@ -713,13 +713,15 @@ A block that survives dismissal now aborts pre-submit with exit 23 (probe `overl
 
 ---
 
-### No in-CLI quota visibility
+### No in-CLI quota visibility — resolved
 
-- **Status:** Open · **Severity:** Low · **Roadmap:** v0.5
+- **Status:** Resolved 2026-09-05
 
-`gflow-cli` doesn't yet show how many Veo / Imagen credits remain on your Ultra/Pro subscription. You can check at <https://gemini.google/subscriptions/> in the meantime.
-
-**Roadmap:** v0.5 will surface remaining quota via `gflow auth status` once we capture the relevant Google API.
+Use `gflow credits user` for the selected profile or `gflow credits list` for all saved
+profiles. Both commands query Flow's current read-only credits endpoint with the saved browser
+session; `--json` provides a stable automation contract. The equivalent MCP surface is
+`gflow_get_credits`. The reported balance funds Veo video generation; image generation consumes
+separate per-model daily quotas.
 
 ---
 
