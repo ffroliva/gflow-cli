@@ -36,8 +36,8 @@ Verification: [LIVE_VERIFICATION_v0.68.0](LIVE_VERIFICATION_v0.68.0.md) — a wh
 to 0.60.1 installed through `uv tool` and through `pipx`, then `gflow update` run from each
 install's own `gflow.exe`: **exit 0 both times, venv at PyPI 0.67.0 afterwards**, the uv run
 carrying the stale-launcher note. Recorded as NOT verified: plain-venv `pip` on Windows,
-macOS / Linux for any manager, and the first genuine banner (0.68.0 is the first release
-after the change).
+macOS / Linux for any manager, a real interactive-terminal screenshot of the panel, and the
+first genuine banner (0.68.0 is the first release after the change).
 
 <details><summary>v0.67.0 — Flow's migrated flow.google.com host driven for text-to-video</summary>
 

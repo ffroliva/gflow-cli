@@ -78,10 +78,12 @@ working, and the next update from another shell refreshes it.
 | Gate | Result |
 |---|---|
 | Impeccable Routine on `develop` at 9525cb5 (hygiene, doc links, website PII, website mirror, council memory, ruff, format, pyright) | all green |
-| Offline pytest (`not live and not e2e and not smoke`) | see the release commit message for the count |
+| Offline pytest (`not live and not e2e and not smoke`) on 9525cb5 | 3849 passed, 24 skipped, 1 failed in 6:54 — `tests/features/test_incident_diagnostics_steps.py::test_remote_errors_do_not_expose_local_incident_paths`, a file untouched since July that passes in isolation (1.25 s); a second session was running pytest in the same checkout during the sweep. The release PR's CI run is the authority for the full suite |
 | Branch council on PR #668 (9 dimensions) | D1/D4/D5/D9 YELLOW → all must-fix applied in a7b95ff; D3/D8/D14/D15 GREEN; D2 did not return |
 | PR #668 CI (15 checks incl. SonarCloud) | green on b8b59a3 |
 | Manager runs (this file) | uv: exit 0 + note; pipx: exit 0 |
+| `/gflow:doc-review` mechanical pass (sections 1–7) | PASS — version refs, INDEX cue, evidence file, doc links, website PII + mirror, skill files, CHANGELOG footer, memory index |
+| `/gflow:doc-review` council (3 auditors) | Completeness YELLOW, Cross-reference YELLOW, Drift GREEN. 0 Tier 1. Tier 2 fixed in aedeaaa (llms.txt names `gflow update`; ARCHITECTURE inventory; USER_GUIDE upgrade hop; CI / cache-refresh wording; CONTRIBUTING plan-consolidation note) and in the follow-up doc commit (five-command gate lists in DEVELOPMENT.md and RELEASE.md aligned to the nine; `uv.lock` in RELEASE.md's bump list; NOT-verified lists aligned; CLAUDE.md INDEX size). Tier 3 deferred: `gflow doctor` absent from llms.txt before this pass (now added), verdict-name abbreviations in CONTRIBUTING. Council reports at `tmp/council/0{1,2,3}-*.md` (local-only) |
 
 ## Post-tag evidence
 
@@ -96,6 +98,8 @@ PyPI page, and one `pip index versions gflow-cli` read showing 0.68.0.
 - **macOS / Linux for any manager** — POSIX allows replacing a running binary, so the
   manager should exit 0 there; same code path, same venv-is-truth check. LIKELY, not
   CONFIRMED.
+- **A real interactive-terminal screenshot of the panel** — rendered through a forced
+  terminal console and read back (see "Banner" above), not photographed on a live tty.
 - **A real newer release on PyPI** for the banner from a normal install — 0.68.0 is the
   first release after the change, so the first genuine banner a user sees will be for
   0.68.1 or later. The #479 mechanism itself was live-verified at v0.56.0.
