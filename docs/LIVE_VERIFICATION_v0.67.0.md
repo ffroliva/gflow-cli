@@ -102,8 +102,11 @@ control … 0 option groups"); fixed in the same change and pinned by
 
 ## Post-tag evidence
 
-Filled after the tag push: release workflow run, PyPI version, GitHub Release URL,
-`pip install gflow-cli==0.67.0` smoke.
+- Signed tag `v0.67.0` (SSH signature, `git tag -v` good) on `f92978e`, pushed 2026-09-05.
+- Release workflow run [33955032750](https://github.com/ffroliva/gflow-cli/actions/runs/33955032750) — `completed / success`.
+- GitHub Release: <https://github.com/ffroliva/gflow-cli/releases/tag/v0.67.0> (published 2026-09-05T08:22:07Z, 5 assets, not a prerelease).
+- PyPI: `pip index versions gflow-cli` → `gflow-cli (0.67.0)`.
+- Release PR: [#667](https://github.com/ffroliva/gflow-cli/pull/667) `chore/release-v0.67.0 → main`, merged with a merge commit, then back-merged into `develop`.
 
 ## NOT verified (recorded, not omitted)
 
