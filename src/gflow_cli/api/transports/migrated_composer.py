@@ -74,6 +74,10 @@ SUBMIT_RPC = "YhhmEf"
 STATUS_RPCS = ("jwpduf", "as29s")
 #: The submit reply arrived 4.0–4.6 s after the click in both measured runs.
 SUBMIT_REPLY_BUDGET_S = 60.0
+# Angular enables the arrow_forward button ~100 ms after `insert_text` lands in the
+# composer (measured 2026-09-05, #670); checking it synchronously reads the stale state.
+SUBMIT_ENABLE_BUDGET_S = 5.0
+SUBMIT_ENABLE_POLL_S = 0.1
 #: A ``jwpduf`` poll reports status 3 first; the record that carries the signed
 #: URLs (``as29s``) followed 2–5 s later in every measured run. Wait that long
 #: for it before settling for the URL-less record.
@@ -518,13 +522,24 @@ class MigratedComposer:
         page.on("response", on_response)
         try:
             submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
-            if not await submit.count() or not await submit.is_enabled():
+            if not await submit.count():
                 raise UiSelectorDriftError(
                     detail=(
-                        "migrated host: the submit button (arrow_forward) is missing or "
-                        "disabled after the prompt was typed (host=migrated)"
+                        "migrated host: the submit button (arrow_forward) is missing "
+                        "after the prompt was typed (host=migrated)"
                     ),
                 )
+            enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
+            while not await submit.is_enabled():
+                if time.monotonic() >= enable_deadline:
+                    raise UiSelectorDriftError(
+                        detail=(
+                            "migrated host: the submit button (arrow_forward) stayed disabled "
+                            f"for {SUBMIT_ENABLE_BUDGET_S:.0f}s after the prompt was typed "
+                            "(host=migrated)"
+                        ),
+                    )
+                await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
             deadline = time.monotonic() + poll_timeout_s
             await submit.click(timeout=5000)
             log.info("migrated.submit_clicked")

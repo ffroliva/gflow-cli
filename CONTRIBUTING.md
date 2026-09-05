@@ -22,7 +22,7 @@ What a contributor PR is expected to have gone through, phase by phase:
 |---|---|---|
 | Touching a GitHub issue | [`issue-assessment`](skills/issue-assessment/SKILL.md) | A verdict (CONFIRMED / LIKELY / NEEDS-INFO …) and which surfaces reproduce it — CLI, MCP, or both |
 | Transport / auth / selector / schema change | [`predict`](skills/predict/SKILL.md) | A GO / CAUTION / STOP verdict **before** code exists; STOP means open an issue instead |
-| Any feature | [`scenario`](skills/scenario/SKILL.md) → [`plan`](skills/plan/SKILL.md) | `docs/superpowers/plans/<date>-<slug>/SCENARIO.md` + `PLAN.md` — the edge-case table and the task list; link them from the PR |
+| Any feature | [`scenario`](skills/scenario/SKILL.md) → [`plan`](skills/plan/SKILL.md) | `docs/superpowers/plans/<date>-<slug>/SCENARIO.md` + `PLAN.md` — the edge-case table and the task list; link them from the PR (they live on the branch and in the PR's history; at release the durable facts are folded into `docs/superpowers/memory/` and the plan dir is removed) |
 | Every commit | [`check`](skills/check/SKILL.md) | The Impeccable Routine green (it is the exact CI gate), plus the **step 1b** CLI↔MCP mirror sweep no CI gate can see |
 | Anything on a generation path | [`live-verify`](skills/live-verify/SKILL.md) | Evidence against real Flow, not just green offline tests — this project drives a black box; say plainly what you could **not** verify |
 | Opening the PR | [`pr-council-review`](skills/pr-council-review/SKILL.md) / [`branch-review`](.claude/commands/gflow/branch-review.md) | The multi-dimension council (correctness, quality, security, tests, memory, YAGNI, parity …); maintainers run it on every PR, so running it yourself first removes a round trip |

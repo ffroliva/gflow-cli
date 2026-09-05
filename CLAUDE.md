@@ -27,7 +27,7 @@ it yet" is not a reachable state.
 ## On every session start
 
 1. Read **[docs/INDEX.md](docs/INDEX.md)** — routing layer for all project docs and
-   commands. Deliberately *not* imported: at 36 KB it is a lookup table, not a rule set,
+   commands. Deliberately *not* imported: at ~47 KB it is a lookup table, not a rule set,
    and AGENTS.md points into it. Read it when you need to find a doc.
 2. Pull deeper context on demand:
    - Current task / where we left off → `/gflow:status`
