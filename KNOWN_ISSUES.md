@@ -14,9 +14,9 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
-### Flow is migrating to `flow.google.com`; gflow drives the migrated frontend for t2v (rest of the matrix pending)
+### Flow is migrating to `flow.google.com`; gflow drives the migrated frontend for t2v and i2v from a local start frame (rest of the matrix pending)
 
-- **Status:** Open (partially resolved) · **Severity:** High for everything except text-to-video · **Affected:** on accounts the rollout has reached, `gflow video t2v` now runs on the migrated host (with `--project`); `image`, i2v/r2v, characters, scenes, extend, instructions and tools are not ported yet and still exit 36
+- **Status:** Open (partially resolved) · **Severity:** High for everything except text-to-video and local-file image-to-video · **Affected:** on accounts the rollout has reached, `gflow video t2v` and `gflow video i2v --initial-frame <local file>` now run on the migrated host (with `--project`); an end frame, a frame by UUID or `@Name`, `image`, r2v, characters, scenes, extend, instructions and tools are not ported yet and still exit 36
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
 - **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
 
@@ -53,7 +53,9 @@ the clip). Two real clips were generated this way on 2026-09-05 — spike
 (`GFLOW_CLI_FLOW_HOST=auto`): flow.google.com is the **default** host for that
 command on every account — moved or not; `flow.google.com` forces it for
 everything, and `labs.google` switches the migrated composer off. Limits today: `--project` is required (project creation from the
-migrated editor is not ported), and only `t2v` — everything else still exits 36.
+migrated editor is not ported), and only `t2v` and `i2v` from a local `--initial-frame` (no end frame,
+no UUID/`@Name` frame — the migrated Frames picker exposes no media id in its DOM, so a frame is
+found by file name after gflow uploads it through the editor) — everything else still exits 36.
 
 **Models on the migrated host.** Its picker is driven for every tier the account's
 menu actually renders, `veo-lite-lp` included — matched by the `[Lower Priority]`

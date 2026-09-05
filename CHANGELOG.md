@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Image-to-video from a local start frame on the migrated `flow.google.com` host**
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639), slice 1). `gflow video i2v
+  --initial-frame <local file> --project <id>` now runs on the new host — on a moved
+  account, and by default (`GFLOW_CLI_FLOW_HOST=auto`) on an unmoved one too. The port
+  is UI-driven and observed, never replayed: the composer selects the Frames submode,
+  uploads the file through the editor's own toolbar Upload entry and reads the media id
+  off the app's `maseQ` reply, finds the upload in the Start-frame picker under its file
+  name (the picker exposes no media id in its DOM), and only then submits. **An unbound
+  chip is refused before the click** — exit 23, zero credits — because an empty Frames
+  submit silently goes out as text-to-video (the labs #125 shape). The app's submit
+  *request* is then inspected as it leaves: a body without that media id, or carrying a
+  `_t2v_` model key, fails the run with `WireFormatError` (exit 7) naming what Flow was
+  actually asked to make — after the fact, since the request is already on the wire.
+  An upload Flow refuses is exit 27 on route `batchexecute:maseQ`; a file the picker
+  never lists after three searches is exit 32. For i2v the submit rpc is `eb1hJf` (t2v
+  stays `YhhmEf`), and an i2v request with no `--model` binds the veo-lite default here
+  exactly as it has always done on labs (#125). Not ported in this slice and named in
+  the exit-36 detail: `--end-frame`, a frame given by media UUID or `@Name`, and r2v.
+  A "Get started" modal over a fresh migrated editor is now dismissed before the run.
+  Recon: `docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md`.
+
 - **`--model veo-lite-lp` is drivable on the migrated `flow.google.com` host.** It was
   the one tier the migrated model map omitted, so an account Google has already moved
   could not select it at all: `_select_model` refused with `ConfigurationError` (exit

@@ -361,11 +361,11 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 
 **What:** Which Flow frontend gflow drives. Google is moving accounts from `labs.google/fx/tools/flow` onto `flow.google.com` one at a time ([#639](https://github.com/ffroliva/gflow-cli/issues/639)); the two are the same product on different widget toolkits and different wire protocols, so each has its own driver.
 **Values:**
-- `auto` (default) — **`flow.google.com` is the default host for every request it can serve today** (`video t2v` with `--project`), on moved and unmoved accounts alike — the new host serves both. A request the new host cannot serve yet keeps the labs driver on an unmoved account; a moved account has no labs to fall back to: other modes exit 36, a missing `--project` or a labs-only model exit 11.
+- `auto` (default) — **`flow.google.com` is the default host for every request it can serve today** (`video t2v`, and `video i2v` from a local `--initial-frame` with no end frame, both with `--project`), on moved and unmoved accounts alike — the new host serves both. A request the new host cannot serve yet keeps the labs driver on an unmoved account; a moved account has no labs to fall back to: other modes exit 36, a missing `--project` or a labs-only model exit 11.
 - `flow.google.com` — force the migrated composer for everything, including what it cannot serve yet (those requests then exit 36/11 instead of falling back).
 - `labs.google` — never use the migrated composer; a moved account fails with exit 36 (kill switch).
 **Default:** `auto`
-**Scope today:** the migrated composer covers `gflow video t2v` with `--project <id>` (settings via the option groups, model picker, submit, status observed on the page's own `batchexecute` replies, download from the signed CDN URL). Image, i2v/r2v, characters, scenes, extend, instructions and tools are not ported yet and exit 36 on a moved account. MCP inherits the setting from the server/daemon environment, not per call.
+**Scope today:** the migrated composer covers `gflow video t2v` and `gflow video i2v --initial-frame <local file>` with `--project <id>` (settings via the option groups, model picker, a local start frame uploaded through the editor's own Upload entry and bound in the Frames picker by file name, submit, status observed on the page's own `batchexecute` replies, download from the signed CDN URL). An end frame, a frame given by UUID or `@Name`, image, r2v, characters, scenes, extend, instructions and tools are not ported yet and exit 36 on a moved account. MCP inherits the setting from the server/daemon environment, not per call.
 
 ### `GFLOW_CLI_PREFER_CLASSIC` *(deprecated — use `GFLOW_CLI_UI_MODE=classic`)*
 
