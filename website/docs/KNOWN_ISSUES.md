@@ -68,7 +68,7 @@ uploaded id, and a run whose references have not all attached is refused **befor
 submit, because the failure mode is a full-price clip with none of them on it.
 References by `@Name` and character entities stay on labs, for the same reason a frame by
 UUID does: the picker exposes no media id to anchor on. Capture:
-[2026-09-05-migrated-r2v-attach-surface](docs/superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md).
+[2026-09-05-migrated-r2v-attach-surface](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md).
 
 **Models on the migrated host.** Its picker is driven for every tier the account's
 menu actually renders, `veo-lite-lp` included — matched by the `[Lower Priority]`
