@@ -52,6 +52,7 @@ class Dom:
     menu_open: bool = False
     prompt: str = ""
     submit_clicked: int = 0
+    submit_enable_after_reads: int = 0  # Angular flips `disabled` a tick after insert_text (#670)
     menu_lingers: bool = False  # Angular keeps a detached menu pane as the LAST overlay
     events: list[str] = field(default_factory=list)
 
@@ -121,7 +122,11 @@ class FakeLocator:
 
     async def is_enabled(self) -> bool:
         if self.kind == "submit":
-            return bool(self.page.dom.prompt)
+            dom = self.page.dom
+            if dom.submit_enable_after_reads > 0:
+                dom.submit_enable_after_reads -= 1
+                return False
+            return bool(dom.prompt)
         return bool(self.items)
 
     async def get_attribute(self, name: str) -> str | None:
@@ -470,6 +475,41 @@ async def test_submit_observes_submit_then_poll_then_result() -> None:
     )
     assert started[0].project_id == PROJ
     assert page.dom.submit_clicked == 1
+
+
+async def test_submit_waits_for_the_button_to_enable_after_insert_text() -> None:
+    """#670: the button reads disabled for a tick after the prompt lands; wait, don't raise."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.dom.submit_enable_after_reads = 2
+    page.scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and page.dom.submit_clicked == 1
+    assert page.dom.submit_enable_after_reads == 0
+
+
+async def test_submit_still_disabled_after_the_budget_is_selector_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "SUBMIT_ENABLE_BUDGET_S", 0.05)
+    monkeypatch.setattr(migrated_composer, "SUBMIT_ENABLE_POLL_S", 0.01)
+    page = FakePage()
+    page.dom.prompt = ""  # nothing in the composer: the button never enables
+    with pytest.raises(UiSelectorDriftError, match="stayed disabled"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+    assert page.dom.submit_clicked == 0
 
 
 async def test_status_three_in_a_poll_is_terminal_even_without_as29s() -> None:
