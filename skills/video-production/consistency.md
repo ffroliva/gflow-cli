@@ -26,7 +26,7 @@ The two reference mechanisms are not interchangeable. This is the distinction pe
 
 `@Name` and `--reference-entity` are the same mechanism; one resolves by display name, the other takes the id. They dedupe against each other.
 
-**They are designed to combine.** An entity plus a location plate reads as *this person, in this place*. That composition is the normal case, not an advanced one.
+**They are designed to combine.** An entity plus a location plate reads as *this person, in this place*. That composition is the normal case, not an advanced one, and `--ref` is **repeatable up to the model's cap** — a plate and a prop sheet in the same call is ordinary usage. To pin a person, a place and an object into one approved still before animating it, see the composited-approved-frame pattern in [`composition.md`](composition.md).
 
 **Entities are project- and account-scoped [CONSTRAINT].** An entity minted on one account will not resolve when generating on another. Moving a production between accounts means rebuilding the cast under identical names, or accepting portrait images instead — a decision to make deliberately, not to discover mid-run.
 

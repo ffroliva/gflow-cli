@@ -101,7 +101,30 @@ gflow scene create <wf1> <wf2>:0-7 <wf3>:0-7 -o shot.mp4 --project P
 
 Trim every extension to `0-7`; see the 7-second constraint above. `1:1` is refused — there is no square extend model.
 
-## Chain 4 — assembly only
+## Chain 4 — the composited approved frame
+
+The pattern to reach for when a shot needs **both** a specific person and a specific staged object, and the object is the point of the shot. `r2v` cannot serve it: it carries identity but composes its own frame, and has dropped a staged focal object outright. `i2v` guarantees the frame but carries no identity. So build the frame first, with identity baked in, then animate it.
+
+```bash
+# 1. compose the still: entity for the face, plates for the place and the prop.
+#    image i2i takes REPEATED --ref up to the model's cap (nano2: 10), so a plate
+#    and a prop sheet in one call is the normal case, not an advanced one. Free.
+gflow image i2i "<close crop, the action's start state, stated exactly>" \
+  --reference-entity <CHARACTER_ID> --ref <PLATE_UUID> --ref <PROP_UUID> \
+  --model nano2 --aspect 16:9 --project P -o frame_approved.png
+
+# 2. a human looks at it. This is the gate the whole pattern exists for.
+#    Crop to the prop and confirm the beat's start state is literally true in the
+#    frame — a prop touching a surface it must leave will animate as attached to it.
+
+# 3. animate the approved frame. No identity flag: the identity is in the pixels.
+gflow video i2v --initial-frame frame_approved.png "<what happens next>" \
+  --model omni-flash --duration 8 --aspect 16:9 --count 1 --project P --json
+```
+
+Use it for a mechanism-critical prop, a precise start state, or a shot that must match the previous clip's last frame. The cost is one extra free image and one human look.
+
+## Chain 5 — assembly only
 
 ```bash
 gflow data list videos --json                  # workflow ids
@@ -131,6 +154,16 @@ Strip generated audio with `-an` where the sound is unwanted — the engine alwa
 ## Pacing, sessions and what wastes money quietly
 
 - **Paid calls in the foreground, roughly two beats per invocation [CALIBRATED].** A detached background run lost a clip mid-poll after the credit was spent.
+
+  **This is about interactive iteration, not a ban on automation.** A scheduled pipeline cannot have a human per call, and does not need one — what it needs is the same guarantee by other means:
+
+  - Gate on a **canary scene** each run: generate one, check it, and stop the rest if it fails.
+  - Prefer `--fail-fast` over `--continue-on-error` unattended, so a broken template bills once instead of once per scene.
+  - **Reconcile rather than retry.** After any interrupted run, list the project's media and compare against the state file; a run cut off between submit and download may already have billed.
+  - Run the job in the foreground **of its own scheduled process**, one profile, never two overlapping invocations.
+  - Keep a credit ceiling per run and fail the job rather than the budget.
+
+  The rule the incident actually supports is: never detach a paid call from the process that is waiting on it. A cron job that blocks on its own run satisfies that; a background job inside an interactive session does not.
 - **One profile, no parallel generations.** Concurrent runs on one profile collide on its lease.
 - **Never auto-retry into a refusal.** A refusal aborts and keeps what completed; re-running into a block only raises the profile's risk score.
 - **`--dry-run` before any manifest run.** It prices the plan and catches model-duration mismatches without opening a browser.
