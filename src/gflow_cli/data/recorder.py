@@ -1247,6 +1247,21 @@ class OperationRecorder:
                 image_paths=image_paths,
             )
 
+    def record_character_abandoned(self, *, row_id: str, exc: BaseException) -> None:
+        """Flip a zero-progress character STARTED row to FAILED (#703).
+
+        Only the saga's rollback path calls this: the run failed before the
+        first slot committed, so the row records no workflow id and buys no
+        resume.  Leaving it STARTED keeps ``find_incomplete_character``
+        pointing at an entity the saga has just deleted.  Classification goes
+        through the same ``_classify_failure`` taxonomy as every other FAILED
+        row, so nothing parallel can drift.
+        """
+        error_type, error_detail = _classify_failure(exc)
+        self.repository.update_operation_status(
+            row_id, OperationStatus.FAILED, _now_utc_iso(), error_type, error_detail
+        )
+
     def _record_character_local_files(
         self,
         *,

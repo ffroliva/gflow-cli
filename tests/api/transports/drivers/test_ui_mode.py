@@ -415,27 +415,33 @@ class TestMigratedOriginFailsFast:
         assert await detect_ui_mode(page, timeout_s=0.1, poll_interval_s=0.01) == "classic"
 
 
-class TestCharacterEditorOnMigratedOriginFailsFast:
-    """`character create` on a moved account died as a bare RuntimeError, exit 1.
+class TestCharacterEditorOnTheMigratedOrigin:
+    """`character create` WORKS on flow.google.com. It must not be gated off.
 
-    The character editor is a labs-only surface: `flow.google.com` renders no
-    prompt textbox for it, ever. So the readiness gate burned its full 20 s
-    timeout and then raised `RuntimeError("Character editor not ready: prompt
-    textbox not visible within 20 s")`, which the CLI reports as "Unexpected
-    error" (exit 1) rather than the typed, non-retryable exit 36 that names the
-    migration and tells the user why.
+    This class previously asserted the opposite — that the editor is "a labs-only
+    surface: flow.google.com renders no prompt textbox for it, ever", and pinned a
+    `raise_if_migrated` guard that returned exit 36 before probing the DOM.
 
-    Measured live 2026-09-06 on a moved account. Fourth instance of the same
-    shape as #673 (image path) and #692 (the reCAPTCHA mint): a labs-only path
-    that fails unclassified on the migrated host.
+    That premise was false, and the guard was the defect. Recon on 2026-09-06
+    (`scripts/dev/spike_migrated_character_editor_anchor.py`) found the editor
+    fully rendered on the migrated host — name, voice, personality, Upload / Add
+    from project, Create portrait / Create body — driven by the SAME labs tRPC and
+    aisandbox backend. What differed was the view layer: labs is React + Slate,
+    flow.google.com is Angular + ProseMirror, so the readiness selector missed and
+    a 20 s timeout got read as "the feature does not exist here". With the anchor
+    widened and the guard removed, a full create succeeded end to end on
+    `ci-probe` — display_name patched, workflow id and thumbnail media id bound.
+
+    The lesson worth keeping: a selector that does not match is evidence about the
+    selector, never about the feature.
     """
 
     @pytest.mark.asyncio
-    async def test_raises_exit_36_before_waiting_on_the_textbox(self) -> None:
+    async def test_the_migrated_origin_does_not_short_circuit_the_editor(self) -> None:
+        """The DOM must be probed, not pre-judged by the host."""
         from unittest.mock import AsyncMock
 
         from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-        from gflow_cli.errors import EXIT_CODE_MAP, FlowHostMigratedError, is_retryable
 
         t = UiAutomationTransport.__new__(UiAutomationTransport)
         t._out_dir = None  # type: ignore[attr-defined]
@@ -443,15 +449,23 @@ class TestCharacterEditorOnMigratedOriginFailsFast:
         t._dismiss_blocking_overlays = AsyncMock()  # type: ignore[attr-defined]
         t._settle_on_character_route = AsyncMock()  # type: ignore[attr-defined]
 
+        probed: list[str] = []
+
+        def _locator(sel: str) -> MagicMock:
+            probed.append(sel)
+            loc = MagicMock()
+            loc.first = loc
+            loc.wait_for = AsyncMock()
+            return loc
+
         page = MagicMock()
         page.goto = AsyncMock()
-        page.url = "https://flow.google.com/project/abc-123"
-        # The readiness gate must never be reached: that is the 20 s the user paid.
-        page.locator = MagicMock(side_effect=AssertionError("must not probe the DOM"))
+        page.url = "https://flow.google.com/project/abc-123/character/e-1"
+        page.locator = MagicMock(side_effect=_locator)
 
-        with pytest.raises(FlowHostMigratedError) as exc_info:
-            await t._enter_character_editor(page, project_id="p-1", entity_id="e-1", locale="en")
+        await t._enter_character_editor(page, project_id="p-1", entity_id="e-1", locale="en")
 
-        page.locator.assert_not_called()
-        assert EXIT_CODE_MAP[FlowHostMigratedError] == 36
-        assert not is_retryable(exc_info.value)
+        assert probed, "the migrated host must be driven, not bailed on"
+        assert any("ProseMirror" in sel for sel in probed), (
+            f"the readiness gate must offer the migrated anchor; probed {probed}"
+        )

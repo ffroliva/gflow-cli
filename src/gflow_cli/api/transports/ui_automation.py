@@ -20,13 +20,13 @@ import random
 import re
 import secrets
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 from urllib.parse import urlparse
 
 import structlog
 
 from gflow_cli.api._retry import parse_retry_after
-from gflow_cli.api.character import CHARACTER_MODELS, CharacterImageRequest
+from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.api.transports._common import (
@@ -37,8 +37,8 @@ from gflow_cli.api.transports._common import (
     flow_host_kind,
     generation_error,
     offered_menu_labels,
-    raise_if_migrated,
 )
+from gflow_cli.api.transports.migrated_composer import MENU_ITEM, ModelMenuMatcher
 from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
@@ -50,6 +50,7 @@ from gflow_cli.api.transports.ui_automation_video import (
 from gflow_cli.errors import (
     AuthExpiredError,
     BatchPartialError,
+    ConfigurationError,
     ContentPolicyError,
     FlowAppError,
     GFlowError,
@@ -1766,8 +1767,15 @@ class UiAutomationTransport(VideoGenerationMixin):
         await self._click_submit(page)
 
     async def _count_character_prompt_boxes(self, page: Page) -> int:
-        """Count Slate prompt boxes (legacy body-mode baseline)."""
-        return int(await page.locator(PROMPT_INPUT_SELECTORS[0]).count())
+        """Count the editor's prompt boxes (legacy body-mode baseline).
+
+        Counts through the SAME anchor the readiness gate accepts, so both
+        frontends are seen: labs mounts Slate, flow.google.com mounts
+        ProseMirror. Counting only Slate reported 0 boxes on the migrated host
+        and aborted the body step with "Body prompt box did not mount" — on an
+        editor whose box was mounted and visible the whole time (2026-09-06).
+        """
+        return int(await page.locator(self._CHARACTER_EDITOR_READY_SELECTOR).count())
 
     async def _locate_body_prompt_box(
         self,
@@ -1790,7 +1798,8 @@ class UiAutomationTransport(VideoGenerationMixin):
         cohorts mount a second box, so their count must exceed
         ``boxes_before``. In either case the LAST mounted box is the target.
         """
-        loc = page.locator(PROMPT_INPUT_SELECTORS[0])
+        # Both frontends' anchors — see _count_character_prompt_boxes.
+        loc = page.locator(self._CHARACTER_EDITOR_READY_SELECTOR)
         deadline = time.monotonic() + _BODY_SLOT_MOUNT_TIMEOUT_S
         count = int(await loc.count())
         required_count = 0 if shared_body_box else boxes_before
@@ -1809,7 +1818,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             msg = (
                 f"Body prompt box did not mount within "
                 f"{_BODY_SLOT_MOUNT_TIMEOUT_S:.0f}s after body-mode activation "
-                f"(Slate boxes: {count}, before slot-add: {boxes_before}). "
+                f"(prompt boxes: {count}, before slot-add: {boxes_before}). "
                 f"The body-mode settle check reported that {settle_signal}. "
                 "Typing now would land in the portrait prompt box and "
                 "overwrite the stored portrait prompt — aborting the body "
@@ -1878,7 +1887,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         sentinel = _BODY_TRIPTYCH_PREAMBLE[:24]
         try:
             target_text = str(await input_box.inner_text() or "")
-            boxes = page.locator(PROMPT_INPUT_SELECTORS[0])
+            # Readiness anchor, not the Slate-only selector: on the migrated
+            # editor the latter counts 0 boxes, so the portrait-overwrite guard
+            # below silently compared against an empty string.
+            boxes = page.locator(self._CHARACTER_EDITOR_READY_SELECTOR)
             box_count = int(await boxes.count())
             portrait_text = str(await boxes.first.inner_text() or "") if box_count > 1 else ""
         except Exception as e:
@@ -3329,10 +3341,20 @@ class UiAutomationTransport(VideoGenerationMixin):
     # ------------------------------------------------------------------
 
     # Selector for the character editor's Slate prompt textbox — used as the
-    # "editor mounted" readiness anchor.  This IS PROMPT_INPUT_SELECTORS[0];
+    # "editor mounted" readiness anchor.  Its first alternative IS
+    # PROMPT_INPUT_SELECTORS[0];
     # duplicated here as a named constant so the character-editor path is
     # self-documenting without importing the tuple.
-    _CHARACTER_EDITOR_READY_SELECTOR = 'div[role="textbox"][data-slate-editor="true"]'
+    # Two frontends, one feature. labs.google renders the character editor with
+    # React + Slate; flow.google.com renders the SAME editor — same tRPC backend,
+    # same aisandbox REST, same entities — with Angular + ProseMirror (recon
+    # 2026-09-06, scripts/dev/spike_migrated_character_editor_anchor.py). Asking
+    # only for Slate made a present feature look absent for 20 s and then get
+    # reported as "labs-only, ever", which was wrong. Both anchors are library
+    # build artefacts rather than display strings, so neither translates.
+    _CHARACTER_EDITOR_READY_SELECTOR = (
+        'div[role="textbox"][data-slate-editor="true"], div.ProseMirror[contenteditable="true"]'
+    )
 
     # Slot-add button for character image slots 1+ (body / accessories).
     #
@@ -3360,7 +3382,13 @@ class UiAutomationTransport(VideoGenerationMixin):
     # [[flow-locale-leak-icon-ligatures]] — it may only serve as a positional
     # hint.  ``text-is`` (exact match) is used so partial-ligature collisions
     # (e.g. ``add_2_box``) cannot match.
-    _CHARACTER_SLOT_ADD_SELECTOR = "[role='button']:has(i.google-symbols:text-is('add_2'))"
+    #: Both ligature carriers: labs uses `<i class="google-symbols">`, the migrated
+    #: Angular frontend uses `<mat-icon>`. Anchoring on one host's carrier is what
+    #: made the whole character surface look absent on the other (2026-09-06).
+    _CHARACTER_SLOT_ADD_SELECTOR = (
+        "[role='button']:has(i.google-symbols:text-is('add_2')), "
+        "[role='button']:has(mat-icon:text-is('add_2'))"
+    )
     # The exact ligature an icon-only slot-add candidate's inner_text reduces to.
     _CHARACTER_SLOT_ADD_LIGATURE = "add_2"
 
@@ -3369,12 +3397,38 @@ class UiAutomationTransport(VideoGenerationMixin):
     # language-independent ``accessibility_new`` icon activates body mode; the
     # generated-face reference chip (image + ``cancel`` icon) proves the mode
     # transition settled before the shared prompt box is safe to edit.
+    #: Stays SCOPED on both hosts. The project-level "Characters" navigation control
+    #: carries the same ``accessibility_new`` ligature, so a bare selector activates
+    #: navigation instead of body mode.
+    #:
+    #: labs scopes it as the sibling of the portrait image button. The migrated
+    #: editor gives us something better: each slot control is wrapped in its own
+    #: ``<flow-slot-chip-button>`` custom element (recon 2026-09-06,
+    #: ``scripts/dev/spike_migrated_character_body_controls.py``), which is a
+    #: component boundary rather than a layout accident — the navigation control is
+    #: not a slot chip, so it cannot match. The migrated host has **no** ``add_2``
+    #: control at all; body mode is entered through this chip directly.
+    #:
+    #: The chip ships ``disabled`` until a portrait exists, which is why callers
+    #: must wait for it to become enabled rather than clicking on sight.
     _CHARACTER_BODY_MODE_SELECTOR = (
-        "button:has(img) + button:has(i.google-symbols:text-is('accessibility_new'))"
+        "button:has(img) + button:has(i.google-symbols:text-is('accessibility_new')), "
+        "flow-slot-chip-button:has(mat-icon:text-is('accessibility_new')) button"
     )
+    #: The settle signal for body mode: proof the generated face actually mounted as
+    #: a reference, so the SHARED prompt box now belongs to body mode. Editing it
+    #: earlier types the body prompt into the face composer (#395).
+    #:
+    #: labs mounts a dismissable card around a ``media.getMediaUrlRedirect`` image.
+    #: The migrated host serves reference images from a different origin entirely —
+    #: ``flow-content.google/image/<id>`` — and mounts a bare ``<img>`` with no card
+    #: chrome. Measured 2026-09-06 (``spike_migrated_body_reference_chip.py``):
+    #: absent before the Create body click, present after it, so it is a genuine
+    #: transition signal and not something that is simply always on the page.
     _CHARACTER_BODY_REFERENCE_SELECTOR = (
         "button[data-card-open]:has(img[src*='media.getMediaUrlRedirect'])"
-        ":has(i.google-symbols:text-is('cancel'))"
+        ":has(i.google-symbols:text-is('cancel')), "
+        "img[src*='flow-content.google/image/']"
     )
 
     # Character-editor model picker.  The editor shows a model chip ("🍌 Nano
@@ -3385,10 +3439,66 @@ class UiAutomationTransport(VideoGenerationMixin):
     # ⚠️ NOT yet spiked from the live DOM — this is a reasonable best-effort
     # selector cascade, live-confirmed later.  A failed pick is NON-FATAL:
     # generation proceeds with Flow's default model.
+    #: The ligature carrier differs by host — labs renders `<i class="google-symbols">`,
+    #: flow.google.com renders `<mat-icon>` — so both are listed. A run that omitted the
+    #: mat-icon variants logged `model-picker trigger not found` on the migrated host and
+    #: generated on whatever tier the editor happened to open on (live 2026-09-06).
     _CHARACTER_MODEL_PICKER_TRIGGER_SELECTORS = (
         "button:has(i.google-symbols:text-is('arrow_drop_down'))",
+        "button:has(mat-icon:text-is('arrow_drop_down'))",
         "[role='button']:has(i.google-symbols:text-is('arrow_drop_down'))",
+        "[role='button']:has(mat-icon:text-is('arrow_drop_down'))",
     )
+
+    #: Every character model is a "Nano Banana …" tier, so the model chip is the one
+    #: `arrow_drop_down` control whose own text names one. The editor renders several
+    #: such controls; picking `.first` blindly is how a picker ends up driving the
+    #: wrong menu. Product names are not localized (see :data:`CHARACTER_MODELS`).
+    _CHARACTER_MODEL_CHIP_HINT = "Nano Banana"
+
+    #: How each CLI alias is recognised among the editor's menu entries. Reuses the
+    #: migrated composer's matcher so both hosts obey the same #539 rule: match in
+    #: Python, and REFUSE an ambiguous hit rather than resolving `.first`.
+    #: "Nano Banana 2" is a prefix of "Nano Banana 2 Lite", so it must exclude it;
+    #: "Nano Banana Pro" shares no prefix and needs no exclusion. Product names are
+    #: not localized, which is why matching entries by display text is permitted
+    #: here where the locale-invariance rule otherwise forbids it.
+    _CHARACTER_MODEL_MATCHERS: ClassVar[dict[str, ModelMenuMatcher]] = {
+        "nano2": ModelMenuMatcher("Nano Banana 2", excludes="Lite"),
+        "nanopro": ModelMenuMatcher("Nano Banana Pro", excludes=None),
+    }
+
+    async def _find_character_model_chip(self, page: Any) -> tuple[Any | None, str]:
+        """Return the model chip and the text it currently shows.
+
+        Prefers a candidate whose text names a model tier over a bare positional
+        `.first`, so a page carrying several `arrow_drop_down` controls cannot
+        hand the picker somebody else's menu. Falls back to the first candidate
+        when none names a tier — better to try than to skip the selection.
+        """
+        # Wait for SOMETHING to mount before enumerating. A bare count() races the
+        # editor: the readiness gate only proves the prompt box exists, and the
+        # model chip lands after it. Dropping this wait during a refactor turned a
+        # working picker back into "model-picker trigger not found" (2026-09-06).
+        for trig_sel in self._CHARACTER_MODEL_PICKER_TRIGGER_SELECTORS:
+            try:
+                await page.locator(trig_sel).first.wait_for(state="visible", timeout=4000)
+                break
+            except Exception:  # noqa: BLE001,PERF203 - try the next carrier
+                continue
+
+        fallback: Any | None = None
+        fallback_text = ""
+        for trig_sel in self._CHARACTER_MODEL_PICKER_TRIGGER_SELECTORS:
+            locator = page.locator(trig_sel)
+            for index in range(await locator.count()):
+                candidate = locator.nth(index)
+                text = (await candidate.text_content() or "").strip()
+                if self._CHARACTER_MODEL_CHIP_HINT.casefold() in text.casefold():
+                    return candidate, text
+                if fallback is None:
+                    fallback, fallback_text = candidate, text
+        return fallback, fallback_text
 
     async def _select_character_model(
         self,
@@ -3396,80 +3506,154 @@ class UiAutomationTransport(VideoGenerationMixin):
         model_alias: str,
         out_dir: Any = None,
     ) -> None:
-        """Best-effort select the character model via the editor's model picker.
+        """Apply the requested character model, or raise. Never silently proceed.
 
-        ``model_alias`` is the friendly CLI alias (``"nano2"`` / ``"nanopro"``);
-        it is mapped through :data:`CHARACTER_MODELS` to the UI display name.
+        ``model_alias`` is the friendly CLI alias (``"nano2"`` / ``"nanopro"``).
 
-        If the requested model is the DEFAULT (``nano2`` / "Nano Banana 2") the
-        picker is left untouched — it is already selected, so an extra click is
-        wasteful and risks closing nothing useful.
+        **This is a hard gate, deliberately.** It used to be best-effort: every
+        failure logged a warning and let the generation run on whatever tier the
+        editor happened to show. For a CLI that is the worst outcome — the user
+        gets a paid artifact from a model they did not ask for, and nothing in
+        the output says so. Both halves of that were seen live on 2026-09-06:
+        ``--model nano2`` generating on Pro because the picker assumed nano2 was
+        the default, and a later run whose menu-item click timed out, leaving the
+        tier unchanged while the generation proceeded.
 
-        Otherwise the dropdown is opened (the element bearing the
-        ``arrow_drop_down`` ligature near the model chip) and the option whose
-        visible text contains the display name is clicked.
+        Aborting is **free**. Everything here happens before the prompt is
+        submitted, so a raise costs no quota and no credits.
 
-        NON-FATAL: if the alias is unknown, or the dropdown / option cannot be
-        found, a warning is logged and generation proceeds with Flow's default
-        model.  The picker DOM is not yet spiked — see the selector constants.
+        The selection is verified by re-reading the chip afterwards rather than
+        trusting the click, because the click is exactly what was observed to
+        fail. One retry absorbs a menu that re-renders under us; anything else
+        raises.
+
+        Raises:
+            :class:`~gflow_cli.errors.ConfigurationError`: the alias is unknown,
+                or the menu does not offer exactly one entry matching it.
+            :class:`~gflow_cli.errors.UiSelectorDriftError`: the picker or its
+                menu could not be driven, or the tier did not apply.
         """
-        display_name = CHARACTER_MODELS.get(model_alias.lower())
-        if display_name is None:
-            log.warning(
-                "ui_automation.character_model_picker_not_found",
-                model=model_alias,
-                reason="unknown_alias",
+        matcher = self._CHARACTER_MODEL_MATCHERS.get(model_alias.lower())
+        if matcher is None:
+            raise ConfigurationError(
+                detail=(
+                    f"unknown character model {model_alias!r}; "
+                    f"known aliases: {', '.join(sorted(self._CHARACTER_MODEL_MATCHERS))}"
+                ),
+                remediation_hint="Pass --model nano2 or --model nanopro.",
             )
-            return
 
-        # nano2 / "Nano Banana 2" is the editor default — already selected.
-        default_display = CHARACTER_MODELS["nano2"]
-        if display_name == default_display:
-            log.info(
-                "ui_automation.character_model_selected",
-                model=display_name,
-                via="default_no_click",
-            )
-            return
-
-        try:
-            opened = False
-            for trig_sel in self._CHARACTER_MODEL_PICKER_TRIGGER_SELECTORS:
-                try:
-                    trigger = page.locator(trig_sel).first
-                    await trigger.wait_for(state="visible", timeout=4000)
-                    await trigger.click()
-                    await page.wait_for_timeout(400)
-                    opened = True
-                    break
-                except Exception:
-                    continue
-            if not opened:
-                raise RuntimeError("model-picker trigger not found")
-
-            option_sel = f":has-text('{display_name}')"
-            option = page.locator(option_sel).first
-            await option.wait_for(state="visible", timeout=4000)
-            await option.click()
-            await page.wait_for_timeout(400)
-            log.info(
-                "ui_automation.character_model_selected",
-                model=display_name,
-                via=option_sel,
-            )
-        except Exception as e:
-            log.warning(
-                "ui_automation.character_model_picker_not_found",
-                model=model_alias,
-                display_name=display_name,
-                error=str(e)[:120],
-                note="Flow default model applies",
-            )
+        trigger, current = await self._find_character_model_chip(page)
+        if trigger is None:
             await _capture_debug_screenshot(page, out_dir, "debug_character_model_picker.png")
+            raise UiSelectorDriftError(
+                detail=(
+                    "character editor: the model picker (an arrow_drop_down control naming a "
+                    f"model tier) was not found, so --model {model_alias} could not be applied. "
+                    f"URL: {page.url}."
+                ),
+            )
+
+        if matcher.matches(current):
+            # Logged because the path is otherwise invisible: a run that
+            # short-circuits emits no model event, and a field timeline cannot
+            # tell "already on the tier you asked for" from "never looked".
+            log.info(
+                "ui_automation.character_model_already_selected",
+                model=current,
+                requested=model_alias,
+            )
+            return
+
+        last_seen = current
+        for attempt in (1, 2):
+            await trigger.click(timeout=4000)
+            # ``:visible`` is load-bearing. The editor keeps several menus in the
+            # DOM at once (two `flow-add-menu`s plus the model `mat-menu`), so an
+            # unscoped `[role='menuitem']` list mixes the open overlay's items
+            # with hidden ones from the others. The text list and the clickable
+            # list then disagree, and `nth(i)` — an index into the text list —
+            # lands on a hidden node: `Locator.click: Timeout 4000ms exceeded`,
+            # every time, while the same selector worked whenever the other menus
+            # happened not to be mounted. Measured live 2026-09-06.
+            items = page.locator(f"{MENU_ITEM}:visible")
             try:
-                await page.keyboard.press("Escape")
-            except Exception:
-                pass
+                await items.first.wait_for(state="visible", timeout=5000)
+            except Exception as e:
+                await _capture_debug_screenshot(page, out_dir, "debug_character_model_picker.png")
+                raise UiSelectorDriftError(
+                    detail=(
+                        "character editor: the model menu ([role='menuitem']) did not open, so "
+                        f"--model {model_alias} could not be applied. URL: {page.url}."
+                    ),
+                ) from e
+
+            # Matched in Python rather than through a `has_text` filter: an
+            # *exclusion* is not expressible as has_text, the menu is read back for
+            # the refusal diagnostic anyway, and more than one hit must REFUSE
+            # instead of resolving `.first` (#539 — a `.first` on an ambiguous
+            # selector picks a tier the user never asked for, and Flow bills it).
+            offered = [t.strip() for t in await items.all_text_contents()]
+            hits = [i for i, text in enumerate(offered) if matcher.matches(text)]
+            if len(hits) != 1:
+                await self._dismiss_character_model_menu(page)
+                raise ConfigurationError(
+                    detail=(
+                        f"--model {model_alias} matched {len(hits)} entries in the character "
+                        f"model menu; offered: {', '.join(offered) or '(none)'}"
+                    ),
+                    remediation_hint=(
+                        "Pass a --model that names exactly one offered entry."
+                        if hits
+                        else "Pass --model with one of the offered names."
+                    ),
+                )
+
+            try:
+                await items.nth(hits[0]).click(timeout=4000)
+            except Exception:  # noqa: BLE001 - a flaky click is what the retry is for
+                log.warning(
+                    "ui_automation.character_model_click_failed",
+                    requested=model_alias,
+                    attempt=attempt,
+                )
+                await self._dismiss_character_model_menu(page)
+                continue
+            await page.wait_for_timeout(400)
+
+            # Verify, never assume: the click is precisely what was seen to fail.
+            _, last_seen = await self._find_character_model_chip(page)
+            if matcher.matches(last_seen):
+                log.info(
+                    "ui_automation.character_model_selected",
+                    model=last_seen,
+                    requested=model_alias,
+                    attempt=attempt,
+                )
+                return
+            log.warning(
+                "ui_automation.character_model_not_applied",
+                requested=model_alias,
+                chip=last_seen,
+                attempt=attempt,
+            )
+
+        await _capture_debug_screenshot(page, out_dir, "debug_character_model_picker.png")
+        raise UiSelectorDriftError(
+            detail=(
+                f"character editor: --model {model_alias} did not apply — the model chip still "
+                f"reads {last_seen!r} after two attempts. Refusing to generate on a tier you did "
+                f"not ask for. URL: {page.url}."
+            ),
+        )
+
+    async def _dismiss_character_model_menu(self, page: Any) -> None:
+        """Close an open model menu; never fatal."""
+        try:
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(200)
+        except Exception:  # noqa: BLE001 - dismissal is a courtesy
+            log.debug("ui_automation.character_model_menu_dismiss_failed", exc_info=True)
 
     _CHARACTER_ROUTE_ATTEMPTS = 4
     _CHARACTER_ROUTE_BACKOFF_MS = 2_500
@@ -3568,15 +3752,18 @@ class UiAutomationTransport(VideoGenerationMixin):
         await self._dismiss_blocking_overlays(page, self._out_dir)
         await self._settle_on_character_route(page, entity_id=entity_id, url=url)
 
-        # The character editor is a labs-only surface: the migrated host renders
-        # no prompt textbox for it, ever. Without this the readiness gate below
-        # burned its full 20 s and then raised a bare RuntimeError, which the CLI
-        # reports as "Unexpected error" (exit 1) instead of the typed,
-        # non-retryable exit 36 that names the migration. Measured live
-        # 2026-09-06 on a moved account. Placed AFTER the settles so the
-        # post-goto client-side hop has landed, and BEFORE the wait so the user
-        # does not pay 20 s to be told something knowable now.
-        raise_if_migrated(page, at="character_editor")
+        # NO migrated-host guard here, deliberately. One stood here and was
+        # wrong: flow.google.com renders the character editor in full — name,
+        # voice, personality, Upload / Add from project, Create portrait /
+        # Create body — against the SAME labs tRPC and aisandbox backend
+        # (recon 2026-09-06, scripts/dev/spike_migrated_vs_labs_provenance.py:
+        # the migrated page itself calls flow.projectInitialData and
+        # v1:checkAppAvailability). What differed was the view layer, React +
+        # Slate vs Angular + ProseMirror, so the readiness selector missed and
+        # a present feature was read as an absent one. The guard then turned
+        # that misreading into a confident, non-retryable "this host will never
+        # do it". Do not reinstate it without live evidence that the editor is
+        # actually gone.
 
         # Wait for the Slate editor to mount — the prompt textbox is the
         # reliable "editor ready" anchor for the character editor surface.

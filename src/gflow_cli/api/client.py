@@ -3033,6 +3033,119 @@ class FlowApiClient:
         except Exception as e:
             await self._raise_with_incident(e, phase="character_generation")
 
+    async def _workflow_primary_media_id(self, project_id: str, workflow_id: str) -> str | None:
+        """Flow's own ``metadata.primaryMediaId`` for *workflow_id*, or ``None``.
+
+        Read from the project listing rather than inferred, because inferring it
+        is what corrupted a body workflow: the entity exposes one thumbnail id,
+        and reusing it across slots wrote the portrait's media onto the body.
+        Best-effort — a listing fault leaves the caller to fall back.
+        """
+        try:
+            listing = await self.fetch_project_listing(project_id)
+        except Exception:  # noqa: BLE001 - diagnostic read, never fatal
+            logger.warning("character.workflow_media_lookup_failed", exc_info=True)
+            return None
+        payload = _unwrap_trpc(listing)
+        contents = payload.get("projectContents")
+        if not isinstance(contents, dict):
+            return None
+        raw_workflows = cast("JsonObject", contents).get("workflows")
+        if not isinstance(raw_workflows, list):
+            return None
+        workflows = cast("list[object]", raw_workflows)
+        for entry in workflows:
+            if not isinstance(entry, dict):
+                continue
+            record = cast("JsonObject", entry)
+            if record.get("name") != workflow_id:
+                continue
+            metadata = record.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            media = cast("JsonObject", metadata).get("primaryMediaId")
+            if isinstance(media, str) and media:
+                return media
+        return None
+
+    async def _character_slot_from_entity(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        image_reference_index: int,
+    ) -> tuple[str, str, AnyPath | None] | None:
+        """Read a generated slot's ids back off the entity, or ``None``.
+
+        Returns ``(workflow_id, primary_media_id, local_path)`` in the shape
+        :meth:`_generate_character_image_impl` returns, with ``local_path``
+        always ``None`` — this path binds ids, it does not download a file.
+
+        ``None`` means "the backend has nothing for this slot", which is the
+        honest answer when a generation really did fail: the caller re-raises
+        the original timeout rather than inventing a success. A fault in the
+        read-back itself is swallowed for the same reason — it is a rescue
+        attempt, and it must never displace the failure the user came to see.
+        """
+        try:
+            character = await self.get_character(project_id, entity_id=entity_id)
+        except Exception:  # noqa: BLE001 - a rescue must not mask the real error
+            logger.warning(
+                "character.result_read_back_failed",
+                entity_id=entity_id,
+                exc_info=True,
+            )
+            return None
+        workflow_ids = tuple(character.workflow_ids or ())
+        if len(workflow_ids) <= image_reference_index:
+            logger.info(
+                "character.result_read_back_empty",
+                entity_id=entity_id,
+                bound_workflows=len(workflow_ids),
+                image_reference_index=image_reference_index,
+            )
+            return None
+        workflow_id = workflow_ids[image_reference_index]
+        # Each workflow carries its OWN primaryMediaId; the entity carries only the
+        # thumbnail. Handing the thumbnail to every slot made the body slot claim
+        # the face's media, and the saga's commit_workflow then PATCHed that id
+        # onto the body workflow — corrupting it (observed live 2026-09-06).
+        # Reading Flow's value instead makes that commit a no-op.
+        media_id = await self._workflow_primary_media_id(project_id, workflow_id) or ""
+        if not media_id and image_reference_index == 0:
+            # Slot 0 IS the thumbnail by definition, so it is a safe last resort.
+            media_id = character.thumbnail_media_id or ""
+
+        # The ids are the character; the file is a convenience. Download it so
+        # `--output` and `image_paths` behave the same on both hosts, but never
+        # let a CDN hiccup cost the user a generation they already spent quota
+        # on — a failed fetch degrades to `None`, it does not raise.
+        #
+        # `media.getMediaUrlRedirect` is a labs route, and migrated_composer
+        # records it 404-ing for a migrated media id. That was measured on a
+        # VIDEO id and does not generalise: probed live 2026-09-06 against this
+        # path's own portrait id, it answered HTTP 200 with 696 767 bytes of
+        # JFIF. Re-probe before assuming either way for a new media kind.
+        local_path: AnyPath | None = None
+        if media_id:
+            try:
+                local_path = await self.download(
+                    media_id,
+                    character_output_path(
+                        self.settings.output_dir,
+                        entity_id=entity_id,
+                        slot=image_reference_index,
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - a missing file never loses the ids
+                logger.warning(
+                    "character.result_read_back_download_failed",
+                    entity_id=entity_id,
+                    slot=image_reference_index,
+                    exc_info=True,
+                )
+        return workflow_id, media_id, local_path
+
     async def _generate_character_image_impl(
         self,
         *,
@@ -3090,17 +3203,44 @@ class FlowApiClient:
             )
             raise RuntimeError(msg)
 
-        _raw = await self.transport.generate_character_images(  # type: ignore[attr-defined]
-            project_id=project_id,
-            entity_id=entity_id,
-            request=req,
-            image_reference_index=image_reference_index,
-            # #580: caller override wins; otherwise the ACCOUNT's own locale.
-            # Never "en-US" — a wrong segment bounces the character route, which
-            # is how #395 presented.
-            locale=locale if locale is not None else self._account_locale,
-            format_prompt=format_prompt,
-        )
+        try:
+            _raw = await self.transport.generate_character_images(  # type: ignore[attr-defined]
+                project_id=project_id,
+                entity_id=entity_id,
+                request=req,
+                image_reference_index=image_reference_index,
+                # #580: caller override wins; otherwise the ACCOUNT's own locale.
+                # Never "en-US" — a wrong segment bounces the character route, which
+                # is how #395 presented.
+                locale=locale if locale is not None else self._account_locale,
+                format_prompt=format_prompt,
+            )
+        except TimeoutError:
+            # The passive capture listens for `flowMedia:batchGenerateImages`,
+            # which is the LABS wire. flow.google.com generates the portrait
+            # over its own `batchexecute` (rpcid ogiZ0b) and never calls it, so
+            # the listener times out on work that SUCCEEDED — measured live
+            # 2026-09-06 on ci-probe, where the entity carried a workflow id and
+            # a thumbnail media id the moment the timeout fired.
+            #
+            # Ask the backend instead of decoding an undocumented envelope. The
+            # ids come off the entity itself, so the binding this method exists
+            # to verify is true by construction — strictly stronger than the
+            # labs path's self-reported parentEntityId.
+            bound = await self._character_slot_from_entity(
+                project_id=project_id,
+                entity_id=entity_id,
+                image_reference_index=image_reference_index,
+            )
+            if bound is None:
+                raise
+            logger.info(
+                "character.result_read_back_from_entity",
+                entity_id=entity_id,
+                workflow_id=bound[0],
+                image_reference_index=image_reference_index,
+            )
+            return bound
         _images, workflows = cast(
             "tuple[list[GeneratedImage], list[JsonObject]]",
             _raw,

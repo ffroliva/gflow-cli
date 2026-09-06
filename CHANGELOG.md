@@ -19,14 +19,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the run aborts in under a second at zero cost. (A sixth declaration already had it; the rest had
   drifted from it.)
 
-- **`character create` on a moved account now exits 36 instead of 1, and 20 s sooner.** The Flow
-  character editor is a labs-only surface: `flow.google.com` renders no prompt textbox for it,
-  ever. The readiness gate burned its full 20 s timeout and then raised a bare
-  `RuntimeError("Character editor not ready…")`, which the CLI reports as "Unexpected error"
-  (exit 1) rather than the typed, non-retryable exit 36 that names the migration and says why.
-  `raise_if_migrated` now runs after the post-`goto` settles and before the wait, so the user is
-  told something knowable immediately instead of paying 20 s for a worse answer. Found by
-  dogfooding a two-character production on a moved account.
+- **`gflow character create` works on the migrated `flow.google.com` host.** It had never been
+  broken there — gflow was not driving it. The readiness gate waited for
+  `div[role="textbox"][data-slate-editor="true"]`, a React/**Slate** anchor; the migrated
+  frontend is Angular and renders the same editor with **ProseMirror**, so the gate timed out
+  after 20 s and the surface was read as absent. v0.69.0 then hardened that misreading into a
+  `raise_if_migrated` guard that aborted with exit 36 *before* probing the DOM, turning "our
+  selector missed" into a confident, non-retryable "this host will never do it". The gate now
+  accepts both anchors, the guard is gone, and the picker/result paths follow:
+
+  - body mode is anchored on the migrated editor's `<flow-slot-chip-button>` component
+    boundary (there is no `add_2` control there at all), its settle signal is the face
+    reference mounting from `flow-content.google/image/…`, and the prompt-box counter now
+    counts through the readiness anchor instead of Slate only — it reported 0 boxes on an
+    editor whose box was mounted and visible. `--body-prompt`, `--voice` and `--personality`
+    all complete on the migrated host as a result.
+  - each slot takes **its own** `primaryMediaId`, read from the project listing. The entity
+    exposes only a thumbnail id, and handing that to every slot made the body slot claim the
+    face's media — which `commit_workflow` then PATCHed onto the body workflow, corrupting it.
+    Reading Flow's own value makes that commit a no-op.
+  - the portrait is read back off the **entity** when the labs `batchGenerateImages` wire stays
+    silent. The migrated host generates over its own `batchexecute` (rpcid `ogiZ0b`), so the
+    listener timed out on work that had already succeeded — the entity carried a workflow id and
+    a thumbnail media id the moment the timeout fired. The ids now come off the entity itself,
+    which proves the character binding by construction rather than trusting a self-reported
+    `parentEntityId`, and the image is downloaded so `--output` and `image_paths` behave the
+    same on both hosts.
+
+  Verified live on a moved account: `display_name` patched, workflow id and thumbnail bound,
+  file on disk, and `--model nano2` / `--model nanopro` each selecting the tier asked for.
+  Recon: `scripts/dev/spike_migrated_character_*.py`.
+
+- **`character create --model` is now deterministic: it applies the tier you asked for, or it
+  fails.** The character model picker was best-effort — every failure path logged a warning and
+  let the generation run on whatever tier the editor happened to show, so `--model nano2` could
+  quietly return a Nano Banana Pro image with nothing in the output saying so. Three separate
+  faults did exactly that: it skipped the click entirely when `nano2` was requested (assuming
+  Nano Banana 2 was the editor default, which is true on labs and false on `flow.google.com`);
+  its option selector `:has-text('…')` was unanchored, so `.first` resolved to `<html>`; and its
+  menu-item lookup was unscoped, so `[role='menuitem']` mixed the open menu's entries with
+  hidden ones from the editor's other menus and `nth(i)` clicked a node that could not be
+  clicked. The menu also offers **three** tiers, not the documented two, and `Nano Banana 2` is
+  a prefix of `Nano Banana 2 Lite`.
+
+  Now: entries are read from the *visible* menu, matched in Python with an explicit exclusion,
+  an ambiguous or absent match refuses rather than guessing, and the selection is **verified by
+  re-reading the chip** rather than trusting the click. Anything else raises — `ConfigurationError`
+  for a tier the menu does not offer, `UiSelectorDriftError` for a picker that cannot be driven.
+  Aborting here is free: the picker runs before the prompt is submitted, so a refusal costs no
+  quota and no credits, while proceeding produces a paid artifact from the wrong model. Verified
+  live: four consecutive runs alternating `--model nano2` / `--model nanopro`, correct tier every
+  time.
+
+- **A failed `character create` no longer strands an "Untitled Character" in the project.** The
+  saga persists before it spends, and deliberately keeps its STARTED row so a retry can resume —
+  but that row is keyed on `(project_id, name)`, so a retry under any other name missed it and
+  minted a second entity, leaving the first orphaned with `refs=0` forever. A failure with no
+  slot committed now rolls the free entity back and marks the row FAILED. It asks the **backend**
+  first: an empty local `workflow_ids` means only that this process failed to read a result, and
+  on the migrated host a portrait generated fine while the client timed out — deleting on the
+  local signal alone would have destroyed finished work.
 
 - **PR-triage autopilot: stop re-alerting a deferred PR on every push.** The `DEFERRED_SIZE` and
   `NEEDS-HUMAN` gate branches deduped on `(pr, head_sha, status)`, so every push to an oversized
