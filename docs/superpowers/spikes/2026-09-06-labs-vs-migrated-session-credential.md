@@ -87,8 +87,71 @@ there:
   for its only consumer (an httpx client that talks solely to `labs.google`). Widening
   it would send `.google.com` SSO cookies to `labs.google` — a regression, not a fix.
 
-**No code change is warranted.** The harvest becomes wrong only when a browserless path
-to the migrated host exists; that is #642's scope, and the fix belongs there.
+**No code change is warranted *for #644 as filed*.** The harvest becomes wrong only when
+a browserless path to the migrated host exists; that is #642's scope.
+
+But tracing it surfaced a larger risk that #644 only gestures at — see Q4.
+
+---
+
+## Q4. What actually breaks if `labs.google` is deprecated?
+
+**A re-login loop that the user cannot escape, plus silent profile degradation.**
+This is the sharper form of #644's concern, and it is a design question for the owner
+rather than something to build speculatively.
+
+`RealChromeStrategy.login` (`auth/real_chrome.py:255`) ends every login with
+`verify_flow_profile`, whose **sole oracle** is `labs.google/fx/api/auth/session`.
+So that one host's BFF is the gate on every profile's usability — *including profiles
+whose actual generation path never touches it* (UI automation, the migrated composer).
+
+Failure sequence once labs stops minting Flow sessions:
+
+1. User runs `gflow auth login` and signs in fully. SSO cookies land;
+   `flow.google.com` renders authenticated.
+2. `verify_flow_profile` asks labs → no user → `verified = False`.
+3. `real_chrome.py:262` **unlinks `.gflow_browser_strategy`** (rollback of the
+   speculative write, when the marker did not pre-exist).
+4. The user is told to re-run `gflow auth login`. → goto 1, forever.
+
+Step 3 is the load-bearing damage: without that marker `channel_for_profile` stops
+returning `"chrome"`, so `FlowApiClient` downgrades to bundled Chromium — which the
+code's own comment identifies as the `[[real-browser-auth-mandatory]]` failure. A labs
+outage therefore does not merely block login; it **degrades a profile that would still
+work through the browser**.
+
+### The discriminator already exists
+
+`ChromeCookieSnapshot.google_session` (`SAPISID` present, computed from the full jar)
+already separates the states. What is missing is only that the last row's remediation
+is unreachable:
+
+| labs BFF | SSO cookies | outcome today | remediation correct? |
+|---|---|---|---|
+| user present | — | `AUTHENTICATED` | ✅ |
+| `{}` | no `SAPISID` | `NO_SESSION` → re-login | ✅ re-login fixes it |
+| `{}` | `SAPISID` | `GOOGLE_SESSION_ONLY` → re-login | ✅ today · ❌ under deprecation, never |
+| non-200 | any | `VERIFICATION_ERROR` → "network" | ✅ today · ❌ under deprecation, permanent |
+
+### Not built here, deliberately
+
+The trigger is **unobserved** — Q2 found the two hosts share a session lifetime, so the
+"SSO alive + labs dead" state may not even be reachable while labs is healthy. Building
+a host-aware fallback now would guard a failure nobody can demonstrate, which is the
+same trap #644's own triage refused.
+
+But the asymmetry is worth the owner's attention: the check is nearly free (the signal
+is already in hand), the failure is unrecoverable by the user, and it **cannot be
+shipped after the deprecation** — by then every affected user is already stuck on a
+version that loops.
+
+**Recommended next step:** `/gflow:predict` on *"decouple profile validity from the
+labs.google BFF"* before any implementation. Two candidate slices, smallest first:
+
+1. **Never let a probe failure delete a marker that a successful browser login just
+   earned** — narrow, defensible today, and removes the degradation in step 3.
+2. **Give `GOOGLE_SESSION_ONLY` / `VERIFICATION_ERROR` an escape hatch** so a user with
+   a live SSO session is not told to repeat an action that cannot help.
 
 ---
 
