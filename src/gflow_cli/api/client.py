@@ -87,6 +87,7 @@ from gflow_cli.errors import (
     ConfigurationError,
     ContentPolicyError,
     FlowApiError,  # re-exported via gflow_cli.api.__init__
+    FlowHostMigratedError,
     NetworkError,
     ProfileLockedError,
     RateLimitError,
@@ -2414,7 +2415,56 @@ class FlowApiClient:
             # page's main-world ``grecaptcha`` global is undefined; the resolver
             # supplies ``isolated_context=False`` for patchright ({} for playwright).
             minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
-            return await minter.mint(action)
+            try:
+                return await minter.mint(action)
+            # Deliberately broad. `TokenMinter.mint` guards only its SECOND
+            # evaluate: `site_key()` -> `discover_site_key` runs an unguarded
+            # `page.evaluate`, and the minter is rebuilt per call so `_site_key`
+            # is always None and that unguarded call runs every time. A hop
+            # mid-mint destroys the execution context, so the likeliest shape of
+            # this failure is a RAW Playwright error, not RecaptchaError —
+            # catching only the latter would miss the very race this exists for.
+            # Nothing is swallowed: the original propagates untouched unless the
+            # page turns out to be migrated.
+            except Exception:
+                # #692: the guard above is a point-in-time read, and the handoff
+                # to flow.google.com is a CLIENT-SIDE navigation that can land
+                # while we are minting. The bootstrap's own `await_url_settled`
+                # does not close the window either — it is skipped entirely for a
+                # profile latched at NOT_REDIRECTED (`settle = cached !=
+                # NOT_REDIRECTED`), which is the population #643 was written for.
+                # So a moved account can read as labs at the guard, hop, and then
+                # fail here for want of `recaptcha/enterprise.js`.
+                #
+                # Re-classify on the FAILURE path only: free when the mint
+                # succeeds, and correct whenever the hop lands, rather than
+                # depending on it landing before a particular line. A genuine
+                # labs-side reCAPTCHA failure still propagates as RecaptchaError.
+                try:
+                    raise_if_migrated(page, at="mint_recaptcha_token_after_failure")
+                    probed_url = getattr(page, "url", None)
+                except FlowHostMigratedError:
+                    raise
+                except Exception:
+                    # The re-check is a PROBE, and `page.url` can itself raise on a
+                    # dead page. `_common.flow_host_kind` is total by construction
+                    # for exactly this reason — "a probe error must never displace
+                    # the real failure" — but reaching it requires the URL read.
+                    # Swallowed so the caller still sees what actually went wrong;
+                    # widening the outer handler is what made this reachable.
+                    logger.debug("recaptcha_mint_migration_probe_failed", exc_info=True)
+                else:
+                    # Still reads as labs. That is the discriminating observation
+                    # for #692 — the reporter's failure could NOT be reproduced
+                    # here (the hop wins the race on this machine and the guard
+                    # classifies correctly), so record where the page actually was
+                    # rather than spending a round trip asking. The URL is the same
+                    # value ``raise_if_migrated`` already logs on the bail path.
+                    logger.warning(
+                        "recaptcha_mint_failed_off_migrated_host",
+                        url=probed_url,
+                    )
+                raise
         finally:
             self._checkin_page(page)
 

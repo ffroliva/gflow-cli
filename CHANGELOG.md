@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A reCAPTCHA mint that fails after the migrated-host handoff now reports exit 36, not exit 1**
+  ([#692](https://github.com/ffroliva/gflow-cli/issues/692)). The `raise_if_migrated` guard added
+  in #678 is a point-in-time read of `page.url`, and Flow's handoff to `flow.google.com` is a
+  **client-side** navigation that can land after it. The bootstrap's own `await_url_settled` does
+  not close that window either — it is skipped entirely for a profile latched at
+  `NOT_REDIRECTED`. The guard is now re-run on the mint's failure path, which costs nothing when
+  the mint succeeds and classifies correctly whenever the hop lands, rather than depending on it
+  landing before one particular line. A genuine labs-side reCAPTCHA failure still surfaces as
+  `RecaptchaError`.
+
+  The re-check catches **any** mint failure, not just `RecaptchaError`. `TokenMinter.mint` guards
+  only its second `page.evaluate`: `site_key()` → `discover_site_key` runs an unguarded one, and
+  the minter is rebuilt per call so that unguarded call runs every time. A hop mid-mint destroys
+  the execution context, so the likeliest shape of this failure is a **raw Playwright error** —
+  which a `RecaptchaError`-only net would miss entirely. Nothing is swallowed: the original
+  exception propagates untouched unless the page turns out to be migrated.
+
+  **Scope, stated honestly:** the reporter's failure could **not** be reproduced locally. On a
+  migrated, `NOT_REDIRECTED`-latched profile the hop wins the race and v0.69.0 already returns
+  exit 36 — verified live, before and after this change. So this hardens a race that is real in
+  the code but unobserved here; it is not a confirmed fix for #692, which stays open.
+
+### Added
+
+- **`recaptcha_mint_failed_off_migrated_host`** — when a mint fails and the page still reads as
+  `labs.google`, the page URL is now logged. That is the one observation which distinguishes the
+  race above from a genuine labs-side reCAPTCHA break, and it makes the next incident bundle
+  self-sufficient instead of costing a round trip to the reporter.
+
 ## [0.69.0] — 2026-09-06
 
 ### Added
