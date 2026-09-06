@@ -59,6 +59,10 @@ gflow auth status                                         # confirms session
 gflow auth                                                # bare: list profiles or trigger first login
 gflow auth logout                                         # delete a saved session
 
+# Veo video-credit balance (read-only; image models use separate daily quotas)
+gflow credits user [--profile NAME] [--json]
+gflow credits list [--json]                               # all saved profiles
+
 # Image generation (Imagen / Nano Banana)
 gflow image upload <path>                                 # → asset UUID + dimensions
 gflow image t2i "<prompt>" [--model {nano2|nano-pro|image4}] \
@@ -248,7 +252,7 @@ The `gflow-cli` supports a 3-layer pipeline for persistent generation context (A
 
 ## Important constraints
 
-- **Costs real money / credits.** Each `gflow video t2v|i2v` and `gflow image t2i|i2i` call burns Flow credits from the user's Google account. Confirm before running batches.
+- **Video costs Flow credits.** Video generation draws down the balance shown by `gflow credits`; image generation uses separate per-model daily quotas. Confirm before running batches.
 - **Not for production-grade SLAs.** gflow-cli reverse-engineers a private Google API. It can break without notice. For production, use the [official Gen AI SDK](https://github.com/googleapis/python-genai).
 - **Don't share auth profiles.** The Playwright profile dir lives at the per-OS user-data location (Windows: `%LOCALAPPDATA%\gflow-cli\profile_*`; macOS: `~/Library/Application Support/gflow-cli/profile_*`; Linux: `~/.local/share/gflow-cli/profile_*`) and contains Google session cookies — treat as secrets.
 - **Same profile can't run in parallel.** Chromium refuses two persistent contexts on the same profile dir; use different `--profile` names for parallel work.
@@ -271,7 +275,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 3.5), `--model nano-pro` (Gem Pix 2), `--model nano2` (Narwhal) |
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
 | Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
-| `gflow video t2v` without `--project` on an account Google moved to `flow.google.com` (exit 11), or any non-t2v command there (exit 36) | Pass `--project <id>` for t2v — only text-to-video is ported to the migrated host; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v) |
+| `gflow video t2v`/`i2v` without `--project` on an account Google moved to `flow.google.com` (exit 11), or `--end-frame`, a UUID/`@Name` frame or any other command there (exit 36) | Pass `--project <id>` — only text-to-video and image-to-video from a local `--initial-frame` are ported to the migrated host; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v) |
 | Suggesting a native `batch` subcommand under `gflow video` | It doesn't exist — that stub never worked and was removed. Loop `gflow video t2v`/`i2v` from the shell for multi-clip runs (`gflow image batch manifest.tsv\|json` is the real, working batch command, but it's image-only) |
 
 ## Disclaimer

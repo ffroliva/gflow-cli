@@ -1,6 +1,6 @@
 ---
 name: migrated-host-driver-wire-lessons
-description: "What the first flow.google.com (migrated) driver build got wrong and how each was pinned — poster vs mp4 URL slots, status-3-before-URL, labs redirect route 404s for migrated media ids, CSS :text-matches escaping, direct load works for unflagged accounts"
+description: "What the flow.google.com (migrated) driver builds got wrong and how each was pinned — poster vs mp4 URL slots, status-3-before-URL, labs redirect route 404s for migrated media ids, CSS :text-matches escaping, direct load works for unflagged accounts; plus the i2v slice-1 frame-attach lessons (late picker index, no media id in DOM, empty Frames submit goes out as t2v)"
 metadata: 
   type: project
 ---
@@ -49,7 +49,61 @@ cost a real run to learn; each is now a unit test in `tests/api/transports/`.
 - **Session hook + heredoc apostrophes, reconfirmed:** a bash heredoc whose body carries
   apostrophes in prose fails with "unexpected EOF while looking for matching quote" —
   write edit scripts to a file with the Write tool and run them.
+- **i2v (slice 1, 2026-09-05, `docs/LIVE_VERIFICATION_v0.69.0.md`):** the i2v submit is rpc
+  **`eb1hJf`** (t2v stays `YhhmEf`); an EMPTY Frames submit goes out on `YhhmEf` with a
+  `_t2v_` key — the labs #125 shape — so the submit *request* body is asserted to carry the
+  uploaded media id and an `_i2v_` key before the run is trusted. The Frames picker
+  (`flow-add-menu-popover-content`) exposes **no media id in its DOM**: uploads are listed
+  under their file name, the id comes from the app's own `maseQ` upload reply. **The picker
+  search is server-side and a fresh upload is not always indexed on the first query** — on a
+  32-asset project two runs missed it within 8 s and a third listed it, so the composer
+  reopens the popover and re-searches (3 attempts). In the Frames submode this cohort's
+  pane renders **no duration row for Veo 3.1 Lite** (#650 shape): forcing `--duration` is a
+  $0 exit 11, so i2v runs pass none. The toolbar `+` is found by XPath
+  (`//button[.//mat-icon[normalize-space()='add']][not(ancestor::flow-prompt-box)]`) — the
+  prompt box carries its own `add` icons and CSS cannot exclude an ancestor.
+
+**The reCAPTCHA mint sits one layer ABOVE the transport (#673, PR #678).**
+`FlowApiClient._mint_recaptcha_token` mints on the pool's bootstrap page before
+`transport.generate_images` / upscale / extend ever run, so transport-level
+`raise_if_migrated` guards never cover it. On a moved account that page is the
+`flow.google.com` grid (client-side handoff), which loads no `recaptcha/enterprise.js`,
+so `discover_site_key` raised `RecaptchaError` — a `RuntimeError` unmapped in
+`EXIT_CODE_MAP` — as exit 1 "unexpected" instead of exit 36. The guard now runs at the
+mint too (`client.py`, `at="mint_recaptcha_token"`); `git grep raise_if_migrated` is
+the current list of sites. Reviewing anything that adds a pre-transport step: ask
+"which page is the pool holding at that moment on a moved account?"
 
 Related: [[flow-recon-must-run-on-denon82-ffroliva-migrated]],
 [[flow-google-com-batchexecute-headless-proven]], [[predict-2026-09-04-migrated-host-driver]],
 [[credit-free-route-abort-verification]].
+
+## Frame attach — i2v slice 1 (v0.69.0, #639)
+
+Folded out of `docs/superpowers/plans/2026-09-05-migrated-i2v/` when that plan shipped.
+Evidence: `docs/LIVE_VERIFICATION_v0.69.0.md`; recon
+`docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md`.
+
+- **The Start-frame picker exposes no media id in its DOM.** Uploads are listed by *file
+  name*, so binding is a name search — not an id lookup. Plan for name collisions rather
+  than assuming identity.
+- **The picker's search is server-side (`UpteDb`) and indexes a fresh upload late.** On a
+  32-asset project both e2e tests missed an upload within 8 s and the identical test passed
+  minutes later. The composer reopens the popover and searches up to
+  `FRAME_SEARCH_ATTEMPTS = 3` times. **A "not found" against a just-uploaded asset is a
+  timing claim, not an absence claim** — the same shape as
+  [[reference-menu-panel-shared-trigger]].
+- **An empty Frames submit silently goes out as text-to-video** (the labs #125 shape) and
+  bills a clip that is not what was asked for. Refuse an unbound chip *before* the click —
+  exit 23, zero credits. Never let this one degrade into a warning.
+- **Inspect the submit request as it leaves.** i2v is rpc `eb1hJf`, t2v is `YhhmEf`; the
+  upload is `maseQ`. A body missing the uploaded media id, or carrying a `_t2v_` model key,
+  fails the run — after the fact, since the request is already on the wire, but it names
+  what Flow was actually asked to make instead of leaving a wrong clip unexplained.
+- **A request built without a model does not merely default — it inherits the editor's
+  remembered tier.** Runs built directly left `request.model` as `None`, so the composer
+  used whatever the editor last had; a queued MCP request (whose payload also carries no
+  model) could have inherited a 100-credit tier. Bind the documented default explicitly, and
+  log the *effective* model, not the requested one. Found by review, not by a run.
+- **An outer stage timeout smaller than the sum of the waits it wraps converts a
+  stage-named failure into a generic timeout.** Bound each leg on its own instead.

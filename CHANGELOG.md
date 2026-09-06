@@ -7,6 +7,138 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.69.0] — 2026-09-06
+
+### Added
+
+- **Read-only Flow balance inspection:** `gflow credits user`, `gflow credits list`, and the
+  matching `gflow_get_credits` MCP tool report current
+  balances and account tiers from saved profiles. Multi-profile inspection preserves partial
+  successes and emits stable JSON for automation. Saved cookies + ordinary HTTP are the primary
+  path, with browser-backed retrieval only as a fallback; cookies remain scoped to `labs.google`,
+  and no copied bearer token or browser API key is stored. The reported balance funds Veo video;
+  image generation uses separate per-model daily quotas.
+
+- **Image-to-video from a local start frame on the migrated `flow.google.com` host**
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639), slice 1). `gflow video i2v
+  --initial-frame <local file> --project <id>` now runs on the new host — on a moved
+  account, and by default (`GFLOW_CLI_FLOW_HOST=auto`) on an unmoved one too. The port
+  is UI-driven and observed, never replayed: the composer selects the Frames submode,
+  uploads the file through the editor's own toolbar Upload entry and reads the media id
+  off the app's `maseQ` reply, finds the upload in the Start-frame picker under its file
+  name (the picker exposes no media id in its DOM), and only then submits. **An unbound
+  chip is refused before the click** — exit 23, zero credits — because an empty Frames
+  submit silently goes out as text-to-video (the labs #125 shape). The app's submit
+  *request* is then inspected as it leaves: a body without that media id, or carrying a
+  `_t2v_` model key, fails the run with `WireFormatError` (exit 7) naming what Flow was
+  actually asked to make — after the fact, since the request is already on the wire.
+  An upload Flow refuses is exit 27 on route `batchexecute:maseQ`; a file the picker
+  never lists after three searches is exit 32. For i2v the submit rpc is `eb1hJf` (t2v
+  stays `YhhmEf`), and an i2v request with no `--model` binds the veo-lite default here
+  exactly as it has always done on labs (#125). Not ported in this slice and named in
+  the exit-36 detail: `--end-frame`, a frame given by media UUID or `@Name`, and r2v.
+  A "Get started" modal over a fresh migrated editor is now dismissed before the run.
+  Recon: `docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md`.
+
+- **`--model veo-lite-lp` is drivable on the migrated `flow.google.com` host.** It was
+  the one tier the migrated model map omitted, so an account Google has already moved
+  could not select it at all: `_select_model` refused with `ConfigurationError` (exit
+  11, "not available on the migrated Flow host") before ever reading the live menu.
+  The omission was not an oversight — the tier's full menu label is unknown, because
+  Flow has never rendered the entry on any account gflow has driven (the 2026-08-14
+  two-account capability matrix, #650's duration capture and v0.61.0's refusal A/B all
+  recorded a picker MISS), and the migrated map is keyed by label. It is now matched
+  the way the labs driver has matched it since #539 — by the `[Lower Priority]` tag
+  alone. **The entry has now been captured** (2026-09-05, a migrated account): the menu
+  renders `Veo 3.1 - Lite [Lower Priority]`, and that account's picker was already
+  *defaulted* to it — presumably why every earlier capture missed the entry, having been
+  taken on accounts Flow was not throttling. Matching stays on the tag rather than the
+  newly-known label: one account's rendering, and a tag Flow appends to whichever tier it
+  throttles survives that tier changing. Verified live at $0 by driving `_select_model`
+  for all five tiers and reading the picker back after each switch — including the
+  lower-priority tier reached through the menu — plus one real 8 s generation on it.
+  Routing is deliberately unchanged: `veo-lite-lp` still does not make
+  `migrated_can_serve` pull an **unmoved** account onto the new host, since Flow appears
+  not to offer the tier to accounts it is not throttling.
+  Capture: `docs/superpowers/spikes/2026-09-05-migrated-model-menu-lower-priority.md`.
+
+### Changed
+
+- **`video-production` skill, epoch 1: the reference cap now routes instead of only
+  forbidding.** A scored rollout picked `veo-quality` for a two-reference shot while
+  correctly reciting that its reference cap is 0 — the skill stated the prohibition in two
+  places and named the substitute in none, and the remedy lived only in the reference files
+  an agent may never load. Step 4 now carries the rule: the reference count picks the model
+  before quality does, `omni-flash` for a single generation needing references and quality
+  together, a `veo-lite` variant when 3 refs is enough — and `video chain` is called out as
+  the exception, since it refuses `omni-flash` outright. Validated by a controlled A/B on
+  one model with the document as the only variable: 0.00 → 0.90.
+
+- **The SkillOpt harness uses the project's own `GFLOW_CLI_LLM_*` settings.** It carried a
+  second, parallel provider configuration — its own `--provider anthropic|openai` switch,
+  its own key env vars and its own `--base-url` — while `Settings.llm_base_url` /
+  `llm_api_key` / `llm_model` already drove the prompt tools. Any OpenAI-compatible endpoint
+  works through the one setting (OpenAI, OpenRouter, LiteLLM, freellmapi, a local gateway,
+  Google's compat endpoint); both LLM SDK dependencies are gone, and the harness now
+  inherits the URL validation its own flag used to bypass. It requires `uv run`. A scoring
+  bug is fixed with it: float accumulation made `1.0 - 0.3 + 0.1` fall short of the `>= 0.8`
+  PASS threshold, so a task at exactly the threshold graded PARTIAL while printing "0.80".
+
+### Fixed
+
+- **Moved accounts: `image t2i` / `i2i` (and `upscale`, `extend`) now exit 36, not a
+  bare `RecaptchaError` exit 1 (#673).** The labs client mints the reCAPTCHA token on
+  the pool's bootstrap page *before* the UI transport runs, so none of the transport's
+  migration guards could fire; on a moved account that page is the `flow.google.com`
+  project grid after the client-side handoff, which loads no
+  `recaptcha/enterprise.js`, so site-key discovery raised `RecaptchaError` — a
+  `RuntimeError` unmapped in `EXIT_CODE_MAP`: exit 1 "unexpected", with a remediation
+  about headless Chrome. `_mint_recaptcha_token` now runs the same one-line
+  `raise_if_migrated` guard the transport uses, so the distinct, non-retryable exit
+  36 and its migration remediation come back within seconds, before any submit.
+  Reproduced and re-verified on a moved maintainer account at zero credits (exit 1 →
+  exit 36); the new
+  `tests/e2e/test_migrated_host_e2e.py::test_e2e_image_on_a_moved_account_exits_36_not_recaptcha`
+  (`e2e_auth`, $0) is the regression.
+
+- **The migrated model picker could bind a tier the user did not ask for.** The port
+  matched menu entries by case-insensitive *substring* and took `.first`, so on an
+  account whose menu carries a lower-priority sibling, `--model veo-lite` also matched
+  `Veo 3.1 - Lite [Lower Priority]` and Flow billed whichever Angular happened to list
+  first. The same substring ran against the picker button's read-back, where a pane
+  already showing the lower-priority tier satisfied `startswith("Veo 3.1 - Lite")` and
+  returned "already selected" without opening the menu — silently keeping the wrong
+  tier. This is the ambiguity #539 fixed on labs.google (whose selectors carry
+  `:not(:has-text('[Lower Priority]'))`) and which this port had dropped. Ordinary
+  tiers now exclude the tag on both paths, and a matcher hitting more than one live
+  entry **refuses** (exit 11) naming every candidate rather than guessing which one
+  Flow would bill. Confirmed against the real button text on a throttled account:
+  `"Veo 3.1 - Lite [Lower Priority] arrow_drop_down".lower().startswith("veo 3.1 - lite")`
+  is `True`, so pre-fix `--model veo-lite` there generated on the throttled tier without
+  ever opening the menu.
+
+- **Switching `--model` on the migrated host broke the next run** — reported as "run 1
+  with a new model dies, run 2 with the same model works, run 3 with another model dies
+  again". Picking from the model menu leaves Angular with **two** stacked overlays (the
+  settings pane and the menu opened over it) and each Escape dismisses exactly one, so
+  `_close_pane`'s single press closed only the menu and left the settings pane covering
+  the composer. `send_prompt`'s click then failed actionability and surfaced ~5 s later
+  as a bare `TimeoutError` naming `[contenteditable='true']`, pointing nowhere near the
+  pane. A repeat run binds the model at the button read-back, never opens the menu and
+  never stacks the second overlay — which is exactly why re-running the same model
+  worked. Measured at $0: after a switch the composer's bounding box is *identical* for
+  12 s (it was never unstable) while `.cdk-overlay-pane:visible` stays at 1; one more
+  Escape takes it to 0. `_close_pane` now escapes until no overlay is visible, bounded,
+  and raises pre-submit if one will not close rather than leaving the composer click to
+  report it. The old read-back did fire `migrated.pane_still_open` — as a warning the run
+  ignored; the observation was there and only the consequence was missing.
+
+- **A migrated run that short-circuited model selection logged nothing.** `_select_model`
+  returning at its button read-back emitted no event, so a field timeline could not tell
+  "bound the tier you asked for" from "never touched the picker" — answering that for the
+  2026-09-05 run took a separate probe. It now logs `migrated.model_already_selected`
+  with the observed button text.
+
 ## [0.68.0] — 2026-09-05
 
 ### Added
@@ -3934,7 +4066,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...HEAD
+[0.69.0]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...v0.68.0
 [0.67.0]: https://github.com/ffroliva/gflow-cli/compare/v0.66.3...v0.67.0
 [0.66.3]: https://github.com/ffroliva/gflow-cli/compare/v0.66.2...v0.66.3

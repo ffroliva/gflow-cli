@@ -34,6 +34,30 @@ def test_pull_request_template_requires_documentation_review() -> None:
     assert "`uv run python scripts/ci/check_doc_links.py`" in template
 
 
+# The e2e-evidence rule is stated in three places that must not drift apart:
+# the PR template asks for it, AGENTS.md states it for agents, CONTRIBUTING.md
+# for humans. A silently deleted line here is how the rule dies — PR #671
+# arrived with eight offline test files and zero e2e because nothing asked.
+def test_pull_request_template_requires_e2e_evidence() -> None:
+    template = (ROOT / ".github/PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")
+
+    assert "**E2E evidence provided**" in template
+    assert "`tests/e2e/`" in template
+
+
+def test_e2e_evidence_rule_is_stated_for_agents_and_contributors() -> None:
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+
+    # Scoped to Flow surfaces — a docs-only change cannot produce an e2e run.
+    assert "required for every behavior change that touches a Flow surface" in agents
+    # live-verify is a narrative ledger, not a re-runnable regression; the two
+    # are complementary and the docs must keep saying so.
+    assert "never runs `pytest -m e2e`" in agents
+    assert "**E2E is required, not optional.**" in contributing
+    assert "E2E is the evidence layer." in contributing
+
+
 # `gflow video batch` was removed as a nonfunctional stub (production-readiness
 # hardening, task A1). These are the operator-facing docs that must not tell
 # a user to run a command that no longer exists. Historical text (CHANGELOG

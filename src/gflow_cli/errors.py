@@ -697,7 +697,8 @@ class FlowHostMigratedError(GFlowError):
     title = "Flow served the migrated flow.google.com frontend"
     _default_remediation = (
         "Google has moved this account's Flow from labs.google to flow.google.com. "
-        "gflow drives that frontend for text-to-video "
+        "gflow drives that frontend for text-to-video and for image-to-video from a "
+        "local --initial-frame (no end frame, no UUID or @Name frame; --project required) "
         "(GFLOW_CLI_FLOW_HOST=auto, the default, or flow.google.com); you see this "
         "error because GFLOW_CLI_FLOW_HOST=labs.google switched the migrated composer "
         "off, or because this request type is not ported to the migrated host yet. "

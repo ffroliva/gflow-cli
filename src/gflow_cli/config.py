@@ -549,8 +549,9 @@ class Settings(BaseSettings):
         default="auto",
         description=(
             "Which Flow frontend gflow drives. 'auto' (default): flow.google.com is the "
-            "default host for every request it can serve today (text-to-video in an "
-            "existing project), on moved and unmoved accounts alike; requests it cannot "
+            "default host for every request it can serve today (text-to-video, and "
+            "image-to-video from a local start frame, in an existing project), on moved "
+            "and unmoved accounts alike; requests it cannot "
             "serve yet keep the labs driver on an unmoved account. 'flow.google.com': force "
             "the migrated composer for everything. 'labs.google': never use it — a moved "
             "account fails with exit 36 (kill switch). Override via GFLOW_CLI_FLOW_HOST."
