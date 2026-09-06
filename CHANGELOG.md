@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   landing before one particular line. A genuine labs-side reCAPTCHA failure still surfaces as
   `RecaptchaError`.
 
+  The re-check catches **any** mint failure, not just `RecaptchaError`. `TokenMinter.mint` guards
+  only its second `page.evaluate`: `site_key()` → `discover_site_key` runs an unguarded one, and
+  the minter is rebuilt per call so that unguarded call runs every time. A hop mid-mint destroys
+  the execution context, so the likeliest shape of this failure is a **raw Playwright error** —
+  which a `RecaptchaError`-only net would miss entirely. Nothing is swallowed: the original
+  exception propagates untouched unless the page turns out to be migrated.
+
   **Scope, stated honestly:** the reporter's failure could **not** be reproduced locally. On a
   migrated, `NOT_REDIRECTED`-latched profile the hop wins the race and v0.69.0 already returns
   exit 36 — verified live, before and after this change. So this hardens a race that is real in

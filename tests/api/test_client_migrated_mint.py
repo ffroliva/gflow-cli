@@ -153,3 +153,102 @@ async def test_mint_failure_off_migrated_host_records_where_the_page_was(
     recorded = [e for e in logs if e.get("event") == "recaptcha_mint_failed_off_migrated_host"]
     assert len(recorded) == 1, f"expected the diagnostic, got {logs}"
     assert recorded[0]["url"] == "https://labs.google/fx/en/tools/flow"
+
+
+class _ContextDestroyedDuringMint:
+    """The mid-mint navigation destroys the execution context.
+
+    #692 review finding: ``TokenMinter.mint`` guards only its SECOND evaluate.
+    ``site_key()`` -> ``discover_site_key`` runs an unguarded
+    ``page.evaluate`` (``recaptcha.py``), and ``TokenMinter`` is rebuilt per
+    call so ``_site_key`` is always ``None`` — meaning the unguarded call runs
+    every time. A hop mid-mint therefore surfaces as a RAW Playwright error,
+    not ``RecaptchaError``, which is the likeliest shape of the reporter's
+    failure and the one a ``except RecaptchaError`` net misses entirely.
+    """
+
+    def __init__(self, page: Any, **_: Any) -> None:
+        self._page = page
+
+    async def mint(self, _action: str) -> str:
+        self._page.url = "https://flow.google.com/"
+        raise RuntimeError("Execution context was destroyed, most likely because of a navigation")
+
+
+@pytest.mark.asyncio
+async def test_mint_reclassifies_a_non_recaptcha_failure_after_the_hop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Any mint failure on a page that turns out to be migrated is exit 36."""
+    monkeypatch.setattr(client_mod, "TokenMinter", _ContextDestroyedDuringMint)
+    c = _client_on("https://labs.google/fx/en/tools/flow")
+    returned: list[Any] = []
+    monkeypatch.setattr(c, "_checkin_page", returned.append)
+
+    with pytest.raises(FlowHostMigratedError):
+        await c._mint_recaptcha_token("IMAGE_GENERATION")
+
+    assert returned == [c._page], "the pool page must not leak on the reclassified path"
+
+
+class _RaisesRuntimeOnLabs:
+    def __init__(self, _page: Any, **_: Any) -> None: ...
+
+    async def mint(self, _action: str) -> str:
+        raise RuntimeError("some unrelated playwright failure")
+
+
+@pytest.mark.asyncio
+async def test_non_recaptcha_failure_on_labs_propagates_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Widening the net must not swallow or reshape unrelated failures."""
+    monkeypatch.setattr(client_mod, "TokenMinter", _RaisesRuntimeOnLabs)
+    c = _client_on("https://labs.google/fx/en/tools/flow")
+    monkeypatch.setattr(c, "_checkin_page", lambda _p: None)
+
+    with pytest.raises(RuntimeError, match="some unrelated playwright failure"):
+        await c._mint_recaptcha_token("IMAGE_GENERATION")
+
+
+class _DiesDuringMint:
+    """Readable at the pre-mint guard, then the target dies mid-mint.
+
+    A page that is dead from the start fails at the FIRST guard, which is
+    pre-existing behaviour. The case this widened handler newly makes reachable
+    is a page that classifies fine going in and whose ``url`` read raises on the
+    way out.
+    """
+
+    def __init__(self) -> None:
+        self._reads = 0
+
+    @property
+    def url(self) -> str:
+        self._reads += 1
+        if self._reads == 1:
+            return "https://labs.google/fx/en/tools/flow"
+        msg = "Target page, context or browser has been closed"
+        raise RuntimeError(msg)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_url_probe_never_displaces_the_real_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The migration re-check is a PROBE; it must never mask the original error.
+
+    ``_common.flow_host_kind`` is total by construction for exactly this reason
+    ("a probe error must never displace the real failure"), but the re-check
+    reads ``page.url`` to get there — and that read can raise on a dead page.
+    Widening the handler to ``except Exception`` made that reachable, so the
+    probe is guarded and the caller still sees what actually went wrong.
+    """
+    monkeypatch.setattr(client_mod, "TokenMinter", _RaisesRuntimeOnLabs)
+    c = FlowApiClient.__new__(FlowApiClient)
+    c._page_queue = None
+    c._page = _DiesDuringMint()  # type: ignore[assignment]
+    monkeypatch.setattr(c, "_checkin_page", lambda _p: None)
+
+    with pytest.raises(RuntimeError, match="some unrelated playwright failure"):
+        await c._mint_recaptcha_token("IMAGE_GENERATION")
