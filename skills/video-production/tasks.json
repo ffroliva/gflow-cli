@@ -100,7 +100,7 @@
       "video",
       "references"
     ],
-    "notes": "veo-quality's reference cap is 0, not 3. A rollout chose it for a two-reference shot and annotated it as being under the cap."
+    "notes": "veo-quality's reference cap is 0, not 3. A rollout chose it for a two-reference shot and annotated it as being under the cap. SCORING CEILING: the question asks 'and why?', so a correct answer names veo-quality to explain the exclusion and takes the 0.3 must_not_include penalty -- a fully correct explained answer tops out near 0.9, not 1.0. Kept deliberately: the guard still catches an answer that picks veo-quality while mentioning omni-flash, and loosening a check so a doc edit scores better is gaming the metric. Read <1.0 here as the ceiling, not as remaining headroom."
   },
   {
     "id": "model-003",

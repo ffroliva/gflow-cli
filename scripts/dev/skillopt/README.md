@@ -9,19 +9,36 @@ before running the full automated SkillOpt optimizer.
 ## Quick start
 
 ```bash
-# Dry-run: inspect prompts and scoring specs
-python scripts/dev/skillopt/harness.py --dry-run
+# Dry-run: inspect prompts and scoring specs. No key, no network.
+uv run python scripts/dev/skillopt/harness.py --dry-run
 
-# Live run (needs Anthropic API key)
-uv pip install anthropic
-ANTHROPIC_API_KEY=sk-ant-... python scripts/dev/skillopt/harness.py
+# Live run. Configuration is the project's own GFLOW_CLI_LLM_* settings — the
+# same ones the prompt tools use (docs/CONFIGURATION.md, .env.template).
+GFLOW_CLI_LLM_API_KEY=... uv run python scripts/dev/skillopt/harness.py
+
+# Any OpenAI-compatible endpoint: OpenRouter, LiteLLM, freellmapi, a corporate
+# gateway, or a local Ollama/LM Studio. No provider flag — the URL is the choice.
+GFLOW_CLI_LLM_API_KEY=sk-or-... \
+GFLOW_CLI_LLM_BASE_URL=https://openrouter.ai/api/v1 \
+GFLOW_CLI_LLM_MODEL=openai/gpt-4o-mini \
+  uv run python scripts/dev/skillopt/harness.py
 
 # Filter to a surface area
-python scripts/dev/skillopt/harness.py --tags auth,error-recovery --dry-run
+uv run python scripts/dev/skillopt/harness.py --tags auth,error-recovery --dry-run
 
-# Compare a candidate skill edit
-python scripts/dev/skillopt/harness.py --skill /tmp/SKILL_candidate.md
+# Compare a candidate skill edit against the same tasks
+uv run python scripts/dev/skillopt/harness.py --skill /tmp/SKILL_candidate.md
+
+# A skill outside this directory brings its own suite — pass BOTH, or you score
+# the new doc against the gflow-cli tasks and the numbers mean nothing.
+uv run python scripts/dev/skillopt/harness.py \
+  --skill skills/video-production/SKILL.md \
+  --tasks skills/video-production/tasks.json
 ```
+
+`uv run` is required: the harness imports `gflow_cli` for its LLM settings and
+HTTP transport, so a bare `python` outside the project venv cannot import it —
+including `--dry-run`.
 
 ## Task dataset (`tasks.json`)
 

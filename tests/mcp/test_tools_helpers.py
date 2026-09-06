@@ -94,13 +94,27 @@ def test_video_media_i2v_requires_initial_frame() -> None:
     assert err["error"]["title"] == "Missing Start Image"
 
 
-def test_video_media_r2v_requires_reference_images() -> None:
+def test_video_media_r2v_requires_some_reference() -> None:
     media, err = _build_video_media_inputs(
         mode="r2v", initial_frame=None, end_frame=None, reference_images=None
     )
     assert media is None
     assert err is not None
-    assert err["error"]["title"] == "Missing Reference Images"
+    assert err["error"]["title"] == "Missing References"
+
+
+def test_video_media_r2v_is_satisfied_by_an_entity_alone() -> None:
+    """The guard must not be stricter than GenerateVideoRequest, which accepts
+    "reference_images, ref_names, OR reference_entities" for r2v (#689)."""
+    media, err = _build_video_media_inputs(
+        mode="r2v",
+        initial_frame=None,
+        end_frame=None,
+        reference_images=None,
+        reference_entities=["11111111-2222-3333-4444-555555555555"],
+    )
+    assert err is None
+    assert media is not None
 
 
 def test_video_media_mutually_exclusive() -> None:

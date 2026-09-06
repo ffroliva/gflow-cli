@@ -4,7 +4,59 @@
 
 ## Current release
 
-**v0.68.0 — alpha.** **gflow-cli keeps itself current: `gflow update` upgrades an install in
+**v0.69.0 — alpha.** **The migrated `flow.google.com` host gains image-to-video from a local
+start frame, and gflow can finally tell you what your balance is.**
+
+`gflow credits user` and `gflow credits list` report the current Veo balance and account tier
+for one saved profile or all of them, and `gflow_get_credits` is the MCP twin. The primary
+path is genuinely browser-free: saved cookies authenticate a `labs.google` session request,
+that client is **closed** before a separate cookie-free, Bearer-only call to the credits
+endpoint, so no cookie crosses an origin boundary. A browser is the fallback, not the route.
+Multi-profile inspection keeps partial successes — a stale profile degrades to its own row
+with a reason instead of failing the run — and `--json` is a stable automation contract. The
+balance funds **Veo video only**; image generation draws on separate per-model daily quotas,
+which the docs now say in three places
+([#671](https://github.com/ffroliva/gflow-cli/pull/671), @ziyedbe).
+
+`gflow video i2v --initial-frame <file> --project <id>` now runs on the migrated host
+([#639](https://github.com/ffroliva/gflow-cli/issues/639), slice 1) — on a moved account, and
+by default on an unmoved one. The port is UI-driven and observed rather than replayed: the
+composer picks the Frames submode, uploads through the editor's own toolbar entry, reads the
+media id off the app's `maseQ` reply, finds the upload in the picker by file name (the picker
+exposes no media id in its DOM, and indexes a fresh upload late — hence up to three searches),
+and inspects the submit *request* as it leaves. An unbound chip is refused before the click,
+exit 23 at zero credits, because an empty Frames submit silently goes out as text-to-video.
+Not ported in this slice, and named in the exit-36 detail: `--end-frame`, a frame given by
+UUID or `@Name`, and r2v.
+
+Also in this release: `--model veo-lite-lp` is drivable on the migrated host — the one tier
+its model map omitted, matched by the `[Lower Priority]` tag rather than a label
+([#669](https://github.com/ffroliva/gflow-cli/pull/669), @kittinan); moved accounts now exit
+36 rather than a misleading `RecaptchaError` on `image t2i`/`i2i`/`upscale`/`extend`, because
+the token was minted on the pool's bootstrap page before any transport guard could fire
+([#673](https://github.com/ffroliva/gflow-cli/issues/673)); and three migrated model-picker
+defects are fixed — a tier bound that the user did not ask for, a stacked overlay that broke
+the next run after a `--model` switch, and a short-circuit that logged nothing.
+
+The `video-production` skill ships at **SkillOpt epoch 1**: a scored rollout picked
+`veo-quality` for a two-reference shot while correctly reciting that its reference cap is 0,
+because the skill stated the prohibition twice and the substitute nowhere. It now routes —
+and names `video chain` as the exception, since chains refuse `omni-flash`. The SkillOpt
+harness moved onto the project's own `GFLOW_CLI_LLM_*` settings, dropping a parallel provider
+configuration and both LLM SDK dependencies.
+
+Verification: [LIVE_VERIFICATION_v0.69.0](LIVE_VERIFICATION_v0.69.0.md) — i2v proven on **two
+moved accounts in two locales**, the decisive run being the CLI entrypoint on the
+Portuguese-locale account (exit 0, 64 s, 632,755 B byte-exact with the status record, catalog
+row present); credits re-tested on the maintainer machine that had originally caught it
+launching a browser, now `status_code=200` with no browser and an `e2e_auth` test whose pass
+*is* the browser-free proof. Recorded as NOT verified: 5 of the 19 skill-benchmark tasks
+(blocked on a 20-request/day free-tier quota, not on the code), the MCP twin of the credits
+path live, and the items the i2v ledger already lists.
+
+<details><summary>v0.68.0 — gflow update, and the once-a-day banner</summary>
+
+**gflow-cli keeps itself current: `gflow update` upgrades an install in
 place, and every command shows a banner when a newer release is on PyPI.**
 
 `gflow update [--check] [--json]` runs the package manager that installed gflow-cli, read
@@ -678,10 +730,13 @@ reporter-verified e2e on macOS).
 
 </details>
 
+</details>
+
 ## Milestone history
 
 | Milestone | Status |
 |---|---|
+| Read-only credit balance in the CLI and MCP (`gflow credits user` / `list`, `gflow_get_credits`) over a browser-free HTTP path; image-to-video from a local start frame on the migrated `flow.google.com` host (#639 slice 1) | ✅ done (v0.69.0) |
 | `gflow update` self-update through the installing manager (uv tool / pipx / pip), venv-verified outcome; the update notice as a stderr banner; CONTRIBUTING routes contributors and agents through the AGENTS.md lifecycle | ✅ done (v0.68.0) |
 | Flow's migrated `flow.google.com` host driven for text-to-video; the default host for what it can serve (`GFLOW_CLI_FLOW_HOST`) | ✅ done (v0.67.0) |
 | Migrated-origin runs fail fast and keep their learned locale (v0.66.1's fast-fail never fired in the field; corrected in v0.66.2) | ✅ done (v0.66.2) |
