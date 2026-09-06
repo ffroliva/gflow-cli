@@ -46,11 +46,9 @@ from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
     _ligature,
 )
 
-from _spike_common import build_client, resolve_profile_dir  # noqa: E402, isort: skip
+from _spike_common import build_client, default_out_path, resolve_profile_dir  # noqa: E402, isort: skip
 
 PROMPT = "a man crying"
-#: Filters the mention picker. "Me" resolved to a real entity on the probe account.
-QUERY = "Me"
 
 
 def _stage(msg: str) -> None:
@@ -278,8 +276,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("profile")
     parser.add_argument("project_id")
-    parser.add_argument("--out", default="r2v_payload.json")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="where to write the report (default: a timestamped file in the "
+        "gitignored scripts/dev/_spike_out/). These reports carry decoded "
+        "batchexecute payloads — prompt text, project and media ids — so the "
+        "default deliberately never lands in the tracked tree.",
+    )
     args = parser.parse_args()
+    args.out = args.out or str(default_out_path("migrated_r2v_submit_payload"))
     return asyncio.run(_main(args.profile, args.project_id, args.out))
 
 

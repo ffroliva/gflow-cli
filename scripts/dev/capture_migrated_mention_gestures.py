@@ -36,7 +36,7 @@ from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
     MigratedComposer,
 )
 
-from _spike_common import build_client, resolve_profile_dir  # noqa: E402, isort: skip
+from _spike_common import build_client, default_out_path, resolve_profile_dir  # noqa: E402, isort: skip
 
 
 def _stage(msg: str) -> None:
@@ -151,8 +151,16 @@ def main() -> int:
     parser.add_argument("profile")
     parser.add_argument("project_id")
     parser.add_argument("--query", default="Me")
-    parser.add_argument("--out", default="mention_gestures.json")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="where to write the report (default: a timestamped file in the "
+        "gitignored scripts/dev/_spike_out/). These reports carry decoded "
+        "batchexecute payloads — prompt text, project and media ids — so the "
+        "default deliberately never lands in the tracked tree.",
+    )
     args = parser.parse_args()
+    args.out = args.out or str(default_out_path("migrated_mention_gestures"))
     return asyncio.run(_main(args.profile, args.project_id, args.query, args.out))
 
 
