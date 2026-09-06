@@ -8,11 +8,9 @@ optimization_notes: |
   Known weak spots, each observed in a scored rollout. Targets for epoch 2+:
   - `--duration` passed without `--model`: binds veo-lite, which renders no duration control, exit 2
   - `--ref` passed with `--model veo-quality`: that model's reference cap is 0, not 3
-    ADDRESSED in epoch 1 (task model-002, controlled A/B on one model: 0.00 -> 0.90).
-    The doc stated the prohibition in two places and the substitute in none, so a
-    rollout recited "reference cap is 0" and still picked a capped model. Step 4 now
-    carries the routing rule, not just the ban. Lesson: a constraint without its
-    substitution teaches the reader to recognise the trap, not to escape it.
+    ADDRESSED in epoch 1 — the doc banned it in two places and named the substitute
+    in none, so a rollout recited "reference cap is 0" and still picked that model.
+    Step 4 now routes to omni-flash. Controlled A/B, one model: 0.00 -> 0.90.
   - Multi-angle sets generated as N independent `t2i` calls, then drift accepted as unavoidable
   - "There is no `gflow project create`" — agents mint a project by burning a placeholder generation
   - `nano-pro` used for bulk image work; it is daily-capped, `nano2` is the batch model

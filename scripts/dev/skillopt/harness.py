@@ -25,9 +25,8 @@ freellmapi, ...), a local Ollama/LM Studio, or Google's compat endpoint.
     GFLOW_CLI_LLM_BASE_URL=http://127.0.0.1:11434/v1 \
     GFLOW_CLI_LLM_MODEL=llama3.2 python scripts/dev/skillopt/harness.py
 
-``--model`` overrides ``GFLOW_CLI_LLM_MODEL`` for a one-off comparison run; the
-endpoint and credential come from the settings only, so there is no second place
-to configure a provider and no way for the two to disagree.
+The endpoint and credential come from those settings only — no second place to
+configure a provider, and no way for the two to disagree.
 
 Other flags:
     --dry-run          Print prompts + scoring spec; no API call
@@ -118,7 +117,11 @@ def score_response(response: str, expected: dict[str, Any]) -> tuple[float, list
     bonus_hits = [p for p in partial_credit if p.lower() in resp_lower]
     bonus = min(len(bonus_hits) * 0.1, 0.3)
 
-    score = max(0.0, min(1.0, base - penalty + bonus))
+    # Rounded because the grade is compared against a hard >= 0.8 threshold and
+    # 1.0 - 0.3 + 0.1 is 0.7999999999999999 in binary float — a task scoring
+    # exactly the threshold graded PARTIAL while printing "0.80". 4 decimals is
+    # finer than any rule here produces; the coarsest term is 0.1.
+    score = round(max(0.0, min(1.0, base - penalty + bonus)), 4)
 
     if misses:
         reasons.append(f"MISS: {misses}")
@@ -176,15 +179,10 @@ def _call_llm(system: str, user: str, model: str | None, settings: Any) -> str:
     key = settings.llm_api_key.get_secret_value() if settings.llm_api_key else None
     url = f"{settings.llm_base_url.rstrip('/')}/chat/completions"
 
-    # ponytail: fixed attempts, not the tools layer's wall-clock budget machinery —
-    # a task suite just has to survive a 429/503 rather than die partway and discard
-    # the scores already paid for. _RETRYABLE_STATUS is imported rather than restated
-    # so the two agree on which codes are transient.
-    #
-    # 429 backs off in whole quota-windows, not seconds: free tiers meter requests
-    # per MINUTE (Google's is 10 RPM on flash), so a suite run back-to-back trips it
-    # around task 10 and a 1-2s retry just burns another attempt inside the same
-    # window. Waiting out the window is what makes an unpaced run finish at all.
+    # ponytail: retries in whole quota-windows, because free tiers meter per MINUTE
+    # (Google's flash is 10 RPM) — a 1-2s backoff just burns another attempt inside
+    # the same window, which is what killed an unpaced 19-task run at task 6.
+    # _RETRYABLE_STATUS is imported so this and the tools layer cannot disagree.
     node: dict[str, object] | None = None
     for attempt in range(_MAX_ATTEMPTS):
         try:
@@ -193,7 +191,7 @@ def _call_llm(system: str, user: str, model: str | None, settings: Any) -> str:
         except LlmHttpError as exc:
             if exc.status not in _RETRYABLE_STATUS or attempt == _MAX_ATTEMPTS - 1:
                 sys.exit(f"LLM endpoint returned HTTP {exc.status}: {exc.detail[:300]}")
-            delay = _QUOTA_WINDOW_SECONDS * (attempt + 1) if exc.status == 429 else 2**attempt
+            delay = _QUOTA_WINDOW_SECONDS * (attempt + 1)
             print(f"  (HTTP {exc.status} — retrying in {delay}s)")
             time.sleep(delay)
         except Exception as exc:  # noqa: BLE001 — a benchmark must report, not mask
