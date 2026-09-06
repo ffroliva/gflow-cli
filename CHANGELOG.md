@@ -25,9 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not all attached is refused **before** submit — the failure mode being a full-price clip
   with none of the user's references on it. References by `@Name` and character entities
   stay on labs, for the same reason a frame by UUID does: the picker exposes no media id
-  to anchor on. Live-verified end to end with two local refs and `--model veo-lite-lp`;
-  the account owner confirms the presenter in the output is the person from the first
-  reference.
+  to anchor on. Live-verified end to end with two local refs and `--model veo-lite-lp`, and
+  confirmed semantically by the account owner: the presenter in the output is the person
+  from the first reference and the product is the one from the second, so both references
+  are genuinely bound rather than merely accepted.
 
 ### Added
 

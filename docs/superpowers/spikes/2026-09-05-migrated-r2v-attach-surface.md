@@ -342,13 +342,20 @@ uploads settling in 16 s / 10 s (vs 14 s / 8 s), 2/2 chips, `MZZa6b`, downloaded
 is what makes the upload waits and the chip-by-chip verification look like the right
 shape rather than a lucky ordering.
 
+## Semantic verification — both references bind
+
+The account owner watched the output on 2026-09-06: the **presenter is the person from
+`me.jpg`** and the **product is the one from the second reference**. Both references are
+therefore genuinely *bound*, not merely accepted — the check no log can make, and the one
+that on labs caught a silently dropped end frame (v0.64.0).
+
+That closes the question this whole spike was built around. Ids on the wire and chips in
+the DOM only ever proved Flow took the references; only the render proves it used them,
+and it used both, in the order given.
+
 ## What this does NOT settle
 
-- **Whether the model used the SECOND reference.** The account owner watched the output on
-  2026-09-06 and confirms the presenter is the person from the first reference
-  (`me.jpg`) — so a reference is genuinely bound, not merely accepted, which is the
-  semantic check no log can make. Whether the *product* comes from the second reference
-  was not separately confirmed, so multi-reference binding is attested for one of two.
+
 - **The avatar wire slot.** A `likeness` chip was produced but never submitted, so which
   slot carries it is unknown; only `media` has been exercised end to end.
 - **Character entities on this host.** The attach works (a chip with a real `entity_id`),
