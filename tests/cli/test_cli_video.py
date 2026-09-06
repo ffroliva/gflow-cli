@@ -1701,3 +1701,38 @@ class TestDurationCapabilityGuard:
             ],
         )
         assert "caps at" not in result.output
+
+
+@pytest.mark.parametrize("sub", ["t2v", "i2v", "r2v"])
+def test_output_rejects_an_existing_directory_before_generating(tmp_path: Path, sub: str) -> None:
+    """`-o <existing dir>` must fail at parse time, not after a paid generation.
+
+    `_relocate_video_output` calls `Path.replace()` onto the target, which raises
+    `PermissionError: [WinError 5]` when the target is a directory. That happens
+    AFTER Flow has rendered and billed the clip, so it surfaced as a bare
+    "Unexpected error" exit 1 and left the paid mp4 orphaned under a UUID name at
+    the repo root. Measured 2026-09-06 on a live r2v run: two clips billed, both
+    unsaveable.
+
+    Click checks `dir_okay=False` while parsing, so the run aborts at $0.
+    """
+    runner = CliRunner()
+    outdir = tmp_path / "already-a-directory"
+    outdir.mkdir()
+    ref = tmp_path / "r.png"
+    ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    args = [sub, "a prompt", "-o", str(outdir)]
+    if sub == "i2v":
+        args += ["--initial-frame", str(ref)]
+    if sub == "r2v":
+        args += ["--ref", str(ref)]
+
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+    ):
+        result = runner.invoke(video, args)
+
+    assert result.exit_code == 2, result.output
+    assert "directory" in result.output.lower(), result.output

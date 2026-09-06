@@ -126,7 +126,7 @@ def _shared_gen_tail_options(f: Any) -> Any:
                 "--output",
                 "output_file",
                 default=None,
-                type=click.Path(path_type=Path),
+                type=click.Path(dir_okay=False, path_type=Path),
                 help="Explicit output file path for the generated asset.",
             ),
             click.option(
@@ -1488,7 +1488,7 @@ def i2v(  # NOSONAR
     "-o",
     "--output",
     "output_file",
-    type=click.Path(path_type=Path),
+    type=click.Path(dir_okay=False, path_type=Path),
     default=None,
     help="Explicit output file path for the generated asset.",
 )
@@ -1666,7 +1666,7 @@ def r2v(
     "-o",
     "--output",
     "output_file",
-    type=click.Path(path_type=Path),
+    type=click.Path(dir_okay=False, path_type=Path),
     default=None,
     help="Explicit output file path for the generated chain clips.",
 )
