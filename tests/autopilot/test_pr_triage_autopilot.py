@@ -568,7 +568,7 @@ def test_send_email_alert_never_raises_on_subprocess_error(tmp_path, monkeypatch
     m_run.assert_called_once()
 
 
-def test_needs_human_dedupes_by_gate_sha(tmp_path):
+def test_needs_human_dedupes_across_pushes(tmp_path):
     mocks = _cycle_mocks()
     with (
         mocks[0] as m_email,
@@ -602,8 +602,20 @@ def test_needs_human_dedupes_by_gate_sha(tmp_path):
         assert m_email.call_count == 1
         assert m_comment.call_count == 1
 
+        # Third tick: a NEW push, still flagged -> still no re-alert.
+        m_gh.return_value = [{"number": 7, "headRefOid": "sha-y"}]
+        with patch(
+            "pr_triage_autopilot.get_ledger_entries",
+            return_value=[{"pr": 7, "head_sha": "sha-x", "status": "NEEDS-HUMAN"}],
+        ):
+            pr_triage_autopilot.run_triage_cycle(
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
+            )
+        assert m_email.call_count == 1
+        assert m_comment.call_count == 1
 
-def test_deferred_size_dedupes_by_gate_sha(tmp_path):
+
+def test_deferred_size_dedupes_across_pushes(tmp_path):
     mocks = _cycle_mocks()
     with (
         mocks[0] as m_email,
@@ -635,6 +647,31 @@ def test_deferred_size_dedupes_by_gate_sha(tmp_path):
             )
         assert m_email.call_count == 1
         assert m_comment.call_count == 0
+
+        # Third tick: a NEW push, still oversized -> still no re-alert.
+        # PR #683 sent three identical mails this way on 2026-09-06.
+        m_gh.return_value = [{"number": 7, "headRefOid": "sha-y"}]
+        with patch(
+            "pr_triage_autopilot.get_ledger_entries",
+            return_value=[{"pr": 7, "head_sha": "sha-x", "status": "DEFERRED_SIZE"}],
+        ):
+            pr_triage_autopilot.run_triage_cycle(
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
+            )
+        assert m_email.call_count == 1
+
+        # Fourth tick: the PR was reviewed in between, then regressed -> alert again.
+        with patch(
+            "pr_triage_autopilot.get_ledger_entries",
+            return_value=[
+                {"pr": 7, "head_sha": "sha-x", "status": "DEFERRED_SIZE"},
+                {"pr": 7, "head_sha": "sha-y", "status": "COMPLETED"},
+            ],
+        ):
+            pr_triage_autopilot.run_triage_cycle(
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
+            )
+        assert m_email.call_count == 2
 
 
 # --- Claude subscription auth via CLAUDE_CODE_OAUTH_TOKEN (2026-08-02) -------

@@ -275,6 +275,24 @@ def get_ledger_entries(ledger_path: Path) -> list[dict]:
     return entries
 
 
+def latest_status(ledger_entries: list[dict], pr_num: int) -> str | None:
+    """Status of the most recent ledger entry for this PR, or None.
+
+    Gate alerts (DEFERRED_SIZE / NEEDS-HUMAN) dedupe on this instead of on
+    (pr, head_sha): an oversized PR keeps getting pushes, and every new SHA
+    re-sent a byte-identical "needs a manual review" mail on the next hourly
+    cycle. PR #683 produced three of them on 2026-09-06 — same verdict, same
+    action, only the line count moved. Nothing after the first is signal.
+
+    Keyed on the LATEST entry, not any entry, so a PR that trips the gate,
+    gets fixed and reviewed, then regresses is alerted again.
+    """
+    for entry in reversed(ledger_entries):
+        if entry.get("pr") == pr_num:
+            return entry.get("status")
+    return None
+
+
 def append_ledger_entry(ledger_path: Path, entry: dict) -> None:
     """Append a new entry atomically to the JSONL ledger."""
     entry["timestamp"] = datetime.datetime.now(datetime.UTC).isoformat()
@@ -547,13 +565,8 @@ def run_triage_cycle(
             continue
 
         if verdict == "DEFERRED_SIZE":
-            if any(
-                e.get("pr") == pr_num
-                and e.get("head_sha") == gate_sha
-                and e.get("status") == "DEFERRED_SIZE"
-                for e in ledger_entries
-            ):
-                logger.info("PR already deferred at this SHA; skipping re-alert", pr=pr_num)
+            if latest_status(ledger_entries, pr_num) == "DEFERRED_SIZE":
+                logger.info("PR already deferred; skipping re-alert", pr=pr_num)
                 continue
             logger.warning(
                 "PR deferred due to oversized diff", pr=pr_num, reason=gate_res["reasons"]
@@ -577,13 +590,8 @@ def run_triage_cycle(
             continue
 
         if verdict == "NEEDS-HUMAN":
-            if any(
-                e.get("pr") == pr_num
-                and e.get("head_sha") == gate_sha
-                and e.get("status") == "NEEDS-HUMAN"
-                for e in ledger_entries
-            ):
-                logger.info("PR already flagged at this SHA; skipping re-alert", pr=pr_num)
+            if latest_status(ledger_entries, pr_num) == "NEEDS-HUMAN":
+                logger.info("PR already flagged; skipping re-alert", pr=pr_num)
                 continue
             logger.warning(
                 "PR flagged for human triage in Stage 0", pr=pr_num, reason=gate_res["reasons"]
