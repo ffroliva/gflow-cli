@@ -14,6 +14,7 @@ that did not run.
 
 | If you are about to… | Load first | Non-negotiable because |
 |---|---|---|
+| Claim a Flow surface is broken, missing, or impossible | `/gflow:spike <question>` | A selector that misses is evidence about the SELECTOR; "labs-only, ever" came from one 20 s timeout and cost a day |
 | Touch a GitHub issue | `/gflow:issue-assessment <N>` | Read-only triage precedes any fix; classification changes what "fixing" means |
 | Propose a transport, auth, selector, or schema change | `/gflow:predict <proposal>` | Five adversarial personas return GO / CAUTION / STOP before code exists |
 | Start a feature | `/gflow:scenario` → `/gflow:plan` | Edge cases before tasks; tasks before code |
@@ -231,6 +232,7 @@ All AI agents and harnesses working on `gflow-cli` follow this standard 10-phase
 
 | Phase | Skill / Command | Purpose | Output Artifact |
 |---|---|---|---|
+| 0. Recon | `/gflow:spike <question>` | Evidence from the live surface (DOM / network / HAR) whenever a claim of absence is in play | `scripts/dev/spike_*.py` + `docs/superpowers/spikes/<date>-<slug>.md` |
 | 1. Triage | `/gflow:issue-assessment <N>` | Read-only issue analysis & root cause hypothesis | `issue_assessment_<N>.md` |
 | 2. Pre-Implementation | `/gflow:predict <proposal>` | Adversarial audit (D14 YAGNI, security, risks) | GO / CAUTION / STOP verdict |
 | 3. BDD Scaffolding | `/gflow:scenario <feature>` | Edge-case explorer & BDD Gherkin spec | `Scenario:` blocks & test scaffold |
@@ -266,6 +268,7 @@ The `skills/` directory ships installable agent skill docs in plain Markdown wit
 | Skill | Path | When to load |
 |---|---|---|
 | `gflow-cli` | [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) | User wants to run any `gflow` command — auth, T2V, I2V, T2I, I2I, batch |
+| `spike` | [`skills/spike/SKILL.md`](skills/spike/SKILL.md) | Before asserting any absence on a live Flow surface — the first layer of investigation |
 | `predict` | [`skills/predict/SKILL.md`](skills/predict/SKILL.md) | Pre-implementation adversarial analysis before any high-stakes change |
 | `scenario` | [`skills/scenario/SKILL.md`](skills/scenario/SKILL.md) | Edge-case explorer after a predict GO/CAUTION |
 | `plan` | [`skills/plan/SKILL.md`](skills/plan/SKILL.md) | Create a structured task-by-task implementation plan for a feature |
@@ -320,7 +323,8 @@ them before writing a capture script from scratch.**
 | **HAR + DOM** | [`scripts/dev/har-spike/`](scripts/dev/har-spike/README.md) | CDP-attached **real Chrome** through a pinned `agent-browser` | **a human, by hand** | the driver cannot reach the surface yet, or a capture is ambiguous and you need ground truth |
 
 Start in-process; escalate to the HAR harness when the driver cannot get far enough to
-observe anything. A hand-driven HAR is the tiebreaker.
+observe anything. A hand-driven HAR is the tiebreaker. **The protocol is
+[`skills/spike/SKILL.md`](skills/spike/SKILL.md) — load it before asserting any absence.**
 
 Both write to **gitignored** output — `scripts/dev/_spike_out/` and
 `scripts/dev/har-spike/artifacts/`. Captures carry Bearer tokens, cookies and prompts:
