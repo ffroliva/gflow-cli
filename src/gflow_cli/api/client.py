@@ -2412,10 +2412,27 @@ class FlowApiClient:
         try:
             # #673: this runs BEFORE the UI transport, so none of its migration
             # guards can fire first. On a moved account the pool page is the
-            # flow.google.com grid (client-side handoff) with no
-            # recaptcha/enterprise.js — bail to exit 36 here instead of a bare
-            # RecaptchaError. (/project/<id> on that host does carry the script,
-            # but no path that mints is ported there yet.)
+            # flow.google.com ROOT GRID, which carries no recaptcha/enterprise.js —
+            # bail to exit 36 here instead of a bare RecaptchaError.
+            #
+            # Be precise about WHY, because the imprecise version misdirects whoever
+            # ports this next: flow.google.com is NOT unable to mint. Measured
+            # 2026-09-06 (scripts/dev/spike_migrated_recaptcha_mint.py) on the same
+            # page pool — `/project/<id>` there carries the enterprise script and
+            # site key 6LdsFiUsAAAA…, and a mint returns a 2404-char token. Only the
+            # root grid, which is where the client-side handoff leaves the pooled
+            # bootstrap page, has no script at all.
+            #
+            # So this guard refuses a HOST that can mint, standing in for the real
+            # constraint: `gflow image` is UI-driven, and the migrated project
+            # composer has no image-generation mode. Its add menu is a media
+            # library (Scenes / Images / Videos / Upload media) and its settings
+            # radios are grid/batch and size — measured, not assumed
+            # (scripts/dev/spike_migrated_image_capability.py). Image generation
+            # does exist on that host, but only inside the character editor.
+            #
+            # When the composer gains an image mode, the fix is to route the mint
+            # to a project page — NOT to keep refusing the origin.
             raise_if_migrated(page, at="mint_recaptcha_token")
             # Patchright evaluates in an isolated world by default, where the
             # page's main-world ``grecaptcha`` global is undefined; the resolver
