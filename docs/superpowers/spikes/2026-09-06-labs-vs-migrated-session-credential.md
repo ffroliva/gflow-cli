@@ -3,8 +3,31 @@
 **Date:** 2026-09-06 · **Issue:** #644 (Refs #639, #642) · **Cost:** $0, read-only, no credits
 **Profile:** `denon82` (migrated account) · **Verdict:** NO — and #644 stays LATENT
 
-This spike answers the question a future #644 fix must not re-derive, and records the
-one arm of the experiment the 2026-09-03 measurement could not reach.
+This spike answers the question a future #644 fix must not re-derive.
+
+> ### ⚠️ Read this first — a retraction, and the trap that caused it
+>
+> The **first pass of this spike measured the wrong directory.** It read
+> `%LOCALAPPDATA%\gflow-cli\profile_denon82`. The real home is
+> `%LOCALAPPDATA%\`**`ffroliva`**`\gflow-cli\` — `paths.default_home()` is
+> `user_data_dir(APP_NAME, APP_AUTHOR)` with `APP_AUTHOR = "ffroliva"`, and on
+> Windows that author segment is part of the path.
+>
+> The author-less path also exists, holds a single stale `profile_denon82`, and has
+> none of the real home's scaffolding (`auth/`, `locks/`, `incidents/`, nine other
+> profiles). Reading it returned a plausible, entirely misleading "expired session".
+>
+> **What was retracted:** the original Q2 finding — *"both hosts agree on signed-out,
+> therefore evidence against independent session lifetimes"* — was measured on an
+> abandoned profile and proves nothing. It is struck below.
+>
+> **Rule for the next run:** never hardcode a profile path. Resolve it:
+> ```python
+> from gflow_cli.paths import default_home, profile_subdir
+> PROFILE = profile_subdir(default_home(), "denon82")
+> ```
+> A stale profile fails *quietly* — it decrypts, yields cookies, and answers every
+> probe. Nothing in the output says "wrong account".
 
 ---
 
@@ -27,45 +50,66 @@ The token is scoped to domain `labs.google`; `flow.google.com` is under `google.
 a different registrable domain. Domain-matching never attaches it. **The two hosts
 receive disjoint credential sets** — this is the correct half of #644's premise.
 
-### 1b. It would not be honoured if forced (mechanism, NOT measured)
+### 1b. It is not honoured when forced — **MEASURED**
 
-It is an Auth.js/NextAuth session handle minted by and validated against the
-`labs.google` BFF's own signing secret. `flow.google.com` is a Google-internal
-Angular frontend authenticating on the standard Google SSO cookie set — different
-issuer, different validator.
+Re-run against the correct profile with a **live, verified session**
+(`denon82@gmail.com`, verified 11:09). Each request sends exactly one credential set
+to `https://flow.google.com/`:
 
-> **Unverified.** Testing acceptance requires forcing the token onto a
-> `flow.google.com` request *while a live session exists*. This profile's session is
-> dead (Q2), so the test would be vacuous — both arms return signed-out regardless.
-> Re-run 1b after a fresh `gflow auth login`.
+| credential sent | bytes | account email in body | GAIA id in body |
+|---|---|---|---|
+| labs `__Secure-next-auth.session-token` only | 146,488 | ❌ | ❌ |
+| Google SSO cookies only | 150,744 | ✅ | ✅ |
+| **no cookies at all (control)** | 146,497 | ❌ | ❌ |
+
+**The labs token is indistinguishable from sending nothing** — 9 bytes off the
+anonymous control, nonce-level noise, and carrying no identity. The SSO set embeds
+the account email and GAIA id directly in the shell.
+
+This upgrades 1b from reasoned to measured: the token confers **zero** authentication
+on `flow.google.com`. Consistent with the mechanism — it is an Auth.js/NextAuth handle
+minted by and validated against the `labs.google` BFF's own signing secret, while
+`flow.google.com` authenticates on Google's standard SSO cookie set.
 
 ---
 
 ## Q2. Did the divergence #644 predicts appear?
 
-**No.** The discriminating experiment requires **Google SSO alive + labs Flow session
-dead**. What was measured is **everything dead** — a plain expiry, not a divergence.
+**No — and no evidence either way.** ~~Both hosts agree on signed-out, which is evidence
+against independent session lifetimes.~~ **RETRACTED** — that was the stray-directory
+read (see the warning at the top). An abandoned profile being logged out says nothing
+about the account.
 
-```
-labs.google/fx/api/auth/session   -> 200, 2 bytes ({}), has_user=False
-flow.google.com/                  -> redirects to /about (marketing), avatar=0, signin_cta=1
-labs.google/fx/tools/flow         -> rendered, avatar=0, no editor
-myaccount.google.com/             -> redirects to www.google.com/account/about (signed out)
-```
+The divergence needs **Google SSO alive + labs Flow session dead**. A fresh login
+cannot produce it — login makes *both* alive — so this remains **unobserved**, exactly
+as the 2026-09-03 triage concluded. No new evidence for or against.
 
-Remaining `labs.google` cookies: `__Host-next-auth.csrf-token`,
-`__Secure-next-auth.callback-url`, `email`. The session token itself is **gone** —
-Chrome dropped it on expiry.
+### What the live run did establish: the instrument works
 
-**New information vs 2026-09-03.** That measurement could only observe the
-`has_user=true` arm. This one reaches the `has_user=false` arm and finds the two hosts
-**agree**: when the Google SSO session dies, the migrated host reports signed-out too.
-That is evidence *against* the two hosts having independent session lifetimes — the
-mechanism #644's false-negative scenario depends on.
+The pass condition recorded below was, until this run, an **unvalidated guess**. It is
+now calibrated against both arms on the same profile:
 
-**Still unobserved, still the only thing that makes #644 actionable:** an account where
-`labs.google/fx/api/auth/session` returns `{}`/no-user **while** `flow.google.com`
-renders authenticated (avatar present, editor rendered).
+| profile state | `flow.google.com/` lands on | `avatar` | `signin_cta` | `aria_buttons` |
+|---|---|---|---|---|
+| logged out (stray dir) | `/about` (marketing) | 0 | 1 | 90 |
+| **live session** | `/` (app) | **1** | **0** | 47 |
+
+The DOM signal cleanly separates authenticated from anonymous. A future
+"no divergence" result from this probe can now be trusted to mean *no divergence*,
+rather than *broken instrument*.
+
+### New finding: the frontend has migrated, the auth BFF has not
+
+Navigating to `https://labs.google/fx/tools/flow` **redirected to
+`https://flow.google.com/`**, while `labs.google/fx/api/auth/session` still answered
+`200 / 653 B / has_user=True` for the same profile at the same moment.
+
+So for this account Google has already moved the **frontend** off `labs.google` while
+leaving the **auth BFF** on it. gflow's only auth oracle now lives on the host the user
+is actively being redirected away from. That is not the #644 divergence, but it is the
+precise coupling that makes **Q4** load-bearing — and it means Q4's trigger is no longer
+purely hypothetical: the migration is visibly in progress, with the auth BFF the last
+piece still on the old host.
 
 ---
 
@@ -135,13 +179,18 @@ is unreachable:
 
 ### Not built here, deliberately
 
-The trigger is **unobserved** — Q2 found the two hosts share a session lifetime, so the
-"SSO alive + labs dead" state may not even be reachable while labs is healthy. Building
-a host-aware fallback now would guard a failure nobody can demonstrate, which is the
-same trap #644's own triage refused.
+The precise failure — a live SSO session that the labs BFF refuses — is still
+**unobserved**, and building a host-aware fallback for it would guard something nobody
+can demonstrate. That is the trap #644's own triage refused, and it still applies.
 
-But the asymmetry is worth the owner's attention: the check is nearly free (the signal
-is already in hand), the failure is unrecoverable by the user, and it **cannot be
+**But the trigger is no longer hypothetical.** Q2's live run found the frontend already
+migrated for this account (`labs.google/fx/tools/flow` → `flow.google.com`) while the
+auth BFF stayed behind. The single oracle gating every profile now sits on the host
+Google is actively moving users off. The remaining step to the Q4 failure is that one
+endpoint following the frontend it belongs to.
+
+The asymmetry is what deserves the owner's attention: the check is nearly free (the
+signal is already in hand), the failure is unrecoverable by the user, and it **cannot be
 shipped after the deprecation** — by then every affected user is already stuck on a
 version that loops.
 
@@ -157,16 +206,17 @@ labs.google BFF"* before any implementation. Two candidate slices, smallest firs
 
 ## Re-running this probe
 
-Needs a profile under `GFLOW_CLI_HOME` and nothing else. Adjust `PROFILE`.
+Needs a profile under `GFLOW_CLI_HOME` and nothing else. **Resolve the path — never
+hardcode it** (see the retraction at the top).
 
 ```python
 import asyncio, json
-from pathlib import Path
 import browser_cookie3, httpx
 from gflow_cli.auth.cookies import get_chrome_cookie_snapshot
-from gflow_cli.paths import get_cookies_path
+from gflow_cli.paths import default_home, profile_subdir
 
-PROFILE = Path.home() / "AppData/Local/gflow-cli/profile_<name>"
+PROFILE = profile_subdir(default_home(), "<name>")
+assert (PROFILE / "Local State").exists(), f"no such profile: {PROFILE}"
 
 async def main():
     snap = await get_chrome_cookie_snapshot(PROFILE)
