@@ -375,8 +375,8 @@ class TestGenerateVideoWired:
         assert result["error"]["status"] == 400
 
     @pytest.mark.asyncio
-    async def test_video_r2v_without_reference_images_is_rejected(self) -> None:
-        """r2v without reference_images must fail fast at the tool boundary."""
+    async def test_video_r2v_without_any_reference_is_rejected(self) -> None:
+        """r2v with neither images nor entities must fail fast at the tool boundary."""
         from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
 
         with (
@@ -389,8 +389,38 @@ class TestGenerateVideoWired:
             result = await gflow_generate_video(prompt="blend these refs", mode="r2v")
 
         assert result["status"] == "error"
-        assert result["error"]["title"] == "Missing Reference Images"
+        assert result["error"]["title"] == "Missing References"
         assert result["error"]["status"] == 400
+
+    @pytest.mark.asyncio
+    async def test_video_r2v_accepts_a_character_entity_as_its_reference(self) -> None:
+        """A saved CHARACTER entity satisfies r2v on its own (#689).
+
+        GenerateVideoRequest accepts "reference_images, ref_names, OR
+        reference_entities"; the tool guard used to demand images, so an agent holding
+        only an entity id could not reach r2v at all.
+        """
+        from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_video
+
+        with (
+            patch("gflow_cli.mcp.tools._rate_limiter", _TokenBucket(capacity=8, refill_rate=0.0)),
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch("gflow_cli.mcp.tools._run_generation_task") as run,
+        ):
+            run.return_value = {"status": "queued"}
+            result = await gflow_generate_video(
+                prompt="the same man, three angles",
+                mode="r2v",
+                reference_entities=["11111111-2222-3333-4444-555555555555"],
+                wait=False,
+            )
+
+        assert result["status"] != "error", result
+        payload = run.call_args.kwargs["payload"]
+        assert payload["reference_entities"] == ["11111111-2222-3333-4444-555555555555"]
 
     @pytest.mark.asyncio
     async def test_video_failed_task_returns_error(

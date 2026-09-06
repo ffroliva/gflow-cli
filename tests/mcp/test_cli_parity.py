@@ -42,6 +42,8 @@ from gflow_cli.mcp import tools as mcp_tools
 # CLI leaf → MCP tool that covers it. One tool may cover several leaves when a
 # parameter selects the behaviour (e.g. gflow_generate_video's ``mode``).
 CLI_TO_MCP: dict[str, str] = {
+    "character list": "gflow_character_list",
+    "character show": "gflow_character_show",
     "credits user": "gflow_get_credits",
     "credits list": "gflow_get_credits",
     "image t2i": "gflow_generate_image",
@@ -100,9 +102,7 @@ _MCP_EXEMPT: dict[str, str] = {
     "models": "informational; models are enumerated in the generate tools' descriptions",
     "run": "chain-manifest runner — not yet ported",
     "character create": "character mutations — not yet ported",
-    "character list": "not yet ported — the old MCP stub returned a misleading empty list (#499)",
     "character rm": "character mutations — not yet ported",
-    "character show": "character mutations — not yet ported",
     "character voices": "character mutations — not yet ported",
     "data errors export": "local catalog maintenance — deliberately CLI-only (#345)",
     "data errors prune": "destructive local retention — deliberately CLI-only (#345)",
@@ -218,15 +218,6 @@ _OPTION_EXEMPT: dict[str, str] = {
     "instructions apply:file": "reads a local file; the tool takes the text directly",
     "tools show:name": "coarse mapping — one MCP tool lists and shows; the name is its filter",
     "video i2v:end_image_deprecated": "deprecated alias retained for CLI compatibility only",
-    # --- GAPS (#689): tracked, not accepted -----------------------------------
-    "image t2i:reference_entities": "GAP #689 — identity axis unmirrored on MCP",
-    "image t2i:reference_entity_names": "GAP #689 — identity axis unmirrored on MCP",
-    "image i2i:reference_entities": "GAP #689 — identity axis unmirrored on MCP",
-    "image i2i:reference_entity_names": "GAP #689 — identity axis unmirrored on MCP",
-    "video t2v:reference_entities": "GAP #689 — identity axis unmirrored on MCP",
-    "video t2v:reference_entity_names": "GAP #689 — identity axis unmirrored on MCP",
-    "video r2v:reference_entities": "GAP #689 — identity axis unmirrored on MCP",
-    "video r2v:reference_entity_names": "GAP #689 — identity axis unmirrored on MCP",
 }
 
 
