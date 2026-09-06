@@ -124,3 +124,35 @@ async def test_character_show_requires_exactly_one_selector() -> None:
         result = await mcp_tools.gflow_character_show(project=_PROJECT, **kwargs)
         assert result["status"] == "error", kwargs
         assert result["error"]["status"] == 400
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_voices_lists_the_preset_voices() -> None:
+    """`voices` reads a static in-process tuple: no network, no browser, no cost.
+
+    It was exempt from MCP as a "character mutation", which it is not — and it is the
+    lookup an agent needs to choose a voice, so the omission compounded.
+    """
+    from gflow_cli.api.character import VOICES
+
+    result: dict[str, Any] = await mcp_tools.gflow_character_voices()
+
+    assert result["status"] == "ok"
+    assert result["count"] == len(VOICES)
+    names = [v["name"] for v in result["voices"]]
+    assert names == [v.name for v in VOICES]
+    assert all("description" in v for v in result["voices"])
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_voices_needs_no_browser_or_profile() -> None:
+    """A static lookup must not open a session — patching the client to explode proves it."""
+
+    def explode(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("gflow_character_voices must not construct a FlowApiClient")
+
+    with patch.object(mcp_tools, "FlowApiClient", explode):
+        result = await mcp_tools.gflow_character_voices()
+
+    assert result["status"] == "ok"
+    assert result["count"] > 0

@@ -43,6 +43,7 @@ from gflow_cli.mcp import tools as mcp_tools
 # parameter selects the behaviour (e.g. gflow_generate_video's ``mode``).
 CLI_TO_MCP: dict[str, str] = {
     "character list": "gflow_character_list",
+    "character voices": "gflow_character_voices",
     "character show": "gflow_character_show",
     "credits user": "gflow_get_credits",
     "credits list": "gflow_get_credits",
@@ -101,9 +102,20 @@ _MCP_EXEMPT: dict[str, str] = {
     ),
     "models": "informational; models are enumerated in the generate tools' descriptions",
     "run": "chain-manifest runner — not yet ported",
-    "character create": "character mutations — not yet ported",
-    "character rm": "character mutations — not yet ported",
-    "character voices": "character mutations — not yet ported",
+    "character create": (
+        "GAP #691 — unported, not principled. 'Mutation' was never a reason: "
+        "gflow_generate_image spends the same per-model image quota over MCP. "
+        "The port is an adapter over services/character_create.py; what needs "
+        "deciding is worker-enqueue vs inline (#481) and whether it should honour "
+        "GFLOW_MCP_NO_SPEND"
+    ),
+    "character rm": (
+        "irreversible deletion of a user-owned Flow entity — deliberately CLI-only, "
+        "same rule as `data prune`/`data errors prune`. The CLI gates it behind a "
+        "confirmation prompt that has no MCP equivalent, so an agent cannot take "
+        "informed consent on the user's behalf (the #481 shape). Note it is FREE, "
+        "so cost is NOT the reason — irreversibility is"
+    ),
     "data errors export": "local catalog maintenance — deliberately CLI-only (#345)",
     "data errors prune": "destructive local retention — deliberately CLI-only (#345)",
     "data list errors": "local catalog maintenance — not yet ported",

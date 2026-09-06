@@ -1315,6 +1315,36 @@ async def gflow_character_list(
 
 
 @server.tool(
+    name="gflow_character_voices",
+    description=(
+        "List the preset voices available for a Flow Character's TTS. Static lookup — "
+        "no network, no browser, no cost. Call it before creating a character to choose "
+        "a valid voice name."
+    ),
+)
+@_guarded
+async def gflow_character_voices() -> dict[str, Any]:
+    """List preset Character TTS voices.
+
+    Reads the in-process ``VOICES`` table, so unlike the other character tools it
+    opens no Flow session and needs no profile.
+
+    Returns:
+        ``{"status": "ok", "voices": [{"name", "description", "sample_url"}], "count": N}``
+    """
+    from gflow_cli.api.character import VOICES
+
+    return {
+        "status": "ok",
+        "voices": [
+            {"name": v.name, "description": v.description, "sample_url": v.sample_url}
+            for v in VOICES
+        ],
+        "count": len(VOICES),
+    }
+
+
+@server.tool(
     name="gflow_character_show",
     description=(
         "Show one saved Flow CHARACTER entity by id or by exact display name. "
