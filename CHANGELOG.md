@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.69.0] — 2026-09-06
+
 ### Added
 
 - **Read-only Flow balance inspection:** `gflow credits user`, `gflow credits list`, and the
@@ -60,42 +62,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not to offer the tier to accounts it is not throttling.
   Capture: `docs/superpowers/spikes/2026-09-05-migrated-model-menu-lower-priority.md`.
 
-- **`gflow update` — self-update in place.** Runs the package manager that
-  installed gflow-cli, read off the install itself rather than guessed from
-  `PATH`: `uv-receipt.toml` in the venv root → `uv tool upgrade gflow-cli`,
-  `pipx_metadata.json` → `pipx upgrade gflow-cli`, otherwise that venv's own
-  `python -m pip install --upgrade gflow-cli`. Asks PyPI first and runs nothing
-  when already current; if PyPI is unreachable the manager still runs. After an
-  upgrade it re-reads the venv's Playwright version and prints the
-  `playwright install chromium` hint only when it moved. `--check` reports
-  installed vs latest plus the command that would run; `--json` returns the
-  same as a document. The outcome is verified against the venv, not the
-  manager's exit code: on Windows the running `gflow.exe` launcher holds its
-  own file open, so `uv tool upgrade` installs the new wheel and then exits 1
-  copying the launcher — measured — and that is reported as an upgrade with a
-  note, because the launcher only points at the venv's python and keeps
-  working. Editable / local / VCS / source installs, a manager binary missing
-  from `PATH`, a `uv venv` with no `pip` module, and a manager run that leaves
-  the version unchanged all surface as `ConfigurationError` (exit 11) — except
-  the one honest no-op: PyPI unreachable, manager exit 0, nothing changed, which
-  is exit 0. Deliberately no MCP twin (a server must not replace its own code under a live
-  session) — recorded as a reasoned exemption in the parity test.
-
 ### Changed
 
-- **The once-a-day update notice (#479) is now a banner.** On a terminal it is
-  a bordered panel on stderr naming the new version, `gflow update`, and the
-  release-notes link; when stderr is piped it stays one plain yellow line so
-  logs and `2>&1 | jq` pipelines see one line per event. Same cache, same
-  gates (`GFLOW_CLI_UPDATE_CHECK=0`, CI, non-index installs). The notice text
-  points at `gflow update` instead of listing three manager commands.
-- **CONTRIBUTING.md now routes contributors — and their coding agents — through the
-  same lifecycle AGENTS.md defines.** A phase → skill → artifact table (issue
-  assessment, predict, scenario/plan, check with the step 1b mirror sweep,
-  live-verify, council review, sonar, known-issues) says what a PR is expected to
-  have gone through and what it leaves behind for the reviewer; the PR template
-  gains a matching *Lifecycle* checklist; the quality-gate list is now identical to
-  AGENTS.md's (it had drifted to six of nine commands).
+- **`video-production` skill, epoch 1: the reference cap now routes instead of only
+  forbidding.** A scored rollout picked `veo-quality` for a two-reference shot while
+  correctly reciting that its reference cap is 0 — the skill stated the prohibition in two
+  places and named the substitute in none, and the remedy lived only in the reference files
+  an agent may never load. Step 4 now carries the rule: the reference count picks the model
+  before quality does, `omni-flash` for a single generation needing references and quality
+  together, a `veo-lite` variant when 3 refs is enough — and `video chain` is called out as
+  the exception, since it refuses `omni-flash` outright. Validated by a controlled A/B on
+  one model with the document as the only variable: 0.00 → 0.90.
+
+- **The SkillOpt harness uses the project's own `GFLOW_CLI_LLM_*` settings.** It carried a
+  second, parallel provider configuration — its own `--provider anthropic|openai` switch,
+  its own key env vars and its own `--base-url` — while `Settings.llm_base_url` /
+  `llm_api_key` / `llm_model` already drove the prompt tools. Any OpenAI-compatible endpoint
+  works through the one setting (OpenAI, OpenRouter, LiteLLM, freellmapi, a local gateway,
+  Google's compat endpoint); both LLM SDK dependencies are gone, and the harness now
+  inherits the URL validation its own flag used to bypass. It requires `uv run`. A scoring
+  bug is fixed with it: float accumulation made `1.0 - 0.3 + 0.1` fall short of the `>= 0.8`
+  PASS threshold, so a task at exactly the threshold graded PARTIAL while printing "0.80".
 
 ### Fixed
 
@@ -113,6 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exit 36); the new
   `tests/e2e/test_migrated_host_e2e.py::test_e2e_image_on_a_moved_account_exits_36_not_recaptcha`
   (`e2e_auth`, $0) is the regression.
+
 - **The migrated model picker could bind a tier the user did not ask for.** The port
   matched menu entries by case-insensitive *substring* and took `.first`, so on an
   account whose menu carries a lower-priority sibling, `--model veo-lite` also matched
@@ -150,7 +138,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "bound the tier you asked for" from "never touched the picker" — answering that for the
   2026-09-05 run took a separate probe. It now logs `migrated.model_already_selected`
   with the observed button text.
-
 
 ## [0.68.0] — 2026-09-05
 
@@ -4079,7 +4066,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...HEAD
+[0.69.0]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...v0.68.0
 [0.67.0]: https://github.com/ffroliva/gflow-cli/compare/v0.66.3...v0.67.0
 [0.66.3]: https://github.com/ffroliva/gflow-cli/compare/v0.66.2...v0.66.3

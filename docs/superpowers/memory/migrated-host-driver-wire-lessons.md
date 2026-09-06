@@ -1,6 +1,6 @@
 ---
 name: migrated-host-driver-wire-lessons
-description: "What the first flow.google.com (migrated) driver build got wrong and how each was pinned — poster vs mp4 URL slots, status-3-before-URL, labs redirect route 404s for migrated media ids, CSS :text-matches escaping, direct load works for unflagged accounts"
+description: "What the flow.google.com (migrated) driver builds got wrong and how each was pinned — poster vs mp4 URL slots, status-3-before-URL, labs redirect route 404s for migrated media ids, CSS :text-matches escaping, direct load works for unflagged accounts; plus the i2v slice-1 frame-attach lessons (late picker index, no media id in DOM, empty Frames submit goes out as t2v)"
 metadata: 
   type: project
 ---
@@ -77,3 +77,33 @@ the current list of sites. Reviewing anything that adds a pre-transport step: as
 Related: [[flow-recon-must-run-on-denon82-ffroliva-migrated]],
 [[flow-google-com-batchexecute-headless-proven]], [[predict-2026-09-04-migrated-host-driver]],
 [[credit-free-route-abort-verification]].
+
+## Frame attach — i2v slice 1 (v0.69.0, #639)
+
+Folded out of `docs/superpowers/plans/2026-09-05-migrated-i2v/` when that plan shipped.
+Evidence: `docs/LIVE_VERIFICATION_v0.69.0.md`; recon
+`docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md`.
+
+- **The Start-frame picker exposes no media id in its DOM.** Uploads are listed by *file
+  name*, so binding is a name search — not an id lookup. Plan for name collisions rather
+  than assuming identity.
+- **The picker's search is server-side (`UpteDb`) and indexes a fresh upload late.** On a
+  32-asset project both e2e tests missed an upload within 8 s and the identical test passed
+  minutes later. The composer reopens the popover and searches up to
+  `FRAME_SEARCH_ATTEMPTS = 3` times. **A "not found" against a just-uploaded asset is a
+  timing claim, not an absence claim** — the same shape as
+  [[reference-menu-panel-shared-trigger]].
+- **An empty Frames submit silently goes out as text-to-video** (the labs #125 shape) and
+  bills a clip that is not what was asked for. Refuse an unbound chip *before* the click —
+  exit 23, zero credits. Never let this one degrade into a warning.
+- **Inspect the submit request as it leaves.** i2v is rpc `eb1hJf`, t2v is `YhhmEf`; the
+  upload is `maseQ`. A body missing the uploaded media id, or carrying a `_t2v_` model key,
+  fails the run — after the fact, since the request is already on the wire, but it names
+  what Flow was actually asked to make instead of leaving a wrong clip unexplained.
+- **A request built without a model does not merely default — it inherits the editor's
+  remembered tier.** Runs built directly left `request.model` as `None`, so the composer
+  used whatever the editor last had; a queued MCP request (whose payload also carries no
+  model) could have inherited a 100-credit tier. Bind the documented default explicitly, and
+  log the *effective* model, not the requested one. Found by review, not by a run.
+- **An outer stage timeout smaller than the sum of the waits it wraps converts a
+  stage-named failure into a generic timeout.** Bound each leg on its own instead.

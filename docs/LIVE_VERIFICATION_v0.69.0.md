@@ -1,11 +1,16 @@
-# Live verification — v0.69.0 (pre-release evidence, 2026-09-05)
+# Live verification — v0.69.0 (pre-release evidence, 2026-09-05 / 2026-09-06)
 
-**Feature:** image-to-video from a **local start frame** on Flow's migrated
+> This ledger began as the record for #639 slice 1 and became the release ledger when
+> three more user-facing changes merged into v0.69.0. The i2v record below is unchanged;
+> the other features are in **§ Also shipped in v0.69.0** at the end, which states for
+> each one whether this session ran it or is citing someone else's run.
+
+**Headline feature:** image-to-video from a **local start frame** on Flow's migrated
 `flow.google.com` host ([#639](https://github.com/ffroliva/gflow-cli/issues/639), slice 1) —
 `gflow video i2v --initial-frame <file> --project <id>` served by the migrated composer
 (`src/gflow_cli/api/transports/migrated_composer.py`). Recon:
-`docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md`; plan and scenarios:
-`docs/superpowers/plans/2026-09-05-migrated-i2v/`.
+`docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md`. The plan and scenarios were
+consolidated into `docs/superpowers/memory/migrated-host-driver-wire-lessons.md` at release.
 
 Two moved accounts, two locales. The decisive run is the **CLI entrypoint** on the
 Portuguese-locale account (`[[live-verify-must-name-the-entrypoint]]`); the e2e tests in
@@ -103,3 +108,61 @@ found by `input[type=text]` inside the picker, never by its translated `aria-lab
   acknowledged it); the code path is offline-tested only.
 - End frame, UUID and `@Name` frames stay unported and exit 36 with the form named
   (offline-tested; not driven live).
+
+---
+
+## Also shipped in v0.69.0
+
+### Flow credit balance — `gflow credits user` / `list`, `gflow_get_credits` ([#671](https://github.com/ffroliva/gflow-cli/pull/671))
+
+**Run by this session, 2026-09-06, on the maintainer machine.** $0 — the endpoint is a
+read-only GET. This is the feature's whole premise (a browser-free HTTP path), and the
+first maintainer review found it launching Chrome on every profile, so it was re-tested
+rather than accepted.
+
+| # | Profile | Entrypoint | Exit | Output |
+|---|---|---|---|---|
+| 5 | `ffroliva` (flagged, en-GB) | **`gflow credits user --json`** — the user command | **0** | `credits.http_fast_path_succeeded status_code=200`, keys `credits, serviceTier, sku, subscriptionCredits, userPaygateTier`, `unknown_key_count=0`; **875** credits, `G1_TIER1`, **no browser launched** |
+| 6 | all 9 saved profiles | **`gflow credits list`** — human-readable table | **0** | 3 profiles read over HTTP (875 / 641 / 50), 6 stale ones degraded per-row with their reason; `Total credits: 1566` — partial-result aggregation holds |
+| 7 | `ffroliva` | `tests/e2e/test_credits_e2e.py` (`e2e_auth`, $0) | **PASS** in 1.48 s | patches the Playwright cookie fallback to fail immediately, so passing *is* the browser-free proof rather than an assertion about one |
+
+Five-layer read: (1) one JSON object per profile; (2) n/a — no media; (3) shape asserted by
+`CreditsInfo.from_response`, which fails closed rather than coercing a bad value to zero;
+(4) `credits.http_fast_path_succeeded` with the status code and the redacted key set — no
+credential and no value logged; (5) user-confirmable — 875 matches the balance the Flow UI
+shows for that account.
+
+### `--model veo-lite-lp` on the migrated host ([#669](https://github.com/ffroliva/gflow-cli/pull/669))
+
+**Not run by this session — citing the contributor's run** recorded in the CHANGELOG entry:
+all five tiers driven through `_select_model` with the picker read back after each switch,
+including the lower-priority tier reached through the menu, plus one real 8 s generation on
+it. The menu entry `Veo 3.1 - Lite [Lower Priority]` was captured on a migrated account
+(`docs/superpowers/spikes/2026-09-05-migrated-model-menu-lower-priority.md`). Matching stays
+on the `[Lower Priority]` tag rather than the newly-known label.
+
+### Moved accounts exit 36 rather than `RecaptchaError` ([#673](https://github.com/ffroliva/gflow-cli/issues/673) / [#678](https://github.com/ffroliva/gflow-cli/pull/678))
+
+**Not run by this session — citing the fixing session's run:** the `e2e_auth` regression
+`test_e2e_image_on_a_moved_account_exits_36_not_recaptcha` passed live four times across four
+heads, $0 each. The labs client minted the reCAPTCHA token on the pool's bootstrap page
+*before* the UI transport, so no transport-level `raise_if_migrated` could fire; on a moved
+account that page is the flow.google.com grid with no `enterprise.js`, so image/upscale/extend
+died as exit 1 `RecaptchaError`. One guard in `_mint_recaptcha_token` makes it exit 36.
+
+### Not a Flow surface — no live verification applicable
+
+The `video-production` skill epoch-1 edit and the SkillOpt harness change touch no
+generation path. The skill edit was validated instead by the mechanism that found the defect:
+a controlled A/B rollout, one model, the document as the only variable, 0.00 → 0.90. The
+harness change is covered by `tests/scripts/test_skillopt_scoring.py`.
+
+### Still not verified for this release (recorded, not omitted)
+
+- **5 of the 19 `video-production` benchmark tasks are unscored** — `qa-002`, `batch-001`,
+  `manifest-001`, `shot-001`, `shot-002`. Blocked on the Google free tier's
+  `GenerateRequestsPerDayPerProjectPerModel-FreeTier` quota of **20 requests per day per
+  model**, not on anything in the code. The skill ships at epoch 1 with 12/14 PASS
+  (avg 0.943) on the tasks that did run.
+- The MCP twin of the credits path (`gflow_get_credits`) was exercised offline only; the CLI
+  and MCP surfaces share `services/credits.py`, so the untested delta is the MCP adapter.
