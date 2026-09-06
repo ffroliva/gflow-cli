@@ -198,9 +198,13 @@ async def test_e2e_r2v_binds_local_references_on_the_migrated_host(
     The layer that matters is the last one. Chips in the DOM and ids in the log only
     prove Flow ACCEPTED the references; ``_r2v_body_problem`` asserting the submit body
     carries every uploaded id is what proves the run is the one the caller asked for —
-    the failure mode being a full-price clip with none of them on it. That assertion is
-    armed inside ``submit_and_observe``, so a run that reached ``migrated.result``
-    without it firing is the evidence.
+    the failure mode being a full-price clip with none of them on it.
+
+    Reaching ``migrated.result`` is NOT evidence that assertion fired. The run this test
+    recorded predates the fix that armed the listener on the r2v path, and passed with the
+    check unreachable; what it proves is the references bound, not that a lost one would
+    have been caught. The assertion's own round trip is covered offline, at zero credits,
+    by ``test_submit_arms_the_body_assertion_on_the_r2v_path``.
     """
     refs = tuple(_write_reference(tmp_path / name) for name in ("ref_one.png", "ref_two.png"))
     project = _project_id()

@@ -1528,6 +1528,86 @@ async def test_submit_body_assertion_is_off_for_t2v() -> None:
     assert rec.is_done and page.listeners("request") == []
 
 
+REF_A = "77777777-7777-4777-8777-777777777777"
+REF_B = "88888888-8888-4888-8888-888888888888"
+
+
+def _r2v_body(*ids: str, key: str = "veo_3_1_r2v_lite_low_priority") -> str:
+    packed = ",".join(f'\\"{i}\\"' for i in ids)
+    return f'f.req=[[["MZZa6b","[\\"{key}\\",{packed},\\"{PROJ}\\"]",null,"generic"]]]'
+
+
+def _r2v_replies() -> list[tuple[str, str]]:
+    return [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+
+
+async def test_submit_arms_the_body_assertion_on_the_r2v_path() -> None:
+    """The round trip, not the unit: drive the real `submit_and_observe` with a body that
+    dropped a reference and assert `_r2v_body_problem` actually fired. Calling that helper
+    directly proves it is correct; only this proves it RUNS. It did not — the listener was
+    registered under `expect_media_id is not None`, which is never true for r2v, so the
+    check was unreachable in a live run while every unit test stayed green."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a woman holding the product"
+    page.scripted_request = ("MZZa6b", _r2v_body(REF_A))  # REF_B never made it
+    page.scripted_responses = _r2v_replies()  # the app answers anyway; the error must win
+    with pytest.raises(WireFormatError, match=REF_B) as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_reference_ids=(REF_A, REF_B),
+        )
+    assert "missing 1 of 2" in str(ei.value)
+    assert "MZZa6b" in ei.value.route and EXIT_CODE_MAP[WireFormatError] == 7
+
+
+async def test_submit_on_the_r2v_path_names_a_t2v_key_as_the_lost_references() -> None:
+    """The expensive shape: the picker closed having inserted nothing, so the app submits
+    as plain text-to-video and Flow bills a clip with none of the references on it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a woman holding the product"
+    page.scripted_request = ("MZZa6b", _r2v_body(REF_A, REF_B, key="veo_3_1_lite_low_priority"))
+    page.scripted_responses = _r2v_replies()
+    with pytest.raises(WireFormatError, match="no reference was bound") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_reference_ids=(REF_A, REF_B),
+        )
+    # MODEL_KEY has to match an r2v-shaped key too, or the diagnostic reports "no model
+    # key" for the one mode it was added to serve.
+    assert "veo_3_1_lite_low_priority" in str(ei.value)
+
+
+async def test_submit_r2v_with_every_reference_in_the_body_proceeds() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a woman holding the product"
+    page.scripted_request = ("MZZa6b", _r2v_body(REF_A, REF_B))
+    page.scripted_responses = _r2v_replies()
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=None,
+        project_id=PROJ,
+        expect_reference_ids=(REF_A, REF_B),
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+    assert page.listeners("request") == [] and page.listeners("response") == []
+
+
 async def test_ensure_editor_dismisses_a_dialog_before_waiting_for_the_trigger() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 

@@ -95,8 +95,13 @@ DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
 SUBMIT_RPCS = ("YhhmEf", "eb1hJf", "MZZa6b")
 STATUS_RPCS = ("jwpduf", "as29s")
 UPLOAD_RPC = "maseQ"
-#: The model key Flow puts in the submit body, e.g. ``veo_3_1_i2v_lite``.
-MODEL_KEY = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*_(?:t2v|i2v)_[a-z0-9_]+")
+#: The model key Flow puts in the submit body. Two observed shapes: mode-infixed
+#: (``abra_t2v_8s``, ``veo_3_1_i2v_lite``, ``veo_3_1_r2v_lite_low_priority``) and
+#: mode-less (``veo_3_1_lite_lower_priority`` — what a plain t2v run sends). The second
+#: alternative is not decoration: the case the r2v diagnostic exists to name is *a t2v
+#: key on an r2v submit*, and that key carries no infix to match on. A mode-only
+#: alternation reported "no model key" for exactly that body.
+MODEL_KEY = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*_(?:t2v|i2v|r2v)_[a-z0-9_]+|veo_[a-z0-9_]+")
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 
 # --- i2v: the toolbar upload path and the Frames picker ---------------------------
@@ -214,8 +219,8 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
         if not request.reference_images:
             return "references given by name rather than a local file"
         return None
-    if request.mode is not Mode.I2V:
-        return "this mode"
+    if request.mode is not Mode.I2V:  # pragma: no cover - a fourth Mode would land here
+        return f"the {request.mode.value} mode"
     if request.end_image or request.end_image_ref_id or request.end_image_ref_name:
         return "an end frame"
     if request.start_image_ref_id:
@@ -799,37 +804,74 @@ class MigratedComposer:
     async def read_chips(self, page: Page) -> list[dict[str, str]]:
         """Every mention now in the prompt, with the kind that decides its wire slot."""
         return await page.evaluate(
-            """() => [...document.querySelectorAll('.mention-chip')].map(c => ({
-                text: (c.textContent || '').trim(),
-                entity_id: c.getAttribute('data-entity-id') || '',
-                reference_type: c.getAttribute('data-reference-type') || '',
-            }))"""
+            "(sel) => [...document.querySelectorAll(sel)].map(c => ({"
+            "  text: (c.textContent || '').trim(),"
+            "  entity_id: c.getAttribute('data-entity-id') || '',"
+            "  reference_type: c.getAttribute('data-reference-type') || '',"
+            "}))",
+            MENTION_CHIP,
         )
 
     async def _mention_by_name(self, page: Page, name: str, *, expect_chips: int) -> None:
-        """Insert one mention chip for *name*, and verify it landed."""
-        await page.locator(COMPOSER).first.click(timeout=5000)
-        # `keyboard.type`, never `insert_text`: the latter dispatches input events with no
-        # key events, so the mention plugin opens a picker with no query behind it and
-        # every later gesture is a no-op. `send_prompt` keeps insert_text on purpose — a
-        # newline in prompt text must not submit — so the two cannot share a path.
-        await page.keyboard.type("@", delay=120)
-        await page.wait_for_timeout(2200)
-        await page.keyboard.type(name, delay=100)
-        await page.wait_for_timeout(2500)
-        offered = [t.strip() for t in await page.locator(PICKER_OPTION).all_text_contents()]
-        await page.keyboard.press("Enter")
-        await page.wait_for_timeout(2500)
+        """Insert one mention chip for *name*, and verify it landed.
+
+        Retries like :meth:`_pick_frame_by_name` does, and for the same measured reason:
+        the mention picker is backed by the same server-side asset search, which does not
+        always index a fresh upload by the first query. A miss leaves the typed ``@name``
+        in the composer as plain text, so each retry backspaces exactly what it typed
+        before querying again — and refuses to continue if that clean-up ate a chip
+        someone already attached.
+        """
+        offered: list[str] = []
         chips = await self.read_chips(page)
-        if len(chips) != expect_chips:
-            raise ReferenceNotFoundError(
-                detail=(
-                    f"migrated host: {name!r} did not attach as a reference "
-                    f"({len(chips)} chip(s), expected {expect_chips}); the picker offered: "
-                    f"{', '.join(offered[:6]) or '<nothing>'}"
-                ),
+        for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
+            before = len(chips)
+            await page.locator(COMPOSER).first.click(timeout=5000)
+            # `keyboard.type`, never `insert_text`: the latter dispatches input events with
+            # no key events, so the mention plugin opens a picker with no query behind it
+            # and every later gesture is a no-op. `send_prompt` keeps insert_text on
+            # purpose — a newline in prompt text must not submit — so they cannot share a
+            # path.
+            await page.keyboard.type("@", delay=120)
+            await page.wait_for_timeout(2200)
+            await page.keyboard.type(name, delay=100)
+            await page.wait_for_timeout(2500)
+            offered = [t.strip() for t in await page.locator(PICKER_OPTION).all_text_contents()]
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(2500)
+            chips = await self.read_chips(page)
+            if len(chips) == expect_chips:
+                await page.keyboard.type(" ", delay=80)
+                return
+            log.info(
+                "migrated.mention_miss",
+                name=name,
+                attempt=attempt,
+                chips=len(chips),
+                offered=len(offered),
             )
-        await page.keyboard.type(" ", delay=80)
+            if attempt == FRAME_SEARCH_ATTEMPTS:
+                break
+            for _ in range(len(name) + 1):  # the '@' and the query it opened
+                await page.keyboard.press("Backspace")
+            chips = await self.read_chips(page)
+            if len(chips) < before:
+                raise ReferenceNotFoundError(
+                    detail=(
+                        f"migrated host: clearing the failed {name!r} query removed an "
+                        f"already-attached reference ({before} chip(s) before, "
+                        f"{len(chips)} after) — the prompt is no longer the one that was "
+                        "built, so this run is abandoned rather than submitted"
+                    ),
+                )
+            await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)
+        raise ReferenceNotFoundError(
+            detail=(
+                f"migrated host: {name!r} did not attach as a reference in "
+                f"{FRAME_SEARCH_ATTEMPTS} attempts ({len(chips)} chip(s), expected "
+                f"{expect_chips}); the picker offered: {', '.join(offered[:6]) or '<nothing>'}"
+            ),
+        )
 
     @staticmethod
     async def _open_frame_picker(page: Page) -> Any:
@@ -958,10 +1000,10 @@ class MigratedComposer:
         ``as29s`` replies until the record is terminal. Fires ``on_started`` as soon
         as the submit reply names the media id — before the poll, as the labs path does.
 
-        ``expect_media_id`` (i2v) inspects the submit *request* the app sends: its body
-        must carry that id and an ``_i2v_`` model key, else the run is a
-        :class:`WireFormatError` — the generation the user asked for is not the one
-        Flow is billing."""
+        ``expect_media_id`` (i2v) and ``expect_reference_ids`` (r2v) inspect the submit
+        *request* the app sends: its body must carry those ids and the matching ``_i2v_``
+        / ``_r2v_`` model key, else the run is a :class:`WireFormatError` — the generation
+        the user asked for is not the one Flow is billing."""
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
         route_error: asyncio.Future[WireFormatError] = loop.create_future()
@@ -973,12 +1015,10 @@ class MigratedComposer:
                 return
             if expect_reference_ids:
                 problem = _r2v_body_problem(_post_data(request), rpcid, expect_reference_ids)
-                if problem is not None and not route_error.done():
-                    route_error.set_exception(WireFormatError(detail=problem, route=rpcid))
+            elif expect_media_id is not None:
+                problem = _i2v_body_problem(_post_data(request), rpcid, expect_media_id)
+            else:
                 return
-            if expect_media_id is None:
-                return
-            problem = _i2v_body_problem(_post_data(request), rpcid, expect_media_id)
             if problem is not None:
                 route_error.set_result(
                     WireFormatError(detail=problem, route=f"batchexecute:{rpcid}")
@@ -1034,7 +1074,10 @@ class MigratedComposer:
                     _settle(rec)
 
         page.on("response", on_response)
-        if expect_media_id is not None:
+        # Both body assertions live in `on_request`, so the listener must be armed for
+        # either. Gating it on `expect_media_id` alone left `_r2v_body_problem` unit-tested
+        # but never reached in a live run — the check the r2v path was built around.
+        if expect_media_id is not None or expect_reference_ids:
             page.on("request", on_request)
         try:
             submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
@@ -1102,7 +1145,7 @@ class MigratedComposer:
             if submitted.done() and not submitted.cancelled():
                 submitted.exception()
             page.remove_listener("response", on_response)
-            if expect_media_id is not None:
+            if expect_media_id is not None or expect_reference_ids:
                 page.remove_listener("request", on_request)
 
     @staticmethod
