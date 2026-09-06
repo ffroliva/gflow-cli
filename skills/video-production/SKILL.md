@@ -1,13 +1,18 @@
 ---
 name: video-production
 version: "2.0"
-skillopt_epoch: 0
+skillopt_epoch: 1
 description: >
   Use when the user wants a finished video out of gflow rather than a single clip — a scripted scene, a talking-head or dialogue piece, an explainer, a product montage, a story sequence, an audition or rehearsal reference, a short film — or asks for consistent actors, a consistent location, a specific prop that must not change, several camera angles, captions or subtitles, or joining clips into one file. Also use when clips came back wrong: a film-strip border, a room that changes between shots, a prop that morphs, rushed or cut-off speech, audio out of sync, a person-policy refusal, or exit 36 / RecaptchaError on a generation.
 optimization_notes: |
-  Known weak spots, each observed in a scored rollout. Targets for epoch 1+:
+  Known weak spots, each observed in a scored rollout. Targets for epoch 2+:
   - `--duration` passed without `--model`: binds veo-lite, which renders no duration control, exit 2
   - `--ref` passed with `--model veo-quality`: that model's reference cap is 0, not 3
+    ADDRESSED in epoch 1 (task model-002, controlled A/B on one model: 0.00 -> 0.90).
+    The doc stated the prohibition in two places and the substitute in none, so a
+    rollout recited "reference cap is 0" and still picked a capped model. Step 4 now
+    carries the routing rule, not just the ban. Lesson: a constraint without its
+    substitution teaches the reader to recognise the trap, not to escape it.
   - Multi-angle sets generated as N independent `t2i` calls, then drift accepted as unavoidable
   - "There is no `gflow project create`" — agents mint a project by burning a placeholder generation
   - `nano-pro` used for bulk image work; it is daily-capped, `nano2` is the batch model
@@ -112,6 +117,7 @@ Full method in **[`consistency.md`](consistency.md)**. The short form:
 - **Locations and props** have no entity type **[CONSTRAINT]** — they are images attached per shot with `--ref`. Look.
 - **One face-bearing reference per generation [CONSTRAINT].** A second entity, or an entity plus a portrait, returns HTTP 400 reported as a wire-format error. Carry other people as role nouns in prose.
 - **Multi-angle locations must be chained, not generated in parallel [CALIBRATED]** — anchor angle by `t2i`, every other angle by `i2i --ref <anchor>`. Independent calls from the same paragraph produce different rooms.
+- **The reference count picks the model, before quality does [CONSTRAINT].** Caps are per model and the entity counts against the same pool: `omni-flash` 7, `veo-lite` / `veo-fast` / `veo-lite-lp` 3, **`veo-quality` 0 — it accepts no references at all**. So a shot carrying any `--ref` or entity cannot use `veo-quality` however much you want its quality; **`omni-flash` is the answer whenever references and quality are both asked for**, and a `veo-lite` variant when 3 is enough. Full table, image models included: [`consistency.md`](consistency.md).
 - Attaching by media UUID buys asset identity, never scene coherence.
 
 ## Step 5 — beat sheet
@@ -179,7 +185,7 @@ Ship a review page beside the cut: the final video, and every clip with its prom
 - A sign, poster, door or garment described as carrying words.
 - A film format in the style block.
 - Two `--reference-entity` flags, or `characters = [A, B]` on one manifest scene.
-- `--duration` with no `--model`; `--ref` with `veo-quality`.
+- `--duration` with no `--model`; `--ref` with `veo-quality` (it takes 0 — reach for `omni-flash`).
 - A beat over 2.5 words per second, or a line shortened "to fit".
 - Angles of one location generated as independent `t2i` calls.
 - "Launch the rest in the background and check later."
