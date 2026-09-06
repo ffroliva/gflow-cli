@@ -2701,7 +2701,12 @@ class FlowApiClient:
             page = await self._checkout_page()
             try:
                 hostname: str = await page.evaluate("() => document.location.hostname")
-                return hostname.endswith(".google") or hostname == "google.com"
+                # #690: ".google" alone covered only the OLD host (labs.google).
+                # A migrated account sits on flow.google.com, which ends in
+                # ".com" and is not "google.com", so a perfectly healthy page
+                # was reported unhealthy. The leading dot is load-bearing —
+                # it is what keeps "evilgoogle.com" out.
+                return hostname == "google.com" or hostname.endswith((".google", ".google.com"))
             finally:
                 self._checkin_page(page)
         except Exception:
