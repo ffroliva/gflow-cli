@@ -132,3 +132,79 @@ def test_index_reference_required(tmp_path: Path) -> None:
     (root / "docs" / "INDEX.md").write_text("no reference here", encoding="utf-8")
     violations = find_violations(root)
     assert any("INDEX.md" in v for v in violations)
+
+
+# --- Iron Law: a "Not verified" entry must name an external blocker -----------
+#
+# Fixtures below are the real v0.69.0 text. Both items were listed as not-verified
+# and both were verified within the hour once challenged — neither was blocked.
+
+
+def _with_ledger(tmp_path: Path, body: str, version: str = "1.2.3") -> Path:
+    root = _repo(tmp_path, version)
+    (root / "docs" / f"LIVE_VERIFICATION_v{version}.md").write_text(body, encoding="utf-8")
+    return root
+
+
+def test_not_verified_entry_without_a_blocker_fails(tmp_path: Path) -> None:
+    """The exact excuse shipped in v0.69.0: shared code offered as a reason not to run."""
+    root = _with_ledger(
+        tmp_path,
+        "# Ledger\n\n## Not verified (recorded, not omitted)\n\n"
+        "- The MCP twin of the credits path was exercised offline only; the CLI and MCP\n"
+        "  surfaces share `services/credits.py`, so the untested delta is the MCP adapter.\n",
+    )
+    violations = find_violations(root)
+    assert any("blocker" in v.lower() for v in violations), violations
+
+
+def test_not_verified_entry_naming_a_blocker_passes(tmp_path: Path) -> None:
+    """A real external blocker is the one permitted exception."""
+    root = _with_ledger(
+        tmp_path,
+        "# Ledger\n\n## Not verified (recorded, not omitted)\n\n"
+        "- 5 of the 19 benchmark tasks are unscored, blocked on the provider's quota of\n"
+        "  20 requests per day per model — not on anything in the code.\n",
+    )
+    assert not any("blocker" in v.lower() for v in find_violations(root))
+
+
+def test_a_ledger_with_no_not_verified_section_is_fine(tmp_path: Path) -> None:
+    root = _with_ledger(tmp_path, "# Ledger\n\n## Runs\n\n- everything ran.\n")
+    assert not any("blocker" in v.lower() for v in find_violations(root))
+
+
+@pytest.mark.parametrize(
+    "excuse",
+    [
+        "covered by unit tests",
+        "it is a thin adapter over verified code",
+        "offline-tested only",
+        "did not get to it this cycle",
+    ],
+)
+def test_known_non_blockers_are_rejected(tmp_path: Path, excuse: str) -> None:
+    root = _with_ledger(
+        tmp_path,
+        f"# Ledger\n\n## Not verified (recorded, not omitted)\n\n- The X path — {excuse}.\n",
+    )
+    assert any("blocker" in v.lower() for v in find_violations(root)), excuse
+
+
+def test_untracked_debt_is_rejected(tmp_path: Path) -> None:
+    """ "We didn't run it" is not a blocker — parking it silently is the failure mode."""
+    root = _with_ledger(
+        tmp_path,
+        "# Ledger\n\n## Not verified\n\n- DEBT — portrait 9:16 and count > 1 were not run.\n",
+    )
+    assert any("blocker" in v.lower() for v in find_violations(root))
+
+
+def test_debt_with_a_tracked_issue_passes(tmp_path: Path) -> None:
+    """Debt is acceptable when it is accountable: an issue someone can close."""
+    root = _with_ledger(
+        tmp_path,
+        "# Ledger\n\n## Not verified\n\n"
+        "- DEBT — portrait 9:16 and count > 1 were not run. Tracked in #1234.\n",
+    )
+    assert not any("blocker" in v.lower() for v in find_violations(root))

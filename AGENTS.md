@@ -96,7 +96,7 @@ the five other mirror axes), which no command here can check and no CI gate can 
 - TDD is non-negotiable. Coverage floor: 80% overall.
 - Documentation is a first-class deliverable. Every behavior, workflow, config, or operator-facing change must update the relevant docs or state why no docs changed in the PR/checklist. `scripts/ci/check_doc_links.py` is a merge gate.
 - **A PR is not done until its SonarCloud gate is green (zero new issues).** The nine gates above are local/pre-commit; SonarCloud is server-side and runs in CI (`sonar.qualitygate.wait=true` → a red gate turns the `SonarCloud analysis` check red). Before calling a PR merge-ready, verify it with `/gflow:sonar <N>` (it is skipped on fork PRs — maintainer-checked there).
-- **E2E is the decisive layer, and it is required for every behavior change that touches a Flow surface.** Run the `tests/e2e/` test that covers the change, or write one — offline-green proves only that *our* code does what we think, never that Flow still behaves as captured. `/gflow:live-verify` does **not** satisfy this: it drives CLI commands by hand into a gitignored note and never runs `pytest -m e2e`. The two are complementary — an e2e test is a re-runnable regression, a live-verify ledger is a narrative record. If you cannot run it, say so explicitly in the PR and a maintainer will; a change touching no Flow surface (docs, help text, exit-code plumbing) is out of scope — say that rather than leaving it blank.
+- **E2E is the decisive layer, and it is required for every behavior change that touches a Flow surface.** Run the `tests/e2e/` test that covers the change, or write one — offline-green proves only that *our* code does what we think, never that Flow still behaves as captured. `/gflow:live-verify` does **not** satisfy this: it drives CLI commands by hand into a gitignored note and never runs `pytest -m e2e`. The two are complementary — an e2e test is a re-runnable regression, a live-verify ledger is a narrative record. A change touching no Flow surface at all (docs, help text, exit-code plumbing) is out of scope — say so explicitly rather than leaving it blank. Anything else follows the **Iron Law** above: run it, or name the external blocker that stops you. "A maintainer will run it" is a handoff, not a verification, and is only available once the blocker is named.
 - E2E tests require `GFLOW_CLI_E2E_PROFILE` and `-m e2e` (excluded from the default `addopts`, so they never run by accident). Cost sub-markers: `e2e_auth` (zero credits, browser only), `e2e_image` (zero credits, daily cap), `e2e_scene`, `e2e_data`, `e2e_batch`, `e2e_character` (opt in with `GFLOW_CLI_E2E_RUN_CHARACTER=1`), `e2e_video` (spends Veo credits — opt in with `GFLOW_CLI_E2E_RUN_VIDEO=1`). Redact account identifiers and any token or cookie value before pasting output into a PR.
 - Live tests (`@pytest.mark.live`) opt in via `GFLOW_LIVE=1`.
 
@@ -142,10 +142,49 @@ the five other mirror axes), which no command here can check and no CI gate can 
 
 These rules exist because docs alone don't bind under momentum: a "check open PRs first" rule was already written and still got skipped, and a PR was merged without seeing an entangled open one. Follow them on every task.
 
+### The Iron Law — done means verified by a run
+
+```
+IF YOU TOUCHED A COMMAND, A FEATURE, OR A FLOW SURFACE,
+YOU RUN ITS E2E TEST. NO RUN = NOT DONE.
+```
+
+Not "tests pass". Not "the gates are green". Not "it's a thin wrapper over code that
+is already covered". **A run, against the real thing, that you watched.** Offline green
+proves our code does what we think it does; it cannot prove Flow still behaves as
+captured, and it cannot prove the surface an agent or a user actually calls is wired to
+the code under test. Everything not exercised is unknown, and unknown ships as a bug.
+
+If no e2e test covers the change, **write one** — that is part of the change, not
+follow-up work.
+
+**The only permitted exception is a named external blocker** you cannot remove: an
+exhausted API quota, hardware you do not have, an account you do not control, a cohort
+Google has not put you in. Write the blocker down. Then these are **not** blockers, and
+naming one is a rule violation, not a caveat:
+
+- "I didn't get to it" · "it's covered by unit tests" · "it's a thin adapter"
+- "the CLI path is verified and it shares the service"
+- "recorded, not omitted"
+
+That last one is the dangerous one, because it is a **good** convention being misused.
+Recording an unverified item beats silently dropping it — but it is a record of a
+blocker, never a substitute for a run. **Listing something as unverified that you could
+have verified is the same failure as omitting it, plus a false paper trail.**
+
+> **This law is written from the failure it prevents.** v0.69.0 shipped with two items
+> under "Not verified": the MCP twin of the credits path, and 5 of 19 skill-benchmark
+> tasks. Asked why we were going blind, both were verified **within the hour**. The MCP
+> twin was a $0 read-only test — 3 assertions, 58 seconds, and it is now
+> `tests/e2e/test_credits_mcp_e2e.py`. The 5 tasks ran on a model whose quota was still
+> open, against a control run to separate model weakness from skill weakness, and
+> exposed **four real defects** that the words "recorded, not omitted" had made invisible.
+> Neither was ever blocked. Both were labelled instead of run.
+
 - **Check what's already in flight before coding a fix, opening a PR, or merging.** Run `gh pr list` and `git ls-remote` first — another open PR may already touch the same issue or files. Reconcile against it; don't re-derive "the only thing left" from a stale handoff. (A `PreToolUse` hook also surfaces same-issue open PRs at `gh pr create`/`merge` time, but treat that as a backstop, not a substitute for looking.)
 - **Truth is the CLI and running the code — not IDE/LSP "reminder" diagnostics.** Editor / `pyright`-in-worktree warnings go stale for an entire session and throw false positives (especially across multiple worktrees). Confirm with `ruff` / `pyright` / `pytest` from the terminal — or trust the worktree's own venv — never an IDE squiggle.
 - **Verify third-party runtime behavior empirically before wiring it in.** Don't assume how an external library, API, or browser actually behaves — exercise it once and observe, then build on the observed contract.
-- **If a claim can't be verified in the current environment, it's LIKELY — not CONFIRMED.** Keep the issue open, reference it with `Refs #N` (not `Closes #N`), and ship diagnostics rather than a blind fix. When you can't reproduce it, hand the fix to whoever can.
+- **A claim you have not run is not a finding — it is a guess with formatting.** Confidence labels are not evidence: do not grade an unrun claim as "likely", "probably correct" or "low risk" and move on. Where a genuine external blocker stops the run (see the Iron Law), keep the issue open, reference it with `Refs #N` (not `Closes #N`), ship diagnostics rather than a blind fix, and hand it to whoever can reproduce it — naming what would settle it.
 - **This project reverse-engineers a blackbox.** gflow-cli doesn't own Google Flow — it drives real Flow through inspected HAR/DOM/browser-log behavior. Offline checks (types, lint, unit/BDD tests) verify *our* code does what we think it does; they cannot verify Flow still behaves the way we captured it. Every feature that touches a generation path is **live-verified**, not just offline-tested, before it's called done — see `/gflow:live-verify`.
 
 ## Standard Workflow Sequence
