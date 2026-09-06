@@ -1100,3 +1100,50 @@ def test_entrypoint_has_no_dangling_memory_symlink():
         "entrypoint still links /memory, which nothing mounts since the memory tree "
         "moved to the path SKILL.md reads"
     )
+
+
+# --- Council model pinning (2026-09-06) --------------------------------------
+#
+# No --model flag was passed anywhere in scripts/autopilot/, so the council ran
+# on whatever the Claude CLI defaulted to for the subscription -- a value that
+# can change on a CLI upgrade with no commit and no alert, and that leaves no
+# record of which model produced a given verdict.
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+SANDBOX_SCRIPT = ROOT / "scripts" / "autopilot" / "run_sandboxed_review.sh"
+
+
+def test_sandbox_pins_the_model_on_the_claude_invocation():
+    script = SANDBOX_SCRIPT.read_text(encoding="utf-8")
+    assert '--model "$COUNCIL_MODEL"' in script, "the council invocation must pin a model"
+
+
+def test_council_model_default_matches_the_shell_script():
+    # Two defaults that can drift apart is how the ledger starts lying about
+    # which model produced a verdict.
+    script = SANDBOX_SCRIPT.read_text(encoding="utf-8")
+    match = re.search(r'COUNCIL_MODEL="\$\{GFLOW_TRIAGE_MODEL:-([^}]+)\}"', script)
+    assert match, "run_sandboxed_review.sh must default COUNCIL_MODEL from GFLOW_TRIAGE_MODEL"
+    assert match.group(1) == pr_triage_autopilot.DEFAULT_COUNCIL_MODEL
+
+
+def test_council_model_is_overridable(monkeypatch):
+    monkeypatch.setenv(pr_triage_autopilot.COUNCIL_MODEL_ENV, "sonnet")
+    assert pr_triage_autopilot.council_model() == "sonnet"
+
+
+def test_council_model_falls_back_when_the_override_is_blank(monkeypatch):
+    # An empty env var must not silently unpin the model back to the CLI default.
+    monkeypatch.setenv(pr_triage_autopilot.COUNCIL_MODEL_ENV, "")
+    assert pr_triage_autopilot.council_model() == pr_triage_autopilot.DEFAULT_COUNCIL_MODEL
+
+
+def test_sandbox_subprocess_receives_the_pinned_model(tmp_path, monkeypatch):
+    monkeypatch.setenv(pr_triage_autopilot.COUNCIL_MODEL_ENV, "opus")
+    with patch("pr_triage_autopilot.subprocess.run") as m_run:
+        m_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="ok", stderr=""
+        )
+        pr_triage_autopilot.run_docker_sandbox(7, tmp_path, tmp_path, "tok")
+    env = m_run.call_args.kwargs["env"]
+    assert env[pr_triage_autopilot.COUNCIL_MODEL_ENV] == "opus"

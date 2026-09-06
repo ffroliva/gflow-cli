@@ -34,6 +34,21 @@ if [ -z "$PR_NUM" ] || [ -z "$HOST_REPO" ] || [ -z "$HOST_MEMORY" ] || [ -z "$GH
   usage
 fi
 
+# Council model. PINNED, not left to the CLI default.
+#
+# The review is the only thing standing between an unread PR and `develop`, and
+# it is exactly the kind of judgement that degrades quietly on a weaker model:
+# a thin verdict still parses, still posts, and still reads like a review. Until
+# now no --model flag was passed anywhere in scripts/autopilot/, so the council
+# ran on whatever the Claude CLI happened to default to for this subscription --
+# a value that can change under us on a CLI upgrade, with no commit, no alert,
+# and no way to tell after the fact which model produced a given verdict.
+#
+# `opus` verified available on this subscription 2026-09-06 (`claude -p --model
+# opus` -> exit 0). Override for a deliberate experiment; do not weaken it to
+# save quota -- a cheap review that misses a defect costs more than it saves.
+COUNCIL_MODEL="${GFLOW_TRIAGE_MODEL:-opus}"
+
 # Claude auth: the subscription token minted by `claude setup-token`, read from
 # the environment (sourced from /opt/hermes/.env by the cron line). Deliberately
 # NOT a CLI flag -- an argv secret is visible to every local user via `ps`,
@@ -127,7 +142,7 @@ else
   echo "Warning: iptables or network subnet lookup not available. Firewall rules skipped." >&2
 fi
 
-echo "Launching sandboxed review for PR $PR_NUM..." >&2
+echo "Launching sandboxed review for PR $PR_NUM on model $COUNCIL_MODEL..." >&2
 COUNCIL_TOOLS="Bash(gh auth status:*) Bash(gh pr view:*) Bash(gh pr diff:*) Bash(gh pr checks:*) Bash(gh pr list:*) Bash(git show:*) Bash(git rev-parse:*) Bash(git diff:*) Bash(git log:*) Bash(git ls-remote:*) Bash(grep:*) Bash(sort:*) Bash(head:*) Bash(tail:*) Bash(wc:*) Bash(awk:*) Bash(jq:*) Bash(cat:*) Bash(ls:*) Bash(comm:*) Bash(cut:*) Bash(uniq:*) Bash(tr:*) Read Grep Glob Task TodoWrite"
 COUNCIL_MEMORY_DIR="/home/nonroot/.claude/projects/C--development-github-gflow-cli/memory"
 # The council memory mount target is not arbitrary: SKILL.md D5 tells the
@@ -168,5 +183,6 @@ docker run --rm \
   -e GITHUB_TOKEN="$GH_TOKEN" \
   gflow-triage:latest \
   claude -p "Conduct a multi-dimensional council review of PR $PR_NUM in autonomous mode following /workspace/skills/pr-council-review/SKILL.md." \
+  --model "$COUNCIL_MODEL" \
   --add-dir "$COUNCIL_MEMORY_DIR" \
   --allowedTools "$COUNCIL_TOOLS"

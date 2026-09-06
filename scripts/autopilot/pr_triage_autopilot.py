@@ -34,6 +34,22 @@ LOCK_FILE_PATH = "/tmp/pr_triage_autopilot.lock"
 SUPPORTED_ENGINES = ("council-claude",)
 DEFAULT_ENGINE = SUPPORTED_ENGINES[0]
 
+# Council model. Pinned in run_sandboxed_review.sh; mirrored here so the ledger
+# records WHICH model produced a verdict -- an unattributable verdict cannot be
+# re-examined after a model change. The orchestrator exports this into the
+# sandbox's environment, so for the automated path this value is the single
+# source of truth; the shell default only covers a hand-run of the script.
+# test_council_model_default_matches_the_shell_script pins the two together --
+# two defaults that can silently disagree is how a ledger starts lying.
+COUNCIL_MODEL_ENV = "GFLOW_TRIAGE_MODEL"
+DEFAULT_COUNCIL_MODEL = "opus"
+
+
+def council_model() -> str:
+    """The model the council runs on."""
+    return os.environ.get(COUNCIL_MODEL_ENV) or DEFAULT_COUNCIL_MODEL
+
+
 # Claude auth is the SUBSCRIPTION token minted by `claude setup-token`, read
 # from CLAUDE_CODE_OAUTH_TOKEN. This deployment has no ANTHROPIC_API_KEY
 # (operator decision, 2026-08-02).
@@ -412,8 +428,15 @@ def run_docker_sandbox(pr_num: int, repo_dir: Path, memory_dir: Path, gh_token: 
         gh_token,
     ]
 
-    logger.info("Running sandboxed Docker review", pr=pr_num)
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    model = council_model()
+    logger.info("Running sandboxed Docker review", pr=pr_num, model=model)
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, COUNCIL_MODEL_ENV: model},
+    )
     if proc.returncode != 0:
         raise RuntimeError(
             f"Docker sandbox failed (exit {proc.returncode}): {proc.stderr.strip()}\n{proc.stdout}"
@@ -689,6 +712,7 @@ def run_triage_cycle(
                     "verdict": parsed_verdict,
                     "must_fixes": must_fixes,
                     "engine": engine,
+                    "model": council_model(),
                 },
             )
 
