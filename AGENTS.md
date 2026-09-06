@@ -109,10 +109,11 @@ the five other mirror axes), which no command here can check and no CI gate can 
 - **YAGNI / least-code**: prefer the smallest change that works. No speculative abstractions (interface/factory with one implementation), no config or flags nobody sets, no dead constants/helpers, no reinventing the stdlib. Review carries this as its own lens — the **D14 over-engineering** dimension of [`pr-council-review`](skills/pr-council-review/SKILL.md) (baseline, always runs). Its rubric is portable; the `ponytail` plugin (see CONTRIBUTING) is an optional accelerant, not a dependency.
 - **MCP & CLI Schema Symmetry**: Any updates or additions to user-facing CLI command parameters (e.g., `gflow image t2i`, `gflow video`) must be mirrored in the corresponding MCP tool definitions. Never add option/argument fields to Click commands without updating the MCP server implementation. This symmetry is enforced programmatically in CI via `tests/mcp/test_cli_parity.py` (every CLI leaf command needs a mapped MCP tool or an explicit, reasoned exemption) plus the schema checks in `tests/mcp/test_server.py`.
 
-  **That CI gate is command-level only** — it fires on a new *leaf*, and stays green while an
-  option goes unmirrored, a queued-payload key goes unread, or a tool docstring asserts a
-  restriction the CLI no longer has. So MCP is a responsibility of **every phase**, not a
-  post-hoc checklist item. Each skill owns its slice:
+  **That gate now covers leaves *and their options*** (`test_every_cli_leaf_has_an_mcp_decision`,
+  `test_every_cli_option_reaches_its_mcp_tool`). It still cannot see a queued-payload key that
+  goes unread, a tool docstring asserting a restriction the CLI no longer has, or a twin that
+  was never *run*. So MCP stays a responsibility of **every phase**, not a post-hoc checklist
+  item. Each skill owns its slice:
 
   | Phase | Skill | Its MCP duty |
   |---|---|---|
@@ -180,6 +181,43 @@ have verified is the same failure as omitting it, plus a false paper trail.**
 > open, against a control run to separate model weakness from skill weakness, and
 > exposed **four real defects** that the words "recorded, not omitted" had made invisible.
 > Neither was ever blocked. Both were labelled instead of run.
+
+### The second law — MCP parity is not a chore, it is the contract
+
+```
+EVERY USER-FACING CLI CAPABILITY HAS AN MCP TWIN,
+OR A RECORDED REASON IT DOES NOT.
+```
+
+The CLI and the MCP server are two doors onto one product. A capability behind only one
+of them is not "mostly shipped" — for whoever is standing at the other door it does not
+exist, and nothing tells them so. Agents cannot read a `--help` they were never given;
+they discover a missing option by getting the wrong result.
+
+Parity is **not** satisfied by a command existing. It has to hold at every level the two
+surfaces can drift apart: the leaf, **its options**, the queued-payload keys the worker
+reads back, and the tool docstring's claims about what the CLI does. The canonical list
+is the **six mirror axes**, written out once in
+[`skills/check/SKILL.md`](skills/check/SKILL.md) step 1b and cited from everywhere else —
+never copied, because a duplicated checklist drifts, which is the failure it exists to
+catch.
+
+**A twin is a separate surface, so the Iron Law applies to it separately.** Verifying the
+CLI path does not verify the MCP path. They share a service, and the service was never
+the risk — the adapter is. Run both.
+
+Where a capability is deliberately CLI-only — an interactive login, a destructive local
+operation, a long-running billed job with no way to take consent — that is a legitimate
+answer. **Record it with its reason** in `tests/mcp/test_cli_parity.py`, and revisit the
+reason when whatever justified it changes.
+
+> **Written from a live gap.** `--reference-entity` exists on four leaf commands and no
+> MCP tool exposes the concept at all, while the whole `gflow character` group sits
+> exempt as "not yet ported". The product's entire **identity axis** — create a
+> character, attach a character — is therefore unreachable over MCP, and the parity gate
+> reported full compliance throughout, because it only ever checked that leaves were
+> *mapped*. Found by an option-level sweep, filed as #689, and the gate now checks
+> options too.
 
 - **Check what's already in flight before coding a fix, opening a PR, or merging.** Run `gh pr list` and `git ls-remote` first — another open PR may already touch the same issue or files. Reconcile against it; don't re-derive "the only thing left" from a stale handoff. (A `PreToolUse` hook also surfaces same-issue open PRs at `gh pr create`/`merge` time, but treat that as a backstop, not a substitute for looking.)
 - **Truth is the CLI and running the code — not IDE/LSP "reminder" diagnostics.** Editor / `pyright`-in-worktree warnings go stale for an entire session and throw false positives (especially across multiple worktrees). Confirm with `ruff` / `pyright` / `pytest` from the terminal — or trust the worktree's own venv — never an IDE squiggle.
