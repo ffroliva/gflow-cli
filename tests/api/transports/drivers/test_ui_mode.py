@@ -413,3 +413,45 @@ class TestMigratedOriginFailsFast:
 
         page = _page_with_present({_CROP})  # MagicMock .url, never assigned
         assert await detect_ui_mode(page, timeout_s=0.1, poll_interval_s=0.01) == "classic"
+
+
+class TestCharacterEditorOnMigratedOriginFailsFast:
+    """`character create` on a moved account died as a bare RuntimeError, exit 1.
+
+    The character editor is a labs-only surface: `flow.google.com` renders no
+    prompt textbox for it, ever. So the readiness gate burned its full 20 s
+    timeout and then raised `RuntimeError("Character editor not ready: prompt
+    textbox not visible within 20 s")`, which the CLI reports as "Unexpected
+    error" (exit 1) rather than the typed, non-retryable exit 36 that names the
+    migration and tells the user why.
+
+    Measured live 2026-09-06 on a moved account. Fourth instance of the same
+    shape as #673 (image path) and #692 (the reCAPTCHA mint): a labs-only path
+    that fails unclassified on the migrated host.
+    """
+
+    @pytest.mark.asyncio
+    async def test_raises_exit_36_before_waiting_on_the_textbox(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+        from gflow_cli.errors import EXIT_CODE_MAP, FlowHostMigratedError, is_retryable
+
+        t = UiAutomationTransport.__new__(UiAutomationTransport)
+        t._out_dir = None  # type: ignore[attr-defined]
+        t._settle_if_redirecting = AsyncMock()  # type: ignore[attr-defined]
+        t._dismiss_blocking_overlays = AsyncMock()  # type: ignore[attr-defined]
+        t._settle_on_character_route = AsyncMock()  # type: ignore[attr-defined]
+
+        page = MagicMock()
+        page.goto = AsyncMock()
+        page.url = "https://flow.google.com/project/abc-123"
+        # The readiness gate must never be reached: that is the 20 s the user paid.
+        page.locator = MagicMock(side_effect=AssertionError("must not probe the DOM"))
+
+        with pytest.raises(FlowHostMigratedError) as exc_info:
+            await t._enter_character_editor(page, project_id="p-1", entity_id="e-1", locale="en")
+
+        page.locator.assert_not_called()
+        assert EXIT_CODE_MAP[FlowHostMigratedError] == 36
+        assert not is_retryable(exc_info.value)

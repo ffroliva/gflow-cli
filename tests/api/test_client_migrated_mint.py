@@ -252,3 +252,52 @@ async def test_a_failing_url_probe_never_displaces_the_real_failure(
 
     with pytest.raises(RuntimeError, match="some unrelated playwright failure"):
         await c._mint_recaptcha_token("IMAGE_GENERATION")
+
+
+class _HopsLateDuringMint:
+    """The hop is still committing when the mint dies.
+
+    #692 residual: the re-check read `page.url` once, at the instant of failure.
+    Playwright updates `page.url` on `framenavigated`, so a mint that dies while
+    the navigation is still committing sees the OLD host and the run exits 1 on
+    an account that is in fact migrated. The first reads return labs; the hop
+    lands a moment later.
+    """
+
+    reads_before_hop = 3
+
+    def __init__(self, page: Any, **_: Any) -> None:
+        self._page = page
+
+    async def mint(self, _action: str) -> str:
+        raise RecaptchaError("recaptcha/enterprise.js not found")
+
+
+class _LateHopPage:
+    def __init__(self) -> None:
+        self._reads = 0
+
+    @property
+    def url(self) -> str:
+        self._reads += 1
+        if self._reads <= _HopsLateDuringMint.reads_before_hop:
+            return "https://labs.google/fx/en/tools/flow"
+        return "https://flow.google.com/"
+
+
+@pytest.mark.asyncio
+async def test_a_hop_that_lands_just_after_the_failure_is_still_exit_36(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single instantaneous read loses the race; a bounded re-poll does not."""
+    monkeypatch.setattr(client_mod, "TokenMinter", _HopsLateDuringMint)
+    c = FlowApiClient.__new__(FlowApiClient)
+    c._page_queue = None
+    c._page = _LateHopPage()  # type: ignore[assignment]
+    returned: list[Any] = []
+    monkeypatch.setattr(c, "_checkin_page", returned.append)
+
+    with pytest.raises(FlowHostMigratedError):
+        await c._mint_recaptcha_token("IMAGE_GENERATION")
+
+    assert returned == [c._page], "the pool page must not leak on the reclassified path"

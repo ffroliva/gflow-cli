@@ -37,6 +37,7 @@ from gflow_cli.api.transports._common import (
     flow_host_kind,
     generation_error,
     offered_menu_labels,
+    raise_if_migrated,
 )
 from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
@@ -3566,6 +3567,16 @@ class UiAutomationTransport(VideoGenerationMixin):
         await self._settle_if_redirecting(page)
         await self._dismiss_blocking_overlays(page, self._out_dir)
         await self._settle_on_character_route(page, entity_id=entity_id, url=url)
+
+        # The character editor is a labs-only surface: the migrated host renders
+        # no prompt textbox for it, ever. Without this the readiness gate below
+        # burned its full 20 s and then raised a bare RuntimeError, which the CLI
+        # reports as "Unexpected error" (exit 1) instead of the typed,
+        # non-retryable exit 36 that names the migration. Measured live
+        # 2026-09-06 on a moved account. Placed AFTER the settles so the
+        # post-goto client-side hop has landed, and BEFORE the wait so the user
+        # does not pay 20 s to be told something knowable now.
+        raise_if_migrated(page, at="character_editor")
 
         # Wait for the Slate editor to mount — the prompt textbox is the
         # reliable "editor ready" anchor for the character editor surface.
