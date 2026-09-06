@@ -1051,9 +1051,10 @@ async def gflow_generate_video(  # NOSONAR
             Google has moved to flow.google.com (``GFLOW_CLI_FLOW_HOST``, read from
             the server/daemon environment, not per call) ``project`` is required —
             omitting it returns the exit-11-equivalent envelope. There the ported
-            modes are 't2v' and 'i2v' with a local ``initial_frame`` and no
-            ``end_frame``; a UUID frame, an end frame and 'r2v' return the
-            exit-36-equivalent envelope.
+            modes are 't2v'; 'i2v' with a local ``initial_frame`` and no
+            ``end_frame``; and 'r2v' with local ``reference_images``. A UUID
+            frame, an end frame, and r2v by ``ref_names`` or
+            ``reference_entities`` return the exit-36-equivalent envelope.
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
             ``video t2v``/``i2v``; applies to every mode of this tool,
             including 'r2v'). Video generation only has a classic driver:

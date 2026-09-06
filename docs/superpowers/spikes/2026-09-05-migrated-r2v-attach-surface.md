@@ -240,9 +240,14 @@ Four things this settles, none of which could be assumed:
 3. **The prompt is segmented, not a string.** Mentions are `[entity_id, name]` nodes
    interleaved with text segments (`["  a man crying"]`). Building it means composing
    segments, not concatenating a prompt.
-4. **The model key is mode-specific:** `veo_3_1_r2v_lite_low_priority`, not the
-   `veo_3_1_lite_lower_priority` a t2v run sends. Mode and tier are encoded together, so
-   the existing `VideoModel` → wire-key mapping does not carry over to r2v unchanged.
+4. **The model key is mode-specific:** `veo_3_1_r2v_lite_low_priority` — observed in this
+   capture. Mode and tier are encoded together, so the existing `VideoModel` → wire-key
+   mapping does not carry over to r2v unchanged. The contrast with the
+   `veo_3_1_lite_lower_priority` a t2v run sends is **inferred**, not measured: no capture
+   in this repo has observed a migrated t2v body at that tier. It matters anyway, and in
+   the safe direction — the r2v body assertion has to be able to *name* a mode-less key,
+   because a key with no `_r2v_` infix is exactly what the body says when the picker
+   inserted nothing.
 
 Verified $0: the catalog's newest video predates the probe by ~2 h, so nothing generated.
 
@@ -355,30 +360,39 @@ and it used both, in the order given.
 
 ## What this does NOT settle
 
+> Bullets that stood here — "Multiple references", "Local files", and the response shape —
+> were **settled by Rounds 6-7 in this same document** and by the live run recorded in
+> `tests/e2e/test_migrated_host_e2e.py`: two local `--ref` files were uploaded through the
+> editor's own toolbar path and both bound. They are removed rather than left standing,
+> because a superseded open question in a doc an agent reads as ground truth is how a
+> settled surface gets re-mined. "More than two references, and the per-model caps" below
+> is the part of them that genuinely remains open.
 
 - **The avatar wire slot.** A `likeness` chip was produced but never submitted, so which
   slot carries it is unknown; only `media` has been exercised end to end.
 - **Character entities on this host.** The attach works (a chip with a real `entity_id`),
   but `migrated_can_serve` still routes `--reference-entity` to labs, and no entity run
   has been submitted.
-- **More than two references, and the per-model caps.** Two is the most ever attached.
-- **`i2v`.** Frames are a different sub-mode with its own slots; nothing has been recon'd.
-- **Selecting a SPECIFIC asset.** ArrowDown+Enter takes whatever is highlighted, and the
-  typed-query path resolved to a name that was not an obvious match for the query. How the
-  picker matches (caption? filename? fuzzy?) is untested, and exit 32
-  `ReferenceNotFoundError` exists on labs precisely because that matching is not obvious.
-- **Multiple references.** Every capture attached exactly one. Ordering, the per-model caps
-  (omni 7, veo lite/fast/lite_lp 3), and whether a second `@` behaves like the first are
-  all unknown.
-- **The response shape.** The submit was blocked, so no `MZZa6b` reply has ever been seen —
-  and the labs lesson [[credit-free-route-abort-verification]] is explicit that request and
-  response shapes differ. A backstop must be written against a real captured response, not
-  inferred from this request.
+- **More than two references, and the per-model caps.** Two is the most ever attached, and
+  two is what Round 7 and the live run both drove; three or more, and the caps themselves
+  (omni 7, veo lite/fast/lite_lp 3), remain untested on this host.
+- ~~**`i2v`.**~~ **Recon'd separately.** Frames are a different sub-mode with its own
+  slots, captured in `2026-09-05-migrated-frames-attach.md` and shipped as slice 1.
+- **Selecting a SPECIFIC asset.** Partly settled: Round 7 measured that matching is
+  **loose** — querying `"me"` matched the avatar named *Me*, not the uploaded `me.jpg` —
+  so the port queries the full filename and then verifies chip-by-chip rather than
+  trusting the match. What the picker matches *on* (caption? filename? fuzzy?) is still
+  untested, which is why exit 32 `ReferenceNotFoundError` is the guard rather than a
+  cleverer query.
+- ~~**The response shape.**~~ **Settled in Round 7.** Written while every submit was still
+  route-aborted, so no `MZZa6b` reply had been seen. The live runs have since parsed real
+  ones — `migrated.submit_observed rpc=MZZa6b` through to `migrated.result` — so the
+  backstop is written against a captured response, as
+  [[credit-free-route-abort-verification]] demands, not inferred from the request.
 - **Search vs Recent.** Only a Recent list was observed. Whether the search box is required
   for an asset outside it, and how it matches (caption? filename? — labs indexes a short
   auto-caption, not the prompt, per exit 32 `ReferenceNotFoundError`), is untested.
-- **Local files.** `--ref <path>` needs the library's `Upload` flow, which was seen but not
-  driven. No `input[type=file]` exists until it is.
+
 - **Ordering and caps.** `MAX_REFERENCE_IMAGES`, and whether the picker enforces the same
   per-model reference caps as labs (omni 7, veo lite/fast/lite_lp 3, quality none), is
   unknown.

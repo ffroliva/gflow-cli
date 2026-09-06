@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.69.0] — 2026-09-06
-
 ### Added
 
 - **`gflow video r2v` from local `--ref` files runs on the migrated `flow.google.com`
@@ -24,13 +22,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot share a path.
 
   The submit body is asserted to carry every uploaded id, and a run whose references have
-  not all attached is refused **before** submit — the failure mode being a full-price clip
-  with none of the user's references on it. References by `@Name` and character entities
-  stay on labs, for the same reason a frame by UUID does: the picker exposes no media id
-  to anchor on. Live-verified end to end with two local refs and `--model veo-lite-lp`, and
-  confirmed semantically by the account owner: the presenter in the output is the person
-  from the first reference and the product is the one from the second, so both references
-  are genuinely bound rather than merely accepted.
+  not all attached is refused **before** submit (exit 32) — the failure mode being a
+  full-price clip with none of the user's references on it. A reference the picker misses
+  is retried, since its search index does not always hold a fresh upload on the first
+  query. References by `@Name` and character entities (`--reference-entity`) stay on labs,
+  for the same reason a frame by UUID does: the picker exposes no media id to anchor on.
+  Live-verified end to end with two local refs and `--model veo-lite-lp`, and confirmed
+  semantically by the account owner: the presenter in the output is the person from the
+  first reference and the product is the one from the second, so both references are
+  genuinely bound rather than merely accepted.
+
+  **Correction to the first cut of this feature**, kept here because the claim was public:
+  the submit-body assertion above was written and unit-tested but **never registered** on
+  the r2v path — `page.on("request", …)` was gated on the i2v `expect_media_id`, which is
+  always `None` for r2v. The live run and its e2e evidence therefore prove the references
+  bound; they do not prove a lost one would have been caught. Fixed, along with the model
+  key regex the diagnostic reads (it matched only mode-infixed keys, and a *mode-less* key
+  is precisely what an r2v body carries when the picker inserted nothing), and covered by a
+  round-trip test that drives `submit_and_observe` and asserts the check actually fired
+  rather than calling it directly.
+
+## [0.69.0] — 2026-09-06
 
 ### Added
 
