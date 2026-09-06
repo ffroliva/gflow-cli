@@ -251,9 +251,13 @@ class RealChromeStrategy(AuthStrategy):
         marker_preexisted = marker.exists()
         marker.write_text("chrome", encoding="utf-8")
         verified = False
+        # Bound before the `try` so the `finally` can log it even when an
+        # interrupt cuts the probe short and `status` never gets assigned.
+        outcome: str | None = None
         try:
             status = await verify_flow_profile(profile_dir, source=self.name)
             verified = status.authenticated
+            outcome = status.outcome.value
         finally:
             # `finally` (not `except`) so an interrupt — KeyboardInterrupt /
             # asyncio.CancelledError, both BaseException — also rolls back a
@@ -261,6 +265,19 @@ class RealChromeStrategy(AuthStrategy):
             # the chrome strategy.
             if not verified and not marker_preexisted:
                 marker.unlink(missing_ok=True)
+                # #644: this rollback flips channel_for_profile away from
+                # 'chrome', silently downgrading generation to bundled
+                # Chromium. It used to emit nothing, so the first real
+                # occurrence was only ever visible as a user report. `outcome`
+                # separates "the probe endpoint was unreachable" (labs.google's
+                # session BFF is the sole oracle, and the Flow frontend has
+                # already migrated off that host) from "genuinely signed out".
+                # It is an enum value — never response content.
+                logger.warning(
+                    "auth_chrome_marker_rolled_back",
+                    strategy=self.name,
+                    outcome=outcome,
+                )
         if status.authenticated:
             logger.info(
                 "auth_flow_session_verified",

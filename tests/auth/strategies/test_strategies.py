@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from structlog.testing import capture_logs
 
 from gflow_cli.auth.real_chrome import _UNVERIFIED_HINT, _UNVERIFIED_MESSAGE, GEMINI_URL
 from gflow_cli.auth.strategies import InternalChromiumStrategy, RealChromeStrategy
@@ -247,6 +248,78 @@ class TestRealChromeStrategy:
         # The marker the profile already had must survive the transient failure.
         assert marker.exists(), "pre-existing chrome marker must survive a transient failure"
         assert marker.read_text(encoding="utf-8") == "chrome"
+
+    @pytest.mark.asyncio
+    async def test_real_chrome_marker_rollback_is_logged(self, tmp_path: Path) -> None:
+        """#644: rolling the speculative marker back must be observable.
+
+        The rollback flips ``channel_for_profile`` away from 'chrome', which
+        silently downgrades generation to bundled Chromium. It previously
+        emitted nothing at all, so the first real occurrence was visible only
+        as a user report weeks later.
+        """
+        strategy = RealChromeStrategy()
+        gflow_home = tmp_path / "gflow_home"
+        profile_dir = gflow_home / "profile_default"
+        gflow_home.mkdir()
+
+        with (
+            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.real_chrome.find_chrome_executable",
+                return_value=r"C:\fake\chrome.exe",
+            ),
+            patch(
+                "gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=_build_mock_proc()),
+            ),
+            patch(
+                "gflow_cli.auth.real_chrome.verify_flow_profile",
+                AsyncMock(return_value=_status(FlowSessionOutcome.VERIFICATION_ERROR)),
+            ),
+            capture_logs() as logs,
+        ):
+            mock_settings.return_value.home = gflow_home
+            with pytest.raises(AuthMissingError):
+                await strategy.login(profile_dir, headless=False)
+
+        rollbacks = [e for e in logs if e.get("event") == "auth_chrome_marker_rolled_back"]
+        assert len(rollbacks) == 1, f"expected exactly one rollback event, got {logs}"
+        # The outcome separates "the probe endpoint was unreachable" from
+        # "genuinely signed out" — the #644 discriminator. It is an enum value,
+        # never response content, so it cannot carry a token or cookie.
+        assert rollbacks[0]["outcome"] == FlowSessionOutcome.VERIFICATION_ERROR.value
+
+    @pytest.mark.asyncio
+    async def test_real_chrome_no_rollback_event_when_marker_survives(self, tmp_path: Path) -> None:
+        """No rollback happened, so no rollback event — the signal must stay rare."""
+        strategy = RealChromeStrategy()
+        gflow_home = tmp_path / "gflow_home"
+        profile_dir = gflow_home / "profile_default"
+        profile_dir.mkdir(parents=True)
+        (profile_dir / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
+
+        with (
+            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.real_chrome.find_chrome_executable",
+                return_value=r"C:\fake\chrome.exe",
+            ),
+            patch(
+                "gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=_build_mock_proc()),
+            ),
+            patch(
+                "gflow_cli.auth.real_chrome.verify_flow_profile",
+                AsyncMock(return_value=_status(FlowSessionOutcome.VERIFICATION_ERROR)),
+            ),
+            capture_logs() as logs,
+        ):
+            mock_settings.return_value.home = gflow_home
+            with pytest.raises(AuthMissingError):
+                await strategy.login(profile_dir, headless=False)
+
+        assert not [e for e in logs if e.get("event") == "auth_chrome_marker_rolled_back"]
 
     @pytest.mark.asyncio
     async def test_real_chrome_privacy_guard(self, tmp_path: Path) -> None:
