@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the run aborts in under a second at zero cost. (A sixth declaration already had it; the rest had
   drifted from it.)
 
+- **`character create` on a moved account now exits 36 instead of 1, and 20 s sooner.** The Flow
+  character editor is a labs-only surface: `flow.google.com` renders no prompt textbox for it,
+  ever. The readiness gate burned its full 20 s timeout and then raised a bare
+  `RuntimeError("Character editor not ready…")`, which the CLI reports as "Unexpected error"
+  (exit 1) rather than the typed, non-retryable exit 36 that names the migration and says why.
+  `raise_if_migrated` now runs after the post-`goto` settles and before the wait, so the user is
+  told something knowable immediately instead of paying 20 s for a worse answer. Found by
+  dogfooding a two-character production on a moved account.
+
 - **PR-triage autopilot: stop re-alerting a deferred PR on every push.** The `DEFERRED_SIZE` and
   `NEEDS-HUMAN` gate branches deduped on `(pr, head_sha, status)`, so every push to an oversized
   PR looked new to the ledger and re-sent a byte-identical "needs a manual review" mail on the
@@ -37,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the mint succeeds and classifies correctly whenever the hop lands, rather than depending on it
   landing before one particular line. A genuine labs-side reCAPTCHA failure still surfaces as
   `RecaptchaError`.
+
+  **The re-check now polls for a bounded 1.5 s rather than reading once.** A single instantaneous
+  read still lost the race: Playwright updates `page.url` on `framenavigated`, so a mint that dies
+  *while* the navigation is committing reads the old host on an account that is in fact migrated,
+  and the run exited 1. Polling turns "who won this instant" into "did the hop land at all". It is
+  the error path, so a successful mint never waits.
 
   The re-check catches **any** mint failure, not just `RecaptchaError`. `TokenMinter.mint` guards
   only its second `page.evaluate`: `site_key()` → `discover_site_key` runs an unguarded one, and

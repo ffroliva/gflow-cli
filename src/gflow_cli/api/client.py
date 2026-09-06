@@ -210,6 +210,12 @@ _SESSION_API_URL = "https://labs.google/fx/api/auth/session"
 # issue #222: the NextAuth Flow session cookie + the URL used to seed it.
 _FLOW_SESSION_COOKIE = "__Secure-next-auth.session-token"
 _FLOW_COOKIE_URL = _LABS_ORIGIN
+# #692: how long the post-failure migration re-check keeps watching `page.url`
+# for a hop that was still committing when the mint died. Error path only, so a
+# successful mint never waits. Small enough that a genuine labs-side reCAPTCHA
+# failure is not meaningfully delayed on its way to the user.
+_MIGRATION_RECHECK_BUDGET_S = 1.5
+_MIGRATION_RECHECK_POLL_S = 0.25
 
 
 def _parse_iso_to_epoch(value: object) -> float:
@@ -2440,9 +2446,21 @@ class FlowApiClient:
                 # succeeds, and correct whenever the hop lands, rather than
                 # depending on it landing before a particular line. A genuine
                 # labs-side reCAPTCHA failure still propagates as RecaptchaError.
+                # One instantaneous read still loses the race. Playwright updates
+                # `page.url` on `framenavigated`, so a mint that dies WHILE the
+                # navigation is committing reads the old host on an account that
+                # is in fact migrated. Poll for a bounded moment instead: this is
+                # already the error path, so the wait costs a successful run
+                # nothing, and it turns "who won this instant" into "did the hop
+                # land at all".
                 try:
-                    raise_if_migrated(page, at="mint_recaptcha_token_after_failure")
-                    probed_url = getattr(page, "url", None)
+                    deadline = time.monotonic() + _MIGRATION_RECHECK_BUDGET_S
+                    while True:
+                        raise_if_migrated(page, at="mint_recaptcha_token_after_failure")
+                        probed_url = getattr(page, "url", None)
+                        if time.monotonic() >= deadline:
+                            break
+                        await asyncio.sleep(_MIGRATION_RECHECK_POLL_S)
                 except FlowHostMigratedError:
                     raise
                 except Exception:
