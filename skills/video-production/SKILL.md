@@ -85,7 +85,7 @@ Load `https://labs.google/fx/tools/flow/project/<id>` in the profile's Chrome an
 | Lands on | Lane | What runs there |
 |---|---|---|
 | `labs.google/fx/…` | **A, full** | everything |
-| `flow.google.com/project/…` | **B, partial** | `video t2v --project` and `video i2v --initial-frame <local file> --project`. Everything else — `image`, `character create`, `r2v`, `extend`, `scene create`, `movie run`, and i2v by media UUID / `@Name` or with `--end-frame` — exits 36 **[CONSTRAINT]** |
+| `flow.google.com/project/…` | **B, partial** | `video t2v --project`, `video i2v --initial-frame <local file> --project`, and **`video r2v --ref <local file> --project`** (ported in v0.70.0, #683). Everything else — `image`, `character create`, `extend`, `scene create`, `movie run`, r2v by `@Name` or `--reference-entity`, and i2v by media UUID / `@Name` or with `--end-frame` — exits 36 **[CONSTRAINT]** |
 
 Lane B grows as forms are ported, so **confirm the row rather than trusting it**: the
 maintained list is [CONFIGURATION § `GFLOW_CLI_FLOW_HOST`](../../docs/CONFIGURATION.md#gflow_cli_flow_host)
@@ -141,6 +141,7 @@ One row per clip: id, camera setup, action, lines with delivery, duration, model
 `style → setting → geometry → cast → setup → action → dialogue → avoid`.
 
 - **Never name a film format** — "35mm", "IMAX", "film grain" draw a sprocket-hole border or change the medium **[CALIBRATED]**. Say "full-frame 16:9 image edge to edge" and put border, letterbox and vignette in the avoid list.
+- **That avoid-list entry is not sufficient on its own [CALIBRATED, 4 clips, veo-quality].** A shot opening "Cinematic close portrait…" returned 72 px letterbox bars top and bottom *while* carrying "full-frame 16:9 image edge to edge" and "letterbox bars" first in its avoid list. The word **cinematic** appears to be enough on its own; no format was named. Restating it positively and explicitly — **"full-frame 16:9 image filling the entire frame edge to edge, no bars, no border"** — returned three consecutive bar-free shots with everything else held constant. Measure it, do not eyeball it: `cropdetect` reported nothing on the bar-carrying clip, so check the frame's own dark-row extents instead. A plate cut from a barred clip carries the bars into every shot that references it.
 - **No age words near a person [CONSTRAINT].** One age phrasing failed eight generations running; a relational or role noun passed immediately with everything else held constant. Minors are refused outright.
 - Dialogue as prose with the delivery **before** the words: `NAME says, weary: …`. Levers, most to least reliable: volume, emotional state, pace, register, physical condition, accent.
 - The avoid list holds artefacts only. **Negations that name an action do not suppress it** — restate positively.
@@ -160,6 +161,18 @@ python clip_qa.py <clips_dir>            # fluidity, lip sync, A/V drift, per cl
 python clip_qa.py final.mp4              # the assembled cut
 python clip_qa.py --selftest <clip.mp4>  # prove the detector before believing it
 ```
+
+Directory mode matches **exactly** `[a-z]{2}\d{2}.mp4` — two letters then two digits, e.g.
+`ka01.mp4`. Descriptive names and `0100.mp4` both silently match nothing and report
+"no clips matched", which reads like a path error.
+
+**On a clip with no speech, run `--selftest` before acting on a sync verdict [CALIBRATED].**
+A wordless close-up flagged `DRIFT sync=+0.500s r=0.7` — correlation above the 0.3 threshold,
+so the gate applied. `--selftest` on that same clip then failed to recover a **known injected
+0.2 s** shift (`saw -0.500s`), which disqualifies the reading rather than confirming it. The
+detector correlates face-region motion against audio; with only wind on the track there is
+nothing for it to lock onto, and it locks onto noise. This is the skill's own listed weak spot
+("a lip-sync detector trusted without first proving it against a known delay") reproduced.
 
 | Gate | Threshold | Tier |
 |---|---|---|
