@@ -158,6 +158,13 @@ Failure sequence once labs stops minting Flow sessions:
    speculative write, when the marker did not pre-exist).
 4. The user is told to re-run `gflow auth login`. → goto 1, forever.
 
+**Precision, because this is easy to misread** (I did, first time): step 3 fires only
+when the marker did **not** pre-exist — i.e. a *first* login on a fresh profile. A
+returning profile that was verified once keeps its marker through any probe failure, so
+it is not degraded. And the first-login deletion is correct, not a gap: gflow genuinely
+could not confirm a session, so it declines to certify the profile. The loop is real,
+but its fix is a working oracle (#642), **not** a retained marker.
+
 Step 3 is the load-bearing damage: without that marker `channel_for_profile` stops
 returning `"chrome"`, so `FlowApiClient` downgrades to bundled Chromium — which the
 code's own comment identifies as the `[[real-browser-auth-mandatory]]` failure. A labs
@@ -194,13 +201,53 @@ signal is already in hand), the failure is unrecoverable by the user, and it **c
 shipped after the deprecation** — by then every affected user is already stuck on a
 version that loops.
 
-**Recommended next step:** `/gflow:predict` on *"decouple profile validity from the
-labs.google BFF"* before any implementation. Two candidate slices, smallest first:
+### Predict verdict (2026-09-06): STOP on both slices
 
-1. **Never let a probe failure delete a marker that a successful browser login just
-   earned** — narrow, defensible today, and removes the degradation in step 3.
-2. **Give `GOOGLE_SESSION_ONLY` / `VERIFICATION_ERROR` an escape hatch** so a user with
-   a live SSO session is not told to repeat an action that cannot help.
+`/gflow:predict` ran a five-persona council on *"decouple profile validity from the
+labs.google BFF"*. Mean confidence 8.2, **−2** because the Devil's Advocate found a
+simpler path the other four missed, and one hard STOP. **Verdict: STOP.**
+
+Both originally-proposed slices were withdrawn:
+
+1. ~~*Never let a probe failure delete a marker a successful browser login just
+   earned.*~~ **Already shipped, and the rest would be a bug.** The `marker_preexisted`
+   guard has protected returning profiles since `a86a335` (2026-07-06, v0.25.0) and is
+   pinned by name in
+   `tests/auth/strategies/test_strategies.py::test_real_chrome_preserves_preexisting_marker_on_transient_failure`.
+   The first-login deletion is *deliberate* — the marker is written speculatively, the
+   probe never confirmed a session, and `AuthMissingError` says so. Keeping it would
+   leave `.gflow_browser_strategy=chrome` on a profile with no `.gflow_account`, a state
+   nothing downstream expects, and would break a passing test. The assertion directly
+   above that test pins the deletion.
+2. ~~*Give `GOOGLE_SESSION_ONLY` / `VERIFICATION_ERROR` an escape hatch.*~~ **Deferred.**
+   It would add control flow to a fail-closed auth path for a state that has never been
+   observed, and there is no account in which to write its e2e test — the Iron Law
+   cannot be satisfied. If it is ever built, the MCP twin (`gflow_auth_status`, which
+   maps `GOOGLE_SESSION_ONLY` → `AuthExpiredError`/401 → "re-run login") must change in
+   lockstep, or the loop closes for humans and stays open for agents.
+
+**What shipped instead — the one thing all of this actually justified.** The rollback at
+`real_chrome.py` emitted *nothing*. A load-bearing state change that silently downgrades
+generation to bundled Chromium, with zero telemetry. It now logs
+`auth_chrome_marker_rolled_back` with the `FlowSessionOutcome` value, which separates
+"the probe endpoint was unreachable" from "genuinely signed out". Zero behaviour change,
+and it is the instrument that would turn #644 from *unobserved* into *observed* on the
+day it first happens.
+
+Explicitly **out of scope**, flagged HIGH by the security persona: widening
+`cookies.py`'s `flow_only=True` harvest. `SAPISID` is account-wide SAPISIDHASH material,
+and Q1b already measured that the target origin ignores a wrong-origin cookie anyway —
+all blast radius, no benefit.
+
+### Open follow-up: the probe's retry budget is sized for the wrong failure
+
+`verification.py` retries `_MAX_ATTEMPTS = 3` with a 15 s timeout and 1 s/2 s backoff, and
+its `except Exception` retries *any* error rather than only `_RETRYABLE_STATUSES`. So a
+hung endpoint costs **~48 s** and an instantly-refused one still burns ~3 s of pure
+sleep — on all three call sites (`auth status`, the MCP twin, and the tail of every
+login). That budget suits a transient 503, not a deprecated host, and a deprecated host
+is more likely to hang at the edge than to 404 cleanly. Not fixed here; worth its own
+change if the BFF starts degrading.
 
 ---
 
