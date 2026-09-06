@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 SkillOpt mock harness for gflow-cli skills.
 
 Runs a scored task suite against a skill document to measure how well
@@ -7,47 +7,70 @@ agents guided by that skill answer gflow-cli usage questions.
 Mimics the SkillOpt rollout→score loop without the automated edit step,
 making it easy to measure baseline accuracy before / after manual edits.
 
-Supports multiple LLM providers so you can compare how different agents
-perform against the same skill doc:
+Run it through ``uv run`` — it imports ``gflow_cli`` for its LLM configuration
+and transport, so a bare ``python`` outside the project venv cannot import it.
 
-Provider: anthropic (default)
-    ANTHROPIC_API_KEY=sk-ant-... python scripts/dev/skillopt/harness.py
-    python scripts/dev/skillopt/harness.py --model claude-sonnet-4-6
+Uses the project's own LLM configuration — the same ``GFLOW_CLI_LLM_*`` settings
+the prompt tools use (docs/CONFIGURATION.md). Any OpenAI-compatible Chat
+Completions endpoint works: OpenAI, a gateway/proxy (OpenRouter, LiteLLM,
+freellmapi, ...), a local Ollama/LM Studio, or Google's compat endpoint.
 
-Provider: openai  (GPT-4o, Gemini OpenAI-compat, local Ollama, LM Studio, …)
-    OPENAI_API_KEY=sk-... python scripts/dev/skillopt/harness.py \\
-        --provider openai --model gpt-4o
+    # Google's compat endpoint (the default) — a key is all you need
+    GFLOW_CLI_LLM_API_KEY=AIza... uv run python scripts/dev/skillopt/harness.py
 
-    # Gemini via its OpenAI-compatible endpoint
-    OPENAI_API_KEY=$GEMINI_API_KEY python scripts/dev/skillopt/harness.py \\
-        --provider openai \\
-        --base-url https://generativelanguage.googleapis.com/v1beta/openai/ \\
-        --model gemini-2.0-flash
+    # OpenRouter, or any gateway
+    GFLOW_CLI_LLM_API_KEY=sk-or-... \
+    GFLOW_CLI_LLM_BASE_URL=https://openrouter.ai/api/v1 \
+    GFLOW_CLI_LLM_MODEL=openai/gpt-4o-mini \
+        uv run python scripts/dev/skillopt/harness.py
 
-    # Local model via Ollama
-    python scripts/dev/skillopt/harness.py \\
-        --provider openai --base-url http://localhost:11434/v1 \\
-        --model llama3.2 --api-key ollama
+    # Local keyless gateway — no credential is sent at all
+    GFLOW_CLI_LLM_BASE_URL=http://127.0.0.1:11434/v1 \
+    GFLOW_CLI_LLM_MODEL=llama3.2 uv run python scripts/dev/skillopt/harness.py
+
+The endpoint and credential come from those settings only — no second place to
+configure a provider, and no way for the two to disagree.
 
 Other flags:
-    --dry-run          Print prompts + scoring spec; no API call
+    --dry-run          Print prompts + scoring spec; no API call, no key needed
     --skill PATH       Point at a different skill version
+    --tasks PATH       Task suite to score against — must match --skill; the
+                       defaults are the gflow-cli skill and ITS tasks, so a
+                       --skill from elsewhere needs its --tasks passed too
+    --model ID         Override GFLOW_CLI_LLM_MODEL for one comparison run
     --tags auth,video  Filter tasks by tag
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
+import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
+
+from gflow_cli.config import DEFAULT_LLM_BASE_URL, get_settings
+from gflow_cli.data.redaction import redact_error_detail
+from gflow_cli.tools.expander import (
+    _RETRYABLE_STATUS,
+    DEFAULT_TIMEOUT,
+    LlmHttpError,
+    PromptExpander,
+    _default_transport,
+    resolve_model,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TASKS_PATH = Path(__file__).parent / "tasks.json"
 DEFAULT_SKILL_PATH = REPO_ROOT / "skills" / "gflow-cli" / "SKILL.md"
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
-DEFAULT_PROVIDER = "anthropic"
+#: Retry budget per task, and the wait that clears one per-minute quota window.
+_MAX_ATTEMPTS = 4
+_QUOTA_WINDOW_SECONDS = 30
+
+
+class RolloutError(RuntimeError):
+    """One task's rollout could not be completed. The suite records it and goes on."""
 
 SYSTEM_TEMPLATE = """\
 You are an agent assistant helping users operate gflow-cli, the unofficial terminal CLI for Google Flow (Veo video generation and Imagen image generation).
@@ -107,7 +130,11 @@ def score_response(response: str, expected: dict[str, Any]) -> tuple[float, list
     bonus_hits = [p for p in partial_credit if p.lower() in resp_lower]
     bonus = min(len(bonus_hits) * 0.1, 0.3)
 
-    score = max(0.0, min(1.0, base - penalty + bonus))
+    # Rounded because the grade is compared against a hard >= 0.8 threshold and
+    # 1.0 - 0.3 + 0.1 is 0.7999999999999999 in binary float — a task scoring
+    # exactly the threshold graded PARTIAL while printing "0.80". 4 decimals is
+    # finer than any rule here produces; the coarsest term is 0.1.
+    score = round(max(0.0, min(1.0, base - penalty + bonus)), 4)
 
     if misses:
         reasons.append(f"MISS: {misses}")
@@ -140,47 +167,66 @@ def run_dry(tasks: list[dict[str, Any]], skill_text: str, version: str, epoch: i
         print()
 
 
-def _call_anthropic(system: str, user: str, model: str, api_key: str) -> str:
-    try:
-        import anthropic
-    except ImportError:
-        sys.exit(
-            "anthropic package not found. Install it:\n"
-            "  uv pip install anthropic"
-        )
-    client = anthropic.Anthropic(api_key=api_key)
-    msg = client.messages.create(
-        model=model,
-        max_tokens=512,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
-    return msg.content[0].text.strip()
+def _call_llm(system: str, user: str, model: str | None, settings: Any) -> str:
+    """One Chat Completions call through the tools layer's own transport.
 
-
-def _call_openai_compat(
-    system: str, user: str, model: str, api_key: str, base_url: str | None
-) -> str:
-    try:
-        import openai
-    except ImportError:
-        sys.exit(
-            "openai package not found. Install it:\n"
-            "  uv pip install openai"
-        )
-    kwargs: dict[str, Any] = {"api_key": api_key}
-    if base_url:
-        kwargs["base_url"] = base_url
-    client = openai.OpenAI(**kwargs)
-    resp = client.chat.completions.create(
-        model=model,
-        max_tokens=512,
-        messages=[
+    Reuses :func:`gflow_cli.tools.expander._default_transport` rather than an SDK:
+    it already puts the key in a header (never the URL), refuses redirects, and
+    is reached only through a ``base_url`` that ``Settings._validate_llm_base_url``
+    has gated to https (or loopback http). A second HTTP client here would be a
+    second trust boundary to audit.
+    """
+    payload: dict[str, object] = {
+        "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-    )
-    return (resp.choices[0].message.content or "").strip()
+        "temperature": 0.0,
+        "max_tokens": 512,
+    }
+    if model:
+        # Omitted when unset so a gateway applies its own default — sending a
+        # vendor-specific name to an endpoint that does not serve it is a silent 400.
+        payload["model"] = model
+
+    key = settings.llm_api_key.get_secret_value() if settings.llm_api_key else None
+    url = f"{settings.llm_base_url.rstrip('/')}/chat/completions"
+
+    # 429 backs off in whole quota-windows because free tiers meter per MINUTE
+    # (Google's flash is 10 RPM), so a 1-2s retry only burns another attempt inside
+    # the same window — that is what killed an unpaced 19-task run at task 6. Server
+    # errors keep the short schedule: a flapping 502 has no per-minute window to wait
+    # out, and paying 30s for it would cost minutes across a suite.
+    # _RETRYABLE_STATUS is imported so this and the tools layer cannot disagree.
+    node: dict[str, object] | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            node = _default_transport(url, payload, DEFAULT_TIMEOUT, key)
+            break
+        except LlmHttpError as exc:
+            # Gateways echo the request on error, Authorization header included —
+            # the same reason expander.py redacts this exact field.
+            detail = redact_error_detail(exc.detail)[:300]
+            if exc.status not in _RETRYABLE_STATUS or attempt == _MAX_ATTEMPTS - 1:
+                msg = f"HTTP {exc.status}: {detail}"
+                raise RolloutError(msg) from exc
+            delay = _QUOTA_WINDOW_SECONDS * (attempt + 1) if exc.status == 429 else 2**attempt
+            print(f"  (HTTP {exc.status} — retrying in {delay}s)")
+            time.sleep(delay)
+        except Exception as exc:
+            msg = f"{type(exc).__name__}: {redact_error_detail(str(exc))[:300]}"
+            raise RolloutError(msg) from exc
+    if node is None:  # pragma: no cover — range(_MAX_ATTEMPTS) is never empty
+        raise RolloutError("exhausted retries without a response")
+
+    # Same defensive extraction the prompt tools use: `content` is legitimately
+    # None on a refusal, and gateways that route multimodal models can return it
+    # as a parts list. str()-ing either would feed the scorer a keyword-matchable
+    # blob and silently corrupt the benchmark, so an unusable shape is an error.
+    text = PromptExpander._extract_text(node)  # noqa: SLF001 — one defensive parser, not two
+    if not text.strip():
+        raise RolloutError("response carried no assistant text (refusal or unexpected shape)")
+    return text.strip()
 
 
 def run_live(
@@ -188,28 +234,40 @@ def run_live(
     skill_text: str,
     version: str,
     epoch: int,
-    model: str,
-    api_key: str,
-    provider: str = DEFAULT_PROVIDER,
-    base_url: str | None = None,
+    model: str | None,
+    settings: Any,
 ) -> None:
     results: list[dict[str, Any]] = []
 
     print(
         f"=== LIVE RUN — {len(tasks)} task(s) — skill v{version} epoch {epoch}"
-        f" — provider {provider} — model {model} ===\n"
+        f" — {urllib.parse.urlsplit(settings.llm_base_url).netloc}"
+        f" — model {model or '(gateway default)'} ===\n"
     )
 
     for i, task in enumerate(tasks, 1):
         system, user = format_prompt(skill_text, version, epoch, task)
         print(f"[{i}/{len(tasks)}] {task['id']}: {task['question'][:70]}...")
 
-        if provider == "anthropic":
-            response = _call_anthropic(system, user, model, api_key)
-        elif provider == "openai":
-            response = _call_openai_compat(system, user, model, api_key, base_url)
-        else:
-            sys.exit(f"Unknown provider '{provider}'. Use 'anthropic' or 'openai'.")
+        # A rollout that cannot complete is recorded and the suite carries on.
+        # Exiting here would discard every score already paid for -- which on a
+        # metered free tier is the expensive half of the run, and is exactly what
+        # happened twice while this harness was being exercised.
+        try:
+            response = _call_llm(system, user, model, settings)
+        except RolloutError as exc:
+            print(f"  ERROR: {exc}")
+            results.append(
+                {
+                    "id": task["id"],
+                    "tags": task.get("tags", []),
+                    "score": 0.0,
+                    "status": "ERROR",
+                    "response_preview": "",
+                    "reasons": [f"ERROR: {exc}"],
+                }
+            )
+            continue
 
         score, reasons = score_response(response, task["expected"])
 
@@ -237,12 +295,24 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
         print("\nNo results.")
         return
 
-    avg = sum(r["score"] for r in results) / total
-    passed = sum(1 for r in results if r["status"] == "PASS")
-    failed = [r for r in results if r["status"] == "FAIL"]
+    # An ERROR is missing data, not a zero: the model never answered. Averaging it
+    # in would understate the skill and make a quota-truncated run look like a
+    # regression, so errors are counted and named but kept out of the score.
+    errored = [r for r in results if r["status"] == "ERROR"]
+    scored = [r for r in results if r["status"] != "ERROR"]
+    passed = sum(1 for r in scored if r["status"] == "PASS")
+    failed = [r for r in scored if r["status"] == "FAIL"]
 
     print(f"\n{'='*60}")
-    print(f"SUMMARY: {passed}/{total} passed  avg score {avg:.3f}")
+    if scored:
+        avg = sum(r["score"] for r in scored) / len(scored)
+        print(f"SUMMARY: {passed}/{len(scored)} passed  avg score {avg:.3f}")
+    else:
+        print("SUMMARY: no task completed a rollout")
+    if errored:
+        print(f"  {len(errored)} of {total} task(s) did not complete and are excluded:")
+        for r in errored:
+            print(f"    {r['id']}: {r['reasons'][0]}")
 
     if failed:
         print(f"\nFailed tasks ({len(failed)}):")
@@ -250,7 +320,7 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
             print(f"  {r['id']}: {r['reasons']}")
 
     tag_scores: dict[str, list[float]] = {}
-    for r in results:
+    for r in scored:
         for tag in r.get("tags", []):
             tag_scores.setdefault(tag, []).append(r["score"])
 
@@ -285,51 +355,19 @@ def main() -> None:
         help="Comma-separated tag filter, e.g. 'auth,video'",
     )
     parser.add_argument(
-        "--provider",
-        type=str,
-        default=DEFAULT_PROVIDER,
-        choices=["anthropic", "openai"],
-        help=(
-            "LLM provider (default: anthropic). "
-            "Use 'openai' for GPT-4o, Gemini (via --base-url), or any OpenAI-compat endpoint."
-        ),
-    )
-    parser.add_argument(
         "--model",
         type=str,
         default=None,
         help=(
-            f"Model ID. Defaults: anthropic={DEFAULT_MODEL}, openai=gpt-4o. "
-            "For Gemini: gemini-2.0-flash. For Ollama: llama3.2."
-        ),
-    )
-    parser.add_argument(
-        "--base-url",
-        type=str,
-        default=None,
-        dest="base_url",
-        help=(
-            "OpenAI-compatible base URL (openai provider only). "
-            "Examples: https://generativelanguage.googleapis.com/v1beta/openai/ (Gemini), "
-            "http://localhost:11434/v1 (Ollama). "
-            "WARNING: do not point at internal/metadata endpoints in CI — "
-            "this value is passed directly to the SDK without validation."
+            "Model ID, overriding GFLOW_CLI_LLM_MODEL for this run "
+            "(e.g. openai/gpt-4o-mini, gemini-2.5-flash, llama3.2). "
+            "Unset falls through the normal precedence and may let the gateway choose."
         ),
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print prompts and scoring spec without calling the API",
-    )
-    parser.add_argument(
-        "--api-key",
-        type=str,
-        default=None,
-        help=(
-            "API key. Prefer env vars ($ANTHROPIC_API_KEY / $OPENAI_API_KEY) over this flag — "
-            "CLI flags are visible in process listings (ps aux). "
-            "This flag exists only for scripting contexts where env vars are unavailable."
-        ),
     )
     args = parser.parse_args()
 
@@ -345,20 +383,27 @@ def main() -> None:
 
     skill_text, version, epoch = load_skill(args.skill)
 
-    provider_defaults = {"anthropic": DEFAULT_MODEL, "openai": "gpt-4o"}
-    model = args.model or provider_defaults.get(args.provider, DEFAULT_MODEL)
-
     if args.dry_run:
         run_dry(tasks, skill_text, version, epoch)
-    else:
-        env_key = "ANTHROPIC_API_KEY" if args.provider == "anthropic" else "OPENAI_API_KEY"
-        api_key = args.api_key or os.environ.get(env_key)
-        if not api_key:
-            sys.exit(f"No API key. Set ${env_key} or pass --api-key.")
-        run_live(
-            tasks, skill_text, version, epoch, model, api_key,
-            provider=args.provider, base_url=args.base_url,
+        return
+
+    try:
+        settings = get_settings()
+    except Exception as exc:  # noqa: BLE001 — a bad GFLOW_CLI_LLM_* value is user error
+        sys.exit(f"Invalid GFLOW_CLI_* configuration: {type(exc).__name__}: {exc}")
+    # Same rule the prompt tools use: a key alone is enough on the default
+    # endpoint, and a chosen endpoint is enough alone because local gateways
+    # need no credential. Neither means the user has not configured this.
+    # rstrip matches resolve_model and PromptExpander._is_configured — without it
+    # a trailing slash on the default URL reads as a chosen endpoint and skips this.
+    if not settings.llm_api_key and settings.llm_base_url.rstrip("/") == DEFAULT_LLM_BASE_URL:
+        sys.exit(
+            "No LLM endpoint configured. Set GFLOW_CLI_LLM_API_KEY (and optionally "
+            "GFLOW_CLI_LLM_BASE_URL / GFLOW_CLI_LLM_MODEL) — the same settings the "
+            "prompt tools use. See docs/CONFIGURATION.md and .env.template."
         )
+    model = resolve_model(args.model, settings.llm_model, settings.llm_base_url)
+    run_live(tasks, skill_text, version, epoch, model, settings)
 
 
 if __name__ == "__main__":
