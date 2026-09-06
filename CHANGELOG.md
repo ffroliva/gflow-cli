@@ -33,6 +33,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`gflow video r2v` from local `--ref` files runs on the migrated `flow.google.com`
+  host** (#639). Each file is uploaded through the same editor toolbar path i2v already
+  uses, so the app's own `maseQ` reply names the media id, and is then attached as an `@`
+  **mention** in the prompt — references are not a chip slot on this host.
+
+  Three measured details shape it. The Ingredients submit is rpcid **`MZZa6b`** (t2v
+  `YhhmEf`, i2v `eb1hJf`) — watching only the others is why this looked for several rounds
+  of recon like r2v never submitted at all. A mention is committed by **Enter**; a typed
+  query alone leaves the picker open and inserts nothing. And mentions need real key
+  events where prompt text needs `insert_text` (a newline must not submit), so the two
+  cannot share a path.
+
+  The submit body is asserted to carry every uploaded id, and a run whose references have
+  not all attached is refused **before** submit (exit 32) — the failure mode being a
+  full-price clip with none of the user's references on it. A reference the picker misses
+  is retried, since its search index does not always hold a fresh upload on the first
+  query. References by `@Name` and character entities (`--reference-entity`) stay on labs,
+  for the same reason a frame by UUID does: the picker exposes no media id to anchor on.
+  Live-verified end to end with two local refs and `--model veo-lite-lp`, and confirmed
+  semantically by the account owner: the presenter in the output is the person from the
+  first reference and the product is the one from the second, so both references are
+  genuinely bound rather than merely accepted.
+
+  **`--duration` is refused on this path (exit 11), and an r2v run pins 8s for itself.**
+  Flow offers reference-to-video only at its base 8s tier on this host. At 4s or 6s it does
+  not refuse: it flattens the reference mentions into plain prompt text and submits
+  `veo_3_1_t2v_lite_4s_low_priority` — a full-price text-to-video clip carrying the file
+  *names* and none of the images. The editor remembers the last duration, so a run passing
+  none was inheriting a degrading one. Measured at zero credits across three route-blocked
+  runs varying only the duration (`scripts/dev/capture_migrated_r2v_production_submit.py`).
+  Note the media slot carries the reference ids even in the degraded submits, so the model
+  key — not the ids — is what distinguishes a bound run from an accepted one.
+
+  **Correction to the first cut of this feature**, kept here because the claim was public:
+  the submit-body assertion above was written and unit-tested but **never registered** on
+  the r2v path — `page.on("request", …)` was gated on the i2v `expect_media_id`, which is
+  always `None` for r2v. The live run and its e2e evidence therefore prove the references
+  bound; they do not prove a lost one would have been caught. Fixed, along with the model
+  key regex the diagnostic reads (it matched only mode-infixed keys, and a *mode-less* key
+  is precisely what an r2v body carries when the picker inserted nothing), and covered by a
+  round-trip test that drives `submit_and_observe` and asserts the check actually fired
+  rather than calling it directly.
+
 - **`recaptcha_mint_failed_off_migrated_host`** — when a mint fails and the page still reads as
   `labs.google`, the page URL is now logged. That is the one observation which distinguishes the
   race above from a genuine labs-side reCAPTCHA break, and it makes the next incident bundle

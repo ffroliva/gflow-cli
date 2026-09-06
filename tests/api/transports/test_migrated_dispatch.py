@@ -222,8 +222,13 @@ async def _run(
 
 
 async def test_run_video_rejects_modes_not_yet_ported_with_exit_36() -> None:
-    with pytest.raises(FlowHostMigratedError, match="reference-to-video"):
+    # r2v from LOCAL files is ported; a reference given by name is not, for the same
+    # reason a frame by UUID is not — the picker exposes no media id, so there is
+    # nothing to anchor the pick on and nothing to assert on the submit body.
+    with pytest.raises(FlowHostMigratedError, match="by name"):
         await _run(_req(mode=Mode.R2V, ref_names=("asset",)))
+    with pytest.raises(FlowHostMigratedError, match="character references"):
+        await _run(_req(mode=Mode.R2V, reference_entities=("ent-1",)))
 
 
 async def test_run_video_needs_a_project_on_the_migrated_host() -> None:

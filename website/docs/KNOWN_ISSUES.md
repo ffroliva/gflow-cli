@@ -14,9 +14,9 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
-### Flow is migrating to `flow.google.com`; gflow drives the migrated frontend for t2v and i2v from a local start frame (rest of the matrix pending)
+### Flow is migrating to `flow.google.com`; gflow drives the migrated frontend for t2v, i2v from a local start frame, and r2v from local reference files (rest of the matrix pending)
 
-- **Status:** Open (partially resolved) · **Severity:** High for everything except text-to-video and local-file image-to-video · **Affected:** on accounts the rollout has reached, `gflow video t2v` and `gflow video i2v --initial-frame <local file>` now run on the migrated host (with `--project`); an end frame, a frame by UUID or `@Name`, `image`, r2v, characters, scenes, extend, instructions and tools are not ported yet and still exit 36
+- **Status:** Open (partially resolved) · **Severity:** High for everything except text-to-video, local-file image-to-video and local-file reference-to-video · **Affected:** on accounts the rollout has reached, `gflow video t2v`, `gflow video i2v --initial-frame <local file>` and `gflow video r2v --ref <local file>` now run on the migrated host (with `--project`); an end frame, a frame by UUID or `@Name`, references by `@Name` or `--reference-entity`, `image`, characters, scenes, extend, instructions and tools are not ported yet and still exit 36
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
 - **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
 - **Image commands on a moved account** ([#673](https://github.com/ffroliva/gflow-cli/issues/673), fixed in the unreleased line, post-v0.68.0): through v0.68.0 `image t2i` / `i2i` (and `upscale`, `extend`) died with exit 1 `RecaptchaError` within seconds, before any submit, instead of the exit 36 above, because the labs client minted the reCAPTCHA token on the `flow.google.com` project grid before any migration guard ran. The guard now runs at the mint. If you still see a `RecaptchaError` on a moved account right after `auth login`, that is the labs logged-out landing page from the [#644](https://github.com/ffroliva/gflow-cli/issues/644) cookie harvest, not this.
@@ -54,9 +54,22 @@ the clip). Two real clips were generated this way on 2026-09-05 — spike
 (`GFLOW_CLI_FLOW_HOST=auto`): flow.google.com is the **default** host for that
 command on every account — moved or not; `flow.google.com` forces it for
 everything, and `labs.google` switches the migrated composer off. Limits today: `--project` is required (project creation from the
-migrated editor is not ported), and only `t2v` and `i2v` from a local `--initial-frame` (no end frame,
+migrated editor is not ported), and only `t2v`, `i2v` from a local `--initial-frame` (no end frame,
 no UUID/`@Name` frame — the migrated Frames picker exposes no media id in its DOM, so a frame is
-found by file name after gflow uploads it through the editor) — everything else still exits 36.
+found by file name after gflow uploads it through the editor), and `r2v` from local `--ref` files
+(see the next paragraph) — everything else still exits 36.
+
+**`r2v` from local `--ref` files also runs there (2026-09-06).** Each file is uploaded
+through the same editor toolbar path i2v uses — so the app's own `maseQ` reply names the
+media id — and then attached as an `@` **mention** in the prompt rather than a chip slot.
+Two details are load-bearing: the Ingredients submit is rpcid **`MZZa6b`** (t2v is
+`YhhmEf`, i2v `eb1hJf`), and a mention is committed by **Enter** — a typed query alone
+leaves the picker open and inserts nothing. The submit body is asserted to carry every
+uploaded id, and a run whose references have not all attached is refused **before**
+submit, because the failure mode is a full-price clip with none of them on it.
+References by `@Name` and character entities stay on labs, for the same reason a frame by
+UUID does: the picker exposes no media id to anchor on. Capture:
+[2026-09-05-migrated-r2v-attach-surface](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md).
 
 **Models on the migrated host.** Its picker is driven for every tier the account's
 menu actually renders, `veo-lite-lp` included — matched by the `[Lower Priority]`
