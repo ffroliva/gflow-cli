@@ -590,6 +590,73 @@ async def test_axis_left_at_default_when_not_requested() -> None:
     assert page.dom.groups["count"][0].checked
 
 
+def _r2v_request(**kw: Any) -> GenerateVideoRequest:
+    base: dict[str, Any] = {
+        "prompt": "the presenter holds the product",
+        "mode": Mode.R2V,
+        "aspect": Aspect.PORTRAIT,
+        "reference_images": (Path("a.png"),),
+        "duration": None,
+    }
+    base.update(kw)
+    return GenerateVideoRequest(**base)
+
+
+async def test_r2v_pins_the_base_duration_instead_of_inheriting_the_editors() -> None:
+    """Measured 2026-09-06 at $0: at 4s and 6s this host does not refuse a references run,
+    it flattens the mention chips to plain prompt text and submits
+    `veo_3_1_t2v_lite_4s_low_priority` — a full-price text-to-video clip carrying the file
+    NAMES and none of the images. Only 8s submits `veo_3_1_r2v_lite_low_priority`.
+
+    The editor remembers the last duration, so passing none is not "no opinion": it is
+    whatever the previous run left. #125's shape, one axis over."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.groups["duration"][2].checked = False  # 8s
+    page.dom.groups["duration"][0].checked = True  # the editor remembers 4s
+    with capture_logs() as logs:
+        await MigratedComposer().apply_video_settings(page, _r2v_request())
+    assert page.dom.groups["duration"][2].checked and not page.dom.groups["duration"][0].checked
+    assert "migrated.r2v_duration_pinned" in [e["event"] for e in logs]
+
+
+async def test_r2v_on_a_pane_with_no_duration_row_is_left_alone() -> None:
+    """A cohort that renders no duration row already submits the base tier — that is the
+    maintainer's account, where r2v has always worked. A missing row is the correct state,
+    so the pin must not go through `_select`, whose duration branch raises exit 11."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    del page.dom.groups["duration"]
+    with capture_logs() as logs:
+        await MigratedComposer().apply_video_settings(page, _r2v_request())
+    events = [e["event"] for e in logs]
+    assert "migrated.r2v_duration_row_absent" in events
+    assert "migrated.r2v_duration_pinned" not in events
+
+
+async def test_r2v_with_an_explicit_degrading_duration_is_refused_before_submit() -> None:
+    """Exit 11 at zero credits beats the post-submit body assertion, which can only name
+    the fault after Flow has already been asked to bill it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    with pytest.raises(ConfigurationError) as exc_info:
+        await MigratedComposer().apply_video_settings(page, _r2v_request(duration=4))
+    message = str(exc_info.value)
+    assert "8s" in message and "silently drops the references" in message
+    assert page.dom.groups["duration"][0].checked is False  # nothing was selected
+
+
+async def test_r2v_at_the_supported_duration_is_allowed_through() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    await MigratedComposer().apply_video_settings(page, _r2v_request(duration=8))
+    assert page.dom.groups["duration"][2].checked
+
+
 async def test_stale_radio_that_never_flips_is_selector_drift_with_host() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -1526,6 +1593,86 @@ async def test_submit_body_assertion_is_off_for_t2v() -> None:
         page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
     )
     assert rec.is_done and page.listeners("request") == []
+
+
+REF_A = "77777777-7777-4777-8777-777777777777"
+REF_B = "88888888-8888-4888-8888-888888888888"
+
+
+def _r2v_body(*ids: str, key: str = "veo_3_1_r2v_lite_low_priority") -> str:
+    packed = ",".join(f'\\"{i}\\"' for i in ids)
+    return f'f.req=[[["MZZa6b","[\\"{key}\\",{packed},\\"{PROJ}\\"]",null,"generic"]]]'
+
+
+def _r2v_replies() -> list[tuple[str, str]]:
+    return [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+
+
+async def test_submit_arms_the_body_assertion_on_the_r2v_path() -> None:
+    """The round trip, not the unit: drive the real `submit_and_observe` with a body that
+    dropped a reference and assert `_r2v_body_problem` actually fired. Calling that helper
+    directly proves it is correct; only this proves it RUNS. It did not — the listener was
+    registered under `expect_media_id is not None`, which is never true for r2v, so the
+    check was unreachable in a live run while every unit test stayed green."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a woman holding the product"
+    page.scripted_request = ("MZZa6b", _r2v_body(REF_A))  # REF_B never made it
+    page.scripted_responses = _r2v_replies()  # the app answers anyway; the error must win
+    with pytest.raises(WireFormatError, match=REF_B) as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_reference_ids=(REF_A, REF_B),
+        )
+    assert "missing 1 of 2" in str(ei.value)
+    assert "MZZa6b" in ei.value.route and EXIT_CODE_MAP[WireFormatError] == 7
+
+
+async def test_submit_on_the_r2v_path_names_a_t2v_key_as_the_lost_references() -> None:
+    """The expensive shape: the picker closed having inserted nothing, so the app submits
+    as plain text-to-video and Flow bills a clip with none of the references on it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a woman holding the product"
+    page.scripted_request = ("MZZa6b", _r2v_body(REF_A, REF_B, key="veo_3_1_lite_low_priority"))
+    page.scripted_responses = _r2v_replies()
+    with pytest.raises(WireFormatError, match="no reference was bound") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_reference_ids=(REF_A, REF_B),
+        )
+    # MODEL_KEY has to match an r2v-shaped key too, or the diagnostic reports "no model
+    # key" for the one mode it was added to serve.
+    assert "veo_3_1_lite_low_priority" in str(ei.value)
+
+
+async def test_submit_r2v_with_every_reference_in_the_body_proceeds() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a woman holding the product"
+    page.scripted_request = ("MZZa6b", _r2v_body(REF_A, REF_B))
+    page.scripted_responses = _r2v_replies()
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=None,
+        project_id=PROJ,
+        expect_reference_ids=(REF_A, REF_B),
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+    assert page.listeners("request") == [] and page.listeners("response") == []
 
 
 async def test_ensure_editor_dismisses_a_dialog_before_waiting_for_the_trigger() -> None:

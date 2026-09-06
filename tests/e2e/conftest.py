@@ -28,16 +28,19 @@ See docs/E2E_TESTING.md for the full layer reference.
 
 from __future__ import annotations
 
+import functools
 import os
 import shutil
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
+from typing import ParamSpec
 
 import pytest
 
 from gflow_cli.config import get_settings, reset_settings
+from gflow_cli.errors import FlowHostMigratedError
 
 _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 
@@ -138,3 +141,36 @@ def e2e_env(tmp_path: Path) -> Iterator[dict[str, str]]:
     env["GFLOW_CLI_PROFILE"] = name
     env["GFLOW_CLI_HISTORY_PROMPTS"] = "store"
     yield env
+
+
+_P = ParamSpec("_P")
+
+
+def skip_on_migrated_host(
+    fn: Callable[_P, Awaitable[None]],
+) -> Callable[_P, Awaitable[None]]:
+    """Skip a labs-frontend e2e test when the profile has moved to flow.google.com.
+
+    Some e2e tests drive affordances that exist only on ``labs.google`` — the
+    Agent toggle, the sidebar, ``mode_control``. The migrated host renders none
+    of them, so on a moved account these tests raise
+    :class:`FlowHostMigratedError` and can never pass, however healthy the
+    product is. That is a missing precondition, not selector drift.
+
+    Left unguarded they report RED nightly: in issue #559 (2026-09-06) three of
+    five canary failures were exactly this, and a canary that cries wolf stops
+    being read.
+
+    Catching the typed error rather than probing the URL is deliberate — the
+    bail can fire at client setup, at ``get_ui_driver``, or at ``mode_control``,
+    and the exception is the only thing common to all three.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> None:
+        try:
+            await fn(*args, **kwargs)
+        except FlowHostMigratedError:
+            pytest.skip("labs-only affordance; this profile is on the migrated host")
+
+    return wrapper

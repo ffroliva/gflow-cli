@@ -64,6 +64,12 @@ def _make_client(
         client.generate_character_image = AsyncMock(side_effect=[face_result, body_result])
     client.commit_workflow = AsyncMock(return_value=None)
     client.patch_entity = AsyncMock(return_value=None)
+    client.delete_characters = AsyncMock(return_value=None)
+    # Default: the backend agrees nothing was bound. Tests that model a
+    # generation which succeeded server-side override this explicitly.
+    client.get_character = AsyncMock(
+        return_value=MagicMock(workflow_ids=(), thumbnail_media_id=None)
+    )
     return client
 
 
@@ -72,6 +78,7 @@ def _make_recorder(*, row_id: str = ROW_ID) -> MagicMock:
     recorder.record_character_started = MagicMock(return_value=row_id)
     recorder.record_character_partial = MagicMock(return_value=None)
     recorder.record_character_completed = MagicMock(return_value=None)
+    recorder.record_character_abandoned = MagicMock(return_value=None)
     # By default: no prior incomplete op
     recorder.repository = MagicMock()
     recorder.repository.find_incomplete_character = MagicMock(return_value=None)
@@ -474,3 +481,89 @@ async def test_format_prompt_defaults_off_and_forwards_when_set() -> None:
     assert all(c.kwargs["format_prompt"] is True for c in calls), (
         "format_prompt must be forwarded to both the face and body slot"
     )
+
+
+# ---------------------------------------------------------------------------
+# Orphan rollback: a failure with NOTHING to resume must not strand an entity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_zero_progress_failure_deletes_the_orphan_entity() -> None:
+    """Face generation fails on the first slot → the free entity is rolled back.
+
+    Nothing was spent and no workflow id exists, so the STARTED row buys the
+    user no resume.  Keeping it strands an ``Untitled Character  refs=0`` in
+    the project forever (the user retries under a different name, which misses
+    ``find_incomplete_character``'s (project, name) key).
+    """
+    exc = WireFormatError("editor never became ready", route="test")
+    client = _make_client(generate_side_effect=exc)
+    recorder = _make_recorder()
+
+    with pytest.raises(WireFormatError):
+        await character_create(client, recorder, **_saga_kwargs())
+
+    client.delete_characters.assert_awaited_once_with(PROJECT_ID, [ENTITY_ID])
+    recorder.record_character_abandoned.assert_called_once_with(row_id=ROW_ID, exc=exc)
+
+
+@pytest.mark.asyncio
+async def test_partial_progress_failure_keeps_the_entity_for_resume() -> None:
+    """Face succeeded, body failed → a credit was spent; the entity MUST survive."""
+    exc = WireFormatError("body slot rejected", route="test")
+
+    async def _generate_side_effect(**kwargs: object) -> tuple[str, str, str | None]:
+        if kwargs.get("image_reference_index") == 0:
+            return (WF0, M0, "/tmp/face_slot0.png")
+        raise exc
+
+    client = _make_client()
+    client.generate_character_image = AsyncMock(side_effect=_generate_side_effect)
+    recorder = _make_recorder()
+
+    with pytest.raises(WireFormatError):
+        await character_create(client, recorder, **_saga_kwargs(body=BODY_REQ))
+
+    client.delete_characters.assert_not_called()
+    recorder.record_character_abandoned.assert_not_called()
+    last_partial = recorder.record_character_partial.call_args
+    assert last_partial.kwargs["workflow_ids"] == [WF0]
+
+
+@pytest.mark.asyncio
+async def test_rollback_failure_never_masks_the_original_error() -> None:
+    """batchDeleteAssets is best-effort — its own failure must stay invisible."""
+    exc = WireFormatError("editor never became ready", route="test")
+    client = _make_client(generate_side_effect=exc)
+    client.delete_characters = AsyncMock(side_effect=RuntimeError("aisandbox 503"))
+    recorder = _make_recorder()
+
+    with pytest.raises(WireFormatError):
+        await character_create(client, recorder, **_saga_kwargs())
+
+    # The row is still flipped, so the dead entity_id stops being resumed.
+    recorder.record_character_abandoned.assert_called_once_with(row_id=ROW_ID, exc=exc)
+
+
+@pytest.mark.asyncio
+async def test_rollback_spares_an_entity_the_backend_has_bound(monkeypatch: object) -> None:
+    """Client-side "zero progress" is not proof the generation did not happen.
+
+    Live 2026-09-06: a portrait generated fine on flow.google.com while the
+    client timed out on the labs wire, so `workflow_ids` was empty HERE and
+    non-empty on the entity. Deleting on that signal alone destroys finished,
+    paid-for work. Ask the backend before rolling back.
+    """
+    exc = WireFormatError("labs wire never answered", route="test")
+    client = _make_client(generate_side_effect=exc)
+    client.get_character = AsyncMock(
+        return_value=MagicMock(workflow_ids=("wf-bound-0",), thumbnail_media_id="m0")
+    )
+    recorder = _make_recorder()
+
+    with pytest.raises(WireFormatError):
+        await character_create(client, recorder, **_saga_kwargs())
+
+    client.delete_characters.assert_not_called()
+    recorder.record_character_abandoned.assert_not_called()

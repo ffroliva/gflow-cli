@@ -27,7 +27,7 @@ from gflow_cli.api.transports.ui_automation_video import (  # noqa: E402
     MODE_SWITCH_TRIGGER_SELECTORS,
 )
 
-_DUMP_TABS = """
+_DUMP_TABS = r"""
 () => ({
   tabs: Array.from(document.querySelectorAll("[role='tab']")).map(e => ({
     id: e.id || null,

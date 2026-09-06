@@ -669,6 +669,7 @@ def _build_video_media_inputs(
     initial_frame: str | None,
     end_frame: str | None,
     reference_images: list[str] | None,
+    reference_entities: list[str] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Validate + resolve the media inputs (start/end/reference frames) for a
     video request. Returns ``(payload_fragment, None)`` or ``(None, error)``.
@@ -687,9 +688,13 @@ def _build_video_media_inputs(
         return None, _bad_param(
             "Missing Start Image", "i2v (image-to-video) requires 'initial_frame'."
         )
-    if mode == "r2v" and not reference_images:
+    # A saved CHARACTER entity is a reference in its own right: GenerateVideoRequest
+    # accepts "reference_images, ref_names, OR reference_entities" for r2v, so this
+    # guard must not be stricter than the domain rule it fronts (#689).
+    if mode == "r2v" and not reference_images and not reference_entities:
         return None, _bad_param(
-            "Missing Reference Images", "r2v (reference-to-video) requires 'reference_images'."
+            "Missing References",
+            "r2v (reference-to-video) requires 'reference_images' or 'reference_entities'.",
         )
 
     media: dict[str, Any] = {}
@@ -747,6 +752,8 @@ async def gflow_generate_image(
     count: int = 1,
     seed: int | None = None,
     reference_images: list[str] | None = None,
+    reference_entities: list[str] | None = None,
+    reference_entity_names: list[str] | None = None,
     tools: list[dict[str, Any]] | None = None,
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
@@ -770,6 +777,12 @@ async def gflow_generate_image(
         seed: Optional random seed for reproducibility.
         reference_images: Optional list of reference images for image-to-image generation.
             Can be local file paths or UUIDs of previously uploaded assets.
+        reference_entities: Saved Flow CHARACTER entity **ids** to attach
+            (mirrors the CLI ``--reference-entity``). Same wire as an ``@Name``
+            mention (``referenceEntities``) and dedupes against it; use ids when
+            a display name would be ambiguous, since names are not unique.
+        reference_entity_names: Optional display names paired positionally with
+            ``reference_entities`` (mirrors ``--reference-entity-name``).
         tools: Optional list of prompt tools to apply before generation.
             Each item is ``{"name": str, "options": dict}``.  Valid names
             include ``"creative-director"`` (which supports an ``options``
@@ -859,6 +872,12 @@ async def gflow_generate_image(
         payload["project_name"] = project_name
     if output is not None:
         payload["output_file"] = output
+    # Omitted rather than written empty when unused: `codec.build_image_request`
+    # already reads both keys, so an empty list is a real (and wrong) instruction.
+    if reference_entities:
+        payload["reference_entities"] = list(reference_entities)
+    if reference_entity_names:
+        payload["reference_entity_names"] = list(reference_entity_names)
 
     task_type = "t2i"
     if reference_images:
@@ -909,6 +928,8 @@ def _build_video_payload(
     project_name: str | None,
     output: str | None = None,
     ui_mode: str | None = None,
+    reference_entities: list[str] | None = None,
+    reference_entity_names: list[str] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "prompt": prompt,
@@ -930,6 +951,12 @@ def _build_video_payload(
         payload["project_name"] = project_name
     if output is not None:
         payload["output_file"] = output
+    # Omitted rather than written empty when unused: `codec.build_video_request`
+    # already reads both keys, so an empty list is a real (and wrong) instruction.
+    if reference_entities:
+        payload["reference_entities"] = list(reference_entities)
+    if reference_entity_names:
+        payload["reference_entity_names"] = list(reference_entity_names)
     return payload
 
 
@@ -957,6 +984,8 @@ async def gflow_generate_video(  # NOSONAR
     initial_frame: str | None = None,
     end_frame: str | None = None,
     reference_images: list[str] | None = None,
+    reference_entities: list[str] | None = None,
+    reference_entity_names: list[str] | None = None,
     model: str | None = None,
     duration: int | None = None,
     count: int = 1,
@@ -984,6 +1013,14 @@ async def gflow_generate_video(  # NOSONAR
         end_frame: Path to end frame image (optional for i2v). Not ported to
             flow.google.com yet — exit-36-equivalent envelope on a moved account.
         reference_images: List of reference image paths (ingredients) for r2v.
+        reference_entities: Saved Flow CHARACTER entity **ids** to attach
+            (mirrors the CLI ``--reference-entity``). Same wire as an
+            ``@Name`` mention (``referenceEntities``) and dedupes against it;
+            use ids when a display name would be ambiguous, since names are
+            not unique. Satisfies r2v's reference requirement on its own.
+        reference_entity_names: Optional display names paired positionally with
+            ``reference_entities`` (mirrors ``--reference-entity-name``); used
+            only to filter the picker, the ids remain the identity.
         model: Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality',
             'omni_flash' (aliases accepted, mirrors the CLI ``--model``). When
             omitted, Flow's UI default applies EXCEPT for i2v with frames,
@@ -994,7 +1031,11 @@ async def gflow_generate_video(  # NOSONAR
         duration: Optional clip length in seconds (mirrors the CLI ``--duration``):
             4/6/8 on the Veo 3.1 models, 4/6/8/10 on ``omni_flash``; whether the
             account's cohort renders the control is decided pre-submit at zero cost.
-            When omitted, Flow's per-model default applies.
+            When omitted, Flow's per-model default applies. On the migrated
+            flow.google.com host an 'r2v' request accepts only 8 and pins it when
+            omitted — Flow offers reference-to-video at its base tier alone, and at
+            4 or 6 it drops the references and bills a text-to-video clip instead of
+            refusing; any other value returns the exit-11-equivalent envelope.
         count: Number of videos to generate (mirrors the CLI ``--count``; default 1).
         tools: Optional list of prompt tools to apply before generation.
             Each item is ``{"name": str, "options": dict}``.  Valid names
@@ -1014,9 +1055,10 @@ async def gflow_generate_video(  # NOSONAR
             Google has moved to flow.google.com (``GFLOW_CLI_FLOW_HOST``, read from
             the server/daemon environment, not per call) ``project`` is required —
             omitting it returns the exit-11-equivalent envelope. There the ported
-            modes are 't2v' and 'i2v' with a local ``initial_frame`` and no
-            ``end_frame``; a UUID frame, an end frame and 'r2v' return the
-            exit-36-equivalent envelope.
+            modes are 't2v'; 'i2v' with a local ``initial_frame`` and no
+            ``end_frame``; and 'r2v' with local ``reference_images``. A UUID
+            frame, an end frame, and r2v by ``ref_names`` or
+            ``reference_entities`` return the exit-36-equivalent envelope.
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
             ``video t2v``/``i2v``; applies to every mode of this tool,
             including 'r2v'). Video generation only has a classic driver:
@@ -1117,6 +1159,7 @@ async def gflow_generate_video(  # NOSONAR
         initial_frame=initial_frame,
         end_frame=end_frame,
         reference_images=reference_images,
+        reference_entities=reference_entities,
     )
     if media_err is not None:
         return media_err
@@ -1134,6 +1177,8 @@ async def gflow_generate_video(  # NOSONAR
         project_name=project_name,
         output=output,
         ui_mode=ui_mode,
+        reference_entities=reference_entities,
+        reference_entity_names=reference_entity_names,
     )
     payload.update(media)
 
@@ -1208,6 +1253,148 @@ async def gflow_get_credits(
     if isinstance(resolved, dict):
         return resolved
     return await inspect_credit_profile(resolved)
+
+
+def _character_to_dict(char: Any) -> dict[str, Any]:
+    """Serialise a Character for the wire.
+
+    Mirrors `Character`'s own rule: only stable identifiers. Signed CDN URLs
+    (``fifeUrl``, ``thumbnailUrl``) are excluded upstream so persisted or logged data
+    never carries credential-bearing URLs, and this must not reintroduce them.
+    """
+    return {
+        "entity_id": char.entity_id,
+        "display_name": char.display_name,
+        "project_id": char.project_id,
+        "workflow_ids": list(char.workflow_ids),
+        "voice": char.voice,
+        "personality": char.personality,
+        "thumbnail_media_id": char.thumbnail_media_id,
+    }
+
+
+@server.tool(
+    name="gflow_character_list",
+    description=(
+        "List the saved Flow CHARACTER entities in a project, with their entity ids. "
+        "Read-only and spends no credits. Call this to discover what you can attach: "
+        "an id goes to reference_entities on the generate tools, and a display_name can "
+        "be used as an @Name mention in a prompt (same wire, they dedupe). "
+        "Drives a browser session, so it is slower than the catalog tools."
+    ),
+)
+@_guarded
+async def gflow_character_list(
+    project: str,
+    profile: str = _DEFAULT_PROFILE,
+) -> dict[str, Any]:
+    """List a project's Flow Character entities.
+
+    Args:
+        project: Flow project id to enumerate (mirrors the CLI ``--project``).
+        profile: gflow-cli profile name; resolves like the CLI when left as "default".
+
+    Returns:
+        ``{"status": "ok", "characters": [...], "count": N}``. The list is exactly what
+        Flow returned -- an empty list means the project has none, never that the lookup
+        was skipped (#499).
+    """
+    log.info("mcp.tool.character_list", project=project, profile=profile)
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved
+
+    settings = get_settings()
+    async with FlowApiClient(
+        profile_dir=settings.profile_subdir(resolved),
+        headless=settings.headless,
+    ) as client:
+        chars = await client.list_characters(project)
+
+    return {
+        "status": "ok",
+        "project": project,
+        "characters": [_character_to_dict(c) for c in chars],
+        "count": len(chars),
+    }
+
+
+@server.tool(
+    name="gflow_character_voices",
+    description=(
+        "List the preset voices available for a Flow Character's TTS. Static lookup — "
+        "no network, no browser, no cost. Call it before creating a character to choose "
+        "a valid voice name."
+    ),
+)
+@_guarded
+async def gflow_character_voices() -> dict[str, Any]:
+    """List preset Character TTS voices.
+
+    Reads the in-process ``VOICES`` table, so unlike the other character tools it
+    opens no Flow session and needs no profile.
+
+    Returns:
+        ``{"status": "ok", "voices": [{"name", "description", "sample_url"}], "count": N}``
+    """
+    from gflow_cli.api.character import VOICES
+
+    return {
+        "status": "ok",
+        "voices": [
+            {"name": v.name, "description": v.description, "sample_url": v.sample_url}
+            for v in VOICES
+        ],
+        "count": len(VOICES),
+    }
+
+
+@server.tool(
+    name="gflow_character_show",
+    description=(
+        "Show one saved Flow CHARACTER entity by id or by exact display name. "
+        "Read-only and spends no credits. Exactly one of entity_id or name is required; "
+        "an ambiguous name is an error rather than a guess, which is the reason to prefer "
+        "the id. Drives a browser session."
+    ),
+)
+@_guarded
+async def gflow_character_show(
+    project: str,
+    entity_id: str | None = None,
+    name: str | None = None,
+    profile: str = _DEFAULT_PROFILE,
+) -> dict[str, Any]:
+    """Show one Flow Character by id or exact display name.
+
+    Args:
+        project: Flow project id the character belongs to.
+        entity_id: The character's entity id (mirrors the CLI ``--id``).
+        name: Exact display name (mirrors ``--name``). Case-sensitive, and ambiguous
+            names are refused rather than resolved arbitrarily.
+        profile: gflow-cli profile name.
+
+    Returns:
+        ``{"status": "ok", "character": {...}}``.
+    """
+    if (entity_id is None) == (name is None):
+        return _bad_param(
+            "Ambiguous Character Selector",
+            "Provide exactly one of 'entity_id' or 'name'.",
+        )
+    log.info("mcp.tool.character_show", project=project, by="id" if entity_id else "name")
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved
+
+    settings = get_settings()
+    async with FlowApiClient(
+        profile_dir=settings.profile_subdir(resolved),
+        headless=settings.headless,
+    ) as client:
+        char = await client.get_character(project, entity_id=entity_id, name=name)
+
+    return {"status": "ok", "project": project, "character": _character_to_dict(char)}
 
 
 @server.tool(

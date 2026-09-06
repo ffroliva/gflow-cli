@@ -34,6 +34,22 @@ LOCK_FILE_PATH = "/tmp/pr_triage_autopilot.lock"
 SUPPORTED_ENGINES = ("council-claude",)
 DEFAULT_ENGINE = SUPPORTED_ENGINES[0]
 
+# Council model. Pinned in run_sandboxed_review.sh; mirrored here so the ledger
+# records WHICH model produced a verdict -- an unattributable verdict cannot be
+# re-examined after a model change. The orchestrator exports this into the
+# sandbox's environment, so for the automated path this value is the single
+# source of truth; the shell default only covers a hand-run of the script.
+# test_council_model_default_matches_the_shell_script pins the two together --
+# two defaults that can silently disagree is how a ledger starts lying.
+COUNCIL_MODEL_ENV = "GFLOW_TRIAGE_MODEL"
+DEFAULT_COUNCIL_MODEL = "opus"
+
+
+def council_model() -> str:
+    """The model the council runs on."""
+    return os.environ.get(COUNCIL_MODEL_ENV) or DEFAULT_COUNCIL_MODEL
+
+
 # Claude auth is the SUBSCRIPTION token minted by `claude setup-token`, read
 # from CLAUDE_CODE_OAUTH_TOKEN. This deployment has no ANTHROPIC_API_KEY
 # (operator decision, 2026-08-02).
@@ -275,6 +291,24 @@ def get_ledger_entries(ledger_path: Path) -> list[dict]:
     return entries
 
 
+def latest_status(ledger_entries: list[dict], pr_num: int) -> str | None:
+    """Status of the most recent ledger entry for this PR, or None.
+
+    Gate alerts (DEFERRED_SIZE / NEEDS-HUMAN) dedupe on this instead of on
+    (pr, head_sha): an oversized PR keeps getting pushes, and every new SHA
+    re-sent a byte-identical "needs a manual review" mail on the next hourly
+    cycle. PR #683 produced three of them on 2026-09-06 — same verdict, same
+    action, only the line count moved. Nothing after the first is signal.
+
+    Keyed on the LATEST entry, not any entry, so a PR that trips the gate,
+    gets fixed and reviewed, then regresses is alerted again.
+    """
+    for entry in reversed(ledger_entries):
+        if entry.get("pr") == pr_num:
+            return entry.get("status")
+    return None
+
+
 def append_ledger_entry(ledger_path: Path, entry: dict) -> None:
     """Append a new entry atomically to the JSONL ledger."""
     entry["timestamp"] = datetime.datetime.now(datetime.UTC).isoformat()
@@ -394,8 +428,15 @@ def run_docker_sandbox(pr_num: int, repo_dir: Path, memory_dir: Path, gh_token: 
         gh_token,
     ]
 
-    logger.info("Running sandboxed Docker review", pr=pr_num)
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    model = council_model()
+    logger.info("Running sandboxed Docker review", pr=pr_num, model=model)
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, COUNCIL_MODEL_ENV: model},
+    )
     if proc.returncode != 0:
         raise RuntimeError(
             f"Docker sandbox failed (exit {proc.returncode}): {proc.stderr.strip()}\n{proc.stdout}"
@@ -547,13 +588,8 @@ def run_triage_cycle(
             continue
 
         if verdict == "DEFERRED_SIZE":
-            if any(
-                e.get("pr") == pr_num
-                and e.get("head_sha") == gate_sha
-                and e.get("status") == "DEFERRED_SIZE"
-                for e in ledger_entries
-            ):
-                logger.info("PR already deferred at this SHA; skipping re-alert", pr=pr_num)
+            if latest_status(ledger_entries, pr_num) == "DEFERRED_SIZE":
+                logger.info("PR already deferred; skipping re-alert", pr=pr_num)
                 continue
             logger.warning(
                 "PR deferred due to oversized diff", pr=pr_num, reason=gate_res["reasons"]
@@ -577,13 +613,8 @@ def run_triage_cycle(
             continue
 
         if verdict == "NEEDS-HUMAN":
-            if any(
-                e.get("pr") == pr_num
-                and e.get("head_sha") == gate_sha
-                and e.get("status") == "NEEDS-HUMAN"
-                for e in ledger_entries
-            ):
-                logger.info("PR already flagged at this SHA; skipping re-alert", pr=pr_num)
+            if latest_status(ledger_entries, pr_num) == "NEEDS-HUMAN":
+                logger.info("PR already flagged; skipping re-alert", pr=pr_num)
                 continue
             logger.warning(
                 "PR flagged for human triage in Stage 0", pr=pr_num, reason=gate_res["reasons"]
@@ -681,6 +712,7 @@ def run_triage_cycle(
                     "verdict": parsed_verdict,
                     "must_fixes": must_fixes,
                     "engine": engine,
+                    "model": council_model(),
                 },
             )
 

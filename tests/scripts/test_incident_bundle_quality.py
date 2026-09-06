@@ -282,7 +282,10 @@ class TestDegradedBundles:
         ui["url"]["host_category"] = "other"
         (b / "ui.json").write_text(json.dumps(ui), encoding="utf-8")
         report = score_bundle(b)
-        assert report.fidelity < 0.5  # 1 of 3 fidelity signals (ligatures) survives
+        # 1 of 3 signals survives: the DOM-rendered check. The fixture carries
+        # BOTH ligature_count 25 and button 36, so since #696 that signal is
+        # satisfied twice over — do not read this as isolating ligatures.
+        assert report.fidelity < 0.5
 
 
 def test_null_command_is_a_note_not_a_q1_failure(tmp_path: Path) -> None:
@@ -291,3 +294,56 @@ def test_null_command_is_a_note_not_a_q1_failure(tmp_path: Path) -> None:
     report = score_bundle(_ui_failure_bundle(tmp_path, extra={"command": None}))
     assert report.q1_what_failed is True
     assert any("command is null" in n for n in report.notes)
+
+
+def test_a_migrated_host_page_without_ligatures_is_still_real_state(tmp_path: Path) -> None:
+    """#696: `flow.google.com` renders no `i.google-symbols`, so a good capture scored 0.667.
+
+    The fidelity signal asked "did we snapshot a real rendered page, or noise?"
+    and used the Material icon ligature count as its proxy. That proxy is
+    labs-only. Measured on a live migrated bundle 2026-09-06: `ligatures: []`
+    and `ligature_count: 0`, while the very same snapshot carried
+    `div: 28, button: 5, iframe: 1, img: 3` and a Flow page title — a real page,
+    well captured, scored as "captured noise, not real state".
+
+    Same shape as #690, where `health_check` only recognised the old host.
+    """
+    b = _ui_failure_bundle(tmp_path)
+    ui = json.loads((b / "ui.json").read_text())
+    ui["ligatures"] = []
+    ui["ligature_count"] = 0
+    ui["tag_counts"] = {"div": 28, "button": 5, "iframe": 1, "img": 3}
+    ui["url"] = {"host_category": "flow_app", "route": "/"}
+    (b / "ui.json").write_text(json.dumps(ui), encoding="utf-8")
+
+    report = score_bundle(b)
+
+    assert report.fidelity == 1.0, f"{report.fidelity} — notes: {report.notes}"
+
+
+def test_a_genuinely_empty_snapshot_still_drops_fidelity(tmp_path: Path) -> None:
+    """No ligatures AND no controls is noise, and must stay scored as noise.
+
+    Honest about what this is: a **characterization guard**, not a regression
+    test for #696. It passes against the pre-#696 expression too, because
+    nothing here distinguishes `ligature_count > 0` from
+    `ligature_count > 0 or button > 0` — both are False on an empty DOM.
+
+    It earns its place by pinning the arithmetic against a *future* widening.
+    The tempting next "fix" is to reach for `div > 0`, or to drop the signal to
+    a constant, either of which would score a blank page as real state and
+    silently retire the check. Asserting the exact value catches that; asserting
+    `< 1.0` would not.
+    """
+    b = _ui_failure_bundle(tmp_path)
+    ui = json.loads((b / "ui.json").read_text())
+    ui["ligatures"] = []
+    ui["ligature_count"] = 0
+    ui["tag_counts"] = {"div": 0, "button": 0}
+    (b / "ui.json").write_text(json.dumps(ui), encoding="utf-8")
+
+    report = score_bundle(b)
+
+    # Exactly one of the three signals drops: the DOM is empty, while the
+    # network hosts and the page URL are still recognised.
+    assert report.fidelity == round(2 / 3, 3), f"{report.fidelity} — notes: {report.notes}"

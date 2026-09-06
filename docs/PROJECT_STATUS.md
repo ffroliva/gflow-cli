@@ -4,6 +4,46 @@
 
 ## Current release
 
+**v0.70.0 — alpha.** **`gflow character create` works on the migrated `flow.google.com`
+host — it was never broken there; the driver was not driving.**
+
+The character editor is fully present on `flow.google.com`, backed by the **same** labs tRPC
+and aisandbox APIs. Only the view layer differs: labs renders React + **Slate**, the migrated
+host renders Angular + **ProseMirror**. Seven selectors missed, a 20 s readiness gate timed
+out, and the absence of a *match* was recorded as the absence of the *feature* — then hardened
+into a guard that aborted *before* probing the DOM, which made the claim unfalsifiable. A
+complete character now builds end to end on a moved account: name, personality, voice,
+portrait **and** body, with two distinct workflow ids, two distinct media ids and both images
+on disk, verified by independent read-back.
+
+`--model` is now deterministic. The picker was best-effort — every failure logged a warning
+and let the generation run on whatever tier the editor happened to show, so `--model nano2`
+could quietly return a Nano Banana Pro image. It now reads the visible menu, refuses an
+ambiguous match, and **verifies by re-reading the chip** rather than trusting the click.
+Aborting is free: the picker runs before submit, so a refusal costs no quota, while proceeding
+produces a paid artefact from the wrong model.
+
+A failed `character create` no longer strands an "Untitled Character" in the project, and the
+rollback asks the backend before deleting — an empty local workflow list means only that *this
+process* failed to read a result, and on the migrated host a portrait generated fine while the
+client timed out. Each slot also takes its own `primaryMediaId` now; reusing the entity
+thumbnail across slots corrupted the body workflow through `commit_workflow`.
+
+`-o <existing directory>` no longer costs you a clip: exit 2 in 0.8 s instead of exit 1 after
+~2 min with a billed, orphaned mp4.
+
+Spike is now **Phase 0** of the workflow (`/gflow:spike`), with the CDP/HAR harness vendored
+in-tree and CONTRIBUTING telling contributors how to produce **redacted** evidence for a bug
+report.
+
+Verification: [LIVE_VERIFICATION_v0.70.0](LIVE_VERIFICATION_v0.70.0.md) — the complete
+character read back from the backend, `--model` determinism over four alternating runs, and
+the orphan-rollback A/B (1 → 2 entities without the fix, 2 → 2 with it). Recorded as NOT
+verified: the labs.google path for all seven changed anchors, because every account available
+here has been migrated by Google.
+
+<details><summary>v0.69.0 — i2v on the migrated host, and credits</summary>
+
 **v0.69.0 — alpha.** **The migrated `flow.google.com` host gains image-to-video from a local
 start frame, and gflow can finally tell you what your balance is.**
 
@@ -53,6 +93,8 @@ launching a browser, now `status_code=200` with no browser and an `e2e_auth` tes
 *is* the browser-free proof. Recorded as NOT verified: 5 of the 19 skill-benchmark tasks
 (blocked on a 20-request/day free-tier quota, not on the code), the MCP twin of the credits
 path live, and the items the i2v ledger already lists.
+
+</details>
 
 <details><summary>v0.68.0 — gflow update, and the once-a-day banner</summary>
 

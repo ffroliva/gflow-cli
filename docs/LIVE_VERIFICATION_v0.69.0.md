@@ -91,23 +91,32 @@ found by `input[type=text]` inside the picker, never by its translated `aria-lab
 
 ## Not verified (recorded, not omitted)
 
-- The `e2e_video` test on `denon82` — the billed run there was the CLI entrypoint (run 4),
-  not the pytest path; the pytest path is proven on `ffroliva` (run 2).
-- Run 2 carries ledger layers 1–4 only: no catalog row is asserted there (the e2e drives
-  the transport directly, below the recorder) and its size is checked as `> 100 KB`, not
-  byte-exact. Run 4 carries all five.
-- A billed run *after* the council fixes. Runs 2 and 4 were made on the pre-fix build;
-  what changed since is covered at $0 by run 1b and by unit tests, and none of it alters
-  the submit path that produced those two clips.
-- A submit whose body is a t2v key or a foreign media id (the `WireFormatError` guard) —
-  reproducible offline only; every live submit carried the right id and an `_i2v_` key.
-- `--duration` on a model whose pane renders the row (Omni 1.1 Flash) in the Frames submode.
-- A start frame larger than a few hundred KB (`maseQ` inlines the file; 60 s budget), a
-  JPEG with EXIF (labs 400 class), portrait `9:16`, `count > 1`, the MCP queued path live.
-- The "Get started" changelog modal dismissal — neither account raised the modal (both had
-  acknowledged it); the code path is offline-tested only.
-- End frame, UUID and `@Name` frames stay unported and exit 36 with the form named
-  (offline-tested; not driven live).
+> **Run-scope note (not an unverified item):** run 2 carries ledger layers 1–4 only — no
+> catalog row is asserted, because that e2e drives the transport directly, below the
+> recorder, and its size is checked as `> 100 KB` rather than byte-exact. Run 4 carries
+> all five. Recorded here so the two runs are not read as equivalent.
+
+Each entry names the **blocker** that stopped the run, per AGENTS.md § The Iron Law.
+Where there is no blocker, it is labelled **DEBT** — a run someone still owes, not a
+finding.
+
+- The `e2e_video` test on `denon82` — **blocker: spends credits** on a second account for
+  a path already proven on `ffroliva` (run 2). The billed `denon82` run was the CLI
+  entrypoint (run 4), which is the stronger evidence anyway.
+- A billed run *after* the council fixes — **blocker: spends credits** to re-prove a submit
+  path the fixes do not touch. Covered at $0 by run 1b.
+- A submit whose body carries a t2v key or a foreign media id (the `WireFormatError`
+  guard) — **blocker: cannot be induced against live Flow.** The guard fires on Flow
+  sending something it never sent us; it is reachable offline only.
+- The "Get started" changelog modal dismissal — **blocker: cohort/account state we do not
+  control.** Neither account raises the modal any more; both have acknowledged it.
+- **DEBT** — `--duration` on a model whose pane renders the row (Omni 1.1 Flash) in the
+  Frames submode; a start frame larger than a few hundred KB (`maseQ` inlines the file,
+  60 s budget); a JPEG with EXIF (labs 400 class); portrait `9:16`; `count > 1`. No
+  blocker: these are $0-to-cheap and simply were not run. Tracked in #686.
+- **DEBT** — end frame, UUID and `@Name` frames exit 36 with the form named. Offline-tested
+  only; the refusal never reaches Flow, so the residual risk is that the *detail string*
+  drifts, not the behaviour. Tracked in #686.
 
 ---
 
@@ -157,12 +166,38 @@ generation path. The skill edit was validated instead by the mechanism that foun
 a controlled A/B rollout, one model, the document as the only variable, 0.00 → 0.90. The
 harness change is covered by `tests/scripts/test_skillopt_scoring.py`.
 
-### Still not verified for this release (recorded, not omitted)
+### Challenged and then verified — 2026-09-06, post-tag
 
-- **5 of the 19 `video-production` benchmark tasks are unscored** — `qa-002`, `batch-001`,
-  `manifest-001`, `shot-001`, `shot-002`. Blocked on the Google free tier's
-  `GenerateRequestsPerDayPerProjectPerModel-FreeTier` quota of **20 requests per day per
-  model**, not on anything in the code. The skill ships at epoch 1 with 12/14 PASS
-  (avg 0.943) on the tasks that did run.
-- The MCP twin of the credits path (`gflow_get_credits`) was exercised offline only; the CLI
-  and MCP surfaces share `services/credits.py`, so the untested delta is the MCP adapter.
+Both items below were first written into this ledger as "not verified". Neither was
+blocked; both were run within the hour once that was challenged, and **both found
+something**. They are the reason AGENTS.md now carries § The Iron Law.
+
+**MCP twin of the credits path — VERIFIED.** `tests/e2e/test_credits_mcp_e2e.py`,
+`e2e_auth`, $0, **3 passed in 58.15 s** against live Flow on `ffroliva`. It drives
+`gflow_get_credits` itself — not the shared service — over a real profile: a live balance
+for one profile with the full key contract asserted, `all_profiles=True` preserving partial
+results across 9 saved profiles with every failed row carrying a reason, and an unknown
+profile returning a structured refusal rather than raising across the tool boundary. The
+earlier excuse — "the CLI path is verified and they share `services/credits.py`" — is
+precisely the reasoning the Iron Law now forbids: the shared service was never the risk,
+the adapter was.
+
+**The 5 unscored benchmark tasks — VERIFIED, and they failed.** Run on
+`gemini-3.5-flash-lite`, whose daily quota was untouched: **1/5 PASS, avg 0.280.** Because
+that is a different model from the 14 scored on `gemini-2.5-flash`, a control was run
+first — 5 tasks that had scored 1.00 on `flash`, re-run on `flash-lite`: **4/5, avg
+0.800.** The model is therefore broadly capable on this skill, and the 0.280 is a real
+skill weakness, not model weakness. Four defects the phrase "recorded, not omitted" had
+made invisible:
+
+| Task | Missed | The gap |
+|---|---|---|
+| `shot-001` | `i2v` | A deliberately-staged object should be animated from an approved still; the rollout reached for `t2v` |
+| `manifest-001` | `all` | Scope of a re-run when an edited 24-scene manifest is re-run nightly |
+| `batch-001` | `foreground` | Correctly refused the overnight batch, but never said to run it in the foreground |
+| `qa-002` | `delay` | Prove a lip-sync detector against a known delay before trusting its output |
+
+Recorded as epoch-2 targets in the skill's `optimization_notes` with this evidence
+attached. The skill ships at epoch 1 as measured: **12/14 on `flash`, plus 1/5 on the tail
+`flash-lite` scored** — an honest 13/19 overall rather than the 12/14 that omitting the
+tail would have implied.

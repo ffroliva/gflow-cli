@@ -51,6 +51,44 @@ Four rules the pipeline enforces that catch first-time contributors most often:
 The PR template's *Lifecycle* checklist mirrors this table. Tick what applies, strike what
 does not, and say why — a reviewer can then start from your evidence instead of re-deriving it.
 
+### Reporting that something is broken? Spike it first
+
+An e2e test proves a **fix**. A spike proves a **diagnosis** — and it is what turns "this
+does not work for me" into something a maintainer can act on without owning your account.
+
+gflow drives a product we do not control, so the single most useful thing in a bug report is
+what Flow actually rendered or called on your machine. Two harnesses exist, and both are `$0`
+(navigation and DOM reads spend no credits and no quota):
+
+| | where | who drives | use when |
+|---|---|---|---|
+| **In-process probe** | `scripts/dev/spike_*.py` | the script, through gflow's own transport | you can reach the surface and want to see what gflow sees |
+| **HAR + DOM capture** | [`scripts/dev/har-spike/`](scripts/dev/har-spike/README.md) | **you**, by hand, in real Chrome over CDP | gflow cannot get far enough to observe anything |
+
+The protocol is [`skills/spike/SKILL.md`](skills/spike/SKILL.md) (`/gflow:spike` in Claude
+Code). The rule it exists to enforce:
+
+> **A selector that does not match is evidence about the selector. It is never evidence
+> about the feature.**
+
+A timeout, an exception or an exit code tells us an anchor missed — not that the thing is
+gone. Saying "X is not supported on this host" without a DOM or network observation behind it
+is how a *working* feature gets documented as impossible, which has happened here and cost a
+day to undo.
+
+**Redact before you attach.** Raw captures carry cookies, Bearer tokens and prompts, and
+`*.har` is gitignored repo-wide for that reason. Run
+`python scripts/dev/har-spike/extract_har_summary.py <capture>.har --host <host>` and attach
+the **summary** — it is redacted by design and is what a maintainer needs anyway. Never paste
+a raw HAR or an unredacted incident bundle into an issue.
+
+> **Windows-only today.** The CDP harness is nine PowerShell scripts; a portable Python twin
+> is being ported one script at a time (`probe_agent_mode.py` is the pattern). On macOS or
+> Linux, use the in-process probes, or attach an **incident bundle** — gflow writes one
+> automatically on operational failures under `<GFLOW_CLI_HOME>/incidents/`; see
+> [DEBUGGING § Automatic incident bundles](docs/DEBUGGING.md#automatic-incident-bundles) for
+> the layout. Redact account ids and any cookie or token value first.
+
 ## Development setup
 
 ```bash

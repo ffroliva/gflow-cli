@@ -235,7 +235,16 @@ def score_bundle(bundle: Path, secrets: list[str] | None = None) -> QualityRepor
         fidelity_signals.append(bool(cats & _KNOWN_HOST_CATEGORIES))
         ui = _as_dict(_load(bundle, "ui.json"))
         if ui:
-            fidelity_signals.append(_int(ui.get("ligature_count")) > 0)
+            # "Did we snapshot a rendered page, or noise?" The Material icon
+            # ligature count was the proxy, and it is labs-only: the migrated
+            # flow.google.com frontend renders no `i.google-symbols` at all, so a
+            # good capture there scored 0.667 and read as "captured noise"
+            # (#696, measured — `ligatures: []` beside `div: 28, button: 5`).
+            # Ask the host-agnostic question instead: did the DOM have controls?
+            # A genuinely blank page still has neither, so this keeps discriminating.
+            tags = _as_dict(ui.get("tag_counts"))
+            rendered = _int(ui.get("ligature_count")) > 0 or _int(tags.get("button")) > 0
+            fidelity_signals.append(rendered)
             fidelity_signals.append(_as_dict(ui.get("url")).get("host_category") != "other")
     report.fidelity = (
         round(sum(fidelity_signals) / len(fidelity_signals), 3) if fidelity_signals else 1.0

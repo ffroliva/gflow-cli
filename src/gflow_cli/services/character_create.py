@@ -14,6 +14,11 @@ contains the entity_id and any workflow/media ids already recorded.  On the
 next invocation, :func:`character_create` detects the incomplete row, reuses
 the entity_id, and skips any generation steps whose ids are already recorded.
 
+A failure with NO slot committed is the one case that cannot be resumed: the
+row's key is (project_id, name), so a retry under a different name never finds
+it.  That case rolls the free entity back and flips the row to FAILED, instead
+of leaving an ``Untitled Character  refs=0`` behind on every failed attempt.
+
 Scenario coverage (mirrors the plan's test-scenario numbering):
   #3  recovery – resume finds entity_id, skips create_entity
   #4  recovery – resume skips already-recorded face slot
@@ -37,6 +42,27 @@ if TYPE_CHECKING:
     from gflow_cli.data.recorder import OperationRecorder
 
 log = structlog.get_logger(__name__)
+
+
+async def _entity_has_bound_work(client: FlowApiClient, project_id: str, entity_id: str) -> bool:
+    """Does the BACKEND think this entity has a generated reference bound to it?
+
+    Guards the rollback below. Errs on the side of keeping the entity: an
+    unreadable backend returns ``True``, because deleting real work is worse
+    than leaving an orphan the user can remove with ``gflow character rm``.
+    """
+    try:
+        character = await client.get_character(project_id, entity_id=entity_id)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - unreadable means "do not delete"
+        log.warning(
+            "character_create.rollback_check_failed",
+            entity_id=entity_id,
+            exc_info=True,
+        )
+        return True
+    return bool(
+        getattr(character, "workflow_ids", ()) or getattr(character, "thumbnail_media_id", None)
+    )
 
 
 async def character_create(
@@ -289,6 +315,35 @@ async def character_create(
             workflow_ids=list(workflow_ids),
             primary_media_ids=list(media_ids),
         )
+        if not workflow_ids and not await _entity_has_bound_work(client, project_id, entity_id):
+            # Zero progress: no credit spent, no workflow id, so the STARTED row
+            # offers no resume — and its key is (project_id, NAME), so a retry
+            # under any other name misses it and mints a second entity.  Roll the
+            # free entity back instead of stranding an "Untitled Character
+            # refs=0" in the project on every failed attempt.  Best-effort: a
+            # rollback fault must never mask the failure the user came to see.
+            #
+            # The backend check is not belt-and-braces.  An empty `workflow_ids`
+            # here means only that THIS process failed to read a result — on the
+            # migrated host a portrait generated fine while the client timed out
+            # on the labs wire (live 2026-09-06), and deleting on the local
+            # signal alone destroys finished work.
+            try:
+                await client.delete_characters(project_id, [entity_id])  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 — rollback is advisory, never fatal
+                log.warning(
+                    "character_create.orphan_rollback_failed",
+                    entity_id=entity_id,
+                    project_id=project_id,
+                    exc_info=True,
+                )
+            else:
+                log.info(
+                    "character_create.orphan_rolled_back",
+                    entity_id=entity_id,
+                    project_id=project_id,
+                )
+            recorder.record_character_abandoned(row_id=row_id, exc=exc)
         log.error(
             "character_create.failed",
             entity_id=entity_id,

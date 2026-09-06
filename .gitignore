@@ -107,3 +107,12 @@ website/site/
 
 # Local git hooks dir (core.hooksPath target) — machine-local tooling, never shipped
 .githooks/
+
+# HAR/DOM spike harness (scripts/dev/har-spike/) — the vendored scripts ARE
+# tracked; everything they generate is not. Captures carry auth cookies, Bearer
+# tokens and prompts, and the npm/agent-browser caches are 34 MB of noise.
+# (No .gitkeep negation here: git never descends into an ignored directory, so a
+# negation for a file inside one is inert. The capture scripts create the dir.)
+scripts/dev/har-spike/artifacts/
+scripts/dev/har-spike/.agent-browser/
+scripts/dev/har-spike/.npm-cache/

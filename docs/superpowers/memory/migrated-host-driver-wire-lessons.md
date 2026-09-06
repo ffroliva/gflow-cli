@@ -1,6 +1,6 @@
 ---
 name: migrated-host-driver-wire-lessons
-description: "What the flow.google.com (migrated) driver builds got wrong and how each was pinned — poster vs mp4 URL slots, status-3-before-URL, labs redirect route 404s for migrated media ids, CSS :text-matches escaping, direct load works for unflagged accounts; plus the i2v slice-1 frame-attach lessons (late picker index, no media id in DOM, empty Frames submit goes out as t2v)"
+description: "What the flow.google.com (migrated) driver builds got wrong and how each was pinned — poster vs mp4 URL slots, status-3-before-URL, labs redirect route 404s for migrated media ids, CSS :text-matches escaping, direct load works for unflagged accounts; plus the i2v slice-1 frame-attach lessons (late picker index, no media id in DOM, empty Frames submit goes out as t2v) and the r2v slice-2 lessons (references are @ mentions not chips, MZZa6b submit rpc, mode-less t2v model key, and a body assertion whose listener was never registered)"
 metadata: 
   type: project
 ---
@@ -107,3 +107,44 @@ Evidence: `docs/LIVE_VERIFICATION_v0.69.0.md`; recon
   log the *effective* model, not the requested one. Found by review, not by a run.
 - **An outer stage timeout smaller than the sum of the waits it wraps converts a
   stage-named failure into a generic timeout.** Bound each leg on its own instead.
+
+## Reference attach — r2v slice 2 (#639)
+
+Recon `docs/superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md` (405 lines, seven
+rounds); e2e `tests/e2e/test_migrated_host_e2e.py`. Read this before re-mining that spike.
+
+- **References are NOT a chip slot on this host — they are `@` mentions in the prompt.**
+  Frames bind to `flow-prompt-box button.empty-chip`; a reference becomes a
+  `.mention-chip` inside the `contenteditable`, and the chip's `data-reference-type`
+  (`media` / `entity` / `likeness`) decides which wire slot carries its id. `entity_id`
+  being null does **not** mean nothing attached.
+- **The Ingredients submit is rpcid `MZZa6b`** — not `YhhmEf` (t2v) and not `eb1hJf`
+  (i2v). Several rounds of recon reported "r2v never submits" purely because only the
+  first was being watched. Any new sub-mode: find its rpcid before concluding anything.
+- **Enter commits a mention; a typed query alone inserts nothing** and leaves the picker
+  open. And mentions need real key events (`keyboard.type`) where prompt text needs
+  `insert_text` — the latter dispatches input events with no keystrokes, so the mention
+  plugin opens a picker with no query behind it. The two gestures cannot share a path,
+  because a newline in prompt text must not submit.
+- **Picker name matching is loose:** querying `"me"` matched an avatar named *Me* rather
+  than the uploaded `me.jpg`. Query the full filename, then verify chip-by-chip.
+- **The r2v model key is mode-specific** (`veo_3_1_r2v_lite_low_priority`), but the t2v
+  key it contrasts with carries **no mode infix at all**. A diagnostic regex written as a
+  mode alternation therefore says "no model key" for exactly the body it exists to
+  describe — a t2v key on an r2v submit, i.e. the picker having inserted nothing.
+- **r2v exists only at the base duration (8s), and below it Flow DEGRADES rather than
+  refuses.** At 4s/6s the app flattens the mention chips into plain prompt text and
+  submits `veo_3_1_t2v_lite_<n>s_low_priority` — a full-price text-to-video clip carrying
+  the file *names* and none of the images. The editor remembers the last duration, so a
+  run passing none inherits it; the composer pins the base tier best-effort and refuses an
+  explicit degrading duration at exit 11. **The media slot carries the ids even in the
+  degraded submits**, so "are the ids in the body?" is not a sufficient assertion — the
+  model key is. Measured at $0, three route-blocked runs varying only duration.
+- **A body assertion is only as good as its listener registration.** `_r2v_body_problem`
+  was written, unit-tested and green while `page.on("request", …)` stayed gated on
+  `expect_media_id is not None` — never true on the r2v path — so the check could not run
+  in a live run. **Assert the round trip: drive the real entry point and check the far end
+  observed it.** A unit test on either half of a join passes while the join is broken;
+  this is the same shape as #689 (a payload key read but never written) and the MCP r2v
+  guard that was stricter than the rule it fronted. Related:
+  [[dead-wiring-passes-every-gate]].

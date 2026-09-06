@@ -568,7 +568,7 @@ def test_send_email_alert_never_raises_on_subprocess_error(tmp_path, monkeypatch
     m_run.assert_called_once()
 
 
-def test_needs_human_dedupes_by_gate_sha(tmp_path):
+def test_needs_human_dedupes_across_pushes(tmp_path):
     mocks = _cycle_mocks()
     with (
         mocks[0] as m_email,
@@ -602,8 +602,20 @@ def test_needs_human_dedupes_by_gate_sha(tmp_path):
         assert m_email.call_count == 1
         assert m_comment.call_count == 1
 
+        # Third tick: a NEW push, still flagged -> still no re-alert.
+        m_gh.return_value = [{"number": 7, "headRefOid": "sha-y"}]
+        with patch(
+            "pr_triage_autopilot.get_ledger_entries",
+            return_value=[{"pr": 7, "head_sha": "sha-x", "status": "NEEDS-HUMAN"}],
+        ):
+            pr_triage_autopilot.run_triage_cycle(
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
+            )
+        assert m_email.call_count == 1
+        assert m_comment.call_count == 1
 
-def test_deferred_size_dedupes_by_gate_sha(tmp_path):
+
+def test_deferred_size_dedupes_across_pushes(tmp_path):
     mocks = _cycle_mocks()
     with (
         mocks[0] as m_email,
@@ -635,6 +647,31 @@ def test_deferred_size_dedupes_by_gate_sha(tmp_path):
             )
         assert m_email.call_count == 1
         assert m_comment.call_count == 0
+
+        # Third tick: a NEW push, still oversized -> still no re-alert.
+        # PR #683 sent three identical mails this way on 2026-09-06.
+        m_gh.return_value = [{"number": 7, "headRefOid": "sha-y"}]
+        with patch(
+            "pr_triage_autopilot.get_ledger_entries",
+            return_value=[{"pr": 7, "head_sha": "sha-x", "status": "DEFERRED_SIZE"}],
+        ):
+            pr_triage_autopilot.run_triage_cycle(
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
+            )
+        assert m_email.call_count == 1
+
+        # Fourth tick: the PR was reviewed in between, then regressed -> alert again.
+        with patch(
+            "pr_triage_autopilot.get_ledger_entries",
+            return_value=[
+                {"pr": 7, "head_sha": "sha-x", "status": "DEFERRED_SIZE"},
+                {"pr": 7, "head_sha": "sha-y", "status": "COMPLETED"},
+            ],
+        ):
+            pr_triage_autopilot.run_triage_cycle(
+                "org/repo", tmp_path, tmp_path, tmp_path / "l.jsonl", "tok"
+            )
+        assert m_email.call_count == 2
 
 
 # --- Claude subscription auth via CLAUDE_CODE_OAUTH_TOKEN (2026-08-02) -------
@@ -1063,3 +1100,50 @@ def test_entrypoint_has_no_dangling_memory_symlink():
         "entrypoint still links /memory, which nothing mounts since the memory tree "
         "moved to the path SKILL.md reads"
     )
+
+
+# --- Council model pinning (2026-09-06) --------------------------------------
+#
+# No --model flag was passed anywhere in scripts/autopilot/, so the council ran
+# on whatever the Claude CLI defaulted to for the subscription -- a value that
+# can change on a CLI upgrade with no commit and no alert, and that leaves no
+# record of which model produced a given verdict.
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+SANDBOX_SCRIPT = ROOT / "scripts" / "autopilot" / "run_sandboxed_review.sh"
+
+
+def test_sandbox_pins_the_model_on_the_claude_invocation():
+    script = SANDBOX_SCRIPT.read_text(encoding="utf-8")
+    assert '--model "$COUNCIL_MODEL"' in script, "the council invocation must pin a model"
+
+
+def test_council_model_default_matches_the_shell_script():
+    # Two defaults that can drift apart is how the ledger starts lying about
+    # which model produced a verdict.
+    script = SANDBOX_SCRIPT.read_text(encoding="utf-8")
+    match = re.search(r'COUNCIL_MODEL="\$\{GFLOW_TRIAGE_MODEL:-([^}]+)\}"', script)
+    assert match, "run_sandboxed_review.sh must default COUNCIL_MODEL from GFLOW_TRIAGE_MODEL"
+    assert match.group(1) == pr_triage_autopilot.DEFAULT_COUNCIL_MODEL
+
+
+def test_council_model_is_overridable(monkeypatch):
+    monkeypatch.setenv(pr_triage_autopilot.COUNCIL_MODEL_ENV, "sonnet")
+    assert pr_triage_autopilot.council_model() == "sonnet"
+
+
+def test_council_model_falls_back_when_the_override_is_blank(monkeypatch):
+    # An empty env var must not silently unpin the model back to the CLI default.
+    monkeypatch.setenv(pr_triage_autopilot.COUNCIL_MODEL_ENV, "")
+    assert pr_triage_autopilot.council_model() == pr_triage_autopilot.DEFAULT_COUNCIL_MODEL
+
+
+def test_sandbox_subprocess_receives_the_pinned_model(tmp_path, monkeypatch):
+    monkeypatch.setenv(pr_triage_autopilot.COUNCIL_MODEL_ENV, "opus")
+    with patch("pr_triage_autopilot.subprocess.run") as m_run:
+        m_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="ok", stderr=""
+        )
+        pr_triage_autopilot.run_docker_sandbox(7, tmp_path, tmp_path, "tok")
+    env = m_run.call_args.kwargs["env"]
+    assert env[pr_triage_autopilot.COUNCIL_MODEL_ENV] == "opus"

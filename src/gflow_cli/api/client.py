@@ -87,6 +87,7 @@ from gflow_cli.errors import (
     ConfigurationError,
     ContentPolicyError,
     FlowApiError,  # re-exported via gflow_cli.api.__init__
+    FlowHostMigratedError,
     NetworkError,
     ProfileLockedError,
     RateLimitError,
@@ -209,6 +210,12 @@ _SESSION_API_URL = "https://labs.google/fx/api/auth/session"
 # issue #222: the NextAuth Flow session cookie + the URL used to seed it.
 _FLOW_SESSION_COOKIE = "__Secure-next-auth.session-token"
 _FLOW_COOKIE_URL = _LABS_ORIGIN
+# #692: how long the post-failure migration re-check keeps watching `page.url`
+# for a hop that was still committing when the mint died. Error path only, so a
+# successful mint never waits. Small enough that a genuine labs-side reCAPTCHA
+# failure is not meaningfully delayed on its way to the user.
+_MIGRATION_RECHECK_BUDGET_S = 1.5
+_MIGRATION_RECHECK_POLL_S = 0.25
 
 
 def _parse_iso_to_epoch(value: object) -> float:
@@ -2405,16 +2412,94 @@ class FlowApiClient:
         try:
             # #673: this runs BEFORE the UI transport, so none of its migration
             # guards can fire first. On a moved account the pool page is the
-            # flow.google.com grid (client-side handoff) with no
-            # recaptcha/enterprise.js — bail to exit 36 here instead of a bare
-            # RecaptchaError. (/project/<id> on that host does carry the script,
-            # but no path that mints is ported there yet.)
+            # flow.google.com ROOT GRID, which carries no recaptcha/enterprise.js —
+            # bail to exit 36 here instead of a bare RecaptchaError.
+            #
+            # Be precise about WHY, because the imprecise version misdirects whoever
+            # ports this next: flow.google.com is NOT unable to mint. Measured
+            # 2026-09-06 (scripts/dev/spike_migrated_recaptcha_mint.py) on the same
+            # page pool — `/project/<id>` there carries the enterprise script and
+            # site key 6LdsFiUsAAAA…, and a mint returns a 2404-char token. Only the
+            # root grid, which is where the client-side handoff leaves the pooled
+            # bootstrap page, has no script at all.
+            #
+            # So this guard refuses a HOST that can mint, standing in for the real
+            # constraint: `gflow image` is UI-driven, and the migrated project
+            # composer has no image-generation mode. Its add menu is a media
+            # library (Scenes / Images / Videos / Upload media) and its settings
+            # radios are grid/batch and size — measured, not assumed
+            # (scripts/dev/spike_migrated_image_capability.py). Image generation
+            # does exist on that host, but only inside the character editor.
+            #
+            # When the composer gains an image mode, the fix is to route the mint
+            # to a project page — NOT to keep refusing the origin.
             raise_if_migrated(page, at="mint_recaptcha_token")
             # Patchright evaluates in an isolated world by default, where the
             # page's main-world ``grecaptcha`` global is undefined; the resolver
             # supplies ``isolated_context=False`` for patchright ({} for playwright).
             minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
-            return await minter.mint(action)
+            try:
+                return await minter.mint(action)
+            # Deliberately broad. `TokenMinter.mint` guards only its SECOND
+            # evaluate: `site_key()` -> `discover_site_key` runs an unguarded
+            # `page.evaluate`, and the minter is rebuilt per call so `_site_key`
+            # is always None and that unguarded call runs every time. A hop
+            # mid-mint destroys the execution context, so the likeliest shape of
+            # this failure is a RAW Playwright error, not RecaptchaError —
+            # catching only the latter would miss the very race this exists for.
+            # Nothing is swallowed: the original propagates untouched unless the
+            # page turns out to be migrated.
+            except Exception:
+                # #692: the guard above is a point-in-time read, and the handoff
+                # to flow.google.com is a CLIENT-SIDE navigation that can land
+                # while we are minting. The bootstrap's own `await_url_settled`
+                # does not close the window either — it is skipped entirely for a
+                # profile latched at NOT_REDIRECTED (`settle = cached !=
+                # NOT_REDIRECTED`), which is the population #643 was written for.
+                # So a moved account can read as labs at the guard, hop, and then
+                # fail here for want of `recaptcha/enterprise.js`.
+                #
+                # Re-classify on the FAILURE path only: free when the mint
+                # succeeds, and correct whenever the hop lands, rather than
+                # depending on it landing before a particular line. A genuine
+                # labs-side reCAPTCHA failure still propagates as RecaptchaError.
+                # One instantaneous read still loses the race. Playwright updates
+                # `page.url` on `framenavigated`, so a mint that dies WHILE the
+                # navigation is committing reads the old host on an account that
+                # is in fact migrated. Poll for a bounded moment instead: this is
+                # already the error path, so the wait costs a successful run
+                # nothing, and it turns "who won this instant" into "did the hop
+                # land at all".
+                try:
+                    deadline = time.monotonic() + _MIGRATION_RECHECK_BUDGET_S
+                    while True:
+                        raise_if_migrated(page, at="mint_recaptcha_token_after_failure")
+                        probed_url = getattr(page, "url", None)
+                        if time.monotonic() >= deadline:
+                            break
+                        await asyncio.sleep(_MIGRATION_RECHECK_POLL_S)
+                except FlowHostMigratedError:
+                    raise
+                except Exception:
+                    # The re-check is a PROBE, and `page.url` can itself raise on a
+                    # dead page. `_common.flow_host_kind` is total by construction
+                    # for exactly this reason — "a probe error must never displace
+                    # the real failure" — but reaching it requires the URL read.
+                    # Swallowed so the caller still sees what actually went wrong;
+                    # widening the outer handler is what made this reachable.
+                    logger.debug("recaptcha_mint_migration_probe_failed", exc_info=True)
+                else:
+                    # Still reads as labs. That is the discriminating observation
+                    # for #692 — the reporter's failure could NOT be reproduced
+                    # here (the hop wins the race on this machine and the guard
+                    # classifies correctly), so record where the page actually was
+                    # rather than spending a round trip asking. The URL is the same
+                    # value ``raise_if_migrated`` already logs on the bail path.
+                    logger.warning(
+                        "recaptcha_mint_failed_off_migrated_host",
+                        url=probed_url,
+                    )
+                raise
         finally:
             self._checkin_page(page)
 
@@ -2701,7 +2786,12 @@ class FlowApiClient:
             page = await self._checkout_page()
             try:
                 hostname: str = await page.evaluate("() => document.location.hostname")
-                return hostname.endswith(".google") or hostname == "google.com"
+                # #690: ".google" alone covered only the OLD host (labs.google).
+                # A migrated account sits on flow.google.com, which ends in
+                # ".com" and is not "google.com", so a perfectly healthy page
+                # was reported unhealthy. The leading dot is load-bearing —
+                # it is what keeps "evilgoogle.com" out.
+                return hostname == "google.com" or hostname.endswith((".google", ".google.com"))
             finally:
                 self._checkin_page(page)
         except Exception:
@@ -2960,6 +3050,119 @@ class FlowApiClient:
         except Exception as e:
             await self._raise_with_incident(e, phase="character_generation")
 
+    async def _workflow_primary_media_id(self, project_id: str, workflow_id: str) -> str | None:
+        """Flow's own ``metadata.primaryMediaId`` for *workflow_id*, or ``None``.
+
+        Read from the project listing rather than inferred, because inferring it
+        is what corrupted a body workflow: the entity exposes one thumbnail id,
+        and reusing it across slots wrote the portrait's media onto the body.
+        Best-effort — a listing fault leaves the caller to fall back.
+        """
+        try:
+            listing = await self.fetch_project_listing(project_id)
+        except Exception:  # noqa: BLE001 - diagnostic read, never fatal
+            logger.warning("character.workflow_media_lookup_failed", exc_info=True)
+            return None
+        payload = _unwrap_trpc(listing)
+        contents = payload.get("projectContents")
+        if not isinstance(contents, dict):
+            return None
+        raw_workflows = cast("JsonObject", contents).get("workflows")
+        if not isinstance(raw_workflows, list):
+            return None
+        workflows = cast("list[object]", raw_workflows)
+        for entry in workflows:
+            if not isinstance(entry, dict):
+                continue
+            record = cast("JsonObject", entry)
+            if record.get("name") != workflow_id:
+                continue
+            metadata = record.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            media = cast("JsonObject", metadata).get("primaryMediaId")
+            if isinstance(media, str) and media:
+                return media
+        return None
+
+    async def _character_slot_from_entity(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        image_reference_index: int,
+    ) -> tuple[str, str, AnyPath | None] | None:
+        """Read a generated slot's ids back off the entity, or ``None``.
+
+        Returns ``(workflow_id, primary_media_id, local_path)`` in the shape
+        :meth:`_generate_character_image_impl` returns, with ``local_path``
+        always ``None`` — this path binds ids, it does not download a file.
+
+        ``None`` means "the backend has nothing for this slot", which is the
+        honest answer when a generation really did fail: the caller re-raises
+        the original timeout rather than inventing a success. A fault in the
+        read-back itself is swallowed for the same reason — it is a rescue
+        attempt, and it must never displace the failure the user came to see.
+        """
+        try:
+            character = await self.get_character(project_id, entity_id=entity_id)
+        except Exception:  # noqa: BLE001 - a rescue must not mask the real error
+            logger.warning(
+                "character.result_read_back_failed",
+                entity_id=entity_id,
+                exc_info=True,
+            )
+            return None
+        workflow_ids = tuple(character.workflow_ids or ())
+        if len(workflow_ids) <= image_reference_index:
+            logger.info(
+                "character.result_read_back_empty",
+                entity_id=entity_id,
+                bound_workflows=len(workflow_ids),
+                image_reference_index=image_reference_index,
+            )
+            return None
+        workflow_id = workflow_ids[image_reference_index]
+        # Each workflow carries its OWN primaryMediaId; the entity carries only the
+        # thumbnail. Handing the thumbnail to every slot made the body slot claim
+        # the face's media, and the saga's commit_workflow then PATCHed that id
+        # onto the body workflow — corrupting it (observed live 2026-09-06).
+        # Reading Flow's value instead makes that commit a no-op.
+        media_id = await self._workflow_primary_media_id(project_id, workflow_id) or ""
+        if not media_id and image_reference_index == 0:
+            # Slot 0 IS the thumbnail by definition, so it is a safe last resort.
+            media_id = character.thumbnail_media_id or ""
+
+        # The ids are the character; the file is a convenience. Download it so
+        # `--output` and `image_paths` behave the same on both hosts, but never
+        # let a CDN hiccup cost the user a generation they already spent quota
+        # on — a failed fetch degrades to `None`, it does not raise.
+        #
+        # `media.getMediaUrlRedirect` is a labs route, and migrated_composer
+        # records it 404-ing for a migrated media id. That was measured on a
+        # VIDEO id and does not generalise: probed live 2026-09-06 against this
+        # path's own portrait id, it answered HTTP 200 with 696 767 bytes of
+        # JFIF. Re-probe before assuming either way for a new media kind.
+        local_path: AnyPath | None = None
+        if media_id:
+            try:
+                local_path = await self.download(
+                    media_id,
+                    character_output_path(
+                        self.settings.output_dir,
+                        entity_id=entity_id,
+                        slot=image_reference_index,
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - a missing file never loses the ids
+                logger.warning(
+                    "character.result_read_back_download_failed",
+                    entity_id=entity_id,
+                    slot=image_reference_index,
+                    exc_info=True,
+                )
+        return workflow_id, media_id, local_path
+
     async def _generate_character_image_impl(
         self,
         *,
@@ -3017,17 +3220,44 @@ class FlowApiClient:
             )
             raise RuntimeError(msg)
 
-        _raw = await self.transport.generate_character_images(  # type: ignore[attr-defined]
-            project_id=project_id,
-            entity_id=entity_id,
-            request=req,
-            image_reference_index=image_reference_index,
-            # #580: caller override wins; otherwise the ACCOUNT's own locale.
-            # Never "en-US" — a wrong segment bounces the character route, which
-            # is how #395 presented.
-            locale=locale if locale is not None else self._account_locale,
-            format_prompt=format_prompt,
-        )
+        try:
+            _raw = await self.transport.generate_character_images(  # type: ignore[attr-defined]
+                project_id=project_id,
+                entity_id=entity_id,
+                request=req,
+                image_reference_index=image_reference_index,
+                # #580: caller override wins; otherwise the ACCOUNT's own locale.
+                # Never "en-US" — a wrong segment bounces the character route, which
+                # is how #395 presented.
+                locale=locale if locale is not None else self._account_locale,
+                format_prompt=format_prompt,
+            )
+        except TimeoutError:
+            # The passive capture listens for `flowMedia:batchGenerateImages`,
+            # which is the LABS wire. flow.google.com generates the portrait
+            # over its own `batchexecute` (rpcid ogiZ0b) and never calls it, so
+            # the listener times out on work that SUCCEEDED — measured live
+            # 2026-09-06 on ci-probe, where the entity carried a workflow id and
+            # a thumbnail media id the moment the timeout fired.
+            #
+            # Ask the backend instead of decoding an undocumented envelope. The
+            # ids come off the entity itself, so the binding this method exists
+            # to verify is true by construction — strictly stronger than the
+            # labs path's self-reported parentEntityId.
+            bound = await self._character_slot_from_entity(
+                project_id=project_id,
+                entity_id=entity_id,
+                image_reference_index=image_reference_index,
+            )
+            if bound is None:
+                raise
+            logger.info(
+                "character.result_read_back_from_entity",
+                entity_id=entity_id,
+                workflow_id=bound[0],
+                image_reference_index=image_reference_index,
+            )
+            return bound
         _images, workflows = cast(
             "tuple[list[GeneratedImage], list[JsonObject]]",
             _raw,

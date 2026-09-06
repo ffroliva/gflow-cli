@@ -50,6 +50,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -525,3 +526,84 @@ def test_character_create_format_prompt_clicks_format_button(e2e_env: dict[str, 
     )
     for miss in ("ui_automation.format_button_not_found", "ui_automation.format_button_disabled"):
         assert miss not in events, f"format button was skipped ({miss}), not clicked"
+
+
+# ---------------------------------------------------------------------------
+# A create leaves a NAMED character or nothing — never an "Untitled" orphan
+# ---------------------------------------------------------------------------
+
+
+def test_create_never_leaves_an_untitled_orphan(e2e_env: dict[str, str]) -> None:
+    """Whatever happens, the project must not gain an unnamed, ref-less entity.
+
+    The saga creates its entity up front (free) and only names it in the final
+    PATCH, so a failure anywhere in between used to leave an "Untitled Character
+    refs=0" behind — every time, because the resume row is keyed on
+    ``(project_id, name)`` and a retry under a different name never finds it.
+
+    This asserts the invariant from the outside, so it holds for BOTH outcomes
+    and needs no injected failure:
+
+      * exit 0  -> exactly one new entity, carrying the name we asked for
+      * non-zero -> no new entity at all (the free one was rolled back)
+
+    Live A/B on 2026-09-06 (``ci-probe``, migrated host) showed the old code
+    going 1 -> 2 entities on a failed create and the fixed code holding at 2.
+
+    Cost: one portrait generation on the success path — image quota, zero
+    credits.
+    """
+    _require_character_optin()
+    project_id = _require_project()
+    env = _character_env(e2e_env)
+    name = f"e2e-orphan-{uuid.uuid4().hex[:8]}"
+
+    def _entities() -> dict[str, str]:
+        listed = _run_gflow(
+            ["character", "list", "--project", project_id, "--json"], env, _SHOW_TIMEOUT_S
+        )
+        assert listed.returncode == 0, (
+            f"character list failed (exit {listed.returncode}): {listed.stderr[-500:]}"
+        )
+        payload = _parse_json_stdout(listed, "character list")
+        rows = cast("list[dict[str, object]]", payload["characters"])
+        return {str(r["entity_id"]): str(r.get("display_name") or "") for r in rows}
+
+    before = _entities()
+
+    created = _run_gflow(
+        [
+            "character",
+            "create",
+            "--project",
+            project_id,
+            "--name",
+            name,
+            "--face-prompt",
+            os.environ.get(_FACE_ENV, _DEFAULT_FACE_PROMPT),
+            "--json",
+        ],
+        env,
+        _CREATE_TIMEOUT_S,
+    )
+
+    after = _entities()
+    new_ids = set(after) - set(before)
+
+    if created.returncode != 0:
+        assert not new_ids, (
+            f"a FAILED create (exit {created.returncode}) stranded {len(new_ids)} entity/entities "
+            f"in project {project_id}: {sorted(new_ids)} — the rollback did not run. "
+            f"STDERR: {created.stderr[-1200:]}"
+        )
+        return
+
+    assert len(new_ids) == 1, (
+        f"a successful create should add exactly one entity, "
+        f"added {len(new_ids)}: {sorted(new_ids)}"
+    )
+    created_name = after[next(iter(new_ids))]
+    assert created_name == name, (
+        f"the new entity is named {created_name!r}, not {name!r} — the final PATCH did not land, "
+        "which is exactly what an orphan looks like"
+    )

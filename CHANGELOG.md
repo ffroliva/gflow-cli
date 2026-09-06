@@ -7,6 +7,168 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.70.0] — 2026-09-06
+
+### Fixed
+
+- **`-o <existing directory>` no longer costs you a clip.** `--output` on `video t2v` / `i2v` /
+  `r2v` and on `image t2i` / `i2i` accepted a path that was already a directory. Nothing checked
+  it until `_relocate_video_output` called `Path.replace()` onto the target, long after Flow had
+  rendered and billed the clip: `PermissionError: [WinError 5]`, surfaced as a bare
+  "Unexpected error" (exit 1), with the paid mp4 orphaned under a bare UUID name in the working
+  directory. Found by dogfooding an r2v run on 2026-09-06 — two clips billed, neither saveable.
+  All five option declarations now carry `dir_okay=False`, which Click enforces while parsing, so
+  the run aborts in under a second at zero cost. (A sixth declaration already had it; the rest had
+  drifted from it.)
+
+- **`gflow character create` works on the migrated `flow.google.com` host.** It had never been
+  broken there — gflow was not driving it. The readiness gate waited for
+  `div[role="textbox"][data-slate-editor="true"]`, a React/**Slate** anchor; the migrated
+  frontend is Angular and renders the same editor with **ProseMirror**, so the gate timed out
+  after 20 s and the surface was read as absent. v0.69.0 then hardened that misreading into a
+  `raise_if_migrated` guard that aborted with exit 36 *before* probing the DOM, turning "our
+  selector missed" into a confident, non-retryable "this host will never do it". The gate now
+  accepts both anchors, the guard is gone, and the picker/result paths follow:
+
+  - body mode is anchored on the migrated editor's `<flow-slot-chip-button>` component
+    boundary (there is no `add_2` control there at all), its settle signal is the face
+    reference mounting from `flow-content.google/image/…`, and the prompt-box counter now
+    counts through the readiness anchor instead of Slate only — it reported 0 boxes on an
+    editor whose box was mounted and visible. `--body-prompt`, `--voice` and `--personality`
+    all complete on the migrated host as a result.
+  - each slot takes **its own** `primaryMediaId`, read from the project listing. The entity
+    exposes only a thumbnail id, and handing that to every slot made the body slot claim the
+    face's media — which `commit_workflow` then PATCHed onto the body workflow, corrupting it.
+    Reading Flow's own value makes that commit a no-op.
+  - the portrait is read back off the **entity** when the labs `batchGenerateImages` wire stays
+    silent. The migrated host generates over its own `batchexecute` (rpcid `ogiZ0b`), so the
+    listener timed out on work that had already succeeded — the entity carried a workflow id and
+    a thumbnail media id the moment the timeout fired. The ids now come off the entity itself,
+    which proves the character binding by construction rather than trusting a self-reported
+    `parentEntityId`, and the image is downloaded so `--output` and `image_paths` behave the
+    same on both hosts.
+
+  Verified live on a moved account: `display_name` patched, workflow id and thumbnail bound,
+  file on disk, and `--model nano2` / `--model nanopro` each selecting the tier asked for.
+  Recon: `scripts/dev/spike_migrated_character_*.py`.
+
+- **`character create --model` is now deterministic: it applies the tier you asked for, or it
+  fails.** The character model picker was best-effort — every failure path logged a warning and
+  let the generation run on whatever tier the editor happened to show, so `--model nano2` could
+  quietly return a Nano Banana Pro image with nothing in the output saying so. Three separate
+  faults did exactly that: it skipped the click entirely when `nano2` was requested (assuming
+  Nano Banana 2 was the editor default, which is true on labs and false on `flow.google.com`);
+  its option selector `:has-text('…')` was unanchored, so `.first` resolved to `<html>`; and its
+  menu-item lookup was unscoped, so `[role='menuitem']` mixed the open menu's entries with
+  hidden ones from the editor's other menus and `nth(i)` clicked a node that could not be
+  clicked. The menu also offers **three** tiers, not the documented two, and `Nano Banana 2` is
+  a prefix of `Nano Banana 2 Lite`.
+
+  Now: entries are read from the *visible* menu, matched in Python with an explicit exclusion,
+  an ambiguous or absent match refuses rather than guessing, and the selection is **verified by
+  re-reading the chip** rather than trusting the click. Anything else raises — `ConfigurationError`
+  for a tier the menu does not offer, `UiSelectorDriftError` for a picker that cannot be driven.
+  Aborting here is free: the picker runs before the prompt is submitted, so a refusal costs no
+  quota and no credits, while proceeding produces a paid artifact from the wrong model. Verified
+  live: four consecutive runs alternating `--model nano2` / `--model nanopro`, correct tier every
+  time.
+
+- **A failed `character create` no longer strands an "Untitled Character" in the project.** The
+  saga persists before it spends, and deliberately keeps its STARTED row so a retry can resume —
+  but that row is keyed on `(project_id, name)`, so a retry under any other name missed it and
+  minted a second entity, leaving the first orphaned with `refs=0` forever. A failure with no
+  slot committed now rolls the free entity back and marks the row FAILED. It asks the **backend**
+  first: an empty local `workflow_ids` means only that this process failed to read a result, and
+  on the migrated host a portrait generated fine while the client timed out — deleting on the
+  local signal alone would have destroyed finished work.
+
+- **PR-triage autopilot: stop re-alerting a deferred PR on every push.** The `DEFERRED_SIZE` and
+  `NEEDS-HUMAN` gate branches deduped on `(pr, head_sha, status)`, so every push to an oversized
+  PR looked new to the ledger and re-sent a byte-identical "needs a manual review" mail on the
+  next hourly cycle. PR #683 produced three on 2026-09-06 (2130 / 2500 / 3066 lines) — same
+  verdict, same required action. Now dedupes on the PR's latest ledger status via a new
+  `latest_status()` helper: one alert per gate trip, and a PR that trips, gets fixed and reviewed,
+  then regresses still alerts again. Ops tooling under `scripts/autopilot/`, not a Flow surface,
+  so no e2e applies. ([#697](https://github.com/ffroliva/gflow-cli/issues/697))
+
+- **A reCAPTCHA mint that fails after the migrated-host handoff now reports exit 36, not exit 1**
+  ([#692](https://github.com/ffroliva/gflow-cli/issues/692)). The `raise_if_migrated` guard added
+  in #678 is a point-in-time read of `page.url`, and Flow's handoff to `flow.google.com` is a
+  **client-side** navigation that can land after it. The bootstrap's own `await_url_settled` does
+  not close that window either — it is skipped entirely for a profile latched at
+  `NOT_REDIRECTED`. The guard is now re-run on the mint's failure path, which costs nothing when
+  the mint succeeds and classifies correctly whenever the hop lands, rather than depending on it
+  landing before one particular line. A genuine labs-side reCAPTCHA failure still surfaces as
+  `RecaptchaError`.
+
+  **The re-check now polls for a bounded 1.5 s rather than reading once.** A single instantaneous
+  read still lost the race: Playwright updates `page.url` on `framenavigated`, so a mint that dies
+  *while* the navigation is committing reads the old host on an account that is in fact migrated,
+  and the run exited 1. Polling turns "who won this instant" into "did the hop land at all". It is
+  the error path, so a successful mint never waits.
+
+  The re-check catches **any** mint failure, not just `RecaptchaError`. `TokenMinter.mint` guards
+  only its second `page.evaluate`: `site_key()` → `discover_site_key` runs an unguarded one, and
+  the minter is rebuilt per call so that unguarded call runs every time. A hop mid-mint destroys
+  the execution context, so the likeliest shape of this failure is a **raw Playwright error** —
+  which a `RecaptchaError`-only net would miss entirely. Nothing is swallowed: the original
+  exception propagates untouched unless the page turns out to be migrated.
+
+  **Scope, stated honestly:** the reporter's failure could **not** be reproduced locally. On a
+  migrated, `NOT_REDIRECTED`-latched profile the hop wins the race and v0.69.0 already returns
+  exit 36 — verified live, before and after this change. So this hardens a race that is real in
+  the code but unobserved here; it is not a confirmed fix for #692, which stays open.
+
+### Added
+
+- **`gflow video r2v` from local `--ref` files runs on the migrated `flow.google.com`
+  host** (#639). Each file is uploaded through the same editor toolbar path i2v already
+  uses, so the app's own `maseQ` reply names the media id, and is then attached as an `@`
+  **mention** in the prompt — references are not a chip slot on this host.
+
+  Three measured details shape it. The Ingredients submit is rpcid **`MZZa6b`** (t2v
+  `YhhmEf`, i2v `eb1hJf`) — watching only the others is why this looked for several rounds
+  of recon like r2v never submitted at all. A mention is committed by **Enter**; a typed
+  query alone leaves the picker open and inserts nothing. And mentions need real key
+  events where prompt text needs `insert_text` (a newline must not submit), so the two
+  cannot share a path.
+
+  The submit body is asserted to carry every uploaded id, and a run whose references have
+  not all attached is refused **before** submit (exit 32) — the failure mode being a
+  full-price clip with none of the user's references on it. A reference the picker misses
+  is retried, since its search index does not always hold a fresh upload on the first
+  query. References by `@Name` and character entities (`--reference-entity`) stay on labs,
+  for the same reason a frame by UUID does: the picker exposes no media id to anchor on.
+  Live-verified end to end with two local refs and `--model veo-lite-lp`, and confirmed
+  semantically by the account owner: the presenter in the output is the person from the
+  first reference and the product is the one from the second, so both references are
+  genuinely bound rather than merely accepted.
+
+  **`--duration` is refused on this path (exit 11), and an r2v run pins 8s for itself.**
+  Flow offers reference-to-video only at its base 8s tier on this host. At 4s or 6s it does
+  not refuse: it flattens the reference mentions into plain prompt text and submits
+  `veo_3_1_t2v_lite_4s_low_priority` — a full-price text-to-video clip carrying the file
+  *names* and none of the images. The editor remembers the last duration, so a run passing
+  none was inheriting a degrading one. Measured at zero credits across three route-blocked
+  runs varying only the duration (`scripts/dev/capture_migrated_r2v_production_submit.py`).
+  Note the media slot carries the reference ids even in the degraded submits, so the model
+  key — not the ids — is what distinguishes a bound run from an accepted one.
+
+  **Correction to the first cut of this feature**, kept here because the claim was public:
+  the submit-body assertion above was written and unit-tested but **never registered** on
+  the r2v path — `page.on("request", …)` was gated on the i2v `expect_media_id`, which is
+  always `None` for r2v. The live run and its e2e evidence therefore prove the references
+  bound; they do not prove a lost one would have been caught. Fixed, along with the model
+  key regex the diagnostic reads (it matched only mode-infixed keys, and a *mode-less* key
+  is precisely what an r2v body carries when the picker inserted nothing), and covered by a
+  round-trip test that drives `submit_and_observe` and asserts the check actually fired
+  rather than calling it directly.
+
+- **`recaptcha_mint_failed_off_migrated_host`** — when a mint fails and the page still reads as
+  `labs.google`, the page URL is now logged. That is the one observation which distinguishes the
+  race above from a genuine labs-side reCAPTCHA break, and it makes the next incident bundle
+  self-sufficient instead of costing a round trip to the reporter.
+
 ## [0.69.0] — 2026-09-06
 
 ### Added
@@ -4066,7 +4228,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...HEAD
+[0.70.0]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...v0.68.0
 [0.67.0]: https://github.com/ffroliva/gflow-cli/compare/v0.66.3...v0.67.0

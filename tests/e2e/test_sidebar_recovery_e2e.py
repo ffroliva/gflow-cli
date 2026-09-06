@@ -37,6 +37,7 @@ import pytest
 
 from gflow_cli.api.transports import mode_control
 from gflow_cli.api.transports.mode_control import AGENT_TOGGLE_SELECTOR, CROP_SELECTORS
+from tests.e2e.conftest import skip_on_migrated_host
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
 
@@ -126,6 +127,7 @@ async def _drive_into_sidebar_state(page: Any) -> bool:
 
 
 @pytest.mark.asyncio
+@skip_on_migrated_host
 async def test_expanded_sidebar_hides_both_affordances_and_is_recoverable(
     e2e_profile_dir: Path,
 ) -> None:
@@ -149,6 +151,7 @@ async def test_expanded_sidebar_hides_both_affordances_and_is_recoverable(
 
 
 @pytest.mark.asyncio
+@skip_on_migrated_host
 async def test_recovers_when_the_scoped_close_selector_misses(
     e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

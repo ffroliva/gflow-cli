@@ -30,15 +30,21 @@ silent no-op there. An MCP agent composing several calls owns its own cadence
 
 from __future__ import annotations
 
+import inspect
+import re
 from typing import Any
 
 import click
 
 from gflow_cli.cli import main
+from gflow_cli.mcp import tools as mcp_tools
 
 # CLI leaf → MCP tool that covers it. One tool may cover several leaves when a
 # parameter selects the behaviour (e.g. gflow_generate_video's ``mode``).
 CLI_TO_MCP: dict[str, str] = {
+    "character list": "gflow_character_list",
+    "character voices": "gflow_character_voices",
+    "character show": "gflow_character_show",
     "credits user": "gflow_get_credits",
     "credits list": "gflow_get_credits",
     "image t2i": "gflow_generate_image",
@@ -96,11 +102,20 @@ _MCP_EXEMPT: dict[str, str] = {
     ),
     "models": "informational; models are enumerated in the generate tools' descriptions",
     "run": "chain-manifest runner — not yet ported",
-    "character create": "character mutations — not yet ported",
-    "character list": "not yet ported — the old MCP stub returned a misleading empty list (#499)",
-    "character rm": "character mutations — not yet ported",
-    "character show": "character mutations — not yet ported",
-    "character voices": "character mutations — not yet ported",
+    "character create": (
+        "GAP #691 — unported, not principled. 'Mutation' was never a reason: "
+        "gflow_generate_image spends the same per-model image quota over MCP. "
+        "The port is an adapter over services/character_create.py; what needs "
+        "deciding is worker-enqueue vs inline (#481) and whether it should honour "
+        "GFLOW_MCP_NO_SPEND"
+    ),
+    "character rm": (
+        "irreversible deletion of a user-owned Flow entity — deliberately CLI-only, "
+        "same rule as `data prune`/`data errors prune`. The CLI gates it behind a "
+        "confirmation prompt that has no MCP equivalent, so an agent cannot take "
+        "informed consent on the user's behalf (the #481 shape). Note it is FREE, "
+        "so cost is NOT the reason — irreversibility is"
+    ),
     "data errors export": "local catalog maintenance — deliberately CLI-only (#345)",
     "data errors prune": "destructive local retention — deliberately CLI-only (#345)",
     "data list errors": "local catalog maintenance — not yet ported",
@@ -170,3 +185,108 @@ def test_mapped_tools_are_registered(mcp_server: Any) -> None:
     registered = set(mcp_server._tool_manager._tools)
     missing = set(CLI_TO_MCP.values()) - registered
     assert not missing, f"CLI_TO_MCP references unregistered MCP tools: {sorted(missing)}"
+
+
+# --- Option-level parity ------------------------------------------------------
+#
+# The leaf-level checks above are satisfied by a *mapping*. They stay green while a
+# CLI option never reaches the tool -- which is how `--reference-entity` came to exist
+# on four leaves with no MCP equivalent anywhere (#689), leaving the identity axis
+# silently CLI-only. AGENTS.md § "MCP parity is a law" is the rule; this is its teeth.
+
+#: CLI concerns an MCP tool structurally cannot have -- presentation and local-file
+#: plumbing. A tool returns structured data to a caller; it does not format or redirect.
+_CLI_ONLY_PARAMS: frozenset[str] = frozenset(
+    {
+        "as_json",  # MCP always returns structured data
+        "out",
+        "out_dir",
+        "output_file",  # the tool reports paths, it does not choose them
+        "read_stdin",
+        "prompts_file",  # shell-input plumbing
+        "transport",  # operator concern
+        "jitter_spec",  # pacing knob for shell loops (#241)
+    }
+)
+
+#: CLI name -> MCP name where one concept is deliberately spelled differently. Checked
+#: as "either spelling satisfies parity", because a rename is per-tool: `refs` means
+#: `reference_images` on the generate tools but stays `refs` on instructions_add.
+#: Keep this small -- a rename with no reason is drift, not translation.
+_PARAM_ALIASES: dict[str, str] = {
+    "project_id": "project",
+    "refs": "reference_images",
+    "tool_specs": "tools",
+    "image": "initial_frame",
+    "enable_mode": "enabled",  # CLI --enable-mode / tool `enabled`: same switch
+    "disabled": "enabled",
+}
+
+#: "<leaf>:<cli param>" -> why the tool does not carry it. A GAP entry is a tracked
+#: admission, NOT an exemption: it exists so a known hole cannot widen unnoticed.
+_OPTION_EXEMPT: dict[str, str] = {
+    "image t2i:prompts": "multi-prompt fan-out is a batch concern; `image batch` is exempt too",
+    "image t2i:continue_on_error": "batch-only semantics — see `image t2i:prompts`",
+    "instructions apply:file": "reads a local file; the tool takes the text directly",
+    "tools show:name": "coarse mapping — one MCP tool lists and shows; the name is its filter",
+    "video i2v:end_image_deprecated": "deprecated alias retained for CLI compatibility only",
+}
+
+
+def _leaf_params(path: str) -> set[str]:
+    """Click parameter names for one CLI leaf."""
+    cmd: Any = main
+    for part in path.split():
+        cmd = cmd.commands[part]
+    return {p.name for p in cmd.params if p.name}
+
+
+def _tool_params(tool_name: str) -> set[str]:
+    """Declared parameter names of a registered MCP tool, unwrapping decorators."""
+    fn: Any = getattr(mcp_tools, tool_name)
+    while hasattr(fn, "__wrapped__"):
+        fn = fn.__wrapped__
+    return set(inspect.signature(fn).parameters) - {"self"}
+
+
+def test_every_cli_option_reaches_its_mcp_tool() -> None:
+    """A mapped leaf's options must exist on the tool, be CLI-only, or be recorded.
+
+    This is the check command-level parity cannot make. Its first run found #689.
+    """
+    unmirrored: list[str] = []
+    for leaf, tool in sorted(CLI_TO_MCP.items()):
+        if not hasattr(mcp_tools, tool):
+            continue  # test_mapped_tools_are_registered owns that failure
+        tool_params = _tool_params(tool)
+        for raw in sorted(_leaf_params(leaf) - _CLI_ONLY_PARAMS):
+            candidates = {raw, _PARAM_ALIASES.get(raw, raw)}
+            if candidates & tool_params or f"{leaf}:{raw}" in _OPTION_EXEMPT:
+                continue
+            unmirrored.append(f"{leaf} --{raw.replace('_', '-')} -> {tool}")
+    assert not unmirrored, (
+        "CLI options with no MCP equivalent and no recorded reason:\n  "
+        + "\n  ".join(unmirrored)
+        + "\n\nAGENTS.md: MCP parity is a law. Mirror the option onto the tool, or add it "
+        "to _OPTION_EXEMPT with a reason (a GAP entry must carry an issue number)."
+    )
+
+
+def test_no_stale_option_exemptions() -> None:
+    """An exemption that no longer describes reality is worse than none."""
+    stale: list[str] = []
+    for key in sorted(_OPTION_EXEMPT):
+        leaf, _, param = key.rpartition(":")
+        if leaf not in CLI_TO_MCP:
+            stale.append(f"{key} (leaf is no longer mapped)")
+        elif param not in _leaf_params(leaf):
+            stale.append(f"{key} (CLI option no longer exists)")
+    assert not stale, f"Stale option exemptions: {stale}"
+
+
+def test_every_recorded_gap_carries_an_issue() -> None:
+    """A GAP is an admission with an owner. Without an issue it is just an excuse."""
+    untracked = [
+        k for k, why in _OPTION_EXEMPT.items() if "GAP" in why and not re.search(r"#\d+", why)
+    ]
+    assert not untracked, f"GAP exemptions with no tracking issue: {untracked}"

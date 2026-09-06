@@ -14,6 +14,7 @@ that did not run.
 
 | If you are about to… | Load first | Non-negotiable because |
 |---|---|---|
+| Claim a Flow surface is broken, missing, or impossible | `/gflow:spike <question>` | A selector that misses is evidence about the SELECTOR; "labs-only, ever" came from one 20 s timeout and cost a day |
 | Touch a GitHub issue | `/gflow:issue-assessment <N>` | Read-only triage precedes any fix; classification changes what "fixing" means |
 | Propose a transport, auth, selector, or schema change | `/gflow:predict <proposal>` | Five adversarial personas return GO / CAUTION / STOP before code exists |
 | Start a feature | `/gflow:scenario` → `/gflow:plan` | Edge cases before tasks; tasks before code |
@@ -96,7 +97,7 @@ the five other mirror axes), which no command here can check and no CI gate can 
 - TDD is non-negotiable. Coverage floor: 80% overall.
 - Documentation is a first-class deliverable. Every behavior, workflow, config, or operator-facing change must update the relevant docs or state why no docs changed in the PR/checklist. `scripts/ci/check_doc_links.py` is a merge gate.
 - **A PR is not done until its SonarCloud gate is green (zero new issues).** The nine gates above are local/pre-commit; SonarCloud is server-side and runs in CI (`sonar.qualitygate.wait=true` → a red gate turns the `SonarCloud analysis` check red). Before calling a PR merge-ready, verify it with `/gflow:sonar <N>` (it is skipped on fork PRs — maintainer-checked there).
-- **E2E is the decisive layer, and it is required for every behavior change that touches a Flow surface.** Run the `tests/e2e/` test that covers the change, or write one — offline-green proves only that *our* code does what we think, never that Flow still behaves as captured. `/gflow:live-verify` does **not** satisfy this: it drives CLI commands by hand into a gitignored note and never runs `pytest -m e2e`. The two are complementary — an e2e test is a re-runnable regression, a live-verify ledger is a narrative record. If you cannot run it, say so explicitly in the PR and a maintainer will; a change touching no Flow surface (docs, help text, exit-code plumbing) is out of scope — say that rather than leaving it blank.
+- **E2E is the decisive layer, and it is required for every behavior change that touches a Flow surface.** Run the `tests/e2e/` test that covers the change, or write one — offline-green proves only that *our* code does what we think, never that Flow still behaves as captured. `/gflow:live-verify` does **not** satisfy this: it drives CLI commands by hand into a gitignored note and never runs `pytest -m e2e`. The two are complementary — an e2e test is a re-runnable regression, a live-verify ledger is a narrative record. A change touching no Flow surface at all (docs, help text, exit-code plumbing) is out of scope — say so explicitly rather than leaving it blank. Anything else follows the **Iron Law** above: run it, or name the external blocker that stops you. "A maintainer will run it" is a handoff, not a verification, and is only available once the blocker is named.
 - E2E tests require `GFLOW_CLI_E2E_PROFILE` and `-m e2e` (excluded from the default `addopts`, so they never run by accident). Cost sub-markers: `e2e_auth` (zero credits, browser only), `e2e_image` (zero credits, daily cap), `e2e_scene`, `e2e_data`, `e2e_batch`, `e2e_character` (opt in with `GFLOW_CLI_E2E_RUN_CHARACTER=1`), `e2e_video` (spends Veo credits — opt in with `GFLOW_CLI_E2E_RUN_VIDEO=1`). Redact account identifiers and any token or cookie value before pasting output into a PR.
 - Live tests (`@pytest.mark.live`) opt in via `GFLOW_LIVE=1`.
 
@@ -109,10 +110,11 @@ the five other mirror axes), which no command here can check and no CI gate can 
 - **YAGNI / least-code**: prefer the smallest change that works. No speculative abstractions (interface/factory with one implementation), no config or flags nobody sets, no dead constants/helpers, no reinventing the stdlib. Review carries this as its own lens — the **D14 over-engineering** dimension of [`pr-council-review`](skills/pr-council-review/SKILL.md) (baseline, always runs). Its rubric is portable; the `ponytail` plugin (see CONTRIBUTING) is an optional accelerant, not a dependency.
 - **MCP & CLI Schema Symmetry**: Any updates or additions to user-facing CLI command parameters (e.g., `gflow image t2i`, `gflow video`) must be mirrored in the corresponding MCP tool definitions. Never add option/argument fields to Click commands without updating the MCP server implementation. This symmetry is enforced programmatically in CI via `tests/mcp/test_cli_parity.py` (every CLI leaf command needs a mapped MCP tool or an explicit, reasoned exemption) plus the schema checks in `tests/mcp/test_server.py`.
 
-  **That CI gate is command-level only** — it fires on a new *leaf*, and stays green while an
-  option goes unmirrored, a queued-payload key goes unread, or a tool docstring asserts a
-  restriction the CLI no longer has. So MCP is a responsibility of **every phase**, not a
-  post-hoc checklist item. Each skill owns its slice:
+  **That gate now covers leaves *and their options*** (`test_every_cli_leaf_has_an_mcp_decision`,
+  `test_every_cli_option_reaches_its_mcp_tool`). It still cannot see a queued-payload key that
+  goes unread, a tool docstring asserting a restriction the CLI no longer has, or a twin that
+  was never *run*. So MCP stays a responsibility of **every phase**, not a post-hoc checklist
+  item. Each skill owns its slice:
 
   | Phase | Skill | Its MCP duty |
   |---|---|---|
@@ -142,10 +144,86 @@ the five other mirror axes), which no command here can check and no CI gate can 
 
 These rules exist because docs alone don't bind under momentum: a "check open PRs first" rule was already written and still got skipped, and a PR was merged without seeing an entangled open one. Follow them on every task.
 
+### The Iron Law — done means verified by a run
+
+```
+IF YOU TOUCHED A COMMAND, A FEATURE, OR A FLOW SURFACE,
+YOU RUN ITS E2E TEST. NO RUN = NOT DONE.
+```
+
+Not "tests pass". Not "the gates are green". Not "it's a thin wrapper over code that
+is already covered". **A run, against the real thing, that you watched.** Offline green
+proves our code does what we think it does; it cannot prove Flow still behaves as
+captured, and it cannot prove the surface an agent or a user actually calls is wired to
+the code under test. Everything not exercised is unknown, and unknown ships as a bug.
+
+If no e2e test covers the change, **write one** — that is part of the change, not
+follow-up work.
+
+**The only permitted exception is a named external blocker** you cannot remove: an
+exhausted API quota, hardware you do not have, an account you do not control, a cohort
+Google has not put you in. Write the blocker down. Then these are **not** blockers, and
+naming one is a rule violation, not a caveat:
+
+- "I didn't get to it" · "it's covered by unit tests" · "it's a thin adapter"
+- "the CLI path is verified and it shares the service"
+- "recorded, not omitted"
+
+That last one is the dangerous one, because it is a **good** convention being misused.
+Recording an unverified item beats silently dropping it — but it is a record of a
+blocker, never a substitute for a run. **Listing something as unverified that you could
+have verified is the same failure as omitting it, plus a false paper trail.**
+
+> **This law is written from the failure it prevents.** v0.69.0 shipped with two items
+> under "Not verified": the MCP twin of the credits path, and 5 of 19 skill-benchmark
+> tasks. Asked why we were going blind, both were verified **within the hour**. The MCP
+> twin was a $0 read-only test — 3 assertions, 58 seconds, and it is now
+> `tests/e2e/test_credits_mcp_e2e.py`. The 5 tasks ran on a model whose quota was still
+> open, against a control run to separate model weakness from skill weakness, and
+> exposed **four real defects** that the words "recorded, not omitted" had made invisible.
+> Neither was ever blocked. Both were labelled instead of run.
+
+### The second law — MCP parity is not a chore, it is the contract
+
+```
+EVERY USER-FACING CLI CAPABILITY HAS AN MCP TWIN,
+OR A RECORDED REASON IT DOES NOT.
+```
+
+The CLI and the MCP server are two doors onto one product. A capability behind only one
+of them is not "mostly shipped" — for whoever is standing at the other door it does not
+exist, and nothing tells them so. Agents cannot read a `--help` they were never given;
+they discover a missing option by getting the wrong result.
+
+Parity is **not** satisfied by a command existing. It has to hold at every level the two
+surfaces can drift apart: the leaf, **its options**, the queued-payload keys the worker
+reads back, and the tool docstring's claims about what the CLI does. The canonical list
+is the **six mirror axes**, written out once in
+[`skills/check/SKILL.md`](skills/check/SKILL.md) step 1b and cited from everywhere else —
+never copied, because a duplicated checklist drifts, which is the failure it exists to
+catch.
+
+**A twin is a separate surface, so the Iron Law applies to it separately.** Verifying the
+CLI path does not verify the MCP path. They share a service, and the service was never
+the risk — the adapter is. Run both.
+
+Where a capability is deliberately CLI-only — an interactive login, a destructive local
+operation, a long-running billed job with no way to take consent — that is a legitimate
+answer. **Record it with its reason** in `tests/mcp/test_cli_parity.py`, and revisit the
+reason when whatever justified it changes.
+
+> **Written from a live gap.** `--reference-entity` exists on four leaf commands and no
+> MCP tool exposes the concept at all, while the whole `gflow character` group sits
+> exempt as "not yet ported". The product's entire **identity axis** — create a
+> character, attach a character — is therefore unreachable over MCP, and the parity gate
+> reported full compliance throughout, because it only ever checked that leaves were
+> *mapped*. Found by an option-level sweep, filed as #689, and the gate now checks
+> options too.
+
 - **Check what's already in flight before coding a fix, opening a PR, or merging.** Run `gh pr list` and `git ls-remote` first — another open PR may already touch the same issue or files. Reconcile against it; don't re-derive "the only thing left" from a stale handoff. (A `PreToolUse` hook also surfaces same-issue open PRs at `gh pr create`/`merge` time, but treat that as a backstop, not a substitute for looking.)
 - **Truth is the CLI and running the code — not IDE/LSP "reminder" diagnostics.** Editor / `pyright`-in-worktree warnings go stale for an entire session and throw false positives (especially across multiple worktrees). Confirm with `ruff` / `pyright` / `pytest` from the terminal — or trust the worktree's own venv — never an IDE squiggle.
 - **Verify third-party runtime behavior empirically before wiring it in.** Don't assume how an external library, API, or browser actually behaves — exercise it once and observe, then build on the observed contract.
-- **If a claim can't be verified in the current environment, it's LIKELY — not CONFIRMED.** Keep the issue open, reference it with `Refs #N` (not `Closes #N`), and ship diagnostics rather than a blind fix. When you can't reproduce it, hand the fix to whoever can.
+- **A claim you have not run is not a finding — it is a guess with formatting.** Confidence labels are not evidence: do not grade an unrun claim as "likely", "probably correct" or "low risk" and move on. Where a genuine external blocker stops the run (see the Iron Law), keep the issue open, reference it with `Refs #N` (not `Closes #N`), ship diagnostics rather than a blind fix, and hand it to whoever can reproduce it — naming what would settle it.
 - **This project reverse-engineers a blackbox.** gflow-cli doesn't own Google Flow — it drives real Flow through inspected HAR/DOM/browser-log behavior. Offline checks (types, lint, unit/BDD tests) verify *our* code does what we think it does; they cannot verify Flow still behaves the way we captured it. Every feature that touches a generation path is **live-verified**, not just offline-tested, before it's called done — see `/gflow:live-verify`.
 
 ## Standard Workflow Sequence
@@ -154,6 +232,7 @@ All AI agents and harnesses working on `gflow-cli` follow this standard 10-phase
 
 | Phase | Skill / Command | Purpose | Output Artifact |
 |---|---|---|---|
+| 0. Spike | `/gflow:spike <question>` | Evidence from the live surface (DOM / network / HAR) whenever a claim of absence is in play | `scripts/dev/spike_*.py` + `docs/superpowers/spikes/<date>-<slug>.md` |
 | 1. Triage | `/gflow:issue-assessment <N>` | Read-only issue analysis & root cause hypothesis | `issue_assessment_<N>.md` |
 | 2. Pre-Implementation | `/gflow:predict <proposal>` | Adversarial audit (D14 YAGNI, security, risks) | GO / CAUTION / STOP verdict |
 | 3. BDD Scaffolding | `/gflow:scenario <feature>` | Edge-case explorer & BDD Gherkin spec | `Scenario:` blocks & test scaffold |
@@ -189,6 +268,7 @@ The `skills/` directory ships installable agent skill docs in plain Markdown wit
 | Skill | Path | When to load |
 |---|---|---|
 | `gflow-cli` | [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) | User wants to run any `gflow` command — auth, T2V, I2V, T2I, I2I, batch |
+| `spike` | [`skills/spike/SKILL.md`](skills/spike/SKILL.md) | Before asserting any absence on a live Flow surface — the first layer of investigation |
 | `predict` | [`skills/predict/SKILL.md`](skills/predict/SKILL.md) | Pre-implementation adversarial analysis before any high-stakes change |
 | `scenario` | [`skills/scenario/SKILL.md`](skills/scenario/SKILL.md) | Edge-case explorer after a predict GO/CAUTION |
 | `plan` | [`skills/plan/SKILL.md`](skills/plan/SKILL.md) | Create a structured task-by-task implementation plan for a feature |
@@ -231,6 +311,35 @@ extension does not currently load plugins, so IDE-only users should include the 
 
 The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each skill guides an agent. It drives any OpenAI-compatible endpoint — OpenAI, a gateway (OpenRouter, LiteLLM, freellmapi), a local model, or Google's compat endpoint — through the project's own `GFLOW_CLI_LLM_*` settings, the same ones the prompt tools use; there is no separate provider configuration. See [`scripts/dev/skillopt/README.md`](scripts/dev/skillopt/README.md).
 
+## Spiking a blackbox surface — the two modes
+
+This project reverse-engineers Google Flow, so "go and look at the real thing" is a
+first-class development activity, not a last resort. Two harnesses exist. **Use one of
+them before writing a capture script from scratch.**
+
+| Mode | Where | Driver | Who clicks | Use when |
+|---|---|---|---|---|
+| **In-process** | `scripts/dev/spike_*.py` | Playwright, via gflow's own transport | the script | you can already drive the surface, or you want to see exactly what gflow sees |
+| **HAR + DOM** | [`scripts/dev/har-spike/`](scripts/dev/har-spike/README.md) | CDP-attached **real Chrome** through a pinned `agent-browser` | **a human, by hand** | the driver cannot reach the surface yet, or a capture is ambiguous and you need ground truth |
+
+Start in-process; escalate to the HAR harness when the driver cannot get far enough to
+observe anything. A hand-driven HAR is the tiebreaker. **The protocol is
+[`skills/spike/SKILL.md`](skills/spike/SKILL.md) — load it before asserting any absence.**
+
+Both write to **gitignored** output — `scripts/dev/_spike_out/` and
+`scripts/dev/har-spike/artifacts/`. Captures carry Bearer tokens, cookies and prompts:
+`*.har` is gitignored repo-wide, and a capture must never be committed or pasted into an
+issue unredacted. Use `scripts/dev/har-spike/extract_har_summary.py` for the redacted
+summary that IS shareable. Findings belong in `docs/superpowers/spikes/`; the evidence
+that produced them stays local.
+
+> **The harness is vendored in for discoverability, and that is the whole point.** It
+> lived in a sibling directory outside git until 2026-09-06. Being outside the repo, no
+> agent could find it, nothing pinned its `agent-browser` version, and its one test ran
+> nowhere. A session that day wrote three capture scripts from scratch and only learned
+> the harness existed because the user said so — after concluding, wrongly, that a
+> working Flow feature was impossible. Keep it in-tree, keep its data disposable.
+
 ## Where to look next
 
 - **Architecture & target shape** → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -240,6 +349,7 @@ The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each ski
 - **Known issues** (read before touching auth / reCAPTCHA) → [KNOWN_ISSUES.md](KNOWN_ISSUES.md)
 - **Current task** → `/gflow:status` · **Create a feature plan** → `/gflow:plan <feature>` · **Full roadmap** → [PLAN.md](PLAN.md)
 - **Release protocol** → [RELEASE.md](RELEASE.md)
+- **Spiking a live Flow surface** (HAR + DOM capture) → [scripts/dev/har-spike/README.md](scripts/dev/har-spike/README.md)
 
 ## Claude Code-specific notes
 

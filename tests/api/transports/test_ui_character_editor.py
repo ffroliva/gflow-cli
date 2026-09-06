@@ -76,7 +76,12 @@ def _make_page(
     def _locator(sel: str) -> MagicMock:
         loc = MagicMock()
         loc.first = loc
-        if sel in vis:
+        # A CSS selector list matches when ANY of its alternatives does. The fake
+        # used to compare the whole string, so widening a production selector to
+        # cover a second frontend silently stopped matching here — the mock, not
+        # the code, decided the test. Split the list instead.
+        parts = {p.strip() for p in sel.split(",")}
+        if sel in vis or parts & vis:
             loc.wait_for = AsyncMock()
             loc.is_visible = AsyncMock(return_value=True)
         else:
@@ -256,6 +261,28 @@ class TestEnterCharacterEditor:
 
         with pytest.raises(RuntimeError, match="Character editor not ready"):
             await t._enter_character_editor(page, project_id="p", entity_id="e", locale="en")
+
+    @pytest.mark.asyncio
+    async def test_ready_gate_accepts_the_migrated_prosemirror_editor(self) -> None:
+        """The readiness gate must not be Slate-only.
+
+        Recon 2026-09-06 (`scripts/dev/spike_migrated_character_editor_anchor.py`,
+        live on ci-probe): flow.google.com renders the character editor in full —
+        `input.name-input`, `textarea.personality-textarea`, a voice picker and an
+        upload affordance — but as **Angular + ProseMirror**, where labs is
+        React + Slate. `[data-slate-editor]` matched 0 elements there while
+        `.ProseMirror[contenteditable="true"]` matched 1, with nothing occluding
+        it. The 20 s timeout was never "no character editor on this host"; it was
+        this gate asking for the wrong library's anchor.
+
+        Both anchors are library/build artefacts, not display strings, so this
+        stays inside the locale-invariance rule.
+        """
+        page = _make_page(visible_selectors={'div.ProseMirror[contenteditable="true"]'})
+        t = _make_transport(page=page)
+        t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
+
+        await t._enter_character_editor(page, project_id="p1", entity_id="e1", locale="en")
 
     @pytest.mark.asyncio
     async def test_does_not_call_enter_editor(self) -> None:
@@ -597,119 +624,13 @@ class TestCharacterImageRequestFieldContract:
 
 # ---------------------------------------------------------------------------
 # Tests: _select_character_model — editor model picker (best-effort, non-fatal)
-# ---------------------------------------------------------------------------
-
-
-class _FakeMenuOption:
-    """A clickable model-menu option."""
-
-    def __init__(self, *, visible: bool = True) -> None:
-        self.clicked = False
-        self.first = self
-        self.click = AsyncMock(side_effect=self._record)
-        if visible:
-            self.wait_for = AsyncMock()
-        else:
-            self.wait_for = AsyncMock(side_effect=Exception("not visible"))
-
-    async def _record(self, *_a: Any, **_kw: Any) -> None:
-        self.clicked = True
-
-
-class _FakeTrigger:
-    """The arrow_drop_down dropdown trigger."""
-
-    def __init__(self, *, visible: bool = True) -> None:
-        self.clicked = False
-        self.first = self
-        self.click = AsyncMock(side_effect=self._record)
-        if visible:
-            self.wait_for = AsyncMock()
-        else:
-            self.wait_for = AsyncMock(side_effect=Exception("not visible"))
-
-    async def _record(self, *_a: Any, **_kw: Any) -> None:
-        self.clicked = True
-
-
-def _make_model_picker_page(
-    *,
-    trigger_visible: bool = True,
-    option_visible: bool = True,
-) -> tuple[MagicMock, _FakeTrigger, _FakeMenuOption]:
-    """Fake page wiring the model-picker trigger + the Nano Banana Pro option."""
-    trigger = _FakeTrigger(visible=trigger_visible)
-    option = _FakeMenuOption(visible=option_visible)
-
-    trigger_sels = set(UiAutomationTransport._CHARACTER_MODEL_PICKER_TRIGGER_SELECTORS)
-
-    page = MagicMock()
-    page.url = "https://labs.google/fx/pt/tools/flow/project/p1/character/e1"
-    page.wait_for_timeout = AsyncMock()
-    page.screenshot = AsyncMock(return_value=b"")
-    page.keyboard = MagicMock()
-    page.keyboard.press = AsyncMock()
-
-    def _locator(sel: str) -> Any:
-        if sel in trigger_sels:
-            return trigger
-        if "Nano Banana Pro" in sel:
-            return option
-        loc = MagicMock()
-        loc.first = loc
-        loc.wait_for = AsyncMock(side_effect=Exception("not visible"))
-        loc.click = AsyncMock()
-        return loc
-
-    page.locator = MagicMock(side_effect=_locator)
-    return page, trigger, option
-
-
-class TestSelectCharacterModel:
-    @pytest.mark.asyncio
-    async def test_nano2_default_does_not_click_dropdown(self) -> None:
-        """nano2 (the default) must be a no-op — no dropdown trigger click."""
-        page, trigger, option = _make_model_picker_page()
-        t = _make_transport(page=page)
-
-        await t._select_character_model(page, "nano2", None)  # type: ignore[attr-defined]
-
-        assert not trigger.clicked, "default model must NOT open the dropdown"
-        assert not option.clicked
-
-    @pytest.mark.asyncio
-    async def test_nanopro_opens_dropdown_and_clicks_option(self) -> None:
-        """nanopro must open the dropdown and click the Nano Banana Pro option."""
-        page, trigger, option = _make_model_picker_page()
-        t = _make_transport(page=page)
-
-        await t._select_character_model(page, "nanopro", None)  # type: ignore[attr-defined]
-
-        assert trigger.clicked, "nanopro must open the model dropdown"
-        assert option.clicked, "the Nano Banana Pro option must be clicked"
-
-    @pytest.mark.asyncio
-    async def test_picker_not_found_is_non_fatal(self) -> None:
-        """If neither the trigger nor the option is found, no exception escapes."""
-        page, trigger, option = _make_model_picker_page(trigger_visible=False)
-        t = _make_transport(page=page)
-
-        # MUST NOT raise — best-effort model selection.
-        await t._select_character_model(page, "nanopro", None)  # type: ignore[attr-defined]
-
-        assert not option.clicked, "no trigger → no option click"
-
-    @pytest.mark.asyncio
-    async def test_unknown_alias_is_non_fatal_no_click(self) -> None:
-        """An unknown alias must NOT crash and must not touch the dropdown."""
-        page, trigger, option = _make_model_picker_page()
-        t = _make_transport(page=page)
-
-        await t._select_character_model(page, "totally-unknown", None)  # type: ignore[attr-defined]
-
-        assert not trigger.clicked
-        assert not option.clicked
-
+# The character model picker's own tests now live in
+# tests/api/transports/test_character_model_picker.py. The class that stood here
+# asserted `nano2` must NOT click the dropdown, on the belief that Nano Banana 2
+# is the editor's default. flow.google.com opens on Nano Banana Pro, so that
+# assertion pinned the bug: `--model nano2` silently generated on Pro. The
+# replacement reads the chip instead of assuming, and covers the three-tier menu
+# and the Lite-prefix ambiguity the old fake could not express.
 
 # ---------------------------------------------------------------------------
 # Tests: _click_character_slot_add selector logic (live-DOM grounded)
@@ -838,10 +759,19 @@ class TestClickCharacterSlotAddSelector:
     async def test_ignores_unscoped_accessibility_button(self) -> None:
         """The project-level Characters control shares ``accessibility_new``;
         body activation must use the button beside the portrait image."""
-        scoped_selector = (
-            "button:has(img) + button:has(i.google-symbols:text-is('accessibility_new'))"
-        )
+        # The production selector is a list of SCOPED forms (one per host). The
+        # bare form below is the trap: it must never be asked for, because the
+        # project-level Characters nav carries the same ligature.
+        scoped_selector = UiAutomationTransport._CHARACTER_BODY_MODE_SELECTOR
         unscoped_selector = "button:has(i.google-symbols:text-is('accessibility_new'))"
+        assert unscoped_selector not in scoped_selector.split(", "), (
+            "body activation must stay scoped; a bare accessibility_new selector "
+            "matches the Characters navigation control"
+        )
+        assert "flow-slot-chip-button" in scoped_selector, (
+            "the migrated host scopes body mode by its <flow-slot-chip-button> "
+            "component boundary; without it the Characters nav matches"
+        )
         body_mode = _FakeCandidate(inner_text="accessibility_new Create Body")
         navigation = _FakeCandidate(inner_text="accessibility_new Characters")
         face_reference = _FakeCandidate(inner_text="cancel")
@@ -994,7 +924,7 @@ class _FakeSlateBox:
 
 
 class _FakeSlateBoxList:
-    """The locator for ``PROMPT_INPUT_SELECTORS[0]``: N mounted Slate boxes."""
+    """The locator for the character readiness anchor: N mounted prompt boxes."""
 
     def __init__(self, boxes: list[_FakeSlateBox]) -> None:
         self.boxes = boxes
@@ -1028,7 +958,6 @@ def _make_body_prompt_page(
     currently-FOCUSED box; ``submit_clicks`` records submit-button clicks.
     """
     from gflow_cli.api.transports.ui_automation import (
-        PROMPT_INPUT_SELECTORS,
         SUBMIT_BUTTON_SELECTORS,
     )
 
@@ -1062,7 +991,10 @@ def _make_body_prompt_page(
     boxes = [portrait, body][:box_count]
     box_list = _FakeSlateBoxList(boxes)
 
-    prompt_sel = PROMPT_INPUT_SELECTORS[0]
+    # The body path now counts through the readiness anchor, which covers BOTH
+    # frontends (labs Slate, migrated ProseMirror) — not PROMPT_INPUT_SELECTORS[0],
+    # which is Slate-only and reported 0 boxes on a migrated editor.
+    prompt_sel = UiAutomationTransport._CHARACTER_EDITOR_READY_SELECTOR
     submit_sels = set(SUBMIT_BUTTON_SELECTORS)
     submit_clicks: list[str] = []
 
