@@ -53,6 +53,41 @@ def _set_flow_host(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
     reset_settings()
 
 
+def _write_reference(path: Path) -> Path:
+    """Write a real 1024x1024 PNG.
+
+    Not a 1x1: Flow's upload answered ``maseQ`` 200 with **no media id** for a 64x64
+    synthetic one (measured), which surfaces as MediaUploadRejectedError. The point of
+    this test is the attach path, so the fixture has to clear whatever size floor the
+    uploader applies rather than probe it.
+    """
+    import struct
+    import zlib
+
+    side = 1024
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        body = tag + data
+        return struct.pack(">I", len(data)) + body + struct.pack(
+            ">I", zlib.crc32(body) & 0xFFFFFFFF
+        )
+
+    # A simple gradient — real image content, and it compresses to a sane size.
+    rows = bytearray()
+    for y in range(side):
+        rows.append(0)  # filter: none
+        for x in range(side):
+            rows += bytes(((x * 255) // side, (y * 255) // side, 128))
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", struct.pack(">IIBBBBB", side, side, 8, 2, 0, 0, 0))
+        + _chunk(b"IDAT", zlib.compress(bytes(rows), 6))
+        + _chunk(b"IEND", b"")
+    )
+    path.write_bytes(png)
+    return path
+
+
 def _events(capture: structlog.testing.LogCapture, prefix: str) -> list[str]:
     return [str(e["event"]) for e in capture.entries if str(e["event"]).startswith(prefix)]
 
@@ -143,6 +178,69 @@ async def test_e2e_t2v_runs_on_flow_google_com_by_default(
     assert result.project_id == project
 
     # 3. File-on-disk: an mp4 with its container magic, not a poster JPEG.
+    assert result.local_path is not None and result.local_path.exists()
+    body = result.local_path.read_bytes()
+    assert body[4:8] == b"ftyp", body[:12]
+    assert len(body) > 100_000, len(body)
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_video
+async def test_e2e_r2v_binds_local_references_on_the_migrated_host(
+    e2e_profile_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """Bills one clip. Two LOCAL ``--ref`` files must upload through the editor, attach
+    as `@` mentions, and ride the ``MZZa6b`` submit.
+
+    The layer that matters is the last one. Chips in the DOM and ids in the log only
+    prove Flow ACCEPTED the references; ``_r2v_body_problem`` asserting the submit body
+    carries every uploaded id is what proves the run is the one the caller asked for —
+    the failure mode being a full-price clip with none of them on it. That assertion is
+    armed inside ``submit_and_observe``, so a run that reached ``migrated.result``
+    without it firing is the evidence.
+    """
+    refs = tuple(
+        _write_reference(tmp_path / name) for name in ("ref_one.png", "ref_two.png")
+    )
+    project = _project_id()
+    _set_flow_host(monkeypatch, os.environ.get("GFLOW_CLI_E2E_FLOW_HOST") or None)
+    req = GenerateVideoRequest(
+        prompt=_PROMPT,
+        mode=Mode.R2V,
+        aspect=Aspect.PORTRAIT,
+        reference_images=refs,
+    )
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(e2e_profile_dir)
+        result: VideoResult = await transport.generate_video(
+            request=req, project_id=project, out_dir=tmp_path, poll_timeout_s=_POLL_TIMEOUT_S
+        )
+    finally:
+        await transport.teardown()
+
+    # 1. The migrated composer handled it, through the reference stage.
+    seen = _events(install_log_capture, "migrated.")
+    for required in (
+        "migrated.dispatch",
+        "migrated.references_attached",
+        "migrated.submit_observed",
+        "migrated.result",
+    ):
+        assert required in seen, f"{required} missing; migrated events: {seen}"
+
+    # 2. Both references uploaded and were attached — not one, not zero.
+    attached = [
+        e for e in install_log_capture.entries if e.get("event") == "migrated.references_attached"
+    ]
+    assert attached and attached[-1]["count"] == len(refs), attached
+    assert len(attached[-1]["media_ids"]) == len(refs), attached
+
+    # 3. Terminal success and a real mp4, same contract as t2v.
+    assert result.status.succeeded, result.status
     assert result.local_path is not None and result.local_path.exists()
     body = result.local_path.read_bytes()
     assert body[4:8] == b"ftyp", body[:12]
