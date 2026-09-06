@@ -6,22 +6,28 @@
 **Goal:** A spike tool a contributor on any OS can run to produce redacted evidence for a bug
 report — backed by a tested library instead of 88 untested scripts and a Node dependency.
 
-**Architecture:** Live capture goes into a **new** `src/gflow_cli/recon/` package (CDP attach,
-HAR capture, DOM inventory). `recon` is already this repo's word for it — 16 doc occurrences,
-plus the "Phase 0: Recon" the workflow gained in #704 — and it means precisely what this does:
-observing terrain we do not control.
+**Architecture:** Live capture goes into a new `src/gflow_cli/spike/` package (CDP attach, HAR
+capture, DOM inventory). **`spike` because that is already the word here** — `/gflow:spike`,
+`skills/spike/SKILL.md`, 48 `scripts/dev/spike_*.py` since July, and `docs/superpowers/spikes/`
+for the findings. One word across command, protocol, scripts, findings and module beats a
+taxonomically neater name that matches nothing else; a contributor grepping for "spike" should
+land on all of it.
+
+Named `spike/`, **not** `_spike/`. The underscore would claim it is private, and it is not:
+[#707](https://github.com/ffroliva/gflow-cli/issues/707) builds a user-facing capture path on
+exactly this code.
 
 **`diagnostics.py` is deliberately left alone.** An earlier draft folded this into it, and that
 was conflation rather than consolidation: `diagnostics` classifies and summarises what already
-went wrong, post-hoc, for an incident bundle; recon actively drives a browser to observe a live
-surface. Different activity, different lifecycle. Promoting a shipped 1890-line module with 4
-importers to a package would have been risk taken for no benefit.
+went wrong, post-hoc, for an incident bundle; a spike actively drives a browser to observe a
+live surface. Different activity, different lifecycle. Promoting a shipped 1890-line module
+with 4 importers to a package would have been risk taken for no benefit.
 
 **What genuinely needed consolidating was redaction, and it still does.** There are three
 implementations today — `redaction.py` (14 lines), `diagnostics.sanitize_url`, and
 `extract_har_summary`'s header/URL redaction. Task 2 merges them into `redaction.py`, which both
-`diagnostics` and `recon` then share. That was always the real drift risk; the module count
-never was.
+`diagnostics` and `spike` then share. That was always the real drift risk; the module name never
+was.
 
 One-shot probes move to `scripts/dev/probes/` and gain a retention rule. The
 Node/`agent-browser`/PowerShell harness is deleted script by script as each Python twin lands.
@@ -44,8 +50,8 @@ piece that could have killed the port is retired.
 | **HIGH** | Redaction regression leaks a Bearer token or cookie into an issue attachment | Consolidate to ONE implementation; property-style tests over a corpus of real header/URL shapes; Task 2 lands before anything that produces a shareable artefact |
 | **HIGH** | A 59.5 MB HAR (measured) is attached to an issue, full of live response bodies | `record_har_content="omit"` is the default; the CDP-shaped path (95 KB for the same traffic) is what the contributor-facing entry point uses |
 | MED | Moving 67 probes breaks a doc link or a `tests/scripts/` import | `check_doc_links.py` is a merge gate; move with `git mv`, run gates per task |
-| MED | `recon` and `diagnostics` drift into two redaction implementations again | Task 2 makes `redaction.py` the single home BEFORE either uses it; no capture code lands first |
-| MED | `recon` grows into a product surface by accident | No Click command, no MCP tool, until #707 decides deliberately |
+| MED | `spike` and `diagnostics` drift into two redaction implementations again | Task 2 makes `redaction.py` the single home BEFORE either uses it; no capture code lands first |
+| MED | `spike` grows into a product surface by accident | No Click command, no MCP tool, until #707 decides deliberately |
 | LOW | Ported script behaves differently from its `.ps1` twin | Delete each `.ps1` only after its twin is exercised against live Chrome once |
 
 ---
@@ -55,12 +61,12 @@ piece that could have killed the port is retired.
 ### New files
 
 ```
-src/gflow_cli/recon/cdp.py            launch/attach a real Chrome over CDP; profile resolution
-src/gflow_cli/recon/har.py            capture -> HAR (body-free by default), shape CDP events
-src/gflow_cli/recon/dom.py            ligature / ARIA role / custom-element inventory
-tests/recon/test_cdp.py         attach/launch contract, no real browser
-tests/recon/test_har.py         CDP-event -> HAR shaping; size discipline
-tests/recon/test_har_redaction.py  header/URL/body redaction over a real-shaped corpus
+src/gflow_cli/spike/cdp.py            launch/attach a real Chrome over CDP; profile resolution
+src/gflow_cli/spike/har.py            capture -> HAR (body-free by default), shape CDP events
+src/gflow_cli/spike/dom.py            ligature / ARIA role / custom-element inventory
+tests/spike/test_cdp.py         attach/launch contract, no real browser
+tests/spike/test_har.py         CDP-event -> HAR shaping; size discipline
+tests/spike/test_har_redaction.py  header/URL/body redaction over a real-shaped corpus
 scripts/dev/probes/README.md          what a probe is, and the retention rule
 ```
 
@@ -85,10 +91,10 @@ AGENTS.md                             two-modes table points at the new paths
 
 **What:** Red tests defining the contract before any code exists.
 
-**Files:** `tests/recon/test_cdp.py`, `tests/recon/test_har.py`
+**Files:** `tests/spike/test_cdp.py`, `tests/spike/test_har.py`
 
 **Steps:**
-- [ ] `tests/recon/` package with a `conftest.py` fixture for a fake CDP session
+- [ ] `tests/spike/` package with a `conftest.py` fixture for a fake CDP session
 - [ ] Assert `har.from_cdp_events()` emits `log.entries[].request/response` (the shape
       `summarize_har` reads) and nothing more
 - [ ] Assert the capture default is **body-free** — a fixture with a 5 MB response body
@@ -106,7 +112,7 @@ AGENTS.md                             two-modes table points at the new paths
 **What:** One redaction implementation. `src/gflow_cli/redaction.py` absorbs the header, URL
 and HAR-entry redaction currently living in `scripts/dev/har-spike/extract_har_summary.py`.
 
-**Files:** `src/gflow_cli/redaction.py`, `tests/recon/test_har_redaction.py`,
+**Files:** `src/gflow_cli/redaction.py`, `tests/spike/test_har_redaction.py`,
 `scripts/dev/har-spike/extract_har_summary.py` (delegates)
 
 **Steps:**
@@ -125,11 +131,11 @@ and HAR-entry redaction currently living in `scripts/dev/har-spike/extract_har_s
 
 ---
 
-## Task 3 — `recon/cdp.py`: attach and launch
+## Task 3 — `spike/cdp.py`: attach and launch
 
 **What:** The Chrome-discovery and CDP-attach machinery, cross-platform.
 
-**Files:** `src/gflow_cli/recon/cdp.py      `, `src/gflow_cli/diagnostics/__init__.py`
+**Files:** `src/gflow_cli/spike/cdp.py      `, `src/gflow_cli/diagnostics/__init__.py`
 
 **Steps:**
 - [ ] `launch_with_cdp(profile, port)` — `channel="chrome"` (no path hunting) +
@@ -144,11 +150,11 @@ and HAR-entry redaction currently living in `scripts/dev/har-spike/extract_har_s
 
 ---
 
-## Task 4 — `recon/har.py`: capture without Node
+## Task 4 — `spike/har.py`: capture without Node
 
 **What:** Both capture routes, with the size discipline baked in.
 
-**Files:** `src/gflow_cli/recon/har.py      `
+**Files:** `src/gflow_cli/spike/har.py      `
 
 **Steps:**
 - [ ] `from_cdp_events(events)` — shape `Network.requestWillBeSent` /
@@ -163,11 +169,11 @@ and HAR-entry redaction currently living in `scripts/dev/har-spike/extract_har_s
 
 ---
 
-## Task 5 — `recon/dom.py`: inventory helpers
+## Task 5 — `spike/dom.py`: inventory helpers
 
 **What:** The DOM-reading JS that tonight's probes each re-implemented.
 
-**Files:** `src/gflow_cli/recon/dom.py      `
+**Files:** `src/gflow_cli/spike/dom.py      `
 
 **Steps:**
 - [ ] `inventory(page)` — ligatures + carrier tag, ARIA roles, custom elements, `href`s
@@ -189,7 +195,7 @@ and HAR-entry redaction currently living in `scripts/dev/har-spike/extract_har_s
 `scripts/dev/har-spike/launch-flow-chrome.ps1`
 
 **Steps:**
-- [ ] Thin CLI over `recon.cdp.launch_with_cdp`
+- [ ] Thin CLI over `spike.cdp.launch_with_cdp`
 - [ ] Exercise once against live Chrome; paste the result in the PR
 - [ ] Delete the `.ps1` in the same commit — two implementations is the drift we are removing
 
@@ -230,7 +236,7 @@ and HAR-entry redaction currently living in `scripts/dev/har-spike/extract_har_s
       finding, or it does not merge.** Findings are permanent; probes are prunable once
       written up
 - [ ] Drop the Windows-only caveat from CONTRIBUTING; the harness is Python now
-- [ ] AGENTS.md two-modes table points at `recon/` and `probes/`
+- [ ] AGENTS.md two-modes table points at `spike/` and `probes/`
 - [ ] Add a one-line cost + question header convention for probes
 
 **Tests:**
@@ -245,7 +251,7 @@ and HAR-entry redaction currently living in `scripts/dev/har-spike/extract_har_s
       full pytest)
 - [ ] CHANGELOG entry under `[Unreleased]`
 - [ ] Confirm no Click command and no MCP tool was added — the user-facing decision belongs
-      to #707. `recon` adds ~40 KB to the wheel and no user-visible surface
+      to #707. `spike` adds ~40 KB to the wheel and no user-visible surface
 
 **Tests:**
 - [ ] `uv run python -m pytest -q --cov=gflow_cli` — coverage floor held
@@ -258,6 +264,6 @@ and HAR-entry redaction currently living in `scripts/dev/har-spike/extract_har_s
   [#707](https://github.com/ffroliva/gflow-cli/issues/707), and it gets `/gflow:predict`
   first. This plan deliberately ships **no** new CLI surface, which is also why it needs no
   MCP mirror task: there is nothing user-facing to mirror.
-- Rewriting existing probes to use `recon/` — they keep working as they are; convert on
+- Rewriting existing probes to use `spike/` — they keep working as they are; convert on
   next touch.
 - Changing what incident bundles contain — overlaps #707's first design question.

@@ -232,7 +232,7 @@ All AI agents and harnesses working on `gflow-cli` follow this standard 10-phase
 
 | Phase | Skill / Command | Purpose | Output Artifact |
 |---|---|---|---|
-| 0. Recon | `/gflow:spike <question>` | Evidence from the live surface (DOM / network / HAR) whenever a claim of absence is in play | `scripts/dev/spike_*.py` + `docs/superpowers/spikes/<date>-<slug>.md` |
+| 0. Spike | `/gflow:spike <question>` | Evidence from the live surface (DOM / network / HAR) whenever a claim of absence is in play | `scripts/dev/spike_*.py` + `docs/superpowers/spikes/<date>-<slug>.md` |
 | 1. Triage | `/gflow:issue-assessment <N>` | Read-only issue analysis & root cause hypothesis | `issue_assessment_<N>.md` |
 | 2. Pre-Implementation | `/gflow:predict <proposal>` | Adversarial audit (D14 YAGNI, security, risks) | GO / CAUTION / STOP verdict |
 | 3. BDD Scaffolding | `/gflow:scenario <feature>` | Edge-case explorer & BDD Gherkin spec | `Scenario:` blocks & test scaffold |
