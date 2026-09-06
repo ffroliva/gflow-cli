@@ -693,6 +693,12 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 > key (exit 7 otherwise) — the failure being a full-price clip with none of your references
 > on it. References given by `@Name` or `--reference-entity` (character entities) exit 36
 > there; an unmoved account keeps the labs driver for those.
+>
+> **`--duration` is refused on this path (exit 11).** The host offers reference-to-video
+> only at its base 8s tier. At 4s or 6s it does not refuse — it drops the references,
+> types their file *names* into the prompt and bills a text-to-video clip (measured at
+> zero credits, 2026-09-06). Because the editor remembers the last duration used, an r2v
+> run pins 8s itself rather than inheriting it. Pass no `--duration`, or `--duration 8`.
 
 ### Sharing one project across calls
 

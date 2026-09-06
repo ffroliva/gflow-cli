@@ -32,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first reference and the product is the one from the second, so both references are
   genuinely bound rather than merely accepted.
 
+  **`--duration` is refused on this path (exit 11), and an r2v run pins 8s for itself.**
+  Flow offers reference-to-video only at its base 8s tier on this host. At 4s or 6s it does
+  not refuse: it flattens the reference mentions into plain prompt text and submits
+  `veo_3_1_t2v_lite_4s_low_priority` — a full-price text-to-video clip carrying the file
+  *names* and none of the images. The editor remembers the last duration, so a run passing
+  none was inheriting a degrading one. Measured at zero credits across three route-blocked
+  runs varying only the duration (`scripts/dev/capture_migrated_r2v_production_submit.py`).
+  Note the media slot carries the reference ids even in the degraded submits, so the model
+  key — not the ids — is what distinguishes a bound run from an accepted one.
+
   **Correction to the first cut of this feature**, kept here because the claim was public:
   the submit-body assertion above was written and unit-tested but **never registered** on
   the r2v path — `page.on("request", …)` was gated on the i2v `expect_media_id`, which is

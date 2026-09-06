@@ -358,6 +358,51 @@ That closes the question this whole spike was built around. Ids on the wire and 
 the DOM only ever proved Flow took the references; only the render proves it used them,
 and it used both, in the order given.
 
+## Round 8 — SETTLED: r2v exists only at the base duration
+
+Reported from a real run on 2026-09-06: two references attached (chip count verified
+twice), and the submit still went out on `MZZa6b` carrying
+`veo_3_1_t2v_lite_4s_low_priority`. Settled at **$0** by
+`scripts/dev/capture_migrated_r2v_production_submit.py`, which drives the *production*
+path — `apply_video_settings` → `attach_references` → `send_prompt` — and blocks
+`batchexecute` inside the page before the click. Three runs, same account, model,
+reference files and gestures; **only the duration changed**:
+
+| duration | model key on `MZZa6b` | prompt segments |
+|---|---|---|
+| 4s (inherited) | `veo_3_1_t2v_lite_4s_low_priority` | **flattened to plain text** |
+| 6s | `veo_3_1_t2v_lite_6s_low_priority` | **flattened to plain text** |
+| 8s | `veo_3_1_r2v_lite_low_priority` | mention nodes intact |
+
+At 8s the prompt carries structured mentions — `[null, [["047e1f1d-…", "me.jpg"]]]`,
+the Round 6 shape. At 4s and 6s the same two chips serialise as one flat string,
+`"me.jpg  ref_….png  the presenter…"`: the app **degrades an ingredients run to
+text-to-video and types the file names into the prompt.** It does not refuse, and it does
+not warn.
+
+Two details that matter for the port:
+
+1. **The media slot is populated in all three.** `[[null,"<id>"],[null,"<id>"]]` carries
+   both ids even in the degraded submits, so "are the ids in the body?" is **not** a
+   sufficient assertion — it passes on a run that would bill a clip with none of the
+   references on it. The model key is the load-bearing signal, which is why
+   `_r2v_body_problem` checks it first. (This is the accepted-vs-bound distinction again,
+   one layer lower than the render.)
+2. **8s is the base tier: its key drops the duration segment entirely.** That explains why
+   a cohort rendering no duration row at all — the maintainer's — has always submitted r2v
+   correctly. It was never on a degrading tier because it cannot select one.
+
+The editor **remembers** the last duration, so an r2v run passing no `--duration` inherits
+whatever the previous run left. `apply_video_settings` therefore pins `R2V_DURATION_S`
+best-effort when the pane offers durations, and refuses an explicit degrading duration
+with exit 11 before any submit — the same reasoning as #125 one axis over.
+
+**Not settled:** whether other models (`veo_3_1_lite`, `veo_3_1_fast`, `omni_flash`) share
+the boundary, and whether `omni_flash`'s 10s tier does. Only
+`veo_3_1_lite_lower_priority` was measured, on one cohort. The pin and the refusal are
+written to be safe rather than precise: over-restricting costs a length nobody has shown
+exists, under-restricting bills a clip with no references on it.
+
 ## What this does NOT settle
 
 > Bullets that stood here — "Multiple references", "Local files", and the response shape —

@@ -132,6 +132,14 @@ rounds); e2e `tests/e2e/test_migrated_host_e2e.py`. Read this before re-mining t
   key it contrasts with carries **no mode infix at all**. A diagnostic regex written as a
   mode alternation therefore says "no model key" for exactly the body it exists to
   describe — a t2v key on an r2v submit, i.e. the picker having inserted nothing.
+- **r2v exists only at the base duration (8s), and below it Flow DEGRADES rather than
+  refuses.** At 4s/6s the app flattens the mention chips into plain prompt text and
+  submits `veo_3_1_t2v_lite_<n>s_low_priority` — a full-price text-to-video clip carrying
+  the file *names* and none of the images. The editor remembers the last duration, so a
+  run passing none inherits it; the composer pins the base tier best-effort and refuses an
+  explicit degrading duration at exit 11. **The media slot carries the ids even in the
+  degraded submits**, so "are the ids in the body?" is not a sufficient assertion — the
+  model key is. Measured at $0, three route-blocked runs varying only duration.
 - **A body assertion is only as good as its listener registration.** `_r2v_body_problem`
   was written, unit-tested and green while `page.on("request", …)` stayed gated on
   `expect_media_id is not None` — never true on the r2v path — so the check could not run

@@ -32,7 +32,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote_plus, urlsplit
 
 import structlog
 
@@ -102,6 +102,9 @@ UPLOAD_RPC = "maseQ"
 #: key on an r2v submit*, and that key carries no infix to match on. A mode-only
 #: alternation reported "no model key" for exactly that body.
 MODEL_KEY = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*_(?:t2v|i2v|r2v)_[a-z0-9_]+|veo_[a-z0-9_]+")
+#: A duration segment inside a model key, e.g. the ``_4s_`` of
+#: ``veo_3_1_t2v_lite_4s_low_priority``. The base tier carries none.
+_DURATION_IN_KEY = re.compile(r"_\d+s_")
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 
 # --- i2v: the toolbar upload path and the Frames picker ---------------------------
@@ -116,6 +119,21 @@ PICKER_SEARCH = "input[type='text']"
 PICKER_OPTION = "button.asset-item[role='option']"
 #: The Ingredients sub-mode holds references; Frames holds the i2v chips.
 INGREDIENTS_LIGATURE = "chrome_extension"
+#: The only duration at which this host offers reference-to-video. Measured 2026-09-06 at
+#: $0 on a cohort that DOES render a duration row for Veo 3.1 Lite [Lower Priority]
+#: (`capture_migrated_r2v_production_submit.py`, three route-blocked runs, same account,
+#: model, references and gestures — only the duration changed):
+#:
+#:     4s -> veo_3_1_t2v_lite_4s_low_priority   mentions FLATTENED to prompt text
+#:     6s -> veo_3_1_t2v_lite_6s_low_priority   mentions FLATTENED to prompt text
+#:     8s -> veo_3_1_r2v_lite_low_priority      mentions intact, ids in the media slot
+#:
+#: At 8s the key drops its duration segment entirely — 8s IS the base tier, which is why
+#: a cohort that renders no duration row at all (the maintainer's) has always submitted
+#: r2v correctly. Below the base tier the app does not refuse: it silently degrades to
+#: text-to-video and bills a clip with the file NAMES typed into the prompt and none of
+#: the images on it.
+R2V_DURATION_S = 8
 #: A mention chip in the prompt document — how a reference is represented once
 #: attached. Its ``data-reference-type`` decides which wire slot carries the id.
 MENTION_CHIP = ".mention-chip"
@@ -280,11 +298,19 @@ def _first_uuid(text: str) -> str | None:
 
 def _post_data(request: Any) -> str:
     """The POST body as text, or ``""`` when Playwright cannot decode it —
-    a listener must not raise."""
+    a listener must not raise.
+
+    Form-decoded, because ``batchexecute`` sends ``f.req=<percent-encoded JSON>``: raw, the
+    model key reads as ``%5C%22veo_3_1_t2v_lite_4s_low_priority%5C%22`` and the diagnostic
+    quoted it back to a user as ``22veo_3_1_t2v_lite_4s_low_priority``. UUIDs survive
+    either way (nothing in them is escaped), so this is about what the message says, not
+    about whether the assertion works.
+    """
     try:
-        return str(request.post_data or "")
+        body = str(request.post_data or "")
     except Exception:  # noqa: BLE001 - Playwright's post_data raises on undecodable bytes
         return ""
+    return unquote_plus(body) if body else ""
 
 
 def _i2v_body_problem(body: str, rpcid: str, media_id: str) -> str | None:
@@ -330,9 +356,21 @@ def _r2v_body_problem(body: str, rpcid: str, media_ids: tuple[str, ...]) -> str 
     key = MODEL_KEY.search(body)
     key_text = key.group(0) if key else "no model key"
     if "_r2v_" not in body:
+        # A duration segment in a t2v key is the measured cause, not a guess: below
+        # R2V_DURATION_S this host flattens the mention chips to plain prompt text and
+        # submits t2v. Say so — "no reference was bound" alone sent the first reporter
+        # looking at the attach code, which was working correctly.
+        duration_hint = ""
+        if _DURATION_IN_KEY.search(key_text):
+            duration_hint = (
+                f" — the key names a duration, and this host offers r2v only at "
+                f"{R2V_DURATION_S}s; below that it drops the references instead of "
+                "refusing, so re-run without --duration"
+            )
         return (
             f"migrated host: the submit went out on {rpcid} with {key_text} for a "
-            "references (r2v) request — no reference was bound when the app submitted"
+            f"references (r2v) request — no reference was bound when the app "
+            f"submitted{duration_hint}"
         )
     missing = [m for m in media_ids if m not in body]
     if missing:
@@ -424,7 +462,24 @@ class MigratedComposer:
                 await self._select_model(page, pane, model)
             await self._select(page, pane, axis="aspect", lig=ASPECT_LIGATURE[request.aspect])
             if request.duration is not None:
+                if request.mode is Mode.R2V and request.duration != R2V_DURATION_S:
+                    raise ConfigurationError(
+                        detail=(
+                            f"the migrated Flow host offers reference-to-video only at "
+                            f"{R2V_DURATION_S}s; at {request.duration}s it does not refuse but "
+                            "silently drops the references and submits a text-to-video run "
+                            "with their file names typed into the prompt — a full-price clip "
+                            "with none of the images on it"
+                        ),
+                        remediation_hint=(
+                            f"Drop --duration (r2v pins {R2V_DURATION_S}s on its own), pass "
+                            f"--duration {R2V_DURATION_S}, or run this length on labs with "
+                            "GFLOW_CLI_FLOW_HOST=labs.google."
+                        ),
+                    )
                 await self._select(page, pane, axis="duration", text=f"{request.duration}s")
+            elif request.mode is Mode.R2V:
+                await self._pin_r2v_duration(page, pane)
             await self._select(page, pane, axis="count", text=f"x{request.count}")
             log.info(
                 "migrated.settings_applied",
@@ -533,6 +588,26 @@ class MigratedComposer:
                 f"composer and the prompt could not be typed (host=migrated)"
             ),
         )
+
+    async def _pin_r2v_duration(self, page: Page, pane: Any) -> None:
+        """Bind the base duration for a references run, when this pane offers durations.
+
+        The editor REMEMBERS the last duration, so an r2v run that passes none inherits
+        whatever the previous run left behind — and below :data:`R2V_DURATION_S` the app
+        degrades an ingredients run to text-to-video instead of refusing it. That is the
+        same shape as #125 one axis over: "no opinion" is not what the caller gets, the
+        editor's memory is.
+
+        Best-effort by construction. A cohort that renders no duration row already submits
+        the base tier, so a missing row is the correct state, not an error — which is why
+        this cannot go through :meth:`_select`, whose duration branch raises exit 11.
+        """
+        wanted = f"{R2V_DURATION_S}s"
+        if not await pane.locator(RADIO).filter(has_text=_exact(wanted)).count():
+            log.info("migrated.r2v_duration_row_absent", wanted=wanted)
+            return
+        await self._select(page, pane, axis="duration", text=wanted)
+        log.info("migrated.r2v_duration_pinned", seconds=R2V_DURATION_S, issue_ref="#639")
 
     async def _select(
         self,

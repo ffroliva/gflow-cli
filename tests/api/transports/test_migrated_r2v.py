@@ -77,6 +77,50 @@ def test_a_submit_that_lost_the_references_is_a_wire_problem() -> None:
     assert problem is not None and "veo_3_1_lite_lower_priority" in problem
 
 
+def test_a_t2v_key_carrying_a_duration_names_the_duration_as_the_cause() -> None:
+    """The measured cause of a degraded r2v submit, not a guess: below 8s this host
+    flattens the mentions and goes out as t2v. "No reference was bound" on its own sent
+    the first reporter reading the attach code, which was working correctly."""
+    from gflow_cli.api.transports.migrated_composer import _r2v_body_problem
+
+    ref = "aaaaaaaa-1111-2222-3333-444444444444"
+    degraded = f'["veo_3_1_t2v_lite_4s_low_priority", "{ref}"]'
+    problem = _r2v_body_problem(degraded, "MZZa6b", (ref,))
+    assert problem is not None
+    assert "veo_3_1_t2v_lite_4s_low_priority" in problem
+    assert "only at 8s" in problem and "--duration" in problem
+
+    # A t2v key with no duration segment is a different fault and must not blame duration.
+    plain = f'["veo_3_1_lite_lower_priority", "{ref}"]'
+    other = _r2v_body_problem(plain, "MZZa6b", (ref,))
+    assert other is not None and "only at 8s" not in other
+
+
+def test_the_submit_body_is_form_decoded_before_it_is_quoted_back() -> None:
+    """`batchexecute` sends `f.req=<percent-encoded JSON>`. Raw, the key reads as
+    `%5C%22veo_...%5C%22` and a real run quoted it back to the user as
+    `22veo_3_1_t2v_lite_4s_low_priority`."""
+    from gflow_cli.api.transports.migrated_composer import _post_data
+
+    class _Req:
+        post_data = (
+            "f.req=%5B%5B%5B%22MZZa6b%22%2C%22%5B%5C%22veo_3_1_r2v_lite%5C%22%5D%22%5D%5D%5D"
+        )
+
+    body = _post_data(_Req())
+    # The nested JSON keeps its own backslash escapes; what must be gone is the percent
+    # encoding, whose `%5C%22` is what MODEL_KEY was matching as a leading "22".
+    assert "%5C%22" not in body and "%22" not in body
+    assert "veo_3_1_r2v_lite" in body and body.startswith('f.req=[[["MZZa6b"')
+
+    class _Boom:
+        @property
+        def post_data(self) -> str:
+            raise RuntimeError("undecodable bytes")
+
+    assert _post_data(_Boom()) == ""  # a listener must never raise
+
+
 def test_submit_rpcs_cover_the_ingredients_submit() -> None:
     """An Ingredients run submits on MZZa6b, not YhhmEf. Watching only the latter is why
     every early capture reported "no submit" while the request was plainly being made."""

@@ -1031,7 +1031,11 @@ async def gflow_generate_video(  # NOSONAR
         duration: Optional clip length in seconds (mirrors the CLI ``--duration``):
             4/6/8 on the Veo 3.1 models, 4/6/8/10 on ``omni_flash``; whether the
             account's cohort renders the control is decided pre-submit at zero cost.
-            When omitted, Flow's per-model default applies.
+            When omitted, Flow's per-model default applies. On the migrated
+            flow.google.com host an 'r2v' request accepts only 8 and pins it when
+            omitted — Flow offers reference-to-video at its base tier alone, and at
+            4 or 6 it drops the references and bills a text-to-video clip instead of
+            refusing; any other value returns the exit-11-equivalent envelope.
         count: Number of videos to generate (mirrors the CLI ``--count``; default 1).
         tools: Optional list of prompt tools to apply before generation.
             Each item is ``{"name": str, "options": dict}``.  Valid names

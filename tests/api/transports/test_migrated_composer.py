@@ -590,6 +590,73 @@ async def test_axis_left_at_default_when_not_requested() -> None:
     assert page.dom.groups["count"][0].checked
 
 
+def _r2v_request(**kw: Any) -> GenerateVideoRequest:
+    base: dict[str, Any] = {
+        "prompt": "the presenter holds the product",
+        "mode": Mode.R2V,
+        "aspect": Aspect.PORTRAIT,
+        "reference_images": (Path("a.png"),),
+        "duration": None,
+    }
+    base.update(kw)
+    return GenerateVideoRequest(**base)
+
+
+async def test_r2v_pins_the_base_duration_instead_of_inheriting_the_editors() -> None:
+    """Measured 2026-09-06 at $0: at 4s and 6s this host does not refuse a references run,
+    it flattens the mention chips to plain prompt text and submits
+    `veo_3_1_t2v_lite_4s_low_priority` — a full-price text-to-video clip carrying the file
+    NAMES and none of the images. Only 8s submits `veo_3_1_r2v_lite_low_priority`.
+
+    The editor remembers the last duration, so passing none is not "no opinion": it is
+    whatever the previous run left. #125's shape, one axis over."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.groups["duration"][2].checked = False  # 8s
+    page.dom.groups["duration"][0].checked = True  # the editor remembers 4s
+    with capture_logs() as logs:
+        await MigratedComposer().apply_video_settings(page, _r2v_request())
+    assert page.dom.groups["duration"][2].checked and not page.dom.groups["duration"][0].checked
+    assert "migrated.r2v_duration_pinned" in [e["event"] for e in logs]
+
+
+async def test_r2v_on_a_pane_with_no_duration_row_is_left_alone() -> None:
+    """A cohort that renders no duration row already submits the base tier — that is the
+    maintainer's account, where r2v has always worked. A missing row is the correct state,
+    so the pin must not go through `_select`, whose duration branch raises exit 11."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    del page.dom.groups["duration"]
+    with capture_logs() as logs:
+        await MigratedComposer().apply_video_settings(page, _r2v_request())
+    events = [e["event"] for e in logs]
+    assert "migrated.r2v_duration_row_absent" in events
+    assert "migrated.r2v_duration_pinned" not in events
+
+
+async def test_r2v_with_an_explicit_degrading_duration_is_refused_before_submit() -> None:
+    """Exit 11 at zero credits beats the post-submit body assertion, which can only name
+    the fault after Flow has already been asked to bill it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    with pytest.raises(ConfigurationError) as exc_info:
+        await MigratedComposer().apply_video_settings(page, _r2v_request(duration=4))
+    message = str(exc_info.value)
+    assert "8s" in message and "silently drops the references" in message
+    assert page.dom.groups["duration"][0].checked is False  # nothing was selected
+
+
+async def test_r2v_at_the_supported_duration_is_allowed_through() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    await MigratedComposer().apply_video_settings(page, _r2v_request(duration=8))
+    assert page.dom.groups["duration"][2].checked
+
+
 async def test_stale_radio_that_never_flips_is_selector_drift_with_host() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
