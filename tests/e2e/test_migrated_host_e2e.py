@@ -279,7 +279,16 @@ async def test_e2e_image_on_a_moved_account_exits_36_not_recaptcha(
     bails = [
         e for e in install_log_capture.entries if e.get("event") == "ui_driver.migrated_host_bail"
     ]
-    assert bails and bails[0].get("at") == "mint_recaptcha_token", bails
+    # #692: the bail can legitimately come from EITHER site now. The pre-mint
+    # guard catches the common case; the re-check on the mint's failure path
+    # catches the race where Flow's client-side hop lands mid-mint (the guard is
+    # a point-in-time URL read, so it cannot see a navigation that has not
+    # happened yet). Pinning this to the pre-mint site alone would make the test
+    # REJECT the very scenario #692 reports.
+    assert bails and bails[0].get("at") in {
+        "mint_recaptcha_token",
+        "mint_recaptcha_token_after_failure",
+    }, bails
     # The page the mint saw is the migrated origin (the grid, route "/", in the
     # reporter's bundle) — not a labs page that merely lost its script.
     assert flow_host_kind(str(bails[0].get("url"))) == "migrated", bails[0]
