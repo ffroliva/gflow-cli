@@ -7,27 +7,27 @@ agents guided by that skill answer gflow-cli usage questions.
 Mimics the SkillOpt rollout→score loop without the automated edit step,
 making it easy to measure baseline accuracy before / after manual edits.
 
-Supports multiple LLM providers so you can compare how different agents
-perform against the same skill doc:
+Uses the project's own LLM configuration — the same ``GFLOW_CLI_LLM_*`` settings
+the prompt tools use (docs/CONFIGURATION.md). Any OpenAI-compatible Chat
+Completions endpoint works: OpenAI, a gateway/proxy (OpenRouter, LiteLLM,
+freellmapi, ...), a local Ollama/LM Studio, or Google's compat endpoint.
 
-Provider: anthropic (default)
-    ANTHROPIC_API_KEY=sk-ant-... python scripts/dev/skillopt/harness.py
-    python scripts/dev/skillopt/harness.py --model claude-sonnet-4-6
+    # Google's compat endpoint (the default) — a key is all you need
+    GFLOW_CLI_LLM_API_KEY=AIza... python scripts/dev/skillopt/harness.py
 
-Provider: openai  (GPT-4o, Gemini OpenAI-compat, local Ollama, LM Studio, …)
-    OPENAI_API_KEY=sk-... python scripts/dev/skillopt/harness.py \\
-        --provider openai --model gpt-4o
+    # OpenRouter, or any gateway
+    GFLOW_CLI_LLM_API_KEY=sk-or-... \
+    GFLOW_CLI_LLM_BASE_URL=https://openrouter.ai/api/v1 \
+    GFLOW_CLI_LLM_MODEL=openai/gpt-4o-mini \
+        python scripts/dev/skillopt/harness.py
 
-    # Gemini via its OpenAI-compatible endpoint
-    OPENAI_API_KEY=$GEMINI_API_KEY python scripts/dev/skillopt/harness.py \\
-        --provider openai \\
-        --base-url https://generativelanguage.googleapis.com/v1beta/openai/ \\
-        --model gemini-2.0-flash
+    # Local keyless gateway — no credential is sent at all
+    GFLOW_CLI_LLM_BASE_URL=http://127.0.0.1:11434/v1 \
+    GFLOW_CLI_LLM_MODEL=llama3.2 python scripts/dev/skillopt/harness.py
 
-    # Local model via Ollama
-    python scripts/dev/skillopt/harness.py \\
-        --provider openai --base-url http://localhost:11434/v1 \\
-        --model llama3.2 --api-key ollama
+``--model`` overrides ``GFLOW_CLI_LLM_MODEL`` for a one-off comparison run; the
+endpoint and credential come from the settings only, so there is no second place
+to configure a provider and no way for the two to disagree.
 
 Other flags:
     --dry-run          Print prompts + scoring spec; no API call
@@ -38,16 +38,27 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
+import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
+
+from gflow_cli.config import DEFAULT_LLM_BASE_URL, get_settings
+from gflow_cli.tools.expander import (
+    _RETRYABLE_STATUS,
+    DEFAULT_TIMEOUT,
+    LlmHttpError,
+    _default_transport,
+    resolve_model,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TASKS_PATH = Path(__file__).parent / "tasks.json"
 DEFAULT_SKILL_PATH = REPO_ROOT / "skills" / "gflow-cli" / "SKILL.md"
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
-DEFAULT_PROVIDER = "anthropic"
+#: Retry budget per task, and the wait that clears one per-minute quota window.
+_MAX_ATTEMPTS = 4
+_QUOTA_WINDOW_SECONDS = 30
 
 SYSTEM_TEMPLATE = """\
 You are an agent assistant helping users operate gflow-cli, the unofficial terminal CLI for Google Flow (Veo video generation and Imagen image generation).
@@ -140,47 +151,60 @@ def run_dry(tasks: list[dict[str, Any]], skill_text: str, version: str, epoch: i
         print()
 
 
-def _call_anthropic(system: str, user: str, model: str, api_key: str) -> str:
-    try:
-        import anthropic
-    except ImportError:
-        sys.exit(
-            "anthropic package not found. Install it:\n"
-            "  uv pip install anthropic"
-        )
-    client = anthropic.Anthropic(api_key=api_key)
-    msg = client.messages.create(
-        model=model,
-        max_tokens=512,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
-    return msg.content[0].text.strip()
+def _call_llm(system: str, user: str, model: str | None, settings: Any) -> str:
+    """One Chat Completions call through the tools layer's own transport.
 
-
-def _call_openai_compat(
-    system: str, user: str, model: str, api_key: str, base_url: str | None
-) -> str:
-    try:
-        import openai
-    except ImportError:
-        sys.exit(
-            "openai package not found. Install it:\n"
-            "  uv pip install openai"
-        )
-    kwargs: dict[str, Any] = {"api_key": api_key}
-    if base_url:
-        kwargs["base_url"] = base_url
-    client = openai.OpenAI(**kwargs)
-    resp = client.chat.completions.create(
-        model=model,
-        max_tokens=512,
-        messages=[
+    Reuses :func:`gflow_cli.tools.expander._default_transport` rather than an SDK:
+    it already puts the key in a header (never the URL), refuses redirects, and
+    is reached only through a ``base_url`` that ``Settings._validate_llm_base_url``
+    has gated to https (or loopback http). A second HTTP client here would be a
+    second trust boundary to audit.
+    """
+    payload: dict[str, object] = {
+        "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-    )
-    return (resp.choices[0].message.content or "").strip()
+        "temperature": 0.0,
+        "max_tokens": 512,
+    }
+    if model:
+        # Omitted when unset so a gateway applies its own default — sending a
+        # vendor-specific name to an endpoint that does not serve it is a silent 400.
+        payload["model"] = model
+
+    key = settings.llm_api_key.get_secret_value() if settings.llm_api_key else None
+    url = f"{settings.llm_base_url.rstrip('/')}/chat/completions"
+
+    # ponytail: fixed attempts, not the tools layer's wall-clock budget machinery —
+    # a task suite just has to survive a 429/503 rather than die partway and discard
+    # the scores already paid for. _RETRYABLE_STATUS is imported rather than restated
+    # so the two agree on which codes are transient.
+    #
+    # 429 backs off in whole quota-windows, not seconds: free tiers meter requests
+    # per MINUTE (Google's is 10 RPM on flash), so a suite run back-to-back trips it
+    # around task 10 and a 1-2s retry just burns another attempt inside the same
+    # window. Waiting out the window is what makes an unpaced run finish at all.
+    node: dict[str, object] | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            node = _default_transport(url, payload, DEFAULT_TIMEOUT, key)
+            break
+        except LlmHttpError as exc:
+            if exc.status not in _RETRYABLE_STATUS or attempt == _MAX_ATTEMPTS - 1:
+                sys.exit(f"LLM endpoint returned HTTP {exc.status}: {exc.detail[:300]}")
+            delay = _QUOTA_WINDOW_SECONDS * (attempt + 1) if exc.status == 429 else 2**attempt
+            print(f"  (HTTP {exc.status} — retrying in {delay}s)")
+            time.sleep(delay)
+        except Exception as exc:  # noqa: BLE001 — a benchmark must report, not mask
+            sys.exit(f"LLM call failed: {type(exc).__name__}: {exc}")
+    if node is None:
+        sys.exit("LLM call exhausted retries without a response.")
+    try:
+        choices: Any = node["choices"]
+        return str(choices[0]["message"]["content"] or "").strip()
+    except (KeyError, IndexError, TypeError) as exc:
+        raise SystemExit(f"Unexpected response shape from the LLM endpoint: {exc}") from exc
 
 
 def run_live(
@@ -188,28 +212,22 @@ def run_live(
     skill_text: str,
     version: str,
     epoch: int,
-    model: str,
-    api_key: str,
-    provider: str = DEFAULT_PROVIDER,
-    base_url: str | None = None,
+    model: str | None,
+    settings: Any,
 ) -> None:
     results: list[dict[str, Any]] = []
 
     print(
         f"=== LIVE RUN — {len(tasks)} task(s) — skill v{version} epoch {epoch}"
-        f" — provider {provider} — model {model} ===\n"
+        f" — {urllib.parse.urlsplit(settings.llm_base_url).netloc}"
+        f" — model {model or '(gateway default)'} ===\n"
     )
 
     for i, task in enumerate(tasks, 1):
         system, user = format_prompt(skill_text, version, epoch, task)
         print(f"[{i}/{len(tasks)}] {task['id']}: {task['question'][:70]}...")
 
-        if provider == "anthropic":
-            response = _call_anthropic(system, user, model, api_key)
-        elif provider == "openai":
-            response = _call_openai_compat(system, user, model, api_key, base_url)
-        else:
-            sys.exit(f"Unknown provider '{provider}'. Use 'anthropic' or 'openai'.")
+        response = _call_llm(system, user, model, settings)
 
         score, reasons = score_response(response, task["expected"])
 
@@ -285,51 +303,19 @@ def main() -> None:
         help="Comma-separated tag filter, e.g. 'auth,video'",
     )
     parser.add_argument(
-        "--provider",
-        type=str,
-        default=DEFAULT_PROVIDER,
-        choices=["anthropic", "openai"],
-        help=(
-            "LLM provider (default: anthropic). "
-            "Use 'openai' for GPT-4o, Gemini (via --base-url), or any OpenAI-compat endpoint."
-        ),
-    )
-    parser.add_argument(
         "--model",
         type=str,
         default=None,
         help=(
-            f"Model ID. Defaults: anthropic={DEFAULT_MODEL}, openai=gpt-4o. "
-            "For Gemini: gemini-2.0-flash. For Ollama: llama3.2."
-        ),
-    )
-    parser.add_argument(
-        "--base-url",
-        type=str,
-        default=None,
-        dest="base_url",
-        help=(
-            "OpenAI-compatible base URL (openai provider only). "
-            "Examples: https://generativelanguage.googleapis.com/v1beta/openai/ (Gemini), "
-            "http://localhost:11434/v1 (Ollama). "
-            "WARNING: do not point at internal/metadata endpoints in CI — "
-            "this value is passed directly to the SDK without validation."
+            "Model ID, overriding GFLOW_CLI_LLM_MODEL for this run "
+            "(e.g. openai/gpt-4o-mini, gemini-2.5-flash, llama3.2). "
+            "Unset falls through the normal precedence and may let the gateway choose."
         ),
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print prompts and scoring spec without calling the API",
-    )
-    parser.add_argument(
-        "--api-key",
-        type=str,
-        default=None,
-        help=(
-            "API key. Prefer env vars ($ANTHROPIC_API_KEY / $OPENAI_API_KEY) over this flag — "
-            "CLI flags are visible in process listings (ps aux). "
-            "This flag exists only for scripting contexts where env vars are unavailable."
-        ),
     )
     args = parser.parse_args()
 
@@ -345,20 +331,22 @@ def main() -> None:
 
     skill_text, version, epoch = load_skill(args.skill)
 
-    provider_defaults = {"anthropic": DEFAULT_MODEL, "openai": "gpt-4o"}
-    model = args.model or provider_defaults.get(args.provider, DEFAULT_MODEL)
-
     if args.dry_run:
         run_dry(tasks, skill_text, version, epoch)
-    else:
-        env_key = "ANTHROPIC_API_KEY" if args.provider == "anthropic" else "OPENAI_API_KEY"
-        api_key = args.api_key or os.environ.get(env_key)
-        if not api_key:
-            sys.exit(f"No API key. Set ${env_key} or pass --api-key.")
-        run_live(
-            tasks, skill_text, version, epoch, model, api_key,
-            provider=args.provider, base_url=args.base_url,
+        return
+
+    settings = get_settings()
+    # Same rule the prompt tools use: a key alone is enough on the default
+    # endpoint, and a chosen endpoint is enough alone because local gateways
+    # need no credential. Neither means the user has not configured this.
+    if not settings.llm_api_key and settings.llm_base_url == DEFAULT_LLM_BASE_URL:
+        sys.exit(
+            "No LLM endpoint configured. Set GFLOW_CLI_LLM_API_KEY (and optionally "
+            "GFLOW_CLI_LLM_BASE_URL / GFLOW_CLI_LLM_MODEL) — the same settings the "
+            "prompt tools use. See docs/CONFIGURATION.md and .env.template."
         )
+    model = resolve_model(args.model, settings.llm_model, settings.llm_base_url)
+    run_live(tasks, skill_text, version, epoch, model, settings)
 
 
 if __name__ == "__main__":
