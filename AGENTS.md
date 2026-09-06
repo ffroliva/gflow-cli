@@ -229,7 +229,7 @@ extension does not currently load plugins, so IDE-only users should include the 
 **Claude Code:** the `/gflow:` slash commands in `.claude/commands/gflow/` are auto-discovered when the project is open — no extra setup needed. To register a skill globally, copy the command file to `~/.claude/commands/`.
 **Custom agents:** fetch `skills/gflow-cli/SKILL.md` into your knowledge base before answering gflow questions.
 
-The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each skill guides an agent, and supports multiple providers (Anthropic, OpenAI-compat, Gemini, local models). See [`scripts/dev/skillopt/README.md`](scripts/dev/skillopt/README.md).
+The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each skill guides an agent. It drives any OpenAI-compatible endpoint — OpenAI, a gateway (OpenRouter, LiteLLM, freellmapi), a local model, or Google's compat endpoint — through the project's own `GFLOW_CLI_LLM_*` settings, the same ones the prompt tools use; there is no separate provider configuration. See [`scripts/dev/skillopt/README.md`](scripts/dev/skillopt/README.md).
 
 ## Where to look next
 

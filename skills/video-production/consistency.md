@@ -147,6 +147,8 @@ When a shot carries several references, order and budget matter.
 
 Caps are per model, and the entity counts against the same pool as the images: omni-flash 7, veo-lite / veo-fast / veo-lite-lp 3, **veo-quality 0 — it accepts no references at all [CONSTRAINT]**. On the image side nano2 and nano-pro take 10, imagen4 3.
 
+So a referenced shot cannot be `veo-quality`, whatever the quality target: take **omni-flash** for a single generation needing more than 3 references or the best quality with any reference at all, and a veo-lite variant when 3 is enough. **`video chain` refuses omni-flash [CONSTRAINT]** — its i2v is verified for single generations only — so chained links take a Veo 3.1 model and its cap of 3.
+
 **Select the model before attaching references [CONSTRAINT].** Switching model afterwards invalidates what was attached.
 
 **Use `nano2` for bulk image work.** `nano-pro` is daily-capped and is the wrong default for building a set of plates.

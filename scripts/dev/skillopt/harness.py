@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 SkillOpt mock harness for gflow-cli skills.
 
 Runs a scored task suite against a skill document to measure how well
@@ -7,30 +7,37 @@ agents guided by that skill answer gflow-cli usage questions.
 Mimics the SkillOpt rollout→score loop without the automated edit step,
 making it easy to measure baseline accuracy before / after manual edits.
 
+Run it through ``uv run`` — it imports ``gflow_cli`` for its LLM configuration
+and transport, so a bare ``python`` outside the project venv cannot import it.
+
 Uses the project's own LLM configuration — the same ``GFLOW_CLI_LLM_*`` settings
 the prompt tools use (docs/CONFIGURATION.md). Any OpenAI-compatible Chat
 Completions endpoint works: OpenAI, a gateway/proxy (OpenRouter, LiteLLM,
 freellmapi, ...), a local Ollama/LM Studio, or Google's compat endpoint.
 
     # Google's compat endpoint (the default) — a key is all you need
-    GFLOW_CLI_LLM_API_KEY=AIza... python scripts/dev/skillopt/harness.py
+    GFLOW_CLI_LLM_API_KEY=AIza... uv run python scripts/dev/skillopt/harness.py
 
     # OpenRouter, or any gateway
     GFLOW_CLI_LLM_API_KEY=sk-or-... \
     GFLOW_CLI_LLM_BASE_URL=https://openrouter.ai/api/v1 \
     GFLOW_CLI_LLM_MODEL=openai/gpt-4o-mini \
-        python scripts/dev/skillopt/harness.py
+        uv run python scripts/dev/skillopt/harness.py
 
     # Local keyless gateway — no credential is sent at all
     GFLOW_CLI_LLM_BASE_URL=http://127.0.0.1:11434/v1 \
-    GFLOW_CLI_LLM_MODEL=llama3.2 python scripts/dev/skillopt/harness.py
+    GFLOW_CLI_LLM_MODEL=llama3.2 uv run python scripts/dev/skillopt/harness.py
 
 The endpoint and credential come from those settings only — no second place to
 configure a provider, and no way for the two to disagree.
 
 Other flags:
-    --dry-run          Print prompts + scoring spec; no API call
+    --dry-run          Print prompts + scoring spec; no API call, no key needed
     --skill PATH       Point at a different skill version
+    --tasks PATH       Task suite to score against — must match --skill; the
+                       defaults are the gflow-cli skill and ITS tasks, so a
+                       --skill from elsewhere needs its --tasks passed too
+    --model ID         Override GFLOW_CLI_LLM_MODEL for one comparison run
     --tags auth,video  Filter tasks by tag
 """
 from __future__ import annotations
@@ -44,10 +51,12 @@ from pathlib import Path
 from typing import Any
 
 from gflow_cli.config import DEFAULT_LLM_BASE_URL, get_settings
+from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.tools.expander import (
     _RETRYABLE_STATUS,
     DEFAULT_TIMEOUT,
     LlmHttpError,
+    PromptExpander,
     _default_transport,
     resolve_model,
 )
@@ -58,6 +67,10 @@ DEFAULT_SKILL_PATH = REPO_ROOT / "skills" / "gflow-cli" / "SKILL.md"
 #: Retry budget per task, and the wait that clears one per-minute quota window.
 _MAX_ATTEMPTS = 4
 _QUOTA_WINDOW_SECONDS = 30
+
+
+class RolloutError(RuntimeError):
+    """One task's rollout could not be completed. The suite records it and goes on."""
 
 SYSTEM_TEMPLATE = """\
 You are an agent assistant helping users operate gflow-cli, the unofficial terminal CLI for Google Flow (Veo video generation and Imagen image generation).
@@ -179,9 +192,11 @@ def _call_llm(system: str, user: str, model: str | None, settings: Any) -> str:
     key = settings.llm_api_key.get_secret_value() if settings.llm_api_key else None
     url = f"{settings.llm_base_url.rstrip('/')}/chat/completions"
 
-    # ponytail: retries in whole quota-windows, because free tiers meter per MINUTE
-    # (Google's flash is 10 RPM) — a 1-2s backoff just burns another attempt inside
-    # the same window, which is what killed an unpaced 19-task run at task 6.
+    # 429 backs off in whole quota-windows because free tiers meter per MINUTE
+    # (Google's flash is 10 RPM), so a 1-2s retry only burns another attempt inside
+    # the same window — that is what killed an unpaced 19-task run at task 6. Server
+    # errors keep the short schedule: a flapping 502 has no per-minute window to wait
+    # out, and paying 30s for it would cost minutes across a suite.
     # _RETRYABLE_STATUS is imported so this and the tools layer cannot disagree.
     node: dict[str, object] | None = None
     for attempt in range(_MAX_ATTEMPTS):
@@ -189,20 +204,29 @@ def _call_llm(system: str, user: str, model: str | None, settings: Any) -> str:
             node = _default_transport(url, payload, DEFAULT_TIMEOUT, key)
             break
         except LlmHttpError as exc:
+            # Gateways echo the request on error, Authorization header included —
+            # the same reason expander.py redacts this exact field.
+            detail = redact_error_detail(exc.detail)[:300]
             if exc.status not in _RETRYABLE_STATUS or attempt == _MAX_ATTEMPTS - 1:
-                sys.exit(f"LLM endpoint returned HTTP {exc.status}: {exc.detail[:300]}")
-            delay = _QUOTA_WINDOW_SECONDS * (attempt + 1)
+                msg = f"HTTP {exc.status}: {detail}"
+                raise RolloutError(msg) from exc
+            delay = _QUOTA_WINDOW_SECONDS * (attempt + 1) if exc.status == 429 else 2**attempt
             print(f"  (HTTP {exc.status} — retrying in {delay}s)")
             time.sleep(delay)
-        except Exception as exc:  # noqa: BLE001 — a benchmark must report, not mask
-            sys.exit(f"LLM call failed: {type(exc).__name__}: {exc}")
-    if node is None:
-        sys.exit("LLM call exhausted retries without a response.")
-    try:
-        choices: Any = node["choices"]
-        return str(choices[0]["message"]["content"] or "").strip()
-    except (KeyError, IndexError, TypeError) as exc:
-        raise SystemExit(f"Unexpected response shape from the LLM endpoint: {exc}") from exc
+        except Exception as exc:
+            msg = f"{type(exc).__name__}: {redact_error_detail(str(exc))[:300]}"
+            raise RolloutError(msg) from exc
+    if node is None:  # pragma: no cover — range(_MAX_ATTEMPTS) is never empty
+        raise RolloutError("exhausted retries without a response")
+
+    # Same defensive extraction the prompt tools use: `content` is legitimately
+    # None on a refusal, and gateways that route multimodal models can return it
+    # as a parts list. str()-ing either would feed the scorer a keyword-matchable
+    # blob and silently corrupt the benchmark, so an unusable shape is an error.
+    text = PromptExpander._extract_text(node)  # noqa: SLF001 — one defensive parser, not two
+    if not text.strip():
+        raise RolloutError("response carried no assistant text (refusal or unexpected shape)")
+    return text.strip()
 
 
 def run_live(
@@ -225,7 +249,25 @@ def run_live(
         system, user = format_prompt(skill_text, version, epoch, task)
         print(f"[{i}/{len(tasks)}] {task['id']}: {task['question'][:70]}...")
 
-        response = _call_llm(system, user, model, settings)
+        # A rollout that cannot complete is recorded and the suite carries on.
+        # Exiting here would discard every score already paid for -- which on a
+        # metered free tier is the expensive half of the run, and is exactly what
+        # happened twice while this harness was being exercised.
+        try:
+            response = _call_llm(system, user, model, settings)
+        except RolloutError as exc:
+            print(f"  ERROR: {exc}")
+            results.append(
+                {
+                    "id": task["id"],
+                    "tags": task.get("tags", []),
+                    "score": 0.0,
+                    "status": "ERROR",
+                    "response_preview": "",
+                    "reasons": [f"ERROR: {exc}"],
+                }
+            )
+            continue
 
         score, reasons = score_response(response, task["expected"])
 
@@ -253,12 +295,24 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
         print("\nNo results.")
         return
 
-    avg = sum(r["score"] for r in results) / total
-    passed = sum(1 for r in results if r["status"] == "PASS")
-    failed = [r for r in results if r["status"] == "FAIL"]
+    # An ERROR is missing data, not a zero: the model never answered. Averaging it
+    # in would understate the skill and make a quota-truncated run look like a
+    # regression, so errors are counted and named but kept out of the score.
+    errored = [r for r in results if r["status"] == "ERROR"]
+    scored = [r for r in results if r["status"] != "ERROR"]
+    passed = sum(1 for r in scored if r["status"] == "PASS")
+    failed = [r for r in scored if r["status"] == "FAIL"]
 
     print(f"\n{'='*60}")
-    print(f"SUMMARY: {passed}/{total} passed  avg score {avg:.3f}")
+    if scored:
+        avg = sum(r["score"] for r in scored) / len(scored)
+        print(f"SUMMARY: {passed}/{len(scored)} passed  avg score {avg:.3f}")
+    else:
+        print("SUMMARY: no task completed a rollout")
+    if errored:
+        print(f"  {len(errored)} of {total} task(s) did not complete and are excluded:")
+        for r in errored:
+            print(f"    {r['id']}: {r['reasons'][0]}")
 
     if failed:
         print(f"\nFailed tasks ({len(failed)}):")
@@ -266,7 +320,7 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
             print(f"  {r['id']}: {r['reasons']}")
 
     tag_scores: dict[str, list[float]] = {}
-    for r in results:
+    for r in scored:
         for tag in r.get("tags", []):
             tag_scores.setdefault(tag, []).append(r["score"])
 
@@ -333,11 +387,16 @@ def main() -> None:
         run_dry(tasks, skill_text, version, epoch)
         return
 
-    settings = get_settings()
+    try:
+        settings = get_settings()
+    except Exception as exc:  # noqa: BLE001 — a bad GFLOW_CLI_LLM_* value is user error
+        sys.exit(f"Invalid GFLOW_CLI_* configuration: {type(exc).__name__}: {exc}")
     # Same rule the prompt tools use: a key alone is enough on the default
     # endpoint, and a chosen endpoint is enough alone because local gateways
     # need no credential. Neither means the user has not configured this.
-    if not settings.llm_api_key and settings.llm_base_url == DEFAULT_LLM_BASE_URL:
+    # rstrip matches resolve_model and PromptExpander._is_configured — without it
+    # a trailing slash on the default URL reads as a chosen endpoint and skips this.
+    if not settings.llm_api_key and settings.llm_base_url.rstrip("/") == DEFAULT_LLM_BASE_URL:
         sys.exit(
             "No LLM endpoint configured. Set GFLOW_CLI_LLM_API_KEY (and optionally "
             "GFLOW_CLI_LLM_BASE_URL / GFLOW_CLI_LLM_MODEL) — the same settings the "
