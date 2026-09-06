@@ -5,7 +5,14 @@ skillopt_epoch: 1
 description: >
   Use when the user wants a finished video out of gflow rather than a single clip — a scripted scene, a talking-head or dialogue piece, an explainer, a product montage, a story sequence, an audition or rehearsal reference, a short film — or asks for consistent actors, a consistent location, a specific prop that must not change, several camera angles, captions or subtitles, or joining clips into one file. Also use when clips came back wrong: a film-strip border, a room that changes between shots, a prop that morphs, rushed or cut-off speech, audio out of sync, a person-policy refusal, or exit 36 / RecaptchaError on a generation.
 optimization_notes: |
-  Known weak spots, each observed in a scored rollout. Targets for epoch 2+:
+  Known weak spots, each observed in a scored rollout. Targets for epoch 2+ (#685 —
+  the four below are MEASURED, not guessed: the tail 5 tasks scored 1/5 avg 0.280 on
+  gemini-3.5-flash-lite, against a control of 4/5 avg 0.800 on the same model, so the
+  gap is the skill and not the model):
+  - A deliberately-staged object animated with t2v instead of i2v from an approved still
+  - Re-run scope for an edited multi-scene manifest
+  - An overnight batch refused correctly, but the foreground alternative never named
+  - A lip-sync detector trusted without first proving it against a known delay
   - `--duration` passed without `--model`: binds veo-lite, which renders no duration control, exit 2
   - `--ref` passed with `--model veo-quality`: that model's reference cap is 0, not 3
     ADDRESSED in epoch 1 — the doc banned it in two places and named the substitute

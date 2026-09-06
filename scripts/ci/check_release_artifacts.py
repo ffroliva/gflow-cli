@@ -62,7 +62,71 @@ def find_violations(root: Path) -> list[str]:
         violations.append(f"docs/INDEX.md: no reference to LIVE_VERIFICATION_v{version}.md")
 
     violations.extend(_project_status_violations(root, version))
+    violations.extend(_not_verified_violations(root, version))
     return violations
+
+
+#: Words that name a real external blocker — something the author cannot remove:
+#: an exhausted quota, hardware or an account they do not have, a cohort they are
+#: not in. AGENTS.md § "The Iron Law" permits these and nothing else.
+_BLOCKER_MARKERS = (
+    "blocked on",
+    "blocker",
+    "quota",
+    "rate limit",
+    "cannot reproduce",
+    "no account",
+    "do not control",
+    "don't control",
+    "not in the cohort",
+    "hardware",
+    "requires a device",
+    "upstream outage",
+    "needs a maintainer with",
+    # "credits" alone is too loose — it matches any mention of the credits FEATURE.
+    # Only a spend the author cannot make is a blocker.
+    "spends credits",
+    "credit budget",
+)
+
+
+def _not_verified_violations(root: Path, version: str) -> list[str]:
+    """Every "Not verified" bullet in the ledger must name an external blocker.
+
+    AGENTS.md § "The Iron Law": done means verified by a run, and the only permitted
+    exception is a blocker you cannot remove. "Recorded, not omitted" is a record of a
+    blocker, never a substitute for running — v0.69.0 shipped two items under that
+    heading and both were verified within the hour once challenged, because neither was
+    ever actually blocked. This gate makes the difference mechanical: name the blocker,
+    or run it.
+    """
+    ledger = root / "docs" / f"LIVE_VERIFICATION_v{version}.md"
+    if not ledger.is_file():
+        return []  # absence is already reported by the caller
+    text = ledger.read_text(encoding="utf-8")
+
+    out: list[str] = []
+    for header in re.finditer(r"^#{2,4}\s+.*not verified.*$", text, re.M | re.I):
+        body = text[header.end() :]
+        nxt = re.search(r"^#{2,4}\s", body, re.M)
+        section = body[: nxt.start()] if nxt else body
+        # Bullets may wrap onto continuation lines; join each bullet before matching.
+        for bullet in re.split(r"(?m)^(?=[-*] )", section):
+            entry = " ".join(bullet.split())
+            if not entry or not entry.startswith(("- ", "* ")):
+                continue
+            # Two accountable forms: a blocker you cannot remove, or debt someone owes
+            # under a tracked issue. Anything else is a run you skipped and wrote down.
+            accountable = re.search(r"#\d+", entry) is not None or any(
+                m in entry.lower() for m in _BLOCKER_MARKERS
+            )
+            if not accountable:
+                out.append(
+                    f"docs/LIVE_VERIFICATION_v{version}.md: a 'Not verified' entry names no "
+                    f"blocker and no tracking issue — run it, say what stops you, or file "
+                    f"it (AGENTS.md § The Iron Law): {entry[:90]}"
+                )
+    return out
 
 
 def _project_status_violations(root: Path, version: str) -> list[str]:
