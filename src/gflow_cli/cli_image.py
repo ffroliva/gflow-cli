@@ -873,7 +873,7 @@ _ui_mode_option = click.option(
     "-o",
     "--output",
     "output_file",
-    type=click.Path(path_type=Path),
+    type=click.Path(dir_okay=False, path_type=Path),
     default=None,
     help="Explicit output file path for the generated asset.",
 )
@@ -1667,7 +1667,7 @@ class _I2IParams:
     "-o",
     "--output",
     "output_file",
-    type=click.Path(path_type=Path),
+    type=click.Path(dir_okay=False, path_type=Path),
     default=None,
     help="Explicit output file path for the generated asset.",
 )

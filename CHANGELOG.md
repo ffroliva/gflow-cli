@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`-o <existing directory>` no longer costs you a clip.** `--output` on `video t2v` / `i2v` /
+  `r2v` and on `image t2i` / `i2i` accepted a path that was already a directory. Nothing checked
+  it until `_relocate_video_output` called `Path.replace()` onto the target, long after Flow had
+  rendered and billed the clip: `PermissionError: [WinError 5]`, surfaced as a bare
+  "Unexpected error" (exit 1), with the paid mp4 orphaned under a bare UUID name in the working
+  directory. Found by dogfooding an r2v run on 2026-09-06 — two clips billed, neither saveable.
+  All five option declarations now carry `dir_okay=False`, which Click enforces while parsing, so
+  the run aborts in under a second at zero cost. (A sixth declaration already had it; the rest had
+  drifted from it.)
+
+- **PR-triage autopilot: stop re-alerting a deferred PR on every push.** The `DEFERRED_SIZE` and
+  `NEEDS-HUMAN` gate branches deduped on `(pr, head_sha, status)`, so every push to an oversized
+  PR looked new to the ledger and re-sent a byte-identical "needs a manual review" mail on the
+  next hourly cycle. PR #683 produced three on 2026-09-06 (2130 / 2500 / 3066 lines) — same
+  verdict, same required action. Now dedupes on the PR's latest ledger status via a new
+  `latest_status()` helper: one alert per gate trip, and a PR that trips, gets fixed and reviewed,
+  then regresses still alerts again. Ops tooling under `scripts/autopilot/`, not a Flow surface,
+  so no e2e applies. ([#697](https://github.com/ffroliva/gflow-cli/issues/697))
+
 - **A reCAPTCHA mint that fails after the migrated-host handoff now reports exit 36, not exit 1**
   ([#692](https://github.com/ffroliva/gflow-cli/issues/692)). The `raise_if_migrated` guard added
   in #678 is a point-in-time read of `page.url`, and Flow's handoff to `flow.google.com` is a
