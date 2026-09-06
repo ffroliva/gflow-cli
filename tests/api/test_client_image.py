@@ -859,6 +859,46 @@ class TestHealthCheck:
 
         assert result is False
 
+    @pytest.mark.parametrize(
+        ("hostname", "expected"),
+        [
+            # Old host — the only one the original check anticipated.
+            ("labs.google", True),
+            ("google.com", True),
+            # #690: the MIGRATED host. Ends with ".com", is not "google.com",
+            # so the original check called a perfectly healthy page unhealthy.
+            ("flow.google.com", True),
+            ("aisandbox-pa.googleapis.com", False),
+            # Lookalikes must stay rejected — the leading dot is load-bearing.
+            ("evilgoogle.com", False),
+            ("notlabs.google.com.evil.net", False),
+            ("google.com.evil.net", False),
+            ("example.com", False),
+        ],
+    )
+    async def test_health_check_hostname_boundary(
+        self, tmp_path: Path, hostname: str, expected: bool
+    ) -> None:
+        """#690: every host a real page can legitimately sit on must pass, and
+        every lookalike must fail.
+
+        The pre-existing "returns True on a Google domain" test mocked
+        ``labs.google`` — the old host — so the unit suite encoded the same
+        assumption as the code and stayed green while migrated accounts were
+        reported unhealthy. Enumerating the boundary is what stops that
+        recurring; a single mocked hostname only ever tests the host the author
+        already had in mind.
+        """
+        transport = _FakeTransport()
+        client = _client_with_transport(tmp_path, transport)
+
+        fake_page = MagicMock()
+        fake_page.evaluate = AsyncMock(return_value=hostname)
+        client._page_queue = asyncio.Queue(maxsize=1)
+        client._page_queue.put_nowait(fake_page)
+
+        assert await client.health_check() is expected
+
     async def test_health_check_returns_false_on_evaluate_exception(self, tmp_path: Path) -> None:
         """If page.evaluate raises (e.g. TargetClosedError) → False, never raises."""
         transport = _FakeTransport()
