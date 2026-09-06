@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.70.0] — 2026-09-06
+
 ### Fixed
 
 - **`-o <existing directory>` no longer costs you a clip.** `--output` on `video t2v` / `i2v` /
@@ -4226,7 +4228,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...HEAD
+[0.70.0]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...v0.68.0
 [0.67.0]: https://github.com/ffroliva/gflow-cli/compare/v0.66.3...v0.67.0

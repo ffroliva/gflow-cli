@@ -73,9 +73,11 @@ picker runs before submit.
 **Orphan rollback**, A/B controlled on the live account: **1 → 2** entities on a failed
 create without the fix, **2 → 2** with it.
 
-**NOT verified:** the labs.google path for any of the seven anchors changed. All three
-accounts here are migrated, so labs is covered by unit tests only — named as a blocker,
-not claimed. ([#703](https://github.com/ffroliva/gflow-cli/pull/703))
+**NOT verified:** the labs.google path for any of the seven anchors changed.
+**Blocker:** every account available on this machine has been migrated by Google, so no
+labs.google Flow session exists to drive; the labs branches are covered by unit tests only.
+Tracked on [#639](https://github.com/ffroliva/gflow-cli/issues/639) alongside the rest of the
+two-frontend matrix. Named as a blocker, not claimed. ([#703](https://github.com/ffroliva/gflow-cli/pull/703))
 
 ## The assembled artefact
 
@@ -128,12 +130,14 @@ same face and the same paper texture — not a generic figure.
   and are deliberately not linked from here while they sit on another branch: a ledger
   must not carry a reference its own branch cannot resolve, and `check_doc_links.py`
   does not cover this file, so nothing would have caught it.
-- **Flow CHARACTER entities WERE exercised** — this bullet previously read "not exercised,
-  because `character create` cannot run on any account available here", which was false.
-  The cast in "The Ridge" still uses the skill's sanctioned no-entity path, because that is
-  how it was produced; the capability is now separately verified (see below).
-- **`gflow image`, `scene`, `movie`, `extend`** were not exercised on a generation path:
-  all exit 36 on the migrated host and no unmoved account exists here.
+- **`gflow image`, `scene`, `movie`, `extend`** were not exercised on a generation path.
+  **Blocker:** all four exit 36 on the migrated host, and no unmoved account exists here —
+  every profile on this machine has been moved, so the labs path cannot be driven at all.
+  `gflow image t2i` was re-measured for this release and still exits 36
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639) tracks the migrated-frontend
+  feature matrix). The reason is now known and recorded: the migrated project composer has
+  no image-generation mode — its add menu is a media library (Scenes / Images / Videos /
+  Upload media) — so this is a porting gap, not a regression.
 - **A Google sign-in interstitial's fidelity score** (whether it renders buttons with no
   ligatures and would now read as "rendered" — #699's open question) has no bundle
   evidence either way.
