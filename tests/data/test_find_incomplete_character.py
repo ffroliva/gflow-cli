@@ -215,3 +215,29 @@ def test_most_recent_started_row_returned(tmp_path: Path) -> None:
         assert result["entity_id"] == "ent-new", (
             "ORDER BY started_at DESC LIMIT 1 must return the most recent row"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test: an abandoned (zero-progress) row stops being resumable
+# ---------------------------------------------------------------------------
+
+
+def test_abandoned_row_is_not_returned(tmp_path: Path) -> None:
+    """record_character_abandoned flips the row out of STARTED (#703).
+
+    The saga deletes the free entity in the zero-progress case, so the row must
+    stop matching — otherwise the next run resumes onto an entity id that no
+    longer exists in the project.
+    """
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+
+        row_id = _start(recorder, tmp_path, project_id="P1", entity_id="ent-001", name="Ana")
+        assert repo.find_incomplete_character("P1", "Ana") is not None
+
+        recorder.record_character_abandoned(row_id=row_id, exc=RuntimeError("editor never ready"))
+
+        assert repo.find_incomplete_character("P1", "Ana") is None
+        row = store.conn.execute("SELECT status FROM operations WHERE id = ?", (row_id,)).fetchone()
+        assert row["status"] == "failed"

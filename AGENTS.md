@@ -308,6 +308,34 @@ extension does not currently load plugins, so IDE-only users should include the 
 
 The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each skill guides an agent. It drives any OpenAI-compatible endpoint — OpenAI, a gateway (OpenRouter, LiteLLM, freellmapi), a local model, or Google's compat endpoint — through the project's own `GFLOW_CLI_LLM_*` settings, the same ones the prompt tools use; there is no separate provider configuration. See [`scripts/dev/skillopt/README.md`](scripts/dev/skillopt/README.md).
 
+## Spiking a blackbox surface — the two modes
+
+This project reverse-engineers Google Flow, so "go and look at the real thing" is a
+first-class development activity, not a last resort. Two harnesses exist. **Use one of
+them before writing a capture script from scratch.**
+
+| Mode | Where | Driver | Who clicks | Use when |
+|---|---|---|---|---|
+| **In-process** | `scripts/dev/spike_*.py` | Playwright, via gflow's own transport | the script | you can already drive the surface, or you want to see exactly what gflow sees |
+| **HAR + DOM** | [`scripts/dev/har-spike/`](scripts/dev/har-spike/README.md) | CDP-attached **real Chrome** through a pinned `agent-browser` | **a human, by hand** | the driver cannot reach the surface yet, or a capture is ambiguous and you need ground truth |
+
+Start in-process; escalate to the HAR harness when the driver cannot get far enough to
+observe anything. A hand-driven HAR is the tiebreaker.
+
+Both write to **gitignored** output — `scripts/dev/_spike_out/` and
+`scripts/dev/har-spike/artifacts/`. Captures carry Bearer tokens, cookies and prompts:
+`*.har` is gitignored repo-wide, and a capture must never be committed or pasted into an
+issue unredacted. Use `scripts/dev/har-spike/extract_har_summary.py` for the redacted
+summary that IS shareable. Findings belong in `docs/superpowers/spikes/`; the evidence
+that produced them stays local.
+
+> **The harness is vendored in for discoverability, and that is the whole point.** It
+> lived in a sibling directory outside git until 2026-09-06. Being outside the repo, no
+> agent could find it, nothing pinned its `agent-browser` version, and its one test ran
+> nowhere. A session that day wrote three capture scripts from scratch and only learned
+> the harness existed because the user said so — after concluding, wrongly, that a
+> working Flow feature was impossible. Keep it in-tree, keep its data disposable.
+
 ## Where to look next
 
 - **Architecture & target shape** → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -317,6 +345,7 @@ The SkillOpt harness at `scripts/dev/skillopt/` measures how accurately each ski
 - **Known issues** (read before touching auth / reCAPTCHA) → [KNOWN_ISSUES.md](KNOWN_ISSUES.md)
 - **Current task** → `/gflow:status` · **Create a feature plan** → `/gflow:plan <feature>` · **Full roadmap** → [PLAN.md](PLAN.md)
 - **Release protocol** → [RELEASE.md](RELEASE.md)
+- **Spiking a live Flow surface** (HAR + DOM capture) → [scripts/dev/har-spike/README.md](scripts/dev/har-spike/README.md)
 
 ## Claude Code-specific notes
 
