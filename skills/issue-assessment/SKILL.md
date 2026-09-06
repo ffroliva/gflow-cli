@@ -131,11 +131,35 @@ it — names drift. Current map:
 
 | Need | Use | How |
 |---|---|---|
+| The issue claims a surface is broken/missing/impossible | `/gflow:spike` | read `skills/spike/SKILL.md` — **do this before classifying** |
 | High-stakes change (auth/transport/selector/schema) | `/gflow:predict` | read `skills/predict/SKILL.md` |
 | Edge cases + BDD skeleton | `/gflow:scenario` | read `skills/scenario/SKILL.md` |
 | Touching auth/reCAPTCHA | `/gflow:known-issues` | `.claude/commands/gflow/known-issues.md` |
 | Drive the fix | `issue-resolve` | read `skills/issue-resolve/SKILL.md` |
 | Worktree / TDD | superpowers | `Skill()` tool (these *are* invocable) |
+
+## Before you classify an absence
+
+A verdict of INVALID / WONTFIX / "not supported on this host" is a claim about the
+live product, and this skill is read-only — it cannot produce one from the code alone.
+**If the issue asserts that something does not work, and the answer turns on what Flow
+actually renders or calls, load [`skills/spike/SKILL.md`](../spike/SKILL.md) and get
+evidence first.**
+
+The failure this prevents: a 20 s selector timeout was read as "the character editor
+is a labs-only surface, it renders no prompt textbox ever", and that unmeasured
+negative reached a code comment, a CHANGELOG entry, a release ledger and a test class
+name before anyone looked at the DOM. The feature had worked the whole time. Closing a
+reporter's issue on that basis tells a user their working feature is impossible.
+
+Cheap tells that you are about to do it:
+
+- the evidence for the absence is a **timeout**, an exception, or an exit code
+- the claim is about a *host*, *cohort* or *account class* you cannot check from here
+- you are about to write "cannot", "never", "not supported" in a reporter-facing reply
+
+Spikes are free for DOM and network reads. Thirty minutes of measurement beats a
+confident wrong classification that ships.
 
 ---
 
