@@ -13,9 +13,11 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from structlog.testing import capture_logs
 
 from gflow_cli.api import client as client_mod
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.recaptcha import RecaptchaError
 from gflow_cli.errors import FlowHostMigratedError
 
 
@@ -60,3 +62,94 @@ async def test_mint_on_labs_host_still_mints(monkeypatch: pytest.MonkeyPatch) ->
     c = _client_on("https://labs.google/fx/en/tools/flow")
     assert await c._mint_recaptcha_token("IMAGE_GENERATION") == "tok"
     mint.assert_awaited_once_with("IMAGE_GENERATION")  # the action is threaded through
+
+
+class _HopsDuringMint:
+    """Flow's client-side handoff lands WHILE the token is being minted.
+
+    #692: ``page.goto`` returns before the hop, and the bootstrap's
+    ``await_url_settled`` is SKIPPED for a profile latched at ``NOT_REDIRECTED``
+    (``client.py`` ``settle = cached != NOT_REDIRECTED``). So the guard can read a
+    still-labs URL, wave the mint through, and only then does the page land on
+    ``flow.google.com`` — where there is no ``recaptcha/enterprise.js``.
+    """
+
+    def __init__(self, page: Any, **_: Any) -> None:
+        self._page = page
+
+    async def mint(self, _action: str) -> str:
+        self._page.url = "https://flow.google.com/"
+        raise RecaptchaError("recaptcha/enterprise.js not found")
+
+
+@pytest.mark.asyncio
+async def test_mint_reclassifies_when_the_migrated_hop_lands_mid_mint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#692: a mint that fails because the page hopped mid-flight is exit 36, not exit 1.
+
+    The reporter ran v0.69.0 — which HAS the #678 guard — and still got a bare
+    ``RecaptchaError``, because that guard is a point-in-time read racing a
+    client-side navigation. Re-checking on the failure path costs nothing when
+    the mint succeeds and is robust regardless of when the hop lands.
+    """
+    monkeypatch.setattr(client_mod, "TokenMinter", _HopsDuringMint)
+    c = _client_on("https://labs.google/fx/en/tools/flow")
+    returned: list[Any] = []
+    monkeypatch.setattr(c, "_checkin_page", returned.append)
+
+    with pytest.raises(FlowHostMigratedError) as info:
+        await c._mint_recaptcha_token("IMAGE_GENERATION")
+
+    assert "flow.google.com" in info.value.detail
+    assert returned == [c._page], "the pool page must not leak on the reclassified path"
+
+
+class _FailsOnLabs:
+    """A genuine labs-side reCAPTCHA failure — the page never hops."""
+
+    def __init__(self, _page: Any, **_: Any) -> None: ...
+
+    async def mint(self, _action: str) -> str:
+        raise RecaptchaError("site key not discoverable")
+
+
+@pytest.mark.asyncio
+async def test_mint_failure_on_labs_still_raises_recaptcha_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reclassification must NOT swallow real reCAPTCHA failures.
+
+    Turning every mint failure into exit 36 would hide the labs-side breakage
+    this error exists to report.
+    """
+    monkeypatch.setattr(client_mod, "TokenMinter", _FailsOnLabs)
+    c = _client_on("https://labs.google/fx/en/tools/flow")
+    monkeypatch.setattr(c, "_checkin_page", lambda _p: None)
+
+    with pytest.raises(RecaptchaError):
+        await c._mint_recaptcha_token("IMAGE_GENERATION")
+
+
+@pytest.mark.asyncio
+async def test_mint_failure_off_migrated_host_records_where_the_page_was(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#692: when the re-check does NOT fire, log the URL that defeated it.
+
+    The reporter's failure could not be reproduced locally — the hop wins the
+    race on this machine and the guard classifies correctly. So the mint failing
+    on a page that reads as *labs* is the discriminating observation, and without
+    it every future report costs a round trip to the reporter. Emitting the URL
+    here turns the next incident bundle into evidence on its own.
+    """
+    monkeypatch.setattr(client_mod, "TokenMinter", _FailsOnLabs)
+    c = _client_on("https://labs.google/fx/en/tools/flow")
+    monkeypatch.setattr(c, "_checkin_page", lambda _p: None)
+
+    with capture_logs() as logs, pytest.raises(RecaptchaError):
+        await c._mint_recaptcha_token("IMAGE_GENERATION")
+
+    recorded = [e for e in logs if e.get("event") == "recaptcha_mint_failed_off_migrated_host"]
+    assert len(recorded) == 1, f"expected the diagnostic, got {logs}"
+    assert recorded[0]["url"] == "https://labs.google/fx/en/tools/flow"

@@ -54,7 +54,7 @@ from gflow_cli.api.image_upscale import (
     UpsampleImageRequest,
     build_upsample_image_body,
 )
-from gflow_cli.api.recaptcha import TokenMinter
+from gflow_cli.api.recaptcha import RecaptchaError, TokenMinter
 from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
 from gflow_cli.api.transports import (
     STANDALONE_ONLY_TRANSPORTS,
@@ -2414,7 +2414,34 @@ class FlowApiClient:
             # page's main-world ``grecaptcha`` global is undefined; the resolver
             # supplies ``isolated_context=False`` for patchright ({} for playwright).
             minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
-            return await minter.mint(action)
+            try:
+                return await minter.mint(action)
+            except RecaptchaError:
+                # #692: the guard above is a point-in-time read, and the handoff
+                # to flow.google.com is a CLIENT-SIDE navigation that can land
+                # while we are minting. The bootstrap's own `await_url_settled`
+                # does not close the window either — it is skipped entirely for a
+                # profile latched at NOT_REDIRECTED (`settle = cached !=
+                # NOT_REDIRECTED`), which is the population #643 was written for.
+                # So a moved account can read as labs at the guard, hop, and then
+                # fail here for want of `recaptcha/enterprise.js`.
+                #
+                # Re-classify on the FAILURE path only: free when the mint
+                # succeeds, and correct whenever the hop lands, rather than
+                # depending on it landing before a particular line. A genuine
+                # labs-side reCAPTCHA failure still propagates as RecaptchaError.
+                raise_if_migrated(page, at="mint_recaptcha_token_after_failure")
+                # Still reads as labs. That is the discriminating observation for
+                # #692 — the reporter's failure could NOT be reproduced here (the
+                # hop wins the race on this machine and the guard classifies
+                # correctly), so record where the page actually was rather than
+                # spending a round trip asking. The URL is the same value
+                # ``raise_if_migrated`` already logs on the bail path.
+                logger.warning(
+                    "recaptcha_mint_failed_off_migrated_host",
+                    url=getattr(page, "url", None),
+                )
+                raise
         finally:
             self._checkin_page(page)
 
