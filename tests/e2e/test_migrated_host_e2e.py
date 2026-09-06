@@ -68,8 +68,8 @@ def _write_reference(path: Path) -> Path:
 
     def _chunk(tag: bytes, data: bytes) -> bytes:
         body = tag + data
-        return struct.pack(">I", len(data)) + body + struct.pack(
-            ">I", zlib.crc32(body) & 0xFFFFFFFF
+        return (
+            struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
         )
 
     # A simple gradient — real image content, and it compresses to a sane size.
@@ -202,9 +202,7 @@ async def test_e2e_r2v_binds_local_references_on_the_migrated_host(
     armed inside ``submit_and_observe``, so a run that reached ``migrated.result``
     without it firing is the evidence.
     """
-    refs = tuple(
-        _write_reference(tmp_path / name) for name in ("ref_one.png", "ref_two.png")
-    )
+    refs = tuple(_write_reference(tmp_path / name) for name in ("ref_one.png", "ref_two.png"))
     project = _project_id()
     _set_flow_host(monkeypatch, os.environ.get("GFLOW_CLI_E2E_FLOW_HOST") or None)
     req = GenerateVideoRequest(
