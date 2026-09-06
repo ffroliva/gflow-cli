@@ -28,10 +28,54 @@ a user-confirmable artefact.
 | Command | Before | After |
 |---|---|---|
 | `gflow video r2v … -o <existing directory>` | exit **1** "Unexpected error" after ~2 min, **one clip billed and orphaned** | exit **2** in **0.8 s**, `Invalid value for '-o' / '--output': File 'tmp/promo' is a directory`, no browser launched |
-| `gflow character create` on a moved account | exit **1**, bare `RuntimeError: Character editor not ready…` after a 20 s wait | exit **36**, `Flow served the migrated flow.google.com frontend…`, immediate |
+| `gflow character create` on a moved account | exit **1**, bare `RuntimeError: Character editor not ready…` after a 20 s wait | **exit 0 — the character is created.** See below; the exit-36 behaviour this row originally recorded was itself the defect |
 | `gflow image t2i` on a moved account | — | exit **36** (confirmed on `ffroliva` and `compiledgrowth.official`; the constraint, not a regression) |
 | `gflow video r2v --model veo-lite-lp` | — | exit **11**, names the four tiers this account is actually offered, **$0** |
 | `gflow video t2v --duration 8` | — | exit **11**, "renders no duration control … only Omni 1.1 Flash does", **$0** (#451/#288/#630 cohort) |
+
+## `gflow character create` on the migrated host — verified, and the premise corrected
+
+This release originally recorded "exit 36, immediate" as the *improvement* for
+`character create` on a moved account, and recorded CHARACTER entities as unexercisable.
+Both were wrong, from the same root: a 20 s readiness timeout was read as proof the
+feature does not exist on `flow.google.com`, and #701 then added a `raise_if_migrated`
+guard that aborted **before** probing the DOM — which made the claim unfalsifiable,
+because no run could look.
+
+Measured instead (`scripts/dev/spike_migrated_character_*.py`): the editor is fully
+present there, on the **same** labs tRPC + aisandbox backend. Only the view layer
+differs — labs is React + Slate, flow.google.com is Angular + ProseMirror — so seven
+selectors missed. `[data-slate-editor]` matched 0; `.ProseMirror[contenteditable]`
+matched 1, unoccluded.
+
+**Verified live on `ci-probe` (migrated), read back independently with
+`gflow character show`:**
+
+| | |
+|---|---|
+| Name | `Kael Ridge Full` — patched, not "Untitled Character" |
+| Personality | `seco, direto — fala pouco; criado no interior` (UTF-8 round-tripped) |
+| Voice | `Algenib` |
+| Portrait | workflow `5698df21…`, media `ca5732c9…`, 633 976 B |
+| Body | workflow `de846b9c…`, media `247eec3b…`, 449 397 B |
+| Distinct images | md5 `60975a89…` vs `60a27f39…` |
+
+Exit 0, both slots on disk. The portrait generation answers on `batchexecute` rpcid
+`ogiZ0b`, not the labs `flowMedia:batchGenerateImages` the listener waited 180 s for —
+so the client was reporting failure over work that had already succeeded.
+
+**`--model` determinism**, four consecutive runs alternating tiers, correct every time.
+The picker previously proceeded on whatever tier the editor showed, so `--model nano2`
+silently generated on Nano Banana Pro. It now verifies by re-reading the chip and raises
+rather than generating on a tier the user did not ask for; refusing is free because the
+picker runs before submit.
+
+**Orphan rollback**, A/B controlled on the live account: **1 → 2** entities on a failed
+create without the fix, **2 → 2** with it.
+
+**NOT verified:** the labs.google path for any of the seven anchors changed. All three
+accounts here are migrated, so labs is covered by unit tests only — named as a blocker,
+not claimed. ([#703](https://github.com/ffroliva/gflow-cli/pull/703))
 
 ## The assembled artefact
 
@@ -74,9 +118,20 @@ same face and the same paper texture — not a generic figure.
   close the window *by construction*: any mint failure on a page that reads as migrated
   now yields exit 36, and the read is no longer a single instant. The issue stays open
   until someone confirms on a build that contains it.
-- **Flow CHARACTER entities were not exercised**, because `character create` cannot run on
-  any account available here. The cast in "The Ridge" therefore uses the skill's sanctioned
-  no-entity path.
+  **New evidence, 2026-09-06:** `flow.google.com` **can** mint a reCAPTCHA Enterprise
+  token. On `/project/<id>` the enterprise script and site key
+  (`6LdsFiUsAAAA…`) are present and a mint returns a 2404-char token; on the root grid
+  there is no script at all. The mint runs on the pooled bootstrap page, which after the
+  handoff IS the root grid — which is why the reporter's bundle showed `route: "/"`.
+  So "any mint failure on a migrated page yields exit 36" is a refusal of the host, not a
+  fix of the cause. The re-runnable probe and its write-up land with the spike-skill PR
+  and are deliberately not linked from here while they sit on another branch: a ledger
+  must not carry a reference its own branch cannot resolve, and `check_doc_links.py`
+  does not cover this file, so nothing would have caught it.
+- **Flow CHARACTER entities WERE exercised** — this bullet previously read "not exercised,
+  because `character create` cannot run on any account available here", which was false.
+  The cast in "The Ridge" still uses the skill's sanctioned no-entity path, because that is
+  how it was produced; the capability is now separately verified (see below).
 - **`gflow image`, `scene`, `movie`, `extend`** were not exercised on a generation path:
   all exit 36 on the migrated host and no unmoved account exists here.
 - **A Google sign-in interstitial's fidelity score** (whether it renders buttons with no
