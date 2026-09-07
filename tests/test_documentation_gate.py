@@ -120,3 +120,20 @@ def test_current_docs_describe_headed_default_and_waf_safe_mode() -> None:
     assert "GFLOW_CLI_HEADLESS=false" in text
     assert "headed" in text.lower()
     assert "**Default:** `false`" in text
+
+
+# 2026-09-07: two sessions worked this repo at once. One held the `denon82`
+# lease; the other read `ProfileLockedError` as a stale lock, took a process
+# list as better evidence than the lease, and killed eighteen Chrome processes
+# — nine of them belonging to the running e2e suite. The lease was correct
+# throughout. `tests/scripts/test_spike_profile_lease.py` pins the code half
+# (no dev script launches Chrome outside a lease); nothing pins the half that
+# would actually have prevented it, which is an instruction to an operator.
+# A rule that lives only in a postmortem is a rule the next session never sees.
+def test_spike_skill_forbids_killing_browsers_on_an_unheld_profile() -> None:
+    text = (ROOT / "skills/spike/SKILL.md").read_text(encoding="utf-8")
+    assert "Never kill Chrome processes to clear the way." in text
+    assert "`ProfileLockedError` is the lease working, not a stale lock." in text
+    # The alternatives must stay named: a prohibition with no cheap next step
+    # is the kind an operator under pressure talks itself out of.
+    assert "wait, or spike on a different profile" in text
