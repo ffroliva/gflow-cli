@@ -264,6 +264,24 @@ SUBMIT_BUTTON_SELECTORS = (
 #
 # `:text()` not `:has-text()` (invalid inside `:has()`); `text-is` exact match so a
 # longer ligature cannot partial-match.
+# Observed-rewrite gate for the Format button (#727). Flow rewrites SERVER-SIDE:
+# measured 2026-09-07 on the migrated host, the reshaped text reached the composer
+# at ~5.4s. The budget is deliberately generous rather than fitted to that single
+# sample -- the costs are asymmetric. Too long is bounded latency on an opt-in flag
+# whose expiry falls back to exactly the old behaviour; too short silently
+# reintroduces the bug, invisibly, which is what shipped. `elapsed_ms` is logged on
+# every success so a real distribution accrues in production instead of being
+# guessed here from n=1.
+_FORMAT_REWRITE_TIMEOUT_S = 30.0
+# Jittered, like every other wait in this module: a fixed cadence is a
+# deterministic signature in front of Google's anti-bot stack.
+_FORMAT_REWRITE_POLL_MS = 250
+# Slate/ProseMirror re-render and normalise whitespace, so a bare `!=` fires on
+# churn. Normalisation moves the length by a handful of characters; the observed
+# rewrite moved it by 632 (19 -> 651). 16 sits far above the former and far below
+# the latter.
+_FORMAT_REWRITE_MIN_DELTA = 16
+
 PROMPT_FORMAT_SELECTORS: tuple[str, ...] = (
     "flow-format-prompt-button button",
     "button:has(mat-icon:text-is('personal_recommendations'))",
@@ -1625,52 +1643,135 @@ class UiAutomationTransport(VideoGenerationMixin):
         log.info("ui_automation.prompt_submitted", via="enter_key_fallback")
         await page.keyboard.press("Enter")
 
-    async def format_character_prompt(self, page: Page) -> bool:
-        """Click Flow's prompt-format button, trying selectors in priority order.
+    async def format_character_prompt(
+        self,
+        page: Page,
+        *,
+        prompt_box: Any,
+        typed_text: str,
+    ) -> bool:
+        """Click Flow's Format button and WAIT for the rewrite to actually land.
 
         Best-effort, like :meth:`_select_character_model`: formatting is a nicety
-        on top of a prompt that already submits fine, so a missing button logs a
-        warning and returns ``False`` rather than failing the generation.
+        on top of a prompt that already submits fine, so every failure logs and
+        returns ``False`` rather than failing the generation. Callers submit
+        regardless — which is why the return value must not lie.
 
-        The enabled check is NOT redundant with the visible check.  Flow ships this
+        **Returning ``True`` means the composer's text changed, not that a button
+        was pressed.** Flow rewrites *server-side*: measured 2026-09-07 on the
+        migrated host, the click fires a ``batchexecute`` round trip and the
+        reshaped text reaches the composer at **~5.4 s**, while this method used to
+        wait ``_jitter_ms(500)`` and return. ``_send_prompt`` submits on the very
+        next line, so ``--format-prompt`` shipped the prompt the user typed and
+        discarded the rewrite — on every run, with ``prompt_formatted`` logged and
+        exit 0. The defect was never the duration. It was reporting a success we
+        had not observed: the absence of a completion inside a window we chose,
+        recorded as a completion. See
+        ``docs/superpowers/spikes/2026-09-07-format-click-is-not-a-format.md``.
+
+        The gate is the DOM, not the wire. ``eAenfb``'s response arrives **4.2 s
+        before** the text settles, so awaiting it would reproduce the same early
+        submit — and an undocumented ``batchexecute`` rpcid is not an anchor this
+        project is willing to depend on. Comparing the box against the string we
+        inserted is locale-invariant by construction: it never reads a display label.
+
+        A **length delta** rather than ``!=`` because Slate/ProseMirror re-render
+        and normalise whitespace; bare inequality would fire on that churn and
+        re-report the same false success with better telemetry.
+
+        The enabled check is NOT redundant with the visible check. Flow ships this
         button ``disabled`` while the prompt box is empty (verified 2026-07-27), and
         a disabled button is still *visible* — so visibility alone would hand a
         disabled element to ``click()``, which auto-waits for actionability and
-        stalls for the full timeout before failing.  Callers invoke this only after
-        inserting prompt text, so a disabled button here means the editor has not
-        settled: skip it rather than block the submit behind a doomed wait.
+        stalls for the full timeout. A disabled match means THAT anchor resolved to
+        the wrong element, so the cascade continues rather than aborting: the old
+        ``return False`` here let one stale anchor kill every selector behind it.
         """
+        button = await self._locate_format_button(page, prompt_box=prompt_box)
+        if button is None:
+            log.warning("ui_automation.format_button_not_found", selectors=PROMPT_FORMAT_SELECTORS)
+            return False
+
+        locator, selector = button
+        try:
+            # Explicit short timeout: never inherit Playwright's 30s default on
+            # a best-effort nicety sitting in front of the submit.
+            await locator.click(timeout=5000)
+        except Exception as e:
+            log.warning("ui_automation.format_click_failed", selector=selector, error=str(e))
+            return False
+        log.info("ui_automation.format_button_clicked", selector=selector)
+
+        typed = typed_text.strip()
+        deadline = time.monotonic() + _FORMAT_REWRITE_TIMEOUT_S
+        started = time.monotonic()
+        while time.monotonic() < deadline:
+            await page.wait_for_timeout(_jitter_ms(_FORMAT_REWRITE_POLL_MS))
+            try:
+                current = (await prompt_box.inner_text()).strip()
+            except Exception as e:
+                log.debug("ui_automation.format_readback_failed", error=str(e))
+                continue
+            if abs(len(current) - len(typed)) >= _FORMAT_REWRITE_MIN_DELTA and current != typed:
+                # Lengths and a stable hash only. Flow ELABORATES a terse
+                # description into a detailed physical one, so the rewrite is more
+                # PII-dense than the input, and structlog is not governed by
+                # GFLOW_CLI_HISTORY_PROMPTS — no operator control would apply to it.
+                log.info(
+                    "ui_automation.prompt_formatted",
+                    selector=selector,
+                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                    prompt_len_before=len(typed),
+                    prompt_len_after=len(current),
+                    prompt_hash=_prompt_hash_stable(current),
+                )
+                return True
+
+        # Say what was observed, never what Flow "failed" to do: an unchanged box
+        # also covers Flow declining, erroring, or judging the prompt already
+        # formatted. None of those were provoked (2026-09-07), so none are claimed.
+        log.warning(
+            "ui_automation.format_not_observed",
+            selector=selector,
+            waited_s=_FORMAT_REWRITE_TIMEOUT_S,
+            prompt_len=len(typed),
+        )
+        return False
+
+    async def _locate_format_button(self, page: Page, *, prompt_box: Any) -> Any:
+        """Resolve the Format button belonging to the ACTIVE composer.
+
+        Returns ``(locator, selector)`` or ``None``.
+
+        Box identity matters here. :meth:`_locate_body_prompt_box` documents that
+        on a two-box cohort "the LAST mounted box is the target" — the body
+        composer, never the portrait's. A page-global ``.first`` on the format
+        button therefore resolves to the PORTRAIT composer's button while the body
+        prompt is the one that was just typed into, reshaping the wrong prompt (or
+        finding a disabled button and giving up). This mirrors that existing
+        convention rather than inventing a second one: when more than one prompt
+        box is mounted, take the last matching button.
+        """
+        try:
+            boxes = await page.locator(self._CHARACTER_EDITOR_READY_SELECTOR).count()
+        except Exception:
+            boxes = 1
         for selector in PROMPT_FORMAT_SELECTORS:
             try:
-                locator = page.locator(selector).first
+                matches = page.locator(selector)
+                locator = matches.last if boxes > 1 else matches.first
                 # No timeout argument: Playwright documents it as ignored here —
                 # `is_visible()` never waits, it answers from the current DOM, so a
                 # non-matching entry costs one round trip rather than a second.
-                #
-                # That is the cost of a MISS. A `click()` that times out is different:
-                # entries 0 and 1 resolve to the same element on the migrated host
-                # (the custom element wraps the button carrying the mat-icon), as do
-                # entries 2 and 3 on labs — so a timeout is retried on an identical
-                # element and the 5s budget is paid twice. Rare (visible + enabled but
-                # not actionable), untuned deliberately: this whole method is due to be
-                # rewritten around an observed-rewrite gate (#727), and de-duplicating
-                # resolved elements belongs with that change, not in front of it.
                 if not await locator.is_visible():
                     continue
                 if not await locator.is_enabled():
-                    log.warning("ui_automation.format_button_disabled", selector=selector)
-                    return False
-                # Explicit short timeout: never inherit Playwright's 30s default on
-                # a best-effort nicety sitting in front of the submit.
-                await locator.click(timeout=5000)
-                await page.wait_for_timeout(_jitter_ms(500))
-                log.info("ui_automation.prompt_formatted", selector=selector)
-                return True
+                    log.debug("ui_automation.format_button_disabled", selector=selector)
+                    continue
+                return (locator, selector)
             except Exception as e:
                 log.debug("ui_automation.format_selector_failed", selector=selector, error=str(e))
-
-        log.warning("ui_automation.format_button_not_found", selectors=PROMPT_FORMAT_SELECTORS)
-        return False
+        return None
 
     async def _send_prompt(
         self,
@@ -1710,7 +1811,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         await page.wait_for_timeout(_jitter_ms(500))
 
         if format_prompt:
-            await self.format_character_prompt(page)
+            # The bound box and the exact string we inserted — the rewrite is only
+            # detectable against a baseline we know landed, and holding that baseline
+            # on `self` would couple it across generations on a reused page.
+            await self.format_character_prompt(page, prompt_box=input_box, typed_text=prompt_text)
 
         await self._click_submit(page)
 
@@ -1778,7 +1882,10 @@ class UiAutomationTransport(VideoGenerationMixin):
             prompt_len=len(full_prompt),
         )
         if format_prompt:
-            await self.format_character_prompt(page)
+            # `input_box` is the BODY composer, bound by _locate_body_prompt_box —
+            # passing it is what keeps the format click off the portrait's box on a
+            # two-box cohort.
+            await self.format_character_prompt(page, prompt_box=input_box, typed_text=full_prompt)
 
         await self._click_submit(page)
 
