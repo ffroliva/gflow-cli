@@ -1765,20 +1765,40 @@ class UiAutomationTransport(VideoGenerationMixin):
             except Exception as e:
                 log.debug("ui_automation.format_readback_failed", error=str(e))
                 continue
-            if abs(len(current) - len(typed)) >= _FORMAT_REWRITE_MIN_DELTA and current != typed:
-                # Lengths and a stable hash only. Flow ELABORATES a terse
-                # description into a detailed physical one, so the rewrite is more
-                # PII-dense than the input, and structlog is not governed by
-                # GFLOW_CLI_HISTORY_PROMPTS — no operator control would apply to it.
-                log.info(
-                    "ui_automation.prompt_formatted",
-                    selector=selector,
-                    elapsed_ms=int((time.monotonic() - started) * 1000),
-                    prompt_len_before=len(typed),
-                    prompt_len_after=len(current),
-                    prompt_hash=_prompt_hash_stable(current),
-                )
-                return True
+            # GROWTH, not absolute delta. `abs()` accepted change in either direction, and
+            # Flow CLEARS the box before repopulating it — so a poll landing in that window
+            # read "" and `abs(0 - 19) >= 16` passed. `prompt_formatted` then logged
+            # `prompt_len_after=0` and `_click_submit` ran on the next line, submitting an
+            # EMPTY prompt on a path that spends image quota (#745). A success signal that
+            # fires on the ABSENCE of the thing it measures is the defect #727 was about,
+            # rebuilt inside its own fix.
+            if len(current) < len(typed) + _FORMAT_REWRITE_MIN_DELTA or current == typed:
+                continue
+            # And confirm it settled. One read can land mid-write; the rewrite observed live
+            # was a single discrete swap, but that was sampled at 250ms and a partial write
+            # between samples was never ruled out. Two agreeing reads cost one interval.
+            await page.wait_for_timeout(_jitter_ms(_FORMAT_REWRITE_POLL_MS))
+            try:
+                settled = (await prompt_box.inner_text()).strip()
+            except Exception as e:
+                log.debug("ui_automation.format_readback_failed", error=str(e))
+                continue
+            if settled != current:
+                log.debug("ui_automation.format_still_settling", chars=len(settled))
+                continue
+            # Lengths and a stable hash only. Flow ELABORATES a terse description into a
+            # detailed physical one, so the rewrite is more PII-dense than the input, and
+            # structlog is not governed by GFLOW_CLI_HISTORY_PROMPTS — no operator control
+            # would apply to it.
+            log.info(
+                "ui_automation.prompt_formatted",
+                selector=selector,
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                prompt_len_before=len(typed),
+                prompt_len_after=len(current),
+                prompt_hash=_prompt_hash_stable(current),
+            )
+            return True
 
         # Say what was observed, never what Flow "failed" to do: an unchanged box
         # also covers Flow declining, erroring, or judging the prompt already
