@@ -123,11 +123,11 @@ written and needed no change.
   the *prompt box*, not the button — it answered a question nobody asked, and the check
   has been removed rather than left to be misread. The live e2e click landing is the
   stronger evidence anyway.
-- **Every other selector constant.** This spike swept one. `git grep "i\.google-symbols"`
-  still returns **55** single-carrier literals across `ui_automation.py`,
-  `ui_automation_video.py`, `mode_control.py`, `diagnostics.py` and `drivers/`. The #703
-  carrier sweep demonstrably missed at least one, and this is the second consecutive PR
-  to fix one by hand — which makes it a registry/sweep problem, not a selector problem.
+- **Every other selector constant.** This spike swept one, and many more remain
+  single-carrier — the #703 sweep demonstrably missed at least one, and this is the
+  second consecutive PR to fix one by hand, which makes it a registry/sweep problem
+  rather than a selector problem. Current count and file list live in
+  [[ligature-carrier-differs-by-host]] and #730, not here — it is a number that rots.
 
 ## 7. The rule this re-earns
 

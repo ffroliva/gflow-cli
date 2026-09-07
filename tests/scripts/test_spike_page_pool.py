@@ -17,10 +17,8 @@ screenshots were on disk. It hung in teardown, holding the `denon82` profile
 lease, with no error and no traceback, because `contextlib.suppress(Exception)`
 cannot rescue a block.
 
-That failure mode is worse than it sounds. A wedged process holding a profile
-lease is exactly what makes an operator reach for the process list — the
-sequence that cost nine browsers belonging to a running e2e suite the same day,
-and that `test_spike_profile_lease.py` exists to prevent the other half of.
+A wedged process holding a profile lease is also what sends an operator to the
+process list; see `test_spike_profile_lease.py` for the other half of that.
 
 The 17 scripts that already pair the calls are the reference; `_post_json`'s own
 `attempt()` in `api/client.py` is the canonical shape:

@@ -103,9 +103,12 @@ async def capture(profile_name: str, out_html: Path, out_json: Path) -> None:
                     const [radixId, before] = args;
                     const popover = document.getElementById(radixId);
                     const openDialogs = Array.from(document.querySelectorAll(
-                        '[role=\"dialog\"][data-state=\"open\"], [data-state=\"open\"][role=\"dialog\"]'
+                        '[role=\"dialog\"][data-state=\"open\"], '
+                        + '[data-state=\"open\"][role=\"dialog\"]'
                     )).map(el => el.outerHTML.slice(0, 2500));
-                    const fileInputs = Array.from(document.querySelectorAll('input[type=\"file\"]'));
+                    const fileInputs = Array.from(
+                        document.querySelectorAll('input[type=\"file\"]')
+                    );
                     const fileInputsAfter = fileInputs.length;
                     // List buttons / clickable elements inside the popover — the
                     // candidates for the intermediate menu hypothesis.
@@ -171,10 +174,8 @@ async def capture(profile_name: str, out_html: Path, out_json: Path) -> None:
                 "Delta > 0 + no menu items = direct-chooser variant (svasakorn variant)."
             )
         finally:
-            # Return the page to the pool. `_checkout_page()` blocks FOREVER on an empty
-            # pool (api/client.py), so holding the only page arms a silent deadlock for the
-            # next caller that needs one -- including any `client.<verb>()`, which check one
-            # out internally. Pinned by tests/scripts/test_spike_page_pool.py.
+            # `_checkout_page()` blocks forever on an empty pool; pinned by
+            # tests/scripts/test_spike_page_pool.py.
             client._checkin_page(page)
 
 

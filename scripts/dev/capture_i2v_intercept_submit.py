@@ -219,10 +219,8 @@ async def capture(
             print("All requests to Veo were aborted at the browser — zero credits.")
             return 0
         finally:
-            # Return the page to the pool. `_checkout_page()` blocks FOREVER on an empty
-            # pool (api/client.py), so holding the only page arms a silent deadlock for the
-            # next caller that needs one -- including any `client.<verb>()`, which check one
-            # out internally. Pinned by tests/scripts/test_spike_page_pool.py.
+            # `_checkout_page()` blocks forever on an empty pool; pinned by
+            # tests/scripts/test_spike_page_pool.py.
             client._checkin_page(page)
 
 
