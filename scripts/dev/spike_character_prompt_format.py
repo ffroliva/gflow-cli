@@ -66,10 +66,10 @@ logger = structlog.get_logger("spike_character_prompt_format")
 
 # Editor-mounted anchor, both frontends (Slate on labs, ProseMirror on migrated).
 # This is the CONTROL: if it misses, the probe reached no editor and every other
-# count in this run is meaningless.
-_CONTROL_SELECTOR = (
-    'div[role="textbox"][data-slate-editor="true"], div.ProseMirror[contenteditable="true"]'
-)
+# count in this run is meaningless. Borrowed from the transport rather than copied —
+# a probe that asserts a DIFFERENT anchor than the code it is probing measures the
+# copy, not the code, which is the whole failure mode #727 is about.
+_CONTROL_SELECTOR = UiAutomationTransport._CHARACTER_EDITOR_READY_SELECTOR
 
 # Every icon ligature in the document, whichever carrier renders it, with the button
 # hosting it. The Format button's ligature is whichever entry sits on a button whose

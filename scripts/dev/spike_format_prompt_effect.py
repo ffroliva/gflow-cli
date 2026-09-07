@@ -55,9 +55,8 @@ from gflow_cli.api.transports.ui_automation import (  # noqa: E402
 
 logger = structlog.get_logger("spike_format_prompt_effect")
 
-_CONTROL_SELECTOR = (
-    'div[role="textbox"][data-slate-editor="true"], div.ProseMirror[contenteditable="true"]'
-)
+# Borrowed from the transport, never copied — see spike_character_prompt_format.py.
+_CONTROL_SELECTOR = UiAutomationTransport._CHARACTER_EDITOR_READY_SELECTOR
 
 # Deliberately terse and unpolished — a rewrite has something to do, so a no-change
 # result cannot be explained away as "the prompt was already well formed".
@@ -104,10 +103,13 @@ async def run_spike(profile_name: str | None, project_id: str, entity_id: str | 
             requests: list[dict[str, Any]] = []
             t_zero = time.monotonic()
 
+            # One clock for requests AND polls, so the two timelines are directly
+            # comparable — the gap between them is the finding.
+            def _elapsed() -> float:
+                return round(time.monotonic() - t_zero, 3)
+
             def _on_request(req: Any) -> None:
-                requests.append(
-                    {"t": round(time.monotonic() - t_zero, 3), "method": req.method, "url": req.url}
-                )
+                requests.append({"t": _elapsed(), "method": req.method, "url": req.url})
 
             page.on("request", _on_request)
 
@@ -147,12 +149,13 @@ async def run_spike(profile_name: str | None, project_id: str, entity_id: str | 
                     "again. This run measures nothing about the rewrite."
                 )
 
-            t_click = time.monotonic()
+            click_at = _elapsed()
+            report["click_at_s"] = click_at
             timeline: list[dict[str, Any]] = []
             changed_at: float | None = None
-            while time.monotonic() - t_click < _POLL_WINDOW_S:
+            while _elapsed() - click_at < _POLL_WINDOW_S:
                 now = (await box.inner_text()).strip()
-                elapsed = round(time.monotonic() - t_click, 3)
+                elapsed = round(_elapsed() - click_at, 3)
                 if not timeline or timeline[-1]["text"] != now:
                     timeline.append({"t": elapsed, "text": now, "chars": len(now)})
                     logger.info("box_text", t=elapsed, chars=len(now), text=now[:70])
@@ -162,7 +165,7 @@ async def run_spike(profile_name: str | None, project_id: str, entity_id: str | 
 
             report["timeline"] = timeline
             report["changed_at_s"] = changed_at
-            report["text_after"] = timeline[-1]["text"] if timeline else None
+            report["text_after"] = timeline[-1]["text"]
             report["requests"] = requests
             await page.screenshot(path=str(out_dir / f"{dump.stem}.png"))
 
@@ -172,7 +175,7 @@ async def run_spike(profile_name: str | None, project_id: str, entity_id: str | 
                 changed_at_s=changed_at,
                 # The number that decides the design: gflow currently waits ~0.5 s.
                 within_current_wait=(changed_at is not None and changed_at <= 0.5),
-                requests_after_click=sum(1 for r in requests if r["t"] >= t_click - t_zero),
+                requests_after_click=sum(1 for r in requests if r["t"] >= click_at),
             )
         finally:
             with contextlib.suppress(Exception):
