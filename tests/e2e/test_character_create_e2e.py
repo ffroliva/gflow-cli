@@ -267,14 +267,27 @@ def test_character_create_binds_parent_entity(e2e_env: dict[str, str]) -> None:
 
 
 def test_character_create_partial_saga_recoverable(e2e_env: dict[str, str]) -> None:
-    """Re-running ``character create`` with the SAME name must RESUME, not
-    double-spend.
+    """A create interrupted mid-saga RESUMES on the next run instead of double-spending.
 
-    A true mid-saga kill (SIGKILL between image-gen and entity PATCH) is a
-    MANUAL exercise — it cannot be reliably injected from a black-box subprocess
-    test. This test asserts the *resume* half of the saga contract observably:
-    a second create with the same name does NOT create a second entity / second
-    face workflow set.
+    The crash IS injected here, by flipping the recorded operation row back to
+    ``status='started'`` between the two runs — exactly the state a SIGKILL between
+    image-gen and the entity PATCH leaves behind, and exactly what the resume path keys
+    on (``repository.find_incomplete_character`` filters ``status = 'started'``,
+    `repository.py:1139`).
+
+    **This test previously asserted something else and could never pass.** Written
+    2026-07-06 (v0.25.0), it ran two ordinary, fully-completing creates and asserted the
+    second reused the first's entity. A completed run is recorded ``SUCCEEDED``
+    (``recorder.record_character_completed``), so ``find_incomplete_character`` never
+    matched it, the saga took its ``else`` branch and minted a second entity — every
+    time, on every host. The assertion was red by construction for two months and nobody
+    saw it, because ``e2e_character`` is opt-in (``GFLOW_CLI_E2E_RUN_CHARACTER=1``) and
+    the nightly canary runs only ``e2e_auth``. First observed in the 2026-09-07 sweep.
+
+    Note what is NOT claimed: ``character create`` is **not** idempotent on name. Two
+    ordinary creates with the same name legitimately produce two entities — nothing in
+    the CLI, the docs or the saga promises otherwise. Resume-after-crash is the
+    guarantee; same-name reuse never was.
 
     Verification ledger:
       - both runs exit 0.
@@ -320,6 +333,35 @@ def test_character_create_partial_saga_recoverable(e2e_env: dict[str, str]) -> N
     first_wf = first_char["workflow_ids"]
     assert isinstance(first_wf, list)
 
+    # ---- inject the crash -------------------------------------------------
+    # The saga completed, so its row reads SUCCEEDED. Flip it back to 'started' to
+    # stand in for a process killed after the entity was minted but before the PATCH
+    # landed. Nothing else is touched: the entity really exists on Flow, the recorded
+    # workflow ids are real, so the resume path is exercised against true state rather
+    # than a fabricated row that would PATCH a non-existent entity.
+    # Status ALONE is not the crash state, and getting that wrong makes this test lie.
+    # `record_character_completed` REPLACES metadata_json with {workflow_ids,
+    # primary_media_ids, ...} (recorder.py, `meta` is built fresh), dropping the
+    # {entity_id, name} that `record_character_started` wrote. So a completed row flipped
+    # to 'started' has no `$.name` -- and `find_incomplete_character` matches on
+    # `json_extract(metadata_json, '$.name')` (repository.py), so it cannot see it. A real
+    # crash never leaves that shape: it dies BEFORE completion, with name and entity_id
+    # still present. Restore them, or this asserts against a state no crash produces.
+    #
+    # Measured, not assumed: the status-only flip failed live on 2026-09-07 with a fresh
+    # entity minted, and that failure is what exposed the metadata overwrite.
+    crashed_meta = json.dumps({"entity_id": first_entity, "name": name, "workflow_ids": first_wf})
+    conn = _open_db(env)
+    try:
+        flipped = conn.execute(
+            "UPDATE operations SET status='started', metadata_json=? WHERE mode='character'",
+            (crashed_meta,),
+        ).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    assert flipped == 1, f"expected exactly one character row to interrupt, flipped {flipped}"
+
     second = _run_gflow(create_args, env=env, timeout=_CREATE_TIMEOUT_S)
     assert second.returncode == 0, (
         f"second (resume) character create exited {second.returncode}\n"
@@ -331,8 +373,8 @@ def test_character_create_partial_saga_recoverable(e2e_env: dict[str, str]) -> N
 
     # Same entity — the resume did NOT mint a new one.
     assert second_char["entity_id"] == first_entity, (
-        "re-run with the same name created a DIFFERENT entity (double-spend): "
-        f"{second_char['entity_id']!r} != {first_entity!r}"
+        "the interrupted saga was not resumed: the re-run minted a NEW entity and "
+        f"re-spent the face quota. {second_char['entity_id']!r} != {first_entity!r}"
     )
     # Workflow set did not double.
     second_wf = second_char["workflow_ids"]

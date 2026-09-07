@@ -17,6 +17,7 @@ Opt-in: ``-m e2e_auth`` with ``GFLOW_CLI_E2E_PROFILE`` and
 from __future__ import annotations
 
 import os
+from collections import Counter
 from typing import Any
 
 import pytest
@@ -77,7 +78,22 @@ async def test_mcp_character_show_resolves_by_id_and_by_name(
 
     listed = await mcp_tools.gflow_character_list(project=character_project, profile=profile)
     assert listed["status"] == "ok" and listed["characters"], listed
-    first = listed["characters"][0]
+
+    # Resolve by a display name that is UNIQUE in this project. `character create` is not
+    # idempotent on name (see docs/USAGE.md), so a long-lived fixture project accumulates
+    # duplicates -- and `show(name=...)` then refuses with an ambiguous-name
+    # ConfigurationError, which is the tool behaving CORRECTLY. Taking characters[0]
+    # blindly made this test fail for the one reason it is not about. Observed in the
+    # 2026-09-07 sweep, where two entities shared the name of a saga-test character.
+    names = Counter(c["display_name"] for c in listed["characters"])
+    unique = [c for c in listed["characters"] if names[c["display_name"]] == 1]
+    if not unique:
+        pytest.skip(
+            f"every character in {character_project} shares its display name with "
+            "another, so name resolution is ambiguous by design here — clean the "
+            "project with `gflow character rm` or point at one with distinct names"
+        )
+    first = unique[0]
 
     by_id = await mcp_tools.gflow_character_show(
         project=character_project, entity_id=first["entity_id"], profile=profile

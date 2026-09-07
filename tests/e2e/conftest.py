@@ -135,6 +135,13 @@ def e2e_env(tmp_path: Path) -> Iterator[dict[str, str]]:
     out = tmp_path / "out"
     out.mkdir()
     env = os.environ.copy()
+    # `tests/conftest.py::_isolate_settings` is autouse and redirects GFLOW_CLI_HOME to
+    # an empty per-test tmp dir. Inherited by the child, that redirect hides every real
+    # profile and the subprocess exits 2 with "No session for profile '<name>'" while
+    # the profile is perfectly valid. DB and output stay isolated below — only the home,
+    # which is where PROFILES live, is restored. Six e2e modules each carried their own
+    # copy of this pop; it belongs here, once.
+    env.pop("GFLOW_CLI_HOME", None)
     env["PYTHONUTF8"] = "1"
     env["GFLOW_CLI_DB_PATH"] = str(db)
     env["GFLOW_CLI_OUTPUT_DIR"] = str(out)

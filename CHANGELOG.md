@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An empty wallet is no longer diagnosed as a moved frontend.** On the migrated
+  `flow.google.com` host, an account out of Veo credits produced
+  `UiSelectorDriftError` (exit 23) — *"A Flow editor UI element could not be located —
+  Google may have updated their frontend. Check for a newer gflow-cli release, then file
+  a bug"*. Flow does not **disable** the submit control when the wallet is empty, it
+  **replaces** it: `arrow_forward` disappears and a `prompt-warning-button` carrying
+  `aria-label='Insufficient credits warning'` takes its place, so the anchor's absence
+  tracks the wallet, not the frontend. Measured by A/B on 2026-09-07 —
+  `scripts/dev/spike_migrated_submit_anchor.py`, same probe and same code ~60 s apart,
+  drained and funded accounts rendering the mirror image of each other. Every path that
+  gives up on the submit control now checks the wallet before naming a culprit, and
+  reports the new `InsufficientCreditsError` (**exit 37**) instead. Genuine drift — a
+  missing anchor with no warning beside it — still reports 23. Beyond the wrong message,
+  the old behaviour manufactured frontend-drift bug reports that no code change could
+  ever fix.
+
 ## [0.70.0] — 2026-09-06
 
 ### Fixed

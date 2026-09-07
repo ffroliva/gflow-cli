@@ -54,6 +54,7 @@ from gflow_cli.api.video import (
 from gflow_cli.errors import (
     ConfigurationError,
     FlowHostMigratedError,
+    InsufficientCreditsError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
     TransportTimeoutError,
@@ -85,6 +86,12 @@ COMPOSER = "[contenteditable='true']"
 #: The submode radio that renders the Start/End frame chips (i2v).
 FRAMES_LIGATURE = "crop_free"
 DIALOG = "[role='dialog']"
+# What Flow puts WHERE the submit button was when the account is out of credits. Both
+# halves are structural (a component class and an ARIA label), not a display string, so
+# this stays locale-invariant: the aria-label is the English attribute Angular emits, not
+# rendered text. Measured 2026-09-07 by A/B on a drained vs a funded account
+# (scripts/dev/spike_migrated_submit_anchor.py).
+CREDITS_WARNING = "button.prompt-warning-button, [aria-label*='Insufficient credits']"
 DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
 
 #: ``YhhmEf`` is the text-to-video submit; ``eb1hJf`` the image-to-video one (a bound
@@ -277,6 +284,26 @@ def _exact(label: str) -> re.Pattern[str]:
 def _ligature(page: Any, name: str) -> Any:
     """A ``mat-icon`` whose ligature text is exactly ``name`` — for ``filter(has=…)``."""
     return page.locator("mat-icon").filter(has_text=_exact(name))
+
+
+async def _raise_if_out_of_credits(page: Any) -> None:
+    """Raise :class:`InsufficientCreditsError` when Flow has swapped the submit control
+    for its insufficient-credits warning.
+
+    Called from every path that concludes "the submit anchor is unusable", because an
+    empty wallet and a moved frontend are indistinguishable at that point -- and only
+    one of them is a bug in gflow. Silent when the warning is absent, so genuine
+    selector drift still surfaces as drift.
+    """
+    if await page.locator(CREDITS_WARNING).count():
+        log.info("migrated.submit_blocked_by_credits")
+        raise InsufficientCreditsError(
+            detail=(
+                "migrated host: Flow replaced the submit control with its "
+                "insufficient-credits warning, so this account cannot start a "
+                "generation right now (host=migrated)"
+            ),
+        )
 
 
 def _rpcid(url: str) -> str | None:
@@ -1157,6 +1184,11 @@ class MigratedComposer:
         try:
             submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
             if not await submit.count():
+                # An empty wallet and a moved frontend look identical here: both are
+                # "arrow_forward is gone". Ask which one BEFORE naming a culprit --
+                # reporting a drained account as selector drift tells the user to file a
+                # frontend bug that no code change can fix.
+                await _raise_if_out_of_credits(page)
                 raise UiSelectorDriftError(
                     detail=(
                         "migrated host: the submit button (arrow_forward) is missing "
@@ -1166,6 +1198,8 @@ class MigratedComposer:
             enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
             while not await submit.is_enabled():
                 if time.monotonic() >= enable_deadline:
+                    # Same question as above, on the other way of giving up on submit.
+                    await _raise_if_out_of_credits(page)
                     raise UiSelectorDriftError(
                         detail=(
                             "migrated host: the submit button (arrow_forward) stayed disabled "

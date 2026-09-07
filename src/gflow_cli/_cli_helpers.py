@@ -417,6 +417,17 @@ def run_with_handlers(
             )
             sys.exit(1)
         sys.exit(_handle_unhandled_error(e, cli_command=cli_command))
+    finally:
+        # Same reasoning as `clear_interrupt_context()` above, applied to the binding
+        # this function makes itself: a long-lived process runs many commands through
+        # here without passing back through `cli.main()`, which is the only place that
+        # clears contextvars. Left bound, a finished command labels the NEXT one's logs
+        # with its own name -- and a wrong `cli_command` is worse than a missing one,
+        # because it sends whoever is reading to the wrong command. Measured in the
+        # 2026-09-07 e2e sweep: six captures labelled `project rename` whose request
+        # bodies were `project.createProject`. `sys.exit` raises SystemExit, so this
+        # runs on every path out, including the error ones.
+        structlog.contextvars.unbind_contextvars("cli_command")
 
 
 # ---------------------------------------------------------------------------
