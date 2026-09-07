@@ -10,6 +10,7 @@ record calls, raise on demand, or stay silent.
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -1429,9 +1430,25 @@ class TestFormatCharacterPrompt:
         """#727: the EN ``span:text-is('Format')`` fallback was dead weight — Flow
         localises that span (``"Formatar"`` on a pt account), so it can never
         match a non-EN profile.  Display labels are banned as anchors by the
-        locale-invariance rule in AGENTS.md; the cascade must stay structural."""
+        locale-invariance rule in AGENTS.md; the cascade must stay structural.
+
+        Enforced by whitelist, not by banning one spelling.  A guard that rejected
+        only the literal ``'Format'`` passed for ``"Format"``, for
+        ``[aria-label*="Format"]``, and — worst — for ``'Formatar'``, the exact
+        string this spike observed live.  Banning spellings loses to translation
+        by construction, so every text argument in the cascade must instead BE a
+        known Material Symbols ligature.
+        """
+        allowed_text_args = {"personal_recommendations"}
         for selector in PROMPT_FORMAT_SELECTORS:
-            assert "'Format'" not in selector, (
-                f"{selector!r} anchors on a localised display label — "
-                "use the custom element or the ligature instead"
+            assert "aria-label" not in selector, (
+                f"{selector!r} anchors on aria-label, which Flow localises "
+                '(observed: aria-label="Formatar" on a pt account)'
             )
+            for match in re.finditer(r"""(?:text-is|text|has-text)\(\s*['"](.*?)['"]""", selector):
+                arg = match.group(1)
+                assert arg in allowed_text_args, (
+                    f"{selector!r} matches on the text {arg!r}, which is not a known "
+                    f"locale-invariant ligature {sorted(allowed_text_args)} — Flow "
+                    "translates display labels, so this can only ever match one locale"
+                )

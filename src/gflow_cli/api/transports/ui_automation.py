@@ -1644,9 +1644,17 @@ class UiAutomationTransport(VideoGenerationMixin):
             try:
                 locator = page.locator(selector).first
                 # No timeout argument: Playwright documents it as ignored here —
-                # `is_visible()` never waits, it answers from the current DOM. Passing
-                # one invited the misreading that a 4-entry cascade costs 4s in front of
-                # the submit; a miss is one round trip.
+                # `is_visible()` never waits, it answers from the current DOM, so a
+                # non-matching entry costs one round trip rather than a second.
+                #
+                # That is the cost of a MISS. A `click()` that times out is different:
+                # entries 0 and 1 resolve to the same element on the migrated host
+                # (the custom element wraps the button carrying the mat-icon), as do
+                # entries 2 and 3 on labs — so a timeout is retried on an identical
+                # element and the 5s budget is paid twice. Rare (visible + enabled but
+                # not actionable), untuned deliberately: this whole method is due to be
+                # rewritten around an observed-rewrite gate (#727), and de-duplicating
+                # resolved elements belongs with that change, not in front of it.
                 if not await locator.is_visible():
                     continue
                 if not await locator.is_enabled():

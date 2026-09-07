@@ -9,9 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`character create --format-prompt` clicks Flow's Format button again.** On the migrated
-  `flow.google.com` host all three entries of `PROMPT_FORMAT_SELECTORS` missed, so the flag
-  degraded to a no-op: `ui_automation.format_button_not_found`, exit **0**, prompt submitted as
+- **`character create --format-prompt` finds and clicks Flow's Format button again.** Scoped
+  deliberately: this fixes the *anchor*, and **`--format-prompt` still does not deliver a
+  reshaped prompt** — see the Known-issues note below. On the migrated `flow.google.com` host
+  all three entries of `PROMPT_FORMAT_SELECTORS` missed, so the flag degraded to a no-op:
+  `ui_automation.format_button_not_found`, exit **0**, prompt submitted as
   typed, and the image quota spent on a run whose requested prompt-engineering step never
   happened. The button was never absent. Measured on 2026-09-07 with
   `scripts/dev/spike_character_prompt_format.py` (`$0` — navigation, one free `createEntity`,
@@ -86,6 +88,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a dead cookie.
 - `scripts/dev/spike_migrated_composer_mode_axis.py` — hard-error probe that opens the migrated
   composer's settings overlay and enumerates its radiogroups.
+- `scripts/dev/spike_format_prompt_effect.py` — measures whether clicking Format actually
+  rewrites the prompt, and when. `$0`, never submits.
+
+### Known issues
+
+- **`character create --format-prompt` still submits the prompt as typed, even when the button
+  is found and clicked.** The anchor fix above is necessary and not sufficient. Flow rewrites
+  **server-side** — a `batchexecute` round trip whose result reaches the composer at **~5.4s**
+  (measured, `denon82`, `$0`) — while `format_character_prompt` waits `_jitter_ms(500)` and
+  `_send_prompt` submits on the next line. The reshaped text arrives after the submit has
+  already gone.
+
+  **The defect is not that the wait is too short. It is that gflow reports success without
+  observing it**: `ui_automation.prompt_formatted` is emitted on the *click*, so the absence of
+  a completion inside a window we chose is recorded as a completion. That is the same class as a
+  20 s selector timeout read as "the feature is absent" and a bundle photographed after teardown
+  read as "the DOM was gone" — a measurement that could not be taken, recorded as a measurement.
+  This one is the worst of them because it fails toward **success**: a premature green looks
+  exactly like the feature working, and nobody investigates a pass. The e2e is green for this
+  reason and is not wrong to be — it asserts the click, which was the only observable when it
+  was written.
+
+  A `/gflow:predict` on the fix returned **GO with conditions** (8.2/10): poll the composer
+  until its text differs from the string gflow inserted, guarded by a length delta rather than
+  raw inequality, and emit `prompt_formatted` on the observed rewrite. Not gating on the
+  `batchexecute` response — it arrives **4.2s before** the DOM settles, so a wire-level gate
+  reproduces the same early submit.
+  ([#727](https://github.com/ffroliva/gflow-cli/issues/727),
+  [spike](docs/superpowers/spikes/2026-09-07-format-click-is-not-a-format.md))
 
 ## [0.70.0] — 2026-09-06
 
