@@ -53,7 +53,6 @@ from gflow_cli.errors import (
     ConfigurationError,
     ContentPolicyError,
     FlowAppError,
-    FlowHostMigratedError,
     GFlowError,
     RateLimitError,
     UiSelectorDriftError,
@@ -357,10 +356,22 @@ _BODY_SLOT_MOUNT_POLL_MS = 250
 # `_enter_editor` now names the host rather than blaming this cascade when it is reached.
 NEW_PROJECT_SELECTORS = (
     # Tier 1 — structural / icon: locale-invariant.
-    "button:has(i.google-symbols:text('add_2'))",
-    "button:has(i:text('add_2'))",
-    "[role='button']:has(i.google-symbols:text('add_2'))",
-    r"button:text-matches('^\+\s+\S+$', 'i')",
+    # The migrated `flow.google.com` gallery renders the CTA with the ligature **`add`**,
+    # under a `<mat-icon>`, and renders `add_2` nowhere on that surface (measured
+    # 2026-09-07, denon82, control 47 ligature nodes). Class-only so one entry covers both
+    # carriers. Listed FIRST because without it every Tier-1 entry below misses there and
+    # the CTA survives only on the English text fallback — which is the anti-pattern this
+    # tier exists to avoid, and which fails outright on a non-EN migrated profile.
+    "button:has(.google-symbols:text-is('add'))",
+    "[role='button']:has(.google-symbols:text-is('add'))",
+    "button:has(.google-symbols:text-is('add_2'))",
+    "[role='button']:has(.google-symbols:text-is('add_2'))",
+    # `button:text-matches('^\+\s+\S+$', 'i')` used to sit here. It is not a valid
+    # Playwright selector and RAISES on every evaluation — measured twice against the live
+    # gallery, both runs `ERR Error`. `except Exception: continue` in the sweep swallowed
+    # that, so it has never matched anything on any host while costing a round trip per
+    # attempt. Deleted rather than repaired: the `add` anchor above is what the "+ <word>"
+    # regex was reaching for, and it is structural rather than a text shape.
     # Tier 2 — localised text: 14 locales (EN / PT / ES / FR / DE / IT / NL /
     # JA / ZH / KO / PL / RU / TR / ID).
     "button:has-text('New project')",  # EN
@@ -1578,25 +1589,12 @@ class UiAutomationTransport(VideoGenerationMixin):
                 continue
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_new_project.png")
-        # Name the host, not the selector. This cascade anchors on the `add_2` ligature;
-        # the migrated frontend renders `add` and renders `add_2` NOWHERE (measured
-        # 2026-09-07 on both surfaces with per-surface controls —
-        # docs/superpowers/spikes/2026-09-07-ligature-carrier-and-name-drift.md). So on
-        # that host the sweep cannot succeed, and reporting "Could not find the CTA"
-        # sends the reader after selector drift — remediation "check for a newer release,
-        # then file a frontend bug" — for a control that host does not render at all.
-        # Same misdiagnosis shape as a credit shortfall reported as frontend drift (#726).
-        if flow_host_kind(page.url) == "migrated":
-            raise FlowHostMigratedError(
-                detail=(
-                    "Flow served this account's gallery from flow.google.com, whose "
-                    "frontend renders no '+ New project' control gflow can drive, so a "
-                    "project cannot be created here. This is not selector drift and it is "
-                    "not transient — the handoff is a per-account setting. Pass --project "
-                    "with an existing project id, which every migrated-host path requires."
-                    f"{screenshot_clause(shot_path)}"
-                )
-            )
+        # NO migrated-host branch here. #739 added one asserting that
+        # flow.google.com "renders no '+ New project' control gflow can drive". That was an
+        # UNPROVEN NEGATIVE, generalised from a sweep of two other surfaces, and a live run
+        # disproved it in one click: the CTA is there, carries the `add` ligature, and the
+        # Tier-1 entry above now matches it. Reaching this line on a migrated host means the
+        # anchor missed — which is selector drift, exactly what the message says.
         msg = (
             f"Could not find 'New project' CTA on Flow gallery. "
             f"URL: {page.url}.{screenshot_clause(shot_path)}"

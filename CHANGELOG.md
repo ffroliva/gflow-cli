@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The "+ New project" CTA is found by structure again, not by English.** Its Tier-1 anchors
+  all targeted the `add_2` ligature. The migrated `flow.google.com` gallery renders **`add`**
+  under a `<mat-icon>` and renders `add_2` nowhere on that surface, so every structural entry
+  missed and the CTA was reached only by `button:has-text('New project')` — the localised-text
+  anti-pattern Tier 1 exists to avoid, and one that fails outright on a non-English migrated
+  profile. Tier 1 now leads with a class-only `add` anchor covering both carriers; measured on
+  the live gallery (control: 47 ligature nodes) it matches 1 where every previous entry
+  matched 0.
+
+  Also removed: `button:text-matches('^\+\s+\S+$', 'i')`. It is not a valid Playwright
+  selector and **raised on every evaluation** — observed twice against the live gallery — with
+  `except Exception: continue` swallowing it, so it had never matched anything on any host
+  while costing a round trip per attempt.
+
+  **This reverts the guard added moments earlier in the same release.** That guard raised
+  `FlowHostMigratedError` claiming the migrated host "renders no '+ New project' control gflow
+  can drive". It was an unproven negative, generalised from a sweep of two other surfaces to a
+  third that was never probed, and a live run disproved it in one click by creating a project
+  there. On a non-EN migrated profile it would have told the user that host has no such
+  control — false, and a dead end — when the real fix was to anchor on `add`.
+  ([#730](https://github.com/ffroliva/gflow-cli/issues/730))
+
 - **A migrated-host gallery no longer reports a missing control as selector drift.**
   `NEW_PROJECT_SELECTORS` anchors on the `add_2` ligature. The migrated `flow.google.com`
   frontend renders **`add`** and renders `add_2` **nowhere** — composer `add=1/add_2=0`,

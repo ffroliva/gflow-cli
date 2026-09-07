@@ -1,108 +1,72 @@
-"""The migrated gallery has no "+ New project" CTA — say that, don't blame the selector.
+"""The migrated gallery DOES have a "+ New project" CTA — it just carries a different ligature.
 
-`NEW_PROJECT_SELECTORS` anchors on the ``add_2`` Material Symbols ligature. The migrated
-``flow.google.com`` frontend renders **`add`**, and renders ``add_2`` nowhere at all —
-measured 2026-09-07 on `denon82`, both surfaces, with per-surface controls
-(``docs/superpowers/spikes/2026-09-07-ligature-carrier-and-name-drift.md``). So on that host
-the sweep walks every selector, matches nothing, and raises:
+This file exists as the correction to a mistake, and keeps the measurement that settled it.
 
-    RuntimeError: Could not find 'New project' CTA on Flow gallery. URL: https://flow.google.com/...
+#739 shipped a guard asserting that `flow.google.com` "renders no '+ New project' control
+gflow can drive", raising `FlowHostMigratedError` when the cascade missed. That was an
+**unproven negative**, generalised from a sweep of two OTHER surfaces (the project composer
+and the character editor) to a third that was never probed. A live run disproved it in one
+click: `_enter_editor` with no project id created a project on the migrated host.
 
-That message is wrong in the way this repo keeps having to fix. It reports a **selector**
-problem — the remediation for which is "check for a newer gflow-cli release, then file a
-frontend bug" — when the truth is that this host does not render that control in any form.
-It is the same misdiagnosis shape as a credit shortfall reported as frontend drift (#726):
-a real, unfixable-by-the-reader error message pointing at the wrong culprit.
+Measured on the gallery afterwards (denon82, control 47 ligature nodes, `$0`):
 
-No production path reaches this today: `migrated_can_serve` refuses without a `project_id`,
-`ensure_editor` navigates straight to the project URL, and `character create` requires
-`--project`. Those guards are what make the `add_2` name drift harmless *right now* — and
-they are exactly what a future port relaxes. A spike hit this on 2026-09-07 and got the
-misleading message; the next person to un-guard a path would get it too.
+    add* ligatures      {"mat-icon|add": 1}      <- the CTA carries `add`
+    [0] add_2 / <i>     0
+    [1] add_2 / i       0
+    [2] add_2 / role    0
+    [4] has-text('New project')  1               <- the ONLY match
+
+So the CTA is present, and before this fix it survived purely on the **English text
+fallback** — the anti-pattern Tier 1 exists to avoid, and one that fails outright on a
+non-EN migrated profile. The guard would then have told that user "this host has no such
+control, pass --project", which is false and is a dead end.
+
+The fix is a Tier-1 anchor on `add`, class-only so it covers both carriers. These tests pin
+that the structural tier — not localised text — is what matches.
 """
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
-from gflow_cli.api.transports.ui_automation import NEW_PROJECT_SELECTORS, UiAutomationTransport
-from gflow_cli.errors import FlowHostMigratedError
-
-_MIGRATED_GALLERY = "https://flow.google.com/?hl=en"
-_LABS_GALLERY = "https://labs.google/fx/en/tools/flow"
+from gflow_cli.api.transports.ui_automation import NEW_PROJECT_SELECTORS
 
 
-def _gallery_page(url: str) -> MagicMock:
-    """A gallery page where NOTHING matches — the state the migrated host produces."""
-    page = MagicMock()
-    page.url = url
-    page.goto = AsyncMock()
-    page.wait_for_timeout = AsyncMock()
-    page.wait_for_url = AsyncMock()
-    page.screenshot = AsyncMock(return_value=b"")
-
-    def _locator(_sel: str) -> Any:
-        loc = MagicMock()
-        loc.first = loc
-        loc.wait_for = AsyncMock(side_effect=Exception("not visible"))
-        loc.click = AsyncMock()
-        loc.count = AsyncMock(return_value=0)
-        return loc
-
-    page.locator = MagicMock(side_effect=_locator)
-    return page
-
-
-def _transport(page: MagicMock) -> UiAutomationTransport:
-    t = UiAutomationTransport()
-    t._setup_done = True  # type: ignore[attr-defined]
-    t._page = page  # type: ignore[attr-defined]
-    # The gallery preamble is not what this test is about.
-    t._settle_if_redirecting = AsyncMock()  # type: ignore[attr-defined]
-    t._bypass_onboarding = AsyncMock()  # type: ignore[attr-defined]
-    t._dismiss_blocking_overlays = AsyncMock(return_value=False)  # type: ignore[attr-defined]
-    t._require_unblocked = AsyncMock()  # type: ignore[attr-defined]
-    return t
-
-
-class TestNewProjectCtaOnMigratedHost:
-    @pytest.mark.asyncio
-    async def test_migrated_gallery_names_the_host_not_the_selector(self) -> None:
-        page = _gallery_page(_MIGRATED_GALLERY)
-        t = _transport(page)
-
-        with pytest.raises(FlowHostMigratedError) as excinfo:
-            await t._enter_editor(page)  # type: ignore[attr-defined]
-
-        detail = str(excinfo.value)
-        assert "flow.google.com" in detail
-        assert "--project" in detail, "the error must name the way forward, not just the wall"
-
-    @pytest.mark.asyncio
-    async def test_labs_gallery_still_reports_a_missing_cta(self) -> None:
-        """On labs the CTA genuinely should be there, so its absence IS selector drift.
-
-        The migrated branch must not swallow the real failure mode it was carved out of.
-        """
-        page = _gallery_page(_LABS_GALLERY)
-        t = _transport(page)
-
-        with pytest.raises(RuntimeError, match="Could not find 'New project' CTA") as excinfo:
-            await t._enter_editor(page)  # type: ignore[attr-defined]
-
-        assert not isinstance(excinfo.value, FlowHostMigratedError)
-
-    def test_the_cta_cascade_still_anchors_on_add_2(self) -> None:
-        """Pins WHY the migrated branch exists, so the two cannot drift apart.
-
-        If someone re-anchors this cascade on `add` (the ligature the migrated host
-        actually renders), this test fails and the branch above should be revisited
-        rather than silently kept.
-        """
-        assert any("add_2" in s for s in NEW_PROJECT_SELECTORS), (
-            "the migrated-host branch exists because this cascade anchors on `add_2`, "
-            "which flow.google.com does not render — re-anchoring it changes that premise"
+class TestNewProjectCtaAnchors:
+    def test_tier_one_covers_the_migrated_add_ligature(self) -> None:
+        """The measured ligature on the migrated gallery is `add`, not `add_2`."""
+        tier1 = [s for s in NEW_PROJECT_SELECTORS if "google-symbols" in s]
+        assert any(":text-is('add')" in s for s in tier1), (
+            "the migrated gallery CTA carries the `add` ligature (measured 2026-09-07); "
+            "without a Tier-1 entry for it the CTA is reachable only by English text"
         )
+
+    def test_the_add_anchors_are_carrier_agnostic(self) -> None:
+        """Class-only, so one entry covers labs `<i>` and migrated `<mat-icon>` alike."""
+        for sel in NEW_PROJECT_SELECTORS:
+            if ":text-is('add')" in sel or ":text-is('add_2')" in sel:
+                assert "i.google-symbols" not in sel, (
+                    f"{sel!r} is tag-qualified — it cannot match the migrated <mat-icon>"
+                )
+
+    def test_a_structural_anchor_precedes_every_localised_text_entry(self) -> None:
+        """Tier 1 before Tier 2, or the CTA is found by locale and breaks off-English.
+
+        This is the property the bug violated in practice: every structural entry missed on
+        the migrated host, so `button:has-text('New project')` was doing the work.
+        """
+        first_text = next(
+            (i for i, s in enumerate(NEW_PROJECT_SELECTORS) if "has-text(" in s), None
+        )
+        first_struct = next(
+            (i for i, s in enumerate(NEW_PROJECT_SELECTORS) if "google-symbols" in s), None
+        )
+        assert first_struct is not None, "the cascade must carry a structural tier"
+        assert first_text is not None
+        assert first_struct < first_text
+
+    @pytest.mark.parametrize("sel", NEW_PROJECT_SELECTORS)
+    def test_every_entry_is_a_valid_selector_shape(self, sel: str) -> None:
+        """`:has-text()` is invalid inside `:has()` — the repo's documented trap."""
+        if ":has(" in sel:
+            assert ":has-text(" not in sel

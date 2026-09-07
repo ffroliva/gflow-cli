@@ -2581,25 +2581,41 @@ class TestSelectorLocaleInvariance:
         assert len(NEW_PROJECT_SELECTORS) == len(set(NEW_PROJECT_SELECTORS))
 
     def test_new_project_selectors_icon_leads(self) -> None:
-        """First selector must be the exact google-symbols icon-class anchor.
+        """First selector must be the exact icon-class anchor for the MIGRATED CTA.
 
-        Locks the full selector prefix (not just substring) so a future rename of
-        the icon ligature, container tag, or class can't silently slip past.
+        Locks the full selector (not just a substring) so a future rename of the
+        ligature, container tag, or class can't silently slip past.
+
+        The pinned value changed once, and the reason is worth keeping: this used to
+        pin `button:has(i.google-symbols:text('add_2'))`. Measured on the live
+        migrated gallery (2026-09-07, denon82, control 47 ligature nodes) that entry
+        matched **0** — that host renders `add` under a `<mat-icon>` and renders
+        `add_2` nowhere on that surface — so the CTA was being found only by
+        `button:has-text('New project')`, which fails on a non-EN profile. Class-only
+        so the one entry covers the labs `<i>` and the migrated `<mat-icon>` alike.
         """
-        assert NEW_PROJECT_SELECTORS[0] == "button:has(i.google-symbols:text('add_2'))", (
+        assert NEW_PROJECT_SELECTORS[0] == "button:has(.google-symbols:text-is('add'))", (
             f"NEW_PROJECT_SELECTORS[0] drifted: {NEW_PROJECT_SELECTORS[0]!r}"
         )
 
-    def test_new_project_selectors_plus_regex_is_anchored(self) -> None:
-        """The '+ <word>' Tier-1 regex must be anchored to avoid over-matching.
+    def test_new_project_selectors_carry_no_text_matches_entry(self) -> None:
+        """The '+ <word>' regex entry is gone, and must not come back.
 
-        Without ``^`` / ``$``, the pattern matches buttons like '+ Filter' or
-        '+ Add member'. Anchoring keeps it scoped to the new-project CTA shape.
+        It read `button:text-matches('^\\+\\s+\\S+$', 'i')` and pinned only that the
+        regex was anchored — a property of a selector that never ran. It is not a
+        valid Playwright selector: it RAISES on every evaluation, observed twice
+        against the live gallery, and `except Exception: continue` in the sweep
+        swallowed that. So it never matched anything on any host while costing a
+        round trip per attempt.
+
+        Validity is now pinned where it belongs, against a real CSS engine, in
+        tests/api/transports/test_ligature_carrier.py — a guard that catches ANY
+        unparseable entry rather than asserting the shape of one.
         """
-        plus_regex = next((s for s in NEW_PROJECT_SELECTORS if "text-matches" in s), None)
-        assert plus_regex is not None, "No text-matches '+' regex in NEW_PROJECT_SELECTORS"
-        assert "^" in plus_regex and "$" in plus_regex, (
-            f"Plus regex must be anchored: {plus_regex!r}"
+        offenders = [s for s in NEW_PROJECT_SELECTORS if "text-matches" in s]
+        assert not offenders, (
+            f"{offenders} — `text-matches` raised on every evaluation here. If a "
+            "'+ <word>' shape is wanted again, prove it parses first."
         )
 
     def test_new_project_selectors_covers_all_14_locales(self) -> None:
