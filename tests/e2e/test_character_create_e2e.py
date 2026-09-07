@@ -339,10 +339,23 @@ def test_character_create_partial_saga_recoverable(e2e_env: dict[str, str]) -> N
     # landed. Nothing else is touched: the entity really exists on Flow, the recorded
     # workflow ids are real, so the resume path is exercised against true state rather
     # than a fabricated row that would PATCH a non-existent entity.
+    # Status ALONE is not the crash state, and getting that wrong makes this test lie.
+    # `record_character_completed` REPLACES metadata_json with {workflow_ids,
+    # primary_media_ids, ...} (recorder.py, `meta` is built fresh), dropping the
+    # {entity_id, name} that `record_character_started` wrote. So a completed row flipped
+    # to 'started' has no `$.name` -- and `find_incomplete_character` matches on
+    # `json_extract(metadata_json, '$.name')` (repository.py), so it cannot see it. A real
+    # crash never leaves that shape: it dies BEFORE completion, with name and entity_id
+    # still present. Restore them, or this asserts against a state no crash produces.
+    #
+    # Measured, not assumed: the status-only flip failed live on 2026-09-07 with a fresh
+    # entity minted, and that failure is what exposed the metadata overwrite.
+    crashed_meta = json.dumps({"entity_id": first_entity, "name": name, "workflow_ids": first_wf})
     conn = _open_db(env)
     try:
         flipped = conn.execute(
-            "UPDATE operations SET status='started' WHERE mode='character'"
+            "UPDATE operations SET status='started', metadata_json=? WHERE mode='character'",
+            (crashed_meta,),
         ).rowcount
         conn.commit()
     finally:
