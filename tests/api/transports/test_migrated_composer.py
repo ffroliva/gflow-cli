@@ -591,6 +591,36 @@ async def test_apply_video_settings_selects_each_axis_and_reads_back() -> None:
     assert not page.dom.pane_open  # closed afterwards
 
 
+async def test_the_submode_follows_the_reference_not_the_mode_name() -> None:
+    """A character reference forces Ingredients even on a t2v request (#723).
+
+    Flow treats an attached character as reference-to-video whatever the caller called
+    the mode: the 2026-09-07 route-aborted capture, taken in Ingredients, submitted
+    `abra_r2v_8s`. A t2v request that attached a character chip while the composer sat
+    under Frames clicked submit and got no reply at all — so this is measured, not a
+    tidy-looking guess, and it must not be "simplified" back to `mode is R2V`.
+    """
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    assert page.dom.groups["submode"][0].checked  # Frames, the fake's default
+    await MigratedComposer().apply_video_settings(
+        page, _t2v(reference_entities=("ent-kael",), reference_entity_names=("Kael",))
+    )
+    assert page.dom.groups["submode"][1].checked  # Ingredients
+    assert not page.dom.groups["submode"][0].checked
+
+
+async def test_a_plain_t2v_still_leaves_the_submode_alone() -> None:
+    """The control for the rule above: without a reference nothing touches submode, so
+    the forcing cannot silently change every t2v run."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    await MigratedComposer().apply_video_settings(page, _t2v())
+    assert page.dom.groups["submode"][0].checked  # untouched
+
+
 async def test_missing_axis_is_a_configuration_error_naming_it() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
