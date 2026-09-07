@@ -43,11 +43,13 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent))
 
 from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
+    MODEL_KEY,
     SUBMIT_RPCS,
     MigratedComposer,
     _ligature,
 )
 from gflow_cli.api.video import (  # noqa: E402
+    _VIDEO_MODEL_FROM_CLI,
     Aspect,
     GenerateVideoRequest,
     Mode,
@@ -77,7 +79,8 @@ def _rpcid(url: str) -> str | None:
         return None
 
 
-async def _probe(page: Any, project_id: str, entity_id: str, name: str, wait_s: float) -> dict:
+async def _probe(page: Any, project_id: str, entity_id: str, name: str, wait_s: float,
+                 ref_image: Path | None = None, model: VideoModel | None = None) -> dict:
     seen: list[dict[str, Any]] = []
     phase = {"now": "idle"}
 
@@ -86,12 +89,27 @@ async def _probe(page: Any, project_id: str, entity_id: str, name: str, wait_s: 
         if "batchexecute" not in url:
             return
         rid = _rpcid(url)
-        seen.append({
+        row: dict[str, Any] = {
             "dir": "request",
             "phase": phase["now"],
             "rpcid": rid,
             "watched": rid in SUBMIT_RPCS,
-        })
+        }
+        # The submit body carries the MODEL KEY Flow derived from the submode plus the
+        # picker choice (e.g. `abra_r2v_8s`, `veo_3_1_r2v_lite_low_priority`). When the
+        # backend rejects an entity-bound run with a null payload and no message, that
+        # key is the only place the chosen model is visible — and a model the character
+        # form does not support would look exactly like this.
+        if rid in SUBMIT_RPCS:
+            try:
+                body = request.post_data
+            except Exception:  # noqa: BLE001 - some requests expose no body
+                body = None
+            if body:
+                keys = sorted(set(MODEL_KEY.findall(body)))
+                row["model_keys"] = keys
+                row["body_head"] = body[:700]
+        seen.append(row)
 
     async def on_response(response: Any) -> None:
         url = str(getattr(response, "url", ""))
@@ -125,22 +143,38 @@ async def _probe(page: Any, project_id: str, entity_id: str, name: str, wait_s: 
     # "clicked submit and got no reply at all". A spike that omits this stage measures
     # the omission, not the port.
     phase["now"] = "apply_settings"
+    # With --ref-image this is a genuine R2V run carrying a media reference AND a
+    # character, which is the combination attach_character_entities documents as
+    # supported ("an r2v run can carry media references AND characters"). Without it,
+    # a T2V request sits in the Ingredients submode the entity forces, and the app
+    # derives its model key from that submode plus the picker choice — so a t2v key
+    # under Ingredients is a plausible cause of a backend rejection, and untested.
     request = GenerateVideoRequest(
         prompt=PROMPT,
-        mode=Mode.T2V,
+        mode=Mode.R2V if ref_image else Mode.T2V,
         aspect=Aspect.LANDSCAPE,
-        model=VideoModel.OMNI_FLASH,
+        model=model,  # None -> Flow's own UI default, untouched picker
         duration=8,
+        reference_images=(ref_image,) if ref_image else (),
         reference_entities=(entity_id,),
         reference_entity_names=(name,),
     )
     await composer.apply_video_settings(page, request)
-    _stage("video settings applied (Ingredients submode, omni-flash, 16:9, 8s)")
+    _stage(
+        f"settings applied: mode={request.mode.value}, "
+        f"model={model or 'FLOW DEFAULT'}, 16:9, 8s"
+    )
+
+    reference_ids: tuple[str, ...] = ()
+    if ref_image:
+        phase["now"] = "attach_reference_image"
+        reference_ids = await composer.attach_references(page, project_id, (ref_image,))
+        _stage(f"reference image attached: {reference_ids}")
 
     phase["now"] = "attach_entity"
     _stage(f"attaching entity {name} ({entity_id})")
     await composer.attach_character_entities(
-        page, entity_ids=(entity_id,), names=(name,), clear=True
+        page, entity_ids=(entity_id,), names=(name,), clear=not reference_ids
     )
     chips_after_attach = await composer.read_chips(page)
     _stage(f"chips after attach: {chips_after_attach}")
@@ -180,16 +214,20 @@ async def _probe(page: Any, project_id: str, entity_id: str, name: str, wait_s: 
                 else "only watched rpcids fired — the reply shape is the problem, not the id"
             )
         ),
+        "submit_model_keys": sorted(
+            {k for e in seen if e.get("model_keys") for k in e["model_keys"]}
+        ),
         "events": seen,
     }
 
 
 async def _main(profile: str, project_id: str, entity_id: str, name: str,
-                wait_s: float, out_path: str) -> int:
+                wait_s: float, out_path: str, ref_image: Path | None,
+                model: VideoModel | None) -> int:
     async with build_client(resolve_profile_dir(profile)) as client:
         page = client._page  # noqa: SLF001 — dev instrument
         assert page is not None
-        report = await _probe(page, project_id, entity_id, name, wait_s)
+        report = await _probe(page, project_id, entity_id, name, wait_s, ref_image, model)
         Path(out_path).write_text(
             json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -205,10 +243,20 @@ def main() -> int:
     p.add_argument("--entity-id", required=True)
     p.add_argument("--entity-name", required=True)
     p.add_argument("--wait", type=float, default=90.0)
+    p.add_argument("--ref-image", default=None,
+                   help="local image to attach as an R2V media reference alongside the "
+                        "character; makes this a genuine r2v run rather than t2v-in-Ingredients")
+    p.add_argument("--model", default=None,
+                   help="omni-flash | veo-lite | veo-fast | veo-quality; omit to leave "
+                        "Flow's own picker untouched, which is what a human gets")
     p.add_argument("--out", default=None)
     a = p.parse_args()
     out = a.out or str(default_out_path("entity_submit_rpcs"))
-    return asyncio.run(_main(a.profile, a.project_id, a.entity_id, a.entity_name, a.wait, out))
+    ref = Path(a.ref_image) if a.ref_image else None
+    mdl = _VIDEO_MODEL_FROM_CLI[a.model] if a.model else None
+    return asyncio.run(
+        _main(a.profile, a.project_id, a.entity_id, a.entity_name, a.wait, out, ref, mdl)
+    )
 
 
 if __name__ == "__main__":

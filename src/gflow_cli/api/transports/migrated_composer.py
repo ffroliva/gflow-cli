@@ -251,41 +251,41 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
     # without consulting it — so that refusal is unreachable for exactly the accounts
     # that need it. This one is on the path every request takes.
     if request.reference_entities:
-        # STILL REFUSED, and deliberately so — the port is HALF done (#723).
+        # STILL REFUSED — but NOT because the backend rejects it. The port is half done
+        # in a narrower way than previously recorded here (#723).
         #
-        # What is measured and works: `MigratedComposer.attach_character_entities` drives
-        # the `@` picker, commits the chip, and verifies it carries
-        # data-reference-type="entity" with the requested id. Confirmed live 2026-09-07 —
-        # `migrated.character_entities_attached` fires and Flow loads the character's
-        # voice sample. A route-aborted capture showed the assembled MZZa6b payload
-        # carrying that id in its own reference slot.
+        # What works: `attach_character_entities` drives the `@` picker, commits the
+        # chip, and verifies it carries data-reference-type="entity" with the requested
+        # id. `migrated.character_entities_attached` fires and Flow loads the
+        # character's voice sample. And the SUBMIT IS ACCEPTED: measured 2026-09-07,
+        # entity-bound submissions appear in Flow's own gallery as **Queued** and
+        # proceed. Nothing is refused server-side.
         #
-        # What does NOT work: the BACKEND rejects the generation. This was previously
-        # recorded here as "the submit never produces a YhhmEf/eb1hJf/MZZa6b reply,
-        # cause unknown, undiagnosable without fixing #722". Both halves of that were
-        # wrong, and `scripts/dev/spike_entity_submit_rpcs.py` shows why — it logs every
-        # batchexecute rpcid through the submit instead of only the three watched ones:
+        # What breaks is the OBSERVER, and the mechanism is exact:
         #
         #   MZZa6b -> [["wrb.fr","MZZa6b",null,null,null,[5],"generic"]]
-        #   WuwhI  -> []
-        #   jwpduf -> the generation IS listed in the project, prompt prefixed with the
-        #             entity name
         #
-        # So MZZa6b DOES reply — with a null result and an error slot — and the run
-        # enqueues and then fails. Flow's own UI says so: "Failed. Sorry, this video
-        # failed to generate. You have not been charged for this generation." There is
-        # nothing missing from SUBMIT_RPCS, and reading the wire live sidesteps the
-        # empty incident bundle entirely, so #722 was never on this path.
+        # The submit reply carries a NULL payload, so it never names a media id and the
+        # `submitted` future in submit_and_observe never resolves. That wait is bounded
+        # by SUBMIT_REPLY_BUDGET_S (60 s), a value calibrated on runs where "the submit
+        # reply arrived 4.0-4.6 s after the click" — i.e. a plate-based generation
+        # against an idle queue. So the run times out (exit 9, TransportTimeoutError)
+        # while the job sits in Flow's queue and completes on its own.
         #
-        # Measured 2026-09-07 across three configurations, all identical:
-        #   - portrait-only character, settings not applied
-        #   - portrait-only character, Ingredients + omni_flash + 16:9 + 8s
-        #   - character with face AND body triptych, same settings
-        # Character completeness is not the variable; the backend refuses the form.
+        # This is also what the ORIGINAL note here described as "the submit never
+        # produces a reply, three runs, 60 s each, cause unknown". Three timeouts
+        # against a queue, read as a refusal. Two later comments (including one of
+        # mine) hardened that misreading further; both were wrong.
         #
-        # Relaxing this gate therefore trades a clear, instant exit 36 for a failed card
-        # the user has to interpret, which is strictly worse. The refusal stays until an
-        # entity-bound generation has actually completed on this host.
+        # Queue latency is not incidental: Flow documents a limit of FIVE concurrent
+        # generations, and rate-limits per-minute throughput after heavy daily use, so
+        # 60 s is routinely too short in real production.
+        #
+        # THE FIX, when someone takes it: on a null submit payload, fall through to the
+        # status poll (jwpduf/as29s) keyed on the project instead of requiring the
+        # submit reply to name the media id, and make the budget configurable. The guard
+        # stays only until that lands, because today the CLI would report a timeout on a
+        # generation that is actually running — worse than an honest refusal.
         return "character references"
     if request.mode is Mode.T2V:
         return None
