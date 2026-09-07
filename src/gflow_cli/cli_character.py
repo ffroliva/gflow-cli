@@ -99,13 +99,13 @@ def character() -> None:
     is_flag=True,
     default=False,
     help=(
-        "Click Flow's in-editor Format button before submitting, asking Flow to "
-        "rewrite the prompt into its character prompt-engineering shape. "
-        "KNOWN LIMITATION (#727): Flow rewrites server-side and the reshaped text "
-        "arrives several seconds after the click, which is later than gflow waits "
-        "— so the prompt is currently submitted as typed even when the button is "
-        "found and clicked. Best-effort either way: a missing button is a warning "
-        "on stderr, never a failure."
+        "Click Flow's in-editor Format button and wait for Flow to rewrite the "
+        "prompt into its character prompt-engineering shape before submitting. "
+        "Flow rewrites server-side, so this adds a few seconds, and the reshaped "
+        "prompt is longer and more detailed — which makes the generation itself "
+        "slower too (measured: roughly double). Best-effort: if the button is "
+        "missing, or the rewrite does not arrive in time, the prompt is submitted "
+        "as typed and a warning names which of the two happened."
     ),
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")

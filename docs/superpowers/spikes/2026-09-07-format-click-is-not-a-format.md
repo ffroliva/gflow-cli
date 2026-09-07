@@ -1,4 +1,11 @@
-# The Format button was fixed, and `--format-prompt` still does nothing
+# The Format button was fixed, and `--format-prompt` still did nothing
+
+> **RESOLVED in the same PR ([#729](https://github.com/ffroliva/gflow-cli/pull/729)).** This
+> records the measurement that found the second fault, not a standing limitation.
+> `format_character_prompt` now polls the composer until the text actually changes, and the
+> live e2e passes (`1 passed in 406.20s`, `denon82`, 2026-09-07) asserting the **observed
+> rewrite** rather than the click. Kept because the measurement is what makes the fix
+> defensible, and because the failure class it names outlived it.
 
 **Date:** 2026-09-07 · **Follows:** [#727](https://github.com/ffroliva/gflow-cli/issues/727),
 [#729](https://github.com/ffroliva/gflow-cli/pull/729) ·
@@ -99,8 +106,15 @@ A CLICK IS NOT AN EFFECT.
 
 #727 replaced "the selector missed" with "the selector matched" and stopped there, because
 matching was what the ticket asked for. The council caught that the evidence chain ended
-at the click; measuring one step further showed the feature still does not work. A green
+at the click; measuring one step further showed the feature still did not work. A green
 test that asserts the last thing you happened to be able to observe is not a green feature.
+
+**What the fix cost, measured after the fact.** Making the flag work made the run slower in
+two places: the rewrite itself (~4-5 s), and the generation, because Flow is now given a
+608-character elaboration instead of the 102 characters the user typed. Live: **406 s with
+`--format-prompt` against a 210 s control** on the same account and face prompt. That is not
+a regression to fix — it is the actual cost of the feature, which was free only while it was
+doing nothing. It did overrun the e2e's 300 s budget, which is why that budget moved to 480 s.
 
 See also: [2026-09-07 — the Format button's anchor](2026-09-07-character-format-button-anchor.md),
 [`skills/spike/SKILL.md`](../../../skills/spike/SKILL.md).
