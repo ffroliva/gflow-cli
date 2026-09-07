@@ -253,11 +253,53 @@ nothing for it to lock onto, and it locks onto noise. This is the skill's own li
 | Lip-sync lag | −0.045 s to +0.125 s, when correlation ≥ 0.3 | ITU-R BT.1359 detectability |
 | Transcript word-hit | ≥ 70 % of scripted words | CALIBRATED |
 | Mean volume | > −40 dB | CALIBRATED |
-| Frames, by eye, 1 fps | identity, wardrobe, geometry, no text, no extra person, no border | judgment |
+| Frames, by eye, **every second, in order** | the per-frame list **and** the temporal list below | CONSTRAINT (the procedure), judgment (the verdict) |
 
 **The whole-frame motion median does not work for dialogue [CALIBRATED].** Calibrated on moving scenes it reads above 1.0, but a locked-off talking head sits at 0.3–0.9 while performing normally. Gating on it condemns good work.
 
 **No metric can tell good motion from bad.** A hallucinated object is motion, so it *raises* every score; the highest-scoring take of five was the broken one. The eye stays in the loop.
+
+### The temporal pass — every gate above is blind to it [CONSTRAINT]
+
+Every metric in that table, and every item on the per-frame list, judges **one frame at a
+time**. A clip whose frames are each individually perfect can still be wrong across TIME,
+and that class of defect **passes everything above while raising the motion score**.
+
+```bash
+python clip_qa.py --strip <clips_dir>     # 1 fps contact sheet, cell k = second k
+```
+
+A directory run writes the strips anyway, on purpose — this is the one gate whose input
+must not depend on anyone remembering to produce it. **Read the strip in order** and answer
+all seven; a defect is cited as a second, not as "looks off":
+
+| # | Temporal failure | What it looks like on the strip |
+|---|---|---|
+| 1 | **object scale drift** | something in frame grows or shrinks across cells while the camera is still |
+| 2 | **materialisation / dissolve** | an object or a fragment of one is absent in early cells and present later, or the reverse |
+| 3 | **identity swap** | a face that is one person early and another later |
+| 4 | **wardrobe change** | a garment, colour or prop that changes between cells |
+| 5 | **background morph** | terrain, horizon or architecture that rearranges behind held actors |
+| 6 | **extra limb or person** | a count that changes between cells |
+| 7 | **axis break** | a subject that crosses to the wrong side of frame mid-shot |
+
+**One frame is not the pass, and neither is a four-frame filmstrip [CALIBRATED, one clip].**
+On 2026-09-07 a beat's background monolith started as a distant stub, had a detached
+fragment appear at frame-top around 2.4 s, then grew to several times its size and loomed
+behind the actors. It passed the letterbox check, both stream-length checks, the audio
+check and every motion gate. It was accepted twice: once off a single frame at ~3.3 s, by
+which point the object was already large and stable; and again off a four-frame filmstrip
+on the review page, where the artifact is plainly visible and was read past. The account
+owner caught it by watching the clip.
+
+**The cause was the prompt, and it is a repeatable trap.** The beat asked for *"the first
+sunlight strikes the top of the monolith and travels slowly down its face"* together with
+*"very slow rise"* on the camera. A lighting instruction phrased as downward travel, plus a
+rising camera, reads as licence to build the object top-down and change its scale. Describe
+a light **state**, not a light **journey**, and state explicitly that the object holds its
+size and position — the re-shoot that fixed it says *"already fully visible from the first
+frame, holding exactly the same size, shape and position for the whole shot"* and *"the
+camera fixed and completely still"*.
 
 Failure → delete the clip, change **one** thing, re-check. A second identical failure means the diagnosis is wrong: restage or delete the beat rather than rewrite the prompt again.
 

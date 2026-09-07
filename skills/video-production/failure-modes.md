@@ -37,6 +37,27 @@ Find your symptom in the left column first. Several of these present as somethin
 | A negation is ignored, or the named thing happens | negations name the unwanted action and do not suppress it **[CALIBRATED]** | restate positively: describe what *does* happen |
 | The wrong asset is attached from the picker | the picker deduplicates by exact filename **[CALIBRATED]** | scope every filename to the production |
 
+## The clip is wrong across TIME, not in any single frame
+
+These pass every gate in `clip_qa.py` and every per-frame eye check, because each
+individual frame is fine. They are only visible on the 1 fps strip, read in order
+(`python clip_qa.py --strip <dir>`). A hallucinated object is motion, so these **raise**
+the motion score rather than lowering it.
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| An object grows, shrinks or looms while the camera is still | a prompt describing a light or a gaze **travelling across** the object, and/or a camera move in the same beat | describe a light STATE, not a journey; state that the object holds its size and position for the whole shot; lock the camera |
+| A fragment appears at frame edge, then the object assembles | the same — "strikes the top and travels down its face" reads as build-order | say "already fully visible from the first frame" |
+| A face becomes a different person mid-shot | no identity anchor, or an anchor that lost the reference | rung 1 or 2 of the identity ladder (SKILL.md step 4a) |
+| Wardrobe changes between seconds | the costume is prose-only against an entity whose body plate says otherwise | a costume state is its own entity — SKILL.md step 4c |
+| Terrain or horizon rearranges behind held actors | too little geometry in the prompt, or a camera move the model cannot hold | restate the geometry verbatim; lock the camera |
+| The count of people or limbs changes | a second person carried as prose in a shot that is already crowded | one face-bearing reference per generation; keep the second actor out of frame |
+
+**Measured 2026-09-07**: a background monolith tripled in size and appeared top-down. It
+passed the letterbox check, both stream-length checks, the audio check and every motion
+gate, and was accepted twice — once off a single frame, once off a four-frame filmstrip
+where the defect is plainly visible. Only watching the clip caught it.
+
 ## The audio is wrong
 
 | Symptom | Real cause | Fix |
