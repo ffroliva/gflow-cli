@@ -4,6 +4,15 @@ ffmpeg and ffprobe only — no model, no numpy, no network. Companion to SKILL.m
   python clip_qa.py <clips_dir>         every <xx00>.mp4 in the directory
   python clip_qa.py <clip.mp4>          one file — use this on the assembled cut
   python clip_qa.py --selftest <clip>   shift a known clip and prove the sync detector sees it
+  python clip_qa.py --strip <clip|dir>  write the 1 fps contact sheet(s) the eye gate needs
+
+A directory run writes the strips too, on purpose. Every number below is a PER-FRAME or
+signal property; a clip whose individual frames are all fine can still be wrong across
+TIME -- an object that grows, materialises or dissolves mid-shot passes every gate here
+and RAISES the motion score. That class is only catchable by looking at the whole clip in
+order, so the strip is produced automatically rather than left to whoever remembers.
+Measured 2026-09-07: a beat whose background monolith tripled in size and appeared
+top-down passed bars, stream lengths, audio and the motion gates, and was caught by eye.
 
 Writes motion.json (whole-frame median, cut spikes) and motion_face.json (speech onset,
 face-region median / p10, sync lag and correlation) beside the clips.
@@ -42,6 +51,35 @@ def run(args: list[str], cwd: Path) -> str:
         target = args[args.index("-i") + 1]
         raise RuntimeError(f"ffmpeg failed ({r.returncode}) on {target}:\n{r.stderr[-800:]}")
     return r.stderr
+
+
+def strip(clip: Path, out_dir: Path, fps: float = 1.0) -> Path:
+    """A contact sheet at *fps*, row-major, written beside the clip.
+
+    Cell k is second k, so a defect is cited as a second without labels on the image --
+    deliberately, because `drawtext` needs libfreetype and this file's contract is ffmpeg
+    and ffprobe only (minimal Windows builds ship without it, and a gate that cannot run
+    is not a gate).
+    """
+    dur = float(
+        subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(clip)],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        or 0
+    )
+    n = max(1, round(dur * fps))
+    cols = min(6, n)
+    rows = -(-n // cols)  # ceil
+    out = out_dir / f"{clip.stem}_{fps:g}fps.png"
+    run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(clip),
+         "-vf", f"fps={fps},scale=420:-1,tile={cols}x{rows}",
+         "-frames:v", "1", str(out)],
+        out_dir,
+    )
+    return out
 
 
 def probe_fps(clip: Path) -> float:
@@ -296,6 +334,18 @@ if __name__ == "__main__":
     if sys.argv[1] == "--selftest":
         selftest(Path(sys.argv[2]))
         raise SystemExit(0)
+    if sys.argv[1] == "--strip":
+        tgt = Path(sys.argv[2])
+        srcs = (
+            [tgt]
+            if tgt.is_file()
+            else sorted(p for p in tgt.glob("*.mp4") if re.fullmatch(r"[a-z]{2}\d{2}\.mp4", p.name))
+        )
+        if not srcs:
+            raise SystemExit(f"no clips matched in {tgt} (expected <xx00>.mp4)")
+        for c in srcs:
+            print(f"strip {strip(c, tgt if tgt.is_dir() else tgt.parent).name}")
+        raise SystemExit(0)
     target = Path(sys.argv[1])
     clips = (
         [target]
@@ -316,6 +366,10 @@ if __name__ == "__main__":
             f"sync={f['sync_lag_s']:+.3f}s r={f['sync_r']} prom={f['sync_prominence']:+.3f} "
             f"a/v={f['av_duration_delta_s']:+.3f}s"
         )
+    for clip in clips:
+        # Not optional, and not left to the operator's memory: the numbers above cannot
+        # see a temporal artifact, so the artifact that CAN is produced every run.
+        print(f"strip {strip(clip, out_dir).name}  (cell k = second k, read in order)")
     if target.is_dir():  # a single-file run is a spot check; do not clobber the batch results
         (out_dir / "motion.json").write_text(json.dumps(motion, indent=1))
         (out_dir / "motion_face.json").write_text(json.dumps(face, indent=1))
