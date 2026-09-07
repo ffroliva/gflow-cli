@@ -139,6 +139,62 @@ async def _sweep_surface(page: Any, surface: str) -> dict[str, Any]:
     return counts
 
 
+async def _verify_shipped_anchors(page: Any, surface: str) -> dict[str, Any]:
+    """Count the SHIPPED constants, plus the pre-#730 forms they replaced.
+
+    This is the proof half of the spike. The sweep above says what the DOM contains; this
+    says whether the code we actually ship resolves against it, and whether the form it
+    replaced did not. A fix asserted from a JSON dump is a fix nobody ran.
+    """
+    from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415
+        IMAGE_MODEL_PICKER_TRIGGER,
+        SUBMIT_BUTTON_SELECTORS,
+    )
+
+    pairs = {
+        "submit": (
+            SUBMIT_BUTTON_SELECTORS[0],
+            "button:has(i.google-symbols:text('arrow_forward'))",
+        ),
+        "image_model_picker": (
+            IMAGE_MODEL_PICKER_TRIGGER,
+            "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))",
+        ),
+    }
+    out: dict[str, Any] = {}
+    for name, (shipped, old) in pairs.items():
+        now = await page.locator(shipped).count()
+        before = await page.locator(old).count()
+        out[name] = {"shipped": shipped, "shipped_count": now, "pre_730_count": before}
+        logger.info(
+            "shipped_anchor",
+            surface=surface,
+            anchor=name,
+            shipped_count=now,
+            pre_730_count=before,
+            selector=shipped,
+        )
+
+    # The de-blinded diagnostics: the artifact an incident bundle would carry. Before #730
+    # this returned an empty list on the migrated host, so a bundle from a migrated user
+    # named no ligatures at all.
+    from gflow_cli.diagnostics import STRUCTURAL_DOM_JS  # noqa: PLC0415
+
+    dom = await page.evaluate(STRUCTURAL_DOM_JS)
+    ligatures = dom.get("ligatures") or []
+    out["structural_dom_ligature_count"] = dom.get("ligatureCount", 0)
+    out["structural_dom_ligatures"] = ligatures[:12]
+    out["structural_dom_crop_present"] = dom.get("cropPresent")
+    logger.info(
+        "structural_dom_capture",
+        surface=surface,
+        ligature_count=dom.get("ligatureCount", 0),
+        distinct=len(ligatures),
+        sample=ligatures[:8],
+    )
+    return out
+
+
 async def run_spike(profile_name: str | None, project_id: str) -> None:
     resolved_profile = _resolve_profile(profile_name)
     profile_dir = _make_provider_dir(resolved_profile)
@@ -176,9 +232,31 @@ async def run_spike(profile_name: str | None, project_id: str) -> None:
                 project_editor_url(None, project_id), wait_until="domcontentloaded", timeout=45_000
             )
             await transport._dismiss_blocking_overlays(page, None)  # type: ignore[attr-defined]
-            await page.wait_for_timeout(3000)
+            # Wait for the icons themselves, not a fixed interval. A 3s sleep produced a
+            # zero-ligature composer once already; the thing being counted is the thing to
+            # wait for. Still bounded, and the control below reports the outcome either way.
+            with contextlib.suppress(Exception):
+                await page.locator(".google-symbols").first.wait_for(
+                    state="attached", timeout=20_000
+                )
+            await page.wait_for_timeout(2000)
             report["composer_url"] = page.url
             report["composer"] = await _sweep_surface(page, "composer")
+            report["composer_anchors"] = await _verify_shipped_anchors(page, "composer")
+            # PER-SURFACE CONTROL. The composer originally had none, and a run on
+            # 2026-09-07 came back with zero ligatures of ANY kind on it — the page had
+            # simply not rendered its icons yet at the 3s mark, while an earlier run on the
+            # same URL saw 8. Those zeros are "did not arrive", not "does not match", and
+            # without this they are indistinguishable from a real absence. Every surface
+            # needs its own control; one control on one surface certifies only that surface.
+            composer_hits = sum(v["any_element"] for v in report["composer"].values())
+            report["control_composer_ligature_hits"] = composer_hits
+            logger.info("control_check", surface="composer", ligature_hits=composer_hits)
+            if composer_hits == 0:
+                control_error = (
+                    f"CONTROL MISSED: composer at {page.url} rendered no ligatures at all — "
+                    "its counts measure nothing. Do not read its zeros as absence."
+                )
             await page.screenshot(path=str(out_dir / f"{dump.stem}_composer.png"))
 
             # --- Surface 2: the character editor -------------------------------
@@ -188,6 +266,7 @@ async def run_spike(profile_name: str | None, project_id: str) -> None:
             await page.wait_for_timeout(2000)
             report["editor_url"] = page.url
             report["editor"] = await _sweep_surface(page, "character_editor")
+            report["editor_anchors"] = await _verify_shipped_anchors(page, "character_editor")
             await page.screenshot(path=str(out_dir / f"{dump.stem}_editor.png"))
 
             # CONTROL — recorded, raised on only after the dump is written. A run where
