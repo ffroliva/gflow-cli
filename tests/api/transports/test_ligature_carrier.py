@@ -35,6 +35,8 @@ import pytest
 
 from gflow_cli.api.transports.ui_automation import (
     IMAGE_MODEL_PICKER_TRIGGER,
+    NEW_PROJECT_SELECTORS,
+    PROMPT_FORMAT_SELECTORS,
     SUBMIT_BUTTON_SELECTORS,
 )
 
@@ -148,3 +150,53 @@ class TestClassOnlyAnchorSpansBothCarriers:
             "silent: the picker is best-effort and generation proceeds on whatever tier the "
             "editor opened at"
         )
+
+
+# Every selector gflow sweeps at runtime. A cascade entry that cannot be PARSED is worse
+# than one that misses: the sweep's `except Exception: continue` swallows it silently, so
+# it costs a round trip on every attempt and can never match on any host.
+_SHIPPED_CASCADES = [
+    ("NEW_PROJECT_SELECTORS", NEW_PROJECT_SELECTORS),
+    ("SUBMIT_BUTTON_SELECTORS", SUBMIT_BUTTON_SELECTORS),
+    ("PROMPT_FORMAT_SELECTORS", PROMPT_FORMAT_SELECTORS),
+    ("IMAGE_MODEL_PICKER_TRIGGER", (IMAGE_MODEL_PICKER_TRIGGER,)),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("name", "selectors"), _SHIPPED_CASCADES, ids=[n for n, _ in _SHIPPED_CASCADES]
+)
+async def test_every_shipped_selector_parses(
+    page: Page, name: str, selectors: tuple[str, ...]
+) -> None:
+    """Every entry must be a selector Playwright can evaluate — not just plausible text.
+
+    Written from a live finding: `button:text-matches('^\\+\\s+\\S+$', 'i')` sat in
+    NEW_PROJECT_SELECTORS and RAISED on every evaluation. The sweep caught the exception
+    and moved on, so it never matched anything on any host and nothing ever said so. A
+    unit test that pinned the regex was anchored passed the whole time, because it
+    inspected the string instead of running it.
+
+    `.count()` against a blank page is the cheapest thing that would have caught it: no
+    account, no network, no credits, and it fails loudly on an unparseable selector.
+    """
+    await page.set_content("<html><body></body></html>")
+    for sel in selectors:
+        try:
+            await page.locator(sel).count()
+        except Exception as exc:  # noqa: BLE001 - the failure IS the assertion
+            pytest.fail(f"{name} entry does not parse: {sel!r} -> {type(exc).__name__}: {exc}")
+
+
+@pytest.mark.asyncio
+async def test_the_parse_guard_can_actually_fail(page: Page) -> None:
+    """A guard that only ever passes proves nothing.
+
+    This is the exact string that shipped in NEW_PROJECT_SELECTORS and raised on every
+    evaluation. If Playwright ever starts accepting it, this test fails and the guard
+    above has quietly stopped discriminating.
+    """
+    await page.set_content("<html><body><button>+ Project</button></body></html>")
+    with pytest.raises(Exception):  # noqa: B017, PT011 - any parse failure is the point
+        await page.locator(r"button:text-matches('^\+\s+\S+$', 'i')").count()
