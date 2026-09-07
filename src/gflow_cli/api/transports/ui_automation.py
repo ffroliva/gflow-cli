@@ -53,6 +53,7 @@ from gflow_cli.errors import (
     ConfigurationError,
     ContentPolicyError,
     FlowAppError,
+    FlowHostMigratedError,
     GFlowError,
     RateLimitError,
     UiSelectorDriftError,
@@ -343,6 +344,17 @@ _BODY_SLOT_MOUNT_POLL_MS = 250
 # only — anchoring prevents matching e.g. "+ Filter" or "+ Add member" rows
 # that contain extra words.  Text variants are ordered by onboarding-locale
 # list (same 14 as ``ONBOARDING_SELECTORS``).
+#
+# LABS-ONLY BY MEASUREMENT, not by intent. The migrated `flow.google.com` frontend renders
+# the ligature `add` and renders `add_2` NOWHERE — composer add=1/add_2=0, editor
+# add=2/add_2=0, per-surface controls passing (2026-09-07,
+# docs/superpowers/spikes/2026-09-07-ligature-carrier-and-name-drift.md). This is a ligature
+# NAME drift, not the carrier split #730 fixed, so adding a `mat-icon` twin would not help.
+#
+# It is harmless today only because no migrated path reaches here: `migrated_can_serve`
+# refuses without a `project_id`, `ensure_editor` navigates straight to the project URL, and
+# `character create` requires `--project`. Those guards are what a future port relaxes — so
+# `_enter_editor` now names the host rather than blaming this cascade when it is reached.
 NEW_PROJECT_SELECTORS = (
     # Tier 1 — structural / icon: locale-invariant.
     "button:has(i.google-symbols:text('add_2'))",
@@ -1566,6 +1578,25 @@ class UiAutomationTransport(VideoGenerationMixin):
                 continue
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_new_project.png")
+        # Name the host, not the selector. This cascade anchors on the `add_2` ligature;
+        # the migrated frontend renders `add` and renders `add_2` NOWHERE (measured
+        # 2026-09-07 on both surfaces with per-surface controls —
+        # docs/superpowers/spikes/2026-09-07-ligature-carrier-and-name-drift.md). So on
+        # that host the sweep cannot succeed, and reporting "Could not find the CTA"
+        # sends the reader after selector drift — remediation "check for a newer release,
+        # then file a frontend bug" — for a control that host does not render at all.
+        # Same misdiagnosis shape as a credit shortfall reported as frontend drift (#726).
+        if flow_host_kind(page.url) == "migrated":
+            raise FlowHostMigratedError(
+                detail=(
+                    "Flow served this account's gallery from flow.google.com, whose "
+                    "frontend renders no '+ New project' control gflow can drive, so a "
+                    "project cannot be created here. This is not selector drift and it is "
+                    "not transient — the handoff is a per-account setting. Pass --project "
+                    "with an existing project id, which every migrated-host path requires."
+                    f"{screenshot_clause(shot_path)}"
+                )
+            )
         msg = (
             f"Could not find 'New project' CTA on Flow gallery. "
             f"URL: {page.url}.{screenshot_clause(shot_path)}"
