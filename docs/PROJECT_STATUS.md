@@ -4,6 +4,44 @@
 
 ## Current release
 
+**v0.71.0 — alpha.** **`gflow character create --voice` is verified end to end for the first
+time, and two confident wrong diagnoses shipped and were retracted inside this one release.**
+
+Before v0.71.0 a repo-wide grep for `--voice` across `tests/e2e/` matched **nothing**. Every
+voice test was a unit test of the hardcoded `VOICES` constant, and the one that looked live
+parsed a fixture — so a voice that silently failed to attach was invisible to the whole suite
+while the command exited 0. A live create plus a `character show` read-back now closes that,
+and settles a contradiction between two of our own documents: `sent='Charon' stored='Charon'`,
+so the Capitalized form round-trips and `CHARACTER_RECON.md`'s "the preset id is the lowercased
+name" does not describe today's wire. Both docs also now record that `personalityNotes` is
+**Agent-scoped** — Flow's own editor says the *agent* uses it to craft scenes — so it is not a
+control on the audio engine.
+
+A credit shortfall reports **exit 37** instead of "file a frontend bug", and the actionable
+half is that it is *short for the selected model*, not empty: the measured account held **50**
+credits and asked for `veo-quality`, which costs **100**. Incident bundles are no longer blind
+on the migrated host — the DOM dump queried `i.google-symbols` only, so **every bundle a
+migrated user sent carried an empty ligature list**, which is why #727 and #731 stayed
+invisible. The "+ New project" CTA is anchored structurally on `add` rather than on English
+text.
+
+**Two mistakes and their retractions are both recorded, not just the corrected state.** #739
+asserted the migrated gallery renders no "+ New project" control gflow can drive; a $0 run
+created a project there in one click, and #740 reverts it. Separately the entity guard was
+given the reason "the backend rejects the generation" — entity-bound submissions are in fact
+**accepted and queued** (Flow types them `abra_r2v_8s` and renders them); what fails is the
+**observer**, because `MZZa6b` replies with a null payload and `SUBMIT_REPLY_BUDGET_S` (60 s,
+calibrated on 4.0–4.6 s replies against an idle queue) expires while the video is still
+rendering. The guard stays until that is fixed (#723), because a timeout reported on a healthy
+generation is worse than an honest refusal. Both were unproven negatives overturned by one
+cheap direct observation.
+
+Recorded as **not** verified rather than omitted: whether a bound character's voice reaches
+rendered audio (#738). Attachment is proven; application is not, and the blocker is no longer
+credits or account access but retrieval.
+
+---
+
 **v0.70.0 — alpha.** **`gflow character create` works on the migrated `flow.google.com`
 host — it was never broken there; the driver was not driving.**
 

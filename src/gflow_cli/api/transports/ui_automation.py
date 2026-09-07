@@ -101,8 +101,14 @@ _PROJECT_URL_FRAGMENT = "/project/"
 # 'Nano Banana Pro', so has-text is unambiguous across the three.
 # Tier 1 (structural) slots are reserved for data-* / aria-* anchors once a DOM
 # probe via scripts/dev/capture_locale_invariants.py confirms stable attributes.
+# Class-only carrier anchor (#730): `.google-symbols` matches the labs `<i>` AND the
+# migrated `<mat-icon>`, which both carry the class — verified against a real CSS engine in
+# tests/api/transports/test_ligature_carrier.py. The tag-qualified form matched ZERO on the
+# migrated host, and this constant has neither a carrier twin nor a text fallback, so the
+# miss was total and silent: the picker is best-effort, so generation simply proceeded on
+# whatever tier the editor happened to open at.
 IMAGE_MODEL_PICKER_TRIGGER = (
-    "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
+    "button[aria-haspopup='menu']:has(.google-symbols:text-is('arrow_drop_down'))"
 )
 # Verified live 2026-08-26 (menu read WHILE OPEN, profile denon82):
 #   ['Nano Banana Pro', 'Nano Banana 2', 'Nano Banana 2 Lite']
@@ -233,38 +239,78 @@ PROMPT_INPUT_SELECTORS = (
 # The ``arrow_forward`` ligature is a Material Symbols icon name (not a UI
 # label), so it renders identically regardless of the Chrome profile locale.
 # Use :text() inside :has() (not :has-text() which is invalid inside :has()).
+# Class-only carrier anchor (#730). `.google-symbols` covers the labs `<i>` and the migrated
+# `<mat-icon>` alike — both carry the class, verified against a real CSS engine in
+# tests/api/transports/test_ligature_carrier.py.
+#
+# This cascade was WORKING BY LUCK on the migrated host. Entries 0 and 1 were tag-qualified
+# and matched nothing there; the submit only ever landed because entry 2 matches the
+# `<mat-icon>`'s *text*. Observed live 2026-09-07:
+# `prompt_submitted via="button:has-text('arrow_forward')"`. Two misses at ~2s each were
+# paid on every submit before the fallback rescued it.
+#
+# The old `button:has(i:text(...))` entry is deleted, not kept: with entry 0 class-only it is
+# strictly dominated — anything a bare `<i>` carrying that text could match, the class-only
+# form matches too, and an `<i>` WITHOUT the class is not an icon carrier.
+# `:text-is` (exact), NOT `:text` (substring). The old entry was
+# `i.google-symbols:text('arrow_forward')`, whose substring match also accepts
+# `arrow_forward_ios` — a real Material Symbol. The `<i>` qualifier happened to contain that
+# on labs; dropping it for the class-only carrier made the over-match reachable, and the
+# two-carrier fixture caught it as `matched 3 of 2` before it ever ran live. Same trap as
+# `:text('upload')` accepting `drive_folder_upload` ([[flow-locale-leak-icon-ligatures]]).
 SUBMIT_BUTTON_SELECTORS = (
-    "button:has(i.google-symbols:text('arrow_forward'))",
-    "button:has(i:text('arrow_forward'))",
+    "button:has(.google-symbols:text-is('arrow_forward'))",
     "button:has-text('arrow_forward')",
 )
 
 # Prompt-format button in the character editor ("Format" in EN) — rewrites the
 # typed prompt into Flow's character prompt-engineering shape.
 #
-# Live DOM, verified 2026-07-27 via ``scripts/dev/spike_character_prompt_format.py``
-# against a fresh entity's editor:
+# Live DOM, two frontends, two captures by scripts/dev/spike_character_prompt_format.py:
 #
-#   <button type="button" disabled="">
-#     <i class="… google-symbols …">personal_recommendations</i><span>Format</span>
-#   </button>
+#   labs      2026-07-27:  <button disabled>
+#                            <i class="... google-symbols ...">personal_recommendations</i>
+#                            <span>Format</span></button>
+#   migrated  2026-09-07:  <flow-format-prompt-button>
+#                            <button ... aria-label="Formatar">
+#                              <mat-icon class="... google-symbols ...">
+#                                personal_recommendations</mat-icon>
+#                              <span>Formatar</span></button></flow-format-prompt-button>
 #
-# Three things that dump settled:
-#  1. The ligature IS ``personal_recommendations`` (1 match, unique in the editor).
-#  2. There is NO aria-label — the label is a ``<span>`` child, so an
-#     ``[aria-label*=Format]`` selector matches nothing at all.  The EN fallback has
-#     to be structural (``span:text-is('Format')``), and it is a fallback only:
-#     Flow localises that span to the Chrome *profile* language, which is the
-#     incident-#56 failure mode ([[flow-locale-leak-icon-ligatures]]).
-#  3. The button ships ``disabled`` while the prompt box is empty — see
-#     :meth:`UiAutomationTransport.format_character_prompt` for why that matters.
+# Same ligature, different carrier tag (`<i>` vs `<mat-icon>`) — and the label is
+# localised on both, so it is never an anchor. Hence: custom element first, then the
+# ligature under either carrier. Full evidence, including why the EN `span:text-is`
+# fallback was deleted rather than translated, in
+# docs/superpowers/spikes/2026-09-07-character-format-button-anchor.md.
 #
-# ``:text()`` not ``:has-text()`` (invalid inside ``:has()``); ``text-is`` exact
-# match so a longer ligature cannot partial-match.
+# The button ships `disabled` while the prompt box is empty (both hosts) — see
+# :meth:`UiAutomationTransport.format_character_prompt` for why that matters.
+#
+# `:text()` not `:has-text()` (invalid inside `:has()`); `text-is` exact match so a
+# longer ligature cannot partial-match.
+# Observed-rewrite gate for the Format button (#727). Flow rewrites SERVER-SIDE:
+# measured 2026-09-07 on the migrated host, the reshaped text reached the composer
+# at ~5.4s. The budget is deliberately generous rather than fitted to that single
+# sample -- the costs are asymmetric. Too long is bounded latency on an opt-in flag
+# whose expiry falls back to exactly the old behaviour; too short silently
+# reintroduces the bug, invisibly, which is what shipped. `elapsed_ms` is logged on
+# every success so a real distribution accrues in production instead of being
+# guessed here from n=1.
+_FORMAT_REWRITE_TIMEOUT_S = 30.0
+# Jittered, like every other wait in this module: a fixed cadence is a
+# deterministic signature in front of Google's anti-bot stack.
+_FORMAT_REWRITE_POLL_MS = 250
+# Slate/ProseMirror re-render and normalise whitespace, so a bare `!=` fires on
+# churn. Normalisation moves the length by a handful of characters; the observed
+# rewrite moved it by 632 (19 -> 651). 16 sits far above the former and far below
+# the latter.
+_FORMAT_REWRITE_MIN_DELTA = 16
+
 PROMPT_FORMAT_SELECTORS: tuple[str, ...] = (
+    "flow-format-prompt-button button",
+    "button:has(mat-icon:text-is('personal_recommendations'))",
     "button:has(i.google-symbols:text-is('personal_recommendations'))",
     "button:has(i:text-is('personal_recommendations'))",
-    "button:has(span:text-is('Format'))",
 )
 
 # Self-contained, locale-independent triptych instruction for body generation.
@@ -297,12 +343,35 @@ _BODY_SLOT_MOUNT_POLL_MS = 250
 # only — anchoring prevents matching e.g. "+ Filter" or "+ Add member" rows
 # that contain extra words.  Text variants are ordered by onboarding-locale
 # list (same 14 as ``ONBOARDING_SELECTORS``).
+#
+# LABS-ONLY BY MEASUREMENT, not by intent. The migrated `flow.google.com` frontend renders
+# the ligature `add` and renders `add_2` NOWHERE — composer add=1/add_2=0, editor
+# add=2/add_2=0, per-surface controls passing (2026-09-07,
+# docs/superpowers/spikes/2026-09-07-ligature-carrier-and-name-drift.md). This is a ligature
+# NAME drift, not the carrier split #730 fixed, so adding a `mat-icon` twin would not help.
+#
+# It is harmless today only because no migrated path reaches here: `migrated_can_serve`
+# refuses without a `project_id`, `ensure_editor` navigates straight to the project URL, and
+# `character create` requires `--project`. Those guards are what a future port relaxes — so
+# `_enter_editor` now names the host rather than blaming this cascade when it is reached.
 NEW_PROJECT_SELECTORS = (
     # Tier 1 — structural / icon: locale-invariant.
-    "button:has(i.google-symbols:text('add_2'))",
-    "button:has(i:text('add_2'))",
-    "[role='button']:has(i.google-symbols:text('add_2'))",
-    r"button:text-matches('^\+\s+\S+$', 'i')",
+    # The migrated `flow.google.com` gallery renders the CTA with the ligature **`add`**,
+    # under a `<mat-icon>`, and renders `add_2` nowhere on that surface (measured
+    # 2026-09-07, denon82, control 47 ligature nodes). Class-only so one entry covers both
+    # carriers. Listed FIRST because without it every Tier-1 entry below misses there and
+    # the CTA survives only on the English text fallback — which is the anti-pattern this
+    # tier exists to avoid, and which fails outright on a non-EN migrated profile.
+    "button:has(.google-symbols:text-is('add'))",
+    "[role='button']:has(.google-symbols:text-is('add'))",
+    "button:has(.google-symbols:text-is('add_2'))",
+    "[role='button']:has(.google-symbols:text-is('add_2'))",
+    # `button:text-matches('^\+\s+\S+$', 'i')` used to sit here. It is not a valid
+    # Playwright selector and RAISES on every evaluation — measured twice against the live
+    # gallery, both runs `ERR Error`. `except Exception: continue` in the sweep swallowed
+    # that, so it has never matched anything on any host while costing a round trip per
+    # attempt. Deleted rather than repaired: the `add` anchor above is what the "+ <word>"
+    # regex was reaching for, and it is structural rather than a text shape.
     # Tier 2 — localised text: 14 locales (EN / PT / ES / FR / DE / IT / NL /
     # JA / ZH / KO / PL / RU / TR / ID).
     "button:has-text('New project')",  # EN
@@ -1520,6 +1589,12 @@ class UiAutomationTransport(VideoGenerationMixin):
                 continue
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_new_project.png")
+        # NO migrated-host branch here. #739 added one asserting that
+        # flow.google.com "renders no '+ New project' control gflow can drive". That was an
+        # UNPROVEN NEGATIVE, generalised from a sweep of two other surfaces, and a live run
+        # disproved it in one click: the CTA is there, carries the `add` ligature, and the
+        # Tier-1 entry above now matches it. Reaching this line on a migrated host means the
+        # anchor missed — which is selector drift, exactly what the message says.
         msg = (
             f"Could not find 'New project' CTA on Flow gallery. "
             f"URL: {page.url}.{screenshot_clause(shot_path)}"
@@ -1621,40 +1696,155 @@ class UiAutomationTransport(VideoGenerationMixin):
         log.info("ui_automation.prompt_submitted", via="enter_key_fallback")
         await page.keyboard.press("Enter")
 
-    async def format_character_prompt(self, page: Page) -> bool:
-        """Click Flow's prompt-format button, trying selectors in priority order.
+    async def format_character_prompt(
+        self,
+        page: Page,
+        *,
+        prompt_box: Any,
+        typed_text: str,
+    ) -> bool:
+        """Click Flow's Format button and WAIT for the rewrite to actually land.
 
         Best-effort, like :meth:`_select_character_model`: formatting is a nicety
-        on top of a prompt that already submits fine, so a missing button logs a
-        warning and returns ``False`` rather than failing the generation.
+        on top of a prompt that already submits fine, so every failure logs and
+        returns ``False`` rather than failing the generation. Callers submit
+        regardless — which is why the return value must not lie.
 
-        The enabled check is NOT redundant with the visible check.  Flow ships this
+        **Returning ``True`` means the composer's text changed, not that a button
+        was pressed.** Flow rewrites *server-side*: measured 2026-09-07 on the
+        migrated host, the click fires a ``batchexecute`` round trip and the
+        reshaped text reaches the composer at **~5.4 s**, while this method used to
+        wait ``_jitter_ms(500)`` and return. ``_send_prompt`` submits on the very
+        next line, so ``--format-prompt`` shipped the prompt the user typed and
+        discarded the rewrite — on every run, with ``prompt_formatted`` logged and
+        exit 0. The defect was never the duration. It was reporting a success we
+        had not observed: the absence of a completion inside a window we chose,
+        recorded as a completion. See
+        ``docs/superpowers/spikes/2026-09-07-format-click-is-not-a-format.md``.
+
+        The gate is the DOM, not the wire. ``eAenfb``'s response arrives **4.2 s
+        before** the text settles, so awaiting it would reproduce the same early
+        submit — and an undocumented ``batchexecute`` rpcid is not an anchor this
+        project is willing to depend on. Comparing the box against the string we
+        inserted is locale-invariant by construction: it never reads a display label.
+
+        A **length delta** rather than ``!=`` because Slate/ProseMirror re-render
+        and normalise whitespace; bare inequality would fire on that churn and
+        re-report the same false success with better telemetry.
+
+        The enabled check is NOT redundant with the visible check. Flow ships this
         button ``disabled`` while the prompt box is empty (verified 2026-07-27), and
         a disabled button is still *visible* — so visibility alone would hand a
         disabled element to ``click()``, which auto-waits for actionability and
-        stalls for the full timeout before failing.  Callers invoke this only after
-        inserting prompt text, so a disabled button here means the editor has not
-        settled: skip it rather than block the submit behind a doomed wait.
+        stalls for the full timeout. A disabled match means THAT anchor resolved to
+        the wrong element, so the cascade continues rather than aborting: the old
+        ``return False`` here let one stale anchor kill every selector behind it.
         """
+        button = await self._locate_format_button(page, prompt_box=prompt_box)
+        if button is None:
+            log.warning("ui_automation.format_button_not_found", selectors=PROMPT_FORMAT_SELECTORS)
+            return False
+
+        locator, selector = button
+        try:
+            # Explicit short timeout: never inherit Playwright's 30s default on
+            # a best-effort nicety sitting in front of the submit.
+            await locator.click(timeout=5000)
+        except Exception as e:
+            log.warning("ui_automation.format_click_failed", selector=selector, error=str(e))
+            return False
+        log.info("ui_automation.format_button_clicked", selector=selector)
+
+        typed = typed_text.strip()
+        deadline = time.monotonic() + _FORMAT_REWRITE_TIMEOUT_S
+        started = time.monotonic()
+        while time.monotonic() < deadline:
+            await page.wait_for_timeout(_jitter_ms(_FORMAT_REWRITE_POLL_MS))
+            try:
+                current = (await prompt_box.inner_text()).strip()
+            except Exception as e:
+                log.debug("ui_automation.format_readback_failed", error=str(e))
+                continue
+            # GROWTH, not absolute delta. `abs()` accepted change in either direction, and
+            # Flow CLEARS the box before repopulating it — so a poll landing in that window
+            # read "" and `abs(0 - 19) >= 16` passed. `prompt_formatted` then logged
+            # `prompt_len_after=0` and `_click_submit` ran on the next line, submitting an
+            # EMPTY prompt on a path that spends image quota (#745). A success signal that
+            # fires on the ABSENCE of the thing it measures is the defect #727 was about,
+            # rebuilt inside its own fix.
+            if len(current) < len(typed) + _FORMAT_REWRITE_MIN_DELTA or current == typed:
+                continue
+            # And confirm it settled. One read can land mid-write; the rewrite observed live
+            # was a single discrete swap, but that was sampled at 250ms and a partial write
+            # between samples was never ruled out. Two agreeing reads cost one interval.
+            await page.wait_for_timeout(_jitter_ms(_FORMAT_REWRITE_POLL_MS))
+            try:
+                settled = (await prompt_box.inner_text()).strip()
+            except Exception as e:
+                log.debug("ui_automation.format_readback_failed", error=str(e))
+                continue
+            if settled != current:
+                log.debug("ui_automation.format_still_settling", chars=len(settled))
+                continue
+            # Lengths and a stable hash only. Flow ELABORATES a terse description into a
+            # detailed physical one, so the rewrite is more PII-dense than the input, and
+            # structlog is not governed by GFLOW_CLI_HISTORY_PROMPTS — no operator control
+            # would apply to it.
+            log.info(
+                "ui_automation.prompt_formatted",
+                selector=selector,
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                prompt_len_before=len(typed),
+                prompt_len_after=len(current),
+                prompt_hash=_prompt_hash_stable(current),
+            )
+            return True
+
+        # Say what was observed, never what Flow "failed" to do: an unchanged box
+        # also covers Flow declining, erroring, or judging the prompt already
+        # formatted. None of those were provoked (2026-09-07), so none are claimed.
+        log.warning(
+            "ui_automation.format_not_observed",
+            selector=selector,
+            waited_s=_FORMAT_REWRITE_TIMEOUT_S,
+            prompt_len=len(typed),
+        )
+        return False
+
+    async def _locate_format_button(self, page: Page, *, prompt_box: Any) -> Any:
+        """Resolve the Format button belonging to the ACTIVE composer.
+
+        Returns ``(locator, selector)`` or ``None``.
+
+        Box identity matters here. :meth:`_locate_body_prompt_box` documents that
+        on a two-box cohort "the LAST mounted box is the target" — the body
+        composer, never the portrait's. A page-global ``.first`` on the format
+        button therefore resolves to the PORTRAIT composer's button while the body
+        prompt is the one that was just typed into, reshaping the wrong prompt (or
+        finding a disabled button and giving up). This mirrors that existing
+        convention rather than inventing a second one: when more than one prompt
+        box is mounted, take the last matching button.
+        """
+        try:
+            boxes = await page.locator(self._CHARACTER_EDITOR_READY_SELECTOR).count()
+        except Exception:
+            boxes = 1
         for selector in PROMPT_FORMAT_SELECTORS:
             try:
-                locator = page.locator(selector).first
-                if not await locator.is_visible(timeout=1000):
+                matches = page.locator(selector)
+                locator = matches.last if boxes > 1 else matches.first
+                # No timeout argument: Playwright documents it as ignored here —
+                # `is_visible()` never waits, it answers from the current DOM, so a
+                # non-matching entry costs one round trip rather than a second.
+                if not await locator.is_visible():
                     continue
                 if not await locator.is_enabled():
-                    log.warning("ui_automation.format_button_disabled", selector=selector)
-                    return False
-                # Explicit short timeout: never inherit Playwright's 30s default on
-                # a best-effort nicety sitting in front of the submit.
-                await locator.click(timeout=5000)
-                await page.wait_for_timeout(_jitter_ms(500))
-                log.info("ui_automation.prompt_formatted", selector=selector)
-                return True
+                    log.debug("ui_automation.format_button_disabled", selector=selector)
+                    continue
+                return (locator, selector)
             except Exception as e:
                 log.debug("ui_automation.format_selector_failed", selector=selector, error=str(e))
-
-        log.warning("ui_automation.format_button_not_found", selectors=PROMPT_FORMAT_SELECTORS)
-        return False
+        return None
 
     async def _send_prompt(
         self,
@@ -1694,7 +1884,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         await page.wait_for_timeout(_jitter_ms(500))
 
         if format_prompt:
-            await self.format_character_prompt(page)
+            # The bound box and the exact string we inserted — the rewrite is only
+            # detectable against a baseline we know landed, and holding that baseline
+            # on `self` would couple it across generations on a reused page.
+            await self.format_character_prompt(page, prompt_box=input_box, typed_text=prompt_text)
 
         await self._click_submit(page)
 
@@ -1762,7 +1955,10 @@ class UiAutomationTransport(VideoGenerationMixin):
             prompt_len=len(full_prompt),
         )
         if format_prompt:
-            await self.format_character_prompt(page)
+            # `input_box` is the BODY composer, bound by _locate_body_prompt_box —
+            # passing it is what keeps the format click off the portrait's box on a
+            # two-box cohort.
+            await self.format_character_prompt(page, prompt_box=input_box, typed_text=full_prompt)
 
         await self._click_submit(page)
 
@@ -2262,7 +2458,13 @@ class UiAutomationTransport(VideoGenerationMixin):
                     }
                 }
                 // Google Symbols icons present anywhere — gives us the ligature names Flow uses.
-                const _gsQuery = 'i.google-symbols, span.google-symbols';
+                // Class-only, NOT tag-qualified. This query used to read
+                // 'i.google-symbols, span.google-symbols' and therefore returned ZERO on the
+                // migrated host, where every ligature rides a <mat-icon>. The instrument we
+                // reach for to diagnose selector drift was blind to the host the drift lives
+                // on — which is why #727 and #731 stayed invisible, and why an incident
+                // bundle from a migrated user reported no ligatures at all (#730).
+                const _gsQuery = '.google-symbols';
                 for (const el of document.querySelectorAll(_gsQuery)) {
                     const lig = (el.innerText || '').trim();
                     if (lig) result.google_symbols_ligatures.push({

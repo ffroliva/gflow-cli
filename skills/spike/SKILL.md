@@ -92,6 +92,33 @@ Navigation, DOM reads, `flow.createEntity`, `batchDeleteAssets` and a reCAPTCHA 
 all **free**. Image generation costs daily **quota**, zero credits. Video costs
 **credits**. Say which in the spike's docstring, and delete anything the spike created.
 
+## Profile etiquette — never kill a browser on a profile you do not hold
+
+**`ProfileLockedError` is the lease working, not a stale lock.** It means another
+process owns that profile right now, and the error carries the holder's evidence. Read
+it. Then wait, or spike on a different profile. Both are cheap; neither can corrupt
+anything.
+
+**Never kill Chrome processes to clear the way.** Two Chrome instances on one
+`user_data_dir` is the corruption the lease exists to prevent, and a process list cannot
+tell you which browser belongs to whom — so "these look like my orphans" is a guess made
+against a fact the lease already gave you.
+
+> **Written from the incident it prevents.** On 2026-09-07 two sessions worked this repo
+> at once. One ran the e2e suite on `denon82` and held its lease. The other hit
+> `ProfileLockedError`, read the resulting Chrome processes as orphans of its own spike,
+> and killed eighteen of them in two batches; nine belonged to the running suite. It then
+> diagnosed the cause as "spike scripts do not take the lease" — but its own spike went
+> through `FlowApiClient`, which acquires at `api/client.py` before Chrome starts, so it
+> *had* held the lease. **The tool was correct and was overruled by a process list.**
+> A real defect did surface underneath — three scripts launched Chrome outside any lease,
+> fixed with a guard test in #717 — but it was not what caused the incident, and fixing it
+> would not have prevented it. This rule would have.
+
+If you write a spike that launches Chrome itself rather than through `FlowApiClient`,
+wrap it: `async with ProfileLease(profile_dir), async_playwright() as pw:`. Chrome must
+never start on a profile this process does not own.
+
 ## Output
 
 - Evidence → `scripts/dev/_spike_out/` (**gitignored**; captures carry Bearer tokens,

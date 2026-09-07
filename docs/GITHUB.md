@@ -38,8 +38,10 @@ This workflow must not checkout the PR branch, install dependencies, run tests, 
 
 ### PR-Triage Autopilot (VPS Sandbox)
 
-To automate deeper verification, an hourly `hermes-ops` cron job runs on the host VPS to triage eligible external PRs. 
-- It uses the deterministic **Stage 0 pre-filter** (`pr_triage_gate.py`) to confirm eligibility.
+> **Moved out of this repo in v0.71.0.** The runner is hosted privately; `scripts/autopilot/`, `eval/pr_triage_*` and `pr_triage_gate.py` are no longer here. The design notes below are kept as history — do not go looking for the scripts.
+
+An hourly `hermes-ops` cron job triaged eligible external PRs on the host VPS.
+- It used the deterministic **Stage 0 pre-filter** (`pr_triage_gate.py`) to confirm eligibility.
 - It fetches the PR branch and runs the full `/gflow:pr-council-review` inside an **ephemeral, non-root, read-only Docker container sandbox** (with restricted network egress and no write credentials).
 - The host orchestrator posts the review comment to the PR and alerts the maintainer via Telegram.
 - For design details, see [2026-07-04-pr-triage-autopilot-design.md](superpowers/specs/2026-07-04-pr-triage-autopilot-design.md) and the implementation plan [PLAN.md](superpowers/plans/2026-07-08-pr-triage-autopilot/PLAN.md).

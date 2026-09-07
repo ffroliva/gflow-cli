@@ -44,6 +44,8 @@ from typing import Any
 
 from playwright.async_api import async_playwright
 
+from gflow_cli.profile_lease import ProfileLease
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _spike_common import (  # noqa: E402, isort: skip
@@ -105,7 +107,10 @@ async def _main(profile: str, port: int) -> int:
     step("profile", f"{profile} -> {profile_dir}")
     findings: dict[str, Any] = {"profile": profile, "port": port}
 
-    async with async_playwright() as pw:
+    # Own the profile before Chrome starts, exactly as FlowApiClient does. The
+    # CDP client below ATTACHES to this same browser and takes no lease of its
+    # own — attaching owns nothing; launching does.
+    async with ProfileLease(profile_dir), async_playwright() as pw:
         # Stand in for "a human has Chrome open": a real Chrome (channel), real profile,
         # CDP port. This is also the answer to Chrome discovery — no path hunting.
         step("launch", f"chrome channel, --remote-debugging-port={port}")

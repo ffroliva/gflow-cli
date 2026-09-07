@@ -48,6 +48,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 from typing import cast
@@ -74,7 +75,14 @@ _DEFAULT_PERSONALITY = "calma, atenciosa — fala pausado; née à Paris, crian�
 
 # Character create runs a real image generation then patches the entity over
 # REST. Generous because of real Flow latency (image-gen + entity PATCH).
-_CREATE_TIMEOUT_S = 300
+# A create drives TWO prompts (face, then body), and `--format-prompt` now waits for
+# Flow's server-side rewrite on each — up to `_FORMAT_REWRITE_TIMEOUT_S` (30s) apiece
+# when the rewrite never lands. That is +60s worst case on a run that already took
+# ~220s, which overran the old 300s budget and produced a hang rather than a failure:
+# `subprocess.run` times out, kills the child, then blocks draining pipes that
+# surviving Chrome grandchildren still hold open. Observed 2026-09-07, 32 minutes
+# before it was stopped by hand.
+_CREATE_TIMEOUT_S = 480
 _SHOW_TIMEOUT_S = 60
 
 
@@ -127,16 +135,45 @@ def _character_env(e2e_env: dict[str, str]) -> dict[str, str]:
 def _run_gflow(
     args: list[str], env: dict[str, str], timeout: float
 ) -> subprocess.CompletedProcess[str]:
-    """Run ``gflow`` in a subprocess and capture stdout/stderr/exit-code."""
+    """Run ``gflow`` in a subprocess and capture stdout/stderr/exit-code.
+
+    A timeout must FAIL, and it must fail WITH the output. Pipes give neither here.
+    ``subprocess.run(timeout=...)`` kills the child and re-enters ``communicate()``
+    to drain — but a browser-driving child leaves Chrome grandchildren holding the
+    inherited write handles, so the drain never returns. Observed 2026-09-07: a
+    create that overran its budget sat for 32 minutes at near-zero CPU, looking
+    exactly like slow progress. Bounding that drain fixed the hang and then threw
+    the output away, which made the next failure diagnose nothing — the timeout
+    reported a command and a duration, and not one transport event.
+
+    Redirecting to files removes the class rather than the symptom: nothing blocks
+    on a reader, and whatever the run logged before it died is on disk and readable
+    afterwards. Five sibling e2e modules carry their own pipe-based ``_run_gflow``;
+    only this one drives a browser long enough today for the difference to show.
+    """
     cmd = [sys.executable, "-m", "gflow_cli", *args]
-    return subprocess.run(
-        cmd,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+    with tempfile.TemporaryDirectory(prefix="gflow-e2e-") as td:
+        out_path = Path(td) / "stdout.txt"
+        err_path = Path(td) / "stderr.txt"
+        with (
+            out_path.open("w", encoding="utf-8") as out_f,
+            err_path.open("w", encoding="utf-8") as err_f,
+        ):
+            proc = subprocess.Popen(cmd, env=env, stdout=out_f, stderr=err_f)  # noqa: S603
+            timed_out = False
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                proc.kill()
+                proc.wait(timeout=30)
+        # Files are flushed and closed here, so the read sees everything the run
+        # emitted — including, on a timeout, the last event before it stalled.
+        stdout = out_path.read_text(encoding="utf-8", errors="replace")
+        stderr = err_path.read_text(encoding="utf-8", errors="replace")
+    if timed_out:
+        raise subprocess.TimeoutExpired(cmd, timeout, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 def _parse_json_stdout(result: subprocess.CompletedProcess[str], what: str) -> dict[str, object]:
@@ -267,14 +304,27 @@ def test_character_create_binds_parent_entity(e2e_env: dict[str, str]) -> None:
 
 
 def test_character_create_partial_saga_recoverable(e2e_env: dict[str, str]) -> None:
-    """Re-running ``character create`` with the SAME name must RESUME, not
-    double-spend.
+    """A create interrupted mid-saga RESUMES on the next run instead of double-spending.
 
-    A true mid-saga kill (SIGKILL between image-gen and entity PATCH) is a
-    MANUAL exercise — it cannot be reliably injected from a black-box subprocess
-    test. This test asserts the *resume* half of the saga contract observably:
-    a second create with the same name does NOT create a second entity / second
-    face workflow set.
+    The crash IS injected here, by flipping the recorded operation row back to
+    ``status='started'`` between the two runs — exactly the state a SIGKILL between
+    image-gen and the entity PATCH leaves behind, and exactly what the resume path keys
+    on (``repository.find_incomplete_character`` filters ``status = 'started'``,
+    `repository.py:1139`).
+
+    **This test previously asserted something else and could never pass.** Written
+    2026-07-06 (v0.25.0), it ran two ordinary, fully-completing creates and asserted the
+    second reused the first's entity. A completed run is recorded ``SUCCEEDED``
+    (``recorder.record_character_completed``), so ``find_incomplete_character`` never
+    matched it, the saga took its ``else`` branch and minted a second entity — every
+    time, on every host. The assertion was red by construction for two months and nobody
+    saw it, because ``e2e_character`` is opt-in (``GFLOW_CLI_E2E_RUN_CHARACTER=1``) and
+    the nightly canary runs only ``e2e_auth``. First observed in the 2026-09-07 sweep.
+
+    Note what is NOT claimed: ``character create`` is **not** idempotent on name. Two
+    ordinary creates with the same name legitimately produce two entities — nothing in
+    the CLI, the docs or the saga promises otherwise. Resume-after-crash is the
+    guarantee; same-name reuse never was.
 
     Verification ledger:
       - both runs exit 0.
@@ -320,6 +370,35 @@ def test_character_create_partial_saga_recoverable(e2e_env: dict[str, str]) -> N
     first_wf = first_char["workflow_ids"]
     assert isinstance(first_wf, list)
 
+    # ---- inject the crash -------------------------------------------------
+    # The saga completed, so its row reads SUCCEEDED. Flip it back to 'started' to
+    # stand in for a process killed after the entity was minted but before the PATCH
+    # landed. Nothing else is touched: the entity really exists on Flow, the recorded
+    # workflow ids are real, so the resume path is exercised against true state rather
+    # than a fabricated row that would PATCH a non-existent entity.
+    # Status ALONE is not the crash state, and getting that wrong makes this test lie.
+    # `record_character_completed` REPLACES metadata_json with {workflow_ids,
+    # primary_media_ids, ...} (recorder.py, `meta` is built fresh), dropping the
+    # {entity_id, name} that `record_character_started` wrote. So a completed row flipped
+    # to 'started' has no `$.name` -- and `find_incomplete_character` matches on
+    # `json_extract(metadata_json, '$.name')` (repository.py), so it cannot see it. A real
+    # crash never leaves that shape: it dies BEFORE completion, with name and entity_id
+    # still present. Restore them, or this asserts against a state no crash produces.
+    #
+    # Measured, not assumed: the status-only flip failed live on 2026-09-07 with a fresh
+    # entity minted, and that failure is what exposed the metadata overwrite.
+    crashed_meta = json.dumps({"entity_id": first_entity, "name": name, "workflow_ids": first_wf})
+    conn = _open_db(env)
+    try:
+        flipped = conn.execute(
+            "UPDATE operations SET status='started', metadata_json=? WHERE mode='character'",
+            (crashed_meta,),
+        ).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    assert flipped == 1, f"expected exactly one character row to interrupt, flipped {flipped}"
+
     second = _run_gflow(create_args, env=env, timeout=_CREATE_TIMEOUT_S)
     assert second.returncode == 0, (
         f"second (resume) character create exited {second.returncode}\n"
@@ -331,8 +410,8 @@ def test_character_create_partial_saga_recoverable(e2e_env: dict[str, str]) -> N
 
     # Same entity — the resume did NOT mint a new one.
     assert second_char["entity_id"] == first_entity, (
-        "re-run with the same name created a DIFFERENT entity (double-spend): "
-        f"{second_char['entity_id']!r} != {first_entity!r}"
+        "the interrupted saga was not resumed: the re-run minted a NEW entity and "
+        f"re-spent the face quota. {second_char['entity_id']!r} != {first_entity!r}"
     )
     # Workflow set did not double.
     second_wf = second_char["workflow_ids"]
@@ -519,13 +598,29 @@ def test_character_create_format_prompt_clicks_format_button(e2e_env: dict[str, 
         for line in result.stderr.splitlines()
         if line.strip().startswith("{")
     ]
+    # `prompt_formatted` is emitted only after the composer's text was OBSERVED to
+    # change (#727 part 2). Before that it fired on the click, so this same
+    # assertion passed for a year while the rewrite was discarded by the submit —
+    # a green test asserting the only thing that was observable at the time.
     assert "ui_automation.prompt_formatted" in events, (
-        "--format-prompt did not click Flow's Format button — the selector "
-        "cascade (anchored on the `personal_recommendations` ligature) has "
-        f"likely drifted. Observed events: {sorted(set(events))}"
+        "--format-prompt did not produce a rewritten prompt. Two distinct causes, "
+        "and the events say which: `format_button_not_found` means the selector "
+        "cascade drifted (probe it with scripts/dev/spike_character_prompt_format.py "
+        "before assuming the button is gone); `format_not_observed` means the button "
+        "was clicked and Flow's rewrite never landed inside the budget — probe that "
+        f"with scripts/dev/spike_format_prompt_effect.py. Observed: {sorted(set(events))}"
     )
-    for miss in ("ui_automation.format_button_not_found", "ui_automation.format_button_disabled"):
-        assert miss not in events, f"format button was skipped ({miss}), not clicked"
+    # The button was clicked, so the click event must be there too — if
+    # `prompt_formatted` ever appears without it, the gate has been short-circuited.
+    assert "ui_automation.format_button_clicked" in events, (
+        f"prompt_formatted without format_button_clicked: {sorted(set(events))}"
+    )
+    for miss in (
+        "ui_automation.format_button_not_found",
+        "ui_automation.format_click_failed",
+        "ui_automation.format_not_observed",
+    ):
+        assert miss not in events, f"--format-prompt degraded ({miss}), see the events above"
 
 
 # ---------------------------------------------------------------------------
@@ -606,4 +701,144 @@ def test_create_never_leaves_an_untitled_orphan(e2e_env: dict[str, str]) -> None
     assert created_name == name, (
         f"the new entity is named {created_name!r}, not {name!r} — the final PATCH did not land, "
         "which is exactly what an orphan looks like"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scenario #8 — `--voice` and `--personality` actually ATTACH (create -> read-back)
+# ---------------------------------------------------------------------------
+
+
+def test_character_create_attaches_voice_and_personality(e2e_env: dict[str, str]) -> None:
+    """Live ``create --voice --personality`` then ``show``: BOTH must survive the round trip.
+
+    **Until this test, ``--voice`` had never been exercised end-to-end.** A repo-wide
+    grep for ``--voice`` across ``tests/e2e/`` matched nothing. Every voice test in the
+    suite is a unit test of the hardcoded ``VOICES`` constant — list length,
+    capitalisation, the sample-URL string pattern, dataclass frozen-ness — and not one
+    reaches Flow. The single test that *looks* live (``chars[0].voice == "gacrux"``)
+    parses a fixture. So a voice that silently failed to attach was invisible to the
+    entire suite while ``character create`` exited 0, and the sibling test that covers
+    the parent-entity binding stops one field short of the voice.
+
+    Personality is asserted **hard** here on purpose. ``test_character_personality_utf8``
+    guards it as ``if shown_personality:`` — a soft check that passes vacuously when the
+    read-back omits the field entirely, which is precisely the failure worth catching.
+
+    **Voice case is compared case-INSENSITIVELY, deliberately.** The wire case of
+    ``presetVoiceId`` is unverified and the repo's own two documents disagree:
+    ``docs/CHARACTER.md`` calls the Capitalized UI name canonical (and flags the
+    question UNVERIFIED in the same section), while ``docs/CHARACTER_RECON.md`` records
+    ``presetVoiceId: "gacrux"`` from a live capture and states the preset id is the
+    lowercased name. gflow normalises to Capitalized and sends that. Pinning either
+    spelling would make this red for a reason that is not the defect it exists to catch
+    — the defect is a voice that does not attach AT ALL. The spelling Flow actually
+    returned is reported in the assertion message so a single run settles the
+    contradiction with evidence instead of another opinion.
+
+    Cost: one image generation, zero credits (no ``--body-prompt``); daily-capped.
+    """
+    _require_character_optin()
+    project_id = _require_project()
+    env = _character_env(e2e_env)
+    profile = env["GFLOW_CLI_PROFILE"]
+    locale = os.environ.get(_LOCALE_ENV, _DEFAULT_LOCALE)
+    face = os.environ.get(_FACE_ENV, _DEFAULT_FACE_PROMPT)
+
+    # A voice whose canonical spelling differs from its lowercase form, so the
+    # read-back tells us which one Flow stored.
+    voice = "Charon"
+    marker = uuid.uuid4().hex[:8]
+    name = f"voice-attach-{marker}"
+    # Unique marker so the read-back cannot match a leftover character.
+    personality = f"{_DEFAULT_PERSONALITY} — marcador {marker}"
+
+    result = _run_gflow(
+        [
+            "character",
+            "create",
+            "--project",
+            project_id,
+            "--name",
+            name,
+            "--face-prompt",
+            face,
+            "--voice",
+            voice,
+            "--personality",
+            personality,
+            "--locale",
+            locale,
+            "--profile",
+            profile,
+            "--json",
+        ],
+        env=env,
+        timeout=_CREATE_TIMEOUT_S,
+    )
+    assert result.returncode == 0, (
+        f"character create (voice) exited {result.returncode}\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    payload = _parse_json_stdout(result, "character create (voice)")
+    created = cast(dict[str, object], payload["character"])
+    entity_id = created.get("entity_id")
+    assert entity_id, f"create returned empty entity_id: {created}"
+
+    # ---- the create payload reports what gflow believes it sent ----
+    created_voice = created.get("voice")
+    assert created_voice, (
+        f"create payload carries no voice at all: {created} — gflow was asked for "
+        f"{voice!r} and reported nothing, so the PATCH never carried audioReferences"
+    )
+
+    # ---- read-back from Flow: the authoritative check ----
+    show = _run_gflow(
+        [
+            "character",
+            "show",
+            "--project",
+            project_id,
+            "--id",
+            str(entity_id),
+            "--profile",
+            profile,
+            "--json",
+        ],
+        env=env,
+        timeout=_SHOW_TIMEOUT_S,
+    )
+    assert show.returncode == 0, (
+        f"character show (voice) exited {show.returncode}\n"
+        f"STDOUT:\n{show.stdout}\nSTDERR:\n{show.stderr}"
+    )
+    shown_payload = _parse_json_stdout(show, "character show (voice)")
+    shown = cast(dict[str, object], shown_payload["character"])
+
+    # THE assertion this test exists for: Flow itself must report a voice on the
+    # entity. A None here means `--voice` was accepted by the CLI, exited 0, and
+    # attached nothing — the silent failure the suite could not see.
+    shown_voice = shown.get("voice")
+    assert shown_voice, (
+        f"read-back reports NO voice on entity {entity_id}: {shown} — "
+        f"`--voice {voice}` exited 0 but nothing was attached server-side"
+    )
+    assert str(shown_voice).casefold() == voice.casefold(), (
+        f"read-back voice {shown_voice!r} is not {voice!r} (compared case-insensitively)"
+    )
+    # Evidence for the CHARACTER.md / CHARACTER_RECON.md contradiction: record the
+    # spelling Flow returned against the spelling gflow sent. Never fails on case.
+    print(  # noqa: T201 -- e2e evidence line, read from the run's captured output
+        f"[voice-case-evidence] sent={voice!r} stored={shown_voice!r} "
+        f"identical={shown_voice == voice}"
+    )
+
+    # ---- personality must survive too, asserted hard (no `if` guard) ----
+    shown_personality = shown.get("personality")
+    assert shown_personality, (
+        f"read-back reports NO personality on entity {entity_id}: {shown} — "
+        "`--personality` exited 0 but personalityNotes never landed"
+    )
+    assert shown_personality == personality, (
+        f"personality corrupted on read-back: sent {personality!r}, got {shown_personality!r}"
     )

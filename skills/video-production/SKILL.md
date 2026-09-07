@@ -116,7 +116,155 @@ Pick one; each has a worked command chain in **[`composition.md`](composition.md
 
 ## Step 4 — lock the assets before spending
 
-Full method in **[`consistency.md`](consistency.md)**. The short form:
+### 4a. The identity resolution ladder — deterministic, and you record the rung
+
+A person in a shot is anchored by exactly one of these. **Take the highest rung the host
+and path allow, and write down which rung you used and what blocked the one above.** This
+is not a preference order, it is the production record: a film whose log does not say how
+each shot was anchored cannot be debugged when a face drifts.
+
+| # | Anchor | What it carries | Use when |
+|---|---|---|---|
+| **1** | **Character entity** — `@Name` or `--reference-entity <id>` | face **and** wardrobe **and** voice, server-side, durable | always, unless a rung-1 blocker is recorded |
+| **2** | **That entity's own generated plate** — `--ref <its portrait or body crop>` | face and wardrobe, as a flat image | rung 1 refused by the host/path |
+| **3** | **A plate cut from an approved take** — `--ref <frame>` | face, plus that take's grade, light and artefacts | no entity exists |
+| **4** | **Prose canon only** | a *type*, never an identity | nothing else is available |
+
+**Rung 4 does not hold a person.** Each generation invents someone new who merely matches
+the description. Two shots on rung 4 are two different actors. Never plan a multi-shot
+piece on it and never let it be the silent default.
+
+**Rung 3 carries contamination.** v1's opening take came back with 72 px letterbox bars and
+its plate carried those bars into every shot that referenced it. A rung-2 plate is generated
+clean by the character editor; a rung-3 plate is only as clean as the take it was cut from.
+
+**Descending a rung is a decision that gets written down**, in `production.json` next to the
+shot, naming the blocker. "I used an image" is not a record; "rung 2, because
+`--reference-entity` exits 36 on this host (#639)" is.
+
+> **Written from a run that skipped its own ladder.** On 2026-09-07 a five-shot film created
+> two real character entities and then anchored every shot on rung 2, because gflow refuses
+> entity references on the migrated host. The refusal was never questioned — and a $0 probe
+> the same day showed the host takes an entity mention perfectly well
+> (`data-reference-type="entity"` with the real `entity_id`); it is gflow that has not ported
+> the gesture. The run went a rung lower than it had to and recorded it only in passing.
+
+### 4b. Entity beats media when a name matches both [CONSTRAINT]
+
+Flow's `@` picker offers **character entities and media assets in one list**, and a query
+matching both can resolve to either — measured 2026-09-07: the same `@Kael` returned
+`reference_type="entity"` on one gesture and `reference_type="media"` (a JPEG that happened
+to be named after him) on another. **Flow does not rank them.**
+
+So you rank them. When a name matches a character and a file, the **character wins**, and if
+you meant the file, reference it by path (`--ref <path>`) rather than by name. A shot that
+silently binds a still image where you asked for a character produces footage that looks
+right and drifts on the next cut.
+
+### 4b-bis. A cast with VOICES — the whole recipe, end to end
+
+A character entity is the only thing that carries a **voice**. A plate does not: it carries
+face and wardrobe as pixels, and the engine invents a new voice for every clip. Measured
+2026-09-07 on one character across three plate-bound takes: **88 Hz, 103 Hz, 118 Hz** — three
+different actors — against an engine noise floor of **4.3 Hz** on an identical prompt
+repeated three times. No re-shoot fixes that, because nothing in a plate was ever carrying
+the voice.
+
+So if anyone speaks more than once, you need rung 1. Here is the whole path.
+
+**1 — pick the voice before you create anyone.** `gflow character voices` lists 29 presets.
+Each has a public sample you can actually listen to, so audition rather than trust the
+descriptor — five of the 29 descriptors disagree with the measured pitch of their own sample:
+
+```bash
+gflow character voices --json
+# every voice has: https://gstatic.com/aitestkitchen/voices/samples/<Name>.wav
+```
+
+**2 — create the character with the voice bound.** Face, body and voice in one call:
+
+```bash
+gflow character create --project "$PROJECT" \
+  --name    "<UniqueName>" \
+  --face-prompt "a man, <face description with a GENDER WORD>" \
+  --body-prompt "<outfit; no print, no logo>" \
+  --voice   "<VoiceName>" \
+  --personality "<how they behave>" \
+  --json > cast_<name>.json
+```
+
+Three traps, each measured:
+
+- **The name must collide with nothing in the media library.** Flow's `@` picker searches
+  characters and media together and does not rank them (4b), so an uploaded `kael_ref.jpg`
+  wins the query `@Kael` and your character becomes unreachable by name. **Never name a
+  plate after a character**; `plate_a.png`, not `<name>_ref.jpg`.
+- **A face prompt with no gender word gets a gender chosen for it.** This fires on the
+  prose canon too, not just on `character create` — a two-hander whose unbound actor is
+  described without one renders the wrong person.
+- **Keep the `entity_id` yourself.** Read it from `--json` at creation. Do not plan on
+  recovering it from the catalog afterwards.
+
+**3 — attach the character to every shot they appear in.**
+
+```bash
+gflow video t2v "<prompt>" --project "$PROJECT" \
+  --reference-entity      "<entity_id>" \
+  --reference-entity-name "<UniqueName>" \
+  --aspect 16:9 --duration 8
+```
+
+One face-bearing reference per generation **[CONSTRAINT]** — so in a two-hander, bind the
+person who **speaks** and carry the other in prose. Getting that backwards is what produced
+the 88 Hz stranger above: the beat bound the silent actor, so the speaker fell to rung 4.
+
+**4 — expect the submit to outlive your patience, and do not read a timeout as a failure.**
+Flow allows **five concurrent generations** and throttles per-minute throughput after heavy
+daily use, so a queued job routinely outlives gflow's submit-reply budget. An
+entity-bound run can exit **9 `TransportTimeoutError`** while the video is rendering
+normally — the job is in Flow's queue and will finish. Check the project before you
+re-submit, or you will double-spend on a generation you already have. (gflow-cli #723,
+#741.)
+
+**5 — verify the voice actually landed, relatively.** Never assert an absolute band: a
+character legitimately speaks differently in an action beat than in a quiet one, and the
+pitch follows the performance. The two sound comparisons are:
+
+- **the same character across comparably-staged shots** — the medians should sit close
+- **a bound take against that voice's own public sample** — the same neighbourhood
+
+And stage every dialogue beat in **still air**. An energy gate is not a voicing gate: on
+this production's own wordless clips the detector reported a confident 145 Hz and 280 Hz
+with no speech present at all, and periodicity did not separate them either. A beat shot in
+wind cannot be checked.
+
+### 4c. A costume is part of the identity, so a costume change is a NEW entity [CONSTRAINT]
+
+A Flow character entity bundles face **and** wardrobe — the body reference fixes the outfit.
+There is no wardrobe axis inside one entity.
+
+So a character who changes clothes is **two entities sharing a face prompt**, with different
+body prompts, named for the costume state:
+
+```
+Kael_ridge   face_prompt=<the canonical face>  body_prompt=<dust-brown canvas jacket, sand scarf>
+Kael_coat    face_prompt=<the same canonical face verbatim>  body_prompt=<heavy oiled coat, hood down>
+```
+
+The face prompt must be **byte-identical** across costume states; only the body prompt moves.
+Then every scene names the costume-state entity, not the character, and continuity becomes a
+lookup instead of a hope.
+
+**This is not what `movie.toml` does today [CONSTRAINT].** `Character.variants` is a
+`Mapping[str, str]` and `resolve_variant()` appends a text delta to the prose appearance
+(`composition.py:67-80`), while the runner creates exactly **one entity per character name**
+(`cli_movie.py:589-597`). On an `identity = "entity"` character a variant therefore changes
+the *words* while the entity's body plate keeps the original outfit, and the two argue inside
+one generation. Until that is fixed, express costume states as **separate entries in the
+manifest's characters array**, each with `identity = "entity"` and a shared face prompt —
+not as `variants`. See [MOVIE.md](../../docs/MOVIE.md) for the TOML.
+
+Full method in **[`consistency.md`](consistency.md)**. The rest of the short form:
 
 - **People** are Flow CHARACTER entities, attached with `--reference-entity` or `@Name`. Identity.
 - **Locations and props** have no entity type **[CONSTRAINT]** — they are images attached per shot with `--ref`. Look.

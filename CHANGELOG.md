@@ -7,6 +7,261 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.0] — 2026-09-07
+
+### Fixed
+
+- **`--format-prompt` could submit an EMPTY prompt and log it as success.** The
+  observed-rewrite gate compared `abs(len(current) - len(typed)) >= 16`, and `abs` accepts
+  change in either direction. Flow **clears** the composer before repopulating it, so a poll
+  landing in that window read `""`, `abs(0 - 19) = 19` passed the gate, and `_send_prompt`
+  called `_click_submit` on the very next line — submitting nothing, on a path that spends
+  image quota, while `ui_automation.prompt_formatted` logged `prompt_len_after=0`
+  (`prompt_hash=e3b0c442`, the SHA-256 of the empty string).
+
+  Silent, billed, and self-certifying: a user hitting it would see a charge, an empty
+  result, and a log line saying it worked. It is also the exact defect the same release
+  fixes — a success signal that fires on the **absence** of the thing it measures — rebuilt
+  inside its own fix.
+
+  The gate now requires **growth** (`len(current) >= len(typed) + MIN_DELTA`) rather than an
+  absolute delta, plus a settle check: two reads one poll-interval apart must agree, because
+  the single discrete swap measured live was sampled at 250 ms and a partial write between
+  samples was never ruled out. Found by an adversarial review of the fix, not by the fix's
+  own tests. ([#745](https://github.com/ffroliva/gflow-cli/issues/745))
+
+- **The entity guard recorded a cause that was wrong, and it is retracted.** The
+  `reference_entities` refusal in `_unported_form` said the submit *"never produces a
+  YhhmEf/eb1hJf/MZZa6b reply"*, cause unknown, undiagnosable without fixing
+  [#722](https://github.com/ffroliva/gflow-cli/issues/722). Reading the wire live shows
+  otherwise: `MZZa6b` **does** reply, with a null payload and an error slot, and the generation
+  is **accepted and queued** — Flow derives an `abra_r2v_8s` model key and renders it. What
+  fails is the observer: a null payload never names a media id, so `submit_and_observe`'s
+  `submitted` future never resolves and `SUBMIT_REPLY_BUDGET_S` (60 s) expires. That budget's
+  own comment records its calibration — *"the submit reply arrived 4.0–4.6 s after the click"* —
+  against an idle queue, while Flow allows **five concurrent generations** and throttles
+  per-minute throughput after heavy daily use. The run exits 9 `TransportTimeoutError` while the
+  video is still rendering. The guard **stays** (a timeout reported on a generation that is
+  actually running is worse for the user than an explicit refusal) but its reason is now
+  accurate and the fix is named beside it: on a null submit payload, fall through to the
+  `jwpduf`/`as29s` status poll. Two earlier comments on that guard, including one added in this
+  release, asserted the wrong cause.
+  ([#723](https://github.com/ffroliva/gflow-cli/issues/723),
+  [#742](https://github.com/ffroliva/gflow-cli/pull/742))
+- **`docs/CHARACTER.md` and `docs/CHARACTER_RECON.md` disagreed on the voice wire case, and one
+  was wrong.** CHARACTER.md called the Capitalized UI name canonical while flagging the question
+  UNVERIFIED; CHARACTER_RECON.md recorded `presetVoiceId: "gacrux"` and stated the preset id is
+  the lowercased name. A live run settles it: `sent='Charon' stored='Charon' identical=True`.
+  Both documents now also record that `personalityNotes` is **Agent-scoped** — Flow's own editor
+  says *"The Flow agent can use this information to help craft scenes with your character"* — so
+  it is not a control on the audio engine and should not be expected to steer a `t2v`/`r2v`
+  performance. ([#736](https://github.com/ffroliva/gflow-cli/pull/736))
+- **The "+ New project" CTA is found by structure again, not by English.** Its Tier-1 anchors
+  all targeted the `add_2` ligature. The migrated `flow.google.com` gallery renders **`add`**
+  under a `<mat-icon>` and renders `add_2` nowhere on that surface, so every structural entry
+  missed and the CTA was reached only by `button:has-text('New project')` — the localised-text
+  anti-pattern Tier 1 exists to avoid, and one that fails outright on a non-English migrated
+  profile. Tier 1 now leads with a class-only `add` anchor covering both carriers; measured on
+  the live gallery (control: 47 ligature nodes) it matches 1 where every previous entry
+  matched 0.
+
+  Also removed: `button:text-matches('^\+\s+\S+$', 'i')`. It is not a valid Playwright
+  selector and **raised on every evaluation** — observed twice against the live gallery — with
+  `except Exception: continue` swallowing it, so it had never matched anything on any host
+  while costing a round trip per attempt.
+
+  **This reverts the guard added moments earlier in the same release.** That guard raised
+  `FlowHostMigratedError` claiming the migrated host "renders no '+ New project' control gflow
+  can drive". It was an unproven negative, generalised from a sweep of two other surfaces to a
+  third that was never probed, and a live run disproved it in one click by creating a project
+  there. On a non-EN migrated profile it would have told the user that host has no such
+  control — false, and a dead end — when the real fix was to anchor on `add`.
+  ([#730](https://github.com/ffroliva/gflow-cli/issues/730))
+
+- **~~A migrated-host gallery no longer reports a missing control as selector drift.~~ REVERTED WITHIN THIS RELEASE — kept for the record, see the bullet above.** The guard described below shipped and was removed again before the tag, because a live run created a project on that very surface in one click. The net change in v0.71.0 is the one above: the CTA is anchored structurally on `add` instead of by English text. Nothing in the paragraph that follows is behaviour you will find in this release.
+  `NEW_PROJECT_SELECTORS` anchors on the `add_2` ligature. The migrated `flow.google.com`
+  frontend renders **`add`** and renders `add_2` **nowhere** — composer `add=1/add_2=0`,
+  editor `add=2/add_2=0`, measured with per-surface controls. That is a ligature *name*
+  drift, not the carrier split, so a `mat-icon` twin would not have helped. Reaching the
+  sweep there produced `Could not find 'New project' CTA on Flow gallery`, whose remediation
+  is "check for a newer release, then file a frontend bug" — unfixable by the reader, and
+  pointing at the wrong culprit, exactly as a credit shortfall once reported as frontend
+  drift. It now raises `FlowHostMigratedError` naming the host and the way forward
+  (`--project`, which every migrated path already requires). On labs a missing CTA is still
+  reported as drift, because there it genuinely is.
+
+  No production path reaches this today — `migrated_can_serve` refuses without a
+  `project_id`, `ensure_editor` navigates straight to the project URL, and `character create`
+  requires `--project`. The `add_2` drift is therefore harmless **because of those guards**,
+  which is precisely what a future port relaxes; the measured fact now sits beside the
+  constant so the next person to un-guard a path meets it.
+  ([#730](https://github.com/ffroliva/gflow-cli/issues/730),
+  [spike](docs/superpowers/spikes/2026-09-07-ligature-carrier-and-name-drift.md))
+
+- **Flow's own diagnostics were blind on the migrated host, and two selectors were broken behind
+  it.** `gflow`'s incident-bundle DOM dump queried `i.google-symbols, span.google-symbols`, and
+  `diagnostics.py`'s `STRUCTURAL_DOM_JS` queried `i.google-symbols` — so on `flow.google.com`,
+  where every Material Symbols ligature rides a `<mat-icon>`, **both reported zero ligatures**.
+  The instrument used to diagnose selector drift was blind to the host the drift lives on. That
+  is why [#727](https://github.com/ffroliva/gflow-cli/issues/727) and
+  [#731](https://github.com/ffroliva/gflow-cli/issues/731) stayed invisible, and why an incident
+  bundle from a migrated user named no ligatures at all. Both queries are now class-only.
+
+  Two selectors were broken behind that blindness. `SUBMIT_BUTTON_SELECTORS` was **working by
+  luck**: its two tag-qualified entries matched nothing on the migrated host and the submit only
+  landed because a third `has-text` entry matches the `<mat-icon>`'s *text* — observed live as
+  `prompt_submitted via="button:has-text('arrow_forward')"`, after paying two misses per submit.
+  `IMAGE_MODEL_PICKER_TRIGGER` had neither twin nor fallback, so its miss was total and silent:
+  the picker is best-effort, so generation simply proceeded on whatever model tier the editor
+  opened at. Both now anchor on the `google-symbols` **class**, which sits on the labs `<i>` and
+  the migrated `<mat-icon>` alike — verified against a real CSS engine, offline, in
+  `tests/api/transports/test_ligature_carrier.py`.
+
+  `SUBMIT_BUTTON_SELECTORS` also moves from `:text` to **`:text-is`**. `:text` is a substring
+  match and accepts `arrow_forward_ios`, a real Material Symbol; the `<i>` qualifier had been
+  containing that, and dropping it for the class-only carrier made the over-match reachable on
+  the submit path. The two-carrier fixture caught it as `matched 3 of 2` before it ran live.
+  ([#730](https://github.com/ffroliva/gflow-cli/issues/730),
+  [spike](docs/superpowers/spikes/2026-09-07-ligature-carrier-and-name-drift.md))
+
+- **`character create --format-prompt` works again — both halves of it.** The flag had two
+  independent faults, and fixing only the first would have left it just as useless. On the
+  migrated `flow.google.com` host
+  all three entries of `PROMPT_FORMAT_SELECTORS` missed, so the flag degraded to a no-op:
+  `ui_automation.format_button_not_found`, exit **0**, prompt submitted as
+  typed, and the image quota spent on a run whose requested prompt-engineering step never
+  happened. The button was never absent. Measured on 2026-09-07 with
+  `scripts/dev/spike_character_prompt_format.py` (`$0` — navigation, one free `createEntity`,
+  DOM reads and typing; two control anchors, so a flat zero could not be mistaken for
+  absence): it renders as
+  `<flow-format-prompt-button>`, and the Angular frontend carries the unchanged
+  `personal_recommendations` ligature in **`<mat-icon>`** rather than `<i>` — the same carrier
+  split fixed for `add_2` / `arrow_drop_down` / `accessibility_new` in #703, which this constant
+  was not swept with. The EN `span:text-is('Format')` fallback missed too and is **deleted**
+  rather than translated: the button's own `aria-label` reads `"Formatar"` on a pt account, and
+  display labels are banned as anchors. The cascade now leads with the custom element and covers
+  both carriers. ([#727](https://github.com/ffroliva/gflow-cli/issues/727),
+  [spike](docs/superpowers/spikes/2026-09-07-character-format-button-anchor.md))
+
+- **`video t2v --reference-entity` no longer bills a clip that ignores the entity.** On the
+  migrated `flow.google.com` host the "character references are not ported" refusal lived inside
+  the r2v branch of the routing gate, so a t2v request returned from that gate before its
+  `reference_entities` were ever inspected — and nothing downstream attaches one there
+  (`attach_start_frame` is i2v-only, `attach_references` and the chip verification are r2v-only).
+  The run was submitted and **billed**, returning a plausible clip with an unbound face. That is
+  strictly worse than the exit 36 it was meant to give: a refusal is free and honest. The
+  sibling gate `migrated_can_serve` did refuse, but it only feeds `prefer_migrated`, and an
+  account Flow has already moved is routed by its URL without consulting it — so the refusal was
+  unreachable for exactly the accounts that needed it. The check is now mode-independent and
+  ahead of every early return. ([#716](https://github.com/ffroliva/gflow-cli/issues/716))
+- **A credit shortfall is no longer diagnosed as a moved frontend.** On the migrated
+  `flow.google.com` host, an account whose balance is short **for the model it asked for**
+  produced `UiSelectorDriftError` (exit 23) — *"A Flow editor UI element could not be
+  located — Google may have updated their frontend. Check for a newer gflow-cli release,
+  then file a bug"*. Flow does not **disable** the submit control, it **replaces** it:
+  `arrow_forward` disappears and a `prompt-warning-button` carrying
+  `aria-label='Insufficient credits warning'` takes its place, so the anchor's absence
+  tracks the credit state, not the frontend. Measured by A/B on 2026-09-07 —
+  `scripts/dev/spike_migrated_submit_anchor.py`, same probe and same code ~60 s apart,
+  two accounts rendering the mirror image of each other. The wallet was **not** empty:
+  it held **50** credits and the run asked for `--model veo-quality`, which costs **100**.
+  That distinction is the actionable half — "you have no credits" is a dead end for
+  someone holding 50, while "short for this model" has a remedy: pick a cheaper tier
+  (`veo-lite` is 10). Every path that gives up on the submit control now checks for the
+  warning before naming a culprit, and reports the new `InsufficientCreditsError`
+  (**exit 37**) instead. Genuine drift — a missing anchor with no warning beside it —
+  still reports 23. Beyond the wrong message, the old behaviour manufactured
+  frontend-drift bug reports that no code change could ever fix.
+
+### Changed
+
+- **`--format-prompt` now waits for the rewrite, and `ui_automation.prompt_formatted` means it
+  happened.** This is the second half of the #727 fix and the half that made the flag useful.
+  Flow rewrites **server-side** — a `batchexecute` round trip reaching the composer at ~5.4s
+  (measured, `denon82`) — while the old code waited `_jitter_ms(500)`, logged
+  `prompt_formatted` and returned; `_send_prompt` submits on the very next line. So the flag
+  shipped the prompt the user typed and discarded the rewrite on **every** run, with a success
+  event in the log and exit 0.
+
+  **The defect was never the duration. It was reporting a success we had not observed** — the
+  absence of a completion inside a window we chose, recorded as a completion. Same class as a
+  20s selector timeout read as "the feature is absent" and a bundle captured after teardown
+  read as "the DOM was gone". This one was the worst of the three because it failed toward
+  **success**: a premature green looks exactly like the feature working, so nobody investigates
+  a pass.
+
+  `format_character_prompt` now polls the bound composer until its text actually changes, and
+  returns `True` only then. The gate is the DOM, not the wire — the `batchexecute` response
+  arrives **4.2s before** the text settles, so awaiting it would reproduce the same early
+  submit. Comparing against the string gflow inserted is locale-invariant by construction, and
+  a **length delta** rather than `!=` keeps Slate's whitespace normalisation from re-reporting
+  the same false success. Telemetry carries lengths and a stable hash, never the prompt text:
+  Flow *elaborates* a terse description into a detailed physical one, so the rewrite is more
+  PII-dense than the input.
+
+  New events: `format_button_clicked` (the old semantics), `format_not_observed` (clicked, no
+  rewrite inside the budget — it does not claim Flow failed, since an unchanged box also covers
+  Flow declining or judging the prompt already formatted).
+
+  **Two user-visible consequences.** A create with `--format-prompt` takes a few seconds longer
+  for the rewrite itself, and — because the reshaped prompt is longer and more detailed — the
+  generation is materially slower: **406s vs a 210s control** on the same account and prompt,
+  live-verified 2026-09-07.
+  ([#727](https://github.com/ffroliva/gflow-cli/issues/727),
+  [spike](docs/superpowers/spikes/2026-09-07-format-click-is-not-a-format.md))
+
+- **Retracted a false "measured" claim about the migrated composer.** A code comment asserted, as
+  "measured, not assumed", that the migrated project composer "has no image-generation mode".
+  Falsified live on 2026-09-07: its settings overlay opens to six radiogroups / sixteen radios and
+  the first is `[imageImage, videocamVideo]`, present and hit-testable, with the VIDEO option
+  carrying `aria-checked`. This reproduced an enumeration already committed on 2026-09-04,
+  exactly, on a different account. That does **not** establish that `image` works there — nothing
+  was clicked on the mode axis and nothing was submitted — only that the claim it cannot is
+  unfounded. Stating it more strongly would repeat the defect being retracted. The guard stays
+  until the port lands, but it no longer tells anyone the host cannot do this. ([#692](https://github.com/ffroliva/gflow-cli/issues/692),
+  [spike](docs/superpowers/spikes/2026-09-07-migrated-composer-has-an-image-mode.md))
+- **A spike that cannot reach its surface now fails instead of concluding.**
+  `spike_migrated_image_capability.py` opened the settings overlay best-effort and swallowed the
+  exception, so it printed "the migrated composer looks VIDEO-ONLY" even when it had never opened
+  the panel — and that sentence became the retracted claim above. It now raises
+  `SpikeUnreachedError` and exits 3 with "This is a failed measurement, NOT evidence of absence".
+  Two features have now been declared absent by a probe that failed silently; the first was
+  `character create`, killed by a single 20 s selector timeout.
+
+### Added
+
+- **`gflow character create --voice` is now verified end to end.**
+  `tests/e2e/test_character_create_e2e.py::test_character_create_attaches_voice_and_personality`
+  drives a live create then reads the character back from Flow. Until it existed, a repo-wide
+  grep for `--voice` across `tests/e2e/` matched **nothing**: every voice test was a unit test
+  of the hardcoded `VOICES` constant, and the one that looked live parsed a fixture. A voice
+  that silently failed to attach was invisible to the whole suite while the command exited 0.
+  Personality is asserted hard, unlike the sibling UTF-8 test which guards it as
+  `if shown_personality:` and passes vacuously when the field is absent.
+  ([#736](https://github.com/ffroliva/gflow-cli/pull/736))
+- `scripts/dev/spike_entity_submit_rpcs.py` — attaches a character, submits, and logs **every**
+  `batchexecute` rpcid rather than only the three in `SUBMIT_RPCS`, plus the submit request's
+  model key. `scripts/dev/spike_project_media_status.py` — reads a project's generation state
+  read-only, `$0`, submitting nothing.
+  ([#741](https://github.com/ffroliva/gflow-cli/issues/741))
+- **`video-production` skill § 4b-bis — the whole recipe for a cast with VOICES.** A character
+  entity is the only thing that carries a voice; a plate carries face and wardrobe as pixels and
+  the engine invents a new voice per clip. Measured across three plate-bound takes of one
+  character: **88 / 103 / 118 Hz**, three different actors, against a **4.3 Hz** engine noise
+  floor on an identical prompt repeated three times. The skill said to prefer rung 1 and never
+  said what skipping it costs, so a production could reach a finished cut before anyone noticed
+  the cast had no voices.
+- `scripts/dev/spike_host_lane.py` — names a profile's lane (labs / migrated / **signed out**) in
+  one $0 run. It reports `SIGNED_OUT` as a distinct verdict and refuses to name a lane there,
+  because a signed-out profile is otherwise indistinguishable from a migrated one: with no
+  session, `labs.google/fx/…` renders its marketing shell and `flow.google.com/project/<id>`
+  redirects to `/about`. Read either in isolation and you conclude "this account was moved" from
+  a dead cookie.
+- `scripts/dev/spike_migrated_composer_mode_axis.py` — hard-error probe that opens the migrated
+  composer's settings overlay and enumerates its radiogroups.
+- `scripts/dev/spike_format_prompt_effect.py` — measures whether clicking Format actually
+  rewrites the prompt, and when. `$0`, never submits.
+
 ## [0.70.0] — 2026-09-06
 
 ### Fixed
@@ -4228,7 +4483,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...HEAD
+[0.71.0]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...v0.68.0

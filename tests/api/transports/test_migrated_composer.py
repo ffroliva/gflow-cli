@@ -21,10 +21,12 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
+from gflow_cli.api.transports import migrated_composer
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     ConfigurationError,
+    InsufficientCreditsError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
     TransportTimeoutError,
@@ -72,6 +74,20 @@ class Dom:
     menu_overlay_lingering: bool = False
     escapes_ignored: bool = False  # a pane that refuses to close at all
     toast_visible: bool = False  # an unrelated CDK overlay (snackbar/tooltip)
+    # Two INDEPENDENT axes, deliberately. Short of credits for the model asked, Flow
+    # does not DISABLE the
+    # submit control, it REPLACES it: `arrow_forward` disappears and a
+    # `.prompt-warning-button` carrying aria-label='Insufficient credits warning' takes
+    # its place. Measured by A/B on 2026-09-07
+    # (scripts/dev/spike_migrated_submit_anchor.py): same probe, same host, same code,
+    # ~60 s apart -- the short account had arrow_forward ABSENT and the warning PRESENT;
+    # funded account the mirror image.
+    #
+    # Kept as two fields so a missing anchor with NO warning is still expressible. That
+    # combination is real selector drift, and a guard that cannot tell the two apart
+    # would trade a false "file a frontend bug" for a false "top up your account".
+    submit_anchor_present: bool = True
+    credits_warning_present: bool = False
     events: list[str] = field(default_factory=list)
     # --- i2v: the toolbar upload path and the Frames picker (2026-09-05 frames spike) ---
     add_button_present: bool = True  # the toolbar `+` outside flow-prompt-box
@@ -464,6 +480,9 @@ class FakePage:
             return FakeLocator(self, "textarea", ["textarea"])
         if css == "[contenteditable='true']":
             return FakeLocator(self, "composer", ["composer"])
+        if css == migrated_composer.CREDITS_WARNING:
+            hits = ["warning"] if dom.credits_warning_present else []
+            return FakeLocator(self, "credits_warning", hits)
         raise AssertionError(f"composer used an unmodelled selector: {css!r}")
 
 
@@ -481,7 +500,8 @@ class _ButtonLocator(FakeLocator):
                 [self.page.dom.model_label] if self.page.dom.pane_open else [],
             )
         if "arrow_forward" in lig:
-            return FakeLocator(self.page, "submit", ["submit"])
+            present = ["submit"] if self.page.dom.submit_anchor_present else []
+            return FakeLocator(self.page, "submit", present)
         return FakeLocator(self.page, "button", [])
 
 
@@ -570,6 +590,36 @@ async def test_apply_video_settings_selects_each_axis_and_reads_back() -> None:
     assert page.dom.groups["duration"][1].checked  # 6s
     assert page.dom.groups["count"][1].checked  # x2
     assert not page.dom.pane_open  # closed afterwards
+
+
+async def test_the_submode_follows_the_reference_not_the_mode_name() -> None:
+    """A character reference forces Ingredients even on a t2v request (#723).
+
+    Flow treats an attached character as reference-to-video whatever the caller called
+    the mode: the 2026-09-07 route-aborted capture, taken in Ingredients, submitted
+    `abra_r2v_8s`. A t2v request that attached a character chip while the composer sat
+    under Frames clicked submit and got no reply at all — so this is measured, not a
+    tidy-looking guess, and it must not be "simplified" back to `mode is R2V`.
+    """
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    assert page.dom.groups["submode"][0].checked  # Frames, the fake's default
+    await MigratedComposer().apply_video_settings(
+        page, _t2v(reference_entities=("ent-kael",), reference_entity_names=("Kael",))
+    )
+    assert page.dom.groups["submode"][1].checked  # Ingredients
+    assert not page.dom.groups["submode"][0].checked
+
+
+async def test_a_plain_t2v_still_leaves_the_submode_alone() -> None:
+    """The control for the rule above: without a reference nothing touches submode, so
+    the forcing cannot silently change every t2v run."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    await MigratedComposer().apply_video_settings(page, _t2v())
+    assert page.dom.groups["submode"][0].checked  # untouched
 
 
 async def test_missing_axis_is_a_configuration_error_naming_it() -> None:
@@ -946,6 +996,84 @@ async def test_submit_still_disabled_after_the_budget_is_selector_drift(
     page = FakePage()
     page.dom.prompt = ""  # nothing in the composer: the button never enables
     with pytest.raises(UiSelectorDriftError, match="stayed disabled"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+    assert page.dom.submit_clicked == 0
+
+
+async def test_a_missing_submit_with_a_credits_warning_is_not_reported_as_drift() -> None:
+    """A credit shortfall must not be diagnosed as a moved frontend.
+
+    Measured 2026-09-07 by A/B (`scripts/dev/spike_migrated_submit_anchor.py`): same
+    probe, same host, same code, ~60 s apart. The short account rendered NO
+    `arrow_forward` and a `prompt-warning-button` with
+    ``aria-label='Insufficient credits warning'``; the funded account the mirror image.
+    So the anchor's absence tracks the WALLET, not the frontend.
+
+    Reported as `UiSelectorDriftError` this told the user "Google may have updated their
+    frontend. Check for a newer gflow-cli release, then file a bug" — a wrong diagnosis
+    pointed at a wrong culprit, and one that manufactures frontend-drift reports no code
+    change can ever fix.
+    """
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.dom.submit_anchor_present = False
+    page.dom.credits_warning_present = True
+
+    with pytest.raises(InsufficientCreditsError) as caught:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+    assert page.dom.submit_clicked == 0
+    assert not isinstance(caught.value, UiSelectorDriftError), (
+        "an out-of-credits account must not be reported as selector drift"
+    )
+
+
+async def test_a_missing_submit_with_no_credits_warning_is_still_drift() -> None:
+    """The guard must not swallow real drift: no warning button means the anchor really
+    is gone, and that IS a frontend change worth reporting."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.dom.submit_anchor_present = False
+    page.dom.credits_warning_present = False  # anchor gone, wallet fine
+
+    with pytest.raises(UiSelectorDriftError, match="is missing"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
+async def test_a_submit_that_never_enables_also_checks_the_wallet_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The policy is "never blame the frontend without checking the wallet", and it has
+    to hold on every path that gives up on the submit control -- not only the one the
+    report came in through.
+
+    This asserts OUR behaviour, not a claim about Flow's DOM: the measured drained state
+    removes the anchor entirely (see the test above), and whether Flow ever renders it
+    present-but-disabled alongside the warning is unmeasured. The guard costs one DOM
+    read on a path that is already failing, and when the warning is absent nothing
+    changes -- so a sibling branch left unguarded would be the only way this defect
+    comes back.
+    """
+    from gflow_cli.api.transports import migrated_composer as mc
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(mc, "SUBMIT_ENABLE_BUDGET_S", 0.05)
+    monkeypatch.setattr(mc, "SUBMIT_ENABLE_POLL_S", 0.01)
+    page = FakePage()
+    page.dom.prompt = ""  # the button never enables
+    page.dom.credits_warning_present = True
+
+    with pytest.raises(InsufficientCreditsError):
         await MigratedComposer().submit_and_observe(
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
         )

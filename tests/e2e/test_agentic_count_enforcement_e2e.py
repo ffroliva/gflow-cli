@@ -20,14 +20,17 @@ from pathlib import Path
 
 import pytest
 import structlog
+from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.transports._common import raise_if_migrated
 from gflow_cli.api.transports.ui_automation_video import (
     COMPOSER_AGENT_TOGGLE_SELECTOR,
     VideoGenerationMixin,
 )
+from tests.e2e.conftest import skip_on_migrated_host
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_image]
 
@@ -57,13 +60,29 @@ async def _set_mismatched_sticky_count(
     default."""
     page = await client._checkout_page()  # noqa: SLF001
     try:
-        await page.goto(
-            # #587: the ACCOUNT's locale, never a hardcoded segment.
-            routes.project_editor_url(client._account_locale, project_id),  # noqa: SLF001
-            wait_until="domcontentloaded",
-            timeout=45_000,
-        )
+        try:
+            await page.goto(
+                # #587: the ACCOUNT's locale, never a hardcoded segment.
+                routes.project_editor_url(client._account_locale, project_id),  # noqa: SLF001
+                wait_until="domcontentloaded",
+                timeout=45_000,
+            )
+        except PlaywrightError:
+            # The handoff to flow.google.com CANCELS this navigation, so the goto itself
+            # can die with net::ERR_ABORTED before any post-goto check runs. Classify on
+            # the failure path -- the host is the reason, not a network fault -- then let
+            # a genuine navigation error through untouched.
+            raise_if_migrated(page, at="e2e_agentic_count_probe_navigation")
+            raise
         await page.wait_for_timeout(4_000)
+        # The raw goto skips the transport, so it also skips the migration guard every
+        # other path crosses. On a moved account this lands on flow.google.com, where
+        # the Agent pill and the `tune` panel below simply do not exist -- and the test
+        # then spent ~40 s timing out on a locator with no indication that the HOST was
+        # the reason. Ask here so `skip_on_migrated_host` can turn it into an honest
+        # skip: a labs-only affordance is a missing precondition, not selector drift.
+        # (2026-09-07 sweep: 4 parametrized cases, 4 blind timeouts.)
+        raise_if_migrated(page, at="e2e_agentic_count_probe")
         # #593: raw goto, so no transport boundary ran. Clear a blocking
         # announcement before the panel work below, which would otherwise time out
         # with no indication of why.
@@ -148,6 +167,7 @@ async def _set_mismatched_sticky_count(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("count", [1, 2, 3, 4])
+@skip_on_migrated_host
 async def test_requested_count_overrides_mismatched_sticky_default(
     count: int,
     monkeypatch: pytest.MonkeyPatch,

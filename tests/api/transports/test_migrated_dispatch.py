@@ -231,6 +231,34 @@ async def test_run_video_rejects_modes_not_yet_ported_with_exit_36() -> None:
         await _run(_req(mode=Mode.R2V, reference_entities=("ent-1",)))
 
 
+async def test_run_video_refuses_character_references_on_every_mode() -> None:
+    """#716: the refusal was behind the R2V branch, so t2v carried an entity into a
+    BILLED generation that never attached it.
+
+    T2V returned early from ``_unported_form`` before ``reference_entities`` was ever
+    inspected, and nothing downstream attaches one — ``attach_start_frame`` is i2v-only,
+    ``attach_references`` is r2v-only, and the ``read_chips`` verification is r2v-only.
+    So the user paid for a clip of a stranger with no warning, which is strictly worse
+    than exit 36: a refusal is free and honest.
+
+    ``migrated_can_serve`` does refuse on ``reference_entities``, but it only feeds
+    ``prefer_migrated``, and an account Flow has already moved is routed by its URL
+    without consulting it — so the refusal was unreachable for exactly the accounts
+    that needed it.
+    """
+    for mode in (Mode.T2V, Mode.R2V):
+        with pytest.raises(FlowHostMigratedError, match="character references"):
+            await _run(_req(mode=mode, reference_entities=("ent-1",)))
+    # I2V is absent from that loop on purpose, and the reason is worth pinning: the DTO
+    # itself refuses the combination (`_validate_i2v_symmetry`, api/video.py), so an i2v
+    # request carrying entities cannot be constructed at all. Broadening the gate to every
+    # mode therefore could not regress i2v -- there was no reachable i2v-with-entities
+    # request to regress. Asserted rather than asserted-in-a-comment, so a future
+    # relaxation of the DTO surfaces here instead of silently widening the gate's reach.
+    with pytest.raises(ValueError, match="must not carry"):
+        _req(mode=Mode.I2V, start_image_ref_name="hero", reference_entities=("ent-1",))
+
+
 async def test_run_video_needs_a_project_on_the_migrated_host() -> None:
     with pytest.raises(ConfigurationError, match="--project"):
         await _run(_req(), url="https://flow.google.com/", project_id=None)

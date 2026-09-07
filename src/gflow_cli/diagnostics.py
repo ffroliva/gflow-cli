@@ -924,7 +924,12 @@ _NET_FAILURE_RE = re.compile(r"net::[A-Z0-9_]{1,64}")
 # ONE DOM engine (design §6.3) — the legacy ui_automation capture wrapper
 # consumes it too.
 STRUCTURAL_DOM_JS = r"""() => {
-  const syms = [...document.querySelectorAll('i.google-symbols')]
+  // Class-only, NOT tag-qualified. `i.google-symbols` returned ZERO on the migrated
+  // flow.google.com host, where every ligature rides a <mat-icon> that carries the same
+  // class. A diagnostic blind to the host the drift lives on is why #727 and #731 went
+  // unnoticed, and why an incident bundle from a migrated user reported no ligatures
+  // at all (#730).
+  const syms = [...document.querySelectorAll('.google-symbols')]
     .map(e => (e.textContent || '').trim()).filter(Boolean);
   const overlays = [...document.querySelectorAll(
       '[role="dialog"],[aria-modal="true"],dialog')].slice(0, 10).map(el => {
@@ -938,7 +943,7 @@ STRUCTURAL_DOM_JS = r"""() => {
       rect: {x: r.x, y: r.y, width: r.width, height: r.height},
       zIndex: parseInt(cs.zIndex, 10) || 0,
       pointerEvents: cs.pointerEvents,
-      ligatures: [...el.querySelectorAll('i.google-symbols')]
+      ligatures: [...el.querySelectorAll('.google-symbols')]
         .map(e => (e.textContent || '').trim()).filter(Boolean),
     };
   });

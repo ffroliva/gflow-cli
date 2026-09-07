@@ -54,6 +54,7 @@ from gflow_cli.api.video import (
 from gflow_cli.errors import (
     ConfigurationError,
     FlowHostMigratedError,
+    InsufficientCreditsError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
     TransportTimeoutError,
@@ -85,6 +86,17 @@ COMPOSER = "[contenteditable='true']"
 #: The submode radio that renders the Start/End frame chips (i2v).
 FRAMES_LIGATURE = "crop_free"
 DIALOG = "[role='dialog']"
+# What Flow puts WHERE the submit button was when the account cannot afford the model.
+# Short of credits, not necessarily out of them: measured 2026-09-07, 50 credits held
+# against a 100-credit veo-quality request still rendered this. Both
+# halves are structural (a component class and an ARIA label), not a display string, so
+# this stays locale-invariant: the aria-label is the English attribute Angular emits, not
+# rendered text. Measured 2026-09-07 by A/B on a short vs a funded account
+# (scripts/dev/spike_migrated_submit_anchor.py). Finding, with the arithmetic and
+# four things named as NOT measured -- including that the positive match on
+# prompt-warning-button was seen exactly once:
+# docs/superpowers/spikes/2026-09-07-credit-shortfall-looks-like-selector-drift.md
+CREDITS_WARNING = "button.prompt-warning-button, [aria-label*='Insufficient credits']"
 DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
 
 #: ``YhhmEf`` is the text-to-video submit; ``eb1hJf`` the image-to-video one (a bound
@@ -225,16 +237,64 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
     start frame only: the Frames picker on this host lists assets by display name
     with no UUID in its DOM (2026-09-05 spike), so a frame given by media UUID or
     ``@Name`` has nothing to anchor on yet, and the End chip is unmeasured."""
+    # Character entities are a different attach surface (a chip with an entity_id, in a
+    # different wire slot) and unported. This check is MODE-INDEPENDENT and must stay
+    # ahead of every early return (#716): it used to live inside the R2V branch, so a
+    # t2v request returned `None` here without its entities ever being inspected, and
+    # nothing downstream attaches one — `attach_start_frame` is i2v-only,
+    # `attach_references` is r2v-only, the `read_chips` verification is r2v-only. The
+    # result was a BILLED generation with the entity silently dropped, which is strictly
+    # worse than exit 36: the refusal is free and the clip is a stranger.
+    #
+    # `migrated_can_serve` also refuses on `reference_entities`, but it only feeds
+    # `prefer_migrated`, and an account Flow has already moved is routed by its URL
+    # without consulting it — so that refusal is unreachable for exactly the accounts
+    # that need it. This one is on the path every request takes.
+    if request.reference_entities:
+        # STILL REFUSED — but NOT because the backend rejects it. The port is half done
+        # in a narrower way than previously recorded here (#723).
+        #
+        # What works: `attach_character_entities` drives the `@` picker, commits the
+        # chip, and verifies it carries data-reference-type="entity" with the requested
+        # id. `migrated.character_entities_attached` fires and Flow loads the
+        # character's voice sample. And the SUBMIT IS ACCEPTED: measured 2026-09-07,
+        # entity-bound submissions appear in Flow's own gallery as **Queued** and
+        # proceed. Nothing is refused server-side.
+        #
+        # What breaks is the OBSERVER, and the mechanism is exact:
+        #
+        #   MZZa6b -> [["wrb.fr","MZZa6b",null,null,null,[5],"generic"]]
+        #
+        # The submit reply carries a NULL payload, so it never names a media id and the
+        # `submitted` future in submit_and_observe never resolves. That wait is bounded
+        # by SUBMIT_REPLY_BUDGET_S (60 s), a value calibrated on runs where "the submit
+        # reply arrived 4.0-4.6 s after the click" — i.e. a plate-based generation
+        # against an idle queue. So the run times out (exit 9, TransportTimeoutError)
+        # while the job sits in Flow's queue and completes on its own.
+        #
+        # This is also what the ORIGINAL note here described as "the submit never
+        # produces a reply, three runs, 60 s each, cause unknown". Three timeouts
+        # against a queue, read as a refusal. Two later comments (including one of
+        # mine) hardened that misreading further; both were wrong.
+        #
+        # Queue latency is not incidental: Flow documents a limit of FIVE concurrent
+        # generations, and rate-limits per-minute throughput after heavy daily use, so
+        # 60 s is routinely too short in real production.
+        #
+        # THE FIX, when someone takes it: on a null submit payload, fall through to the
+        # status poll (jwpduf/as29s) keyed on the project instead of requiring the
+        # submit reply to name the media id, and make the budget configurable. The guard
+        # stays only until that lands, because today the CLI would report a timeout on a
+        # generation that is actually running — worse than an honest refusal.
+        return "character references"
     if request.mode is Mode.T2V:
         return None
     if request.mode is Mode.R2V:
         # Local files only, for the same reason i2v is: the picker lists assets by
         # display name and exposes no media id, so a reference gflow did not upload
-        # itself has nothing to anchor on. Character entities are a different attach
-        # surface (a chip with an entity_id, in a different wire slot) and unported.
-        if request.reference_entities:
-            return "character references"
-        if not request.reference_images:
+        # itself has nothing to anchor on. Character entities are the exception above:
+        # they are addressed by name on purpose, and verified by entity id after the fact.
+        if not request.reference_images and not request.reference_entities:
             return "references given by name rather than a local file"
         return None
     if request.mode is not Mode.I2V:  # pragma: no cover - a fourth Mode would land here
@@ -277,6 +337,26 @@ def _exact(label: str) -> re.Pattern[str]:
 def _ligature(page: Any, name: str) -> Any:
     """A ``mat-icon`` whose ligature text is exactly ``name`` — for ``filter(has=…)``."""
     return page.locator("mat-icon").filter(has_text=_exact(name))
+
+
+async def _raise_if_out_of_credits(page: Any) -> None:
+    """Raise :class:`InsufficientCreditsError` when Flow has swapped the submit control
+    for its insufficient-credits warning.
+
+    Called from every path that concludes "the submit anchor is unusable", because an
+    credit shortfall and a moved frontend are indistinguishable at that point -- and only
+    one of them is a bug in gflow. Silent when the warning is absent, so genuine
+    selector drift still surfaces as drift.
+    """
+    if await page.locator(CREDITS_WARNING).count():
+        log.info("migrated.submit_blocked_by_credits")
+        raise InsufficientCreditsError(
+            detail=(
+                "migrated host: Flow replaced the submit control with its "
+                "insufficient-credits warning, so this account cannot start a "
+                "generation right now (host=migrated)"
+            ),
+        )
 
 
 def _rpcid(url: str) -> str | None:
@@ -445,11 +525,19 @@ class MigratedComposer:
                 # Frames renders the Start/End chips the attach stage binds to. Flow
                 # remembers the last submode per account, so it is set, not assumed.
                 await self._select(page, pane, axis="submode", lig=FRAMES_LIGATURE)
-            if request.mode is Mode.R2V:
+            if request.mode is Mode.R2V or request.reference_entities:
                 # Ingredients is where references live, and the app derives the r2v model
                 # key from this plus the picker choice — the same run sends
                 # veo_3_1_r2v_lite_low_priority here and veo_3_1_lite_low_priority under
                 # Frames — so nothing maps that by hand.
+                #
+                # A CHARACTER reference needs it too, whatever mode the caller asked for
+                # (#723). Flow treats an attached character as reference-to-video: the
+                # 2026-09-07 payload capture, taken in Ingredients, submitted
+                # `abra_r2v_8s`. A t2v request that attached a character chip while the
+                # composer sat under Frames clicked submit and got no reply at all —
+                # measured, not inferred. So the submode follows the REFERENCE, not the
+                # mode name.
                 await self._select(page, pane, axis="submode", lig=INGREDIENTS_LIGATURE)
             model = request.model
             if model is None and request.mode is Mode.I2V:
@@ -870,6 +958,64 @@ class MigratedComposer:
         log.info("migrated.references_attached", count=len(paths), media_ids=media_ids)
         return tuple(media_ids)
 
+    async def attach_character_entities(
+        self,
+        page: Page,
+        *,
+        entity_ids: tuple[str, ...],
+        names: tuple[str, ...],
+        clear: bool = True,
+    ) -> None:
+        """Mention each character by name, then prove the chip is that ENTITY (#723).
+
+        The gesture is the same one references use — ``@``, the name, **Enter** — because
+        the migrated composer has one picker for everything. What differs is the
+        verification, and it is not optional:
+
+        **Flow lists characters and media in that one picker and does not rank them.**
+        Measured 2026-09-07: the same ``@Kael`` query committed
+        ``data-reference-type="entity"`` with the real entity id on one gesture, and
+        ``reference_type="media"`` — a JPEG that merely shared the name — on another.
+        A media chip where a character was asked for produces a clip that looks right and
+        drifts on the next cut, which is the failure characters exist to prevent. So every
+        chip is read back and checked for BOTH its kind and its id before anything is
+        submitted, exactly as the labs path asserts ``referenceEntities`` on the wire
+        (``ui_automation_video.py`` ``_assert_entities_attached``).
+        """
+        if clear:
+            await self.clear_composer(page)
+        # An r2v run can carry media references AND characters, so judge only the chips
+        # THIS call adds: media chips already on the prompt are legitimate, and clearing
+        # them would silently drop references the caller asked for.
+        base = len(await self.read_chips(page))
+        for i, name in enumerate(names):
+            await self._mention_by_name(page, name, expect_chips=base + i + 1)
+
+        chips = (await self.read_chips(page))[base:]
+        not_entities = [c for c in chips if c.get("reference_type") != "entity"]
+        if not_entities:
+            got = ", ".join(f"{c.get('text')!r} ({c.get('reference_type')})" for c in not_entities)
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: asked for character(s) {', '.join(names)} but the "
+                    f"picker committed {got}. Flow offers characters and media under one "
+                    f"search and does not rank them, so a file sharing the name can win. "
+                    f"Refusing to spend credits on a generation that would carry the wrong "
+                    f"reference"
+                ),
+            )
+        attached = {c.get("entity_id", "") for c in chips}
+        missing = [e for e in entity_ids if e not in attached]
+        if missing:
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: the prompt carries entity chips {sorted(attached)} but "
+                    f"{missing} was requested — a chip of the right kind is not proof it is "
+                    f"the right character. Refusing to submit"
+                ),
+            )
+        log.info("migrated.character_entities_attached", count=len(entity_ids), names=list(names))
+
     async def clear_composer(self, page: Page) -> None:
         await page.locator(COMPOSER).first.click(timeout=5000)
         await page.keyboard.press("Control+a")
@@ -1157,6 +1303,11 @@ class MigratedComposer:
         try:
             submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
             if not await submit.count():
+                # A credit shortfall and a moved frontend look identical here: both are
+                # "arrow_forward is gone". Ask which one BEFORE naming a culprit --
+                # reporting a short balance as selector drift tells the user to file a
+                # frontend bug that no code change can fix.
+                await _raise_if_out_of_credits(page)
                 raise UiSelectorDriftError(
                     detail=(
                         "migrated host: the submit button (arrow_forward) is missing "
@@ -1166,6 +1317,8 @@ class MigratedComposer:
             enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
             while not await submit.is_enabled():
                 if time.monotonic() >= enable_deadline:
+                    # Same question as above, on the other way of giving up on submit.
+                    await _raise_if_out_of_credits(page)
                     raise UiSelectorDriftError(
                         detail=(
                             "migrated host: the submit button (arrow_forward) stayed disabled "
@@ -1377,14 +1530,25 @@ async def run_video(
     frame = request.start_image
     if request.mode is Mode.I2V and frame is not None:
         media_id = await composer.attach_start_frame(page, pid, frame)
-    if request.mode is Mode.R2V:
+    if request.mode is Mode.R2V and request.reference_images:
         reference_ids = await composer.attach_references(page, pid, request.reference_images)
-    # The prompt is appended for r2v: the mentions are already in the document and
-    # clicking the composer would move the caret away from where the last one left it.
-    await composer.send_prompt(page, request.prompt, append=request.mode is Mode.R2V)
+    if request.reference_entities:
+        # #723: characters attach through the SAME `@` picker as media, so they go on
+        # after any uploads (whose file chooser steals keyboard focus) and must not clear
+        # mentions those uploads already placed.
+        await composer.attach_character_entities(
+            page,
+            entity_ids=tuple(request.reference_entities),
+            names=tuple(request.reference_entity_names),
+            clear=not reference_ids,
+        )
+    # The prompt is appended whenever mentions are already in the document: clicking the
+    # composer would move the caret away from where the last one left it.
+    has_mentions = bool(request.reference_entities) or request.mode is Mode.R2V
+    await composer.send_prompt(page, request.prompt, append=has_mentions)
     if request.mode is Mode.R2V:
         attached = await composer.read_chips(page)
-        if len(attached) != len(request.reference_images):
+        if len(attached) != len(request.reference_images) + len(request.reference_entities):
             raise ReferenceNotFoundError(
                 detail=(
                     f"migrated host: {len(request.reference_images)} reference(s) requested "

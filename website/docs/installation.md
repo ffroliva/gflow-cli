@@ -34,7 +34,7 @@ uv tool run --from gflow-cli playwright install chromium
 
 - **Output directory** — CLI outputs default to `./out/`; override with `GFLOW_CLI_OUTPUT_DIR`. Scripts/tests write to `./tmp/`.
 - **Batch pacing** — `GFLOW_CLI_JITTER_RANGE` (or `--jitter MIN-MAX`) tunes the delay between batch submissions.
-- **Environment** — copy the project's `.env.template` to `.env.local` for the full list of variables; never commit it.
+- **Environment** — copy the project's `.env.template` to **`.env`**, either beside where you run `gflow` or at `$GFLOW_CLI_HOME/.env`; the CWD one wins on conflict. It lists every variable. Both are gitignored; never commit either. A `.env.local` is **not** read by gflow.
 
 ## Upgrade
 
