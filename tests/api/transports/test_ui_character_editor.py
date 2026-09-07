@@ -1340,9 +1340,9 @@ class TestFormatCharacterPrompt:
 
         assert await t.format_character_prompt(page) is True
         assert button.clicked
-        # The ligature selector is tried before any aria-label/text selector.
+        # The structural selector is tried before any aria-label/text selector.
         assert page.locator.call_args_list[0].args[0] == PROMPT_FORMAT_SELECTORS[0]
-        assert "personal_recommendations" in PROMPT_FORMAT_SELECTORS[0]
+        assert "flow-format-prompt-button" in PROMPT_FORMAT_SELECTORS[0]
 
     @pytest.mark.asyncio
     async def test_falls_through_cascade_to_later_selector(self) -> None:
@@ -1399,3 +1399,28 @@ class TestFormatCharacterPrompt:
         inside_has = [s for s in PROMPT_FORMAT_SELECTORS if ":has(" in s]
         assert inside_has, "cascade must carry at least one :has() ligature selector"
         assert all(":has-text(" not in s for s in inside_has)
+
+    def test_cascade_covers_both_ligature_carriers(self) -> None:
+        """#727: labs renders the ligature in ``<i class=google-symbols>``, the
+        migrated Angular frontend in ``<mat-icon>``.  Anchoring on one host's
+        carrier is what made this flag a silent no-op — the whole cascade
+        returned 0 matches on ``flow.google.com`` while the button was visible
+        (measured 2026-09-07, ``scripts/dev/spike_character_prompt_format.py``)."""
+        joined = " ".join(PROMPT_FORMAT_SELECTORS)
+        assert "mat-icon:text-is('personal_recommendations')" in joined, (
+            "cascade must carry the migrated-host <mat-icon> carrier"
+        )
+        assert "i.google-symbols:text-is('personal_recommendations')" in joined, (
+            "cascade must keep the labs <i class=google-symbols> carrier"
+        )
+
+    def test_cascade_carries_no_display_label_anchor(self) -> None:
+        """#727: the EN ``span:text-is('Format')`` fallback was dead weight — Flow
+        localises that span (``"Formatar"`` on a pt account), so it can never
+        match a non-EN profile.  Display labels are banned as anchors by the
+        locale-invariance rule in AGENTS.md; the cascade must stay structural."""
+        for selector in PROMPT_FORMAT_SELECTORS:
+            assert "'Format'" not in selector, (
+                f"{selector!r} anchors on a localised display label — "
+                "use the custom element or the ligature instead"
+            )

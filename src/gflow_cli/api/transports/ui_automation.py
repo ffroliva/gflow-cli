@@ -259,12 +259,39 @@ SUBMIT_BUTTON_SELECTORS = (
 #  3. The button ships ``disabled`` while the prompt box is empty — see
 #     :meth:`UiAutomationTransport.format_character_prompt` for why that matters.
 #
+# Re-measured 2026-09-07 on the MIGRATED host (#727), same script, denon82.  The
+# whole cascade returned 0/0/0 while the button was visible the entire time:
+#
+#   <flow-format-prompt-button>
+#     <button flow-button matbutton class="… format-chip-button …" aria-label="Formatar">
+#       <mat-icon class="… google-symbols …">personal_recommendations</mat-icon>
+#       <span>Formatar</span>
+#     </button>
+#   </flow-format-prompt-button>
+#
+# Two independent misses, either of which alone was fatal:
+#  a. **Carrier tag.** Angular renders the ligature in ``<mat-icon>``, not ``<i>``.
+#     ``mat-icon`` *does* carry the ``google-symbols`` class, so the class was never
+#     the problem — the ``i`` tag was.  This is the same carrier split already fixed
+#     for ``add_2`` / ``arrow_drop_down`` / ``accessibility_new`` in #703; this
+#     constant was simply not swept with them.
+#  b. **Localised label.** The button now HAS an ``aria-label``, but Flow localises
+#     it (``"Formatar"`` on a pt account) — as it does the ``<span>``.  So the EN
+#     text fallback missed too, and is deleted rather than translated: display
+#     labels are banned as anchors (locale-invariance rule, AGENTS.md).
+#
+# The primary anchor is now the **custom element** ``<flow-format-prompt-button>``
+# — a component boundary rather than a layout accident, unique in the editor
+# (1 of 6 composer buttons), and the strongest anchor class this frontend offers.
+# The ligature entries stay as the labs-frontend fallbacks they were proven to be.
+#
 # ``:text()`` not ``:has-text()`` (invalid inside ``:has()``); ``text-is`` exact
 # match so a longer ligature cannot partial-match.
 PROMPT_FORMAT_SELECTORS: tuple[str, ...] = (
+    "flow-format-prompt-button button",
+    "button:has(mat-icon:text-is('personal_recommendations'))",
     "button:has(i.google-symbols:text-is('personal_recommendations'))",
     "button:has(i:text-is('personal_recommendations'))",
-    "button:has(span:text-is('Format'))",
 )
 
 # Self-contained, locale-independent triptych instruction for body generation.
