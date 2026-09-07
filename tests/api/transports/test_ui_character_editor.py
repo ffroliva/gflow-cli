@@ -1333,21 +1333,32 @@ def _make_format_page(
 
 class TestFormatCharacterPrompt:
     @pytest.mark.asyncio
-    async def test_clicks_ligature_selector_first(self) -> None:
-        """The Material Symbols ligature is the primary anchor, not the EN label."""
+    async def test_clicks_structural_selector_first(self) -> None:
+        """The custom element is the primary anchor — not a ligature, not the EN label.
+
+        `<flow-format-prompt-button>` is a component boundary rather than a layout
+        accident, so it survives both a carrier-tag change and a translation. The
+        ligature entries behind it are the per-frontend fallbacks (#727).
+        """
         page, button = _make_format_page()
         t = _make_transport(page=page)
 
         assert await t.format_character_prompt(page) is True
         assert button.clicked
-        # The structural selector is tried before any aria-label/text selector.
+        # The structural selector is tried before any ligature/aria-label/text selector.
         assert page.locator.call_args_list[0].args[0] == PROMPT_FORMAT_SELECTORS[0]
         assert "flow-format-prompt-button" in PROMPT_FORMAT_SELECTORS[0]
 
     @pytest.mark.asyncio
-    async def test_falls_through_cascade_to_later_selector(self) -> None:
-        """A miss on the primary anchor keeps walking the cascade."""
-        page, button = _make_format_page(matching_selector=PROMPT_FORMAT_SELECTORS[-1])
+    @pytest.mark.parametrize("index", range(len(PROMPT_FORMAT_SELECTORS)))
+    async def test_falls_through_cascade_to_later_selector(self, index: int) -> None:
+        """A miss on an earlier anchor keeps walking — every entry must be reachable.
+
+        Parametrized over the WHOLE cascade rather than just the last entry: #727's
+        `<mat-icon>` carrier sits at index 1, and a fall-through test pinned to
+        ``[-1]`` would never have driven it.
+        """
+        page, button = _make_format_page(matching_selector=PROMPT_FORMAT_SELECTORS[index])
         t = _make_transport(page=page)
 
         assert await t.format_character_prompt(page) is True

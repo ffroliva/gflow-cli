@@ -15,14 +15,22 @@ Two runs behind this file:
   rewritten to be carrier-agnostic, to type into the prompt box (the button is disabled
   until then, so an empty-box read measures the wrong state), and to carry a **control**.
 
-The control is the point.  A selector sweep that returns zero everywhere is worthless
-unless something *known present* also resolved in the same run — otherwise "nothing
-matched" and "the probe never reached the editor" are the same observation.  This script
-hard-errors if the editor-ready anchor misses, so a flat zero can never be read as
-absence.
+**Two controls, and both fail AFTER the dump, never before it.**  A selector sweep that
+returns zero everywhere is worthless unless something *known present* also resolved in
+the same run — otherwise "nothing matched" and "the probe never reached the editor" are
+the same observation.  So the script records (1) that the editor-ready anchor resolves
+and (2) that the typed text actually landed in the box — the second is the load-bearing
+one, because a click that hits a consent overlay leaves the box empty, the Format button
+disabled, and produces a false absence indistinguishable from a real measurement.
+
+Both raise, but only from a ``finally`` that has already written the capture and the
+screenshots.  ``skills/spike/SKILL.md``: *never put a guard in front of a probe* — a
+fail-fast that runs before the evidence is collected deletes the evidence that would
+correct it, which is exactly how #701 made a false claim unfalsifiable.
 
 FREE — navigation, a free tRPC ``createEntity``, DOM reads and typing.  Nothing is
-submitted, nothing is generated, no credit and no image quota is spent.
+submitted, nothing is generated, no credit and no image quota is spent, and a scratch
+entity the spike minted is deleted again on the way out.
 
 Usage:
     uv run python scripts/dev/spike_character_prompt_format.py --project <id> [--entity <id>]
@@ -35,14 +43,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
-from datetime import UTC, datetime
+import sys
 from pathlib import Path
 from typing import Any, cast
 
 import structlog
 
-from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _spike_common import default_out_path  # noqa: E402, isort: skip
+
+from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile  # noqa: E402
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports.ui_automation import (
     PROMPT_FORMAT_SELECTORS,
@@ -102,20 +115,6 @@ _COMPOSER_BUTTON_DUMP_JS = """(sel) => {
     }));
 }"""
 
-# Does anything sit on top of the element? Present + visible + not clickable is a
-# distinct failure from absent, and only elementFromPoint tells them apart.
-_OCCLUSION_JS = """(sel) => {
-    const el = document.querySelector(sel);
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-    return {
-        rect: {x: r.x, y: r.y, w: r.width, h: r.height},
-        hit_tag: hit ? hit.tagName.toLowerCase() : null,
-        hit_is_self_or_child: hit ? (el === hit || el.contains(hit)) : false,
-    };
-}"""
-
 
 async def _sweep(page: Any, phase: str) -> list[dict[str, Any]]:
     """Run the shipped cascade plus an EN-text locator and log every count."""
@@ -139,84 +138,122 @@ async def _sweep(page: Any, phase: str) -> list[dict[str, Any]]:
 async def run_spike(profile_name: str | None, project_id: str, entity_id: str | None) -> None:
     resolved_profile = _resolve_profile(profile_name)
     profile_dir = _make_provider_dir(resolved_profile)
-    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    out_dir = Path("./scripts/dev/_spike_out")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # `default_out_path` anchors on the repo ROOT. Hand-rolling `Path("./scripts/dev/…")`
+    # is CWD-relative, and `.gitignore`'s `scripts/dev/_spike_out/` entry has a mid-pattern
+    # slash, so it anchors to the root too: run from `scripts/dev/` and the capture lands
+    # in an UNIGNORED `scripts/dev/scripts/dev/_spike_out/`, carrying the profile name, the
+    # live URL, entity ids and authenticated `outer_html` ([[git-add-all-sweeps-scratch-files]]).
+    dump = default_out_path(f"char_format_anchor_{Path(resolved_profile).name}")
+    out_dir = dump.parent
+
+    report: dict[str, Any] = {
+        "captured_at": dump.stem,
+        "profile": resolved_profile,
+        "project_id": project_id,
+    }
+    control_error: str | None = None
 
     # FlowApiClient acquires the profile lease before Chrome starts — never launch a
     # browser on a profile this process does not own (skills/spike/SKILL.md).
     async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
+        scratch_entity: str | None = None
         if entity_id is None:
             # A character that already has images renders a saved-character view with
             # no prompt composer — and no Format button. The composer (and the button)
             # only exist on an entity with empty slots, which is the state the saga
             # navigates into. create_entity is FREE (tRPC, no credit, no generation).
-            entity_id = await client.create_entity(project_id)
+            entity_id = scratch_entity = await client.create_entity(project_id)
             logger.info("created_scratch_entity", entity_id=entity_id, project_id=project_id)
+        report["entity_id"] = entity_id
 
         transport = cast("UiAutomationTransport", client.transport)
         page = await client._checkout_page()
 
-        await transport._enter_character_editor(
-            page,
-            project_id=project_id,
-            entity_id=entity_id,
-            locale="en-US",
-        )
-        logger.info("page_state", url=page.url, title=await page.title())
-
-        # CONTROL — established before anything is counted. A zero here means the
-        # probe never reached the editor, not that the editor lacks a Format button.
-        control_count = await page.locator(_CONTROL_SELECTOR).count()
-        logger.info("control_check", selector=_CONTROL_SELECTOR, count=control_count)
-        if control_count == 0:
-            msg = (
-                "CONTROL MISSED: no prompt box on "
-                f"{page.url} — this run measures nothing. Do not read its zeros as absence."
+        try:
+            await transport._enter_character_editor(
+                page,
+                project_id=project_id,
+                entity_id=entity_id,
+                locale="en-US",
             )
-            raise RuntimeError(msg)
+            report["url"] = page.url
+            logger.info("page_state", url=page.url, title=await page.title())
 
-        report: dict[str, Any] = {
-            "captured_at": stamp,
-            "profile": resolved_profile,
-            "url": page.url,
-            "project_id": project_id,
-            "entity_id": entity_id,
-            "control_selector": _CONTROL_SELECTOR,
-            "control_count": control_count,
-        }
+            # CONTROL — recorded before anything is counted, but NOT raised on here.
+            # `skills/spike/SKILL.md`: never put a guard in front of a probe. A fail-fast
+            # that runs before the evidence is collected deletes the evidence that would
+            # correct it — that is the #701 failure this whole file exists to prevent. So
+            # the verdict is deferred to the `finally`, after the dump is on disk.
+            control_count = await page.locator(_CONTROL_SELECTOR).count()
+            report["control_selector"] = _CONTROL_SELECTOR
+            report["control_count"] = control_count
+            logger.info("control_check", selector=_CONTROL_SELECTOR, count=control_count)
+            if control_count == 0:
+                control_error = (
+                    f"CONTROL MISSED: no prompt box on {page.url} — this run measures "
+                    "nothing. Do not read its zeros as absence."
+                )
 
-        # Both sides of the transition. The button ships `disabled` on an empty box,
-        # so an empty-box read measures the wrong state — but the empty read is what
-        # proves the enabled state that follows is caused by the typing.
-        report["ligatures_empty"] = await page.evaluate(_LIGATURE_DUMP_JS)
-        report["sweep_empty"] = await _sweep(page, "empty")
-        await page.screenshot(path=str(out_dir / f"char_format_empty_{stamp}.png"))
+            report["sweep_empty"] = await _sweep(page, "empty")
+            await page.screenshot(path=str(out_dir / f"{dump.stem}_empty.png"))
 
-        box = page.locator(_CONTROL_SELECTOR).first
-        await box.click()
-        await page.keyboard.insert_text("a woman with short silver hair, studio portrait")
-        await page.wait_for_timeout(1500)
+            # Both sides of the transition: the button ships `disabled` on an empty box,
+            # so the empty read is what proves the enabled state that follows was caused
+            # by the typing.
+            box = page.locator(_CONTROL_SELECTOR).first
+            await box.click()
+            await page.keyboard.insert_text("a woman with short silver hair, studio portrait")
+            await page.wait_for_timeout(1500)
 
-        report["ligatures_typed"] = await page.evaluate(_LIGATURE_DUMP_JS)
-        report["sweep_typed"] = await _sweep(page, "typed")
-        report["composer_buttons"] = await page.evaluate(
-            _COMPOSER_BUTTON_DUMP_JS, _CONTROL_SELECTOR
-        )
-        report["control_occlusion"] = await page.evaluate(_OCCLUSION_JS, _CONTROL_SELECTOR)
-        await page.screenshot(path=str(out_dir / f"char_format_typed_{stamp}.png"))
+            # SECOND CONTROL, and the load-bearing one. If that click landed on a consent
+            # overlay instead of the box, the text never arrives, the button stays disabled
+            # and `sweep_typed` records a FALSE ABSENCE that looks exactly like a real
+            # measurement. Recorded, and raised on in the `finally` — never before the dump.
+            typed_text = (await box.inner_text()).strip()
+            report["typed_control_text"] = typed_text[:80]
+            logger.info("typed_control", chars=len(typed_text))
+            if not typed_text and control_error is None:
+                control_error = (
+                    "TYPED CONTROL MISSED: the prompt box is still empty after click + "
+                    "insert_text — the enabled/disabled reads below measure nothing."
+                )
 
-        for lig in report["ligatures_typed"]:
-            logger.info("ligature", **{k: ascii(v) for k, v in lig.items()})
+            report["ligatures_typed"] = await page.evaluate(_LIGATURE_DUMP_JS)
+            report["sweep_typed"] = await _sweep(page, "typed")
+            report["composer_buttons"] = await page.evaluate(
+                _COMPOSER_BUTTON_DUMP_JS, _CONTROL_SELECTOR
+            )
+            await page.screenshot(path=str(out_dir / f"{dump.stem}_typed.png"))
 
-        dump = out_dir / f"char_format_anchor_{resolved_profile}_{stamp}.json"
-        dump.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        logger.info(
-            "report_written",
-            path=str(dump),
-            ligatures=len(report["ligatures_typed"]),
-            composer_buttons=len(report["composer_buttons"] or []),
-        )
+            for lig in report["ligatures_typed"]:
+                logger.info("ligature", **{k: ascii(v) for k, v in lig.items()})
+        finally:
+            # Evidence first, verdict second. Whatever DID render is itself the finding.
+            with contextlib.suppress(Exception):
+                await page.screenshot(path=str(out_dir / f"{dump.stem}_final.png"))
+            # Return the page BEFORE any `client.<verb>()` below. The pool holds one
+            # page and `_checkout_page()` waits forever on an empty queue, so a client
+            # call made while this script still holds the page deadlocks in silence —
+            # measured 2026-09-07: the capture and all three screenshots were on disk
+            # and the process never exited, holding the profile lease. `suppress` does
+            # not help; a block is not an exception.
+            # Pinned by tests/scripts/test_spike_page_pool.py.
+            client._checkin_page(page)
+            dump.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            logger.info(
+                "report_written",
+                path=str(dump),
+                ligatures=len(report.get("ligatures_typed") or []),
+                composer_buttons=len(report.get("composer_buttons") or []),
+            )
+            if scratch_entity is not None:
+                # Delete what the spike created (skills/spike/SKILL.md). FREE.
+                with contextlib.suppress(Exception):
+                    await client.delete_characters(project_id, [scratch_entity])
+                    logger.info("deleted_scratch_entity", entity_id=scratch_entity)
+
+    if control_error is not None:
+        raise RuntimeError(control_error)
 
 
 def main() -> None:

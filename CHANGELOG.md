@@ -14,15 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   degraded to a no-op: `ui_automation.format_button_not_found`, exit **0**, prompt submitted as
   typed, and the image quota spent on a run whose requested prompt-engineering step never
   happened. The button was never absent. Measured on 2026-09-07 with
-  `scripts/dev/spike_character_prompt_format.py` (`$0` — DOM read only, with a control anchor
-  so a flat zero could not be mistaken for absence): it renders as
+  `scripts/dev/spike_character_prompt_format.py` (`$0` — navigation, one free `createEntity`,
+  DOM reads and typing; two control anchors, so a flat zero could not be mistaken for
+  absence): it renders as
   `<flow-format-prompt-button>`, and the Angular frontend carries the unchanged
   `personal_recommendations` ligature in **`<mat-icon>`** rather than `<i>` — the same carrier
   split fixed for `add_2` / `arrow_drop_down` / `accessibility_new` in #703, which this constant
   was not swept with. The EN `span:text-is('Format')` fallback missed too and is **deleted**
   rather than translated: the button's own `aria-label` reads `"Formatar"` on a pt account, and
   display labels are banned as anchors. The cascade now leads with the custom element and covers
-  both carriers. ([#727](https://github.com/ffroliva/gflow-cli/issues/727))
+  both carriers. ([#727](https://github.com/ffroliva/gflow-cli/issues/727),
+  [spike](docs/superpowers/spikes/2026-09-07-character-format-button-anchor.md))
 
 - **`video t2v --reference-entity` no longer bills a clip that ignores the entity.** On the
   migrated `flow.google.com` host the "character references are not ported" refusal lived inside

@@ -5,7 +5,14 @@ description: Flow renders dialog labels in the Chrome PROFILE language; --lang=e
 
 Flow's editor UI renders dialog labels in the Chrome **profile** language preference (set in `chrome://settings/languages`), NOT the Google **account** language and NOT the `--lang=en-US` Chromium launch arg. Any selector that matches localized text breaks on non-EN profiles. The fail-loud `RuntimeError` in `_attach_references` (PR #60) correctly distinguishes these — keep that hint when adding similar guards.
 
-The durable selector pattern is `button:has(i.google-symbols:text('<icon_ligature>'))`. Known Material Symbols ligatures used in Flow's UI (locale-stable):
+The durable part of the selector is the **ligature**, not the tag that carries it. Flow's two frontends render the same Material Symbols ligature under different carriers — labs (React) `<i class="google-symbols">`, migrated `flow.google.com` (Angular) `<mat-icon class="… google-symbols …">` — so a cascade must cover **both**:
+
+```
+button:has(i.google-symbols:text('<icon_ligature>'))   # labs
+button:has(mat-icon:text('<icon_ligature>'))           # migrated
+```
+
+Anchoring on one carrier returns a flat zero on the other host while the control is fully visible. See [[ligature-carrier-differs-by-host]] — that split cost #727, because #703 swept three constants for it and missed a fourth. Known Material Symbols ligatures used in Flow's UI (locale-stable):
 
 - `add_2` — project "+" button AND editor Add Media button (disambiguate via `aria-haspopup="dialog"` + `aria-controls^="radix-"` for the editor variant)
 - `upload` — "Upload media" item in the media-attach popover (use **`:text-is('upload')` exact match** — `:text` would also match `drive_folder_upload` of the Uploads tab)

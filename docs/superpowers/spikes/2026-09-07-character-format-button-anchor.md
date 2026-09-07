@@ -106,8 +106,6 @@ The disabled-until-typed behaviour from 2026-07-27 still holds on the migrated h
 types before calling `format_character_prompt`, so the enabled check is correct as
 written and needed no change.
 
-No occluder: `elementFromPoint` over the prompt box returns a child of the box itself.
-
 ## 6. What this did NOT measure
 
 - **The labs frontend.** No unmoved account exists here, so the two `<i>` entries are
@@ -116,8 +114,20 @@ No occluder: `elementFromPoint` over the prompt box returns a child of the box i
 - **The content of Flow's rewrite.** The probe never submits. That the button is found,
   enabled and clicked is what the e2e test asserts; whether Flow's reshaped prompt is
   *better* stays a human read.
-- **Every other selector constant.** This spike swept one. The #703 carrier sweep
-  demonstrably missed at least one constant, and nothing proves this was the last.
+- **The network.** No request/response capture was taken, so nothing here establishes
+  that clicking Format reaches a backend — only that the button is found, enabled and
+  clickable. A click is not proof of a downstream effect
+  ([[playwright-click-no-downstream-event-signature]]); the e2e's
+  `ui_automation.prompt_formatted` event is the click, not the rewrite.
+- **Occlusion of the Format button.** The probe's `elementFromPoint` read was pointed at
+  the *prompt box*, not the button — it answered a question nobody asked, and the check
+  has been removed rather than left to be misread. The live e2e click landing is the
+  stronger evidence anyway.
+- **Every other selector constant.** This spike swept one. `git grep "i\.google-symbols"`
+  still returns **55** single-carrier literals across `ui_automation.py`,
+  `ui_automation_video.py`, `mode_control.py`, `diagnostics.py` and `drivers/`. The #703
+  carrier sweep demonstrably missed at least one, and this is the second consecutive PR
+  to fix one by hand — which makes it a registry/sweep problem, not a selector problem.
 
 ## 7. The rule this re-earns
 

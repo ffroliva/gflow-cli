@@ -562,9 +562,11 @@ def test_character_create_format_prompt_clicks_format_button(e2e_env: dict[str, 
         if line.strip().startswith("{")
     ]
     assert "ui_automation.prompt_formatted" in events, (
-        "--format-prompt did not click Flow's Format button — the selector "
-        "cascade (anchored on the `personal_recommendations` ligature) has "
-        f"likely drifted. Observed events: {sorted(set(events))}"
+        "--format-prompt did not click Flow's Format button — the selector cascade "
+        "(the `<flow-format-prompt-button>` custom element, then the "
+        "`personal_recommendations` ligature under either carrier tag) has likely "
+        "drifted. Probe it with scripts/dev/spike_character_prompt_format.py before "
+        f"assuming the button is gone. Observed events: {sorted(set(events))}"
     )
     for miss in ("ui_automation.format_button_not_found", "ui_automation.format_button_disabled"):
         assert miss not in events, f"format button was skipped ({miss}), not clicked"

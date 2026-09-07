@@ -242,51 +242,28 @@ SUBMIT_BUTTON_SELECTORS = (
 # Prompt-format button in the character editor ("Format" in EN) — rewrites the
 # typed prompt into Flow's character prompt-engineering shape.
 #
-# Live DOM, verified 2026-07-27 via ``scripts/dev/spike_character_prompt_format.py``
-# against a fresh entity's editor:
+# Live DOM, two frontends, two captures by scripts/dev/spike_character_prompt_format.py:
 #
-#   <button type="button" disabled="">
-#     <i class="… google-symbols …">personal_recommendations</i><span>Format</span>
-#   </button>
+#   labs      2026-07-27:  <button disabled>
+#                            <i class="... google-symbols ...">personal_recommendations</i>
+#                            <span>Format</span></button>
+#   migrated  2026-09-07:  <flow-format-prompt-button>
+#                            <button ... aria-label="Formatar">
+#                              <mat-icon class="... google-symbols ...">
+#                                personal_recommendations</mat-icon>
+#                              <span>Formatar</span></button></flow-format-prompt-button>
 #
-# Three things that dump settled:
-#  1. The ligature IS ``personal_recommendations`` (1 match, unique in the editor).
-#  2. There is NO aria-label — the label is a ``<span>`` child, so an
-#     ``[aria-label*=Format]`` selector matches nothing at all.  The EN fallback has
-#     to be structural (``span:text-is('Format')``), and it is a fallback only:
-#     Flow localises that span to the Chrome *profile* language, which is the
-#     incident-#56 failure mode ([[flow-locale-leak-icon-ligatures]]).
-#  3. The button ships ``disabled`` while the prompt box is empty — see
-#     :meth:`UiAutomationTransport.format_character_prompt` for why that matters.
+# Same ligature, different carrier tag (`<i>` vs `<mat-icon>`) — and the label is
+# localised on both, so it is never an anchor. Hence: custom element first, then the
+# ligature under either carrier. Full evidence, including why the EN `span:text-is`
+# fallback was deleted rather than translated, in
+# docs/superpowers/spikes/2026-09-07-character-format-button-anchor.md.
 #
-# Re-measured 2026-09-07 on the MIGRATED host (#727), same script, denon82.  The
-# whole cascade returned 0/0/0 while the button was visible the entire time:
+# The button ships `disabled` while the prompt box is empty (both hosts) — see
+# :meth:`UiAutomationTransport.format_character_prompt` for why that matters.
 #
-#   <flow-format-prompt-button>
-#     <button flow-button matbutton class="… format-chip-button …" aria-label="Formatar">
-#       <mat-icon class="… google-symbols …">personal_recommendations</mat-icon>
-#       <span>Formatar</span>
-#     </button>
-#   </flow-format-prompt-button>
-#
-# Two independent misses, either of which alone was fatal:
-#  a. **Carrier tag.** Angular renders the ligature in ``<mat-icon>``, not ``<i>``.
-#     ``mat-icon`` *does* carry the ``google-symbols`` class, so the class was never
-#     the problem — the ``i`` tag was.  This is the same carrier split already fixed
-#     for ``add_2`` / ``arrow_drop_down`` / ``accessibility_new`` in #703; this
-#     constant was simply not swept with them.
-#  b. **Localised label.** The button now HAS an ``aria-label``, but Flow localises
-#     it (``"Formatar"`` on a pt account) — as it does the ``<span>``.  So the EN
-#     text fallback missed too, and is deleted rather than translated: display
-#     labels are banned as anchors (locale-invariance rule, AGENTS.md).
-#
-# The primary anchor is now the **custom element** ``<flow-format-prompt-button>``
-# — a component boundary rather than a layout accident, unique in the editor
-# (1 of 6 composer buttons), and the strongest anchor class this frontend offers.
-# The ligature entries stay as the labs-frontend fallbacks they were proven to be.
-#
-# ``:text()`` not ``:has-text()`` (invalid inside ``:has()``); ``text-is`` exact
-# match so a longer ligature cannot partial-match.
+# `:text()` not `:has-text()` (invalid inside `:has()`); `text-is` exact match so a
+# longer ligature cannot partial-match.
 PROMPT_FORMAT_SELECTORS: tuple[str, ...] = (
     "flow-format-prompt-button button",
     "button:has(mat-icon:text-is('personal_recommendations'))",
@@ -1666,7 +1643,11 @@ class UiAutomationTransport(VideoGenerationMixin):
         for selector in PROMPT_FORMAT_SELECTORS:
             try:
                 locator = page.locator(selector).first
-                if not await locator.is_visible(timeout=1000):
+                # No timeout argument: Playwright documents it as ignored here —
+                # `is_visible()` never waits, it answers from the current DOM. Passing
+                # one invited the misreading that a 4-entry cascade costs 4s in front of
+                # the submit; a miss is one round trip.
+                if not await locator.is_visible():
                     continue
                 if not await locator.is_enabled():
                     log.warning("ui_automation.format_button_disabled", selector=selector)
