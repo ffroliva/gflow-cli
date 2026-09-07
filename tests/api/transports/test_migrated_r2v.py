@@ -298,3 +298,94 @@ async def test_the_prompt_is_appended_so_the_mentions_survive() -> None:
     await MigratedComposer().send_prompt(page, "a woman holding it", append=True)
     assert page.composer_clicks == 0
     assert "a woman holding it" in page.typed
+
+
+# --- character entities (#723) ----------------------------------------------
+
+
+class FakeEntityPage(FakeComposerPage):
+    """A composer whose picker commits CHARACTER ENTITIES rather than media.
+
+    Modelled on the 2026-09-07 capture: `@` + the character's name + Enter inserts
+    ``<span class="mention-chip" data-reference-type="entity" data-entity-id="...">``,
+    and the aborted ``MZZa6b`` submit carried that id in its own reference slot.
+    """
+
+    def __init__(self, *, entities: dict[str, str], **kw: Any) -> None:
+        super().__init__(assets=[f"{n}Character" for n in entities], **kw)
+        self._entities = entities
+        self._order = list(entities)
+
+    def on_enter(self) -> None:
+        self.enters += 1
+        if self.enters <= self.miss_first:
+            return
+        for _ in range(self.chips_per_enter):
+            name = self._order[len(self.chips) % len(self._order)]
+            self.chips.append(
+                {
+                    "text": name,
+                    "entity_id": self._entities[name],
+                    "reference_type": "entity",
+                }
+            )
+
+
+async def test_character_mentions_land_as_entity_chips() -> None:
+    """The whole point: the chip must carry the ENTITY id, not merely exist."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeEntityPage(entities={"Kael": "ent-kael", "Naia": "ent-naia"})
+    await MigratedComposer().attach_character_entities(
+        page, entity_ids=("ent-kael", "ent-naia"), names=("Kael", "Naia")
+    )
+    assert [c["entity_id"] for c in page.chips] == ["ent-kael", "ent-naia"]
+    assert {c["reference_type"] for c in page.chips} == {"entity"}
+
+
+async def test_a_media_chip_where_a_character_was_asked_for_is_refused() -> None:
+    """Flow's picker lists characters and media TOGETHER and does not rank them.
+
+    Measured 2026-09-07: the same ``@Kael`` query returned ``reference_type="entity"``
+    on one gesture and ``reference_type="media"`` — a JPEG that merely shared the name —
+    on another. Committing the file would generate a clip that looks right and drifts on
+    the next cut, which is the exact failure characters exist to prevent. So a chip that
+    is not an entity is refused before any submit.
+    """
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeComposerPage(assets=["kael_ref.jpgImage"])  # commits MEDIA chips
+    with pytest.raises(ReferenceNotFoundError, match="media"):
+        await MigratedComposer().attach_character_entities(
+            page, entity_ids=("ent-kael",), names=("Kael",)
+        )
+
+
+async def test_the_wrong_entity_is_refused_even_though_a_chip_landed() -> None:
+    """A chip of the right KIND is not proof it is the right PERSON."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeEntityPage(entities={"Kael": "ent-someone-else"})
+    with pytest.raises(ReferenceNotFoundError, match="ent-kael"):
+        await MigratedComposer().attach_character_entities(
+            page, entity_ids=("ent-kael",), names=("Kael",)
+        )
+
+
+def test_character_references_are_still_refused_until_a_submit_completes() -> None:
+    """The attach half is ported and proven; the submit half is not, so the gate stays.
+
+    `attach_character_entities` is verified live — the chip commits with the right
+    entity_id and Flow loads the character's voice — but the submit that follows produced
+    no reply in three runs. Until an entity-bound generation actually completes, refusing
+    instantly (exit 36) beats a 60-second timeout, so the gate must NOT be relaxed just
+    because the attach works. This test is the thing that stops that happening by
+    accident.
+    """
+    from gflow_cli.api.transports.migrated_composer import _unported_form
+
+    assert _unported_form(_r2v(reference_entities=("ent-kael",))) is not None
+    assert (
+        _unported_form(_r2v(reference_entities=("ent-kael",), reference_entity_names=("Kael",)))
+        is not None
+    )

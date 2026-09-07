@@ -246,14 +246,34 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
     # without consulting it — so that refusal is unreachable for exactly the accounts
     # that need it. This one is on the path every request takes.
     if request.reference_entities:
+        # STILL REFUSED, and deliberately so — the port is HALF done (#723).
+        #
+        # What is measured and works: `MigratedComposer.attach_character_entities` drives
+        # the `@` picker, commits the chip, and verifies it carries
+        # data-reference-type="entity" with the requested id. Confirmed live 2026-09-07 —
+        # `migrated.character_entities_attached` fires and Flow loads the character's
+        # voice sample. A route-aborted capture showed the assembled MZZa6b payload
+        # carrying that id in its own reference slot.
+        #
+        # What does NOT work: the submit that follows never produces a
+        # YhhmEf/eb1hJf/MZZa6b reply. Three runs, 60 s each, with the submode forced to
+        # Ingredients and with the model both pinned and left to Flow's default. Cause
+        # unknown — and undiagnosable from an incident bundle today, because the video
+        # path parks the page at about:blank before the capture runs (#722), so every
+        # bundle reports an empty DOM.
+        #
+        # Relaxing this gate before that is understood trades a clear, instant exit 36
+        # for a 60-second timeout, which is strictly worse for the user. The refusal
+        # stays until an entity-bound generation has actually completed.
         return "character references"
     if request.mode is Mode.T2V:
         return None
     if request.mode is Mode.R2V:
         # Local files only, for the same reason i2v is: the picker lists assets by
         # display name and exposes no media id, so a reference gflow did not upload
-        # itself has nothing to anchor on.
-        if not request.reference_images:
+        # itself has nothing to anchor on. Character entities are the exception above:
+        # they are addressed by name on purpose, and verified by entity id after the fact.
+        if not request.reference_images and not request.reference_entities:
             return "references given by name rather than a local file"
         return None
     if request.mode is not Mode.I2V:  # pragma: no cover - a fourth Mode would land here
@@ -484,11 +504,19 @@ class MigratedComposer:
                 # Frames renders the Start/End chips the attach stage binds to. Flow
                 # remembers the last submode per account, so it is set, not assumed.
                 await self._select(page, pane, axis="submode", lig=FRAMES_LIGATURE)
-            if request.mode is Mode.R2V:
+            if request.mode is Mode.R2V or request.reference_entities:
                 # Ingredients is where references live, and the app derives the r2v model
                 # key from this plus the picker choice — the same run sends
                 # veo_3_1_r2v_lite_low_priority here and veo_3_1_lite_low_priority under
                 # Frames — so nothing maps that by hand.
+                #
+                # A CHARACTER reference needs it too, whatever mode the caller asked for
+                # (#723). Flow treats an attached character as reference-to-video: the
+                # 2026-09-07 payload capture, taken in Ingredients, submitted
+                # `abra_r2v_8s`. A t2v request that attached a character chip while the
+                # composer sat under Frames clicked submit and got no reply at all —
+                # measured, not inferred. So the submode follows the REFERENCE, not the
+                # mode name.
                 await self._select(page, pane, axis="submode", lig=INGREDIENTS_LIGATURE)
             model = request.model
             if model is None and request.mode is Mode.I2V:
@@ -908,6 +936,64 @@ class MigratedComposer:
             await self._mention_by_name(page, path.name, expect_chips=i + 1)
         log.info("migrated.references_attached", count=len(paths), media_ids=media_ids)
         return tuple(media_ids)
+
+    async def attach_character_entities(
+        self,
+        page: Page,
+        *,
+        entity_ids: tuple[str, ...],
+        names: tuple[str, ...],
+        clear: bool = True,
+    ) -> None:
+        """Mention each character by name, then prove the chip is that ENTITY (#723).
+
+        The gesture is the same one references use — ``@``, the name, **Enter** — because
+        the migrated composer has one picker for everything. What differs is the
+        verification, and it is not optional:
+
+        **Flow lists characters and media in that one picker and does not rank them.**
+        Measured 2026-09-07: the same ``@Kael`` query committed
+        ``data-reference-type="entity"`` with the real entity id on one gesture, and
+        ``reference_type="media"`` — a JPEG that merely shared the name — on another.
+        A media chip where a character was asked for produces a clip that looks right and
+        drifts on the next cut, which is the failure characters exist to prevent. So every
+        chip is read back and checked for BOTH its kind and its id before anything is
+        submitted, exactly as the labs path asserts ``referenceEntities`` on the wire
+        (``ui_automation_video.py`` ``_assert_entities_attached``).
+        """
+        if clear:
+            await self.clear_composer(page)
+        # An r2v run can carry media references AND characters, so judge only the chips
+        # THIS call adds: media chips already on the prompt are legitimate, and clearing
+        # them would silently drop references the caller asked for.
+        base = len(await self.read_chips(page))
+        for i, name in enumerate(names):
+            await self._mention_by_name(page, name, expect_chips=base + i + 1)
+
+        chips = (await self.read_chips(page))[base:]
+        not_entities = [c for c in chips if c.get("reference_type") != "entity"]
+        if not_entities:
+            got = ", ".join(f"{c.get('text')!r} ({c.get('reference_type')})" for c in not_entities)
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: asked for character(s) {', '.join(names)} but the "
+                    f"picker committed {got}. Flow offers characters and media under one "
+                    f"search and does not rank them, so a file sharing the name can win. "
+                    f"Refusing to spend credits on a generation that would carry the wrong "
+                    f"reference"
+                ),
+            )
+        attached = {c.get("entity_id", "") for c in chips}
+        missing = [e for e in entity_ids if e not in attached]
+        if missing:
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: the prompt carries entity chips {sorted(attached)} but "
+                    f"{missing} was requested — a chip of the right kind is not proof it is "
+                    f"the right character. Refusing to submit"
+                ),
+            )
+        log.info("migrated.character_entities_attached", count=len(entity_ids), names=list(names))
 
     async def clear_composer(self, page: Page) -> None:
         await page.locator(COMPOSER).first.click(timeout=5000)
@@ -1423,14 +1509,25 @@ async def run_video(
     frame = request.start_image
     if request.mode is Mode.I2V and frame is not None:
         media_id = await composer.attach_start_frame(page, pid, frame)
-    if request.mode is Mode.R2V:
+    if request.mode is Mode.R2V and request.reference_images:
         reference_ids = await composer.attach_references(page, pid, request.reference_images)
-    # The prompt is appended for r2v: the mentions are already in the document and
-    # clicking the composer would move the caret away from where the last one left it.
-    await composer.send_prompt(page, request.prompt, append=request.mode is Mode.R2V)
+    if request.reference_entities:
+        # #723: characters attach through the SAME `@` picker as media, so they go on
+        # after any uploads (whose file chooser steals keyboard focus) and must not clear
+        # mentions those uploads already placed.
+        await composer.attach_character_entities(
+            page,
+            entity_ids=tuple(request.reference_entities),
+            names=tuple(request.reference_entity_names),
+            clear=not reference_ids,
+        )
+    # The prompt is appended whenever mentions are already in the document: clicking the
+    # composer would move the caret away from where the last one left it.
+    has_mentions = bool(request.reference_entities) or request.mode is Mode.R2V
+    await composer.send_prompt(page, request.prompt, append=has_mentions)
     if request.mode is Mode.R2V:
         attached = await composer.read_chips(page)
-        if len(attached) != len(request.reference_images):
+        if len(attached) != len(request.reference_images) + len(request.reference_entities):
             raise ReferenceNotFoundError(
                 detail=(
                     f"migrated host: {len(request.reference_images)} reference(s) requested "
