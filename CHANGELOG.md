@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.71.0] — 2026-09-07
 
+### Known issues
+
+- **`--format-prompt` can submit an EMPTY prompt and log it as success — a billed generation**
+  ([#747](https://github.com/ffroliva/gflow-cli/issues/747)). `_await_format_rewrite` gates on
+  `abs(len(current) - len(typed)) >= 16`, which accepts change in **either** direction. Flow
+  clears the composer before repopulating it, so a poll landing in that window reads `""`,
+  `abs(0 - 19)` passes, `prompt_formatted prompt_len_after=0` is logged as success, and
+  `_click_submit` runs on the next line. Reproduced offline: the logged `prompt_hash` was
+  `e3b0c442…`, the SHA-256 of the empty string.
+
+  It is a **race** — it needs a poll inside the clear window and live runs did not hit it — but
+  the shape is the worst available: silent, billed, and self-certifying. It is also the same
+  class of defect [#727](https://github.com/ffroliva/gflow-cli/issues/727) addressed, rebuilt
+  inside its own fix: a success signal that fires on the *absence* of the thing it measures.
+
+  The fix is written and tested (gate on growth rather than absolute delta, plus a stable
+  re-read) and lands in **v0.71.1**. Until then, avoid `--format-prompt` on `character create`,
+  or check the created character's prompt before relying on it. It is documented here rather
+  than shipped silently so that nobody discovers it from a charge on their account.
+
 ### Removed
 
 - **The PR-triage autopilot runner is no longer in this repo** (`scripts/autopilot/`,
