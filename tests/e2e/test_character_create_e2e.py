@@ -702,3 +702,143 @@ def test_create_never_leaves_an_untitled_orphan(e2e_env: dict[str, str]) -> None
         f"the new entity is named {created_name!r}, not {name!r} — the final PATCH did not land, "
         "which is exactly what an orphan looks like"
     )
+
+
+# ---------------------------------------------------------------------------
+# Scenario #8 — `--voice` and `--personality` actually ATTACH (create -> read-back)
+# ---------------------------------------------------------------------------
+
+
+def test_character_create_attaches_voice_and_personality(e2e_env: dict[str, str]) -> None:
+    """Live ``create --voice --personality`` then ``show``: BOTH must survive the round trip.
+
+    **Until this test, ``--voice`` had never been exercised end-to-end.** A repo-wide
+    grep for ``--voice`` across ``tests/e2e/`` matched nothing. Every voice test in the
+    suite is a unit test of the hardcoded ``VOICES`` constant — list length,
+    capitalisation, the sample-URL string pattern, dataclass frozen-ness — and not one
+    reaches Flow. The single test that *looks* live (``chars[0].voice == "gacrux"``)
+    parses a fixture. So a voice that silently failed to attach was invisible to the
+    entire suite while ``character create`` exited 0, and the sibling test that covers
+    the parent-entity binding stops one field short of the voice.
+
+    Personality is asserted **hard** here on purpose. ``test_character_personality_utf8``
+    guards it as ``if shown_personality:`` — a soft check that passes vacuously when the
+    read-back omits the field entirely, which is precisely the failure worth catching.
+
+    **Voice case is compared case-INSENSITIVELY, deliberately.** The wire case of
+    ``presetVoiceId`` is unverified and the repo's own two documents disagree:
+    ``docs/CHARACTER.md`` calls the Capitalized UI name canonical (and flags the
+    question UNVERIFIED in the same section), while ``docs/CHARACTER_RECON.md`` records
+    ``presetVoiceId: "gacrux"`` from a live capture and states the preset id is the
+    lowercased name. gflow normalises to Capitalized and sends that. Pinning either
+    spelling would make this red for a reason that is not the defect it exists to catch
+    — the defect is a voice that does not attach AT ALL. The spelling Flow actually
+    returned is reported in the assertion message so a single run settles the
+    contradiction with evidence instead of another opinion.
+
+    Cost: one image generation, zero credits (no ``--body-prompt``); daily-capped.
+    """
+    _require_character_optin()
+    project_id = _require_project()
+    env = _character_env(e2e_env)
+    profile = env["GFLOW_CLI_PROFILE"]
+    locale = os.environ.get(_LOCALE_ENV, _DEFAULT_LOCALE)
+    face = os.environ.get(_FACE_ENV, _DEFAULT_FACE_PROMPT)
+
+    # A voice whose canonical spelling differs from its lowercase form, so the
+    # read-back tells us which one Flow stored.
+    voice = "Charon"
+    marker = uuid.uuid4().hex[:8]
+    name = f"voice-attach-{marker}"
+    # Unique marker so the read-back cannot match a leftover character.
+    personality = f"{_DEFAULT_PERSONALITY} — marcador {marker}"
+
+    result = _run_gflow(
+        [
+            "character",
+            "create",
+            "--project",
+            project_id,
+            "--name",
+            name,
+            "--face-prompt",
+            face,
+            "--voice",
+            voice,
+            "--personality",
+            personality,
+            "--locale",
+            locale,
+            "--profile",
+            profile,
+            "--json",
+        ],
+        env=env,
+        timeout=_CREATE_TIMEOUT_S,
+    )
+    assert result.returncode == 0, (
+        f"character create (voice) exited {result.returncode}\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    payload = _parse_json_stdout(result, "character create (voice)")
+    created = cast(dict[str, object], payload["character"])
+    entity_id = created.get("entity_id")
+    assert entity_id, f"create returned empty entity_id: {created}"
+
+    # ---- the create payload reports what gflow believes it sent ----
+    created_voice = created.get("voice")
+    assert created_voice, (
+        f"create payload carries no voice at all: {created} — gflow was asked for "
+        f"{voice!r} and reported nothing, so the PATCH never carried audioReferences"
+    )
+
+    # ---- read-back from Flow: the authoritative check ----
+    show = _run_gflow(
+        [
+            "character",
+            "show",
+            "--project",
+            project_id,
+            "--id",
+            str(entity_id),
+            "--profile",
+            profile,
+            "--json",
+        ],
+        env=env,
+        timeout=_SHOW_TIMEOUT_S,
+    )
+    assert show.returncode == 0, (
+        f"character show (voice) exited {show.returncode}\n"
+        f"STDOUT:\n{show.stdout}\nSTDERR:\n{show.stderr}"
+    )
+    shown_payload = _parse_json_stdout(show, "character show (voice)")
+    shown = cast(dict[str, object], shown_payload["character"])
+
+    # THE assertion this test exists for: Flow itself must report a voice on the
+    # entity. A None here means `--voice` was accepted by the CLI, exited 0, and
+    # attached nothing — the silent failure the suite could not see.
+    shown_voice = shown.get("voice")
+    assert shown_voice, (
+        f"read-back reports NO voice on entity {entity_id}: {shown} — "
+        f"`--voice {voice}` exited 0 but nothing was attached server-side"
+    )
+    assert str(shown_voice).casefold() == voice.casefold(), (
+        f"read-back voice {shown_voice!r} is not {voice!r} (compared case-insensitively)"
+    )
+    # Evidence for the CHARACTER.md / CHARACTER_RECON.md contradiction: record the
+    # spelling Flow returned against the spelling gflow sent. Never fails on case.
+    print(  # noqa: T201 -- e2e evidence line, read from the run's captured output
+        f"[voice-case-evidence] sent={voice!r} stored={shown_voice!r} "
+        f"identical={shown_voice == voice}"
+    )
+
+    # ---- personality must survive too, asserted hard (no `if` guard) ----
+    shown_personality = shown.get("personality")
+    assert shown_personality, (
+        f"read-back reports NO personality on entity {entity_id}: {shown} — "
+        "`--personality` exited 0 but personalityNotes never landed"
+    )
+    assert shown_personality == personality, (
+        f"personality corrupted on read-back: sent {personality!r}, got {shown_personality!r}"
+    )

@@ -260,16 +260,32 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
         # voice sample. A route-aborted capture showed the assembled MZZa6b payload
         # carrying that id in its own reference slot.
         #
-        # What does NOT work: the submit that follows never produces a
-        # YhhmEf/eb1hJf/MZZa6b reply. Three runs, 60 s each, with the submode forced to
-        # Ingredients and with the model both pinned and left to Flow's default. Cause
-        # unknown — and undiagnosable from an incident bundle today, because the video
-        # path parks the page at about:blank before the capture runs (#722), so every
-        # bundle reports an empty DOM.
+        # What does NOT work: the BACKEND rejects the generation. This was previously
+        # recorded here as "the submit never produces a YhhmEf/eb1hJf/MZZa6b reply,
+        # cause unknown, undiagnosable without fixing #722". Both halves of that were
+        # wrong, and `scripts/dev/spike_entity_submit_rpcs.py` shows why — it logs every
+        # batchexecute rpcid through the submit instead of only the three watched ones:
         #
-        # Relaxing this gate before that is understood trades a clear, instant exit 36
-        # for a 60-second timeout, which is strictly worse for the user. The refusal
-        # stays until an entity-bound generation has actually completed.
+        #   MZZa6b -> [["wrb.fr","MZZa6b",null,null,null,[5],"generic"]]
+        #   WuwhI  -> []
+        #   jwpduf -> the generation IS listed in the project, prompt prefixed with the
+        #             entity name
+        #
+        # So MZZa6b DOES reply — with a null result and an error slot — and the run
+        # enqueues and then fails. Flow's own UI says so: "Failed. Sorry, this video
+        # failed to generate. You have not been charged for this generation." There is
+        # nothing missing from SUBMIT_RPCS, and reading the wire live sidesteps the
+        # empty incident bundle entirely, so #722 was never on this path.
+        #
+        # Measured 2026-09-07 across three configurations, all identical:
+        #   - portrait-only character, settings not applied
+        #   - portrait-only character, Ingredients + omni_flash + 16:9 + 8s
+        #   - character with face AND body triptych, same settings
+        # Character completeness is not the variable; the backend refuses the form.
+        #
+        # Relaxing this gate therefore trades a clear, instant exit 36 for a failed card
+        # the user has to interpret, which is strictly worse. The refusal stays until an
+        # entity-bound generation has actually completed on this host.
         return "character references"
     if request.mode is Mode.T2V:
         return None

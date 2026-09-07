@@ -262,12 +262,28 @@ token that drives the sample URL, so a canonical id round-trips to a playable sa
 `gflow character create --voice <Name>` validates the value **case-insensitively** (so `charon` and `Charon`
 both normalize to the canonical `Charon`) and sets `audioReferences[].presetVoiceId` via the entity PATCH.
 
-> **Wire-case caveat (open):** a prior live run sent a **lowercase** id (`"charon"`) and Flow persisted it,
-> but whether Flow applies the voice from a lowercase id vs the Capitalized canonical form is **UNVERIFIED**.
-> gflow adopts the Capitalized form as canonical per the UI. The voice list is currently a **hardcoded
-> constant**; fetching the live list from Flow's voice API and confirming the `presetVoiceId` wire-case are
-> tracked in the [Backlog](#14-backlog--not-yet-implemented). A "create new voice" flow ("Criar nova voz")
-> exists in the UI but is **not yet implemented**.
+> **Wire-case: Capitalized round-trips — VERIFIED 2026-09-07.** A live e2e
+> (`tests/e2e/test_character_create_e2e.py::test_character_create_attaches_voice_and_personality`,
+> profile `ffroliva`) created a character with `--voice Charon` and read it back from Flow:
+> `sent='Charon' stored='Charon' identical=True`. The Capitalized canonical form is stored
+> unchanged, so `CHARACTER_RECON.md`'s older note that "the preset id is the lowercased name"
+> does **not** describe what the wire does today.
+>
+> **Still untested:** whether a *lowercase* id is also accepted (gflow never sends one — it
+> normalizes to Capitalized before the PATCH), and — separately and more importantly —
+> whether a bound voice is actually **applied to generated video audio**. Attachment to the
+> entity is proven; application at render time is not.
+>
+> **`personalityNotes` is Agent-scoped.** Flow's own character editor labels the field
+> "Character info (optional) — Describe how your character acts…" and states underneath:
+> *"The Flow agent can use this information to help craft scenes with your character."*
+> It is an input to Flow's **agent** when it writes scenes, not a control on the audio engine
+> and not a documented input to a direct composer generation. Do not expect it to steer
+> performance on a `video t2v` / `r2v` call — put the direction in the prompt instead.
+>
+> The voice list is currently a **hardcoded constant**; fetching the live list from Flow's
+> voice API is tracked in the [Backlog](#14-backlog--not-yet-implemented). A "create new voice"
+> flow ("Criar nova voz") exists in the UI but is **not yet implemented**.
 
 ## 8. CLI surface (shipped v0.12.0)
 
