@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Flow's own diagnostics were blind on the migrated host, and two selectors were broken behind
+  it.** `gflow`'s incident-bundle DOM dump queried `i.google-symbols, span.google-symbols`, and
+  `diagnostics.py`'s `STRUCTURAL_DOM_JS` queried `i.google-symbols` — so on `flow.google.com`,
+  where every Material Symbols ligature rides a `<mat-icon>`, **both reported zero ligatures**.
+  The instrument used to diagnose selector drift was blind to the host the drift lives on. That
+  is why [#727](https://github.com/ffroliva/gflow-cli/issues/727) and
+  [#731](https://github.com/ffroliva/gflow-cli/issues/731) stayed invisible, and why an incident
+  bundle from a migrated user named no ligatures at all. Both queries are now class-only.
+
+  Two selectors were broken behind that blindness. `SUBMIT_BUTTON_SELECTORS` was **working by
+  luck**: its two tag-qualified entries matched nothing on the migrated host and the submit only
+  landed because a third `has-text` entry matches the `<mat-icon>`'s *text* — observed live as
+  `prompt_submitted via="button:has-text('arrow_forward')"`, after paying two misses per submit.
+  `IMAGE_MODEL_PICKER_TRIGGER` had neither twin nor fallback, so its miss was total and silent:
+  the picker is best-effort, so generation simply proceeded on whatever model tier the editor
+  opened at. Both now anchor on the `google-symbols` **class**, which sits on the labs `<i>` and
+  the migrated `<mat-icon>` alike — verified against a real CSS engine, offline, in
+  `tests/api/transports/test_ligature_carrier.py`.
+
+  `SUBMIT_BUTTON_SELECTORS` also moves from `:text` to **`:text-is`**. `:text` is a substring
+  match and accepts `arrow_forward_ios`, a real Material Symbol; the `<i>` qualifier had been
+  containing that, and dropping it for the class-only carrier made the over-match reachable on
+  the submit path. The two-carrier fixture caught it as `matched 3 of 2` before it ran live.
+  ([#730](https://github.com/ffroliva/gflow-cli/issues/730),
+  [spike](docs/superpowers/spikes/2026-09-07-ligature-carrier-and-name-drift.md))
+
 - **`character create --format-prompt` works again — both halves of it.** The flag had two
   independent faults, and fixing only the first would have left it just as useless. On the
   migrated `flow.google.com` host

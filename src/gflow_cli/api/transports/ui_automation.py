@@ -101,8 +101,14 @@ _PROJECT_URL_FRAGMENT = "/project/"
 # 'Nano Banana Pro', so has-text is unambiguous across the three.
 # Tier 1 (structural) slots are reserved for data-* / aria-* anchors once a DOM
 # probe via scripts/dev/capture_locale_invariants.py confirms stable attributes.
+# Class-only carrier anchor (#730): `.google-symbols` matches the labs `<i>` AND the
+# migrated `<mat-icon>`, which both carry the class — verified against a real CSS engine in
+# tests/api/transports/test_ligature_carrier.py. The tag-qualified form matched ZERO on the
+# migrated host, and this constant has neither a carrier twin nor a text fallback, so the
+# miss was total and silent: the picker is best-effort, so generation simply proceeded on
+# whatever tier the editor happened to open at.
 IMAGE_MODEL_PICKER_TRIGGER = (
-    "button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))"
+    "button[aria-haspopup='menu']:has(.google-symbols:text-is('arrow_drop_down'))"
 )
 # Verified live 2026-08-26 (menu read WHILE OPEN, profile denon82):
 #   ['Nano Banana Pro', 'Nano Banana 2', 'Nano Banana 2 Lite']
@@ -233,9 +239,27 @@ PROMPT_INPUT_SELECTORS = (
 # The ``arrow_forward`` ligature is a Material Symbols icon name (not a UI
 # label), so it renders identically regardless of the Chrome profile locale.
 # Use :text() inside :has() (not :has-text() which is invalid inside :has()).
+# Class-only carrier anchor (#730). `.google-symbols` covers the labs `<i>` and the migrated
+# `<mat-icon>` alike — both carry the class, verified against a real CSS engine in
+# tests/api/transports/test_ligature_carrier.py.
+#
+# This cascade was WORKING BY LUCK on the migrated host. Entries 0 and 1 were tag-qualified
+# and matched nothing there; the submit only ever landed because entry 2 matches the
+# `<mat-icon>`'s *text*. Observed live 2026-09-07:
+# `prompt_submitted via="button:has-text('arrow_forward')"`. Two misses at ~2s each were
+# paid on every submit before the fallback rescued it.
+#
+# The old `button:has(i:text(...))` entry is deleted, not kept: with entry 0 class-only it is
+# strictly dominated — anything a bare `<i>` carrying that text could match, the class-only
+# form matches too, and an `<i>` WITHOUT the class is not an icon carrier.
+# `:text-is` (exact), NOT `:text` (substring). The old entry was
+# `i.google-symbols:text('arrow_forward')`, whose substring match also accepts
+# `arrow_forward_ios` — a real Material Symbol. The `<i>` qualifier happened to contain that
+# on labs; dropping it for the class-only carrier made the over-match reachable, and the
+# two-carrier fixture caught it as `matched 3 of 2` before it ever ran live. Same trap as
+# `:text('upload')` accepting `drive_folder_upload` ([[flow-locale-leak-icon-ligatures]]).
 SUBMIT_BUTTON_SELECTORS = (
-    "button:has(i.google-symbols:text('arrow_forward'))",
-    "button:has(i:text('arrow_forward'))",
+    "button:has(.google-symbols:text-is('arrow_forward'))",
     "button:has-text('arrow_forward')",
 )
 
@@ -2385,7 +2409,13 @@ class UiAutomationTransport(VideoGenerationMixin):
                     }
                 }
                 // Google Symbols icons present anywhere — gives us the ligature names Flow uses.
-                const _gsQuery = 'i.google-symbols, span.google-symbols';
+                // Class-only, NOT tag-qualified. This query used to read
+                // 'i.google-symbols, span.google-symbols' and therefore returned ZERO on the
+                // migrated host, where every ligature rides a <mat-icon>. The instrument we
+                // reach for to diagnose selector drift was blind to the host the drift lives
+                // on — which is why #727 and #731 stayed invisible, and why an incident
+                // bundle from a migrated user reported no ligatures at all (#730).
+                const _gsQuery = '.google-symbols';
                 for (const el of document.querySelectorAll(_gsQuery)) {
                     const lig = (el.innerText || '').trim();
                     if (lig) result.google_symbols_ligatures.push({
