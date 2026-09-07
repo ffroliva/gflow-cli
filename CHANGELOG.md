@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.71.0] — 2026-09-07
 
+### Removed
+
+- **The PR-triage autopilot runner is no longer in this repo** (`scripts/autopilot/`,
+  `eval/pr_triage_*`, `deploy/PR-TRIAGE-AUTOPILOT-OPS.md`, `tests/autopilot/`, and its two
+  dependabot ecosystems). It is hosted privately now. `docs/GITHUB.md` described it in the
+  present tense as an hourly job using `pr_triage_gate.py`, so an operator reading the shipped
+  docs would have gone looking for a script this release deleted; that section is corrected.
+  The design spec and implementation plan stay in `docs/superpowers/` as history.
+
 ### Fixed
 
 - **The entity guard recorded a cause that was wrong, and it is retracted.** The
@@ -59,7 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   control — false, and a dead end — when the real fix was to anchor on `add`.
   ([#730](https://github.com/ffroliva/gflow-cli/issues/730))
 
-- **A migrated-host gallery no longer reports a missing control as selector drift.**
+- **~~A migrated-host gallery no longer reports a missing control as selector drift.~~ REVERTED WITHIN THIS RELEASE — kept for the record, see the bullet above.** The guard described below shipped and was removed again before the tag, because a live run created a project on that very surface in one click. The net change in v0.71.0 is the one above: the CTA is anchored structurally on `add` instead of by English text. Nothing in the paragraph that follows is behaviour you will find in this release.
   `NEW_PROJECT_SELECTORS` anchors on the `add_2` ligature. The migrated `flow.google.com`
   frontend renders **`add`** and renders `add_2` **nowhere** — composer `add=1/add_2=0`,
   editor `add=2/add_2=0`, measured with per-surface controls. That is a ligature *name*
