@@ -45,6 +45,15 @@ secrets.json
 .env.local
 .env.*.local
 
+# Runtime state written into this repo by tools run FROM this directory.
+# social-publisher's queue defaults to a RELATIVE path (its cli.py: SP_QUEUE_DB,
+# default "state/queue.sqlite"), so invoking it — or its MCP server — with this repo
+# as CWD silently creates state/queue.sqlite here. On 2026-09-07 that produced a
+# second, EMPTY queue that a dry-run then read and reported as "nothing pending",
+# while the real queue sat in social-publisher/state/. Untracked and unignored, it
+# was also one `git add -A` from being committed.
+state/
+
 # Generated outputs
 out/
 tmp/
