@@ -86,11 +86,16 @@ COMPOSER = "[contenteditable='true']"
 #: The submode radio that renders the Start/End frame chips (i2v).
 FRAMES_LIGATURE = "crop_free"
 DIALOG = "[role='dialog']"
-# What Flow puts WHERE the submit button was when the account is out of credits. Both
+# What Flow puts WHERE the submit button was when the account cannot afford the model.
+# Short of credits, not necessarily out of them: measured 2026-09-07, 50 credits held
+# against a 100-credit veo-quality request still rendered this. Both
 # halves are structural (a component class and an ARIA label), not a display string, so
 # this stays locale-invariant: the aria-label is the English attribute Angular emits, not
-# rendered text. Measured 2026-09-07 by A/B on a drained vs a funded account
-# (scripts/dev/spike_migrated_submit_anchor.py).
+# rendered text. Measured 2026-09-07 by A/B on a short vs a funded account
+# (scripts/dev/spike_migrated_submit_anchor.py). Finding, with the arithmetic and
+# four things named as NOT measured -- including that the positive match on
+# prompt-warning-button was seen exactly once:
+# docs/superpowers/spikes/2026-09-07-credit-shortfall-looks-like-selector-drift.md
 CREDITS_WARNING = "button.prompt-warning-button, [aria-label*='Insufficient credits']"
 DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
 
@@ -323,7 +328,7 @@ async def _raise_if_out_of_credits(page: Any) -> None:
     for its insufficient-credits warning.
 
     Called from every path that concludes "the submit anchor is unusable", because an
-    empty wallet and a moved frontend are indistinguishable at that point -- and only
+    credit shortfall and a moved frontend are indistinguishable at that point -- and only
     one of them is a bug in gflow. Silent when the warning is absent, so genuine
     selector drift still surfaces as drift.
     """
@@ -1282,9 +1287,9 @@ class MigratedComposer:
         try:
             submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
             if not await submit.count():
-                # An empty wallet and a moved frontend look identical here: both are
+                # A credit shortfall and a moved frontend look identical here: both are
                 # "arrow_forward is gone". Ask which one BEFORE naming a culprit --
-                # reporting a drained account as selector drift tells the user to file a
+                # reporting a short balance as selector drift tells the user to file a
                 # frontend bug that no code change can fix.
                 await _raise_if_out_of_credits(page)
                 raise UiSelectorDriftError(

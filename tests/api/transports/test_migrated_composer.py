@@ -74,12 +74,13 @@ class Dom:
     menu_overlay_lingering: bool = False
     escapes_ignored: bool = False  # a pane that refuses to close at all
     toast_visible: bool = False  # an unrelated CDK overlay (snackbar/tooltip)
-    # Two INDEPENDENT axes, deliberately. Out of Veo credits, Flow does not DISABLE the
+    # Two INDEPENDENT axes, deliberately. Short of credits for the model asked, Flow
+    # does not DISABLE the
     # submit control, it REPLACES it: `arrow_forward` disappears and a
     # `.prompt-warning-button` carrying aria-label='Insufficient credits warning' takes
     # its place. Measured by A/B on 2026-09-07
     # (scripts/dev/spike_migrated_submit_anchor.py): same probe, same host, same code,
-    # ~60 s apart -- drained account had arrow_forward ABSENT and the warning PRESENT;
+    # ~60 s apart -- the short account had arrow_forward ABSENT and the warning PRESENT;
     # funded account the mirror image.
     #
     # Kept as two fields so a missing anchor with NO warning is still expressible. That
@@ -1002,10 +1003,10 @@ async def test_submit_still_disabled_after_the_budget_is_selector_drift(
 
 
 async def test_a_missing_submit_with_a_credits_warning_is_not_reported_as_drift() -> None:
-    """An empty wallet must not be diagnosed as a moved frontend.
+    """A credit shortfall must not be diagnosed as a moved frontend.
 
     Measured 2026-09-07 by A/B (`scripts/dev/spike_migrated_submit_anchor.py`): same
-    probe, same host, same code, ~60 s apart. The drained account rendered NO
+    probe, same host, same code, ~60 s apart. The short account rendered NO
     `arrow_forward` and a `prompt-warning-button` with
     ``aria-label='Insufficient credits warning'``; the funded account the mirror image.
     So the anchor's absence tracks the WALLET, not the frontend.

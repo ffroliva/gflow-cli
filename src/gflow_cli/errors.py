@@ -650,9 +650,11 @@ class InsufficientCreditsError(GFlowError):
     A/B on 2026-09-07 on the migrated host: same probe, same code, ~60 s apart, a
     short account and a funded one rendering the mirror image of each other.
 
+    Finding: ``docs/superpowers/spikes/2026-09-07-credit-shortfall-looks-like-selector-drift.md``.
+
     That is why this class exists rather than reusing
     :class:`UiSelectorDriftError`. A missing anchor was being reported as "Google may
-    have updated their frontend — file a bug", for an empty wallet: a wrong diagnosis
+    have updated their frontend — file a bug", over a credit shortfall: a wrong diagnosis
     pointed at a wrong culprit, which also manufactures frontend-drift reports that no
     code change can ever fix. Exit code 37 lets a scripted caller branch on "top up the
     account" versus "the UI moved" (23), which is the whole point of separating them.
