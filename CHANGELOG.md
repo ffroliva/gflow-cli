@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.0] — 2026-09-07
+
 ### Fixed
 
 - **`--format-prompt` could submit an EMPTY prompt and log it as success.** The
@@ -28,6 +30,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   samples was never ruled out. Found by an adversarial review of the fix, not by the fix's
   own tests. ([#745](https://github.com/ffroliva/gflow-cli/issues/745))
 
+- **The entity guard recorded a cause that was wrong, and it is retracted.** The
+  `reference_entities` refusal in `_unported_form` said the submit *"never produces a
+  YhhmEf/eb1hJf/MZZa6b reply"*, cause unknown, undiagnosable without fixing
+  [#722](https://github.com/ffroliva/gflow-cli/issues/722). Reading the wire live shows
+  otherwise: `MZZa6b` **does** reply, with a null payload and an error slot, and the generation
+  is **accepted and queued** — Flow derives an `abra_r2v_8s` model key and renders it. What
+  fails is the observer: a null payload never names a media id, so `submit_and_observe`'s
+  `submitted` future never resolves and `SUBMIT_REPLY_BUDGET_S` (60 s) expires. That budget's
+  own comment records its calibration — *"the submit reply arrived 4.0–4.6 s after the click"* —
+  against an idle queue, while Flow allows **five concurrent generations** and throttles
+  per-minute throughput after heavy daily use. The run exits 9 `TransportTimeoutError` while the
+  video is still rendering. The guard **stays** (a timeout reported on a generation that is
+  actually running is worse for the user than an explicit refusal) but its reason is now
+  accurate and the fix is named beside it: on a null submit payload, fall through to the
+  `jwpduf`/`as29s` status poll. Two earlier comments on that guard, including one added in this
+  release, asserted the wrong cause.
+  ([#723](https://github.com/ffroliva/gflow-cli/issues/723),
+  [#742](https://github.com/ffroliva/gflow-cli/pull/742))
+- **`docs/CHARACTER.md` and `docs/CHARACTER_RECON.md` disagreed on the voice wire case, and one
+  was wrong.** CHARACTER.md called the Capitalized UI name canonical while flagging the question
+  UNVERIFIED; CHARACTER_RECON.md recorded `presetVoiceId: "gacrux"` and stated the preset id is
+  the lowercased name. A live run settles it: `sent='Charon' stored='Charon' identical=True`.
+  Both documents now also record that `personalityNotes` is **Agent-scoped** — Flow's own editor
+  says *"The Flow agent can use this information to help craft scenes with your character"* — so
+  it is not a control on the audio engine and should not be expected to steer a `t2v`/`r2v`
+  performance. ([#736](https://github.com/ffroliva/gflow-cli/pull/736))
 - **The "+ New project" CTA is found by structure again, not by English.** Its Tier-1 anchors
   all targeted the `add_2` ligature. The migrated `flow.google.com` gallery renders **`add`**
   under a `<mat-icon>` and renders `add_2` nowhere on that surface, so every structural entry
@@ -50,7 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   control — false, and a dead end — when the real fix was to anchor on `add`.
   ([#730](https://github.com/ffroliva/gflow-cli/issues/730))
 
-- **A migrated-host gallery no longer reports a missing control as selector drift.**
+- **~~A migrated-host gallery no longer reports a missing control as selector drift.~~ REVERTED WITHIN THIS RELEASE — kept for the record, see the bullet above.** The guard described below shipped and was removed again before the tag, because a live run created a project on that very surface in one click. The net change in v0.71.0 is the one above: the CTA is anchored structurally on `add` instead of by English text. Nothing in the paragraph that follows is behaviour you will find in this release.
   `NEW_PROJECT_SELECTORS` anchors on the `add_2` ligature. The migrated `flow.google.com`
   frontend renders **`add`** and renders `add_2` **nowhere** — composer `add=1/add_2=0`,
   editor `add=2/add_2=0`, measured with per-surface controls. That is a ligature *name*
@@ -202,6 +230,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`gflow character create --voice` is now verified end to end.**
+  `tests/e2e/test_character_create_e2e.py::test_character_create_attaches_voice_and_personality`
+  drives a live create then reads the character back from Flow. Until it existed, a repo-wide
+  grep for `--voice` across `tests/e2e/` matched **nothing**: every voice test was a unit test
+  of the hardcoded `VOICES` constant, and the one that looked live parsed a fixture. A voice
+  that silently failed to attach was invisible to the whole suite while the command exited 0.
+  Personality is asserted hard, unlike the sibling UTF-8 test which guards it as
+  `if shown_personality:` and passes vacuously when the field is absent.
+  ([#736](https://github.com/ffroliva/gflow-cli/pull/736))
+- `scripts/dev/spike_entity_submit_rpcs.py` — attaches a character, submits, and logs **every**
+  `batchexecute` rpcid rather than only the three in `SUBMIT_RPCS`, plus the submit request's
+  model key. `scripts/dev/spike_project_media_status.py` — reads a project's generation state
+  read-only, `$0`, submitting nothing.
+  ([#741](https://github.com/ffroliva/gflow-cli/issues/741))
+- **`video-production` skill § 4b-bis — the whole recipe for a cast with VOICES.** A character
+  entity is the only thing that carries a voice; a plate carries face and wardrobe as pixels and
+  the engine invents a new voice per clip. Measured across three plate-bound takes of one
+  character: **88 / 103 / 118 Hz**, three different actors, against a **4.3 Hz** engine noise
+  floor on an identical prompt repeated three times. The skill said to prefer rung 1 and never
+  said what skipping it costs, so a production could reach a finished cut before anyone noticed
+  the cast had no voices.
 - `scripts/dev/spike_host_lane.py` — names a profile's lane (labs / migrated / **signed out**) in
   one $0 run. It reports `SIGNED_OUT` as a distinct verdict and refuses to name a lane there,
   because a signed-out profile is otherwise indistinguishable from a migrated one: with no
@@ -4434,7 +4483,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...HEAD
+[0.71.0]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/ffroliva/gflow-cli/compare/v0.67.0...v0.68.0
