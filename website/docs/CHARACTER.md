@@ -417,11 +417,21 @@ convenience later.
   - **Cost reality:** the feature is UI-automation-heavy (new character-editor + picker selectors), not the
     "mostly REST" earlier framing. Structural metadata is REST; the value-generating steps are UI.
 
-## 12. UI-automation selectors (Option B) — VERIFIED 2026-06-02
+## 12. UI-automation selectors (Option B)
 
 Language-agnostic (ligature/structural) selectors. Flow renders in the profile locale, so **never match on
-localized text** — use Material-Symbol ligatures (`i.google-symbols:text('<lig>')`) or structure. Rows marked
-**VERIFIED** are confirmed against the shipped `api/transports/ui_automation.py` + spike DOM dumps (my-profile).
+localized text** — use Material-Symbol ligatures or structure.
+
+> **The ligature carrier differs by host.** `labs.google` renders ligatures in
+> `<i class="google-symbols">`; the migrated `flow.google.com` Angular frontend renders the SAME ligature in
+> `<mat-icon>` (which also carries the `google-symbols` class — the class was never the discriminator, the
+> tag is). A cascade anchored on one carrier returns a flat zero on the other host while the control is
+> fully visible — indistinguishable, from the driver's side, from the feature being gone. Tracked in #730.
+>
+> **Each row is dated against the code it was read from, and rows are re-derived from the shipped
+> constants rather than edited in place.** They previously carried an undated **VERIFIED** marker and went
+> stale at #703 without anyone noticing — a row marked verified that is not is worse than no row, because
+> it is what a reader trusts *instead of* reading the code (#731).
 
 **Editor URL (VERIFIED — `/fx/` prefix required).** After REST `createEntity`, the character-editor path is
 
@@ -437,16 +447,16 @@ owned by gflow) and the body-mode activation/settle signals.
 
 | Purpose | Selector | Conf. |
 |---|---|---|
-| Editor-ready anchor | the prompt textbox becoming visible: `div[role=textbox][data-slate-editor='true']` (`_CHARACTER_EDITOR_READY_SELECTOR`) | **VERIFIED** |
-| Prompt box (char editor) | `div[role=textbox][data-slate-editor='true']` (== `PROMPT_INPUT_SELECTORS[0]`) | **VERIFIED** |
-| Generate / submit | `arrow_forward` google-symbols button: `button:has(i.google-symbols:text('arrow_forward'))` (== `SUBMIT_BUTTON_SELECTORS`) | **VERIFIED** |
+| Editor-ready anchor | `div[role="textbox"][data-slate-editor="true"], div.ProseMirror[contenteditable="true"]` (`_CHARACTER_EDITOR_READY_SELECTOR`) — **both frontends**: labs mounts Slate, `flow.google.com` mounts ProseMirror. Asking only for Slate reported 0 boxes on a migrated editor whose box was visible the whole time. | read from code 2026-09-07 |
+| Prompt box (char editor) | the `PROMPT_INPUT_SELECTORS` cascade, **not** its first entry. `[0]` is the Slate anchor; on the migrated host it misses and `[1]` `div[contenteditable="true"]` is what matches (observed live 2026-09-07, `ui_automation.prompt_input_found`). | read from code + live 2026-09-07 |
+| Generate / submit | `SUBMIT_BUTTON_SELECTORS` — `button:has(i.google-symbols:text('arrow_forward'))`, then `button:has(i:text(…))`, then `button:has-text('arrow_forward')`. ⚠️ **Single-carrier**: on the migrated host both `<i>` entries miss and only the third (which matches the `<mat-icon>`'s text) fires — observed live 2026-09-07, `prompt_submitted via="button:has-text('arrow_forward')"`. Working by luck, not by design; tracked in #730. | read from code + live 2026-09-07 |
 | Name field | `input[placeholder]` — localized placeholder; **do NOT rely on the text** (structural: it is the editor's lone placeholdered input) | **VERIFIED** |
 | Personality field | the panel `textarea` (localized placeholder) — **prefer REST PATCH** | **VERIFIED** |
 | Slot 0 image (face) | aria-label `"Imagem do personagem 1"` — **localized**, note only (do not load-bear on the text) | med (localized) |
-| **Body mode (slot 1)** | Current cohort: portrait-image sibling `button:has(img) + button:has(i.google-symbols:text-is('accessibility_new'))`; settle signal: a newly mounted generated-media card with an `img` and exact `cancel` icon. Legacy cohort fallback: icon-only `[role=button]` carrying exact `add_2`, followed by Slate-box count rise. No localized button text or positional index. | **VERIFIED** live 2026-07-26 |
-| Model picker (char editor) | `button[aria-haspopup='menu']:has(i.google-symbols:text-is('arrow_drop_down'))` *(normal editor uses `crop_16_9`)* | **VERIFIED** |
+| **Body mode (slot 1)** | `_CHARACTER_BODY_MODE_SELECTOR` = `button:has(img) + button:has(i.google-symbols:text-is('accessibility_new'))` **or** `flow-slot-chip-button:has(mat-icon:text-is('accessibility_new')) button` — the second alternative is the migrated host's custom element and was added in #703; the row omitted it until #731. Settle signal: a newly mounted generated-media card with an `img` and exact `cancel` icon. The chip ships `disabled` until a portrait exists. | read from code 2026-09-07; behaviour live 2026-07-26 |
+| Model picker (char editor) | `_CHARACTER_MODEL_PICKER_TRIGGER_SELECTORS` — `arrow_drop_down` under **either** carrier, on `button` **and** `[role='button']` (4 entries). The row previously showed an `aria-haspopup='menu'` variant that appears in none of them. Omitting the `mat-icon` entries logged `model-picker trigger not found` on the migrated host and generated on whatever tier the editor opened at (live 2026-09-06). | read from code 2026-09-07 |
 | Voice picker | `voice_selection` google-symbols ligature | **VERIFIED** (ligature) |
-| Personagens nav (project) | `button:has(i.google-symbols:text-is('accessibility_new'))` (cards are `div[role=button]`; tag disambiguates) | high |
+| Personagens nav (project) | `button:has(i.google-symbols:text-is('accessibility_new'))` (cards are `div[role=button]`; tag disambiguates). ⚠️ single-carrier — see #730. | high (unre-verified) |
 | Delete character (rm, v2) | `button:has(i.google-symbols:text-is('delete'))` | high |
 | Picker tab → Personagens | `[role=dialog] button[role=tab]:has(i.google-symbols:text-is('accessibility_new'))` | high |
 | **Picker "include in command"** | primary `button` in the dialog footer — **no ligature → structural anchor (last/primary dialog button)**; only appears *after* an option is selected | low ⚠️ |
