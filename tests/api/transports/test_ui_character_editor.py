@@ -1336,6 +1336,26 @@ class _FakePromptBox:
         return self._before
 
 
+class _FakeClearingPromptBox:
+    """Models Flow's real sequence: typed -> "" (cleared) -> rewritten.
+
+    The empty window is what a fixed-cadence poll can land in, and what the original
+    `abs()` gate accepted as a rewrite.
+    """
+
+    def __init__(self, before: str, after: str) -> None:
+        self._seq = [before, before, "", "", after]
+        self.reads = 0
+        self.saw_empty = False
+
+    async def inner_text(self) -> str:
+        v = self._seq[min(self.reads, len(self._seq) - 1)]
+        self.reads += 1
+        if v == "":
+            self.saw_empty = True
+        return v
+
+
 def _make_format_page(
     *,
     matching_selector: str | None = PROMPT_FORMAT_SELECTORS[0],
@@ -1496,6 +1516,37 @@ class TestFormatCharacterPrompt:
         assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is True
         assert button.clicked
         assert box.reads > 1, "must poll the box, not return on the click"
+
+    @pytest.mark.asyncio
+    async def test_a_cleared_box_is_not_a_rewrite(self) -> None:
+        """#745: Flow CLEARS the box before repopulating it. An empty read is not success.
+
+        The gate was `abs(len(current) - len(typed)) >= MIN_DELTA`, and `abs` accepts
+        change in EITHER direction. A poll landing in the clear-then-repopulate window
+        reads "" -> abs(0 - 19) = 19 >= 16 -> passes. `prompt_formatted` would log
+        `prompt_len_after=0` and `_send_prompt` calls `_click_submit` on the very next
+        line, submitting an EMPTY prompt on a path that spends image quota.
+
+        A success signal that fires on the ABSENCE of the thing it measures is the exact
+        defect #727 was about, rebuilt inside its own fix.
+        """
+        page, _button = _make_format_page()
+        box = _FakePromptBox(TYPED, "", change_after_reads=1)
+        t = _make_transport(page=page)
+
+        assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is False, (
+            "an emptied box must never count as a rewrite"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_rewrite_seen_after_a_clear_still_counts(self) -> None:
+        """The clear is transient — the real rewrite that follows must still be observed."""
+        page, _button = _make_format_page()
+        box = _FakeClearingPromptBox(TYPED, REWRITTEN)
+        t = _make_transport(page=page)
+
+        assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is True
+        assert box.saw_empty, "fixture must actually exercise the empty window"
 
     @pytest.mark.asyncio
     async def test_returns_false_when_the_rewrite_never_lands(self) -> None:

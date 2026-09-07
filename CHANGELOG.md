@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`--format-prompt` could submit an EMPTY prompt and log it as success.** The
+  observed-rewrite gate compared `abs(len(current) - len(typed)) >= 16`, and `abs` accepts
+  change in either direction. Flow **clears** the composer before repopulating it, so a poll
+  landing in that window read `""`, `abs(0 - 19) = 19` passed the gate, and `_send_prompt`
+  called `_click_submit` on the very next line — submitting nothing, on a path that spends
+  image quota, while `ui_automation.prompt_formatted` logged `prompt_len_after=0`
+  (`prompt_hash=e3b0c442`, the SHA-256 of the empty string).
+
+  Silent, billed, and self-certifying: a user hitting it would see a charge, an empty
+  result, and a log line saying it worked. It is also the exact defect the same release
+  fixes — a success signal that fires on the **absence** of the thing it measures — rebuilt
+  inside its own fix.
+
+  The gate now requires **growth** (`len(current) >= len(typed) + MIN_DELTA`) rather than an
+  absolute delta, plus a settle check: two reads one poll-interval apart must agree, because
+  the single discrete swap measured live was sampled at 250 ms and a partial write between
+  samples was never ruled out. Found by an adversarial review of the fix, not by the fix's
+  own tests. ([#745](https://github.com/ffroliva/gflow-cli/issues/745))
+
 - **The "+ New project" CTA is found by structure again, not by English.** Its Tier-1 anchors
   all targeted the `add_2` ligature. The migrated `flow.google.com` gallery renders **`add`**
   under a `<mat-icon>` and renders `add_2` nowhere on that surface, so every structural entry
