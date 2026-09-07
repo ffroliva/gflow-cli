@@ -183,8 +183,9 @@ lookup instead of a hope.
 (`composition.py:67-80`), while the runner creates exactly **one entity per character name**
 (`cli_movie.py:589-597`). On an `identity = "entity"` character a variant therefore changes
 the *words* while the entity's body plate keeps the original outfit, and the two argue inside
-one generation. Until that is fixed, express costume states as **separate `[[characters]]`
-entries** with `identity = "entity"` and a shared face prompt — not as `variants`.
+one generation. Until that is fixed, express costume states as **separate entries in the
+manifest's characters array**, each with `identity = "entity"` and a shared face prompt —
+not as `variants`. See [MOVIE.md](../../docs/MOVIE.md) for the TOML.
 
 Full method in **[`consistency.md`](consistency.md)**. The rest of the short form:
 
