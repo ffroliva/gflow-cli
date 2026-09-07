@@ -100,123 +100,130 @@ async def capture(
         if transport is None:
             sys.exit("FlowApiClient.transport is None")
         page = await client._checkout_page()
+        try:
 
-        await transport._enter_editor(page, None)  # type: ignore[attr-defined]
-        await transport._dismiss_blocking_overlays(page, None)  # type: ignore[attr-defined]
-        await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
-        await VideoGenerationMixin._wait_video_editor_ready(page)
-        # Select model BEFORE attaching frames — mirrors _generate_video_locked
-        # order. Critical for the issue #125 model+i2v compatibility probe:
-        # omni-flash silently drops refs at submit, veo-3.1-* preserves them.
-        if model_alias:
-            chosen = VideoModel.from_cli(model_alias)
-            if chosen is None:
-                sys.exit(f"Unknown CLI model alias: {model_alias!r}")
-            evidence["selected_model"] = model_alias
-            print(f"Selecting model {model_alias!r} ({chosen.value})...")
-            await VideoGenerationMixin._select_video_model(page, chosen, out_dir=None)
-        await VideoGenerationMixin._switch_video_sub_mode(page, "frames", out_dir=None)
-        await page.keyboard.press("Escape")
-        await page.wait_for_timeout(600)
+            await transport._enter_editor(page, None)  # type: ignore[attr-defined]
+            await transport._dismiss_blocking_overlays(page, None)  # type: ignore[attr-defined]
+            await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
+            await VideoGenerationMixin._wait_video_editor_ready(page)
+            # Select model BEFORE attaching frames — mirrors _generate_video_locked
+            # order. Critical for the issue #125 model+i2v compatibility probe:
+            # omni-flash silently drops refs at submit, veo-3.1-* preserves them.
+            if model_alias:
+                chosen = VideoModel.from_cli(model_alias)
+                if chosen is None:
+                    sys.exit(f"Unknown CLI model alias: {model_alias!r}")
+                evidence["selected_model"] = model_alias
+                print(f"Selecting model {model_alias!r} ({chosen.value})...")
+                await VideoGenerationMixin._select_video_model(page, chosen, out_dir=None)
+            await VideoGenerationMixin._switch_video_sub_mode(page, "frames", out_dir=None)
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(600)
 
-        async def type_prompt() -> None:
-            print("Typing prompt...")
-            boxes = page.locator(PROMPT_INPUT_SELECTOR)
-            box = boxes.first
-            await box.click()
-            await page.keyboard.press("Control+A")
-            await page.keyboard.press("Delete")
-            await page.keyboard.insert_text(prompt_text)
-            await page.wait_for_timeout(500)
+            async def type_prompt() -> None:
+                print("Typing prompt...")
+                boxes = page.locator(PROMPT_INPUT_SELECTOR)
+                box = boxes.first
+                await box.click()
+                await page.keyboard.press("Control+A")
+                await page.keyboard.press("Delete")
+                await page.keyboard.insert_text(prompt_text)
+                await page.wait_for_timeout(500)
 
-        async def bind_frames() -> None:
-            print("Attaching Start...")
-            await VideoGenerationMixin._attach_frame(page, 0, "Start", probe_image, out_dir=out_dir)
-            if start_only:
-                print("Skipping End (start-only mode).")
-                return
-            print("Attaching End...")
-            await VideoGenerationMixin._attach_frame(page, 1, "End", probe_image, out_dir=out_dir)
+            async def bind_frames() -> None:
+                print("Attaching Start...")
+                await VideoGenerationMixin._attach_frame(page, 0, "Start", probe_image, out_dir=out_dir)
+                if start_only:
+                    print("Skipping End (start-only mode).")
+                    return
+                print("Attaching End...")
+                await VideoGenerationMixin._attach_frame(page, 1, "End", probe_image, out_dir=out_dir)
 
-        # Sequence selection — this is what the probe is testing.
-        if reorder:
-            await type_prompt()
-            await bind_frames()
-        else:
-            await bind_frames()
-            await type_prompt()
-
-        evidence["slot_count_at_t_pre_submit"] = await page.locator(FRAME_SLOTS_STRUCT).count()
-        await page.screenshot(path=str(out_dir / "01-pre-submit.png"))
-
-        # Install network-layer interceptor + request observer.
-        captured_requests: list[dict[str, Any]] = []
-
-        async def on_request(req: Any) -> None:
-            if "batchAsync" in req.url or "video:batch" in req.url:
-                summary = _summarize_request_image_inputs(req)
-                captured_requests.append(
-                    {
-                        "url": req.url,
-                        "method": req.method,
-                        "image_inputs": summary,
-                    }
-                )
-                print(f"  REQUEST observed: {req.url}")
-
-        async def on_route(route: Any) -> None:
-            # Block the request from reaching Veo so no credit consumed.
-            url = route.request.url
-            if "video:batchAsync" in url:
-                print(f"  ABORTING: {url}")
-                await route.abort()
+            # Sequence selection — this is what the probe is testing.
+            if reorder:
+                await type_prompt()
+                await bind_frames()
             else:
-                await route.continue_()
+                await bind_frames()
+                await type_prompt()
 
-        await page.route(ENDPOINT_GLOB, on_route)
-        page.on("request", on_request)
+            evidence["slot_count_at_t_pre_submit"] = await page.locator(FRAME_SLOTS_STRUCT).count()
+            await page.screenshot(path=str(out_dir / "01-pre-submit.png"))
 
-        # Now click submit via the production selector cascade.
-        print("Clicking submit (XHR will be aborted before reaching Veo)...")
-        for sel in SUBMIT_BUTTON_SELECTORS:
-            try:
-                btn = page.locator(sel).first
-                await btn.wait_for(state="visible", timeout=2_000)
-                if await btn.is_disabled():
-                    print(f"  submit '{sel}' still disabled, skipping")
-                    continue
-                await btn.click()
-                print(f"  clicked via {sel}")
-                break
-            except Exception as e:
-                print(f"  miss {sel}: {e}")
+            # Install network-layer interceptor + request observer.
+            captured_requests: list[dict[str, Any]] = []
 
-        # Give the browser ~3s to fire the request before we close.
-        await asyncio.sleep(3)
-        await page.screenshot(path=str(out_dir / "02-post-submit-attempt.png"))
+            async def on_request(req: Any) -> None:
+                if "batchAsync" in req.url or "video:batch" in req.url:
+                    summary = _summarize_request_image_inputs(req)
+                    captured_requests.append(
+                        {
+                            "url": req.url,
+                            "method": req.method,
+                            "image_inputs": summary,
+                        }
+                    )
+                    print(f"  REQUEST observed: {req.url}")
 
-        evidence["slot_count_at_t_post_submit"] = await page.locator(FRAME_SLOTS_STRUCT).count()
-        evidence["captured_requests"] = captured_requests
+            async def on_route(route: Any) -> None:
+                # Block the request from reaching Veo so no credit consumed.
+                url = route.request.url
+                if "video:batchAsync" in url:
+                    print(f"  ABORTING: {url}")
+                    await route.abort()
+                else:
+                    await route.continue_()
 
-        (out_dir / "evidence.json").write_text(
-            json.dumps(evidence, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+            await page.route(ENDPOINT_GLOB, on_route)
+            page.on("request", on_request)
 
-        print("\n=== summary ===")
-        print(f"Pre-submit slot count:  {evidence['slot_count_at_t_pre_submit']}  (expect 0)")
-        print(f"Post-submit slot count: {evidence['slot_count_at_t_post_submit']}")
-        print(f"Captured generate requests: {len(captured_requests)}")
-        for r in captured_requests:
-            ep = r["url"].split("/")[-1].split("?")[0]
-            ii = r["image_inputs"]
-            print(
-                f"  {ep}  startImage={ii.get('startImage')!r}  endImage={ii.get('endImage')!r}  refs={ii.get('referenceCount')}"
+            # Now click submit via the production selector cascade.
+            print("Clicking submit (XHR will be aborted before reaching Veo)...")
+            for sel in SUBMIT_BUTTON_SELECTORS:
+                try:
+                    btn = page.locator(sel).first
+                    await btn.wait_for(state="visible", timeout=2_000)
+                    if await btn.is_disabled():
+                        print(f"  submit '{sel}' still disabled, skipping")
+                        continue
+                    await btn.click()
+                    print(f"  clicked via {sel}")
+                    break
+                except Exception as e:
+                    print(f"  miss {sel}: {e}")
+
+            # Give the browser ~3s to fire the request before we close.
+            await asyncio.sleep(3)
+            await page.screenshot(path=str(out_dir / "02-post-submit-attempt.png"))
+
+            evidence["slot_count_at_t_post_submit"] = await page.locator(FRAME_SLOTS_STRUCT).count()
+            evidence["captured_requests"] = captured_requests
+
+            (out_dir / "evidence.json").write_text(
+                json.dumps(evidence, indent=2, ensure_ascii=False),
+                encoding="utf-8",
             )
 
-        print(f"\nDOM evidence: {out_dir / 'evidence.json'}")
-        print("All requests to Veo were aborted at the browser — zero credits.")
-        return 0
+            print("\n=== summary ===")
+            print(f"Pre-submit slot count:  {evidence['slot_count_at_t_pre_submit']}  (expect 0)")
+            print(f"Post-submit slot count: {evidence['slot_count_at_t_post_submit']}")
+            print(f"Captured generate requests: {len(captured_requests)}")
+            for r in captured_requests:
+                ep = r["url"].split("/")[-1].split("?")[0]
+                ii = r["image_inputs"]
+                print(
+                    f"  {ep}  startImage={ii.get('startImage')!r}  endImage={ii.get('endImage')!r}  refs={ii.get('referenceCount')}"
+                )
+
+            print(f"\nDOM evidence: {out_dir / 'evidence.json'}")
+            print("All requests to Veo were aborted at the browser — zero credits.")
+            return 0
+        finally:
+            # Return the page to the pool. `_checkout_page()` blocks FOREVER on an empty
+            # pool (api/client.py), so holding the only page arms a silent deadlock for the
+            # next caller that needs one -- including any `client.<verb>()`, which check one
+            # out internally. Pinned by tests/scripts/test_spike_page_pool.py.
+            client._checkin_page(page)
 
 
 def main() -> int:

@@ -54,41 +54,48 @@ async def capture(profile_name: str, model_alias: str, settle_ms: int) -> int:
         if transport is None:
             sys.exit("FlowApiClient.transport is None")
         page = await client._checkout_page()
-
-        # PRODUCTION order (mirrors _generate_video_locked exactly).
-        await transport._enter_editor(page, None)  # type: ignore[attr-defined]
-        await VideoGenerationMixin._wait_video_editor_ready(page)
-        await transport._dismiss_blocking_overlays(page, None)  # type: ignore[attr-defined]
-        await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
-
-        if settle_ms > 0:
-            print(f"Inserting {settle_ms}ms settle between switch and select...")
-            await page.wait_for_timeout(settle_ms)
-
-        # Enumerate menu items right before select (diagnostic).
         try:
-            items = await page.locator("[role='menuitem']").all_inner_texts()
-            print(f"menuitems visible before select ({len(items)}): {[t[:30] for t in items][:12]}")
-        except Exception as e:
-            print(f"menuitem enumeration failed: {e}")
 
-        # Try selection. _select_video_model logs model_selected OR
-        # model_option_not_found — both visible on stderr.
-        try:
-            await VideoGenerationMixin._select_video_model(
-                page, model, out_dir=None, required=False
-            )
-        except Exception as e:  # noqa: BLE001
-            print(f"_select_video_model raised: {e}")
+            # PRODUCTION order (mirrors _generate_video_locked exactly).
+            await transport._enter_editor(page, None)  # type: ignore[attr-defined]
+            await VideoGenerationMixin._wait_video_editor_ready(page)
+            await transport._dismiss_blocking_overlays(page, None)  # type: ignore[attr-defined]
+            await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
 
-        # Report what the model picker now shows (its label reflects the choice).
-        try:
-            items_after = await page.locator("[role='menuitem']").all_inner_texts()
-            print(f"menuitems after select attempt ({len(items_after)})")
-        except Exception:
-            pass
-        print("Done (no Generate — zero credits).")
-        return 0
+            if settle_ms > 0:
+                print(f"Inserting {settle_ms}ms settle between switch and select...")
+                await page.wait_for_timeout(settle_ms)
+
+            # Enumerate menu items right before select (diagnostic).
+            try:
+                items = await page.locator("[role='menuitem']").all_inner_texts()
+                print(f"menuitems visible before select ({len(items)}): {[t[:30] for t in items][:12]}")
+            except Exception as e:
+                print(f"menuitem enumeration failed: {e}")
+
+            # Try selection. _select_video_model logs model_selected OR
+            # model_option_not_found — both visible on stderr.
+            try:
+                await VideoGenerationMixin._select_video_model(
+                    page, model, out_dir=None, required=False
+                )
+            except Exception as e:  # noqa: BLE001
+                print(f"_select_video_model raised: {e}")
+
+            # Report what the model picker now shows (its label reflects the choice).
+            try:
+                items_after = await page.locator("[role='menuitem']").all_inner_texts()
+                print(f"menuitems after select attempt ({len(items_after)})")
+            except Exception:
+                pass
+            print("Done (no Generate — zero credits).")
+            return 0
+        finally:
+            # Return the page to the pool. `_checkout_page()` blocks FOREVER on an empty
+            # pool (api/client.py), so holding the only page arms a silent deadlock for the
+            # next caller that needs one -- including any `client.<verb>()`, which check one
+            # out internally. Pinned by tests/scripts/test_spike_page_pool.py.
+            client._checkin_page(page)
 
 
 def main() -> int:
