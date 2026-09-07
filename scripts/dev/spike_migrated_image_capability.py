@@ -53,6 +53,16 @@ from _spike_common import (  # noqa: E402, isort: skip
 
 _MIGRATED_ROOT = "https://flow.google.com"
 
+
+class SpikeUnreachedError(RuntimeError):
+    """A closed surface this spike exists to read could not be opened.
+
+    Raised instead of printing a verdict. The distinction is the whole point of
+    the class: "I looked and found nothing" and "I never got to look" are
+    different results, and collapsing them is how an unopened settings panel
+    became a shipped claim that the migrated composer has no image mode.
+    """
+
 # Anything that could plausibly name an image mode, by ligature or by role.
 _SURFACE_JS = r"""() => {
   const LIG = '.google-symbols, .material-symbols-outlined, .material-icons, mat-icon';
@@ -125,6 +135,10 @@ async def _main(profile: str, project: str) -> int:
 
             await _snapshot(page, "default_view", findings)
 
+            # Which closed surfaces we actually got INSIDE. A verdict may only be
+            # printed once every one of them has been read — see _UNREACHED_MSG.
+            reached: dict[str, bool] = {"settings_overlay": False, "add_menu": False}
+
             # Open each add menu in turn and read what it offers.
             menus = page.locator("flow-add-menu button")
             count = await menus.count()
@@ -134,12 +148,16 @@ async def _main(profile: str, project: str) -> int:
                     await menus.nth(i).click(timeout=4000)
                     await page.wait_for_timeout(1500)
                     await _snapshot(page, f"add_menu_{i}_open", findings)
+                    reached["add_menu"] = True
                     await page.keyboard.press("Escape")
                     await page.wait_for_timeout(600)
                 except Exception as exc:  # noqa: BLE001,PERF203 - a menu may not open
                     step("add_menu", f"[{i}] could not open: {type(exc).__name__}")
 
-            # The settings overlay is where the migrated composer keeps submodes.
+            # The settings overlay is where the migrated composer keeps submodes —
+            # and where the `mode` radiogroup carrying `imageImage` lives. This is
+            # THE surface the spike exists to read, so failing to open it is a
+            # failed run, never a finding.
             trig = page.locator(
                 "button[aria-label='Settings trigger'], .settings-trigger-button, "
                 "button:has(mat-icon:text-is('settings_2'))"
@@ -148,12 +166,19 @@ async def _main(profile: str, project: str) -> int:
                 try:
                     await trig.click(timeout=4000)
                     await page.wait_for_timeout(1800)
+                    # Presence of the trigger is not entry to the panel: wait for a
+                    # pane that actually contains radios before claiming to have read it.
+                    await page.locator(".cdk-overlay-pane").filter(
+                        has=page.locator("[role='radiogroup']")
+                    ).last.wait_for(state="visible", timeout=10_000)
                     await _snapshot(page, "settings_open", findings)
-                except Exception as exc:  # noqa: BLE001 - overlay is best-effort
+                    reached["settings_overlay"] = True
+                except Exception as exc:  # noqa: BLE001 - recorded, never swallowed
                     step("settings", f"could not open: {type(exc).__name__}")
             else:
                 step("settings", "no settings trigger found")
 
+            findings["surfaces_reached"] = reached
             found = sorted(
                 {
                     lig
@@ -162,13 +187,33 @@ async def _main(profile: str, project: str) -> int:
                     for lig in sec.get("image_ligatures", [])
                 }
             )
+            findings["image_ligatures_found"] = found
+
+            # A probe that could not reach the surface it exists to read must FAIL,
+            # never conclude. The original version printed "the migrated composer
+            # looks VIDEO-ONLY" unconditionally, and that sentence — from a run whose
+            # overlay-open had silently failed — reached a shipped code comment as
+            # "measured, not assumed". It was falsified on 2026-09-07 by
+            # spike_migrated_composer_mode_axis.py: the panel holds
+            # `[imageImage, videocamVideo]`. Never restore the unconditional verdict.
+            unreached = [name for name, ok in reached.items() if not ok]
+            if unreached:
+                step("VERDICT", "WITHHELD")
+                step("unreached", ", ".join(unreached))
+                raise SpikeUnreachedError(
+                    "did not get inside: "
+                    + ", ".join(unreached)
+                    + " — this run cannot speak to what those surfaces contain"
+                )
             step(
                 "verdict",
                 f"image-naming ligatures across all surfaces: {found or 'NONE'} -> "
                 + (
                     "an image capability may be drivable — investigate"
                     if found
-                    else "no image mode surfaced; the migrated composer looks VIDEO-ONLY"
+                    else "no image ligature on any surface READ (all surfaces were "
+                    "opened) — still not proof of absence; confirm against "
+                    "spike_migrated_composer_mode_axis.py"
                 ),
             )
         finally:
@@ -189,4 +234,13 @@ if __name__ == "__main__":
     ap.add_argument("--profile", default="ci-probe")
     ap.add_argument("--project", required=True)
     args = ap.parse_args()
-    raise SystemExit(asyncio.run(_main(args.profile, args.project)))
+    try:
+        raise SystemExit(asyncio.run(_main(args.profile, args.project)))
+    except SpikeUnreachedError as exc:
+        print(f"[spike] PROBE FAILED: {exc}", file=sys.stderr, flush=True)
+        print(
+            "[spike] This is a failed measurement, NOT evidence of absence.",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise SystemExit(3) from exc

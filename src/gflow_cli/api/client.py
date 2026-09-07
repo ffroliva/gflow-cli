@@ -2423,16 +2423,43 @@ class FlowApiClient:
             # root grid, which is where the client-side handoff leaves the pooled
             # bootstrap page, has no script at all.
             #
-            # So this guard refuses a HOST that can mint, standing in for the real
-            # constraint: `gflow image` is UI-driven, and the migrated project
-            # composer has no image-generation mode. Its add menu is a media
-            # library (Scenes / Images / Videos / Upload media) and its settings
-            # radios are grid/batch and size — measured, not assumed
-            # (scripts/dev/spike_migrated_image_capability.py). Image generation
-            # does exist on that host, but only inside the character editor.
+            # So this guard refuses a HOST that can mint, standing in for a
+            # DIFFERENT constraint: `gflow image` is UI-driven, and nothing in
+            # this repo drives the migrated composer's image path yet.
             #
-            # When the composer gains an image mode, the fix is to route the mint
-            # to a project page — NOT to keep refusing the origin.
+            # It does NOT stand in for "that composer cannot generate images".
+            # This comment used to say exactly that — "no image-generation mode
+            # … measured, not assumed" — and it was FALSIFIED on 2026-09-07 by
+            # scripts/dev/spike_migrated_composer_mode_axis.py, live on a
+            # migrated account: the composer's settings overlay opens to 6
+            # radiogroups / 16 radios and group 0 is
+            # `[imageImage, videocamVideo]`, present and hit-testable, with the
+            # VIDEO option carrying aria-checked. That reproduced the independent
+            # 2026-09-04 enumeration in
+            # docs/superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md:123-136
+            # exactly, three days later, on a different account.
+            #
+            # Why video was the checked one is NOT established: the probe opened a
+            # fresh page and read persisted overlay state, and never invoked the
+            # driver. Flow remembering the account's last-used mode explains it as
+            # well as anything gflow does. (`MigratedComposer.apply_video_settings`
+            # does pin `axis="mode"` to `videocam` unconditionally, but that ran in
+            # no part of this measurement.)
+            #
+            # The retracted claim cited a script whose run was never recorded and
+            # whose overlay-open was best-effort with a swallowed exception, so it
+            # could — and evidently did — conclude "video-only" having never opened
+            # the panel it existed to read. Two features have now been declared
+            # absent by a probe that failed silently; see skills/spike/SKILL.md.
+            #
+            # What IS established is narrow and worth stating precisely, because
+            # overstating it here would repeat the defect this comment retracts:
+            # an image radio EXISTS on that axis and is hit-testable. Nothing was
+            # clicked on it and nothing was submitted, so whether `gflow image`
+            # can be served from this host is still open. It is no longer safe to
+            # say it cannot. The next probe — click the radio, route the mint to a
+            # project page, and see how far a submit gets — is what decides the
+            # size of the port, and it is tracked separately.
             raise_if_migrated(page, at="mint_recaptcha_token")
             # Patchright evaluates in an isolated world by default, where the
             # page's main-world ``grecaptcha`` global is undefined; the resolver

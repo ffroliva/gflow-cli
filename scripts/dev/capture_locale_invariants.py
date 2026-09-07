@@ -24,6 +24,7 @@ from playwright.async_api import async_playwright
 
 from gflow_cli.auth import profile_dir as resolve_auth_profile_dir
 from gflow_cli.browser_manager import channel_for_profile
+from gflow_cli.profile_lease import ProfileLease
 
 DEFAULT_LOCALES = ("en-US", "pt-BR", "es-ES")
 FLOW_URL = "https://labs.google/fx/tools/flow"
@@ -144,7 +145,11 @@ def _summarize(results: CaptureResults) -> Summary:
 async def capture_locale(locale: str, profile_dir: Path) -> LocaleCapture | None:
     """Capture Flow DOM metadata for one locale."""
     print(f"Capturing locale: {locale}")
-    async with async_playwright() as playwright:
+    # Own the profile before Chrome starts, exactly as FlowApiClient does: two
+    # Chrome instances on one user_data_dir corrupt it, and an unleased browser
+    # is indistinguishable from an orphan in another operator's process list.
+    # Acquired per locale so a multi-locale run releases between browsers.
+    async with ProfileLease(profile_dir), async_playwright() as playwright:
         context = None
         for attempt in range(1, 4):
             try:
