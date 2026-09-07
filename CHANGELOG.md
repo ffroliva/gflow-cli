@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A migrated-host gallery no longer reports a missing control as selector drift.**
+  `NEW_PROJECT_SELECTORS` anchors on the `add_2` ligature. The migrated `flow.google.com`
+  frontend renders **`add`** and renders `add_2` **nowhere** — composer `add=1/add_2=0`,
+  editor `add=2/add_2=0`, measured with per-surface controls. That is a ligature *name*
+  drift, not the carrier split, so a `mat-icon` twin would not have helped. Reaching the
+  sweep there produced `Could not find 'New project' CTA on Flow gallery`, whose remediation
+  is "check for a newer release, then file a frontend bug" — unfixable by the reader, and
+  pointing at the wrong culprit, exactly as a credit shortfall once reported as frontend
+  drift. It now raises `FlowHostMigratedError` naming the host and the way forward
+  (`--project`, which every migrated path already requires). On labs a missing CTA is still
+  reported as drift, because there it genuinely is.
+
+  No production path reaches this today — `migrated_can_serve` refuses without a
+  `project_id`, `ensure_editor` navigates straight to the project URL, and `character create`
+  requires `--project`. The `add_2` drift is therefore harmless **because of those guards**,
+  which is precisely what a future port relaxes; the measured fact now sits beside the
+  constant so the next person to un-guard a path meets it.
+  ([#730](https://github.com/ffroliva/gflow-cli/issues/730),
+  [spike](docs/superpowers/spikes/2026-09-07-ligature-carrier-and-name-drift.md))
+
 - **Flow's own diagnostics were blind on the migrated host, and two selectors were broken behind
   it.** `gflow`'s incident-bundle DOM dump queried `i.google-symbols, span.google-symbols`, and
   `diagnostics.py`'s `STRUCTURAL_DOM_JS` queried `i.google-symbols` — so on `flow.google.com`,
