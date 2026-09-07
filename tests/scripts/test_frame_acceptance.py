@@ -172,6 +172,30 @@ def test_an_accept_must_carry_no_findings(tmp_path: Path) -> None:
         judge.assess(_sheet(tmp_path))
 
 
+def test_a_stray_trailing_brace_does_not_discard_a_correct_answer(tmp_path: Path) -> None:
+    """Verbatim from the first live run, and it cost a correct verdict.
+
+    A reasoning model closed its JSON with one brace too many. Matching greedily from the
+    first `{` to the LAST `}` swallowed the extra and produced invalid JSON, so a judge
+    that had correctly found the defect — naming it AND locating it at the right cell —
+    was reported as unparseable. Refusing to guess is right; refusing to read is not.
+    Extraction now balances braces instead of matching to the end.
+    """
+    body = (
+        '{"verdict": "reject", "findings": [{"failure": "background_morph", '
+        '"first_cell": 3, "evidence": "the rock formation shifts between cell 0 and 3"}]}}'
+    )
+    client = _FakeClient(_completion(body))
+    judge = VisionFrameJudge(
+        JudgeSettings(base_url="https://x/v1", api_key="k", models=("m1",)),
+        client_factory=lambda _s: client,
+    )
+    a = judge.assess(_sheet(tmp_path))
+    assert a.verdict is Verdict.REJECT
+    assert a.findings[0].failure is TemporalFailure.BACKGROUND_MORPH
+    assert a.findings[0].first_cell == 3
+
+
 # --- rotation and failover ----------------------------------------------------
 
 
@@ -201,6 +225,38 @@ def test_a_model_the_gateway_does_not_know_is_dropped_from_the_pool(tmp_path: Pa
     assert judge.live_models == ("m2",)
 
 
+def test_a_response_with_no_choices_rotates_instead_of_crashing(tmp_path: Path) -> None:
+    """Met live: a 200 whose body carried an error and no choices. `response.choices[0]`
+    raised TypeError deep in the parse, which reads as a bug here rather than a hiccup
+    upstream. It is transient, so it must rotate to the next model."""
+    empty = type("R", (), {"choices": None})()
+    good = _completion('{"verdict": "accept", "findings": []}')
+    client = _FakeClient(empty, good)
+    judge = VisionFrameJudge(
+        JudgeSettings(base_url="https://x/v1", api_key="k", models=("m1", "m2")),
+        client_factory=lambda _s: client,
+    )
+    assert judge.assess(_sheet(tmp_path)).verdict is Verdict.ACCEPT
+    assert client.models_called == ["m1", "m2"]
+
+
+def test_a_model_with_no_available_endpoints_is_dropped(tmp_path: Path) -> None:
+    """Met live: OpenRouter answers 404 "No endpoints found for <id>" when every provider
+    behind a model is offline. The phrasing was not in the dead-model markers, so the id
+    kept its turn in rotation and burned an attempt each pass."""
+    gone = RuntimeError("Error code: 404 - No endpoints found for nvidia/some-model:free.")
+    gone.status_code = 404  # type: ignore[attr-defined]
+    client = _FakeClient(gone, _completion('{"verdict": "accept", "findings": []}'))
+    judge = VisionFrameJudge(
+        JudgeSettings(
+            base_url="https://x/v1", api_key="k", models=("nvidia/some-model:free", "m2")
+        ),
+        client_factory=lambda _s: client,
+    )
+    judge.assess(_sheet(tmp_path))
+    assert judge.live_models == ("m2",)
+
+
 def test_exhausting_every_model_raises_rather_than_returning_clean(tmp_path: Path) -> None:
     client = _FakeClient(RuntimeError("boom"), RuntimeError("boom"))
     judge = VisionFrameJudge(
@@ -227,6 +283,18 @@ def test_a_judge_that_cannot_see_fails_its_sight_proof(tmp_path: Path) -> None:
     )
     with pytest.raises(JudgeUnavailableError, match="sight"):
         judge.prove_sight(expected_colour="red", tmp_dir=tmp_path)
+
+
+def test_the_sight_proof_creates_its_own_scratch_directory(tmp_path: Path) -> None:
+    """Regression: the first live run died here. `tmp_path` always exists in pytest, so
+    every unit test passed while the real caller — handing over a directory it had not
+    made yet — hit FileNotFoundError before a single call went out."""
+    client = _FakeClient(_completion('{"colour": "red"}'))
+    judge = VisionFrameJudge(
+        JudgeSettings(base_url="https://x/v1", api_key="k", models=("m1",)),
+        client_factory=lambda _s: client,
+    )
+    judge.prove_sight(expected_colour="red", tmp_dir=tmp_path / "does" / "not" / "exist")
 
 
 def test_a_judge_that_can_see_passes_its_sight_proof(tmp_path: Path) -> None:

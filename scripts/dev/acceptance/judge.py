@@ -63,7 +63,17 @@ Do not report ordinary camera movement, lighting change, or wind in cloth as a d
 #: unanswerable for anything that cannot.
 _SIGHT_PROMPT = 'This image is one flat colour. Answer with JSON only: {"colour": "<the colour>"}'
 
-_DEAD_MODEL_MARKERS = ("not in the catalog", "not in catalog", "not found", "does not exist")
+#: Ways a gateway says "that model id is not servable here". Retrying any of them just
+#: burns attempts, so the id leaves the pool for the run. "no endpoints found" is
+#: OpenRouter's phrasing for a model whose providers are all offline — met live on
+#: 2026-09-07, where it was NOT recognised and the dead id kept its turn in rotation.
+_DEAD_MODEL_MARKERS = (
+    "not in the catalog",
+    "not in catalog",
+    "not found",
+    "does not exist",
+    "no endpoints found",
+)
 
 
 def _looks_dead(exc: Exception) -> bool:
@@ -73,6 +83,44 @@ def _looks_dead(exc: Exception) -> bool:
     return any(m in str(exc).lower() for m in _DEAD_MODEL_MARKERS)
 
 
+def _first_balanced_object(text: str) -> str | None:
+    """The first COMPLETE JSON object in *text*, by brace depth rather than by regex.
+
+    Greedily matching the first `{` to the last `}` breaks on the commonest thing a
+    model actually does: emit one brace too many. That cost a correct verdict on the
+    first live run — the judge had found the defect, named it and located it, and the
+    answer was discarded as unparseable. Depth-counting stops at the object's real end
+    and ignores whatever follows.
+
+    Braces inside strings do not count, and an escaped quote does not end a string;
+    both are cheap to honour and expensive to get wrong.
+    """
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start >= 0:
+                return text[start : i + 1]
+    return None
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     """The first JSON object in *text*, tolerating a code fence but nothing weirder.
 
@@ -80,12 +128,12 @@ def _extract_json(text: str) -> dict[str, Any]:
     answer is an absent answer, and an absent answer must never become "nothing found".
     """
     stripped = re.sub(r"^\s*```(?:json)?|```\s*$", "", text.strip(), flags=re.MULTILINE)
-    match = re.search(r"\{.*\}", stripped, flags=re.S)
-    if not match:
+    blob = _first_balanced_object(stripped)
+    if blob is None:
         msg = f"the judge's answer could not be parsed as JSON: {text[:200]!r}"
         raise JudgeUnavailableError(msg)
     try:
-        parsed = json.loads(match.group(0))
+        parsed = json.loads(blob)
     except json.JSONDecodeError as exc:
         msg = f"the judge's answer could not be parsed as JSON: {text[:200]!r}"
         raise JudgeUnavailableError(msg) from exc
@@ -185,6 +233,10 @@ class VisionFrameJudge:
         if rgb is None:
             msg = f"no sight-proof colour named {expected_colour!r}"
             raise ValueError(msg)
+        # The caller hands us a directory; whether it exists yet is not their problem.
+        # Missed by the unit tests because pytest's tmp_path always exists — found by
+        # the first live run, which is the argument for having done one.
+        tmp_dir.mkdir(parents=True, exist_ok=True)
         image = _solid_colour_png(tmp_dir / f"_sight_{expected_colour}.png", rgb)
         body, model = self._ask(_SIGHT_PROMPT, image)
         seen = str(_extract_json(body).get("colour", "")).strip().lower()
@@ -241,7 +293,16 @@ class VisionFrameJudge:
             temperature=0.0,
             max_tokens=self._settings.max_tokens,
         )
-        choice = response.choices[0]
+        # A gateway under load can return a 200 whose body carries an error and no
+        # choices at all. Indexing it raises TypeError deep in the parse, which reads
+        # like a bug in this module rather than a hiccup upstream. It is transient, so
+        # it must ROTATE — hence a plain error, not JudgeUnavailableError, which is
+        # re-raised without rotating.
+        choices = getattr(response, "choices", None)
+        if not choices:
+            msg = f"{model} returned no choices (gateway error body?)"
+            raise RuntimeError(msg)
+        choice = choices[0]
         # A completion that ran out of budget is HALF AN ANSWER. Parsed leniently it
         # yields no findings, which reads as ACCEPT — a clean bill of health from a
         # sentence that stopped mid-word. This check is the whole reason the class exists.
