@@ -232,15 +232,27 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
     start frame only: the Frames picker on this host lists assets by display name
     with no UUID in its DOM (2026-09-05 spike), so a frame given by media UUID or
     ``@Name`` has nothing to anchor on yet, and the End chip is unmeasured."""
+    # Character entities are a different attach surface (a chip with an entity_id, in a
+    # different wire slot) and unported. This check is MODE-INDEPENDENT and must stay
+    # ahead of every early return (#716): it used to live inside the R2V branch, so a
+    # t2v request returned `None` here without its entities ever being inspected, and
+    # nothing downstream attaches one — `attach_start_frame` is i2v-only,
+    # `attach_references` is r2v-only, the `read_chips` verification is r2v-only. The
+    # result was a BILLED generation with the entity silently dropped, which is strictly
+    # worse than exit 36: the refusal is free and the clip is a stranger.
+    #
+    # `migrated_can_serve` also refuses on `reference_entities`, but it only feeds
+    # `prefer_migrated`, and an account Flow has already moved is routed by its URL
+    # without consulting it — so that refusal is unreachable for exactly the accounts
+    # that need it. This one is on the path every request takes.
+    if request.reference_entities:
+        return "character references"
     if request.mode is Mode.T2V:
         return None
     if request.mode is Mode.R2V:
         # Local files only, for the same reason i2v is: the picker lists assets by
         # display name and exposes no media id, so a reference gflow did not upload
-        # itself has nothing to anchor on. Character entities are a different attach
-        # surface (a chip with an entity_id, in a different wire slot) and unported.
-        if request.reference_entities:
-            return "character references"
+        # itself has nothing to anchor on.
         if not request.reference_images:
             return "references given by name rather than a local file"
         return None

@@ -9,21 +9,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **An empty wallet is no longer diagnosed as a moved frontend.** On the migrated
-  `flow.google.com` host, an account out of Veo credits produced
-  `UiSelectorDriftError` (exit 23) — *"A Flow editor UI element could not be located —
-  Google may have updated their frontend. Check for a newer gflow-cli release, then file
-  a bug"*. Flow does not **disable** the submit control when the wallet is empty, it
-  **replaces** it: `arrow_forward` disappears and a `prompt-warning-button` carrying
+- **`video t2v --reference-entity` no longer bills a clip that ignores the entity.** On the
+  migrated `flow.google.com` host the "character references are not ported" refusal lived inside
+  the r2v branch of the routing gate, so a t2v request returned from that gate before its
+  `reference_entities` were ever inspected — and nothing downstream attaches one there
+  (`attach_start_frame` is i2v-only, `attach_references` and the chip verification are r2v-only).
+  The run was submitted and **billed**, returning a plausible clip with an unbound face. That is
+  strictly worse than the exit 36 it was meant to give: a refusal is free and honest. The
+  sibling gate `migrated_can_serve` did refuse, but it only feeds `prefer_migrated`, and an
+  account Flow has already moved is routed by its URL without consulting it — so the refusal was
+  unreachable for exactly the accounts that needed it. The check is now mode-independent and
+  ahead of every early return. ([#716](https://github.com/ffroliva/gflow-cli/issues/716))
+- **A credit shortfall is no longer diagnosed as a moved frontend.** On the migrated
+  `flow.google.com` host, an account whose balance is short **for the model it asked for**
+  produced `UiSelectorDriftError` (exit 23) — *"A Flow editor UI element could not be
+  located — Google may have updated their frontend. Check for a newer gflow-cli release,
+  then file a bug"*. Flow does not **disable** the submit control, it **replaces** it:
+  `arrow_forward` disappears and a `prompt-warning-button` carrying
   `aria-label='Insufficient credits warning'` takes its place, so the anchor's absence
-  tracks the wallet, not the frontend. Measured by A/B on 2026-09-07 —
+  tracks the credit state, not the frontend. Measured by A/B on 2026-09-07 —
   `scripts/dev/spike_migrated_submit_anchor.py`, same probe and same code ~60 s apart,
-  drained and funded accounts rendering the mirror image of each other. Every path that
-  gives up on the submit control now checks the wallet before naming a culprit, and
-  reports the new `InsufficientCreditsError` (**exit 37**) instead. Genuine drift — a
-  missing anchor with no warning beside it — still reports 23. Beyond the wrong message,
-  the old behaviour manufactured frontend-drift bug reports that no code change could
-  ever fix.
+  two accounts rendering the mirror image of each other. The wallet was **not** empty:
+  it held **50** credits and the run asked for `--model veo-quality`, which costs **100**.
+  That distinction is the actionable half — "you have no credits" is a dead end for
+  someone holding 50, while "short for this model" has a remedy: pick a cheaper tier
+  (`veo-lite` is 10). Every path that gives up on the submit control now checks for the
+  warning before naming a culprit, and reports the new `InsufficientCreditsError`
+  (**exit 37**) instead. Genuine drift — a missing anchor with no warning beside it —
+  still reports 23. Beyond the wrong message, the old behaviour manufactured
+  frontend-drift bug reports that no code change could ever fix.
+
+### Changed
+
+- **Retracted a false "measured" claim about the migrated composer.** A code comment asserted, as
+  "measured, not assumed", that the migrated project composer "has no image-generation mode".
+  Falsified live on 2026-09-07: its settings overlay opens to six radiogroups / sixteen radios and
+  the first is `[imageImage, videocamVideo]`, hit-testable, pinned to `videocam` by
+  `migrated_composer.py:443`. This reproduced an enumeration already committed on 2026-09-04,
+  exactly, on a different account. `image` on a moved account is a **wiring** gap, not a
+  capability gap. The guard stays until the port lands, but it no longer tells anyone the host
+  cannot do this. ([#692](https://github.com/ffroliva/gflow-cli/issues/692),
+  [spike](docs/superpowers/spikes/2026-09-07-migrated-composer-has-an-image-mode.md))
+- **A spike that cannot reach its surface now fails instead of concluding.**
+  `spike_migrated_image_capability.py` opened the settings overlay best-effort and swallowed the
+  exception, so it printed "the migrated composer looks VIDEO-ONLY" even when it had never opened
+  the panel — and that sentence became the retracted claim above. It now raises
+  `SpikeUnreachedError` and exits 3 with "This is a failed measurement, NOT evidence of absence".
+  Two features have now been declared absent by a probe that failed silently; the first was
+  `character create`, killed by a single 20 s selector timeout.
+
+### Added
+
+- `scripts/dev/spike_host_lane.py` — names a profile's lane (labs / migrated / **signed out**) in
+  one $0 run. It reports `SIGNED_OUT` as a distinct verdict and refuses to name a lane there,
+  because a signed-out profile is otherwise indistinguishable from a migrated one: with no
+  session, `labs.google/fx/…` renders its marketing shell and `flow.google.com/project/<id>`
+  redirects to `/about`. Read either in isolation and you conclude "this account was moved" from
+  a dead cookie.
+- `scripts/dev/spike_migrated_composer_mode_axis.py` — hard-error probe that opens the migrated
+  composer's settings overlay and enumerates its radiogroups.
 
 ## [0.70.0] — 2026-09-06
 

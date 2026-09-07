@@ -2423,16 +2423,32 @@ class FlowApiClient:
             # root grid, which is where the client-side handoff leaves the pooled
             # bootstrap page, has no script at all.
             #
-            # So this guard refuses a HOST that can mint, standing in for the real
-            # constraint: `gflow image` is UI-driven, and the migrated project
-            # composer has no image-generation mode. Its add menu is a media
-            # library (Scenes / Images / Videos / Upload media) and its settings
-            # radios are grid/batch and size — measured, not assumed
-            # (scripts/dev/spike_migrated_image_capability.py). Image generation
-            # does exist on that host, but only inside the character editor.
+            # So this guard refuses a HOST that can mint, standing in for a
+            # DIFFERENT constraint: `gflow image` is UI-driven, and nothing in
+            # this repo drives the migrated composer's image path yet.
             #
-            # When the composer gains an image mode, the fix is to route the mint
-            # to a project page — NOT to keep refusing the origin.
+            # It does NOT stand in for "that composer cannot generate images".
+            # This comment used to say exactly that — "no image-generation mode
+            # … measured, not assumed" — and it was FALSIFIED on 2026-09-07 by
+            # scripts/dev/spike_migrated_composer_mode_axis.py, live on a
+            # migrated account: the composer's settings overlay opens to 6
+            # radiogroups / 16 radios and group 0 is
+            # `[imageImage, videocamVideo]`, hit-testable, with `videocam`
+            # selected because migrated_composer.py:443 pins it there on every
+            # run. That reproduced the independent 2026-09-04 enumeration in
+            # docs/superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md:123-136
+            # exactly, three days later, on a different account.
+            #
+            # The retracted claim cited a script whose run was never recorded and
+            # whose overlay-open was best-effort with a swallowed exception, so it
+            # could — and evidently did — conclude "video-only" having never opened
+            # the panel it existed to read. Two features have now been declared
+            # absent by a probe that failed silently; see skills/spike/SKILL.md.
+            #
+            # The port is tracked separately. Until it lands the guard stays, but
+            # it is a WIRING gap, not a capability gap: the fix is to route the
+            # mint to a project page and drive `mode=image` — NOT to keep refusing
+            # the origin, and never to tell a user the host cannot do this.
             raise_if_migrated(page, at="mint_recaptcha_token")
             # Patchright evaluates in an isolated world by default, where the
             # page's main-world ``grecaptcha`` global is undefined; the resolver
