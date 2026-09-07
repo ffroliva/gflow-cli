@@ -179,138 +179,143 @@ async def recon(
         if transport is None:
             sys.exit("FlowApiClient.transport is None")
         page = await client._checkout_page()  # type: ignore[reportPrivateUsage]
+        try:
 
-        await transport._enter_editor(page, None)  # type: ignore[attr-defined]
-        await transport._dismiss_blocking_overlays(page, None)  # type: ignore[attr-defined]
-        await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)  # type: ignore[reportPrivateUsage]
-        await VideoGenerationMixin._wait_video_editor_ready(page)  # type: ignore[reportPrivateUsage]
+            await transport._enter_editor(page, None)  # type: ignore[attr-defined]
+            await transport._dismiss_blocking_overlays(page, None)  # type: ignore[attr-defined]
+            await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)  # type: ignore[reportPrivateUsage]
+            await VideoGenerationMixin._wait_video_editor_ready(page)  # type: ignore[reportPrivateUsage]
 
-        # ---- A1: default video-mode state --------------------------------
-        await _dump_tabs(page, evidence, "initial")
-        await page.screenshot(path=str(out_dir / "01-video-mode-initial.png"))
+            # ---- A1: default video-mode state --------------------------------
+            await _dump_tabs(page, evidence, "initial")
+            await page.screenshot(path=str(out_dir / "01-video-mode-initial.png"))
 
-        # ---- A2a: model inventory in the DEFAULT sub-mode ----------------
-        if await _open_model_menu(page):
-            await _dump_menuitems(page, evidence, "default_submode")
-            await page.screenshot(path=str(out_dir / "02-model-menu-default-submode.png"))
-            await page.keyboard.press("Escape")
-            await page.wait_for_timeout(300)
-
-        # ---- A2b: switch to Frames, model inventory again ----------------
-        await _ensure_settings_open(page)
-        frames_ok = await _click_submode(page, "frames")
-        evidence["frames_tab_clickable_default_model"] = frames_ok
-        print(f"[recon] frames sub-mode clickable (default model): {frames_ok}")
-        await _dump_tabs(page, evidence, "frames_active")
-        evidence["slot_count_frames_default_model"] = await _slot_count(page)
-        print(
-            f"[recon] frame slots visible (frames + default model): {evidence['slot_count_frames_default_model']}"
-        )
-
-        if await _open_model_menu(page):
-            items = await _dump_menuitems(page, evidence, "frames_submode")
-            await page.screenshot(path=str(out_dir / "03-model-menu-frames-submode.png"))
-
-            # Token match, not the literal 'Omni Flash': Flow renamed the tier
-            # to 'Omni 1.1 Flash' (2026-08-30) and versions the name in place,
-            # so a contiguous-substring probe reports the model MISSING and the
-            # recon silently skips A3/A4 instead of answering them.
-            # Lowercased because `:has-text` is case-INSENSITIVE: a case-exact
-            # probe would report the model missing on an 'OMNI 1.1 FLASH' render
-            # that the transport selects fine.
-            omni = [
-                m for m in items if "omni" in m["text"].lower() and "flash" in m["text"].lower()
-            ]
-            omni_listed = bool(omni)
-            omni_disabled = any(m["disabled"] not in (None, "false") for m in omni)
-            evidence["omni_listed_in_frames_menu"] = omni_listed
-            evidence["omni_disabled_in_frames_menu"] = omni_disabled
-            print(
-                f"[recon] Omni Flash listed={omni_listed} disabled={omni_disabled} (Frames active)"
-            )
-
-            # ---- A3: select Omni Flash while Frames is active ------------
-            if omni_listed and not omni_disabled:
-                opt = page.locator(VIDEO_MODEL_OPTION_SELECTORS[VideoModel.OMNI_FLASH]).first
-                try:
-                    await opt.click()
-                    await page.wait_for_timeout(1_000)
-                    evidence["omni_selected_in_frames"] = True
-                except Exception as e:
-                    evidence["omni_selected_in_frames"] = False
-                    evidence["omni_select_error"] = str(e)
-            else:
+            # ---- A2a: model inventory in the DEFAULT sub-mode ----------------
+            if await _open_model_menu(page):
+                await _dump_menuitems(page, evidence, "default_submode")
+                await page.screenshot(path=str(out_dir / "02-model-menu-default-submode.png"))
                 await page.keyboard.press("Escape")
                 await page.wait_for_timeout(300)
-                evidence["omni_selected_in_frames"] = False
 
-        await _dump_tabs(page, evidence, "after_omni_in_frames")
-        evidence["slot_count_after_omni"] = await _slot_count(page)
-        await _dump_toasts(page, evidence, "after_omni_in_frames")
-        await page.screenshot(path=str(out_dir / "04-after-omni-in-frames.png"))
-        print(
-            f"[recon] frame slots visible (after Omni select): {evidence['slot_count_after_omni']}"
-        )
-
-        # ---- A4: with Omni active, is Frames still clickable? ------------
-        await _ensure_settings_open(page)
-        await _click_submode(page, "references")
-        await _dump_tabs(page, evidence, "references_with_omni")
-        frames_again = await _click_submode(page, "frames")
-        evidence["frames_tab_clickable_with_omni"] = frames_again
-        print(f"[recon] frames sub-mode clickable (Omni active): {frames_again}")
-        await _dump_tabs(page, evidence, "frames_again_with_omni")
-        evidence["slot_count_frames_with_omni"] = await _slot_count(page)
-        await page.screenshot(path=str(out_dir / "05-frames-with-omni.png"))
-
-        # ---- B: bind a frame on veo-lite, then switch to Omni ------------
-        if with_frame_bind and probe_image is not None:
-            print("[recon] phase B: veo-lite + Frames + bind Start, then switch to Omni Flash")
-            if await _open_model_menu(page):
-                lite = page.locator(VIDEO_MODEL_OPTION_SELECTORS[VideoModel.VEO_3_1_LITE]).first
-                await lite.click()
-                await page.wait_for_timeout(800)
+            # ---- A2b: switch to Frames, model inventory again ----------------
             await _ensure_settings_open(page)
-            await _click_submode(page, "frames")
-            await page.keyboard.press("Escape")
-            await page.wait_for_timeout(600)
-            evidence["slots_before_bind"] = await _slot_count(page)
-            await VideoGenerationMixin._attach_frame(  # type: ignore[reportPrivateUsage]
-                page, 0, "Start", probe_image, out_dir=out_dir
-            )
-            evidence["slots_after_bind"] = await _slot_count(page)
+            frames_ok = await _click_submode(page, "frames")
+            evidence["frames_tab_clickable_default_model"] = frames_ok
+            print(f"[recon] frames sub-mode clickable (default model): {frames_ok}")
+            await _dump_tabs(page, evidence, "frames_active")
+            evidence["slot_count_frames_default_model"] = await _slot_count(page)
             print(
-                f"[recon] slots before bind={evidence['slots_before_bind']} "
-                f"after bind={evidence['slots_after_bind']} (expect 2 -> 1)"
+                f"[recon] frame slots visible (frames + default model): {evidence['slot_count_frames_default_model']}"
             )
-            await page.screenshot(path=str(out_dir / "06-start-bound-veo-lite.png"))
 
             if await _open_model_menu(page):
-                opt = page.locator(VIDEO_MODEL_OPTION_SELECTORS[VideoModel.OMNI_FLASH]).first
-                try:
-                    await opt.click()
-                    await page.wait_for_timeout(1_200)
-                    evidence["omni_selected_with_bound_frame"] = True
-                except Exception as e:
-                    evidence["omni_selected_with_bound_frame"] = False
-                    evidence["omni_switch_error"] = str(e)
-            evidence["slots_after_omni_switch"] = await _slot_count(page)
-            await _dump_tabs(page, evidence, "bound_frame_omni")
-            await _dump_toasts(page, evidence, "bound_frame_omni")
-            await page.screenshot(path=str(out_dir / "07-bound-frame-after-omni-switch.png"))
-            print(
-                f"[recon] slots after Omni switch={evidence['slots_after_omni_switch']} "
-                f"(1 = binding visually survived; 2 = Flow dropped it)"
-            )
-            await page.keyboard.press("Escape")
+                items = await _dump_menuitems(page, evidence, "frames_submode")
+                await page.screenshot(path=str(out_dir / "03-model-menu-frames-submode.png"))
 
-        # NO SUBMIT — this spike never clicks generate.
-        (out_dir / "evidence.json").write_text(
-            json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        print(f"\n[recon] evidence written: {out_dir / 'evidence.json'}")
-        print("[recon] NO generate request was fired — zero credits.")
-        return 0
+                # Token match, not the literal 'Omni Flash': Flow renamed the tier
+                # to 'Omni 1.1 Flash' (2026-08-30) and versions the name in place,
+                # so a contiguous-substring probe reports the model MISSING and the
+                # recon silently skips A3/A4 instead of answering them.
+                # Lowercased because `:has-text` is case-INSENSITIVE: a case-exact
+                # probe would report the model missing on an 'OMNI 1.1 FLASH' render
+                # that the transport selects fine.
+                omni = [
+                    m for m in items if "omni" in m["text"].lower() and "flash" in m["text"].lower()
+                ]
+                omni_listed = bool(omni)
+                omni_disabled = any(m["disabled"] not in (None, "false") for m in omni)
+                evidence["omni_listed_in_frames_menu"] = omni_listed
+                evidence["omni_disabled_in_frames_menu"] = omni_disabled
+                print(
+                    f"[recon] Omni Flash listed={omni_listed} disabled={omni_disabled} (Frames active)"
+                )
+
+                # ---- A3: select Omni Flash while Frames is active ------------
+                if omni_listed and not omni_disabled:
+                    opt = page.locator(VIDEO_MODEL_OPTION_SELECTORS[VideoModel.OMNI_FLASH]).first
+                    try:
+                        await opt.click()
+                        await page.wait_for_timeout(1_000)
+                        evidence["omni_selected_in_frames"] = True
+                    except Exception as e:
+                        evidence["omni_selected_in_frames"] = False
+                        evidence["omni_select_error"] = str(e)
+                else:
+                    await page.keyboard.press("Escape")
+                    await page.wait_for_timeout(300)
+                    evidence["omni_selected_in_frames"] = False
+
+            await _dump_tabs(page, evidence, "after_omni_in_frames")
+            evidence["slot_count_after_omni"] = await _slot_count(page)
+            await _dump_toasts(page, evidence, "after_omni_in_frames")
+            await page.screenshot(path=str(out_dir / "04-after-omni-in-frames.png"))
+            print(
+                f"[recon] frame slots visible (after Omni select): {evidence['slot_count_after_omni']}"
+            )
+
+            # ---- A4: with Omni active, is Frames still clickable? ------------
+            await _ensure_settings_open(page)
+            await _click_submode(page, "references")
+            await _dump_tabs(page, evidence, "references_with_omni")
+            frames_again = await _click_submode(page, "frames")
+            evidence["frames_tab_clickable_with_omni"] = frames_again
+            print(f"[recon] frames sub-mode clickable (Omni active): {frames_again}")
+            await _dump_tabs(page, evidence, "frames_again_with_omni")
+            evidence["slot_count_frames_with_omni"] = await _slot_count(page)
+            await page.screenshot(path=str(out_dir / "05-frames-with-omni.png"))
+
+            # ---- B: bind a frame on veo-lite, then switch to Omni ------------
+            if with_frame_bind and probe_image is not None:
+                print("[recon] phase B: veo-lite + Frames + bind Start, then switch to Omni Flash")
+                if await _open_model_menu(page):
+                    lite = page.locator(VIDEO_MODEL_OPTION_SELECTORS[VideoModel.VEO_3_1_LITE]).first
+                    await lite.click()
+                    await page.wait_for_timeout(800)
+                await _ensure_settings_open(page)
+                await _click_submode(page, "frames")
+                await page.keyboard.press("Escape")
+                await page.wait_for_timeout(600)
+                evidence["slots_before_bind"] = await _slot_count(page)
+                await VideoGenerationMixin._attach_frame(  # type: ignore[reportPrivateUsage]
+                    page, 0, "Start", probe_image, out_dir=out_dir
+                )
+                evidence["slots_after_bind"] = await _slot_count(page)
+                print(
+                    f"[recon] slots before bind={evidence['slots_before_bind']} "
+                    f"after bind={evidence['slots_after_bind']} (expect 2 -> 1)"
+                )
+                await page.screenshot(path=str(out_dir / "06-start-bound-veo-lite.png"))
+
+                if await _open_model_menu(page):
+                    opt = page.locator(VIDEO_MODEL_OPTION_SELECTORS[VideoModel.OMNI_FLASH]).first
+                    try:
+                        await opt.click()
+                        await page.wait_for_timeout(1_200)
+                        evidence["omni_selected_with_bound_frame"] = True
+                    except Exception as e:
+                        evidence["omni_selected_with_bound_frame"] = False
+                        evidence["omni_switch_error"] = str(e)
+                evidence["slots_after_omni_switch"] = await _slot_count(page)
+                await _dump_tabs(page, evidence, "bound_frame_omni")
+                await _dump_toasts(page, evidence, "bound_frame_omni")
+                await page.screenshot(path=str(out_dir / "07-bound-frame-after-omni-switch.png"))
+                print(
+                    f"[recon] slots after Omni switch={evidence['slots_after_omni_switch']} "
+                    f"(1 = binding visually survived; 2 = Flow dropped it)"
+                )
+                await page.keyboard.press("Escape")
+
+            # NO SUBMIT — this spike never clicks generate.
+            (out_dir / "evidence.json").write_text(
+                json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            print(f"\n[recon] evidence written: {out_dir / 'evidence.json'}")
+            print("[recon] NO generate request was fired — zero credits.")
+            return 0
+        finally:
+            # `_checkout_page()` blocks forever on an empty pool; pinned by
+            # tests/scripts/test_spike_page_pool.py.
+            client._checkin_page(page)
 
 
 def main() -> int:

@@ -10,6 +10,7 @@ record calls, raise on demand, or stay silent.
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -1297,6 +1298,8 @@ class _FakeFormatButton:
     def __init__(self, *, visible: bool = True, enabled: bool = True) -> None:
         self.clicked = False
         self.first = self
+        self.last = self
+        self.count = AsyncMock(return_value=1)
         self.is_visible = AsyncMock(return_value=visible)
         self.is_enabled = AsyncMock(return_value=enabled)
         self.click = AsyncMock(side_effect=self._record)
@@ -1305,12 +1308,47 @@ class _FakeFormatButton:
         self.clicked = True
 
 
+TYPED = "girl, red hair, sad"
+REWRITTEN = (
+    "Medium studio shot of a young girl with vibrant red hair and a sorrowful, "
+    "melancholic expression, captured with a 50mm lens on a neutral background."
+)
+
+
+class _FakePromptBox:
+    """The composer, whose text is replaced once Flow's rewrite lands.
+
+    Models the ONE thing the live measurement established: the swap is discrete
+    (19 -> 651 chars in a single step, 2026-09-07), and it happens some polls
+    after the click rather than within the click itself.
+    """
+
+    def __init__(self, before: str, after: str | None, *, change_after_reads: int = 2) -> None:
+        self._before = before
+        self._after = after
+        self._change_after_reads = change_after_reads
+        self.reads = 0
+
+    async def inner_text(self) -> str:
+        self.reads += 1
+        if self._after is not None and self.reads > self._change_after_reads:
+            return self._after
+        return self._before
+
+
 def _make_format_page(
     *,
     matching_selector: str | None = PROMPT_FORMAT_SELECTORS[0],
     enabled: bool = True,
+    disabled_selectors: tuple[str, ...] = (),
+    box_count: int = 1,
 ) -> tuple[MagicMock, _FakeFormatButton]:
-    """Fake page where only ``matching_selector`` resolves to a visible button."""
+    """Fake page where only ``matching_selector`` resolves to a visible button.
+
+    ``disabled_selectors`` resolve to a visible-but-DISABLED button, so a cascade
+    that aborts on the first disabled entry can be told apart from one that keeps
+    walking. ``box_count`` drives the prompt-box count the locator scoping reads.
+    """
     button = _FakeFormatButton(enabled=enabled)
 
     page = MagicMock()
@@ -1320,8 +1358,13 @@ def _make_format_page(
     def _locator(sel: str) -> Any:
         if sel == matching_selector:
             return button
+        if sel in disabled_selectors:
+            blocked = _FakeFormatButton(enabled=False)
+            return blocked
         miss = MagicMock()
         miss.first = miss
+        miss.last = miss
+        miss.count = AsyncMock(return_value=box_count if "textbox" in sel else 0)
         miss.is_visible = AsyncMock(return_value=False)
         miss.is_enabled = AsyncMock(return_value=False)
         miss.click = AsyncMock()
@@ -1332,25 +1375,57 @@ def _make_format_page(
 
 
 class TestFormatCharacterPrompt:
+    @pytest.fixture(autouse=True)
+    def _fast_rewrite_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Shrink the 30s production budget for the offline suite.
+
+        `page.wait_for_timeout` is a mock here, so the poll loop never sleeps — it
+        spins on `time.monotonic()` for the full wall-clock budget. Two
+        never-lands cases at 30s each is a minute added to every run. The VALUE is
+        not what these tests are about; the observe-or-report-failure behaviour is.
+        """
+        from gflow_cli.api.transports import ui_automation as mod
+
+        monkeypatch.setattr(mod, "_FORMAT_REWRITE_TIMEOUT_S", 0.3)
+        monkeypatch.setattr(mod, "_FORMAT_REWRITE_POLL_MS", 1)
+
     @pytest.mark.asyncio
-    async def test_clicks_ligature_selector_first(self) -> None:
-        """The Material Symbols ligature is the primary anchor, not the EN label."""
+    async def test_clicks_structural_selector_first(self) -> None:
+        """The custom element is the primary anchor — not a ligature, not the EN label.
+
+        `<flow-format-prompt-button>` is a component boundary rather than a layout
+        accident, so it survives both a carrier-tag change and a translation. The
+        ligature entries behind it are the per-frontend fallbacks (#727).
+        """
         page, button = _make_format_page()
         t = _make_transport(page=page)
 
-        assert await t.format_character_prompt(page) is True
+        box = _FakePromptBox(TYPED, REWRITTEN)
+        assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is True
         assert button.clicked
-        # The ligature selector is tried before any aria-label/text selector.
-        assert page.locator.call_args_list[0].args[0] == PROMPT_FORMAT_SELECTORS[0]
-        assert "personal_recommendations" in PROMPT_FORMAT_SELECTORS[0]
+        # The structural selector is tried before any ligature/aria-label/text
+        # selector. Filtered to the cascade because the first locator() call is now
+        # the prompt-box count that decides first-vs-last scoping.
+        tried = [
+            c.args[0] for c in page.locator.call_args_list if c.args[0] in PROMPT_FORMAT_SELECTORS
+        ]
+        assert tried and tried[0] == PROMPT_FORMAT_SELECTORS[0]
+        assert "flow-format-prompt-button" in PROMPT_FORMAT_SELECTORS[0]
 
     @pytest.mark.asyncio
-    async def test_falls_through_cascade_to_later_selector(self) -> None:
-        """A miss on the primary anchor keeps walking the cascade."""
-        page, button = _make_format_page(matching_selector=PROMPT_FORMAT_SELECTORS[-1])
+    @pytest.mark.parametrize("index", range(len(PROMPT_FORMAT_SELECTORS)))
+    async def test_falls_through_cascade_to_later_selector(self, index: int) -> None:
+        """A miss on an earlier anchor keeps walking — every entry must be reachable.
+
+        Parametrized over the WHOLE cascade rather than just the last entry: #727's
+        `<mat-icon>` carrier sits at index 1, and a fall-through test pinned to
+        ``[-1]`` would never have driven it.
+        """
+        page, button = _make_format_page(matching_selector=PROMPT_FORMAT_SELECTORS[index])
         t = _make_transport(page=page)
 
-        assert await t.format_character_prompt(page) is True
+        box = _FakePromptBox(TYPED, REWRITTEN)
+        assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is True
         assert button.clicked
 
     @pytest.mark.asyncio
@@ -1359,7 +1434,8 @@ class TestFormatCharacterPrompt:
         page, button = _make_format_page(matching_selector=None)
         t = _make_transport(page=page)
 
-        assert await t.format_character_prompt(page) is False
+        box = _FakePromptBox(TYPED, REWRITTEN)
+        assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is False
         assert not button.clicked
 
     @pytest.mark.asyncio
@@ -1370,7 +1446,8 @@ class TestFormatCharacterPrompt:
         page, button = _make_format_page(enabled=False)
         t = _make_transport(page=page)
 
-        assert await t.format_character_prompt(page) is False
+        box = _FakePromptBox(TYPED, REWRITTEN)
+        assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is False
         assert not button.clicked, "a disabled button must never be handed to click()"
 
     @pytest.mark.asyncio
@@ -1379,7 +1456,8 @@ class TestFormatCharacterPrompt:
         page, button = _make_format_page()
         t = _make_transport(page=page)
 
-        await t.format_character_prompt(page)
+        box = _FakePromptBox(TYPED, REWRITTEN)
+        await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED)
 
         assert button.click.await_args is not None
         assert button.click.await_args.kwargs.get("timeout") is not None
@@ -1391,7 +1469,8 @@ class TestFormatCharacterPrompt:
         page.locator = MagicMock(side_effect=Exception("invalid selector"))
         t = _make_transport(page=page)
 
-        assert await t.format_character_prompt(page) is False
+        box = _FakePromptBox(TYPED, REWRITTEN)
+        assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is False
 
     @pytest.mark.asyncio
     async def test_no_ligature_selector_uses_has_text(self) -> None:
@@ -1399,3 +1478,141 @@ class TestFormatCharacterPrompt:
         inside_has = [s for s in PROMPT_FORMAT_SELECTORS if ":has(" in s]
         assert inside_has, "cascade must carry at least one :has() ligature selector"
         assert all(":has-text(" not in s for s in inside_has)
+
+    @pytest.mark.asyncio
+    async def test_returns_true_only_when_the_rewrite_is_observed(self) -> None:
+        """#727 part 2: the click is not the effect.
+
+        Flow rewrites server-side — measured landing at ~5.4s via a `batchexecute`
+        round trip, while the old code waited ~0.5s and returned True. So a click
+        that succeeded still meant the reshaped prompt was discarded by the submit
+        on the very next line. `True` must now mean the composer's text actually
+        changed, not that a button was pressed.
+        """
+        page, button = _make_format_page()
+        box = _FakePromptBox(TYPED, REWRITTEN)
+        t = _make_transport(page=page)
+
+        assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is True
+        assert button.clicked
+        assert box.reads > 1, "must poll the box, not return on the click"
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_the_rewrite_never_lands(self) -> None:
+        """A click with no observable effect is a failure, reported as one.
+
+        This is the case the old code called success: it is the absence of a
+        completion inside a window we chose, and recording that as a completion
+        is the defect class, not the timeout value.
+        """
+        page, button = _make_format_page()
+        box = _FakePromptBox(TYPED, None)
+        t = _make_transport(page=page)
+
+        assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is False
+        assert button.clicked, "the button was still clicked — only the effect is missing"
+
+    @pytest.mark.asyncio
+    async def test_whitespace_churn_is_not_a_rewrite(self) -> None:
+        """Slate/ProseMirror re-render and normalise; raw `!=` would fire on that.
+
+        A length delta is the guard: the observed rewrite was 19 -> 651 chars, so
+        real reshaping moves the length by far more than normalisation can.
+        """
+        page, _button = _make_format_page()
+        box = _FakePromptBox(TYPED, TYPED + "  ")
+        t = _make_transport(page=page)
+
+        assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is False
+
+    @pytest.mark.asyncio
+    async def test_a_disabled_entry_does_not_abort_the_cascade(self) -> None:
+        """A disabled match means THAT anchor is wrong, not that the feature is gone.
+
+        The old code `return False`d on the first visible-but-disabled entry, so a
+        stale anchor resolving to some other disabled button killed every remaining
+        selector — including the one that would have worked.
+        """
+        page, button = _make_format_page(
+            matching_selector=PROMPT_FORMAT_SELECTORS[2],
+            disabled_selectors=(PROMPT_FORMAT_SELECTORS[0],),
+        )
+        box = _FakePromptBox(TYPED, REWRITTEN)
+        t = _make_transport(page=page)
+
+        assert await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED) is True
+        assert button.clicked
+
+    @pytest.mark.asyncio
+    async def test_never_logs_the_prompt_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Flow ELABORATES a terse description into a detailed physical one.
+
+        The rewrite is more PII-dense than the user's input, and structlog is not
+        governed by GFLOW_CLI_HISTORY_PROMPTS, so no operator control applies to it.
+        Lengths and the stable hash only — never the text, and never a truncated
+        head, which is exactly where the physical description lands.
+        """
+        from gflow_cli.api.transports import ui_automation as mod
+
+        recorded: list[tuple[str, dict[str, Any]]] = []
+
+        class _Spy:
+            def _capture(self, event: str, **kw: Any) -> None:
+                recorded.append((event, kw))
+
+            info = warning = debug = error = _capture
+
+        monkeypatch.setattr(mod, "log", _Spy())
+
+        page, _button = _make_format_page()
+        box = _FakePromptBox(TYPED, REWRITTEN)
+        t = _make_transport(page=page)
+        await t.format_character_prompt(page, prompt_box=box, typed_text=TYPED)
+
+        assert recorded, "expected telemetry"
+        for event, kw in recorded:
+            blob = repr(kw)
+            assert TYPED not in blob, f"{event} leaked the typed prompt: {kw}"
+            for fragment in REWRITTEN.split(", "):
+                assert fragment not in blob, f"{event} leaked the rewritten prompt: {kw}"
+
+    def test_cascade_covers_both_ligature_carriers(self) -> None:
+        """#727: labs renders the ligature in ``<i class=google-symbols>``, the
+        migrated Angular frontend in ``<mat-icon>``.  Anchoring on one host's
+        carrier is what made this flag a silent no-op — the whole cascade
+        returned 0 matches on ``flow.google.com`` while the button was visible
+        (measured 2026-09-07, ``scripts/dev/spike_character_prompt_format.py``)."""
+        joined = " ".join(PROMPT_FORMAT_SELECTORS)
+        assert "mat-icon:text-is('personal_recommendations')" in joined, (
+            "cascade must carry the migrated-host <mat-icon> carrier"
+        )
+        assert "i.google-symbols:text-is('personal_recommendations')" in joined, (
+            "cascade must keep the labs <i class=google-symbols> carrier"
+        )
+
+    def test_cascade_carries_no_display_label_anchor(self) -> None:
+        """#727: the EN ``span:text-is('Format')`` fallback was dead weight — Flow
+        localises that span (``"Formatar"`` on a pt account), so it can never
+        match a non-EN profile.  Display labels are banned as anchors by the
+        locale-invariance rule in AGENTS.md; the cascade must stay structural.
+
+        Enforced by whitelist, not by banning one spelling.  A guard that rejected
+        only the literal ``'Format'`` passed for ``"Format"``, for
+        ``[aria-label*="Format"]``, and — worst — for ``'Formatar'``, the exact
+        string this spike observed live.  Banning spellings loses to translation
+        by construction, so every text argument in the cascade must instead BE a
+        known Material Symbols ligature.
+        """
+        allowed_text_args = {"personal_recommendations"}
+        for selector in PROMPT_FORMAT_SELECTORS:
+            assert "aria-label" not in selector, (
+                f"{selector!r} anchors on aria-label, which Flow localises "
+                '(observed: aria-label="Formatar" on a pt account)'
+            )
+            for match in re.finditer(r"""(?:text-is|text|has-text)\(\s*['"](.*?)['"]""", selector):
+                arg = match.group(1)
+                assert arg in allowed_text_args, (
+                    f"{selector!r} matches on the text {arg!r}, which is not a known "
+                    f"locale-invariant ligature {sorted(allowed_text_args)} — Flow "
+                    "translates display labels, so this can only ever match one locale"
+                )

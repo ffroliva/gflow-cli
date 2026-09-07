@@ -48,6 +48,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 from typing import cast
@@ -74,7 +75,14 @@ _DEFAULT_PERSONALITY = "calma, atenciosa — fala pausado; née à Paris, crian�
 
 # Character create runs a real image generation then patches the entity over
 # REST. Generous because of real Flow latency (image-gen + entity PATCH).
-_CREATE_TIMEOUT_S = 300
+# A create drives TWO prompts (face, then body), and `--format-prompt` now waits for
+# Flow's server-side rewrite on each — up to `_FORMAT_REWRITE_TIMEOUT_S` (30s) apiece
+# when the rewrite never lands. That is +60s worst case on a run that already took
+# ~220s, which overran the old 300s budget and produced a hang rather than a failure:
+# `subprocess.run` times out, kills the child, then blocks draining pipes that
+# surviving Chrome grandchildren still hold open. Observed 2026-09-07, 32 minutes
+# before it was stopped by hand.
+_CREATE_TIMEOUT_S = 480
 _SHOW_TIMEOUT_S = 60
 
 
@@ -127,16 +135,45 @@ def _character_env(e2e_env: dict[str, str]) -> dict[str, str]:
 def _run_gflow(
     args: list[str], env: dict[str, str], timeout: float
 ) -> subprocess.CompletedProcess[str]:
-    """Run ``gflow`` in a subprocess and capture stdout/stderr/exit-code."""
+    """Run ``gflow`` in a subprocess and capture stdout/stderr/exit-code.
+
+    A timeout must FAIL, and it must fail WITH the output. Pipes give neither here.
+    ``subprocess.run(timeout=...)`` kills the child and re-enters ``communicate()``
+    to drain — but a browser-driving child leaves Chrome grandchildren holding the
+    inherited write handles, so the drain never returns. Observed 2026-09-07: a
+    create that overran its budget sat for 32 minutes at near-zero CPU, looking
+    exactly like slow progress. Bounding that drain fixed the hang and then threw
+    the output away, which made the next failure diagnose nothing — the timeout
+    reported a command and a duration, and not one transport event.
+
+    Redirecting to files removes the class rather than the symptom: nothing blocks
+    on a reader, and whatever the run logged before it died is on disk and readable
+    afterwards. Five sibling e2e modules carry their own pipe-based ``_run_gflow``;
+    only this one drives a browser long enough today for the difference to show.
+    """
     cmd = [sys.executable, "-m", "gflow_cli", *args]
-    return subprocess.run(
-        cmd,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+    with tempfile.TemporaryDirectory(prefix="gflow-e2e-") as td:
+        out_path = Path(td) / "stdout.txt"
+        err_path = Path(td) / "stderr.txt"
+        with (
+            out_path.open("w", encoding="utf-8") as out_f,
+            err_path.open("w", encoding="utf-8") as err_f,
+        ):
+            proc = subprocess.Popen(cmd, env=env, stdout=out_f, stderr=err_f)  # noqa: S603
+            timed_out = False
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                proc.kill()
+                proc.wait(timeout=30)
+        # Files are flushed and closed here, so the read sees everything the run
+        # emitted — including, on a timeout, the last event before it stalled.
+        stdout = out_path.read_text(encoding="utf-8", errors="replace")
+        stderr = err_path.read_text(encoding="utf-8", errors="replace")
+    if timed_out:
+        raise subprocess.TimeoutExpired(cmd, timeout, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 def _parse_json_stdout(result: subprocess.CompletedProcess[str], what: str) -> dict[str, object]:
@@ -561,13 +598,29 @@ def test_character_create_format_prompt_clicks_format_button(e2e_env: dict[str, 
         for line in result.stderr.splitlines()
         if line.strip().startswith("{")
     ]
+    # `prompt_formatted` is emitted only after the composer's text was OBSERVED to
+    # change (#727 part 2). Before that it fired on the click, so this same
+    # assertion passed for a year while the rewrite was discarded by the submit —
+    # a green test asserting the only thing that was observable at the time.
     assert "ui_automation.prompt_formatted" in events, (
-        "--format-prompt did not click Flow's Format button — the selector "
-        "cascade (anchored on the `personal_recommendations` ligature) has "
-        f"likely drifted. Observed events: {sorted(set(events))}"
+        "--format-prompt did not produce a rewritten prompt. Two distinct causes, "
+        "and the events say which: `format_button_not_found` means the selector "
+        "cascade drifted (probe it with scripts/dev/spike_character_prompt_format.py "
+        "before assuming the button is gone); `format_not_observed` means the button "
+        "was clicked and Flow's rewrite never landed inside the budget — probe that "
+        f"with scripts/dev/spike_format_prompt_effect.py. Observed: {sorted(set(events))}"
     )
-    for miss in ("ui_automation.format_button_not_found", "ui_automation.format_button_disabled"):
-        assert miss not in events, f"format button was skipped ({miss}), not clicked"
+    # The button was clicked, so the click event must be there too — if
+    # `prompt_formatted` ever appears without it, the gate has been short-circuited.
+    assert "ui_automation.format_button_clicked" in events, (
+        f"prompt_formatted without format_button_clicked: {sorted(set(events))}"
+    )
+    for miss in (
+        "ui_automation.format_button_not_found",
+        "ui_automation.format_click_failed",
+        "ui_automation.format_not_observed",
+    ):
+        assert miss not in events, f"--format-prompt degraded ({miss}), see the events above"
 
 
 # ---------------------------------------------------------------------------

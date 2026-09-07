@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`character create --format-prompt` works again — both halves of it.** The flag had two
+  independent faults, and fixing only the first would have left it just as useless. On the
+  migrated `flow.google.com` host
+  all three entries of `PROMPT_FORMAT_SELECTORS` missed, so the flag degraded to a no-op:
+  `ui_automation.format_button_not_found`, exit **0**, prompt submitted as
+  typed, and the image quota spent on a run whose requested prompt-engineering step never
+  happened. The button was never absent. Measured on 2026-09-07 with
+  `scripts/dev/spike_character_prompt_format.py` (`$0` — navigation, one free `createEntity`,
+  DOM reads and typing; two control anchors, so a flat zero could not be mistaken for
+  absence): it renders as
+  `<flow-format-prompt-button>`, and the Angular frontend carries the unchanged
+  `personal_recommendations` ligature in **`<mat-icon>`** rather than `<i>` — the same carrier
+  split fixed for `add_2` / `arrow_drop_down` / `accessibility_new` in #703, which this constant
+  was not swept with. The EN `span:text-is('Format')` fallback missed too and is **deleted**
+  rather than translated: the button's own `aria-label` reads `"Formatar"` on a pt account, and
+  display labels are banned as anchors. The cascade now leads with the custom element and covers
+  both carriers. ([#727](https://github.com/ffroliva/gflow-cli/issues/727),
+  [spike](docs/superpowers/spikes/2026-09-07-character-format-button-anchor.md))
+
 - **`video t2v --reference-entity` no longer bills a clip that ignores the entity.** On the
   migrated `flow.google.com` host the "character references are not ported" refusal lived inside
   the r2v branch of the routing gate, so a t2v request returned from that gate before its
@@ -41,6 +60,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`--format-prompt` now waits for the rewrite, and `ui_automation.prompt_formatted` means it
+  happened.** This is the second half of the #727 fix and the half that made the flag useful.
+  Flow rewrites **server-side** — a `batchexecute` round trip reaching the composer at ~5.4s
+  (measured, `denon82`) — while the old code waited `_jitter_ms(500)`, logged
+  `prompt_formatted` and returned; `_send_prompt` submits on the very next line. So the flag
+  shipped the prompt the user typed and discarded the rewrite on **every** run, with a success
+  event in the log and exit 0.
+
+  **The defect was never the duration. It was reporting a success we had not observed** — the
+  absence of a completion inside a window we chose, recorded as a completion. Same class as a
+  20s selector timeout read as "the feature is absent" and a bundle captured after teardown
+  read as "the DOM was gone". This one was the worst of the three because it failed toward
+  **success**: a premature green looks exactly like the feature working, so nobody investigates
+  a pass.
+
+  `format_character_prompt` now polls the bound composer until its text actually changes, and
+  returns `True` only then. The gate is the DOM, not the wire — the `batchexecute` response
+  arrives **4.2s before** the text settles, so awaiting it would reproduce the same early
+  submit. Comparing against the string gflow inserted is locale-invariant by construction, and
+  a **length delta** rather than `!=` keeps Slate's whitespace normalisation from re-reporting
+  the same false success. Telemetry carries lengths and a stable hash, never the prompt text:
+  Flow *elaborates* a terse description into a detailed physical one, so the rewrite is more
+  PII-dense than the input.
+
+  New events: `format_button_clicked` (the old semantics), `format_not_observed` (clicked, no
+  rewrite inside the budget — it does not claim Flow failed, since an unchanged box also covers
+  Flow declining or judging the prompt already formatted).
+
+  **Two user-visible consequences.** A create with `--format-prompt` takes a few seconds longer
+  for the rewrite itself, and — because the reshaped prompt is longer and more detailed — the
+  generation is materially slower: **406s vs a 210s control** on the same account and prompt,
+  live-verified 2026-09-07.
+  ([#727](https://github.com/ffroliva/gflow-cli/issues/727),
+  [spike](docs/superpowers/spikes/2026-09-07-format-click-is-not-a-format.md))
+
 - **Retracted a false "measured" claim about the migrated composer.** A code comment asserted, as
   "measured, not assumed", that the migrated project composer "has no image-generation mode".
   Falsified live on 2026-09-07: its settings overlay opens to six radiogroups / sixteen radios and
@@ -69,6 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a dead cookie.
 - `scripts/dev/spike_migrated_composer_mode_axis.py` — hard-error probe that opens the migrated
   composer's settings overlay and enumerates its radiogroups.
+- `scripts/dev/spike_format_prompt_effect.py` — measures whether clicking Format actually
+  rewrites the prompt, and when. `$0`, never submits.
 
 ## [0.70.0] — 2026-09-06
 
