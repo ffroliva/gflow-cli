@@ -635,14 +635,20 @@ class UiSelectorDriftError(GFlowError):
 
 
 class InsufficientCreditsError(GFlowError):
-    """Raised when Flow refuses a generation because the account is out of credits.
+    """Raised when Flow refuses a generation because the account is short of credits.
 
-    Flow does not disable the submit control when the wallet is empty — it
+    **Short of, not necessarily out of.** Veo tiers cost different amounts, so the
+    threshold is per-model: measured 2026-09-07, `ci-probe` held **50** credits and
+    still rendered the warning. An empty balance is one way to reach this; an
+    expensive model on a partial balance is another, and the error must not tell a
+    user with credits that they have none.
+
+    Flow does not disable the submit control when the balance falls short — it
     **replaces** it. The ``arrow_forward`` anchor disappears and a
     ``prompt-warning-button`` carrying ``aria-label='Insufficient credits warning'``
-    takes its place. Measured by A/B on 2026-09-07 on the migrated host: same probe,
-    same code, ~60 s apart, drained account and funded account rendering the mirror
-    image of each other.
+    takes its place (note Flow's own word: *insufficient*, not *none*). Measured by
+    A/B on 2026-09-07 on the migrated host: same probe, same code, ~60 s apart, a
+    short account and a funded one rendering the mirror image of each other.
 
     That is why this class exists rather than reusing
     :class:`UiSelectorDriftError`. A missing anchor was being reported as "Google may
@@ -658,9 +664,12 @@ class InsufficientCreditsError(GFlowError):
     problem_type = "https://gflow-cli.dev/errors/insufficient-credits"
     title = "Insufficient Flow credits"
     _default_remediation = (
-        "Your Google account has no Flow credits left for this model, so Flow replaced "
-        "the submit control with its 'Insufficient credits' warning. Check the balance "
-        "with `gflow credits user`, then top up or wait for your allowance to reset. "
+        "Your Google account does not have enough Flow credits for this model, so Flow "
+        "replaced the submit control with its 'Insufficient credits' warning. This is a "
+        "shortfall, not necessarily an empty balance: Veo tiers cost different amounts "
+        "(measured 2026-09-07: an account holding 50 credits still saw the warning), so "
+        "a cheaper model may go through. Check the balance with `gflow credits user`, "
+        "then try a cheaper `--model`, top up, or wait for your allowance to reset. "
         "Image generation (`gflow image`) draws on a separate daily quota and may still "
         "work. This is not a gflow-cli bug and does not need a report."
     )
