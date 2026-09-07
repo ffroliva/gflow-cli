@@ -62,7 +62,8 @@ If you can help unblock a pure HTTP transport (especially for video generation, 
 ## Dev environment tips
 
 - `uv sync` then `uv run playwright install chromium`. No global Python install needed.
-- Copy `.env.template` to `.env.local`; never commit `.env.local`. It documents every env var.
+- Copy `.env.template` to **`.env`** — either in the directory you run `gflow` from (project-local) or at `$GFLOW_CLI_HOME/.env` (machine-wide); on conflict the CWD one wins. It documents every env var. Both are gitignored; never commit either.
+  **Not `.env.local` — nothing loads that file.** `config.py::_env_files()` returns exactly `(<home>/.env, .env)`, so `GFLOW_CLI_*` settings put in `.env.local` are silently ignored and `get_settings()` reports the default as though you had set nothing. Keeping a `.env.local` for credentials **you** read by hand (e.g. `SONAR_TOKEN`) is fine — it is only wrong as a home for gflow's own settings.
 - Output goes to `./tmp/` for scripts/tests or `$GFLOW_CLI_OUTPUT_DIR` for CLI outputs (defaults to `./out/`).
 - One-time auth: `gflow auth login --browser chrome` (recommended — a real-Chrome profile is what generation runs need; the default `--browser auto` can also pick the internal strategy, and generation later fails fast on profiles created with a non-chrome strategy).
 - Use `/gflow:status` to see the current task before starting work; `/gflow:known-issues` before touching auth or reCAPTCHA code paths.

@@ -16,7 +16,7 @@ These are non-negotiable. They override default agent behavior where conflicts e
 - **TDD before code.** Write a failing test, then the minimum production code to make it pass, then refactor. Coverage floor: 80% overall. See [CONTRIBUTING.md](../CONTRIBUTING.md).
 - **Documentation is first-class.** Any user-facing, operator-facing, architecture, configuration, workflow, or agent-rule change must update the matching docs, changelog/release note when relevant, and docs index if a new doc is added. If no docs change, record the reason in the PR/checklist. `scripts/ci/check_doc_links.py` must pass before merge.
 - **No raw `print()` or `import logging` in `src/`.** Structured logging via `structlog` only.
-- **No secrets in commits.** `.env.local` is gitignored; never commit it. `pre-commit` hooks run `detect-secrets` on staged content.
+- **No secrets in commits.** `.env`, `.env.local` and `$GFLOW_CLI_HOME/.env` are all gitignored; never commit any of them. Note gflow only READS `.env` (CWD and home) — see [CONFIGURATION.md](CONFIGURATION.md). `pre-commit` hooks run `detect-secrets` on staged content.
 - **No AI attribution in commit messages.** `Co-Authored-By:` trailers are fine when explicitly requested; auto-generated `🤖 Generated with…` footers are not.
 - **Branch naming.** `feature/`, `bugfix/`, `hotfix/`, `chore/`, `docs/`, `test/`, `release/`. Never `claude/` or unprefixed.
 - **Signed tags only.** Releases tag with `git tag -s vX.Y.Z`. CI rejects unsigned or lightweight tags.
