@@ -2433,11 +2433,18 @@ class FlowApiClient:
             # scripts/dev/spike_migrated_composer_mode_axis.py, live on a
             # migrated account: the composer's settings overlay opens to 6
             # radiogroups / 16 radios and group 0 is
-            # `[imageImage, videocamVideo]`, hit-testable, with `videocam`
-            # selected because migrated_composer.py:443 pins it there on every
-            # run. That reproduced the independent 2026-09-04 enumeration in
+            # `[imageImage, videocamVideo]`, present and hit-testable, with the
+            # VIDEO option carrying aria-checked. That reproduced the independent
+            # 2026-09-04 enumeration in
             # docs/superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md:123-136
             # exactly, three days later, on a different account.
+            #
+            # Why video was the checked one is NOT established: the probe opened a
+            # fresh page and read persisted overlay state, and never invoked the
+            # driver. Flow remembering the account's last-used mode explains it as
+            # well as anything gflow does. (`MigratedComposer.apply_video_settings`
+            # does pin `axis="mode"` to `videocam` unconditionally, but that ran in
+            # no part of this measurement.)
             #
             # The retracted claim cited a script whose run was never recorded and
             # whose overlay-open was best-effort with a swallowed exception, so it
@@ -2445,10 +2452,14 @@ class FlowApiClient:
             # the panel it existed to read. Two features have now been declared
             # absent by a probe that failed silently; see skills/spike/SKILL.md.
             #
-            # The port is tracked separately. Until it lands the guard stays, but
-            # it is a WIRING gap, not a capability gap: the fix is to route the
-            # mint to a project page and drive `mode=image` — NOT to keep refusing
-            # the origin, and never to tell a user the host cannot do this.
+            # What IS established is narrow and worth stating precisely, because
+            # overstating it here would repeat the defect this comment retracts:
+            # an image radio EXISTS on that axis and is hit-testable. Nothing was
+            # clicked on it and nothing was submitted, so whether `gflow image`
+            # can be served from this host is still open. It is no longer safe to
+            # say it cannot. The next probe — click the radio, route the mint to a
+            # project page, and see how far a submit gets — is what decides the
+            # size of the port, and it is tracked separately.
             raise_if_migrated(page, at="mint_recaptcha_token")
             # Patchright evaluates in an isolated world by default, where the
             # page's main-world ``grecaptcha`` global is undefined; the resolver

@@ -86,18 +86,28 @@ _PROBE_JS = """
 
 
 def verdict(labs: dict[str, Any], migrated: dict[str, Any]) -> str:
-    """Name the lane, or refuse to. SIGNED_OUT outranks every other reading."""
-    tells = lambda r: r.get("signed_out_tells", {})  # noqa: E731
-    landing = lambda r: bool(  # noqa: E731
-        tells(r).get("create_with_google_flow") or r.get("shells", {}).get("flow_landing_page")
-    )
-    if landing(labs) and landing(migrated):
+    """Name the lane, or refuse to. SIGNED_OUT outranks every other reading.
+
+    Decided on ONE structural signal: **does a root render the account's project grid**
+    (`a[href*="/project/"]`). A signed-in Flow always does; the marketing landing page
+    never can, because it has no account to list.
+
+    Deliberately not decided on text. An earlier draft keyed SIGNED_OUT on the English
+    string "Create with Google Flow", which would read MIGRATED for a signed-out
+    non-English profile — precisely the false positive this script exists to prevent, and
+    a breach of the locale-invariance rule in AGENTS.md. The `signed_out_tells` are still
+    collected, because they are useful to a human reading the JSON, but they no longer
+    decide anything.
+
+    `aisandbox_root` is likewise not a signed-in signal: the migrated marketing page
+    mounts the same Angular shell.
+    """
+    grid = lambda r: int(r.get("project_links") or 0) > 0  # noqa: E731
+    if not grid(labs) and not grid(migrated):
         return "SIGNED_OUT"
-    # The app mounted somewhere. Whichever root shows a project grid owns the account.
-    if migrated.get("project_links", 0) or migrated.get("shells", {}).get("aisandbox_root"):
-        if not landing(migrated):
-            return "MIGRATED"
-    if labs.get("project_links", 0) and not landing(labs):
+    if grid(migrated):
+        return "MIGRATED"
+    if grid(labs):
         return "LABS"
     return "INDETERMINATE"
 

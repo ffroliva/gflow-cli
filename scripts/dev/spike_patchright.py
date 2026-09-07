@@ -80,6 +80,7 @@ from gflow_cli.api.client import FlowApiClient  # noqa: E402
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model  # noqa: E402
 from gflow_cli.api.recaptcha import RecaptchaError, discover_site_key  # noqa: E402
 from gflow_cli.browser_manager import channel_for_profile  # noqa: E402
+from gflow_cli.profile_lease import ProfileLease  # noqa: E402
 
 _EXECUTE_JS = recaptcha_mod._EXECUTE_JS  # noqa: SLF001 — spike reuses the production mint JS
 
@@ -136,7 +137,10 @@ async def probe_primitives(engine: str, profile_dir: Path, action: str) -> dict[
     apw = _engine_async_playwright(engine)
     req_count = {"request": 0, "response": 0}
     try:
-        async with apw() as pw:
+        # Own the profile before Chrome starts, exactly as FlowApiClient does.
+        # Scoped to phase A only: phase B goes through FlowApiClient, which takes
+        # its own lease, and a same-process double-acquire fails fast by design.
+        async with ProfileLease(profile_dir), apw() as pw:
             try:
                 ctx = await pw.chromium.launch_persistent_context(**_launch_kwargs(profile_dir))
             except Exception as exc:  # noqa: BLE001

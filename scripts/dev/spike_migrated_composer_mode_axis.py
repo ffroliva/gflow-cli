@@ -4,13 +4,14 @@ Settles the contradiction at the heart of #692.
 
 `src/gflow_cli/api/client.py:2426-2436` asserts, as "measured, not assumed", that "the
 migrated project composer has no image-generation mode ... its settings radios are
-grid/batch and size". `docs/superpowers/spikes/2026-09-04-migrated-host-handoff-mechanism.md:123-136`
+grid/batch and size". The 2026-09-04 handoff-mechanism spike doc (lines 123-136)
 enumerates the SAME overlay — same trigger, same `.cdk-overlay-pane`, same
 `[role='radiogroup']` — and records six radiogroups, the first of which is:
 
     [imageImage, videocamVideo]                     mode
 
-and `migrated_composer.py:443` already drives that axis, always passing `videocam`.
+and `MigratedComposer.apply_video_settings` already drives that axis, always passing
+`videocam`.
 
 Only one of those can be true of the same panel. This probe opens the overlay and reads
 it, so the answer is an observation rather than a citation.
@@ -94,7 +95,7 @@ _READ_OVERLAY_JS = """
 """
 
 
-class ProbeFailure(RuntimeError):
+class ProbeFailedError(RuntimeError):
     """A step this probe cannot complete. Never downgraded to a verdict."""
 
 
@@ -118,7 +119,7 @@ async def main() -> int:
         findings["landed_url"] = page.url
         step("landed", page.url)
         if "flow.google.com/project/" not in page.url:
-            raise ProbeFailure(
+            raise ProbeFailedError(
                 f"did not land on a migrated project page (got {page.url}) — "
                 "the account is signed out or not on the migrated cohort, so this run "
                 "says NOTHING about the composer"
@@ -137,7 +138,7 @@ async def main() -> int:
         try:
             await overlay.wait_for(state="visible", timeout=15_000)
         except Exception as exc:
-            raise ProbeFailure(
+            raise ProbeFailedError(
                 f"the settings trigger was clicked but no {OVERLAY} containing "
                 f"{RADIOGROUP} became visible — the panel did not open, so this run "
                 "cannot speak to what is inside it"
@@ -149,7 +150,7 @@ async def main() -> int:
             {"overlay": OVERLAY, "radiogroup": RADIOGROUP, "radio": RADIO},
         )
         if not result.get("pane_found"):
-            raise ProbeFailure(f"overlay visible but unreadable: {result}")
+            raise ProbeFailedError(f"overlay visible but unreadable: {result}")
         findings["overlay"] = result
 
     # ---- the question, answered from the read -------------------------------
@@ -197,7 +198,7 @@ async def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(asyncio.run(main()))
-    except ProbeFailure as exc:
+    except ProbeFailedError as exc:
         print(f"[spike] PROBE FAILED: {exc}", file=sys.stderr, flush=True)
         print(
             "[spike] This is a failed measurement, NOT evidence of absence.",

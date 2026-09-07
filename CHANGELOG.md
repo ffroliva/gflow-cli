@@ -44,11 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Retracted a false "measured" claim about the migrated composer.** A code comment asserted, as
   "measured, not assumed", that the migrated project composer "has no image-generation mode".
   Falsified live on 2026-09-07: its settings overlay opens to six radiogroups / sixteen radios and
-  the first is `[imageImage, videocamVideo]`, hit-testable, pinned to `videocam` by
-  `migrated_composer.py:443`. This reproduced an enumeration already committed on 2026-09-04,
-  exactly, on a different account. `image` on a moved account is a **wiring** gap, not a
-  capability gap. The guard stays until the port lands, but it no longer tells anyone the host
-  cannot do this. ([#692](https://github.com/ffroliva/gflow-cli/issues/692),
+  the first is `[imageImage, videocamVideo]`, present and hit-testable, with the VIDEO option
+  carrying `aria-checked`. This reproduced an enumeration already committed on 2026-09-04,
+  exactly, on a different account. That does **not** establish that `image` works there — nothing
+  was clicked on the mode axis and nothing was submitted — only that the claim it cannot is
+  unfounded. Stating it more strongly would repeat the defect being retracted. The guard stays
+  until the port lands, but it no longer tells anyone the host cannot do this. ([#692](https://github.com/ffroliva/gflow-cli/issues/692),
   [spike](docs/superpowers/spikes/2026-09-07-migrated-composer-has-an-image-mode.md))
 - **A spike that cannot reach its surface now fails instead of concluding.**
   `spike_migrated_image_capability.py` opened the settings overlay best-effort and swallowed the

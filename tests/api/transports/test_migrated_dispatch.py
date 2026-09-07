@@ -249,6 +249,14 @@ async def test_run_video_refuses_character_references_on_every_mode() -> None:
     for mode in (Mode.T2V, Mode.R2V):
         with pytest.raises(FlowHostMigratedError, match="character references"):
             await _run(_req(mode=mode, reference_entities=("ent-1",)))
+    # I2V is absent from that loop on purpose, and the reason is worth pinning: the DTO
+    # itself refuses the combination (`_validate_i2v_symmetry`, api/video.py), so an i2v
+    # request carrying entities cannot be constructed at all. Broadening the gate to every
+    # mode therefore could not regress i2v -- there was no reachable i2v-with-entities
+    # request to regress. Asserted rather than asserted-in-a-comment, so a future
+    # relaxation of the DTO surfaces here instead of silently widening the gate's reach.
+    with pytest.raises(ValueError, match="must not carry"):
+        _req(mode=Mode.I2V, start_image_ref_name="hero", reference_entities=("ent-1",))
 
 
 async def test_run_video_needs_a_project_on_the_migrated_host() -> None:

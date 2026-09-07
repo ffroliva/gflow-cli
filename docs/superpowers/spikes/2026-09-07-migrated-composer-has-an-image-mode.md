@@ -25,10 +25,18 @@ image_mode_present   = True
 image_mode_hit_testable = True
 ```
 
-`videocam` carries the selection because
-[`migrated_composer.py:443`](../../../src/gflow_cli/api/transports/migrated_composer.py)
-pins it there unconditionally — it is the only `axis="mode"` call in the file, and its
-ligature is a hardcoded literal. **The `mode` axis is write-only to video.**
+The VIDEO option is the one carrying `aria-checked`. **Why** is not established by this
+run: the probe opened a fresh page and read persisted overlay state, and never invoked
+the driver. Flow remembering the account's last-used mode explains it as well as anything
+gflow does — and the same reading shows `submode` checked on Ingredients, which
+`apply_video_settings` only ever sets for I2V/R2V, so persisted state is demonstrably in
+play here.
+
+Separately and independently of this measurement:
+`MigratedComposer.apply_video_settings` does pin `axis="mode"` to `videocam`
+unconditionally — the only `axis="mode"` call in the file, with a hardcoded ligature. **The
+`mode` axis is write-only to video** as far as gflow is concerned. That is a fact about the
+driver, read from the source, not a conclusion from this probe.
 
 ## What it falsifies
 
