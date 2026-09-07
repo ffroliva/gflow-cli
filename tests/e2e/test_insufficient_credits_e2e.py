@@ -85,6 +85,6 @@ async def test_a_drained_account_reports_insufficient_credits_not_drift() -> Non
             )
 
     # The point of the change, asserted directly rather than implied by the type: a
-    # drained wallet must never be reported as a moved frontend.
+    # credit shortfall must never be reported as a moved frontend.
     assert not isinstance(caught.value, UiSelectorDriftError)
     assert "credit" in str(caught.value).lower()
