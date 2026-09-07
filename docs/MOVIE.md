@@ -202,6 +202,66 @@ clip is never silently passed off as character-consistent. The recorded
 `consistency_method` in the run state is `entity` when the entity rode (vs
 `text`).
 
+### The same trap on the migrated host, and it is not ported yet
+
+The bullet above — *the inline include button attaches the character's thumbnail as a plain
+image, not the entity* — is not a labs quirk. It is how Flow's reference surfaces work, and
+the migrated `flow.google.com` composer has its own version of it.
+
+Measured 2026-09-07 ($0, `scripts/dev/capture_migrated_mention_gestures.py`): the migrated
+composer attaches by an `@` mention picker that lists **characters and media in one list**,
+and the same query resolves to either depending on the keystroke.
+
+| gesture | chip | `data-reference-type` |
+|---|---|---|
+| `@` + query + **Enter** | `Kael` | **`entity`** — carries `data-entity-id` |
+| `@` + query + **ArrowDown** + Enter | `kael_ref.jpg` | `media` — `entity_id` is `null` |
+
+So a name that matches both a character and a file is **ambiguous at the picker**, and Flow
+does not rank them. Whatever drives it must: **the character wins**, and the committed chip's
+`data-reference-type` is read back before submit — exactly the assertion
+`_assert_entities_attached` already makes on labs.
+
+None of this is driven yet: `--reference-entity` / `@Name` on the migrated video path exits
+36, so `movie run` cannot produce an entity-consistent scene there. Tracked in
+[#723](https://github.com/ffroliva/gflow-cli/issues/723) with the working gesture recorded.
+
+### A costume change is a new character, not a variant
+
+`[characters.variants]` appends a **text delta** to the prose appearance
+(`composition.py:67-80`), and the runner creates **one entity per character name**
+(`cli_movie.py:589-597`). That is coherent for `identity = "text"` and **incoherent for
+`identity = "entity"`**: the entity's body reference fixes one outfit permanently, so a
+variant asking for another puts the reference and the prose in conflict inside one
+generation, with an undefined winner.
+
+A Flow character entity bundles face **and** wardrobe. So model a costume change as two
+entities sharing a byte-identical `face_prompt` and differing only in `body_prompt`:
+
+```toml
+[[characters]]
+name = "Kael_ridge"
+identity = "entity"
+face_prompt = "<the canonical face>"
+body_prompt = "a plain worn canvas jacket in dust-brown, sand-coloured scarf"
+
+[[characters]]
+name = "Kael_coat"
+identity = "entity"
+face_prompt = "<the same canonical face, byte-identical>"
+body_prompt = "a heavy oiled coat, hood down"
+```
+
+Scenes then name the costume state, and continuity is a lookup rather than a hope. Tracked in
+[#724](https://github.com/ffroliva/gflow-cli/issues/724).
+
+**The full identity resolution ladder** — entity, then the entity's own plate, then a plate cut
+from a take, then prose canon, with the rule that descending a rung is recorded next to the
+shot — lives in
+[`skills/video-production/SKILL.md`](../skills/video-production/SKILL.md) step 4a. Read it
+before planning a multi-shot piece; a manifest that silently lands on the bottom rung produces
+a different actor in every scene.
+
 See [CHARACTER.md](CHARACTER.md) for the underlying entity model and
 [CHARACTER_RECON.md](CHARACTER_RECON.md) for the reverse-engineered wire
 protocol.
