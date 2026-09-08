@@ -1169,6 +1169,32 @@ a `WireFormatError` about video bytes — neither naming the cause). `auto` now 
 instead of a mid-run failure, and `GFLOW_CLI_PREFER_CLASSIC=1` is no longer the
 workaround anyone needs to discover.
 
+### Flow's agent-mode chip hides the settings trigger on `flow.google.com` (exit 23)
+
+- **Status:** Mitigated · **Severity:** High while it lasts (every video run on the account fails) · **Affects:** the migrated `flow.google.com` host, all versions through 0.71.0 · **Tracked:** [#749](https://github.com/ffroliva/gflow-cli/issues/749), follow-up [#752](https://github.com/ffroliva/gflow-cli/issues/752)
+
+The migrated composer has an **Agent** chip. Pressed, Flow swaps the prompt box and
+leaves `.settings-trigger-button` — the element this driver waits on — in the DOM under
+a bare `hidden` (`display: none`, 0×0). Flow **remembers the chip per account**, so a
+single click in a browser made every later `gflow video` run on that account die at 30 s
+as `UiSelectorDriftError` (exit 23), telling the user to file a frontend-drift bug about
+a frontend that was working correctly.
+
+**Mitigation** (unreleased line, post-v0.71.0): the readiness gate leaves agent mode by
+itself, so an account parked there recovers with no user action. If it cannot, the error
+now names which of three things happened rather than blaming drift:
+
+| The message says | What it means | What to do |
+|---|---|---|
+| `the account is in Flow's agent mode … the chip could not be clicked` | something is covering the chip (a modal) | dismiss it in a browser; re-run |
+| `the chip was clicked, and it is STILL pressed` | the mode is pinned on this account | turn the **Agent** chip off in a browser; re-run |
+| `agent mode was left, but the settings trigger … still did not become visible` | the mode is off — this is real selector drift | file a bug; it is not this issue |
+| `the chip could not be read back, so whether the mode is still on is unknown` | the page went dark mid-recovery | check the **Agent** chip in a browser *before* filing this as drift |
+| `the settings trigger … is not visible — the account is in Flow's agent mode` | the mode flipped **mid-run**, after the editor was already ready | turn the **Agent** chip off in a browser; re-run |
+
+**On 0.71.0 and earlier there is no recovery.** Open the project on
+`flow.google.com`, click the **Agent** chip off, and the account works again.
+
 ### Auth verification depends on Google's NextAuth session endpoint
 
 - **Status:** Mitigated · **Severity:** Low (degrades fail-closed) · **Affects:** issue #15 fix onward · **Tracked:** issue #15

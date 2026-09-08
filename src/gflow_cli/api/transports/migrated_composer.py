@@ -31,7 +31,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import unquote_plus, urlsplit
 
 import structlog
@@ -83,30 +83,32 @@ RADIOGROUP = "[role='radiogroup']"
 RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
 COMPOSER = "[contenteditable='true']"
-#: Flow's agent-mode chip. Pressed, the app swaps `flow-prompt-box` for
-#: `flow-creative-agent-prompt-box`: `.settings-trigger-button` stays in the DOM but gains
-#: a bare `hidden` (display:none, 0x0, not hit-testable), and a `div.agent-footer-actions`
-#: with its own `tune` button appears instead. The mode is remembered per account, so one
-#: click in a browser breaks every later run until something clicks it back — which is
-#: exactly what #749 reported.
+#: Flow's agent-mode chip. Pressed, `.settings-trigger-button` stays in the DOM but gains
+#: a bare `hidden` (display:none, 0x0, not hit-testable) — which is why every gate on it
+#: waits for VISIBILITY and never `count()` (#749).
 #:
-#: Anchored on the component class plus `aria-pressed`, never on the label: the chip's text
-#: is translated (the reporter's was "Configuración"), and in agent mode a SECOND
-#: `button[aria-pressed]` appears (`agent-action-button`, ligature `article_spark`), so the
-#: bare attribute selector is ambiguous there. `[aria-pressed='true']` also makes the
-#: locator self-guarding — it matches only when there is something to undo, so the recovery
-#: cannot click a healthy composer INTO agent mode.
+#: Three constraints put this exact selector here, none of them cosmetic: the component
+#: class, because in agent mode a SECOND `button[aria-pressed]` appears
+#: (`agent-action-button`) and the bare attribute selector is ambiguous there;
+#: `aria-pressed` rather than the label, because the label is translated; and `='true'`
+#: specifically, which makes the locator self-guarding — it matches only when there is
+#: something to undo, so the recovery cannot click a healthy composer INTO agent mode.
 #:
 #: `mode_control.py` handles this same split on labs and is deliberately not reused: it
 #: refuses this host (`raise_if_migrated`), and its `AGENT_TOGGLE_SELECTOR` requires a
-#: `span.content` this chip does not have (measured `has_span_content: false`).
-#: Measured 2026-09-08 on ffroliva + denon82, $0 —
+#: `span.content` this chip does not have.
+#:
+#: Accounts, measurements and the transition inventory:
 #: docs/superpowers/spikes/2026-09-08-migrated-composer-agent-mode-hides-settings.md
 AGENT_MODE_CHIP = "button.agent-mode-chip[aria-pressed='true']"
 #: How long the classic composer gets to come back after the chip is clicked. The swap is
 #: a local Angular re-render, not a navigation — measured well under a second on both
 #: accounts — so this is headroom, not an expectation.
 AGENT_RECOVERY_S = 20.0
+#: What :meth:`MigratedComposer._exit_agent_mode` did. `"blocked"` — the chip was there
+#: and the click did not land — is not `"clicked"`: nothing was toggled, so there is
+#: nothing to wait :data:`AGENT_RECOVERY_S` for.
+AgentModeExit = Literal["clicked", "blocked", "absent"]
 #: The submode radio that renders the Start/End frame chips (i2v).
 FRAMES_LIGATURE = "crop_free"
 DIALOG = "[role='dialog']"
@@ -512,7 +514,8 @@ class MigratedComposer:
             # recovery no-opped, and the run failed exactly as it did before the fix
             # (caught by this change's own e2e, 2026-09-08). Waiting first also costs a
             # healthy run nothing — no extra query is issued unless the gate has failed.
-            if not await self._exit_agent_mode(page):
+            state, click_error = await self._exit_agent_mode(page)
+            if state == "absent":
                 raise UiSelectorDriftError(
                     detail=(
                         f"migrated host: the settings trigger ({READY_ANCHOR}) did not "
@@ -520,52 +523,111 @@ class MigratedComposer:
                         f"(host=migrated): {e}"
                     ),
                 ) from e
+            if state == "blocked":
+                # Nothing was toggled, so the trigger cannot have changed — spending
+                # AGENT_RECOVERY_S here buys a verdict already in hand. The click's own
+                # exception IS the message: a modal eating the click is a different bug
+                # from a pinned mode, and only that exception says which one this is.
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"migrated host: the account is in Flow's agent mode, which hides "
+                        f"the settings trigger, and the chip ({AGENT_MODE_CHIP}) could not "
+                        f"be clicked on {page.url} after {timeout_s:.0f}s (host=migrated) — "
+                        f"something is covering it; turn the Agent chip off in a browser and "
+                        f"re-run. Readiness gate: {e}. Chip click: {click_error}"
+                    ),
+                ) from click_error
             try:
                 await trigger.wait_for(state="visible", timeout=int(AGENT_RECOVERY_S * 1000))
             except Exception as e2:
-                # Distinct from ordinary drift, and actionable: the frontend is fine,
-                # the account is parked somewhere gflow could not get it out of.
-                raise UiSelectorDriftError(
-                    detail=(
-                        f"migrated host: the account was in Flow's agent mode and the chip "
-                        f"was clicked to leave it, but the classic composer did not come "
+                # Which of these two it is decides who can fix it, so the chip is read
+                # BACK rather than assumed. Reporting both as "the mode may be pinned"
+                # hides genuine selector drift behind a mode the driver already left.
+                pressed = await self._agent_chip_pressed(page)
+                if pressed:
+                    detail = (
+                        f"migrated host: the account was in Flow's agent mode, the chip was "
+                        f"clicked, and it is STILL pressed {AGENT_RECOVERY_S:.0f}s later on "
+                        f"{page.url} (host=migrated) — the mode is pinned on this account; "
+                        f"turn the Agent chip off in a browser and re-run: {e2}"
+                    )
+                elif pressed is None:
+                    detail = (
+                        f"migrated host: the account was in Flow's agent mode, the chip was "
+                        f"clicked, and the settings trigger ({READY_ANCHOR}) did not come "
                         f"back within {AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) "
-                        f"— the mode may be pinned on this account; turn the Agent chip off "
-                        f"in a browser and re-run: {e2}"
-                    ),
-                ) from e2
+                        f"— the chip could not be read back, so whether the mode is still "
+                        f"on is unknown; check the Agent chip in a browser before filing "
+                        f"this as drift: {e2}"
+                    )
+                else:
+                    detail = (
+                        f"migrated host: Flow's agent mode was left, but the settings "
+                        f"trigger ({READY_ANCHOR}) still did not become visible within "
+                        f"{AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) — the mode "
+                        f"is off, so this is ordinary selector drift: {e2}"
+                    )
+                raise UiSelectorDriftError(detail=detail) from e2
+        # One count() on the happy path, for the cohort that would render the agent prompt
+        # box while LEAVING the trigger visible: `send_prompt` would type into the agent
+        # composer ([contenteditable='true'].first) and nothing downstream would notice.
+        #
+        # It OBSERVES and does not act, which is the whole point. Clicking here would
+        # mutate a server-remembered account setting on a run that is otherwise healthy,
+        # and it would do it in the one window where that is wrong: right after a
+        # successful recovery, where a chip still reporting `aria-pressed='true'` for a
+        # frame would toggle the account straight back INTO agent mode. `AGENT_MODE_CHIP`
+        # being self-guarding only holds while the click is reserved for a trigger that
+        # did NOT come up. No cohort has been measured here, so a log line is the honest
+        # instrument — the next occurrence is then diagnosable from a run instead of a
+        # re-run (the same reason #719 asks for telemetry before a fix).
+        if await self._agent_chip_pressed(page):
+            log.warning("migrated.agent_mode_chip_pressed_while_ready", issue_ref="#752")
         log.info("migrated.editor_ready", url=page.url)
 
     @staticmethod
-    async def _exit_agent_mode(page: Page) -> bool:
-        """Turn Flow's agent mode off if it is on. Returns whether the chip was clicked.
+    async def _agent_chip_pressed(page: Page) -> bool | None:
+        """Is Flow's agent-mode chip pressed right now? One count, and never the failure.
+
+        ``None`` — the query did not answer at all — is a third answer, not a quiet
+        ``False``. Both of the claims this feeds are unsafe to make on an unanswered
+        probe: "you were in agent mode" sends a user to fix a mode they may never have
+        been in, and its negation, "the mode is off, so file a drift bug", sends a user
+        whose account really is pinned to file a bug about a healthy frontend. A caller
+        that only needs the safe direction can use the falsiness; one that reports on the
+        absence has to look at ``None``.
+        """
+        try:
+            return bool(await page.locator(AGENT_MODE_CHIP).first.count())
+        except Exception as e:  # noqa: BLE001 - an unreadable page is not an answer
+            log.warning("migrated.agent_mode_probe_failed", error=str(e)[:200])
+            return None
+
+    @classmethod
+    async def _exit_agent_mode(cls, page: Page) -> tuple[AgentModeExit, Exception | None]:
+        """Turn Flow's agent mode off if it is on.
 
         Agent mode `hidden`s the settings trigger this driver waits on (#749), and Flow
         remembers the chip per account — so without this, a single click in a browser
-        leaves every later run failing as selector drift. The locator matches only
-        ``aria-pressed='true'``, so on a healthy composer this is one cheap count and
-        nothing else.
+        leaves every later run failing as selector drift. :data:`AGENT_MODE_CHIP` matches
+        only ``aria-pressed='true'``, so on a healthy composer this is one cheap count.
+
+        The three outcomes are not interchangeable, which is why this is not a bool:
+        ``"clicked"`` means the page was asked to change and may still be re-rendering,
+        ``"blocked"`` means it was never asked — there is nothing to wait for — and
+        ``"absent"`` means the mode was not the problem. ``"blocked"`` carries the click's
+        own exception, so the caller can chain it instead of truncating it into a warning
+        nobody reads.
         """
-        chip = page.locator(AGENT_MODE_CHIP).first
+        if not await cls._agent_chip_pressed(page):
+            return "absent", None
         try:
-            found = await chip.count()
-        except Exception as e:  # noqa: BLE001 - an unreadable page is ordinary drift
-            # Returning True here would put "the account was in Flow's agent mode" in
-            # front of a user on the strength of a query that never answered. Only a
-            # chip actually FOUND may claim that.
-            log.warning("migrated.agent_mode_probe_failed", error=str(e)[:200])
-            return False
-        if not found:
-            return False
-        try:
-            await chip.click(timeout=5000)
-        except Exception as e:  # noqa: BLE001 - the trigger wait is the real verdict
-            # The chip was there, so agent mode is confirmed either way — and the
-            # pinned-mode message is the accurate one to end on.
+            await page.locator(AGENT_MODE_CHIP).first.click(timeout=5000)
+        except Exception as e:  # noqa: BLE001 - the caller decides what it means
             log.warning("migrated.agent_mode_exit_failed", error=str(e)[:200])
-            return True
+            return "blocked", e
         log.info("migrated.agent_mode_exited", issue_ref="#749")
-        return True
+        return "clicked", None
 
     @staticmethod
     async def _dismiss_dialog(page: Page) -> None:
@@ -666,10 +728,25 @@ class MigratedComposer:
 
     async def _open_pane(self, page: Page) -> Any:
         trigger = page.locator(READY_ANCHOR).first
-        if not await trigger.count():
-            raise UiSelectorDriftError(
-                detail=f"migrated host: settings trigger ({READY_ANCHOR}) missing (host=migrated)"
+        try:
+            # Visibility, not `count()`. Agent mode leaves the trigger in the DOM under a
+            # bare `hidden` (#749), and the mode can flip between `ensure_editor` and
+            # here — a count-guard then walks into a click that expires as a bare
+            # Playwright TimeoutError, with no exit code and no mention of the mode.
+            await trigger.wait_for(state="visible", timeout=5000)
+        except Exception as e:
+            why = (
+                " — the account is in Flow's agent mode, which hides it; turn the Agent "
+                "chip off in a browser and re-run"
+                if await self._agent_chip_pressed(page)
+                else ""
             )
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: the settings trigger ({READY_ANCHOR}) is not visible"
+                    f"{why} (host=migrated)"
+                ),
+            ) from e
         await trigger.click(timeout=5000)
         # THE overlay that holds the option groups — not `.last`: once the model
         # menu (a second overlay) has opened and closed, a detached menu pane can

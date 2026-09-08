@@ -28,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   label, and the chip's own component class plus `aria-pressed` carry the same identity in every
   locale. ([#749](https://github.com/ffroliva/gflow-cli/issues/749))
 
+  **Follow-up ([#752](https://github.com/ffroliva/gflow-cli/issues/752)):** the fix worked and
+  its diagnostics did not. Three states were collapsed into one message — the chip was clicked,
+  the chip was found but the click was blocked, the chip was clicked and the mode is still on —
+  and all three read as *"the chip was clicked to leave it … the mode may be pinned"*. A modal
+  eating the click sent the user to toggle a chip; genuine selector drift **after** the mode was
+  successfully left was reported as a pinned mode, so the drift bug never got filed. The chip's
+  `aria-pressed` is now read back before that claim is made, a blocked click raises at once
+  instead of waiting out the 20 s recovery window (worst case 55 s → 35 s), the click's own
+  exception is chained rather than truncated into a log line, and `_open_pane` — the same gate
+  one step later — guards on **visibility** rather than `count()`, so a mode flip mid-run maps
+  to exit 23 naming agent mode instead of escaping as a bare Playwright timeout. Searchable
+  entry added to [KNOWN_ISSUES.md](KNOWN_ISSUES.md), which the shipped message gave a user no
+  way to find.
+
 ## [0.71.0] — 2026-09-07
 
 ### Fixed
