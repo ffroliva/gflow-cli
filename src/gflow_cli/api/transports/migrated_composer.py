@@ -1011,7 +1011,20 @@ class MigratedComposer:
             if not reply.done():
                 reply.set_result((status, text))
 
+        # The response listener alone cannot tell "the page never asked" from "Flow was
+        # slow" — and those are different bugs with opposite fixes (#719: shape A is a
+        # blocked send, shape B is a lost reply). One boolean splits them at the point of
+        # failure instead of leaving both as one 60 s timeout.
+        sent = False
+
+        def on_request(request: Any) -> None:
+            nonlocal sent
+            url = str(getattr(request, "url", ""))
+            if "batchexecute" in url and _rpcid(url) == UPLOAD_RPC:
+                sent = True
+
         page.on("response", on_response)
+        page.on("request", on_request)
         try:
             add = page.locator(TOOLBAR_ADD).first
             if not await add.count():
@@ -1069,12 +1082,20 @@ class MigratedComposer:
             try:
                 status, text = await asyncio.wait_for(reply, timeout=FRAME_UPLOAD_S)
             except TimeoutError:
-                if await page.locator(DIALOG).count() > dialogs_before:
+                try:
+                    opened = await page.locator(DIALOG).count() > dialogs_before
+                except Exception:  # noqa: BLE001 - a probe is never the failure it reports
+                    # The likeliest reason no reply came is that the page died or navigated,
+                    # in which case this count raises too. Letting that escape would replace
+                    # a mapped exit 27 and its remediation with an unmapped traceback — the
+                    # #752 lesson, one surface over.
+                    opened = False
+                if opened and not sent:
                     raise MediaUploadRejectedError(
                         detail=(
                             f"migrated host: a dialog opened after the file was chosen and no "
-                            f"{UPLOAD_RPC} request was ever sent — Flow is holding the upload "
-                            f"behind its one-time upload-terms confirmation (host=migrated)"
+                            f"{UPLOAD_RPC} request left the page — most likely Flow's one-time "
+                            f"upload-terms confirmation (host=migrated)"
                         ),
                         route=route,
                         remediation_hint=(
@@ -1082,13 +1103,22 @@ class MigratedComposer:
                             "and accept the one-time 'rights to use this image' dialog. gflow "
                             "does not accept it for you: it affirms that YOU hold the rights "
                             "to what you upload. It appears once per account — after that, "
-                            "uploads work unattended. Nothing was spent; re-run when done."
+                            "uploads work unattended. If you see a different dialog instead "
+                            "(an error, a quota notice, a re-login), that is the one blocking "
+                            "the upload. Nothing was spent; re-run when done."
                         ),
                     ) from None
+                # Say which half of #719 this is. `sent` is observed, not inferred: the
+                # request listener above saw the upload leave the page, or it did not.
+                went_out = (
+                    "the request left the page and Flow did not answer in time"
+                    if sent
+                    else "no upload request ever left the page"
+                )
                 raise MediaUploadRejectedError(
                     detail=(
                         f"migrated host: no {UPLOAD_RPC} reply within {FRAME_UPLOAD_S:.0f}s "
-                        "of choosing the file — the upload never reached Flow or was dropped"
+                        f"of choosing the file — {went_out}"
                     ),
                     route=route,
                 ) from None
@@ -1122,6 +1152,7 @@ class MigratedComposer:
             return media_id
         finally:
             page.remove_listener("response", on_response)
+            page.remove_listener("request", on_request)
 
     async def attach_references(
         self, page: Page, project_id: str, paths: tuple[Path, ...]

@@ -118,6 +118,11 @@ class Dom:
     #: handed over, and Flow sends NOTHING until a human accepts it — so this both
     #: raises a dialog and withholds the reply, which is the whole shape of the bug.
     consent_dialog_on_upload: bool = False
+    #: The page dies once the file is handed over (navigation, crash, context
+    #: teardown) — the likeliest reason a reply never comes, and the state in which
+    #: the post-timeout dialog probe would itself raise.
+    page_dies_on_upload: bool = False
+    dialog_probe_raises: bool = False
     dialog_closed: int = 0
     # --- #749: Flow's agent mode ------------------------------------------------------
     # Pressed, the chip leaves `.settings-trigger-button` in the DOM under a bare `hidden`
@@ -235,6 +240,8 @@ class FakeLocator:
 
     # --- reads --------------------------------------------------------------
     async def count(self) -> int:
+        if self.kind == "dialog" and self.page.dom.dialog_probe_raises:
+            raise PlaywrightTimeoutError("count: Target page, context or browser has been closed")
         if self.kind == "agent_chip":
             dom = self.page.dom
             index, dom.agent_chip_probes = dom.agent_chip_probes, dom.agent_chip_probes + 1
@@ -348,8 +355,15 @@ class FakeFileChooser:
         if dom.consent_dialog_on_upload:
             dom.dialog_present = True
             return  # ...and no upload request is ever made
+        if dom.page_dies_on_upload:
+            dom.dialog_probe_raises = True
+            return
         reply = dom.maseq_reply
         if reply == "none":
+            return
+        # Everything past here means the upload actually left the page.
+        self.page._fire_request(_batch_url("maseQ"))
+        if reply == "sent_no_reply":
             return
         payloads: dict[str, list[Any]] = {
             "ok": [MEDIA_UP, PROJ_UUID, "44444444-4444-4444-8444-444444444444", "CAE"],
@@ -455,6 +469,10 @@ class FakePage:
 
     def listeners(self, event: str) -> list[Any]:
         return list(self._handlers[event])
+
+    def _fire_request(self, url: str) -> None:
+        for h in list(self._handlers["request"]):
+            asyncio.get_event_loop().create_task(_maybe_await(h(FakeRequest(url, ""))))
 
     def _fire_response(self, response: FakeResponse) -> None:
         for h in list(self._handlers["response"]):
@@ -1621,7 +1639,10 @@ async def test_attach_names_the_one_time_terms_dialog_when_one_opens(
     with pytest.raises(MediaUploadRejectedError) as ei:
         await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
     assert "one-time upload-terms" in str(ei.value)
+    assert "most likely" in str(ei.value)  # a count is evidence for a guess, not a fact
     assert "rights" in ei.value.remediation_hint
+    # A different modal (an error, a quota notice) must leave the user somewhere to go.
+    assert "different dialog" in ei.value.remediation_hint
     # The wrong advice this replaces must not survive on this branch.
     assert "re-encoding" not in ei.value.remediation_hint
     assert ei.value.route == "batchexecute:maseQ"
@@ -1644,7 +1665,46 @@ async def test_attach_does_not_blame_a_dialog_that_was_already_open(
     with pytest.raises(MediaUploadRejectedError) as ei:
         await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
     assert "one-time upload-terms" not in str(ei.value)
-    assert "never reached Flow" in str(ei.value)
+    assert "no upload request ever left the page" in str(ei.value)
+
+
+async def test_attach_says_the_request_left_the_page_when_flow_just_never_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#719 shape B, and the half the old message could not express. Watching only
+    responses cannot tell "the page never asked" from "Flow was slow" — and they are
+    different bugs with opposite fixes: one argues for a retry, the other against.
+    `FRAME_UPLOAD_S` itself concedes a large file on a slow link can exceed the budget,
+    so claiming nothing was sent would have been false on a perfectly healthy upload."""
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
+    page = FakePage()
+    page.dom.maseq_reply = "sent_no_reply"
+    with pytest.raises(MediaUploadRejectedError) as ei:
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert "the request left the page and Flow did not answer" in str(ei.value)
+    assert "one-time upload-terms" not in str(ei.value)
+
+
+async def test_attach_keeps_exit_27_when_the_dialog_probe_itself_dies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe must never become the failure it was added to describe. The likeliest
+    reason no reply arrived is that the page died or navigated — in which case the dialog
+    count raises too, and letting that escape would swap a mapped exit 27 and its
+    remediation for an unmapped traceback. Same lesson as #752, one surface over."""
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
+    page = FakePage()
+    page.dom.page_dies_on_upload = True
+    with pytest.raises(MediaUploadRejectedError) as ei:
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert EXIT_CODE_MAP[MediaUploadRejectedError] == 27
+    assert "no upload request ever left the page" in str(ei.value)
 
 
 async def test_attach_is_upload_rejected_on_a_non_200_maseq(tmp_path: Path) -> None:
