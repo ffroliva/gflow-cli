@@ -532,8 +532,9 @@ class MigratedComposer:
                     detail=(
                         f"migrated host: the account is in Flow's agent mode, which hides "
                         f"the settings trigger, and the chip ({AGENT_MODE_CHIP}) could not "
-                        f"be clicked on {page.url} (host=migrated) — something is covering "
-                        f"it; turn the Agent chip off in a browser and re-run: {click_error}"
+                        f"be clicked on {page.url} after {timeout_s:.0f}s (host=migrated) — "
+                        f"something is covering it; turn the Agent chip off in a browser and "
+                        f"re-run. Readiness gate: {e}. Chip click: {click_error}"
                     ),
                 ) from click_error
             try:
@@ -542,12 +543,22 @@ class MigratedComposer:
                 # Which of these two it is decides who can fix it, so the chip is read
                 # BACK rather than assumed. Reporting both as "the mode may be pinned"
                 # hides genuine selector drift behind a mode the driver already left.
-                if await self._agent_chip_pressed(page):
+                pressed = await self._agent_chip_pressed(page)
+                if pressed:
                     detail = (
                         f"migrated host: the account was in Flow's agent mode, the chip was "
                         f"clicked, and it is STILL pressed {AGENT_RECOVERY_S:.0f}s later on "
                         f"{page.url} (host=migrated) — the mode is pinned on this account; "
                         f"turn the Agent chip off in a browser and re-run: {e2}"
+                    )
+                elif pressed is None:
+                    detail = (
+                        f"migrated host: the account was in Flow's agent mode, the chip was "
+                        f"clicked, and the settings trigger ({READY_ANCHOR}) did not come "
+                        f"back within {AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) "
+                        f"— the chip could not be read back, so whether the mode is still "
+                        f"on is unknown; check the Agent chip in a browser before filing "
+                        f"this as drift: {e2}"
                     )
                 else:
                     detail = (
@@ -558,25 +569,39 @@ class MigratedComposer:
                     )
                 raise UiSelectorDriftError(detail=detail) from e2
         # One count() on the happy path, for the cohort that would render the agent prompt
-        # box while LEAVING the trigger visible: nothing downstream would notice, and
-        # `send_prompt` would type into the agent composer ([contenteditable='true'].first).
-        # Not observed on either account — this costs less than the run it would waste.
-        await self._exit_agent_mode(page)
+        # box while LEAVING the trigger visible: `send_prompt` would type into the agent
+        # composer ([contenteditable='true'].first) and nothing downstream would notice.
+        #
+        # It OBSERVES and does not act, which is the whole point. Clicking here would
+        # mutate a server-remembered account setting on a run that is otherwise healthy,
+        # and it would do it in the one window where that is wrong: right after a
+        # successful recovery, where a chip still reporting `aria-pressed='true'` for a
+        # frame would toggle the account straight back INTO agent mode. `AGENT_MODE_CHIP`
+        # being self-guarding only holds while the click is reserved for a trigger that
+        # did NOT come up. No cohort has been measured here, so a log line is the honest
+        # instrument — the next occurrence is then diagnosable from a run instead of a
+        # re-run (the same reason #719 asks for telemetry before a fix).
+        if await self._agent_chip_pressed(page):
+            log.warning("migrated.agent_mode_chip_pressed_while_ready", issue_ref="#752")
         log.info("migrated.editor_ready", url=page.url)
 
     @staticmethod
-    async def _agent_chip_pressed(page: Page) -> bool:
+    async def _agent_chip_pressed(page: Page) -> bool | None:
         """Is Flow's agent-mode chip pressed right now? One count, and never the failure.
 
-        A probe that cannot answer must read as "no". Answering "yes" would put "the
-        account was in Flow's agent mode" in front of a user on the strength of a query
-        that never returned, sending them to fix a mode they may never have been in.
+        ``None`` — the query did not answer at all — is a third answer, not a quiet
+        ``False``. Both of the claims this feeds are unsafe to make on an unanswered
+        probe: "you were in agent mode" sends a user to fix a mode they may never have
+        been in, and its negation, "the mode is off, so file a drift bug", sends a user
+        whose account really is pinned to file a bug about a healthy frontend. A caller
+        that only needs the safe direction can use the falsiness; one that reports on the
+        absence has to look at ``None``.
         """
         try:
             return bool(await page.locator(AGENT_MODE_CHIP).first.count())
-        except Exception as e:  # noqa: BLE001 - an unreadable page is ordinary drift
+        except Exception as e:  # noqa: BLE001 - an unreadable page is not an answer
             log.warning("migrated.agent_mode_probe_failed", error=str(e)[:200])
-            return False
+            return None
 
     @classmethod
     async def _exit_agent_mode(cls, page: Page) -> tuple[AgentModeExit, Exception | None]:

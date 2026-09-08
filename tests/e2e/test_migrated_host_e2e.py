@@ -170,9 +170,15 @@ async def test_e2e_agent_mode_is_left_before_the_readiness_gate(
             # on restores it — including when it failed. gflow 0.71.0 and earlier have no
             # recovery at all, so a chip left pressed here breaks every run a user makes
             # on that build until someone clicks it back in a browser.
-            pressed = page.locator("button.agent-mode-chip[aria-pressed='true']").first
-            if await pressed.count():
-                await pressed.click(timeout=10_000)
+            # Best-effort by construction: if the body failed BECAUSE something is
+            # covering the chip, this click times out too, and an exception here would
+            # replace the real assertion failure with a cleanup one.
+            try:
+                pressed = page.locator("button.agent-mode-chip[aria-pressed='true']").first
+                if await pressed.count():
+                    await pressed.click(timeout=10_000)
+            except Exception as cleanup_error:  # noqa: BLE001 - never mask the verdict
+                print(f"agent-mode restore failed, chip may still be pressed: {cleanup_error}")
     finally:
         await transport.teardown()
 

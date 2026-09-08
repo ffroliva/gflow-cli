@@ -129,10 +129,17 @@ class Dom:
     # the trigger stayed hidden" would report that as ordinary selector drift again.
     agent_chip_sticks: bool = False
     agent_chip_clicks: int = 0
-    # A page that cannot answer the probe at all (closed / detached). Distinct from
-    # "no chip": the driver must NOT tell the user they were in agent mode on the
-    # strength of a query that never answered.
-    agent_chip_probe_raises: bool = False
+    #: The unmeasured cohort: agent mode on, and the trigger left VISIBLE anyway. Every
+    #: account seen so far hides it, but nothing downstream would notice if one did not —
+    #: `send_prompt` would type into the agent composer and the run would be wasted.
+    agent_mode_hides_trigger: bool = True
+    # A page that cannot answer the probe (closed / detached). The index is which probe
+    # stops answering, because the driver reads the chip more than once and the reads are
+    # not interchangeable: 0 = never answers, so no claim of agent mode may be made at
+    # all; 1 = answers, is clicked, and then goes dark before the read-back — where the
+    # unsafe claim is the OPPOSITE one, "the mode is off, so file a drift bug".
+    agent_chip_probe_raises_from: int | None = None
+    agent_chip_probes: int = 0
     agent_chip_click_raises: bool = False
 
 
@@ -224,8 +231,15 @@ class FakeLocator:
 
     # --- reads --------------------------------------------------------------
     async def count(self) -> int:
-        if self.kind == "agent_chip" and self.page.dom.agent_chip_probe_raises:
-            raise PlaywrightTimeoutError("count: Target page, context or browser has been closed")
+        if self.kind == "agent_chip":
+            dom = self.page.dom
+            index, dom.agent_chip_probes = dom.agent_chip_probes, dom.agent_chip_probes + 1
+            if dom.agent_chip_probe_raises_from is not None and (
+                index >= dom.agent_chip_probe_raises_from
+            ):
+                raise PlaywrightTimeoutError(
+                    "count: Target page, context or browser has been closed"
+                )
         return len(self.items)
 
     async def is_visible(self) -> bool:
@@ -461,7 +475,7 @@ class FakePage:
                 self,
                 "trigger",
                 ["trigger"] if dom.trigger_present else [],
-                visible=lambda: not dom.agent_mode,
+                visible=lambda: not (dom.agent_mode and dom.agent_mode_hides_trigger),
             )
         if css == migrated_composer.AGENT_MODE_CHIP:
             pressed = dom.agent_mode and dom.agent_chip_present
@@ -1939,7 +1953,7 @@ async def test_ensure_editor_does_not_claim_agent_mode_when_the_probe_itself_fai
 
     page = FakePage()
     page.dom.agent_mode = True
-    page.dom.agent_chip_probe_raises = True
+    page.dom.agent_chip_probe_raises_from = 0
     with capture_logs() as logs, pytest.raises(UiSelectorDriftError) as exc:
         await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
     assert page.dom.agent_chip_clicks == 0
@@ -2014,6 +2028,49 @@ async def test_open_pane_names_agent_mode_when_the_mode_flips_after_readiness() 
     with pytest.raises(UiSelectorDriftError) as exc:
         await composer.apply_video_settings(page, _t2v())
     assert "agent mode" in str(exc.value).casefold()
+
+
+async def test_ensure_editor_will_not_call_it_drift_when_the_chip_cannot_be_read_back() -> None:
+    """The mirror of the probe-failure case, and the one that bites harder. `False` and
+    "could not answer" are the same value to a bool, but here the claim rides on the
+    NEGATIVE: an account genuinely pinned in agent mode, on a page that went dark during
+    the recovery wait, would be told the mode is off and to file a frontend-drift bug —
+    the exact mis-routing this whole issue exists to stop, one inversion further on."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_chip_sticks = True
+    page.dom.agent_chip_probe_raises_from = 1  # answers once, dark by the read-back
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    assert page.dom.agent_chip_clicks == 1
+    assert "could not be read back" in str(exc.value)
+    assert "ordinary selector drift" not in str(exc.value)
+    assert "pinned" not in str(exc.value)
+
+
+async def test_ensure_editor_reports_but_never_clicks_a_chip_pressed_beside_a_ready_trigger() -> (
+    None
+):
+    """The unmeasured cohort: agent mode on, trigger visible anyway. The readiness gate
+    passes, so nothing downstream would ever notice that `send_prompt` is about to type
+    into the agent composer. It is recorded — and NOT clicked: a click here mutates a
+    server-remembered account setting on a run that is otherwise healthy, and the same
+    line fires right after a successful recovery, where a chip still reading pressed for
+    one frame would toggle the account straight back into agent mode."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_mode_hides_trigger = False
+    with capture_logs() as logs:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0)
+    events = [e["event"] for e in logs]
+    assert "migrated.agent_mode_chip_pressed_while_ready" in events
+    assert "migrated.editor_ready" in events
+    assert page.dom.agent_chip_clicks == 0
+    assert page.dom.agent_mode is True
 
 
 async def test_ensure_editor_drift_message_does_not_blame_agent_mode_in_classic() -> None:
