@@ -548,10 +548,20 @@ class MigratedComposer:
         """
         chip = page.locator(AGENT_MODE_CHIP).first
         try:
-            if not await chip.count():
-                return False
+            found = await chip.count()
+        except Exception as e:  # noqa: BLE001 - an unreadable page is ordinary drift
+            # Returning True here would put "the account was in Flow's agent mode" in
+            # front of a user on the strength of a query that never answered. Only a
+            # chip actually FOUND may claim that.
+            log.warning("migrated.agent_mode_probe_failed", error=str(e)[:200])
+            return False
+        if not found:
+            return False
+        try:
             await chip.click(timeout=5000)
-        except Exception as e:  # noqa: BLE001 - the trigger wait below is the real verdict
+        except Exception as e:  # noqa: BLE001 - the trigger wait is the real verdict
+            # The chip was there, so agent mode is confirmed either way — and the
+            # pinned-mode message is the accurate one to end on.
             log.warning("migrated.agent_mode_exit_failed", error=str(e)[:200])
             return True
         log.info("migrated.agent_mode_exited", issue_ref="#749")
