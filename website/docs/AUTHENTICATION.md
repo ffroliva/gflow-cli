@@ -179,17 +179,37 @@ and the profile keeps the name `default`.
 | Value | Browser used | When to use |
 |---|---|---|
 | `auto` (default) | Real Chrome if installed; falls back to internal | First choice for most users |
-| `chrome` | System Google Chrome (**Passive Capture**) | Required to bypass "G12" blocks |
+| `chrome` | System Google Chrome, driven by Playwright (auto-closes) | Required to bypass "G12" blocks |
 | `internal` | Playwright's bundled Chromium | Fallback when Chrome isn't installed |
 
 Override with the env var: `GFLOW_CLI_AUTH_BROWSER=chrome gflow auth login`
 
-**Why `chrome` bypasses bot detection:** Playwright's default automation mode exposes
-`navigator.webdriver = true` as a non-configurable native property. Google detects this
-and redirects to `/v3/signin/rejected` (the "G12 block"). The `chrome` strategy
-implements **Passive Capture**: it launches your real system Chrome as a 100% standard
-process without any automation flags or debugging ports. You log in manually, close
-the window, and `gflow` extracts the verified session from the profile.
+`internal` now launches with the same anti-automation flags as `chrome` (it previously did
+not, which was the configuration Google rejects). It stays a fallback rather than a
+recommendation: a profile created by `internal` carries no `chrome` strategy marker, so
+generation later opens it with bundled Chromium instead of your real Chrome.
+
+**Why `chrome` bypasses bot detection:** what Google rejects is a browser that *advertises*
+automation. Blink sets `navigator.webdriver = true` as a non-configurable native property
+unless `--disable-blink-features=AutomationControlled` is passed, and Google redirects that
+browser to `/v3/signin/rejected` (the "G12 block"). The `chrome` strategy launches your real
+system Chrome through Playwright with that flag plus
+`ignore_default_args=["--enable-automation"]`, `chromium_sandbox=True`, and
+`no_viewport=True`, so `navigator.webdriver` is `false` and the sign-in proceeds normally.
+The block itself is still live — re-measured 2026-09-08; see the G12 entry in
+[KNOWN_ISSUES.md](../KNOWN_ISSUES.md) for the numbers and their N=1 caveat.
+
+**You don't close the browser — gflow does.** Because gflow owns that Chrome window, it
+watches for the completed Flow sign-in and closes the window itself, then prints the
+verified account. If you close the window yourself it still works: gflow verifies the
+profile exactly the same way and does not treat a manual close as an error.
+
+**Automatic fallback, with nothing to choose.** If Playwright can't resolve a Chrome channel
+on this machine (a Chromium-only Linux box, for instance), or Google rejects the browser
+anyway, `gflow auth login` falls back to the earlier **Passive Capture** flow: Chrome
+launched as a plain process with no automation flags and no debugging port, where you close
+the window once the Flow editor has loaded and `gflow` extracts the verified session from the
+profile. There is no flag and no prompt for this — the fallback simply happens.
 
 **Privacy guard:** The `chrome` strategy strictly refuses to use any profile directory
 outside `GFLOW_CLI_HOME`. This protects your primary system Chrome profile from

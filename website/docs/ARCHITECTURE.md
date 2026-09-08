@@ -94,10 +94,10 @@ class AuthStrategy(Protocol):
 - `mode="internal"` — explicit `InternalChromiumStrategy`.
 
 **RealChromeStrategy stealth design** (`real_chrome.py`):
-- Uses a **Passive Capture** pattern: launches system Chrome via `subprocess.Popen` without any automation flags or remote-debugging ports.
-- Provides a 100% clean browser process that Google's G12 block cannot detect.
-- The CLI blocks on `proc.wait()`, prompting the user to complete the sign-in and **close the browser completely**.
-- Post-close: performs a fast, headless `launch_persistent_context` probe to verify the `SAPISID` cookie was successfully captured.
+- **Default — Playwright-owned Chrome.** Launches the system's real Google Chrome via Playwright's `channel="chrome"` with `chromium_sandbox=True`, `no_viewport=True`, `--disable-blink-features=AutomationControlled`, and `ignore_default_args=["--enable-automation"]`. What Google's G12 block keys on is a browser that *advertises* automation (`navigator.webdriver`), not the Playwright connection itself; with these flags the property is `false` and sign-in proceeds normally. See the G12 entry in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) for the 2026-09-08 measurement and its N=1 caveat.
+- Because gflow owns that context, it polls the Flow session endpoint from it until the outcome is `AUTHENTICATED` and then **closes the browser itself** — the user is not asked to close anything. A user who closes the window anyway is routed to the same `verify_flow_profile` check, never to an error.
+- **Automatic fallback — Passive Capture.** When Playwright cannot resolve a Chrome channel (`browser_manager.is_playwright_chrome_channel_available()`), or Google rejects the browser anyway, the strategy silently falls back to the older shape: system Chrome via `subprocess.Popen` with no automation flags and no remote-debugging port, the CLI blocking on `proc.wait()` until the user closes the window. There is **no user-facing flag and no choice to make** — a Chromium-only host is never locked out of onboarding.
+- Verification: both paths end in the same `verify_flow_profile` call after the browser is gone. That probe is **httpx-first** — it reads the profile's cookie store directly via `browser_cookie3` and only falls back to a headless `launch_persistent_context` when cookie decryption fails (DPAPI on Windows, keychain on macOS, libsecret on Linux). The default path additionally polls the same session contract *from the browser it owns*, which is what tells it when to close. Both write the `.gflow_browser_strategy = "chrome"` marker that `channel_for_profile()` later reads.
 - Privacy guard: raises `SecurityError` if the resolved `profile_dir` is outside `GFLOW_CLI_HOME` — protects the user's primary system Chrome profile from being used as a session store.
 
 **UiAutomationTransport (UI Mimicry)**:

@@ -32,6 +32,11 @@ is_chrome_available() -> bool
 resolved_chrome_binary() -> str | None
     The resolved Chrome binary path, or None. Never raises.
 
+is_playwright_chrome_channel_available() -> bool
+    True only if Google Chrome proper sits at one of the paths Playwright's
+    ``channel="chrome"`` hard-codes. Stricter than ``is_chrome_available()``,
+    which accepts Chromium; ``CHROME_BINARY`` does not satisfy it.
+
 channel_for_profile(profile_dir) -> str | None
     ``"chrome"`` if the profile's strategy marker requests it AND Google
     Chrome proper is available at Playwright's expected paths; else None.
@@ -47,7 +52,6 @@ ensure_profile_engine_compatible(profile_dir, channel) -> None
 Internal helpers (exported for tests)
 --------------------------------------
 _find_chrome_binary() -> str
-_is_playwright_chrome_channel_available() -> bool
 """
 
 from __future__ import annotations
@@ -82,7 +86,7 @@ def _find_chrome_binary() -> str:
     .. note::
         This function accepts Chromium as a fallback for the auth use-case.
         It must NOT be used to decide whether Playwright's ``channel="chrome"``
-        is available — use :func:`_is_playwright_chrome_channel_available` for
+        is available — use :func:`is_playwright_chrome_channel_available` for
         that, which checks only the exact paths Playwright hard-codes.
 
     Raises ``ConfigurationError`` if nothing found.
@@ -131,24 +135,22 @@ def _find_chrome_binary() -> str:
     )
 
 
-def _is_playwright_chrome_channel_available() -> bool:
+def is_playwright_chrome_channel_available() -> bool:
     """Return True only when Playwright's ``channel="chrome"`` can find Chrome.
 
     Playwright's ``launch_persistent_context(channel="chrome")`` looks for
     **Google Chrome proper** at platform-specific hardcoded paths — it does NOT
     accept a plain Chromium binary. This function replicates those paths so
-    :func:`channel_for_profile` can gate the ``channel="chrome"`` argument on a
-    binary that Playwright will actually find, avoiding the misleading
+    callers can gate the ``channel="chrome"`` argument on a binary that Playwright
+    will actually find, avoiding the misleading
     ``Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome``
     error that occurs when only system Chromium is present.
 
-    The ``CHROME_BINARY`` env var override is honoured for parity with
-    :func:`_find_chrome_binary`.
+    ``CHROME_BINARY`` is deliberately **ignored** here, unlike in
+    :func:`_find_chrome_binary`: Playwright honours a custom binary only via
+    ``executable_path=``, never via ``channel=``. Treating the env var as proof of
+    a resolvable channel passed this gate and then failed at launch.
     """
-    env_override = os.environ.get("CHROME_BINARY")
-    if env_override:
-        return True
-
     # Playwright's own resolution paths for channel="chrome". Derived from
     # playwright/_impl/_browser_type.py executables(). channel="chrome" resolves
     # ONLY to these exact Google-Chrome paths — a system Chromium does NOT
@@ -179,7 +181,7 @@ def is_chrome_available() -> bool:
     This is used for the auth login flow. It intentionally accepts Chromium as
     a fallback so the auth browser can open even when only Chromium is
     installed. For deciding whether Playwright's ``channel="chrome"`` can be
-    used, call :func:`_is_playwright_chrome_channel_available` instead.
+    used, call :func:`is_playwright_chrome_channel_available` instead.
     """
     try:
         _find_chrome_binary()
@@ -216,7 +218,7 @@ def channel_for_profile(profile_dir: Path) -> str | None:
     exit-33 that occurs when Playwright's bundled Chromium opens a profile
     created by Chrome 130+.
 
-    Critically, this gate uses :func:`_is_playwright_chrome_channel_available`
+    Critically, this gate uses :func:`is_playwright_chrome_channel_available`
     (not :func:`is_chrome_available`) so that a system with only Chromium
     installed does NOT request ``channel="chrome"`` — Playwright's
     ``channel="chrome"`` resolves to hardcoded Google-Chrome paths and would
@@ -236,7 +238,7 @@ def channel_for_profile(profile_dir: Path) -> str | None:
     strategy = marker.read_text(encoding="utf-8").strip()
     if strategy != "chrome":
         return None
-    if _is_playwright_chrome_channel_available():
+    if is_playwright_chrome_channel_available():
         return "chrome"
     _log.warning(
         "browser_manager.chrome_marker_but_unavailable",

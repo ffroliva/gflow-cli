@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -33,6 +34,18 @@ def _build_mock_proc() -> MagicMock:
     mock_proc.terminate = MagicMock()
     mock_proc.kill = MagicMock()
     return mock_proc
+
+
+def _force_subprocess_path() -> Any:
+    """Pin RealChromeStrategy to its RETAINED subprocess path.
+
+    The default is now the owned-Playwright browser; without this pin these
+    tests would launch a real Chrome on any machine that has one.
+    """
+    return patch(
+        "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
+        return_value=False,
+    )
 
 
 def _record_lease_events(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> None:
@@ -71,6 +84,7 @@ class TestRealChromeStrategy:
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            _force_subprocess_path(),
             patch("gflow_cli.auth.real_chrome.find_chrome_executable", return_value=fake_chrome),
             patch("gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec", mock_create),
             patch(
@@ -104,6 +118,7 @@ class TestRealChromeStrategy:
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
                 return_value=r"C:\fake\chrome.exe",
@@ -149,6 +164,7 @@ class TestRealChromeStrategy:
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
                 return_value=r"C:\fake\chrome.exe",
@@ -187,6 +203,7 @@ class TestRealChromeStrategy:
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
                 return_value=r"C:\fake\chrome.exe",
@@ -228,6 +245,7 @@ class TestRealChromeStrategy:
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
                 return_value=r"C:\fake\chrome.exe",
@@ -265,6 +283,7 @@ class TestRealChromeStrategy:
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
                 return_value=r"C:\fake\chrome.exe",
@@ -301,6 +320,7 @@ class TestRealChromeStrategy:
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
                 return_value=r"C:\fake\chrome.exe",
@@ -361,6 +381,7 @@ class TestRealChromeStrategy:
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
                 return_value=r"C:\fake\chrome.exe",
@@ -426,9 +447,24 @@ class TestInternalChromiumStrategy:
 
         _, kwargs = mock_launch_pctx.call_args
         assert "channel" not in kwargs or kwargs["channel"] != "chrome"
-        assert "--disable-blink-features=AutomationControlled" not in kwargs.get("args", [])
-        # Login viewport matches the generation viewport (#315 consistency).
-        assert kwargs.get("viewport") == {"width": 1920, "height": 1080}
+        launch_args = kwargs.get("args", [])
+        # G12 stealth flags. Measured 2026-09-08 (docs/superpowers/spikes/
+        # 2026-09-08-g12-blocks-webdriver-not-playwright.md): without them
+        # navigator.webdriver is True and Google routes to /v3/signin/rejected
+        # in 17.5s; with them both real Chrome and bundled Chromium signed in.
+        assert "--disable-blink-features=AutomationControlled" in launch_args
+        assert kwargs.get("ignore_default_args") == ["--enable-automation"]
+        # Playwright defaults chromium_sandbox=False, injecting --no-sandbox —
+        # an extra automation signal plus Chrome's unsupported-flag banner.
+        assert kwargs.get("chromium_sandbox") is True
+        # #315: log in at the size generation runs at — through the REAL OS
+        # window. An explicit viewport makes Playwright emulate that size and
+        # pushes Google's sign-in form off-screen on smaller/scaled displays.
+        assert "--window-size=1920,1080" in launch_args
+        assert kwargs.get("no_viewport") is True
+        assert "viewport" not in kwargs
+        # Load-bearing beyond auth: macOS keychain prompt on the profile (#222).
+        assert "--password-store=basic" in launch_args
         mock_page.request.get.assert_awaited()
         account_file = profile_dir / ".gflow_account"
         assert account_file.exists(), ".gflow_account must be written on successful login"

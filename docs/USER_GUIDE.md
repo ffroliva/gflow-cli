@@ -71,7 +71,7 @@ This is a ~150 MB download. It happens once per user.
 gflow auth login
 ```
 
-A Chromium window opens. Sign in to the Google account you use for Flow. **Solve any captchas Google shows you** — `gflow-cli` cannot solve them; that's intentional (anti-bot detection). When the Flow dashboard loads, return to your terminal and confirm.
+A browser window opens (real Chrome where it's installed). Sign in to the Google account you use for Flow. **Solve any captchas Google shows you** — `gflow-cli` cannot solve them; that's intentional (anti-bot detection). Keep going until the Flow dashboard loads; **gflow detects the completed sign-in and closes the window for you**, then prints the verified account in your terminal. Closing the window yourself works too.
 
 Your session is saved under (one of):
 - Windows: `%LOCALAPPDATA%\gflow-cli\profile_default\`
@@ -750,7 +750,11 @@ gflow auth login --profile <name> --browser chrome
 
 1. Chrome opens to `https://labs.google/fx/tools/flow?hl=en`.
 2. Sign in to the Google account you use for Flow.
-3. When the Flow editor loads, **close Chrome**.
+3. Keep going until the Flow editor loads — **gflow closes Chrome for you** once it sees the
+   completed Flow sign-in. (Closing the window yourself also works and verifies the same
+   way. On a machine where Playwright can't resolve a Chrome channel, login falls back
+   automatically to the older flow, where you close the window; nothing to configure either
+   way.)
 4. `gflow auth login` probes the profile with `channel="chrome"`, verifies SAPISID is
    present, and writes `.gflow_browser_strategy = "chrome"` to the profile directory.
 5. Subsequent `gflow image` / `gflow video` calls will use Chrome to open the profile and

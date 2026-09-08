@@ -48,7 +48,7 @@ The `--browser chrome` flag is mandatory — Google rejects Playwright's bundled
 gflow auth login --browser chrome
 ```
 
-A Chrome window opens at the Flow sign-in page. Sign in with your Google account (2FA included), keep going until the Flow editor loads, then **close the browser** — gflow verifies automatically.
+A Chrome window opens at the Flow sign-in page. Sign in with your Google account (2FA included) and keep going until the Flow editor loads — **gflow closes the window for you** and verifies the session automatically. Closing it yourself also works.
 
 ```
 Session saved.

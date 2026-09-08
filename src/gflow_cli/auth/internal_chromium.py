@@ -24,18 +24,70 @@ GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
 GOOGLE_REJECTED_BROWSER_ROUTE = "accounts.google.com/v3/signin/rejected"
 
 
-async def _poll_session_until_authenticated(
+def login_launch_kwargs(
+    profile_dir: Path,
+    headless: bool,
+    *,
+    channel: str | None = None,
+) -> dict[str, Any]:
+    """Launch kwargs for a browser a HUMAN signs into — shared by both strategies.
+
+    Defined once because the stealth set is measured, not chosen: 2026-09-08
+    (docs/superpowers/spikes/2026-09-08-g12-blocks-webdriver-not-playwright.md)
+    real Chrome WITHOUT these flags reported ``navigator.webdriver == True`` and
+    Google routed the sign-in to ``/v3/signin/rejected`` in 17.5 s, while both
+    real Chrome and bundled Chromium WITH them signed in normally. Whether
+    either flag alone suffices is untested — keep both, on both strategies.
+
+    ``channel="chrome"`` selects the system Chrome binary. It is not what gets
+    past the sign-in gate (the bundled arm passed too) — it is what makes the
+    resulting profile a chrome-strategy profile, without which
+    ``channel_for_profile()`` returns None and generation silently downgrades.
+    """
+    return {
+        "user_data_dir": str(profile_dir),
+        "channel": channel,
+        "headless": headless,
+        # A human signs into this window, so let it be a REAL window: an
+        # explicit viewport makes Playwright emulate that size independently of
+        # the OS window and pushes Google's sign-in form off-screen on
+        # smaller/scaled displays. The #315 "log in at the size you generate at"
+        # rationale is preserved by --window-size below, on the real window.
+        "no_viewport": True,
+        # Playwright defaults chromium_sandbox=False, which injects
+        # --no-sandbox: an extra automation signal plus Chrome's "unsupported
+        # command-line flag" banner.
+        "chromium_sandbox": True,
+        "ignore_default_args": ["--enable-automation"],
+        "args": [
+            "--disable-blink-features=AutomationControlled",
+            "--window-size=1920,1080",
+            # Load-bearing beyond auth: keeps the profile off the macOS
+            # keychain, which api/client.py also depends on (#222).
+            "--password-store=basic",
+        ],
+    }
+
+
+async def poll_session_until_authenticated(
     ctx: Any,
     page: Any,
     timeout_seconds: int,
     strategy_name: str,
+    *,
+    raise_on_close: bool = True,
 ) -> str | None:
     """Poll the Flow NextAuth session endpoint until the sign-in completes.
 
     Returns the verified user email, or None if it could not be extracted.
     Raises ``AuthBrowserRejectedError`` if Google rejects the browser.
-    Raises ``AuthLoginTimeoutError`` if the timeout elapses or the browser
-    closes before authentication is verified.
+    Raises ``AuthLoginTimeoutError`` if the timeout elapses, and — when
+    ``raise_on_close`` — also when the browser closes before authentication is
+    verified. Callers that own a *fallback* oracle (``RealChromeStrategy``
+    re-checks the on-disk store with ``verify_flow_profile``) pass
+    ``raise_on_close=False`` and get ``None`` instead: three releases told users
+    to close the window themselves, so doing so must not turn a successful
+    login red.
     """
     timeout_at = asyncio.get_running_loop().time() + timeout_seconds
     success = False
@@ -93,6 +145,9 @@ async def _poll_session_until_authenticated(
         )
 
     if not success:
+        if not raise_on_close:
+            logger.info("auth_login_browser_closed_by_user", strategy=strategy_name)
+            return None
         msg = "Browser closed before the Flow editor sign-in was verified."
         raise AuthLoginTimeoutError(
             msg,
@@ -149,13 +204,10 @@ class InternalChromiumStrategy(AuthStrategy):
         # ProfileLockedError before Chromium launches.
         async with ProfileLease(profile_dir), async_playwright() as pw:
             # We use launch_persistent_context to ensure cookies are saved to profile_dir
+            # Bundled Chromium: no channel. Everything else — the stealth set,
+            # the real-window geometry — is the shared, measured configuration.
             ctx = await pw.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
-                headless=headless,
-                # Match the generation viewport (#315) so a profile logs in at the
-                # same size it later generates with; login-window only, not selector-bound.
-                viewport={"width": 1920, "height": 1080},
-                args=["--password-store=basic"],
+                **login_launch_kwargs(profile_dir, headless),
             )
             try:
                 page = ctx.pages[0] if ctx.pages else await ctx.new_page()
@@ -169,7 +221,7 @@ class InternalChromiumStrategy(AuthStrategy):
                     )
 
                 # Poll until the Flow app sign-in completes; raises on timeout/rejection.
-                user_email = await _poll_session_until_authenticated(
+                user_email = await poll_session_until_authenticated(
                     ctx,
                     page,
                     self._timeout_seconds,

@@ -513,7 +513,7 @@
     <!-- Step 2: Auth -->
     <div class="step active">
       <div class="step-label">Authenticate</div>
-      <p class="step-desc">A one-time login opens a real Chrome window. Sign in with your Google account, close the window when the Flow editor loads — gflow verifies automatically.</p>
+      <p class="step-desc">A one-time login opens a real Chrome window. Sign in with your Google account and keep going until the Flow editor loads — gflow closes the window for you and verifies the session automatically.</p>
 
       <p>The <code>--browser chrome</code> flag is mandatory — Google rejects Playwright's bundled Chromium.</p>
       <div class="terminal">
@@ -533,7 +533,7 @@
         <div>A Chrome window opens at the Flow sign-in page.</div>
         <div>Sign in with your Google account (2FA included).</div>
         <div>Keep going until the Flow editor loads.</div>
-        <div>CLOSE THE BROWSER — gflow verifies automatically.</div>
+        <div>gflow CLOSES THE WINDOW for you and verifies automatically.</div>
         <div></div>
         <div><span class="success">Session saved.</span></div>
         <div>Profile dir: ~/.local/share/gflow-cli/profile_default</div>
