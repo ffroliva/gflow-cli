@@ -1121,6 +1121,14 @@ class MigratedComposer:
                         f"of choosing the file — {went_out}"
                     ),
                     route=route,
+                    remediation_hint=(
+                        "If the request left the page, Flow accepted the upload and did not "
+                        "answer in time — an intermittent fault on this host (#719), not "
+                        "your file: re-run, and the same file usually succeeds. If nothing "
+                        "left the page, something client-side stopped it — check for a modal "
+                        "on flow.google.com. Either way nothing was spent. Re-encoding the "
+                        "image does NOT help; three different files were ruled out in #719."
+                    ),
                 ) from None
             if status != 200:
                 raise MediaUploadRejectedError(

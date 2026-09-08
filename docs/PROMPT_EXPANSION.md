@@ -226,7 +226,7 @@ functionally with `creative-director`, but they are **different surfaces**:
 
 **Guidance:** prefer the `creative-director` tool (`--tool` / the MCP `tools` array) for actual
 generation — it is the maintained, provenance-recording, server-side path. `expand_prompt` is
-**deprecated** as of the unreleased line: its client-visible description carries a `[DEPRECATED]`
+**deprecated** as of v0.22.0: its client-visible description carries a `[DEPRECATED]`
 marker pointing to the tool, and it is **slated for removal in a future major release**. It remains
 functional for now because some MCP clients surface prompts as user-pickable templates (a distinct
 UX from agent-invoked tools), but no new work should depend on it. See

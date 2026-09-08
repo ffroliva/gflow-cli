@@ -19,9 +19,9 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 - **Status:** Open (partially resolved) · **Severity:** High for everything except text-to-video, local-file image-to-video and local-file reference-to-video · **Affected:** on accounts the rollout has reached, `gflow video t2v`, `gflow video i2v --initial-frame <local file>` and `gflow video r2v --ref <local file>` now run on the migrated host (with `--project`); an end frame, a frame by UUID or `@Name`, references by `@Name` or `--reference-entity`, `image`, scenes, extend, instructions and tools are not ported yet and still exit 36. **`character` is NOT in that list any more** — `character create` was verified working on the migrated host in v0.70.0 and `character list` was re-verified there on 2026-09-07. This line claimed otherwise for a day, which is the dangerous direction for a stale doc to be stale in: a migrated user reading it concludes a working feature is impossible. Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker's tiles carry no media id); `scenes`, `extend`, `instructions` and `tools` have never had a probe run against them at all, so read them as *unported by gflow*, never as *impossible on the host*
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
 - **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
-- **`--reference-entity` was refused on `r2v` but not on `t2v`** ([#716](https://github.com/ffroliva/gflow-cli/issues/716), fixed in the unreleased line, post-v0.70.0): the "not ported, exit 36" refusal above sat inside the r2v branch of the routing gate, so a `t2v` request carrying a character entity returned from that gate without its entities ever being inspected — and nothing downstream attaches one on this host. The generation was **submitted and billed** with the entity silently dropped, returning a plausible clip of the wrong person. The check is now mode-independent and ahead of every early return. If you ran `gflow video t2v @Name …` or `--reference-entity` on a moved account before this fix, the identity in those clips was never bound.
+- **`--reference-entity` was refused on `r2v` but not on `t2v`** ([#716](https://github.com/ffroliva/gflow-cli/issues/716), fixed in v0.71.0): the "not ported, exit 36" refusal above sat inside the r2v branch of the routing gate, so a `t2v` request carrying a character entity returned from that gate without its entities ever being inspected — and nothing downstream attaches one on this host. The generation was **submitted and billed** with the entity silently dropped, returning a plausible clip of the wrong person. The check is now mode-independent and ahead of every early return. If you ran `gflow video t2v @Name …` or `--reference-entity` on a moved account before this fix, the identity in those clips was never bound.
 - **The migrated composer DOES have an image mode** ([#692](https://github.com/ffroliva/gflow-cli/issues/692)): a code comment claimed, as "measured, not assumed", that it has none. Falsified 2026-09-07 — its settings overlay carries a `mode` radiogroup of `[imageImage, videocamVideo]`, present and hit-testable. Nothing was clicked on that axis and nothing was submitted, so this does **not** establish that `image` works on a moved account; it establishes only that the claim it cannot is unfounded. Read the remaining exit 36 as *gflow does not drive this yet*, never as *the host cannot do it*; see [the spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-09-07-migrated-composer-has-an-image-mode.md).
-- **Image commands on a moved account** ([#673](https://github.com/ffroliva/gflow-cli/issues/673), fixed in the unreleased line, post-v0.68.0): through v0.68.0 `image t2i` / `i2i` (and `upscale`, `extend`) died with exit 1 `RecaptchaError` within seconds, before any submit, instead of the exit 36 above, because the labs client minted the reCAPTCHA token on the `flow.google.com` project grid before any migration guard ran. The guard now runs at the mint. If you still see a `RecaptchaError` on a moved account right after `auth login`, that is the labs logged-out landing page from the [#644](https://github.com/ffroliva/gflow-cli/issues/644) cookie harvest, not this.
+- **Image commands on a moved account** ([#673](https://github.com/ffroliva/gflow-cli/issues/673), fixed in v0.69.0): through v0.68.0 `image t2i` / `i2i` (and `upscale`, `extend`) died with exit 1 `RecaptchaError` within seconds, before any submit, instead of the exit 36 above, because the labs client minted the reCAPTCHA token on the `flow.google.com` project grid before any migration guard ran. The guard now runs at the mint. If you still see a `RecaptchaError` on a moved account right after `auth login`, that is the labs logged-out landing page from the [#644](https://github.com/ffroliva/gflow-cli/issues/644) cookie harvest, not this.
 
 Google is moving Flow off Labs onto its own origin. On a migrated page load,
 `https://labs.google/fx/tools/flow/project/<id>` redirects to
@@ -391,7 +391,7 @@ Evidence: [LIVE_VERIFICATION_v0.23.0](https://github.com/ffroliva/gflow-cli/blob
 
 ### Expanded chat sidebar left the composer unrecoverable (exit 23)
 
-- **Status:** **Resolved** in the unreleased line — fixed and A/B-verified live;
+- **Status:** **Resolved** in v0.60.0 — fixed and A/B-verified live;
   tracked in [#493](https://github.com/ffroliva/gflow-cli/issues/493)
 - **Severity:** High · **Affected:** `gflow image` / `gflow video` generation on
   accounts whose chat sidebar lacks the `edit_square` affordance, any locale
@@ -702,15 +702,36 @@ the file — the upload never reached Flow or was dropped
 
 > **This entry previously said the opposite.** It read *"Affects: the legacy in-tree Compiled Growth worker, NOT `gflow-cli` itself"*, because *"gflow-cli's API-driven path bypasses this dialog entirely (the REST endpoint already implies acceptance)"*, with *"Workaround in gflow-cli: none needed."* That was true of the REST path and became false when the migrated driver started using the editor's **own** upload — so the entry a user hitting #719 would find was reassuring them about the exact thing that was breaking their run.
 
-**Mitigation** (unreleased line, post-v0.71.0): when the upload budget expires, the driver checks whether a dialog opened *during* the upload window and, if so, says so and points the user at the one-time acceptance instead of blaming the file.
+**Mitigation** (v0.71.1): when the upload budget expires, the driver checks whether a dialog opened *during* the upload window and, if so, says so and points the user at the one-time acceptance instead of blaming the file.
 
-**Workaround / how to clear it — once per account, ever:** open the project on `flow.google.com`, upload any image by hand, and accept the dialog. Uploads then work unattended forever.
+**Workaround / how to clear it — once per account, ever:** open the project on `flow.google.com`, upload any image by hand, and accept the dialog. Uploads on that account then stop hitting *this* failure.
+
+> **Accepting does not make every upload succeed — there is a second, unrelated failure on this path.** See the next entry. If you have already accepted the dialog and an upload still times out, you are not looking at this issue and repeating the workaround will not help.
 
 **gflow does not accept it for you, by design.** The dialog affirms that *you* hold the rights to the content you upload; that is not a claim a tool may make on an account owner's behalf. It is also a 30-second step, once, on a path that already requires an interactive browser login (`gflow auth login`) — so automating it would buy nothing and assert something on your behalf. There is deliberately no config flag: a setting that can never safely default to on, on a once-per-account event, is a flag nobody sets.
 
 **Legacy worker:** Compiled Growth's `flow_video.py` clicks "Concordo" / "Agree" in its own consent-dismiss block. That is a different product decision, recorded here so the two are not confused.
 
 ---
+
+### An upload request leaves the page and Flow never answers (intermittent, migrated host)
+
+- **Status:** Open · **Severity:** Medium (intermittent; costs a re-run, spends nothing) · **Affects:** the migrated `flow.google.com` host, `video i2v --initial-frame` and `video r2v --ref` · **Tracked:** [#719](https://github.com/ffroliva/gflow-cli/issues/719)
+
+Distinct from the one-time upload-terms dialog above, and **not** fixed by accepting it. On an account that has already consented, roughly **1 upload in 4** sends the `maseQ` request — measured at 8 675 B for a 4 321-byte PNG, so the image is genuinely on the wire — and no reply ever arrives. Since v0.71.1 that reports:
+
+```
+MediaUploadRejectedError (exit 27): migrated host: no maseQ reply within 60s of choosing
+the file — the request left the page and Flow did not answer in time
+```
+
+The contrasting message, **`no upload request ever left the page`**, means something client-side stopped it before the network — the consent dialog above being the known cause.
+
+**Workaround:** re-run. The same file usually succeeds on the next attempt, and nothing is spent when it fails — Flow refuses before any submit.
+
+**Not the file.** Three different images were ruled out in [#719](https://github.com/ffroliva/gflow-cli/issues/719), including a 4.3 KB synthetic flat colour with no metadata, and the same file uploads successfully on other attempts. Re-encoding does not help; the remediation text that used to suggest it was wrong.
+
+**What is known.** A healthy upload window issues **4** POSTs; a failing one issued **24** — the full project-load rpcid inventory, firing ~2.6 s after the request went out, which is just before the ~2.8 s successful uploads take to answer. That has the shape of the page re-initialising underneath the in-flight upload, but no navigation event was captured, so the cause is unconfirmed. Measured 2026-09-08, 1 failure in 4 runs on one funded account — enough for "intermittent", not enough for a rate.
 
 ### Flow's release-notes ("What's new") changelog popup blocks first-run UI automation
 
@@ -1193,7 +1214,7 @@ single click in a browser made every later `gflow video` run on that account die
 as `UiSelectorDriftError` (exit 23), telling the user to file a frontend-drift bug about
 a frontend that was working correctly.
 
-**Mitigation** (unreleased line, post-v0.71.0): the readiness gate leaves agent mode by
+**Mitigation** (v0.71.1): the readiness gate leaves agent mode by
 itself, so an account parked there recovers with no user action. If it cannot, the error
 now names which of three things happened rather than blaming drift:
 
