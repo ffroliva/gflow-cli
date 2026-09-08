@@ -128,6 +128,11 @@ class Dom:
     # the trigger stayed hidden" would report that as ordinary selector drift again.
     agent_chip_sticks: bool = False
     agent_chip_clicks: int = 0
+    # A page that cannot answer the probe at all (closed / detached). Distinct from
+    # "no chip": the driver must NOT tell the user they were in agent mode on the
+    # strength of a query that never answered.
+    agent_chip_probe_raises: bool = False
+    agent_chip_click_raises: bool = False
 
 
 def _default_dom() -> Dom:
@@ -218,6 +223,8 @@ class FakeLocator:
 
     # --- reads --------------------------------------------------------------
     async def count(self) -> int:
+        if self.kind == "agent_chip" and self.page.dom.agent_chip_probe_raises:
+            raise PlaywrightTimeoutError("count: Target page, context or browser has been closed")
         return len(self.items)
 
     async def is_visible(self) -> bool:
@@ -302,6 +309,8 @@ class FakeLocator:
             dom.dialog_closed += 1
         elif self.kind == "agent_chip":
             dom.agent_chip_clicks += 1
+            if dom.agent_chip_click_raises:
+                raise PlaywrightTimeoutError("click: element is not stable")
             if not dom.agent_chip_sticks:
                 dom.agent_mode = False
 
@@ -1919,6 +1928,37 @@ async def test_ensure_editor_names_agent_mode_when_the_chip_will_not_toggle_off(
         await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
     assert page.dom.agent_chip_clicks == 1
     assert "agent mode" in str(exc.value).casefold()
+
+
+async def test_ensure_editor_does_not_claim_agent_mode_when_the_probe_itself_fails() -> None:
+    """An unreadable page is ordinary drift. Claiming "you were in agent mode" on the
+    strength of a query that never answered sends the user to fix a mode they may never
+    have been in."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_chip_probe_raises = True
+    with capture_logs() as logs, pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    assert page.dom.agent_chip_clicks == 0
+    assert "agent mode" not in str(exc.value).casefold()
+    assert "migrated.agent_mode_probe_failed" in [e["event"] for e in logs]
+
+
+async def test_ensure_editor_still_names_agent_mode_when_the_chip_click_fails() -> None:
+    """The mirror of the above: the chip WAS found, so agent mode is confirmed whether
+    or not the click landed — the pinned-mode message is the accurate one to end on."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_chip_click_raises = True
+    with capture_logs() as logs, pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    assert page.dom.agent_chip_clicks == 1
+    assert "agent mode" in str(exc.value).casefold()
+    assert "migrated.agent_mode_exit_failed" in [e["event"] for e in logs]
 
 
 async def test_ensure_editor_drift_message_does_not_blame_agent_mode_in_classic() -> None:
