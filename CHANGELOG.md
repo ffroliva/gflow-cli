@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exit 23 — which told the user to file a frontend-drift bug about a frontend that was
   behaving correctly.
 
+- **Account auto-selection at post-migration sign-in chooser**
+  ([#763](https://github.com/ffroliva/gflow-cli/issues/763)). When Google
+  Flow hands the session over to `flow.google.com` and redirects to an account
+  chooser, `FlowApiClient` now auto-selects the profile's recorded account from
+  `.gflow_account`. If the recorded account is absent or cannot be selected, the
+  client raises a dedicated, non-retryable `FlowAccountChooserError` (exit code 38),
+  avoiding generic `UnexpectedError` or selector drift stalls. `gflow auth login`
+  gains an optional `--account <email>` option to assert that login authenticates
+  as the required account.
+
 ### Changed
 
 - **`gflow auth login` closes the browser for you.** It drives your real Google Chrome

@@ -86,6 +86,7 @@ from gflow_cli.errors import (
     BrowserSessionClosedError,
     ConfigurationError,
     ContentPolicyError,
+    FlowAccountChooserError,
     FlowApiError,  # re-exported via gflow_cli.api.__init__
     FlowHostMigratedError,
     NetworkError,
@@ -783,6 +784,55 @@ class FlowApiClient:
         # S1 can share this context rather than opening its own.
         await self._setup_transport()
 
+    async def _handle_account_chooser(self, page: Any, account_email: str | None = None) -> bool:
+        """Select the recorded Google account on accountchooser if encountered (#750).
+
+        Returns True if an account was clicked, False if not on chooser.
+        Raises FlowAccountChooserError if on chooser but account is missing/not selectable.
+        """
+        from gflow_cli.profile_store import read_account_file
+
+        url = getattr(page, "url", "") or ""
+        # Check if URL looks like accountchooser or Google sign-in
+        is_chooser = "accounts.google.com" in url and ("accountchooser" in url or "signin" in url)
+        # Also check for presence of chooser DOM or landing page redirect
+        if not is_chooser:
+            return False
+
+        email = account_email or read_account_file(self.profile_dir)
+        if not email:
+            raise FlowAccountChooserError(
+                detail=(
+                    f"Google sign-in/chooser displayed at {url} but no account is recorded "
+                    f"in this profile to auto-select."
+                )
+            )
+
+        # Match row by email attribute, text, or data-email
+        # Google account chooser rows typically have data-email, or text containing the email
+        selector = (
+            f"div[data-email='{email}'], [aria-label*='{email}'], "
+            f"[role='link']:has-text('{email}'), [role='button']:has-text('{email}')"
+        )
+        locator = page.locator(selector)
+        count = await locator.count()
+        if count == 0:
+            # Fallback broader text search
+            locator = page.locator(f"text={email}")
+            count = await locator.count()
+
+        if count == 0:
+            raise FlowAccountChooserError(
+                detail=(
+                    f"Account chooser displayed at {url} but recorded account '{email}' "
+                    f"was not found among selectable accounts."
+                )
+            )
+
+        # Click the row
+        await locator.first.click()
+        return True
+
     async def _bootstrap_and_resolve_locale(self) -> None:
         """Navigate the bootstrap page and settle the account locale (#580, #587).
 
@@ -807,6 +857,8 @@ class FlowApiClient:
             wait_until="domcontentloaded",
             timeout=60_000,
         )
+        # Check if landing redirected to account chooser
+        await self._handle_account_chooser(self._page)
         # #639: NOT_REDIRECTED means "there is no redirect to wait for". It must not
         # ALSO mean "do not read the locale" — which is what returning here made it
         # mean, and that made the state ABSORBING: `_resolve_account_locale` is the

@@ -30,6 +30,7 @@ __all__ = [
     "FlowAgentUiError",
     "FlowApiError",
     "FlowAppError",
+    "FlowAccountChooserError",
     "FlowHostMigratedError",
     "FrameExtractionError",
     "GFlowError",
@@ -756,6 +757,23 @@ class FlowHostMigratedError(GFlowError):
     )
 
 
+class FlowAccountChooserError(GFlowError):
+    """Raised when Google Flow lands on an account chooser or sign-in hop
+    and the profile's recorded Google account cannot be selected automatically.
+
+    **Not retryable** (exit code 33). Retrying with the same profile and recorded
+    account into a signed-out or missing chooser row cannot succeed without
+    manual operator interaction via gflow auth login.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/flow-account-chooser"
+    title = "Recorded Google account not selectable"
+    _default_remediation = (
+        "Run `gflow auth login --profile <name>` and complete the account chooser "
+        "manually, or pass --account <email-present-on-chooser>."
+    )
+
+
 class UiModeUnavailableError(GFlowError):
     """Raised when the Flow UI arm a command REQUIRES (``--ui-mode`` /
     ``GFLOW_CLI_UI_MODE``, or inferred — e.g. ``-i`` instructions force agentic)
@@ -1245,6 +1263,11 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # frontend" (per-account, not retryable) from genuine selector drift
     # (23), which it used to masquerade as.
     FlowHostMigratedError: 36,
+    # FlowAccountChooserError: Google Flow landed on account chooser
+    # and the recorded account row could not be selected automatically.
+    # Direct GFlowError subclass; exit 33 distinguishes account chooser stall
+    # from generic errors (1) without parsing stderr.
+    FlowAccountChooserError: 33,
     # UiModeUnavailableError (issue #299): a command's required arm (--ui-mode /
     # inferred) couldn't be reached after a best-effort switch. Direct GFlowError
     # subclass — retryable policy abort, distinct from FlowAgentUiError (25).

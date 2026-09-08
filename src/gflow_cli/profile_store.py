@@ -350,6 +350,11 @@ def account_locale_for(profile_name: str) -> str | None:
     return cached
 
 
+def read_account_file(profile_path: Path) -> str | None:
+    """Read the Google account email from the profile's .gflow_account file."""
+    return _read_account_file(profile_path)
+
+
 def _read_account_file(profile_path: Path) -> str | None:
     """Read the Google account email from the profile's .gflow_account file."""
     account_file = profile_path / ACCOUNT_FILE

@@ -261,7 +261,12 @@ def _maybe_rename_first_profile(
     help="Browser strategy for login. 'chrome' bypasses Google secure blocks.",
     envvar="GFLOW_CLI_AUTH_BROWSER",
 )
-def auth_login(profile: str | None, browser: str | None) -> None:
+@click.option(
+    "--account",
+    default=None,
+    help="Assert that login authenticates as this exact Google account (email address).",
+)
+def auth_login(profile: str | None, browser: str | None, account: str | None = None) -> None:
     """One-time interactive sign-in. Opens a browser window."""
     from gflow_cli.browser_manager import is_chrome_available
     from gflow_cli.errors import EXIT_CODE_MAP, GFlowError
@@ -284,6 +289,17 @@ def auth_login(profile: str | None, browser: str | None) -> None:
 
     try:
         pdir = asyncio.run(auth_mod.login(name, browser=selected_browser))
+        if account:
+            actual_account = profile_store.read_account_file(pdir)
+            if actual_account and actual_account.lower() != account.strip().lower():
+                from gflow_cli.errors import FlowAccountChooserError
+
+                raise FlowAccountChooserError(
+                    detail=(
+                        f"Login completed but verified account '{actual_account}' does not "
+                        f"match required --account '{account}'."
+                    )
+                )
     except GFlowError as e:
         console.print(f"[red]{e}[/red]")
         if e.remediation_hint:
