@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.1] — 2026-09-08
+
+### Fixed
+
+- **A blocked first upload no longer reads as a broken file or a broken network.** On the
+  migrated `flow.google.com` host, `video i2v --initial-frame` and `video r2v --ref` failed
+  on an account's **first** upload with `MediaUploadRejectedError` (exit 27) — *"no maseQ
+  reply within 60s of choosing the file — the upload never reached Flow or was dropped"* —
+  and advised re-encoding the image to strip metadata. Neither the file nor the network was
+  involved: Flow shows a one-time **"Rights to use this image"** confirmation *after* the
+  chooser hands the file over, and sends nothing until a human accepts it, so the driver
+  spent its whole budget waiting for a request the page had already declined to make.
+  Measured across 8 runs on 3 profiles — the two accounts that had uploaded before never saw
+  the dialog and uploaded fine, the account that never had failed 3/3, and accepting it once
+  made that account upload on the next run and every run after
+  ([spike](docs/superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md)).
+
+  The driver now counts dialogs across the upload and, when one appeared *during* it, names
+  the one-time confirmation and tells the user to accept it once in a browser. **It is
+  counted rather than matched on purpose:** the dialog's two buttons are
+  `button.flow-button-medium` with no ligature and no data attribute, separable only by DOM
+  order, and its copy is translated — there is no anchor there that satisfies this project's
+  locale rule, whereas "a dialog appeared between the file being chosen and the wait
+  expiring" is upload-related by construction and cannot rot when Angular renames a class.
+
+  **gflow does not accept the dialog for you**, and there is no flag to make it: the dialog
+  affirms that *you* hold the rights to what you upload, it is one-off per account, and the
+  path already requires an interactive `gflow auth login` — so a setting that could never
+  safely default to on would be a flag nobody sets.
+
+  The driver also now watches the upload **request**, not just the response, so the timeout
+  splits into two distinct messages: `no upload request ever left the page` and `the request
+  left the page and Flow did not answer in time`. That distinction is load-bearing — the
+  second argues for a retry and the first argues against one — and it exposes a **second,
+  unfixed** failure on this path, an intermittent no-reply on already-consented accounts
+  (~1 run in 4) that keeps [#719](https://github.com/ffroliva/gflow-cli/issues/719) open and
+  now has its own [KNOWN_ISSUES.md](KNOWN_ISSUES.md) entry.
+  ([#719](https://github.com/ffroliva/gflow-cli/issues/719))
+
+### Documentation
+
+- **Three documents said things that were not true, and are corrected rather than quietly
+  patched.** [KNOWN_ISSUES.md](KNOWN_ISSUES.md) said Flow's first-upload terms dialog affected
+  "the legacy in-tree Compiled Growth worker, **NOT `gflow-cli` itself** … workaround: none
+  needed" — true of the old REST path, false since the migrated driver began using the
+  editor's own upload, so it was the entry a user hitting #719 would find and be *reassured*
+  by. [LIVE_VERIFICATION_v0.71.0](docs/LIVE_VERIFICATION_v0.71.0.md) labelled the `ci-probe`
+  profile **labs** when it is migrated, contradicting v0.70.0 one day earlier; in a repo where
+  "Flow's UI shows X" is not a fact until the host is named, that silently re-scoped every
+  conclusion keyed to it — and it helped a credit-based theory for #719 survive four runs.
+  Six "unreleased line" phrases, which go stale the moment a release ships and had accumulated
+  across four of them, are now dated from the CHANGELOG.
+
+### Added
+
+- **Two `$0` read-only dev instruments** for the migrated host.
+  [`scripts/dev/spike_migrated_queue_read.py`](scripts/dev/spike_migrated_queue_read.py) reads
+  a project's generation queue by listening to the page's own traffic — establishing that the
+  listing arrives on **`Zzl0ze`**, not the `jwpduf`/`as29s` progress polls, which is what a
+  future `gflow video status` ([#741](https://github.com/ffroliva/gflow-cli/issues/741)) should
+  read. [`scripts/dev/spike_migrated_upload_wire.py`](scripts/dev/spike_migrated_upload_wire.py)
+  drives the real `_upload_via_toolbar` with a listener on every request, which is how the
+  consent dialog above was found. Neither is wired into the CLI.
+
+- **Flow's agent mode no longer bricks the account for every later run.** On the migrated
+  `flow.google.com` host the composer carries an **agent-mode chip**
+  (`button.agent-mode-chip[aria-pressed]`). Pressed, Flow swaps `flow-prompt-box` for
+  `flow-creative-agent-prompt-box`: the `.settings-trigger-button` this driver waits on stays
+  in the DOM but gains a bare `hidden` (`display: none`, 0×0, not hit-testable), so
+  `wait_for(state="visible")` could never pass and every run died at 30 s as
+  `UiSelectorDriftError` (exit 23) — telling the user to file a frontend-drift bug about a
+  frontend that was working fine. Flow **remembers the chip per account**, so one click in a
+  browser broke every subsequent `gflow video t2v`, with nothing on the CLI to say why or how
+  to undo it. `ensure_editor` now leaves agent mode before the readiness gate, and if the
+  classic composer still does not come back it says *that* instead of blaming drift. Measured
+  2026-09-08 on two accounts, $0 —
+  [`scripts/dev/spike_migrated_composer_arms.py`](scripts/dev/spike_migrated_composer_arms.py),
+  finding in
+  [`docs/superpowers/spikes/2026-09-08-migrated-composer-agent-mode-hides-settings.md`](docs/superpowers/spikes/2026-09-08-migrated-composer-agent-mode-hides-settings.md).
+  The reporter's suggested anchor (`aria-label="Configuración"`) is not used: it is a translated
+  label, and the chip's own component class plus `aria-pressed` carry the same identity in every
+  locale. ([#749](https://github.com/ffroliva/gflow-cli/issues/749))
+
+  **Follow-up ([#752](https://github.com/ffroliva/gflow-cli/issues/752)):** the fix worked and
+  its diagnostics did not. Three states were collapsed into one message — the chip was clicked,
+  the chip was found but the click was blocked, the chip was clicked and the mode is still on —
+  and all three read as *"the chip was clicked to leave it … the mode may be pinned"*. A modal
+  eating the click sent the user to toggle a chip; genuine selector drift **after** the mode was
+  successfully left was reported as a pinned mode, so the drift bug never got filed. The chip's
+  `aria-pressed` is now read back before that claim is made, a blocked click raises at once
+  instead of waiting out the 20 s recovery window (worst case 55 s → 35 s), the click's own
+  exception is chained rather than truncated into a log line, and `_open_pane` — the same gate
+  one step later — guards on **visibility** rather than `count()`, so a mode flip mid-run maps
+  to exit 23 naming agent mode instead of escaping as a bare Playwright timeout. Searchable
+  entry added to [KNOWN_ISSUES.md](KNOWN_ISSUES.md), which the shipped message gave a user no
+  way to find.
+
 ## [0.71.0] — 2026-09-07
 
 ### Fixed
@@ -4483,7 +4580,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...HEAD
+[0.71.1]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...v0.71.1
 [0.71.0]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...v0.69.0

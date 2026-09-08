@@ -31,7 +31,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import unquote_plus, urlsplit
 
 import structlog
@@ -83,6 +83,32 @@ RADIOGROUP = "[role='radiogroup']"
 RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
 COMPOSER = "[contenteditable='true']"
+#: Flow's agent-mode chip. Pressed, `.settings-trigger-button` stays in the DOM but gains
+#: a bare `hidden` (display:none, 0x0, not hit-testable) — which is why every gate on it
+#: waits for VISIBILITY and never `count()` (#749).
+#:
+#: Three constraints put this exact selector here, none of them cosmetic: the component
+#: class, because in agent mode a SECOND `button[aria-pressed]` appears
+#: (`agent-action-button`) and the bare attribute selector is ambiguous there;
+#: `aria-pressed` rather than the label, because the label is translated; and `='true'`
+#: specifically, which makes the locator self-guarding — it matches only when there is
+#: something to undo, so the recovery cannot click a healthy composer INTO agent mode.
+#:
+#: `mode_control.py` handles this same split on labs and is deliberately not reused: it
+#: refuses this host (`raise_if_migrated`), and its `AGENT_TOGGLE_SELECTOR` requires a
+#: `span.content` this chip does not have.
+#:
+#: Accounts, measurements and the transition inventory:
+#: docs/superpowers/spikes/2026-09-08-migrated-composer-agent-mode-hides-settings.md
+AGENT_MODE_CHIP = "button.agent-mode-chip[aria-pressed='true']"
+#: How long the classic composer gets to come back after the chip is clicked. The swap is
+#: a local Angular re-render, not a navigation — measured well under a second on both
+#: accounts — so this is headroom, not an expectation.
+AGENT_RECOVERY_S = 20.0
+#: What :meth:`MigratedComposer._exit_agent_mode` did. `"blocked"` — the chip was there
+#: and the click did not land — is not `"clicked"`: nothing was toggled, so there is
+#: nothing to wait :data:`AGENT_RECOVERY_S` for.
+AgentModeExit = Literal["clicked", "blocked", "absent"]
 #: The submode radio that renders the Start/End frame chips (i2v).
 FRAMES_LIGATURE = "crop_free"
 DIALOG = "[role='dialog']"
@@ -478,18 +504,130 @@ class MigratedComposer:
             log.info("migrated.navigate", url=target)
             await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
         await self._dismiss_dialog(page)
+        trigger = page.locator(READY_ANCHOR).first
         try:
-            await page.locator(READY_ANCHOR).first.wait_for(
-                state="visible", timeout=int(timeout_s * 1000)
-            )
+            await trigger.wait_for(state="visible", timeout=int(timeout_s * 1000))
         except Exception as e:
-            raise UiSelectorDriftError(
-                detail=(
-                    f"migrated host: the settings trigger ({READY_ANCHOR}) did not become "
-                    f"visible within {timeout_s:.0f}s on {page.url} (host=migrated): {e}"
-                ),
-            ) from e
+            # Only now look for agent mode. Probing for the chip BEFORE this wait raced
+            # the SPA: `goto` returns on `domcontentloaded` and Angular mounts the
+            # composer seconds later, so the chip was reliably absent at that point, the
+            # recovery no-opped, and the run failed exactly as it did before the fix
+            # (caught by this change's own e2e, 2026-09-08). Waiting first also costs a
+            # healthy run nothing — no extra query is issued unless the gate has failed.
+            state, click_error = await self._exit_agent_mode(page)
+            if state == "absent":
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"migrated host: the settings trigger ({READY_ANCHOR}) did not "
+                        f"become visible within {timeout_s:.0f}s on {page.url} "
+                        f"(host=migrated): {e}"
+                    ),
+                ) from e
+            if state == "blocked":
+                # Nothing was toggled, so the trigger cannot have changed — spending
+                # AGENT_RECOVERY_S here buys a verdict already in hand. The click's own
+                # exception IS the message: a modal eating the click is a different bug
+                # from a pinned mode, and only that exception says which one this is.
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"migrated host: the account is in Flow's agent mode, which hides "
+                        f"the settings trigger, and the chip ({AGENT_MODE_CHIP}) could not "
+                        f"be clicked on {page.url} after {timeout_s:.0f}s (host=migrated) — "
+                        f"something is covering it; turn the Agent chip off in a browser and "
+                        f"re-run. Readiness gate: {e}. Chip click: {click_error}"
+                    ),
+                ) from click_error
+            try:
+                await trigger.wait_for(state="visible", timeout=int(AGENT_RECOVERY_S * 1000))
+            except Exception as e2:
+                # Which of these two it is decides who can fix it, so the chip is read
+                # BACK rather than assumed. Reporting both as "the mode may be pinned"
+                # hides genuine selector drift behind a mode the driver already left.
+                pressed = await self._agent_chip_pressed(page)
+                if pressed:
+                    detail = (
+                        f"migrated host: the account was in Flow's agent mode, the chip was "
+                        f"clicked, and it is STILL pressed {AGENT_RECOVERY_S:.0f}s later on "
+                        f"{page.url} (host=migrated) — the mode is pinned on this account; "
+                        f"turn the Agent chip off in a browser and re-run: {e2}"
+                    )
+                elif pressed is None:
+                    detail = (
+                        f"migrated host: the account was in Flow's agent mode, the chip was "
+                        f"clicked, and the settings trigger ({READY_ANCHOR}) did not come "
+                        f"back within {AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) "
+                        f"— the chip could not be read back, so whether the mode is still "
+                        f"on is unknown; check the Agent chip in a browser before filing "
+                        f"this as drift: {e2}"
+                    )
+                else:
+                    detail = (
+                        f"migrated host: Flow's agent mode was left, but the settings "
+                        f"trigger ({READY_ANCHOR}) still did not become visible within "
+                        f"{AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) — the mode "
+                        f"is off, so this is ordinary selector drift: {e2}"
+                    )
+                raise UiSelectorDriftError(detail=detail) from e2
+        # One count() on the happy path, for the cohort that would render the agent prompt
+        # box while LEAVING the trigger visible: `send_prompt` would type into the agent
+        # composer ([contenteditable='true'].first) and nothing downstream would notice.
+        #
+        # It OBSERVES and does not act, which is the whole point. Clicking here would
+        # mutate a server-remembered account setting on a run that is otherwise healthy,
+        # and it would do it in the one window where that is wrong: right after a
+        # successful recovery, where a chip still reporting `aria-pressed='true'` for a
+        # frame would toggle the account straight back INTO agent mode. `AGENT_MODE_CHIP`
+        # being self-guarding only holds while the click is reserved for a trigger that
+        # did NOT come up. No cohort has been measured here, so a log line is the honest
+        # instrument — the next occurrence is then diagnosable from a run instead of a
+        # re-run (the same reason #719 asks for telemetry before a fix).
+        if await self._agent_chip_pressed(page):
+            log.warning("migrated.agent_mode_chip_pressed_while_ready", issue_ref="#752")
         log.info("migrated.editor_ready", url=page.url)
+
+    @staticmethod
+    async def _agent_chip_pressed(page: Page) -> bool | None:
+        """Is Flow's agent-mode chip pressed right now? One count, and never the failure.
+
+        ``None`` — the query did not answer at all — is a third answer, not a quiet
+        ``False``. Both of the claims this feeds are unsafe to make on an unanswered
+        probe: "you were in agent mode" sends a user to fix a mode they may never have
+        been in, and its negation, "the mode is off, so file a drift bug", sends a user
+        whose account really is pinned to file a bug about a healthy frontend. A caller
+        that only needs the safe direction can use the falsiness; one that reports on the
+        absence has to look at ``None``.
+        """
+        try:
+            return bool(await page.locator(AGENT_MODE_CHIP).first.count())
+        except Exception as e:  # noqa: BLE001 - an unreadable page is not an answer
+            log.warning("migrated.agent_mode_probe_failed", error=str(e)[:200])
+            return None
+
+    @classmethod
+    async def _exit_agent_mode(cls, page: Page) -> tuple[AgentModeExit, Exception | None]:
+        """Turn Flow's agent mode off if it is on.
+
+        Agent mode `hidden`s the settings trigger this driver waits on (#749), and Flow
+        remembers the chip per account — so without this, a single click in a browser
+        leaves every later run failing as selector drift. :data:`AGENT_MODE_CHIP` matches
+        only ``aria-pressed='true'``, so on a healthy composer this is one cheap count.
+
+        The three outcomes are not interchangeable, which is why this is not a bool:
+        ``"clicked"`` means the page was asked to change and may still be re-rendering,
+        ``"blocked"`` means it was never asked — there is nothing to wait for — and
+        ``"absent"`` means the mode was not the problem. ``"blocked"`` carries the click's
+        own exception, so the caller can chain it instead of truncating it into a warning
+        nobody reads.
+        """
+        if not await cls._agent_chip_pressed(page):
+            return "absent", None
+        try:
+            await page.locator(AGENT_MODE_CHIP).first.click(timeout=5000)
+        except Exception as e:  # noqa: BLE001 - the caller decides what it means
+            log.warning("migrated.agent_mode_exit_failed", error=str(e)[:200])
+            return "blocked", e
+        log.info("migrated.agent_mode_exited", issue_ref="#749")
+        return "clicked", None
 
     @staticmethod
     async def _dismiss_dialog(page: Page) -> None:
@@ -590,10 +728,25 @@ class MigratedComposer:
 
     async def _open_pane(self, page: Page) -> Any:
         trigger = page.locator(READY_ANCHOR).first
-        if not await trigger.count():
-            raise UiSelectorDriftError(
-                detail=f"migrated host: settings trigger ({READY_ANCHOR}) missing (host=migrated)"
+        try:
+            # Visibility, not `count()`. Agent mode leaves the trigger in the DOM under a
+            # bare `hidden` (#749), and the mode can flip between `ensure_editor` and
+            # here — a count-guard then walks into a click that expires as a bare
+            # Playwright TimeoutError, with no exit code and no mention of the mode.
+            await trigger.wait_for(state="visible", timeout=5000)
+        except Exception as e:
+            why = (
+                " — the account is in Flow's agent mode, which hides it; turn the Agent "
+                "chip off in a browser and re-run"
+                if await self._agent_chip_pressed(page)
+                else ""
             )
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: the settings trigger ({READY_ANCHOR}) is not visible"
+                    f"{why} (host=migrated)"
+                ),
+            ) from e
         await trigger.click(timeout=5000)
         # THE overlay that holds the option groups — not `.last`: once the model
         # menu (a second overlay) has opened and closed, a detached menu pane can
@@ -858,7 +1011,20 @@ class MigratedComposer:
             if not reply.done():
                 reply.set_result((status, text))
 
+        # The response listener alone cannot tell "the page never asked" from "Flow was
+        # slow" — and those are different bugs with opposite fixes (#719: shape A is a
+        # blocked send, shape B is a lost reply). One boolean splits them at the point of
+        # failure instead of leaving both as one 60 s timeout.
+        sent = False
+
+        def on_request(request: Any) -> None:
+            nonlocal sent
+            url = str(getattr(request, "url", ""))
+            if "batchexecute" in url and _rpcid(url) == UPLOAD_RPC:
+                sent = True
+
         page.on("response", on_response)
+        page.on("request", on_request)
         try:
             add = page.locator(TOOLBAR_ADD).first
             if not await add.count():
@@ -893,16 +1059,76 @@ class MigratedComposer:
                         f"{FRAME_PICKER_OPEN_S:.0f}s (host=migrated)"
                     ),
                 ) from e
+            # Flow holds an account's FIRST upload behind a one-time "rights to use this
+            # image" confirmation. It renders only once the chooser has handed the file
+            # over — so `_dismiss_dialog`, back in `ensure_editor`, never sees it — and
+            # Flow sends nothing until a human accepts, which is why the wait below used
+            # to expire on a request the page had already declined to make (#719).
+            #
+            # Counted, never matched. The dialog's two buttons are
+            # `button.flow-button-medium` with no ligature and no data attribute,
+            # separable only by DOM order, and its copy is translated — no anchor there
+            # satisfies this module's locale rule. "A dialog appeared between the file
+            # being chosen and the wait expiring" is upload-related by construction: it
+            # needs no selector and cannot rot when Angular renames a class. The baseline
+            # is taken BEFORE `set_files` so an already-open modal is never blamed.
+            #
+            # gflow does not click it: accepting affirms that the ACCOUNT OWNER holds the
+            # rights to the content, which is not a claim a script may make for someone.
+            # Measured 2026-09-08 across 6 runs on ci-probe —
+            # docs/superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md
+            dialogs_before = await page.locator(DIALOG).count()
             await chooser.set_files(str(image_path))
             try:
                 status, text = await asyncio.wait_for(reply, timeout=FRAME_UPLOAD_S)
             except TimeoutError:
+                try:
+                    opened = await page.locator(DIALOG).count() > dialogs_before
+                except Exception:  # noqa: BLE001 - a probe is never the failure it reports
+                    # The likeliest reason no reply came is that the page died or navigated,
+                    # in which case this count raises too. Letting that escape would replace
+                    # a mapped exit 27 and its remediation with an unmapped traceback — the
+                    # #752 lesson, one surface over.
+                    opened = False
+                if opened and not sent:
+                    raise MediaUploadRejectedError(
+                        detail=(
+                            f"migrated host: a dialog opened after the file was chosen and no "
+                            f"{UPLOAD_RPC} request left the page — most likely Flow's one-time "
+                            f"upload-terms confirmation (host=migrated)"
+                        ),
+                        route=route,
+                        remediation_hint=(
+                            "Open the project on flow.google.com, upload any image by hand, "
+                            "and accept the one-time 'rights to use this image' dialog. gflow "
+                            "does not accept it for you: it affirms that YOU hold the rights "
+                            "to what you upload. It appears once per account — after that, "
+                            "uploads work unattended. If you see a different dialog instead "
+                            "(an error, a quota notice, a re-login), that is the one blocking "
+                            "the upload. Nothing was spent; re-run when done."
+                        ),
+                    ) from None
+                # Say which half of #719 this is. `sent` is observed, not inferred: the
+                # request listener above saw the upload leave the page, or it did not.
+                went_out = (
+                    "the request left the page and Flow did not answer in time"
+                    if sent
+                    else "no upload request ever left the page"
+                )
                 raise MediaUploadRejectedError(
                     detail=(
                         f"migrated host: no {UPLOAD_RPC} reply within {FRAME_UPLOAD_S:.0f}s "
-                        "of choosing the file — the upload never reached Flow or was dropped"
+                        f"of choosing the file — {went_out}"
                     ),
                     route=route,
+                    remediation_hint=(
+                        "If the request left the page, Flow accepted the upload and did not "
+                        "answer in time — an intermittent fault on this host (#719), not "
+                        "your file: re-run, and the same file usually succeeds. If nothing "
+                        "left the page, something client-side stopped it — check for a modal "
+                        "on flow.google.com. Either way nothing was spent. Re-encoding the "
+                        "image does NOT help; three different files were ruled out in #719."
+                    ),
                 ) from None
             if status != 200:
                 raise MediaUploadRejectedError(
@@ -934,6 +1160,7 @@ class MigratedComposer:
             return media_id
         finally:
             page.remove_listener("response", on_response)
+            page.remove_listener("request", on_request)
 
     async def attach_references(
         self, page: Page, project_id: str, paths: tuple[Path, ...]
