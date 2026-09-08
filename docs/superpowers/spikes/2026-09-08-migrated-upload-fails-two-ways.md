@@ -25,7 +25,7 @@ Anyone holding `MediaUploadRejectedError` already knows the affordance was found
 opened, the chooser fired and `set_files` was called. That part of the issue's framing was
 wrong, and it still is.
 
-## Results — 7 runs, 3 profiles
+## Results — 8 runs, 3 profiles
 
 The probe drives **the real driver method**, not a re-implementation, with a listener on
 every request.
@@ -34,7 +34,7 @@ every request.
 |---|---|---|---|
 | `ffroliva` | funded | 4 | **3 uploaded**, 1 × `no maseQ reply` |
 | `denon82` | funded | 1 | uploaded |
-| `ci-probe` | **none (non-paying)** | 2 | **2 × `no maseQ reply`** |
+| `ci-probe` | none (non-paying) | 3 | **3 × `no maseQ reply`** — never consented to uploads |
 
 ### `maseQ` is NOT renamed — #719's top candidate is dead
 
@@ -44,11 +44,49 @@ most because it was the only candidate a constant change would have fixed.
 
 ### The failure has two distinct shapes, and they are not the same bug
 
-**Shape A — credit-less account: the client never sends the upload at all.** 2/2 on
-`ci-probe`. After `set_files`, no `maseQ` request under any name, to any host, by any
-method — the only POSTs in the whole window are one `WuwhI` (2 027 B, *smaller* than the
-4 321 B image, so not carrying it) and a `play.google.com` telemetry beacon. The driver then
-waits 60 s for a request the page decided not to make.
+**Shape A — the client never sends the upload at all.** 3/3 on `ci-probe`. After
+`set_files`, no `maseQ` request under any name, to any host, by any method — the only POSTs
+in the whole window are one `WuwhI` (2 027 B, *smaller* than the 4 321 B image, so not
+carrying it) and a `play.google.com` telemetry beacon. The driver then waits 60 s for a
+request the page decided not to make.
+
+**Root cause, and it is not credits.** The driver only ever watches the wire, so it never
+read what the app was *saying*. Asking the DOM produced it immediately:
+
+> **Rights to use this image** — Make sure you have the necessary rights to any content or
+> files that you upload, including content of minors. Do not generate content that infringes
+> on others' rights... When using Flow, you must comply with Google's Prohibited...
+
+A **one-time upload-consent dialog**. Flow will not send the file until it is accepted, and
+it appears *after* `set_files` — so `_dismiss_dialog`, which runs back in `ensure_editor`,
+never sees it. `ffroliva` and `denon82` do not hit it because they have uploaded on this
+host before and already accepted it. `ci-probe` never had.
+
+The credit-less framing was a **coincidence, not a cause**: the account that reproduces is
+also the account that had never uploaded. One variable was measured and a different one was
+inferred, which is the mistake this document already made once.
+
+**KNOWN_ISSUES.md is stale on exactly this.** Its *"Flow's first-upload terms-of-use dialog
+(Aviso) blocks the worker (worker-only)"* entry says **Affects: the legacy worker, NOT
+`gflow-cli` itself**, because *"gflow-cli's API-driven path bypasses this dialog entirely
+(the REST endpoint already implies acceptance)"*, and **Workaround in gflow-cli: none
+needed.** That was true of the REST path. On the migrated host gflow drives the editor's
+**own** upload, so the dialog is squarely in the way, and the entry now tells a reader the
+opposite of what is happening to them.
+
+**Anchors for a fix**, captured read-only:
+
+```
+mat-dialog-container.mat-mdc-dialog-container-with-actions   <- distinguishes it from the
+                                                                changelog modal, which has
+                                                                no action row
+  button.flow-button-medium   x2   lig: []   data-*: []
+```
+
+Both buttons are `button.flow-button-medium` with **no ligature and no data attribute**;
+only DOM order separates them, and the second carries `cdk-focused`. Under this project's
+locale rule (never match translated copy) that leaves order or focus state as the only
+anchors, and both are thin. Any fix should say so rather than pretend the anchor is solid.
 
 **Shape B — funded account, intermittent: the request goes out and the reply is lost.**
 1/4 on `ffroliva`. The `maseQ` POST carries **8 675 B** (the image), and then:
@@ -77,9 +115,13 @@ Worth stating explicitly because `["REGION"]` is a known eligibility blocker on 
 
 ## What is NOT established
 
-- **Why the credit-less client declines to send.** No credits, non-paying tier, and a
-  storage entitlement all co-vary on this one account and cannot be separated with it.
-  Uploads are otherwise free operations, so "no credits" is not an obvious mechanism.
+- **That accepting the dialog fixes it.** Deliberately not tested: accepting is a rights
+  affirmation on the account owner's behalf and is not a probe's to give. The inference —
+  consent blocks the send — rests on the dialog being present and modal, and on the two
+  accounts that never see it being the two that upload. Strong, but not the same as a run.
+- **Whether credits play any part at all.** They looked like the variable for four runs and
+  turned out to co-vary with the real one. Nothing here rules a credit effect *in* either;
+  it simply is not needed to explain shape A.
 - **That the t=14.5 burst is a reload.** It is the *shape* of one — the full project-load
   rpcid set, at once. No navigation event was captured, and nothing in
   `_upload_via_toolbar` navigates. Cause unknown.
@@ -101,3 +143,10 @@ Worth stating explicitly because `["REGION"]` is a known eligibility blocker on 
    failure, instead of leaving both as one 60 s timeout.
 3. Shape B argues for a retry, shape A argues against one — which is precisely why they must
    be distinguished before either is implemented.
+4. **Whether gflow may accept the consent dialog for the user is a product decision, not a
+   technical one**, and it should be made deliberately. The legacy worker clicks "Concordo".
+   The conservative alternative — detect it, fail fast, and tell the user to accept it once
+   in a browser — costs one run and never puts a rights affirmation in a script's hands.
+   Recommend the latter unless the maintainer decides otherwise.
+5. Correct the `KNOWN_ISSUES.md` first-upload-dialog entry: "not gflow-cli" is false on the
+   migrated host, and it is the entry a user hitting #719 would find and be reassured by.

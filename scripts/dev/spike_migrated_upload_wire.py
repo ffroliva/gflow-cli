@@ -164,6 +164,45 @@ async def _main(profile: str, project_id: str, image: Path | None, out: Path) ->
         # Whatever happened, give the wire a few seconds to show a late reply.
         await page.wait_for_timeout(5_000)
 
+        # What is the APP saying? If it declined to upload, it very likely told the user
+        # something the driver never reads — it only ever watches the wire. Roles and
+        # component tags only: `aria-label` and visible copy are translated on this host.
+        outcome["announcements"] = await page.evaluate(
+            """() => {
+                const sel = "[role='alert'],[role='status'],[role='dialog'],"
+                          + "mat-snack-bar-container,.mat-mdc-snack-bar-label,"
+                          + ".prompt-warning-button,[aria-live]";
+                return [...document.querySelectorAll(sel)]
+                    .filter(e => e.offsetParent !== null || e.getClientRects().length)
+                    .map(e => (e.innerText || "").trim().slice(0, 300))
+                    .filter(Boolean);
+            }"""
+        )
+        # Structural anchors for whatever is on screen — for a FIX to bind to, since the
+        # copy is translated. Read-only on purpose: this dialog is a rights affirmation and
+        # a probe must never click it on an account owner's behalf.
+        outcome["dialog_controls"] = await page.evaluate(
+            """() => {
+                const d = document.querySelector("[role='dialog']");
+                if (!d) return null;
+                return {
+                    tag: d.tagName.toLowerCase(),
+                    cls: d.className,
+                    buttons: [...d.querySelectorAll("button")].map(b => ({
+                        cls: b.className,
+                        lig: [...b.querySelectorAll("mat-icon,i")].map(i => i.textContent.trim()),
+                        attrs: b.getAttributeNames().filter(a => a.startsWith("data-")
+                               || a === "type" || a === "aria-pressed"),
+                    })),
+                };
+            }"""
+        )
+        step("dialog", str(outcome["dialog_controls"])[:400])
+        shot = out.with_name(out.stem + "_after.png")
+        await page.screenshot(path=str(shot))
+        outcome["screenshot"] = shot.name
+        step("dom", f"announcements={outcome['announcements']} shot={shot.name}")
+
     during = events[baseline:]
     posts = [e for e in during if e.get("dir") == "req" and e["method"] == "POST"]
     findings = {
