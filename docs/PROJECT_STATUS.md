@@ -57,6 +57,14 @@ second failure shape (an upload request that leaves the page and is never answer
 branch is now **unrepeatable** here, because the dialog is one-off and all three available
 accounts have accepted it.
 
+**Unreleased — the migrated image slice of #639 is implemented and live-verified.**
+`gflow image t2i` and local-file `gflow image i2i` drive the Angular Image mode and the
+page-owned `ogiZ0b` wire on moved accounts (Nano Banana 2 / Pro, the four aspects measured
+there — 16:9, 4:3, 1:1, 9:16 — and counts 1–4, with `--project` required); the direct and
+queued MCP twins share the same payload path. UUID/entity references, Agent instructions,
+Imagen 4, `image batch` and the 3:4 aspect remain unported on that host and are refused
+before submit.
+
 <details><summary>v0.71.0 — <code>character create --voice</code> verified, and two retractions</summary>
 
 **v0.71.0 — alpha.** **`gflow character create --voice` is verified end to end for the first

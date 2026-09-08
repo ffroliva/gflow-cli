@@ -70,6 +70,10 @@ gflow image t2i "<prompt>" [--model {nano2|nano-pro|image4}] \
                             [-n 1..4] [--out DIR]
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]
 gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out DIR]  # shared project, up to 5 prompts
+# On migrated flow.google.com accounts (#639), t2i and i2i are ported for an
+# existing --project (required — exit 11 without it): i2i accepts local --ref
+# files only, aspects 16:9/4:3/1:1/9:16. UUIDs, @Name/entity references, Imagen 4
+# (image4), --aspect 3:4, and image batch are refused there with exit 36.
 
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--out-dir DIR] [--aspect ...]  # --project required on the migrated flow.google.com host (#639); 10s is omni-flash-only
@@ -275,7 +279,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 3.5), `--model nano-pro` (Gem Pix 2), `--model nano2` (Narwhal) |
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
 | Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
-| `gflow video t2v`/`i2v`/`r2v` without `--project` on an account Google moved to `flow.google.com` (exit 11), or `--end-frame`, a UUID/`@Name` frame, a reference by `@Name`/`--reference-entity`, or any other command there (exit 36) | Pass `--project <id>` — only text-to-video, image-to-video from a local `--initial-frame`, and reference-to-video from local `--ref` files are ported to the migrated host; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v) |
+| `gflow video t2v`/`i2v`/`r2v` without `--project` on an account Google moved to `flow.google.com` (exit 11), or an unported UUID/entity reference or model (exit 36) | Pass `--project <id>` — migrated hosts support video t2v, local-file i2v/r2v, and image t2i/i2i (local refs) only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |
 | Suggesting a native `batch` subcommand under `gflow video` | It doesn't exist — that stub never worked and was removed. Loop `gflow video t2v`/`i2v` from the shell for multi-clip runs (`gflow image batch manifest.tsv\|json` is the real, working batch command, but it's image-only) |
 
 ## Disclaimer

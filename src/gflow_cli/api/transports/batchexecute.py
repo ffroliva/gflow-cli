@@ -67,6 +67,25 @@ class GenerationRecord:
         return self.status is not None and not self.is_done and not self.is_running
 
 
+@dataclass(frozen=True)
+class ImageGenerationRecord:
+    """One completed image from the migrated host's ``ogiZ0b`` reply.
+
+    Image generation is synchronous at this RPC boundary: the measured response arrives
+    after the render and already carries its signed CDN URL. It is deliberately distinct
+    from :class:`GenerationRecord`; image records do not use the video ``CAE`` shape.
+    """
+
+    media_id: str
+    workflow_id: str
+    project_id: str
+    seed: int
+    prompt: str
+    image_url: str
+    dimensions: tuple[int, int]
+    display_name: str | None = None
+
+
 def _as_list(node: object) -> list[Any] | None:
     return cast("list[Any]", node) if isinstance(node, list) else None
 
@@ -133,6 +152,13 @@ def _find_record(node: object) -> list[Any] | None:
     return None
 
 
+def _walk_lists(node: object) -> list[list[Any]]:
+    items = _as_list(node)
+    if items is None:
+        return []
+    return [items, *(child for item in items for child in _walk_lists(item))]
+
+
 def _at(node: object, *path: int) -> Any:
     current: Any = node
     for i in path:
@@ -183,3 +209,80 @@ def generation_record(rpcid: str, payload: Any) -> GenerationRecord:
         poster_url=_url(_at(rec, 5, 10)),
         size_bytes=size if isinstance(size, int) else None,
     )
+
+
+def image_records(rpcid: str, payload: Any) -> list[ImageGenerationRecord]:
+    """Decode every completed image in the migrated ``ogiZ0b`` payload.
+
+    The media tuple is identified by invariants measured on both T2I and I2I:
+    UUID media/workflow ids at slots 0/2, generation details at ``[6][0]``, a signed
+    HTTPS URL at details slot 13, and integer dimensions at ``[6][2]``. Sibling
+    workflow tuples supply the project id and display name. A shape change fails loud
+    with a redacted discovery head instead of guessing positional fallbacks.
+    """
+    workflow_meta: dict[str, tuple[str, str | None]] = {}
+    lists = _walk_lists(payload)
+    for node in lists:
+        if len(node) < 5 or not isinstance(node[0], str) or not _UUID_RE.match(node[0]):
+            continue
+        meta = _as_list(node[3])
+        project_id = node[4]
+        if meta is None or not isinstance(project_id, str) or not _UUID_RE.match(project_id):
+            continue
+        title = meta[0] if meta and isinstance(meta[0], str) else None
+        workflow_meta[node[0]] = (project_id, title)
+
+    records: list[ImageGenerationRecord] = []
+    for node in lists:
+        if len(node) < 7:
+            continue
+        media_id, workflow_id = node[0], node[2]
+        if not (
+            isinstance(media_id, str)
+            and _UUID_RE.match(media_id)
+            and isinstance(workflow_id, str)
+            and _UUID_RE.match(workflow_id)
+        ):
+            continue
+        container = _as_list(node[6])
+        if container is None:
+            continue
+        details = _as_list(_at(container, 0))
+        dims = _as_list(_at(container, 2))
+        if details is None or dims is None or len(details) <= 13 or len(dims) < 2:
+            continue
+        image_url = _url(details[13])
+        seed, prompt = _at(details, 1), _at(details, 7)
+        width, height = dims[0], dims[1]
+        meta = workflow_meta.get(workflow_id)
+        if not (
+            image_url
+            and isinstance(seed, int)
+            and isinstance(prompt, str)
+            and isinstance(width, int)
+            and isinstance(height, int)
+            and meta is not None
+        ):
+            continue
+        records.append(
+            ImageGenerationRecord(
+                media_id=media_id,
+                workflow_id=workflow_id,
+                project_id=meta[0],
+                seed=seed,
+                prompt=prompt,
+                image_url=image_url,
+                dimensions=(width, height),
+                display_name=meta[1],
+            )
+        )
+    if not records:
+        raise WireFormatError(
+            detail=(
+                f"batchexecute {rpcid}: no completed image record "
+                "([media_uuid, …, workflow_uuid, …, details-with-https-url]) in the reply"
+            ),
+            route=f"batchexecute:{rpcid}",
+            discovery={"rpcid": rpcid, "payload_head": _discovery_head(payload)},
+        )
+    return records

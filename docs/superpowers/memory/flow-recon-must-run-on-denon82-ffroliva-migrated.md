@@ -1,6 +1,6 @@
 ---
 name: flow-recon-must-run-on-denon82-ffroliva-migrated
-description: "Both maintainer accounts are FULLY migrated to flow.google.com (one-way, not a flap) — there is no labs.google account left, so labs-side behaviour is cohort-external. Recon and live-verification run on either account through the migrated composer, which drives t2v and i2v-from-a-local-frame; unported forms still exit 36. Also: a capability claim without the frontend AND profile named is meaningless."
+description: "Both maintainer accounts are FULLY migrated to flow.google.com (one-way, not a flap) — there is no labs.google account left, so labs-side behaviour is cohort-external. Recon and live-verification run on either account through the migrated composer, which drives t2v, i2v/r2v from local files, character create, and image t2i/i2i from local files; unported forms still exit 36. Also: a capability claim without the frontend AND profile named is meaningless."
 ---
 
 **Measured 2026-09-03.** Running `scripts/dev/capture_video_model_capability_matrix.py`
@@ -37,11 +37,21 @@ having a migrated driver at all, and read as "the new host cannot be driven"):
   text with ligature-keyed selectors is the point of that account (see
   [[flow-locale-leak-icon-ligatures]]); prefer `ffroliva` (en-GB) for a first capture.
   Verify a generation path on **both** before calling it done.
-- A **video** spike on either account exits 36 only for a form the migrated composer has
-  not ported (today: an end frame, a frame by media UUID or `@Name`, r2v). For a ported
-  form, exit 36 is a real regression to investigate, not the environment. Every other
-  surface — image, characters, scenes, extend, instructions, tools — has no migrated
-  driver at all; how each one *fails* there is the next bullet, not this one.
+- A spike on either account exits 36 only for a form the migrated composer has not
+  ported. For a ported form, exit 36 is a real regression to investigate, not the
+  environment. **This list has been wrong in the dangerous direction three times** —
+  it called r2v unported after v0.70.0 shipped it, `character` unported after
+  `character create` was verified there, and `image` undriven after #639's image
+  slice landed. A migrated user reading a stale line concludes a working feature is
+  impossible, so re-derive it from the guards rather than from this bullet:
+  `_unported_form` and `_unported_image_form` in `migrated_composer.py` ARE the
+  matrix. As of #639's image slice the ported set is t2v; i2v/r2v from local files;
+  `character create`/`list`; and image t2i/i2i from local files — each with
+  `--project`. Unported: end frames, frames/references by UUID or `@Name`, character
+  entities on a generation, Agent instructions, Imagen 4, `image batch`, the 3:4
+  image aspect, scenes, extend and tools. Of those only i2v-by-UUID rests on a
+  positive observation of absence; the rest are *unported by gflow*, never proven
+  impossible on the host.
 - Both accounts are fine for **mint-free** REST-path work (`gflow project list`,
   `gflow data …`) — the migration changed the *frontend*, not the aisandbox REST
   surface. See [[rest-path-capability-matrix]]. A REST path that **mints a reCAPTCHA
@@ -51,6 +61,10 @@ having a migrated driver at all, and read as "the new host cannot be driven"):
   `RecaptchaError` through v0.68.0 (#673). Measured by the session that fixed it; PR
   #678 turned that into the exit 36 it should always have been — the guard now runs at
   the mint too, so the failure is classified before `discover_site_key` is reached.
+  **Since #639's image slice this is no longer the end of the story for images:** the
+  migrated page mints its own token and submits `ogiZ0b` itself, so `image t2i`/`i2i`
+  now RUN on a moved account and the client skips the labs mint entirely. `upscale`
+  and `extend` still take the old path and still exit 36.
 - **Labs-side** behaviour is what is now unreachable: no maintainer account is left on
   `labs.google`, so a labs-only claim is cohort-external — verify via a contributor or
   record it NOT verified.

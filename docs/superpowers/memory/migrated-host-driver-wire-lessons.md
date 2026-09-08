@@ -148,3 +148,32 @@ rounds); e2e `tests/e2e/test_migrated_host_e2e.py`. Read this before re-mining t
   this is the same shape as #689 (a payload key read but never written) and the MCP r2v
   guard that was stricter than the rule it fronted. Related:
   [[dead-wiring-passes-every-gate]].
+
+## Image submit — the t2i / i2i slice (#639)
+
+- **`ogiZ0b` is synchronous, and that is the one place on this host where a submit
+  reply IS the terminal answer.** Video submits (`YhhmEf` / `eb1hJf` / `MZZa6b`) start a
+  job and the result arrives later on `jwpduf` / `as29s`; the image submit's own reply
+  already carries completed records with signed JPEG URLs and dimensions, and there is
+  no polling rpc on that path at all. Note this explicitly whenever the point comes up,
+  because the standing rule is the opposite — [[intermediate-signal-is-not-terminal]]
+  was written from a null `MZZa6b` reply read as a refusal three times. Images are the
+  documented exception, not a counter-example to it.
+- **The migrated page owns the image reCAPTCHA.** The labs client minted a token on the
+  pool's bootstrap page before the transport ran; on a moved account that page is the
+  `flow.google.com` grid, which carries no `enterprise.js`, so the mint failed before
+  any guard could classify it (#673). The client now skips minting when the transport
+  reports `uses_page_owned_image_recaptcha()` and lets the project page mint + submit.
+- **Derive that capability from a latch, not from `page.url`.** The image path parks the
+  page on `about:blank` when it finishes, which routes as `labs` — so a URL-derived
+  capability answers `False` on the *second* image in one client session and falls back
+  to the very mint it exists to avoid. Invisible to every single-image test; reachable
+  from `gflow image batch`, which runs every prompt through one `FlowApiClient`. Same
+  shape as the r2v listener above: both halves correct, the join stateful and wrong.
+- **Enumerate the axis before mapping to it.** The image aspect radiogroup carried four
+  radios — `crop_16_9`, `crop_landscape`, `crop_square`, `crop_9_16` — and no
+  `crop_portrait`. A driver that maps 3:4 to a guessed ligature does not fail as "not
+  ported"; it misses its selector and raises `UiSelectorDriftError` (exit 23), which
+  tells the user to file a frontend bug about a frontend that is fine. Refuse an
+  unmeasured axis value as an unported form (exit 36) and keep the measured set in its
+  own constant, so the difference between *observed* and *assumed* survives in code.
