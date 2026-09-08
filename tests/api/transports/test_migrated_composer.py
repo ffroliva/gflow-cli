@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -114,14 +115,14 @@ class Dom:
     chip_bound: bool = False
     dialog_present: bool = False  # a `[role=dialog]` (the changelog modal) on load
     dialog_closed: int = 0
-    # --- #749: Flow's agent mode, measured 2026-09-08 on ffroliva AND denon82 ---------
-    # `button.agent-mode-chip[aria-pressed]` swaps the whole prompt box. Pressed, the
-    # classic `.settings-trigger-button` stays in the DOM but gains a bare `hidden`
-    # (display:none, 0x0), and `flow-creative-agent-prompt-box` + `div.agent-footer-actions`
-    # appear instead. Flow remembers the chip per account, so one click in the browser
-    # breaks every later gflow run. Spike:
-    # docs/superpowers/spikes/2026-09-08-migrated-composer-agent-mode-hides-settings.md
+    # --- #749: Flow's agent mode ------------------------------------------------------
+    # Pressed, the chip leaves `.settings-trigger-button` in the DOM under a bare `hidden`
+    # — present to `count()`, never visible. The knobs below are the states the driver has
+    # to tell apart; `migrated_composer.AGENT_MODE_CHIP` carries the selector rationale
+    # and points at the spike that measured all of this.
     agent_mode: bool = False
+    #: The mode is on but the chip is not in the DOM — nothing to click, so the driver
+    #: must fall back to the ordinary drift message rather than promise a recovery.
     agent_chip_present: bool = True
     # A chip that will not toggle off. NOT observed on either of our accounts — kept
     # because the reporter's might pin the mode, and a fix that cannot say "I tried and
@@ -168,7 +169,7 @@ class FakeLocator:
         kind: str,
         items: list[Any],
         *,
-        visible: bool | Any = True,
+        visible: bool | Callable[[], bool] = True,
     ) -> None:
         self.page, self.kind, self.items = page, kind, items
         #: Present in the DOM but not visible — what a bare `hidden` attribute does
@@ -1947,8 +1948,12 @@ async def test_ensure_editor_does_not_claim_agent_mode_when_the_probe_itself_fai
 
 
 async def test_ensure_editor_still_names_agent_mode_when_the_chip_click_fails() -> None:
-    """The mirror of the above: the chip WAS found, so agent mode is confirmed whether
-    or not the click landed — the pinned-mode message is the accurate one to end on."""
+    """The mirror of the above: the chip WAS found, so agent mode is confirmed whether or
+    not the click landed. But a click that never landed changed nothing, so the message
+    must say THAT — "the chip was clicked to leave it" sends a user to toggle a chip when
+    a modal was covering it — and the run must not wait AGENT_RECOVERY_S for a trigger it
+    knows was never asked to change. The click's own exception is chained, not truncated
+    into a warning nobody reads."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = FakePage()
@@ -1958,7 +1963,57 @@ async def test_ensure_editor_still_names_agent_mode_when_the_chip_click_fails() 
         await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
     assert page.dom.agent_chip_clicks == 1
     assert "agent mode" in str(exc.value).casefold()
+    assert "could not be clicked" in str(exc.value)
+    assert "pinned" not in str(exc.value)
+    assert isinstance(exc.value.__cause__, PlaywrightTimeoutError)
     assert "migrated.agent_mode_exit_failed" in [e["event"] for e in logs]
+
+
+async def test_ensure_editor_falls_back_to_drift_when_agent_mode_renders_no_chip() -> None:
+    """Mode on, chip absent — a cohort that hides it, or a renamed class. There is
+    nothing to click, so nothing may be promised: the ordinary drift message is the
+    honest one, and the `agent_chip_present` knob exists for exactly this state."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_chip_present = False
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    assert page.dom.agent_chip_clicks == 0
+    assert "agent mode" not in str(exc.value).casefold()
+
+
+async def test_ensure_editor_reports_drift_once_agent_mode_is_actually_off() -> None:
+    """The chip clicked, the mode left, and the trigger STILL missing — a real
+    selector-drift bug someone should file. A pinned-mode message written without reading
+    `aria-pressed` back would bury it behind an account setting the driver just changed."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.trigger_present = False  # gone for real, not merely hidden
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    assert page.dom.agent_chip_clicks == 1
+    assert not page.dom.agent_mode
+    assert "ordinary selector drift" in str(exc.value)
+    assert "pinned" not in str(exc.value)
+
+
+async def test_open_pane_names_agent_mode_when_the_mode_flips_after_readiness() -> None:
+    """#749 at the second gate. `ensure_editor` passed, then the mode flipped: a `count()`
+    guard sees the still-present trigger, clicks the hidden element, and the run dies as a
+    bare Playwright timeout with no exit code and no mention of the mode."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    composer = MigratedComposer()
+    await composer.ensure_editor(page, "p1", timeout_s=1.0)
+    page.dom.agent_mode = True
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await composer.apply_video_settings(page, _t2v())
+    assert "agent mode" in str(exc.value).casefold()
 
 
 async def test_ensure_editor_drift_message_does_not_blame_agent_mode_in_classic() -> None:

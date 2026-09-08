@@ -147,17 +147,32 @@ async def test_e2e_agent_mode_is_left_before_the_readiness_gate(
         await page.locator(migrated_composer.READY_ANCHOR).first.wait_for(
             state="hidden", timeout=15_000
         )
+        try:
+            # --- control: the recovery cannot fire -> the gate must still fail -----
+            # `monkeypatch.context()`, never `undo()`: this is the function-scoped
+            # instance the autouse `_isolate_settings` and the e2e `GFLOW_CLI_HOME`
+            # were set through, and `undo()` pops the WHOLE stack — every line after it
+            # would resolve against the developer's own catalog and profile store
+            # (#86's pollution mode, reintroduced mid-test).
+            with monkeypatch.context() as m:
+                m.setattr(migrated_composer, "AGENT_MODE_CHIP", "button.gflow-no-such-chip")
+                # Pinned to the message, not just the class: without this the control
+                # passes on ANY drift, including one raised by the recovery firing
+                # wrongly, and stops discriminating the moment it matters.
+                with pytest.raises(UiSelectorDriftError, match="did not become visible"):
+                    await composer.ensure_editor(page, project, timeout_s=10.0)
 
-        # --- control: the recovery cannot fire -> the gate must still fail ---------
-        monkeypatch.setattr(migrated_composer, "AGENT_MODE_CHIP", "button.gflow-no-such-chip")
-        with pytest.raises(UiSelectorDriftError):
-            await composer.ensure_editor(page, project, timeout_s=10.0)
-
-        # --- fix: the recovery fires -> the classic composer comes back ------------
-        monkeypatch.undo()
-        _set_flow_host(monkeypatch, None)
-        await composer.ensure_editor(page, project, timeout_s=45.0)
-        assert await page.locator(migrated_composer.READY_ANCHOR).first.is_visible()
+            # --- fix: the recovery fires -> the classic composer comes back --------
+            await composer.ensure_editor(page, project, timeout_s=45.0)
+            assert await page.locator(migrated_composer.READY_ANCHOR).first.is_visible()
+        finally:
+            # Agent mode is remembered per ACCOUNT, server-side, so a test that turns it
+            # on restores it — including when it failed. gflow 0.71.0 and earlier have no
+            # recovery at all, so a chip left pressed here breaks every run a user makes
+            # on that build until someone clicks it back in a browser.
+            pressed = page.locator("button.agent-mode-chip[aria-pressed='true']").first
+            if await pressed.count():
+                await pressed.click(timeout=10_000)
     finally:
         await transport.teardown()
 

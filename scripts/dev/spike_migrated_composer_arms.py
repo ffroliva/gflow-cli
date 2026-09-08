@@ -237,9 +237,14 @@ async def main() -> int:
         # Only a toggle is clicked, and only if one is present. No text is typed: the
         # reporter's "the composer must be touched first" claim is a SEPARATE question,
         # and mixing it in here would leave neither answered.
+        # `button.agent-mode-chip`, not the bare attribute: in agent mode a SECOND
+        # `button[aria-pressed]` is present (`agent-action-button`, ligature
+        # `article_spark`), so re-running this against a profile ALREADY in agent mode
+        # would let `.first` toggle the wrong control — and a non-transition would then
+        # read as evidence about the mode.
         toggle_sel = None
         if findings["state_a"]["aria_pressed"]:
-            toggle_sel = "button[aria-pressed]"
+            toggle_sel = "button.agent-mode-chip[aria-pressed]"
         elif findings["state_a"]["tune_buttons"]:
             toggle_sel = AGENT_TUNE
         findings["toggle_selector"] = toggle_sel
