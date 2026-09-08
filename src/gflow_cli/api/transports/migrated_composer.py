@@ -83,6 +83,30 @@ RADIOGROUP = "[role='radiogroup']"
 RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
 COMPOSER = "[contenteditable='true']"
+#: Flow's agent-mode chip. Pressed, the app swaps `flow-prompt-box` for
+#: `flow-creative-agent-prompt-box`: `.settings-trigger-button` stays in the DOM but gains
+#: a bare `hidden` (display:none, 0x0, not hit-testable), and a `div.agent-footer-actions`
+#: with its own `tune` button appears instead. The mode is remembered per account, so one
+#: click in a browser breaks every later run until something clicks it back — which is
+#: exactly what #749 reported.
+#:
+#: Anchored on the component class plus `aria-pressed`, never on the label: the chip's text
+#: is translated (the reporter's was "Configuración"), and in agent mode a SECOND
+#: `button[aria-pressed]` appears (`agent-action-button`, ligature `article_spark`), so the
+#: bare attribute selector is ambiguous there. `[aria-pressed='true']` also makes the
+#: locator self-guarding — it matches only when there is something to undo, so the recovery
+#: cannot click a healthy composer INTO agent mode.
+#:
+#: `mode_control.py` handles this same split on labs and is deliberately not reused: it
+#: refuses this host (`raise_if_migrated`), and its `AGENT_TOGGLE_SELECTOR` requires a
+#: `span.content` this chip does not have (measured `has_span_content: false`).
+#: Measured 2026-09-08 on ffroliva + denon82, $0 —
+#: docs/superpowers/spikes/2026-09-08-migrated-composer-agent-mode-hides-settings.md
+AGENT_MODE_CHIP = "button.agent-mode-chip[aria-pressed='true']"
+#: How long the classic composer gets to come back after the chip is clicked. The swap is
+#: a local Angular re-render, not a navigation — measured well under a second on both
+#: accounts — so this is headroom, not an expectation.
+AGENT_RECOVERY_S = 20.0
 #: The submode radio that renders the Start/End frame chips (i2v).
 FRAMES_LIGATURE = "crop_free"
 DIALOG = "[role='dialog']"
@@ -478,18 +502,70 @@ class MigratedComposer:
             log.info("migrated.navigate", url=target)
             await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
         await self._dismiss_dialog(page)
+        trigger = page.locator(READY_ANCHOR).first
         try:
-            await page.locator(READY_ANCHOR).first.wait_for(
-                state="visible", timeout=int(timeout_s * 1000)
-            )
+            await trigger.wait_for(state="visible", timeout=int(timeout_s * 1000))
         except Exception as e:
-            raise UiSelectorDriftError(
-                detail=(
-                    f"migrated host: the settings trigger ({READY_ANCHOR}) did not become "
-                    f"visible within {timeout_s:.0f}s on {page.url} (host=migrated): {e}"
-                ),
-            ) from e
+            # Only now look for agent mode. Probing for the chip BEFORE this wait raced
+            # the SPA: `goto` returns on `domcontentloaded` and Angular mounts the
+            # composer seconds later, so the chip was reliably absent at that point, the
+            # recovery no-opped, and the run failed exactly as it did before the fix
+            # (caught by this change's own e2e, 2026-09-08). Waiting first also costs a
+            # healthy run nothing — no extra query is issued unless the gate has failed.
+            if not await self._exit_agent_mode(page):
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"migrated host: the settings trigger ({READY_ANCHOR}) did not "
+                        f"become visible within {timeout_s:.0f}s on {page.url} "
+                        f"(host=migrated): {e}"
+                    ),
+                ) from e
+            try:
+                await trigger.wait_for(state="visible", timeout=int(AGENT_RECOVERY_S * 1000))
+            except Exception as e2:
+                # Distinct from ordinary drift, and actionable: the frontend is fine,
+                # the account is parked somewhere gflow could not get it out of.
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"migrated host: the account was in Flow's agent mode and the chip "
+                        f"was clicked to leave it, but the classic composer did not come "
+                        f"back within {AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) "
+                        f"— the mode may be pinned on this account; turn the Agent chip off "
+                        f"in a browser and re-run: {e2}"
+                    ),
+                ) from e2
         log.info("migrated.editor_ready", url=page.url)
+
+    @staticmethod
+    async def _exit_agent_mode(page: Page) -> bool:
+        """Turn Flow's agent mode off if it is on. Returns whether the chip was clicked.
+
+        Agent mode `hidden`s the settings trigger this driver waits on (#749), and Flow
+        remembers the chip per account — so without this, a single click in a browser
+        leaves every later run failing as selector drift. The locator matches only
+        ``aria-pressed='true'``, so on a healthy composer this is one cheap count and
+        nothing else.
+        """
+        chip = page.locator(AGENT_MODE_CHIP).first
+        try:
+            found = await chip.count()
+        except Exception as e:  # noqa: BLE001 - an unreadable page is ordinary drift
+            # Returning True here would put "the account was in Flow's agent mode" in
+            # front of a user on the strength of a query that never answered. Only a
+            # chip actually FOUND may claim that.
+            log.warning("migrated.agent_mode_probe_failed", error=str(e)[:200])
+            return False
+        if not found:
+            return False
+        try:
+            await chip.click(timeout=5000)
+        except Exception as e:  # noqa: BLE001 - the trigger wait is the real verdict
+            # The chip was there, so agent mode is confirmed either way — and the
+            # pinned-mode message is the accurate one to end on.
+            log.warning("migrated.agent_mode_exit_failed", error=str(e)[:200])
+            return True
+        log.info("migrated.agent_mode_exited", issue_ref="#749")
+        return True
 
     @staticmethod
     async def _dismiss_dialog(page: Page) -> None:

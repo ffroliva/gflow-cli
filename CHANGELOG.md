@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Flow's agent mode no longer bricks the account for every later run.** On the migrated
+  `flow.google.com` host the composer carries an **agent-mode chip**
+  (`button.agent-mode-chip[aria-pressed]`). Pressed, Flow swaps `flow-prompt-box` for
+  `flow-creative-agent-prompt-box`: the `.settings-trigger-button` this driver waits on stays
+  in the DOM but gains a bare `hidden` (`display: none`, 0×0, not hit-testable), so
+  `wait_for(state="visible")` could never pass and every run died at 30 s as
+  `UiSelectorDriftError` (exit 23) — telling the user to file a frontend-drift bug about a
+  frontend that was working fine. Flow **remembers the chip per account**, so one click in a
+  browser broke every subsequent `gflow video t2v`, with nothing on the CLI to say why or how
+  to undo it. `ensure_editor` now leaves agent mode before the readiness gate, and if the
+  classic composer still does not come back it says *that* instead of blaming drift. Measured
+  2026-09-08 on two accounts, $0 —
+  [`scripts/dev/spike_migrated_composer_arms.py`](scripts/dev/spike_migrated_composer_arms.py),
+  finding in
+  [`docs/superpowers/spikes/2026-09-08-migrated-composer-agent-mode-hides-settings.md`](docs/superpowers/spikes/2026-09-08-migrated-composer-agent-mode-hides-settings.md).
+  The reporter's suggested anchor (`aria-label="Configuración"`) is not used: it is a translated
+  label, and the chip's own component class plus `aria-pressed` carry the same identity in every
+  locale. ([#749](https://github.com/ffroliva/gflow-cli/issues/749))
+
 ## [0.71.0] — 2026-09-07
 
 ### Fixed
