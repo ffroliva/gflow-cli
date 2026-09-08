@@ -1686,6 +1686,11 @@ async def test_attach_says_the_request_left_the_page_when_flow_just_never_answer
         await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
     assert "the request left the page and Flow did not answer" in str(ei.value)
     assert "one-time upload-terms" not in str(ei.value)
+    # This message ships a user-visible string, so it must ship somewhere to go with it —
+    # and must not repeat the re-encode advice #719 ruled out across three files.
+    assert "re-run" in ei.value.remediation_hint
+    assert "Re-encoding" in ei.value.remediation_hint
+    assert "#719" in ei.value.remediation_hint
 
 
 async def test_attach_keeps_exit_27_when_the_dialog_probe_itself_dies(

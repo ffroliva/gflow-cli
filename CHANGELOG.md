@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.1] — 2026-09-08
+
 ### Fixed
 
 - **A blocked first upload no longer reads as a broken file or a broken network.** On the
@@ -34,7 +36,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   affirms that *you* hold the rights to what you upload, it is one-off per account, and the
   path already requires an interactive `gflow auth login` — so a setting that could never
   safely default to on would be a flag nobody sets.
+
+  The driver also now watches the upload **request**, not just the response, so the timeout
+  splits into two distinct messages: `no upload request ever left the page` and `the request
+  left the page and Flow did not answer in time`. That distinction is load-bearing — the
+  second argues for a retry and the first argues against one — and it exposes a **second,
+  unfixed** failure on this path, an intermittent no-reply on already-consented accounts
+  (~1 run in 4) that keeps [#719](https://github.com/ffroliva/gflow-cli/issues/719) open and
+  now has its own [KNOWN_ISSUES.md](KNOWN_ISSUES.md) entry.
   ([#719](https://github.com/ffroliva/gflow-cli/issues/719))
+
+### Documentation
+
+- **Three documents said things that were not true, and are corrected rather than quietly
+  patched.** [KNOWN_ISSUES.md](KNOWN_ISSUES.md) said Flow's first-upload terms dialog affected
+  "the legacy in-tree Compiled Growth worker, **NOT `gflow-cli` itself** … workaround: none
+  needed" — true of the old REST path, false since the migrated driver began using the
+  editor's own upload, so it was the entry a user hitting #719 would find and be *reassured*
+  by. [LIVE_VERIFICATION_v0.71.0](docs/LIVE_VERIFICATION_v0.71.0.md) labelled the `ci-probe`
+  profile **labs** when it is migrated, contradicting v0.70.0 one day earlier; in a repo where
+  "Flow's UI shows X" is not a fact until the host is named, that silently re-scoped every
+  conclusion keyed to it — and it helped a credit-based theory for #719 survive four runs.
+  Six "unreleased line" phrases, which go stale the moment a release ships and had accumulated
+  across four of them, are now dated from the CHANGELOG.
+
+### Added
+
+- **Two `$0` read-only dev instruments** for the migrated host.
+  [`scripts/dev/spike_migrated_queue_read.py`](scripts/dev/spike_migrated_queue_read.py) reads
+  a project's generation queue by listening to the page's own traffic — establishing that the
+  listing arrives on **`Zzl0ze`**, not the `jwpduf`/`as29s` progress polls, which is what a
+  future `gflow video status` ([#741](https://github.com/ffroliva/gflow-cli/issues/741)) should
+  read. [`scripts/dev/spike_migrated_upload_wire.py`](scripts/dev/spike_migrated_upload_wire.py)
+  drives the real `_upload_via_toolbar` with a listener on every request, which is how the
+  consent dialog above was found. Neither is wired into the CLI.
 
 - **Flow's agent mode no longer bricks the account for every later run.** On the migrated
   `flow.google.com` host the composer carries an **agent-mode chip**
@@ -4545,7 +4580,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...HEAD
+[0.71.1]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...v0.71.1
 [0.71.0]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/ffroliva/gflow-cli/compare/v0.68.0...v0.69.0

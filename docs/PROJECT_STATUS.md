@@ -4,6 +4,61 @@
 
 ## Current release
 
+**v0.71.1 — alpha.** **Two migrated-host failures stopped blaming the wrong thing — and
+both were found by asking what the app was *saying*, which this driver had never done.**
+
+An account parked in Flow's **agent mode** gained a recovery earlier in this same release
+(#749), but that first cut collapsed three distinct outcomes into one message: the chip was clicked, the chip
+was found and the click was blocked, the chip was clicked and the mode is still on. All three
+read as *"the chip was clicked to leave it … the mode may be pinned"*. So a modal eating the
+click sent the user to toggle a chip that was never the problem, and genuine selector drift
+**after** the mode was successfully left was filed under an account setting the driver had
+already changed — which is to say, not filed at all. `_exit_agent_mode` now returns a
+tri-state, a blocked click raises at once instead of waiting out the recovery window (worst
+case 55 s → 35 s), and a timed-out recovery re-reads `aria-pressed` before choosing between
+*pinned* and *ordinary drift*. `_open_pane` had the same defect one gate later — it guarded
+with `count()`, and agent mode leaves the trigger present-but-`hidden` — so a mode flip
+mid-run escaped as a bare Playwright timeout with no exit code; it waits on **visibility**
+now.
+
+An account's **first upload** on the migrated host failed with *"no maseQ reply within 60s …
+the upload never reached Flow or was dropped"*, and advised re-encoding the image. Neither the
+file nor the network was involved: Flow shows a one-time **"Rights to use this image"**
+confirmation *after* the chooser hands the file over, and sends nothing until a human accepts
+it — so the driver spent its whole budget waiting for a request the page had already declined
+to make. It is detected by **counting** dialogs across the upload rather than matching one:
+the dialog's two buttons carry no ligature and no data attribute, separable only by DOM order,
+and its copy is translated, so no anchor there satisfies the locale rule — whereas *"a dialog
+appeared between the file being chosen and the wait expiring"* is upload-related by
+construction and cannot rot when Angular renames a class. **gflow does not accept it for you,
+and there is no flag to make it**: it affirms that *you* hold the rights to what you upload,
+it is one-off per account, and the path already requires an interactive `gflow auth login`.
+
+The driver also now watches the upload **request**, not just the response, so *"nothing left
+the page"* and *"it left and Flow did not answer"* are no longer the same message. That
+distinction is load-bearing — the second argues for a retry and the first argues against one.
+
+**Three documents were wrong and are corrected, not quietly patched.** `KNOWN_ISSUES.md` said
+this upload dialog affected "the legacy worker, **NOT gflow-cli itself** … workaround: none
+needed" — true of the REST path, false since the migrated driver began using the editor's own
+upload, and it was the entry a user hitting #719 would find and be reassured by.
+`LIVE_VERIFICATION_v0.71.0` labelled the `ci-probe` profile **labs** when it is migrated,
+contradicting v0.70.0 one day earlier; in a repo where "Flow's UI shows X" is not a fact until
+the host is named, that silently re-scoped every conclusion keyed to it — and it helped make a
+credit-based theory for #719 look plausible for four runs. Two `$0` instruments were added to
+settle such things by measurement: a queue reader (Flow's listing is on `Zzl0ze`, not the
+`jwpduf`/`as29s` progress polls) and an upload-wire probe.
+
+Verification: [LIVE_VERIFICATION_v0.71.1](LIVE_VERIFICATION_v0.71.1.md) — the agent-mode
+recovery A/B run twice against a live account, and the consent guard's full six-run chain
+(guard fires → accept → uploads → never asked again). Recorded as **not** verified: #719's
+second failure shape (an upload request that leaves the page and is never answered, ~1 run in
+4 on a consented account) is unfixed and the issue stays open; and the consent guard's firing
+branch is now **unrepeatable** here, because the dialog is one-off and all three available
+accounts have accepted it.
+
+<details><summary>v0.71.0 — <code>character create --voice</code> verified, and two retractions</summary>
+
 **v0.71.0 — alpha.** **`gflow character create --voice` is verified end to end for the first
 time, and two confident wrong diagnoses shipped and were retracted inside this one release.**
 
@@ -40,7 +95,9 @@ Recorded as **not** verified rather than omitted: whether a bound character's vo
 rendered audio (#738). Attachment is proven; application is not, and the blocker is no longer
 credits or account access but retrieval.
 
----
+</details>
+
+<details><summary>v0.70.0 — <code>character create</code> on the migrated host</summary>
 
 **v0.70.0 — alpha.** **`gflow character create` works on the migrated `flow.google.com`
 host — it was never broken there; the driver was not driving.**
@@ -79,6 +136,8 @@ character read back from the backend, `--model` determinism over four alternatin
 the orphan-rollback A/B (1 → 2 entities without the fix, 2 → 2 with it). Recorded as NOT
 verified: the labs.google path for all seven changed anchors, because every account available
 here has been migrated by Google.
+
+</details>
 
 <details><summary>v0.69.0 — i2v on the migrated host, and credits</summary>
 
@@ -174,6 +233,8 @@ install's own `gflow.exe`: **exit 0 both times, venv at PyPI 0.67.0 afterwards**
 carrying the stale-launcher note. Recorded as NOT verified: plain-venv `pip` on Windows,
 macOS / Linux for any manager, a real interactive-terminal screenshot of the panel, and the
 first genuine banner (0.68.0 is the first release after the change).
+
+</details>
 
 <details><summary>v0.67.0 — Flow's migrated flow.google.com host driven for text-to-video</summary>
 
@@ -810,12 +871,13 @@ reporter-verified e2e on macOS).
 
 </details>
 
-</details>
-
 ## Milestone history
 
 | Milestone | Status |
 |---|---|
+| Two migrated-host error paths stop blaming the wrong thing: Flow's agent mode (three distinct outcomes, not one message) and its one-time upload-terms dialog (#749/#752, #719 shape A) | ✅ done (v0.71.1) |
+| `gflow character create --voice` verified end to end for the first time; a credit shortfall reports exit 37; incident bundles no longer blind on the migrated host | ✅ done (v0.71.0) |
+| `gflow character create` driven on the migrated `flow.google.com` host; `--model` made deterministic by chip read-back; spike promoted to Phase 0 of the workflow | ✅ done (v0.70.0) |
 | Read-only credit balance in the CLI and MCP (`gflow credits user` / `list`, `gflow_get_credits`) over a browser-free HTTP path; image-to-video from a local start frame on the migrated `flow.google.com` host (#639 slice 1) | ✅ done (v0.69.0) |
 | `gflow update` self-update through the installing manager (uv tool / pipx / pip), venv-verified outcome; the update notice as a stderr banner; CONTRIBUTING routes contributors and agents through the AGENTS.md lifecycle | ✅ done (v0.68.0) |
 | Flow's migrated `flow.google.com` host driven for text-to-video; the default host for what it can serve (`GFLOW_CLI_FLOW_HOST`) | ✅ done (v0.67.0) |
