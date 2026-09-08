@@ -42,7 +42,7 @@ gflow, version 0.41.0
 
 ## Step 2 — Authenticate
 
-The `--browser chrome` flag is mandatory — Google rejects Playwright's bundled Chromium.
+Use `--browser chrome` — the default `auto` picks the same real Chrome when it is installed, and only this strategy marks the profile as a real-Chrome profile.
 
 ```bash
 gflow auth login --browser chrome
@@ -119,7 +119,7 @@ If something goes wrong on this path, here are the most common errors and exactl
 
 ### AuthBrowserRejectedError (exit 14)
 
-Google rejected Playwright's bundled Chromium as an insecure browser.
+Google's sign-in rejected the login browser for advertising automation (`navigator.webdriver`).
 
 **Fix:** Install Google Chrome from [chrome.com](https://chrome.com), then restart your terminal and run:
 

@@ -601,6 +601,65 @@ class TestInternalChromiumStrategy:
             with pytest.raises(AuthBrowserRejectedError) as excinfo:
                 await strategy.login(profile_dir, headless=False)
 
-        assert "--browser chrome" in excinfo.value.remediation_hint
-        assert "GFLOW_CLI_AUTH_BROWSER=chrome" in excinfo.value.remediation_hint
+        # This used to assert the hint said "--browser chrome" / "GFLOW_CLI_AUTH_BROWSER=chrome",
+        # i.e. "you picked the wrong binary, pick Chrome". The 2026-09-08 spike disproved
+        # that: bundled Chromium signed in fine WITH the anti-automation flags, and real
+        # Chrome was rejected WITHOUT them. Pinning the old advice would have kept a
+        # now-wrong remediation on the one exit code whose whole job is to explain this.
+        # Assert the cause, which is what stays true.
+        hint = excinfo.value.remediation_hint
+        assert hint is not None
+        assert "navigator.webdriver" in hint
+        assert "gflow auth login" in hint
         mock_ctx.close.assert_called_once()
+
+
+class TestRaiseOnCloseDefault:
+    """`raise_on_close` defaults to True, and that default is load-bearing.
+
+    The keyword was added so the chrome strategy could treat a hand-closed window as
+    "fall through to the on-disk probe" rather than an error. `InternalChromiumStrategy`
+    keeps the opposite contract: it has no second probe to fall through to, so a browser
+    closed before the Flow sign-in completes must raise. Nothing pinned that default —
+    flipping it to False left the whole auth suite green while silently turning a failed
+    login into a reported success with no `.gflow_account` written.
+    """
+
+    @pytest.mark.asyncio
+    async def test_closed_before_auth_raises_by_default(self) -> None:
+        from playwright.async_api import Error as PlaywrightError
+
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        page = MagicMock(name="page")
+        page.url = "https://labs.google/fx/tools/flow"
+        page.is_closed = MagicMock(return_value=True)
+        page.request.get = AsyncMock(side_effect=PlaywrightError("Target closed"))
+
+        ctx = MagicMock(name="ctx")
+        ctx.cookies = AsyncMock(return_value=[])
+
+        with pytest.raises(AuthLoginTimeoutError) as excinfo:
+            # No `raise_on_close=` — the default is the thing under test.
+            await poll_session_until_authenticated(ctx, page, 600, "internal")
+
+        assert "closed" in str(excinfo.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_closed_before_auth_returns_none_when_opted_out(self) -> None:
+        from playwright.async_api import Error as PlaywrightError
+
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        page = MagicMock(name="page")
+        page.url = "https://labs.google/fx/tools/flow"
+        page.is_closed = MagicMock(return_value=True)
+        page.request.get = AsyncMock(side_effect=PlaywrightError("Target closed"))
+
+        ctx = MagicMock(name="ctx")
+        ctx.cookies = AsyncMock(return_value=[])
+
+        assert (
+            await poll_session_until_authenticated(ctx, page, 600, "chrome", raise_on_close=False)
+            is None
+        )

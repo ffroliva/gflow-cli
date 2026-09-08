@@ -121,9 +121,22 @@ async def poll_session_until_authenticated(
             raise
         except AuthBrowserRejectedError:
             raise
-        except PlaywrightError:
-            # Browser / page / context closed — stop polling.
-            break
+        except PlaywrightError as exc:
+            # NOT every PlaywrightError means the window is gone. `TimeoutError`
+            # subclasses `Error`, so a 15 s request timeout, a DNS hiccup or a Wi-Fi
+            # reassociation lands here too — and breaking on those made gflow close
+            # Chrome out from under a user still on Google's password screen, then
+            # report exit 8 "No sign-in detected" for a sign-in that had not failed.
+            # Ask the page whether it is actually closed; anything else is transient
+            # and retries until the deadline. (HTTP-level failures never reached this
+            # arm at all: they come back as VERIFICATION_ERROR and keep polling.)
+            if page.is_closed():
+                break
+            logger.warning(
+                "auth_flow_session_poll_error",
+                strategy=strategy_name,
+                error=type(exc).__name__,
+            )
         except Exception as exc:
             logger.warning(
                 "auth_flow_session_poll_error",

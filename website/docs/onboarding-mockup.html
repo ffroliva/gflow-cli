@@ -515,7 +515,7 @@
       <div class="step-label">Authenticate</div>
       <p class="step-desc">A one-time login opens a real Chrome window. Sign in with your Google account and keep going until the Flow editor loads — gflow closes the window for you and verifies the session automatically.</p>
 
-      <p>The <code>--browser chrome</code> flag is mandatory — Google rejects Playwright's bundled Chromium.</p>
+      <p>Use <code>--browser chrome</code> — the default <code>auto</code> picks the same real Chrome when it is installed, and only this strategy marks the profile as a real-Chrome profile.</p>
       <div class="terminal">
         <div class="terminal-header">
           <span class="terminal-dot red"></span>
@@ -625,7 +625,7 @@
   <!-- Error: Chrome not found -->
   <div class="error-card">
     <div class="error-title">AuthBrowserRejectedError (exit 14)</div>
-    <div class="error-detail">Google rejected Playwright's bundled Chromium as an insecure browser.</div>
+    <div class="error-detail">Google's sign-in rejected the login browser for advertising automation (navigator.webdriver).</div>
     <div class="remediation">
       <strong>Fix:</strong> Install Google Chrome from <a href="https://chrome.com">chrome.com</a>, then restart your terminal and run:<br>
       <code>gflow auth login --browser chrome</code>

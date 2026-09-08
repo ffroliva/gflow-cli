@@ -755,8 +755,10 @@ gflow auth login --profile <name> --browser chrome
    way. On a machine where Playwright can't resolve a Chrome channel, login falls back
    automatically to the older flow, where you close the window; nothing to configure either
    way.)
-4. `gflow auth login` probes the profile with `channel="chrome"`, verifies SAPISID is
-   present, and writes `.gflow_browser_strategy = "chrome"` to the profile directory.
+4. `gflow auth login` verifies the saved session — httpx-first, reading the profile's cookie
+   store directly with `browser_cookie3` and only falling back to a Playwright launch if
+   that decryption fails — checks SAPISID is present, and keeps
+   `.gflow_browser_strategy = "chrome"` in the profile directory.
 5. Subsequent `gflow image` / `gflow video` calls will use Chrome to open the profile and
    can decrypt the cookies.
 

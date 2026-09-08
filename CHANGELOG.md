@@ -59,10 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driving only t2v and local-frame i2v, so an image refusal printed a `detail` saying
   t2i/i2i are driven directly above a remediation saying they are not. Both it and the
   class docstring now name the full ported matrix.
-- **`gflow auth login --browser internal` launched the exact browser configuration Google
-  rejects.** The bundled-Chromium path shipped with no anti-automation flags, so
-  `navigator.webdriver` was `true` — measured 2026-09-08 as rejected at
-  `/v3/signin/rejected` 17.5 s into the flow. It now passes
+- **`gflow auth login --browser internal` launched a browser configuration measured as
+  rejected.** The bundled-Chromium path shipped with no anti-automation flags, which leaves
+  `navigator.webdriver` set. On 2026-09-08 a browser in that state — real Chrome with the
+  flags removed — was rejected at `/v3/signin/rejected` 17.5 s into the flow, while the same
+  browser *with* the flags signed in normally. Bundled Chromium was measured only in the
+  flagged configuration, so its unflagged rejection is inferred from the shared signal, not
+  observed directly. It now passes
   `--disable-blink-features=AutomationControlled`, `ignore_default_args=["--enable-automation"]`
   and `chromium_sandbox=True` — the last of which also removes Chrome's cosmetic *"You are
   using an unsupported command-line flag"* banner — and signs in on the real OS window

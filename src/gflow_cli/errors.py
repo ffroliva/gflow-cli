@@ -966,9 +966,10 @@ class AuthBrowserRejectedError(GFlowError):
     problem_type = "https://gflow-cli.dev/errors/auth-browser-rejected"
     title = "Login browser rejected"
     _default_remediation = (
-        "Google rejected Playwright's bundled Chromium as an insecure browser. "
-        "Install Google Chrome and rerun `gflow auth login --browser chrome`, "
-        "or set GFLOW_CLI_AUTH_BROWSER=chrome so future logins use real Chrome."
+        "Google's sign-in rejected this browser for advertising automation "
+        "(navigator.webdriver), not for being Chromium. Re-run `gflow auth login`; "
+        "with Google Chrome installed, the `chrome` strategy retries automatically "
+        "on a path with no automation surface."
     )
 
 

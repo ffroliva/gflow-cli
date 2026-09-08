@@ -50,7 +50,7 @@ by construction, so Codex / Cursor / Aider / `agy` read exactly what Claude Code
 
 ## Headed-browser dependency (architectural reality)
 
-gflow-cli currently drives Flow via a **real Chrome session managed by Playwright** — `ui_automation` transport. Google's auth + reCAPTCHA stack rejects Playwright's bundled Chromium and most headless approaches. This is the project's defining trade-off:
+gflow-cli currently drives Flow via a **real Chrome session managed by Playwright** — `ui_automation` transport. Google's auth + reCAPTCHA stack rejects browsers that advertise automation, and most headless approaches. This is the project's defining trade-off:
 
 - ✅ Works end-to-end against live Google accounts.
 - ❌ Requires a saved Chrome profile, a display server for one-time login, and ~150 MB for Chromium.

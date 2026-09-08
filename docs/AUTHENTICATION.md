@@ -179,7 +179,7 @@ and the profile keeps the name `default`.
 | Value | Browser used | When to use |
 |---|---|---|
 | `auto` (default) | Real Chrome if installed; falls back to internal | First choice for most users |
-| `chrome` | System Google Chrome, driven by Playwright (auto-closes) | Required to bypass "G12" blocks |
+| `chrome` | System Google Chrome, driven by Playwright (auto-closes) | Required for a chrome-strategy profile |
 | `internal` | Playwright's bundled Chromium | Fallback when Chrome isn't installed |
 
 Override with the env var: `GFLOW_CLI_AUTH_BROWSER=chrome gflow auth login`

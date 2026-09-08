@@ -224,7 +224,7 @@ First visible-and-clickable wins. Log:
 |---|---|---|---|
 | `BrowserSessionClosedError` | 15 | Playwright page/context/browser was closed mid-call (translated from `TargetClosedError`) | Recreate `FlowApiClient` via `async with` |
 | `AuthExpiredError` | 3 | Session cookies no longer valid | `gflow auth login --profile <name>` |
-| `AuthBrowserRejectedError` | 14 | Google rejected Playwright's bundled Chromium | Re-login with `--browser chrome` |
+| `AuthBrowserRejectedError` | 14 | Google's sign-in rejected the browser for advertising automation; only the `internal` strategy surfaces it | Re-run `gflow auth login` (default `auto` picks the `chrome` strategy, which retries on a no-automation path) |
 | `AuthLoginTimeoutError` | 12 | User did not finish the OAuth flow in time | Run `gflow auth login` again; raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT` |
 | `TransportTimeoutError` | 9 | A single API call exceeded its timeout | Retry; check Flow status |
 | `WafRejectionError` | 10 | reCAPTCHA / WAF blocked the request | Wait + retry; verify session is healthy |

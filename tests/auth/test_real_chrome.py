@@ -52,7 +52,8 @@ def _build_fake_playwright(
     page_url: str = "https://labs.google/fx/tools/flow",
     webdriver: bool = False,
     launch_error: Exception | None = None,
-    poll_error: Exception | None = None,
+    poll_error: Any = None,
+    page_closed: bool = False,
     order: list[str] | None = None,
     on_poll: Any = None,
 ) -> tuple[MagicMock, MagicMock, MagicMock]:
@@ -65,6 +66,10 @@ def _build_fake_playwright(
     page.url = page_url
     page.goto = AsyncMock()
     page.evaluate = AsyncMock(return_value=webdriver)
+    # Explicit, because a bare MagicMock attribute is TRUTHY: left to autospec,
+    # `page.is_closed()` would report "closed" on every poll and the guard under
+    # test would pass for the wrong reason.
+    page.is_closed = MagicMock(return_value=page_closed)
     page.request.get = AsyncMock(return_value=resp, side_effect=poll_error)
 
     async def _cookies() -> list[dict[str, str]]:
@@ -338,6 +343,58 @@ class TestPlaywrightAutoClose:
         assert fallbacks[0]["reason"] == "channel_unavailable"
 
     @pytest.mark.asyncio
+    async def test_transient_request_failure_does_not_close_the_window(
+        self, tmp_path: Path
+    ) -> None:
+        """A network blip mid-sign-in must not be read as "the user closed it".
+
+        `playwright.async_api.TimeoutError` subclasses `Error`, so a 15 s request
+        timeout, a DNS hiccup or a Wi-Fi reassociation arrives on the same except
+        arm as a genuinely closed target. Treating them alike closed Chrome out
+        from under a user still on Google's password screen and reported exit 8,
+        "No sign-in detected", on a sign-in that had not failed.
+        """
+        from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+        gflow_home, profile_dir = self._home(tmp_path)
+        resp = MagicMock(name="resp")
+        resp.status = 200
+        resp.text = AsyncMock(return_value=AUTHENTICATED_BODY)
+        # Blip on the first poll, real answer on the second. The page stays open
+        # throughout — nobody closed anything.
+        ap, _pw, ctx = _build_fake_playwright(
+            poll_error=[PlaywrightTimeoutError("Request timed out after 15000ms"), resp],
+            page_closed=False,
+        )
+
+        with (
+            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
+                return_value=True,
+            ),
+            patch("gflow_cli.auth.strategies.async_playwright", ap),
+            patch("gflow_cli.auth.real_chrome.asyncio.sleep", AsyncMock()),
+            patch(
+                "gflow_cli.auth.internal_chromium.asyncio.sleep",
+                AsyncMock(),
+            ),
+            patch(
+                "gflow_cli.auth.real_chrome.verify_flow_profile",
+                AsyncMock(return_value=_authenticated_status()),
+            ),
+            capture_logs() as logs,
+        ):
+            mock_settings.return_value.home = gflow_home
+            await RealChromeStrategy().login(profile_dir, headless=False)
+
+        # The poll retried instead of giving up, so the session was detected...
+        assert any(e.get("event") == "auth_login_session_detected" for e in logs)
+        # ...and the run was never mislabelled as a user-initiated close.
+        assert not any(e.get("event") == "auth_login_browser_closed_by_user" for e in logs)
+        ctx.close.assert_awaited()
+
+    @pytest.mark.asyncio
     async def test_headless_never_reaches_the_owned_browser(self, tmp_path: Path) -> None:
         """headless=True takes the subprocess path even when the channel resolves.
 
@@ -470,7 +527,15 @@ class TestPlaywrightAutoClose:
         login that actually succeeded must NOT produce a red error — it falls
         through to verify_flow_profile, which is the authority either way."""
         gflow_home, profile_dir = self._home(tmp_path)
-        ap, _pw, _ctx = _build_fake_playwright(poll_error=PlaywrightError("Target closed"))
+        # `page_closed=True` is the point, not scaffolding: a closed browser really
+        # does leave a closed page behind, and that is now the only thing that ends
+        # the poll. Injecting the error alone described a browser that raised on
+        # every request while insisting it was still open — a state Chrome cannot
+        # actually be in, and one that would now spin to the deadline.
+        ap, _pw, _ctx = _build_fake_playwright(
+            poll_error=PlaywrightError("Target closed"),
+            page_closed=True,
+        )
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
