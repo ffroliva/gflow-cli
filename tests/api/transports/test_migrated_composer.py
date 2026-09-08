@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from structlog.testing import capture_logs
@@ -30,6 +31,7 @@ from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     ConfigurationError,
+    FlowHostMigratedError,
     InsufficientCreditsError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
@@ -2350,3 +2352,154 @@ async def test_an_image_reply_that_never_arrives_is_a_timeout_not_a_hang(
         await MigratedComposer().submit_images_and_observe(
             page, GenerateImageRequest(prompt="a blue cup")
         )
+
+
+# ----------------------------------------------------------------------------------
+# run_images — the migrated image entry point.
+#
+# Every image test mocked this away, so the whole orchestration (guard → project →
+# editor → settings → references → prompt → submit) was reachable only from a live
+# account. That left SonarCloud's new-code coverage under its gate on the merge, and
+# more importantly left the reference chip-count check — the one thing standing
+# between a dropped upload and a T2I result returned as i2i — never executed offline.
+# ----------------------------------------------------------------------------------
+
+
+def _image_page() -> FakePage:
+    """A FakePage on a migrated project, wired for the image axes."""
+    page = FakePage(url="https://flow.google.com/project/p1")
+    page.dom.prompt = "a blue cup"
+    page.dom.models = ["🍌 Nano Banana 2", "🍌 Nano Banana 2 Lite", "🍌 Nano Banana Pro"]
+    page.dom.model_label = "🍌 Nano Banana 2"
+    page.dom.groups["aspect"] = [
+        Radio("crop_16_9", "16:9", checked=True),
+        Radio("crop_landscape", "4:3"),
+        Radio("crop_square", "1:1"),
+        Radio("crop_9_16", "9:16"),
+    ]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), _image_frame())]
+    return page
+
+
+async def test_run_images_drives_the_whole_t2i_path() -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import run_images
+
+    page = _image_page()
+    images = await run_images(page, GenerateImageRequest(prompt="a blue cup"), project_id="p1")
+
+    assert len(images) == 1
+    assert images[0].fife_url.startswith("https://flow-content.google/image/")
+    assert page.dom.submit_clicked == 1
+
+
+async def test_run_images_refuses_an_unported_form_before_touching_the_page() -> None:
+    from gflow_cli.api.image import GenerateImageRequest, ImageRef
+    from gflow_cli.api.transports.migrated_composer import run_images
+
+    page = _image_page()
+    with pytest.raises(FlowHostMigratedError, match="media UUID"):
+        await run_images(
+            page,
+            GenerateImageRequest(prompt="a blue cup", refs=(ImageRef(MEDIA),)),
+            project_id="p1",
+        )
+    assert page.dom.submit_clicked == 0
+    assert page.gotos == []
+
+
+async def test_run_images_without_a_project_is_a_configuration_error() -> None:
+    """A fresh project can only be made through the labs gallery, so the caller must
+    name one. Exit 11, not a mid-run failure after the editor is already mounted.
+    """
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import run_images
+
+    page = _image_page()
+    page.url = "https://flow.google.com/"  # no project id to extract
+    with pytest.raises(ConfigurationError, match="--project"):
+        await run_images(page, GenerateImageRequest(prompt="a blue cup"), project_id=None)
+    assert page.dom.submit_clicked == 0
+
+
+async def test_run_images_refuses_when_a_reference_uploaded_but_never_bound(
+    tmp_path: Path,
+) -> None:
+    """Uploads that do not become mention chips are the silent-degrade-to-T2I case:
+    Flow would accept the submit and bill it, and the caller would get a plausible
+    image that ignored their reference.
+    """
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer, run_images
+
+    ref = tmp_path / "reference.png"
+    ref.write_bytes(b"png")
+    page = _image_page()
+
+    async def _attach(*_: Any, **__: Any) -> tuple[str, ...]:
+        return (MEDIA_UP,)
+
+    async def _no_chips(*_: Any, **__: Any) -> list[str]:
+        return []
+
+    with (
+        patch.object(MigratedComposer, "attach_references", _attach),
+        patch.object(MigratedComposer, "read_chips", _no_chips),
+        pytest.raises(ReferenceNotFoundError, match="mention chip"),
+    ):
+        await run_images(
+            page, GenerateImageRequest(prompt="a blue cup", ref_paths=(ref,)), project_id="p1"
+        )
+    assert page.dom.submit_clicked == 0
+
+
+async def test_a_missing_image_submit_with_a_credits_warning_is_not_drift() -> None:
+    """The image path carries its own copy of the video path's credits check, so it
+    needs its own proof. A drained wallet REPLACES Flow's submit button (#721); calling
+    that selector drift tells the user to file a frontend bug no code change can fix.
+    """
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _image_page()
+    page.dom.submit_anchor_present = False
+    page.dom.credits_warning_present = True
+
+    with pytest.raises(InsufficientCreditsError) as caught:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+    assert page.dom.submit_clicked == 0
+    assert not isinstance(caught.value, UiSelectorDriftError)
+
+
+async def test_a_missing_image_submit_with_no_credits_warning_is_still_drift() -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _image_page()
+    page.dom.submit_anchor_present = False
+    page.dom.credits_warning_present = False
+
+    with pytest.raises(UiSelectorDriftError, match="is missing"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+
+
+async def test_an_image_submit_that_stays_disabled_is_drift_not_a_hang(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "SUBMIT_ENABLE_BUDGET_S", 0.05)
+    monkeypatch.setattr(migrated_composer, "SUBMIT_ENABLE_POLL_S", 0.01)
+    page = _image_page()
+    page.dom.prompt = ""  # nothing in the composer: the button never enables
+
+    with pytest.raises(UiSelectorDriftError, match="stayed disabled"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+    assert page.dom.submit_clicked == 0
