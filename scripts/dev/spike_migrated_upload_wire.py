@@ -46,6 +46,7 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
+from gflow_cli.api.transports import migrated_composer  # noqa: E402
 from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
     UPLOAD_RPC,
     MigratedComposer,
@@ -72,7 +73,9 @@ def _rpcid_of(url: str) -> str | None:
     return (parse_qs(urlsplit(url).query).get("rpcids") or [None])[0]
 
 
-async def _main(profile: str, project_id: str, image: Path | None, out: Path) -> int:
+async def _main(
+    profile: str, project_id: str, image: Path | None, out: Path, accept_terms: bool
+) -> int:
     events: list[dict[str, Any]] = []
     t0 = time.monotonic()
     #: Off during the noisy project load, on for the attach window — where a rpcid that is
@@ -198,6 +201,37 @@ async def _main(profile: str, project_id: str, image: Path | None, out: Path) ->
             }"""
         )
         step("dialog", str(outcome["dialog_controls"])[:400])
+
+        # --- the one-off consent, and ONLY on an explicit instruction -------------------
+        # `--accept-terms` clicks Flow's "I agree". It is off by default and must stay
+        # that way: accepting affirms that the ACCOUNT OWNER holds the rights to what is
+        # being uploaded, which is not a claim a script may make unasked. It exists so the
+        # one-off nature of the dialog can be MEASURED — accept once, upload, then run
+        # again and show it never returns — which is the only way to prove the product
+        # guard is pointing at a real, self-clearing state rather than a permanent wall.
+        if accept_terms and outcome.get("dialog_controls"):
+            buttons = page.locator(f"{migrated_composer.DIALOG} button.flow-button-medium")
+            count = await buttons.count()
+            if count != 2:
+                step("accept", f"expected 2 dialog buttons, saw {count} — NOT clicking")
+                outcome["accept"] = f"skipped: {count} buttons"
+            else:
+                # Cancel first, agree second (confirmed against a screenshot of the live
+                # dialog, and the second is the one Angular focuses).
+                await buttons.last.click(timeout=5_000)
+                await page.wait_for_timeout(2_000)
+                step("accept", "clicked the second (agree) button; retrying the upload")
+                try:
+                    media_id = await composer._upload_via_toolbar(  # noqa: SLF001
+                        page, project_id, image
+                    )
+                    outcome["accept"] = "accepted"
+                    outcome["retry_result"] = f"uploaded {media_id}"
+                    step("retry", f"OK media_id={media_id}")
+                except Exception as exc:  # noqa: BLE001 - a failed retry is the finding
+                    outcome["accept"] = "accepted"
+                    outcome["retry_result"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+                    step("retry", str(outcome["retry_result"]))
         shot = out.with_name(out.stem + "_after.png")
         await page.screenshot(path=str(shot))
         outcome["screenshot"] = shot.name
@@ -233,9 +267,17 @@ def main() -> int:
     parser.add_argument("project_id")
     parser.add_argument("--image", type=Path, default=None, help="defaults to a 1x1 PNG")
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument(
+        "--accept-terms",
+        action="store_true",
+        help=(
+            "click Flow's one-time upload-terms 'I agree' and retry. OFF by default — "
+            "only with the account owner's explicit instruction (see the module docstring)"
+        ),
+    )
     args = parser.parse_args()
     out = args.out or default_out_path("spike_migrated_upload_wire", ".json")
-    return asyncio.run(_main(args.profile, args.project_id, args.image, out))
+    return asyncio.run(_main(args.profile, args.project_id, args.image, out, args.accept_terms))
 
 
 if __name__ == "__main__":
