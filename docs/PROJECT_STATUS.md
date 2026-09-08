@@ -62,6 +62,12 @@ accounts have accepted it.
 **v0.71.0 — alpha.** **`gflow character create --voice` is verified end to end for the first
 time, and two confident wrong diagnoses shipped and were retracted inside this one release.**
 
+**Post-v0.71.0 working tree:** the migrated image slice of #639 is now implemented and
+live-verified. `gflow image t2i` and local-file `gflow image i2i` use the Angular Image
+mode and page-owned `ogiZ0b` wire on moved accounts (Nano Banana 2 / Pro, five aspects,
+counts 1–4); the direct and queued MCP twins share the same payload path. UUID/entity
+references, Agent instructions and Imagen 4 remain intentionally unported on that host.
+
 Before v0.71.0 a repo-wide grep for `--voice` across `tests/e2e/` matched **nothing**. Every
 voice test was a unit test of the hardcoded `VOICES` constant, and the one that looked live
 parsed a fixture — so a voice that silently failed to attach was invisible to the whole suite

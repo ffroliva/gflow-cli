@@ -36,7 +36,9 @@ from gflow_cli.api.transports._common import (
     extract_project_id,
     flow_host_kind,
     generation_error,
+    migrated_route,
     offered_menu_labels,
+    raise_if_migrated,
 )
 from gflow_cli.api.transports.migrated_composer import MENU_ITEM, ModelMenuMatcher
 from gflow_cli.api.transports.ui_automation_video import (
@@ -3003,6 +3005,24 @@ class UiAutomationTransport(VideoGenerationMixin):
                 request, project_id=project_id, name_resolver=name_resolver
             )
 
+    def uses_page_owned_image_recaptcha(
+        self,
+        project_id: str,
+        request: GenerateImageRequest,
+    ) -> bool:
+        """Whether this run will let the migrated page own token mint + submit.
+
+        Kept as a narrow optional transport capability rather than changing every
+        strategy protocol: only UI automation can observe a page-owned request.
+        """
+        del project_id, request
+        if self._page is None:
+            return False
+        from gflow_cli.config import get_settings  # noqa: PLC0415
+
+        route = migrated_route(self._page.url, get_settings().flow_host)
+        return route in {"migrated", "blocked"}
+
     async def _generate_images_locked(
         self,
         request: GenerateImageRequest,
@@ -3018,10 +3038,28 @@ class UiAutomationTransport(VideoGenerationMixin):
         page: Page = self._page  # type: ignore[assignment]  # guard in caller
         out_dir = self._out_dir
 
-        await self._enter_editor(page, out_dir, project_id=project_id)
-        # Dismiss any Flow changelog / "What's new" overlay that may be on top
-        # of the editor before we click into settings / submit (#26).
-        await self._dismiss_blocking_overlays(page, out_dir)
+        from gflow_cli.api.transports.migrated_composer import run_images  # noqa: PLC0415
+        from gflow_cli.config import get_settings  # noqa: PLC0415
+
+        flow_host = get_settings().flow_host
+        route = migrated_route(page.url, flow_host)
+        if route == "labs":
+            await self._enter_editor(page, out_dir, project_id=project_id)
+            # Dismiss any Flow changelog / "What's new" overlay that may be on top
+            # of the editor before we click into settings / submit (#26).
+            await self._dismiss_blocking_overlays(page, out_dir)
+            route = migrated_route(page.url, flow_host)
+        if route == "blocked":
+            raise_if_migrated(page, at="image_flow_host_kill_switch")
+        if route == "migrated":
+            try:
+                return await run_images(page, request, project_id=project_id)
+            finally:
+                try:
+                    await page.goto("about:blank", wait_until="commit", timeout=5_000)
+                    await self._settle_if_redirecting(page)
+                except Exception as exc:  # noqa: BLE001 - parking is best-effort
+                    log.warning("migrated.image_page_park_failed", error=str(exc)[:120])
 
         # Determine the arm this command REQUIRES: explicit --ui-mode / env, or
         # inferred — agent instructions (-i) are an agentic-only surface, so they

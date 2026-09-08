@@ -22,6 +22,9 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
+from gflow_cli.api.image import Aspect as ImageAspect
+from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.transports import migrated_composer
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
@@ -150,6 +153,7 @@ class Dom:
     agent_chip_probe_raises_from: int | None = None
     agent_chip_probes: int = 0
     agent_chip_click_raises: bool = False
+    agent_panel_expanded: bool = False
 
 
 def _default_dom() -> Dom:
@@ -268,6 +272,8 @@ class FakeLocator:
     async def get_attribute(self, name: str) -> str | None:
         if name == "aria-checked" and self.items and isinstance(self.items[0], Radio):
             return "true" if self.items[0].checked else "false"
+        if name == "aria-pressed" and self.kind == "agent_toggle":
+            return "true" if self.page.dom.agent_mode else "false"
         return None
 
     async def text_content(self) -> str | None:
@@ -291,6 +297,10 @@ class FakeLocator:
         target = self.items[0]
         if self.kind == "trigger":
             dom.pane_open = not dom.pane_open
+        elif self.kind == "agent_close":
+            dom.agent_panel_expanded = False
+        elif self.kind == "agent_toggle":
+            dom.agent_mode = not dom.agent_mode
         elif self.kind == "radio":
             if not target.stale:
                 group = next(g for g in dom.groups.values() if target in g)
@@ -505,6 +515,9 @@ class FakePage:
         if css == migrated_composer.AGENT_MODE_CHIP:
             pressed = dom.agent_mode and dom.agent_chip_present
             return FakeLocator(self, "agent_chip", ["chip"] if pressed else [])
+        if css == "flow-agent-panel button":
+            buttons = [Radio("close", "Close")] if dom.agent_panel_expanded else []
+            return FakeLocator(self, "agent_close", buttons)
         if css == TOOLBAR_ADD_XPATH:
             return FakeLocator(self, "toolbar_add", ["add"] if dom.add_button_present else [])
         if css == ".cdk-overlay-pane [role='menuitem']:has(mat-icon:text-is('upload'))":
@@ -690,6 +703,37 @@ async def test_apply_video_settings_selects_each_axis_and_reads_back() -> None:
     assert page.dom.groups["duration"][1].checked  # 6s
     assert page.dom.groups["count"][1].checked  # x2
     assert not page.dom.pane_open  # closed afterwards
+
+
+async def test_apply_image_settings_selects_mode_model_aspect_and_count() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.models = ["🍌 Nano Banana 2", "🍌 Nano Banana 2 Lite", "🍌 Nano Banana Pro"]
+    page.dom.model_label = "🍌 Nano Banana 2 Lite"
+    page.dom.groups["aspect"] = [
+        Radio("crop_16_9", "16:9"),
+        Radio("crop_landscape", "4:3"),
+        Radio("crop_square", "1:1", checked=True),
+        Radio("crop_portrait", "3:4"),
+        Radio("crop_9_16", "9:16"),
+    ]
+
+    await MigratedComposer().apply_image_settings(
+        page,
+        GenerateImageRequest(
+            prompt="a crane",
+            model=ImageModel.NARWHAL,
+            aspect=ImageAspect.PORTRAIT_THREE_FOUR,
+            count=3,
+        ),
+    )
+
+    assert page.dom.groups["mode"][0].checked
+    assert page.dom.model_label == "🍌 Nano Banana 2"
+    assert page.dom.groups["aspect"][3].checked
+    assert page.dom.groups["count"][2].checked
+    assert not page.dom.pane_open
 
 
 async def test_the_submode_follows_the_reference_not_the_mode_name() -> None:
@@ -1459,6 +1503,19 @@ async def test_ensure_editor_skips_navigation_when_already_there() -> None:
     page = FakePage(url="https://flow.google.com/project/p1")
     await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0)
     assert page.gotos == []
+
+
+async def test_ensure_editor_exits_persisted_agent_mode_before_waiting_for_settings() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage(url="https://flow.google.com/project/p1")
+    page.dom.agent_mode = True
+    page.dom.agent_panel_expanded = True
+
+    await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0)
+
+    assert not page.dom.agent_mode
+    assert not page.dom.agent_panel_expanded
 
 
 async def test_ensure_editor_without_trigger_is_selector_drift() -> None:

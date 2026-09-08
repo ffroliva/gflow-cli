@@ -207,7 +207,9 @@ With both fixed, the deep-linked editor binds reliably. See
 - `gflow character rm <id>` → entity delete (capture verb later).
 - Reuse: **`--character <id>` (repeatable → multi-reference)** on `gflow video` → adds
   `referenceEntities:[{entityId}]` to `video:batchAsyncGenerateVideoReferenceImages` (R2V mode, async + poll).
-  Same flag on `gflow image` pending an image-path confirm.
+  Same flag on `gflow image` remains pending on the migrated host: local-file image
+  generation is confirmed, but character/entity binding is intentionally refused until
+  its migrated picker wire is captured.
 
 ## Reuse from PR #123 (kittinan)
 

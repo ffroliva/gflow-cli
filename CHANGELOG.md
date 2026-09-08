@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow image t2i` and local-file `i2i` now run on migrated `flow.google.com`
+  accounts** ([#639](https://github.com/ffroliva/gflow-cli/issues/639)). The Angular
+  composer binds Image mode, Nano Banana 2 / Pro, all five aspect ratios and counts 1–4,
+  then observes the page-owned `ogiZ0b` `batchexecute` reply and returns the same
+  `GeneratedImage` contract as the labs driver. Local references reuse the measured
+  `maseQ` upload + mention path and are verified in the outgoing submit body before the
+  result is trusted. The migrated page owns reCAPTCHA minting, avoiding the root-grid
+  `RecaptchaError`; unsupported UUID/entity/instruction/Imagen-4 forms still fail before
+  submit rather than silently dropping options.
+
 ## [0.71.1] — 2026-09-08
 
 ### Fixed
