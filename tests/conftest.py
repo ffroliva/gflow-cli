@@ -31,6 +31,40 @@ import structlog
 from tests.fixtures.doctor_env import healthy_doctor_env  # noqa: F401
 
 
+def _assert_source_under_test_is_this_tree() -> None:
+    """Fail loudly if ``gflow_cli`` resolves outside the tree these tests live in (#760).
+
+    A git worktree has no ``.venv`` of its own: the venv's editable install pins ``src/``
+    in the PRIMARY checkout. So ``pytest`` run inside a worktree executes the worktree's
+    TESTS against the main checkout's SOURCE — and it fails *open*. A release branch runs
+    its own gates, sees green, and has validated code it is not shipping; a regression on
+    that branch passes, because the other tree's healthy code answered for it.
+
+    Caught during the v0.71.1 release only because one new assertion happened to differ
+    between the two trees. Nothing structural would have caught it, which is why this is a
+    hard error rather than a warning.
+
+    Deliberately narrow: it fires only when a local ``src/gflow_cli`` exists beside these
+    tests AND the import came from somewhere else. Testing an installed wheel — where no
+    local source tree is present — is untouched.
+    """
+    import gflow_cli
+
+    tests_root = Path(__file__).resolve().parent.parent
+    local_src = tests_root / "src" / "gflow_cli"
+    if not local_src.is_dir():
+        return  # no source tree beside the tests: an installed-package run, leave it alone
+    imported = Path(gflow_cli.__file__).resolve().parent
+    if imported == local_src.resolve():
+        return
+    raise pytest.UsageError(
+        f"gflow_cli was imported from {imported}, but these tests live in {tests_root} "
+        f"(which ships {local_src}). The tests would validate the WRONG source tree and "
+        f"pass regardless — see #760. If you are in a git worktree, prefix the run with "
+        f'PYTHONPATH="{tests_root / "src"}".'
+    )
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Stop git from escaping pytest's basetemp into the real clone (#605).
 
@@ -48,6 +82,7 @@ def pytest_configure(config: pytest.Config) -> None:
     (``tmp_path_factory.getbasetemp()``) free to walk out. Any ceiling the
     developer already set is preserved after ours.
     """
+    _assert_source_under_test_is_this_tree()
     basetemp = config.getoption("basetemp", None)
     if basetemp:
         ceilings = [str(Path(basetemp).resolve().parent), os.environ.get("GIT_CEILING_DIRECTORIES")]
