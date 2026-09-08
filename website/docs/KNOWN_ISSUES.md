@@ -687,15 +687,28 @@ This is because Chromium holds an exclusive lock on its SQLite cookie database w
 ---
 
 
-### Flow's first-upload terms-of-use dialog ("Aviso") blocks the worker (worker-only)
+### Flow's one-time upload-terms dialog blocks the FIRST upload on an account
 
-- **Status:** Open · **Severity:** Low · **Affects:** the legacy in-tree Compiled Growth worker, NOT `gflow-cli` itself
+- **Status:** Mitigated · **Severity:** High until accepted (every `i2v --initial-frame` and `r2v --ref` on that account fails) · **Affects:** the migrated `flow.google.com` host, all versions through 0.71.0 · **Tracked:** [#719](https://github.com/ffroliva/gflow-cli/issues/719)
 
-Flow shows a one-time "Aviso" / "Notice" terms-of-use confirmation on the first image upload of a new account session. The legacy Playwright worker has to explicitly click "Concordo" / "Agree". `gflow-cli`'s API-driven path bypasses this dialog entirely (the REST endpoint already implies acceptance).
+Flow shows a one-time **"Rights to use this image"** confirmation the first time an account uploads a file. It renders **after** the file chooser has handed the file over, and Flow sends **nothing** until it is accepted — so the driver waited out its full 60 s budget for an upload request the page had already decided not to make, then reported:
 
-**Workaround in gflow-cli:** none needed.
+```
+MediaUploadRejectedError (exit 27): migrated host: no maseQ reply within 60s of choosing
+the file — the upload never reached Flow or was dropped
+```
 
-**Workaround in legacy worker:** see Compiled Growth's `flow_video.py` consent-dismiss block.
+…and advised re-encoding the image to strip metadata. Neither the file nor the network was ever involved. Measured 2026-09-08 on three profiles, eight runs: the two accounts that had uploaded before never saw the dialog and uploaded fine; the account that never had failed 3/3. See [the spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md).
+
+> **This entry previously said the opposite.** It read *"Affects: the legacy in-tree Compiled Growth worker, NOT `gflow-cli` itself"*, because *"gflow-cli's API-driven path bypasses this dialog entirely (the REST endpoint already implies acceptance)"*, with *"Workaround in gflow-cli: none needed."* That was true of the REST path and became false when the migrated driver started using the editor's **own** upload — so the entry a user hitting #719 would find was reassuring them about the exact thing that was breaking their run.
+
+**Mitigation** (unreleased line, post-v0.71.0): when the upload budget expires, the driver checks whether a dialog opened *during* the upload window and, if so, says so and points the user at the one-time acceptance instead of blaming the file.
+
+**Workaround / how to clear it — once per account, ever:** open the project on `flow.google.com`, upload any image by hand, and accept the dialog. Uploads then work unattended forever.
+
+**gflow does not accept it for you, by design.** The dialog affirms that *you* hold the rights to the content you upload; that is not a claim a tool may make on an account owner's behalf. It is also a 30-second step, once, on a path that already requires an interactive browser login (`gflow auth login`) — so automating it would buy nothing and assert something on your behalf. There is deliberately no config flag: a setting that can never safely default to on, on a once-per-account event, is a flag nobody sets.
+
+**Legacy worker:** Compiled Growth's `flow_video.py` clicks "Concordo" / "Agree" in its own consent-dismiss block. That is a different product decision, recorded here so the two are not confused.
 
 ---
 

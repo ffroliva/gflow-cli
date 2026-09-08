@@ -1011,7 +1011,20 @@ class MigratedComposer:
             if not reply.done():
                 reply.set_result((status, text))
 
+        # The response listener alone cannot tell "the page never asked" from "Flow was
+        # slow" — and those are different bugs with opposite fixes (#719: shape A is a
+        # blocked send, shape B is a lost reply). One boolean splits them at the point of
+        # failure instead of leaving both as one 60 s timeout.
+        sent = False
+
+        def on_request(request: Any) -> None:
+            nonlocal sent
+            url = str(getattr(request, "url", ""))
+            if "batchexecute" in url and _rpcid(url) == UPLOAD_RPC:
+                sent = True
+
         page.on("response", on_response)
+        page.on("request", on_request)
         try:
             add = page.locator(TOOLBAR_ADD).first
             if not await add.count():
@@ -1046,14 +1059,66 @@ class MigratedComposer:
                         f"{FRAME_PICKER_OPEN_S:.0f}s (host=migrated)"
                     ),
                 ) from e
+            # Flow holds an account's FIRST upload behind a one-time "rights to use this
+            # image" confirmation. It renders only once the chooser has handed the file
+            # over — so `_dismiss_dialog`, back in `ensure_editor`, never sees it — and
+            # Flow sends nothing until a human accepts, which is why the wait below used
+            # to expire on a request the page had already declined to make (#719).
+            #
+            # Counted, never matched. The dialog's two buttons are
+            # `button.flow-button-medium` with no ligature and no data attribute,
+            # separable only by DOM order, and its copy is translated — no anchor there
+            # satisfies this module's locale rule. "A dialog appeared between the file
+            # being chosen and the wait expiring" is upload-related by construction: it
+            # needs no selector and cannot rot when Angular renames a class. The baseline
+            # is taken BEFORE `set_files` so an already-open modal is never blamed.
+            #
+            # gflow does not click it: accepting affirms that the ACCOUNT OWNER holds the
+            # rights to the content, which is not a claim a script may make for someone.
+            # Measured 2026-09-08 across 6 runs on ci-probe —
+            # docs/superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md
+            dialogs_before = await page.locator(DIALOG).count()
             await chooser.set_files(str(image_path))
             try:
                 status, text = await asyncio.wait_for(reply, timeout=FRAME_UPLOAD_S)
             except TimeoutError:
+                try:
+                    opened = await page.locator(DIALOG).count() > dialogs_before
+                except Exception:  # noqa: BLE001 - a probe is never the failure it reports
+                    # The likeliest reason no reply came is that the page died or navigated,
+                    # in which case this count raises too. Letting that escape would replace
+                    # a mapped exit 27 and its remediation with an unmapped traceback — the
+                    # #752 lesson, one surface over.
+                    opened = False
+                if opened and not sent:
+                    raise MediaUploadRejectedError(
+                        detail=(
+                            f"migrated host: a dialog opened after the file was chosen and no "
+                            f"{UPLOAD_RPC} request left the page — most likely Flow's one-time "
+                            f"upload-terms confirmation (host=migrated)"
+                        ),
+                        route=route,
+                        remediation_hint=(
+                            "Open the project on flow.google.com, upload any image by hand, "
+                            "and accept the one-time 'rights to use this image' dialog. gflow "
+                            "does not accept it for you: it affirms that YOU hold the rights "
+                            "to what you upload. It appears once per account — after that, "
+                            "uploads work unattended. If you see a different dialog instead "
+                            "(an error, a quota notice, a re-login), that is the one blocking "
+                            "the upload. Nothing was spent; re-run when done."
+                        ),
+                    ) from None
+                # Say which half of #719 this is. `sent` is observed, not inferred: the
+                # request listener above saw the upload leave the page, or it did not.
+                went_out = (
+                    "the request left the page and Flow did not answer in time"
+                    if sent
+                    else "no upload request ever left the page"
+                )
                 raise MediaUploadRejectedError(
                     detail=(
                         f"migrated host: no {UPLOAD_RPC} reply within {FRAME_UPLOAD_S:.0f}s "
-                        "of choosing the file — the upload never reached Flow or was dropped"
+                        f"of choosing the file — {went_out}"
                     ),
                     route=route,
                 ) from None
@@ -1087,6 +1152,7 @@ class MigratedComposer:
             return media_id
         finally:
             page.remove_listener("response", on_response)
+            page.remove_listener("request", on_request)
 
     async def attach_references(
         self, page: Page, project_id: str, paths: tuple[Path, ...]

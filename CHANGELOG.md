@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A blocked first upload no longer reads as a broken file or a broken network.** On the
+  migrated `flow.google.com` host, `video i2v --initial-frame` and `video r2v --ref` failed
+  on an account's **first** upload with `MediaUploadRejectedError` (exit 27) — *"no maseQ
+  reply within 60s of choosing the file — the upload never reached Flow or was dropped"* —
+  and advised re-encoding the image to strip metadata. Neither the file nor the network was
+  involved: Flow shows a one-time **"Rights to use this image"** confirmation *after* the
+  chooser hands the file over, and sends nothing until a human accepts it, so the driver
+  spent its whole budget waiting for a request the page had already declined to make.
+  Measured across 8 runs on 3 profiles — the two accounts that had uploaded before never saw
+  the dialog and uploaded fine, the account that never had failed 3/3, and accepting it once
+  made that account upload on the next run and every run after
+  ([spike](docs/superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md)).
+
+  The driver now counts dialogs across the upload and, when one appeared *during* it, names
+  the one-time confirmation and tells the user to accept it once in a browser. **It is
+  counted rather than matched on purpose:** the dialog's two buttons are
+  `button.flow-button-medium` with no ligature and no data attribute, separable only by DOM
+  order, and its copy is translated — there is no anchor there that satisfies this project's
+  locale rule, whereas "a dialog appeared between the file being chosen and the wait
+  expiring" is upload-related by construction and cannot rot when Angular renames a class.
+
+  **gflow does not accept the dialog for you**, and there is no flag to make it: the dialog
+  affirms that *you* hold the rights to what you upload, it is one-off per account, and the
+  path already requires an interactive `gflow auth login` — so a setting that could never
+  safely default to on would be a flag nobody sets.
+  ([#719](https://github.com/ffroliva/gflow-cli/issues/719))
+
 - **Flow's agent mode no longer bricks the account for every later run.** On the migrated
   `flow.google.com` host the composer carries an **agent-mode chip**
   (`button.agent-mode-chip[aria-pressed]`). Pressed, Flow swaps `flow-prompt-box` for

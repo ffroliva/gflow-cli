@@ -5,8 +5,17 @@
 > Flow for this release, and — just as importantly — what was **not**.
 
 **Date:** 2026-09-07 · **Profiles:** `ffroliva` (migrated `flow.google.com`, 501→ credits),
-`ci-probe` (labs, freemium, **no credit**) · **Host lane matters here**: several items below
-are migrated-host-specific.
+`ci-probe` (**migrated `flow.google.com`**, freemium, **no credit**) · **Host lane matters
+here**: several items below are migrated-host-specific.
+
+> **Host label corrected 2026-09-08.** This line said `ci-probe` was on **labs**, which
+> contradicted [LIVE_VERIFICATION_v0.70.0](LIVE_VERIFICATION_v0.70.0.md) one day earlier and
+> was wrong. Measured: `labs.google/fx/tools/flow` on that profile redirects to
+> `flow.google.com/` — the one-way migration redirect. In a repo where "Flow's UI shows X"
+> is not a fact until the host is named, a mislabelled host in a verification ledger
+> silently re-scopes every conclusion keyed to it — and this one helped make a credit
+> theory look plausible for #719 when the real cause was a one-time consent dialog
+> ([spike](superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md)).
 
 ---
 
