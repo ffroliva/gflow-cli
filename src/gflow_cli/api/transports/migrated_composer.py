@@ -124,25 +124,6 @@ DIALOG = "[role='dialog']"
 # docs/superpowers/spikes/2026-09-07-credit-shortfall-looks-like-selector-drift.md
 CREDITS_WARNING = "button.prompt-warning-button, [aria-label*='Insufficient credits']"
 DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
-#: Flow shows a one-time upload-terms dialog ("rights to use this image") the first time an
-#: account uploads a file on this host. It renders AFTER the file chooser hands the file
-#: over, so `_dismiss_dialog` — which runs back in `ensure_editor` — never sees it, and Flow
-#: does not send the upload until a human accepts it. The driver's `FRAME_UPLOAD_S` wait was
-#: therefore waiting for a request the page had already decided not to make, and reported it
-#: as "the upload never reached Flow", advising the user to re-encode their image (#719).
-#:
-#: **This is detected by COUNTING dialogs across the upload, not by matching one.** Its two
-#: buttons are `button.flow-button-medium` with no ligature and no data attribute, separable
-#: only by DOM order, and its copy is translated — so there is no anchor here that satisfies
-#: this module's locale rule. A dialog that appears between "the file was chosen" and "we
-#: gave up waiting" is upload-related by construction, which needs no selector at all and
-#: cannot rot when Angular renames a class.
-#:
-#: gflow never clicks it. Accepting affirms that the ACCOUNT OWNER holds the rights to the
-#: content being uploaded, which is not a claim a script may make on someone's behalf — and
-#: since it is one-off per account on a path that already requires an interactive browser
-#: login, the manual step costs a user 30 seconds once. Measured 2026-09-08 on ci-probe:
-#: docs/superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md
 
 #: ``YhhmEf`` is the text-to-video submit; ``eb1hJf`` the image-to-video one (a bound
 #: Start chip switches the app between them — 2026-09-05 frames spike).
@@ -1065,9 +1046,24 @@ class MigratedComposer:
                         f"{FRAME_PICKER_OPEN_S:.0f}s (host=migrated)"
                     ),
                 ) from e
-            # Counted BEFORE the file is handed over, so the check after a timeout can ask
-            # the only question that matters: did a dialog appear *during* the upload
-            # window? See UPLOAD_CONSENT_DIALOG for why this is a count and not a selector.
+            # Flow holds an account's FIRST upload behind a one-time "rights to use this
+            # image" confirmation. It renders only once the chooser has handed the file
+            # over — so `_dismiss_dialog`, back in `ensure_editor`, never sees it — and
+            # Flow sends nothing until a human accepts, which is why the wait below used
+            # to expire on a request the page had already declined to make (#719).
+            #
+            # Counted, never matched. The dialog's two buttons are
+            # `button.flow-button-medium` with no ligature and no data attribute,
+            # separable only by DOM order, and its copy is translated — no anchor there
+            # satisfies this module's locale rule. "A dialog appeared between the file
+            # being chosen and the wait expiring" is upload-related by construction: it
+            # needs no selector and cannot rot when Angular renames a class. The baseline
+            # is taken BEFORE `set_files` so an already-open modal is never blamed.
+            #
+            # gflow does not click it: accepting affirms that the ACCOUNT OWNER holds the
+            # rights to the content, which is not a claim a script may make for someone.
+            # Measured 2026-09-08 across 6 runs on ci-probe —
+            # docs/superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md
             dialogs_before = await page.locator(DIALOG).count()
             await chooser.set_files(str(image_path))
             try:
