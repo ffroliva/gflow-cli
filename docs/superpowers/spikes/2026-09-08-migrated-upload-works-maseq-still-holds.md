@@ -70,6 +70,26 @@ a refusal reported as a malfunction.
 https://flow.google.com/about"*. The URL is in the message, which is the only reason this
 was diagnosable at all.
 
+**Followed up the same day, and the landings are distinguishable.** A second $0 navigation
+probe across both profiles:
+
+| Navigation | Lands on |
+|---|---|
+| `ci-probe` → `labs.google/fx/tools/flow` | `accounts.google.com/…/signin/accountchooser` |
+| `ci-probe` → its **own** project on flow.google.com | `flow.google.com/about` |
+| `ffroliva` → its **own** project | `flow.google.com/project/<id>` |
+| `ffroliva` → **`ci-probe`'s** project | `flow.google.com/404?reason=project` |
+
+So `/about` is **not** "you cannot open this project" — that is `404?reason=project`, a
+different URL. `/about` is where a **signed-out** browser lands, which the labs-root
+redirect to the OAuth account chooser confirms independently.
+
+That makes the split concrete: `ci-probe`'s **browser session is dead** while its NextAuth
+token is still good — which is exactly why `auth status` reports verified and `project list`
+returns three projects. The REST lane and the browser lane authenticate differently
+(`flow-session-vs-google-sso-cookie`), and today only the browser lane's failure is
+invisible until a run dies 30 s later calling it selector drift.
+
 ## What this does NOT establish
 
 - **It does not prove #719 was wrong when filed.** It proves the path works *today, on two
@@ -80,14 +100,21 @@ was diagnosable at all.
   or merely travelled with it cannot be answered while the only drained account available
   cannot load the editor. Both funded accounts uploading is consistent with the credit
   theory AND with it being irrelevant.
-- **Nothing about `/about`.** Whether that is a signed-out state, a cohort gate, or a
-  project-access problem is unmeasured. It is a *hypothesis-shaped* observation only.
+- **Why `ci-probe`'s browser session died**, or when. That it *is* signed out is now
+  measured; whether it expired, was evicted, or never survived the last login is not.
+- **Whether `ci-probe` is migrated or labs.** `LIVE_VERIFICATION_v0.70.0` says migrated and
+  `v0.71.0` says labs, one day apart, and a signed-out profile redirects to the account
+  chooser either way — so this probe cannot settle it. It needs re-testing after a login.
 - **No `i2v`/`r2v` generation was run.** Only the upload leg. `_pick_frame_by_name` and the
   submit that follows are untested here, and #719 covers the whole chain.
 
 ## Follow-ups this suggests
 
 1. Name Flow's refusal of an image, instead of `200 without a media id`.
-2. Detect the `/about` landing and say the account cannot open the project on this host,
-   instead of reporting selector drift — the third instance this week of a known state
-   reported as unexplained drift (cf. #721 credits, #749 agent mode).
+2. Read the post-navigation URL and name what it says — `/about` is signed out,
+   `404?reason=project` is no access, anything else is the real thing — instead of
+   reporting selector drift. Third instance this week of a known state reported as
+   unexplained drift (cf. #721 credits, #749 agent mode).
+3. `gflow auth status` reports **verified** for a profile whose browser is signed out. It
+   checks the lane that still works, and the lane generation actually needs is the one that
+   is broken.
