@@ -114,6 +114,20 @@ class Dom:
     chip_bound: bool = False
     dialog_present: bool = False  # a `[role=dialog]` (the changelog modal) on load
     dialog_closed: int = 0
+    # --- #749: Flow's agent mode, measured 2026-09-08 on ffroliva AND denon82 ---------
+    # `button.agent-mode-chip[aria-pressed]` swaps the whole prompt box. Pressed, the
+    # classic `.settings-trigger-button` stays in the DOM but gains a bare `hidden`
+    # (display:none, 0x0), and `flow-creative-agent-prompt-box` + `div.agent-footer-actions`
+    # appear instead. Flow remembers the chip per account, so one click in the browser
+    # breaks every later gflow run. Spike:
+    # docs/superpowers/spikes/2026-09-08-migrated-composer-agent-mode-hides-settings.md
+    agent_mode: bool = False
+    agent_chip_present: bool = True
+    # A chip that will not toggle off. NOT observed on either of our accounts — kept
+    # because the reporter's might pin the mode, and a fix that cannot say "I tried and
+    # the trigger stayed hidden" would report that as ordinary selector drift again.
+    agent_chip_sticks: bool = False
+    agent_chip_clicks: int = 0
 
 
 def _default_dom() -> Dom:
@@ -143,20 +157,43 @@ def _default_dom() -> Dom:
 
 
 class FakeLocator:
-    def __init__(self, page: FakePage, kind: str, items: list[Any]) -> None:
+    def __init__(
+        self,
+        page: FakePage,
+        kind: str,
+        items: list[Any],
+        *,
+        visible: bool | Any = True,
+    ) -> None:
         self.page, self.kind, self.items = page, kind, items
+        #: Present in the DOM but not visible — what a bare `hidden` attribute does
+        #: (#749: the settings trigger in agent mode). `count()` still sees it; a
+        #: `wait_for(state="visible")` must not. Modelling this as absence instead
+        #: would hide the exact distinction the bug turns on.
+        #:
+        #: A CALLABLE here is re-evaluated on every read, because a real Playwright
+        #: locator is lazy: it re-queries the DOM each time, so one held across a click
+        #: that unhides its target then passes. A bool snapshotted at construction made
+        #: the agent-mode recovery look broken when only the fake was.
+        self.visible = visible
+
+    @property
+    def _visible_now(self) -> bool:
+        return bool(self.visible()) if callable(self.visible) else bool(self.visible)
 
     # --- narrowing --------------------------------------------------------
     @property
     def first(self) -> FakeLocator:
-        return FakeLocator(self.page, self.kind, self.items[:1])
+        return FakeLocator(self.page, self.kind, self.items[:1], visible=self.visible)
 
     @property
     def last(self) -> FakeLocator:
-        return FakeLocator(self.page, self.kind, self.items[-1:])
+        return FakeLocator(self.page, self.kind, self.items[-1:], visible=self.visible)
 
     def nth(self, index: int) -> FakeLocator:
-        return FakeLocator(self.page, self.kind, self.items[index : index + 1])
+        return FakeLocator(
+            self.page, self.kind, self.items[index : index + 1], visible=self.visible
+        )
 
     def filter(self, *, has: FakeLocator | None = None, has_text: Any = None) -> FakeLocator:
         items = self.items
@@ -174,7 +211,7 @@ class FakeLocator:
         if has_text is not None:
             pat = has_text if hasattr(has_text, "search") else re.compile(re.escape(str(has_text)))
             items = [i for i in items if pat.search(i.text if isinstance(i, Radio) else str(i))]
-        return FakeLocator(self.page, self.kind, items)
+        return FakeLocator(self.page, self.kind, items, visible=self.visible)
 
     def locator(self, css: str) -> FakeLocator:
         return self.page.locator(css, scope=self)
@@ -184,7 +221,7 @@ class FakeLocator:
         return len(self.items)
 
     async def is_visible(self) -> bool:
-        return bool(self.items)
+        return bool(self.items) and self._visible_now
 
     async def is_enabled(self) -> bool:
         if self.kind == "submit":
@@ -208,7 +245,7 @@ class FakeLocator:
 
     async def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:
         await asyncio.sleep(0)
-        present = bool(self.items)
+        present = bool(self.items) and self._visible_now
         if (state == "hidden") == present:
             msg = f"waiting for {self.kind} to be {state}"
             raise PlaywrightTimeoutError(msg)
@@ -263,6 +300,10 @@ class FakeLocator:
         elif self.kind == "dialog_close":
             dom.dialog_present = False
             dom.dialog_closed += 1
+        elif self.kind == "agent_chip":
+            dom.agent_chip_clicks += 1
+            if not dom.agent_chip_sticks:
+                dom.agent_mode = False
 
 
 class PlaywrightTimeoutError(Exception):
@@ -404,7 +445,17 @@ class FakePage:
     def locator(self, css: str, *, scope: FakeLocator | None = None) -> FakeLocator:
         dom = self.dom
         if css == ".settings-trigger-button":
-            return FakeLocator(self, "trigger", ["trigger"] if dom.trigger_present else [])
+            # In agent mode it is still THERE (count 1) — just `hidden`. The reporter
+            # counted 57 locator matches on an element that never became visible.
+            return FakeLocator(
+                self,
+                "trigger",
+                ["trigger"] if dom.trigger_present else [],
+                visible=lambda: not dom.agent_mode,
+            )
+        if css == migrated_composer.AGENT_MODE_CHIP:
+            pressed = dom.agent_mode and dom.agent_chip_present
+            return FakeLocator(self, "agent_chip", ["chip"] if pressed else [])
         if css == TOOLBAR_ADD_XPATH:
             return FakeLocator(self, "toolbar_add", ["add"] if dom.add_button_present else [])
         if css == ".cdk-overlay-pane [role='menuitem']:has(mat-icon:text-is('upload'))":
@@ -1822,3 +1873,61 @@ async def test_ensure_editor_without_a_dialog_is_unchanged() -> None:
         await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0)
     assert page.dom.dialog_closed == 0
     assert "migrated.dialog_dismissed" not in [e["event"] for e in logs]
+
+
+# --- #749: agent mode hides the settings trigger ----------------------------
+# Measured 2026-09-08 on two accounts: the chip is `button.agent-mode-chip[aria-pressed]`,
+# and pressed it puts a bare `hidden` on `.settings-trigger-button`. Flow remembers it per
+# account, so without this the account is broken for every run until someone clicks the
+# chip back in a browser.
+
+
+async def test_ensure_editor_leaves_agent_mode_before_waiting_for_the_trigger() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    with capture_logs() as logs:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0)
+    assert page.dom.agent_chip_clicks == 1
+    assert not page.dom.agent_mode
+    assert "migrated.agent_mode_exited" in [e["event"] for e in logs]
+
+
+async def test_ensure_editor_does_not_touch_the_chip_in_classic_mode() -> None:
+    """The control. A recovery that fires unconditionally would click the chip INTO
+    agent mode on every healthy run — the same bug, mirrored."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    with capture_logs() as logs:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0)
+    assert page.dom.agent_chip_clicks == 0
+    assert not page.dom.agent_mode
+    assert "migrated.agent_mode_exited" not in [e["event"] for e in logs]
+
+
+async def test_ensure_editor_names_agent_mode_when_the_chip_will_not_toggle_off() -> None:
+    """Not observed on our accounts — but if Flow pins the mode, the user must be told
+    THAT, not "file a frontend-drift bug"."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_chip_sticks = True
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    assert page.dom.agent_chip_clicks == 1
+    assert "agent mode" in str(exc.value).casefold()
+
+
+async def test_ensure_editor_drift_message_does_not_blame_agent_mode_in_classic() -> None:
+    """A trigger missing outright is ordinary drift — the agent-mode wording must not
+    leak onto it, or the next reporter gets sent to the wrong place."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.trigger_present = False
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    assert "agent mode" not in str(exc.value).casefold()
