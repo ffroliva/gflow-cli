@@ -114,6 +114,10 @@ class Dom:
     chip_binds: bool = True  # the option click flips the Start chip to a bound one
     chip_bound: bool = False
     dialog_present: bool = False  # a `[role=dialog]` (the changelog modal) on load
+    #: #719: the one-time upload-terms modal. It appears only once the file has been
+    #: handed over, and Flow sends NOTHING until a human accepts it — so this both
+    #: raises a dialog and withholds the reply, which is the whole shape of the bug.
+    consent_dialog_on_upload: bool = False
     dialog_closed: int = 0
     # --- #749: Flow's agent mode ------------------------------------------------------
     # Pressed, the chip leaves `.settings-trigger-button` in the DOM under a bare `hidden`
@@ -341,6 +345,9 @@ class FakeFileChooser:
     async def set_files(self, files: Any) -> None:
         dom = self.page.dom
         dom.chosen_files.append(str(files))
+        if dom.consent_dialog_on_upload:
+            dom.dialog_present = True
+            return  # ...and no upload request is ever made
         reply = dom.maseq_reply
         if reply == "none":
             return
@@ -1591,6 +1598,53 @@ async def test_attach_is_upload_rejected_when_maseq_does_not_answer(
     assert ei.value.route == "batchexecute:maseQ"
     assert EXIT_CODE_MAP[MediaUploadRejectedError] == 27
     assert page.dom.picked == [] and not page.dom.picker_open
+    # No dialog opened, so this stays the plain timeout — the terms wording must not
+    # leak onto a run where nothing was asked of the user.
+    assert "one-time upload-terms" not in str(ei.value)
+
+
+async def test_attach_names_the_one_time_terms_dialog_when_one_opens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#719 shape A. Flow holds the first upload of an account behind a one-time
+    terms dialog, rendered only AFTER the file is handed over — so `_dismiss_dialog`,
+    which runs back in `ensure_editor`, never sees it, and the driver waited out the
+    full budget for a request the page had already declined to make. The old message
+    said the upload "never reached Flow" and told the user to re-encode their image;
+    it is neither the file nor the network."""
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
+    page = FakePage()
+    page.dom.consent_dialog_on_upload = True
+    with pytest.raises(MediaUploadRejectedError) as ei:
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert "one-time upload-terms" in str(ei.value)
+    assert "rights" in ei.value.remediation_hint
+    # The wrong advice this replaces must not survive on this branch.
+    assert "re-encoding" not in ei.value.remediation_hint
+    assert ei.value.route == "batchexecute:maseQ"
+
+
+async def test_attach_does_not_blame_a_dialog_that_was_already_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control for the guard. It fires on a dialog that appeared DURING the upload,
+    never on one that was already on screen — otherwise a lingering changelog modal
+    (#26) would rewrite every unrelated upload timeout into a terms message and send
+    the user to accept something that was never asked of them."""
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
+    page = FakePage()
+    page.dom.dialog_present = True  # already there before the file is chosen
+    page.dom.maseq_reply = "none"
+    with pytest.raises(MediaUploadRejectedError) as ei:
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert "one-time upload-terms" not in str(ei.value)
+    assert "never reached Flow" in str(ei.value)
 
 
 async def test_attach_is_upload_rejected_on_a_non_200_maseq(tmp_path: Path) -> None:
