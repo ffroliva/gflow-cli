@@ -90,7 +90,6 @@ def test_image_records_parse_the_measured_ogiz0b_shape() -> None:
     assert record.image_url == URL
     assert record.dimensions == (1376, 768)
     assert record.display_name == "Blue cup"
-    assert record.reference_ids == (REFERENCE,)
 
 
 def test_image_records_reject_unknown_envelopes_without_leaking_tokens() -> None:
@@ -103,26 +102,45 @@ def test_image_records_reject_unknown_envelopes_without_leaking_tokens() -> None
     assert info.value.route == "batchexecute:ogiZ0b"
 
 
-def test_migrated_image_capability_is_narrow_and_pre_submit() -> None:
-    from gflow_cli.api.transports.migrated_composer import migrated_image_can_serve
+def test_unported_image_forms_are_named_and_refused_pre_submit() -> None:
+    from gflow_cli.api.transports.migrated_composer import _unported_image_form
 
     local = Path("reference.png")
-    assert migrated_image_can_serve(_request(), PROJECT)
-    assert migrated_image_can_serve(_request(ref_paths=(local,)), PROJECT)
-    assert not migrated_image_can_serve(_request(), None)
-    assert not migrated_image_can_serve(
-        _request(refs=(ImageRef(REFERENCE),)),
-        PROJECT,
+    assert _unported_image_form(_request()) is None
+    assert _unported_image_form(_request(ref_paths=(local,))) is None
+    assert _unported_image_form(_request(refs=(ImageRef(REFERENCE),))) == (
+        "a reference given by Flow media UUID"
     )
-    assert not migrated_image_can_serve(
-        _request(reference_entities=("entity-1",), reference_entity_names=("Hero",)),
-        PROJECT,
+    assert (
+        _unported_image_form(
+            _request(reference_entities=("entity-1",), reference_entity_names=("Hero",)),
+        )
+        == "character references"
     )
-    assert not migrated_image_can_serve(
-        _request(instructions=(AgentInstruction(text="keep it blue"),)),
-        PROJECT,
+    assert (
+        _unported_image_form(_request(instructions=(AgentInstruction(text="keep it blue"),)))
+        == "Agent instructions"
     )
-    assert not migrated_image_can_serve(_request(model=Model.IMAGEN_3_5), PROJECT)
+    assert _unported_image_form(_request(model=Model.IMAGEN_3_5)) is not None
+
+
+def test_only_the_measured_aspects_are_offered_and_three_four_is_refused() -> None:
+    """3:4 has no radio in the enumerated aspect row, so it must be refused as an
+    unported form (exit 36) — never left to miss its selector and surface as
+    UiSelectorDriftError (exit 23), which tells the user to file a frontend bug
+    about a frontend that is behaving correctly.
+    """
+    from gflow_cli.api.transports.migrated_composer import (
+        IMAGE_ASPECT_LIGATURE_MEASURED,
+        _unported_image_form,
+    )
+
+    for aspect in IMAGE_ASPECT_LIGATURE_MEASURED:
+        assert _unported_image_form(_request(aspect=aspect)) is None, aspect
+    assert Aspect.PORTRAIT_THREE_FOUR not in IMAGE_ASPECT_LIGATURE_MEASURED
+    refusal = _unported_image_form(_request(aspect=Aspect.PORTRAIT_THREE_FOUR))
+    assert refusal is not None
+    assert "aspect" in refusal
 
 
 def test_image_submit_body_requires_every_uploaded_reference() -> None:
@@ -148,9 +166,7 @@ class _PageOwnedImageTransport:
         self.owned = owned
         self.request: GenerateImageRequest | None = None
 
-    def uses_page_owned_image_recaptcha(
-        self, project_id: str, request: GenerateImageRequest
-    ) -> bool:
+    def uses_page_owned_image_recaptcha(self) -> bool:
         return self.owned
 
     async def generate_images(self, **kwargs: Any) -> list[GeneratedImage]:
@@ -263,6 +279,83 @@ def test_page_owned_recaptcha_is_only_selected_for_the_migrated_route(
     transport._page = page  # noqa: SLF001
 
     page.url = f"https://labs.google/fx/en/tools/flow/project/{PROJECT}"
-    assert not transport.uses_page_owned_image_recaptcha(PROJECT, _request())
+    assert not transport.uses_page_owned_image_recaptcha()
     page.url = f"https://flow.google.com/project/{PROJECT}"
-    assert transport.uses_page_owned_image_recaptcha(PROJECT, _request())
+    assert transport.uses_page_owned_image_recaptcha()
+
+
+def test_page_owned_recaptcha_survives_the_post_run_page_park(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SECOND image in one client session must still skip the labs mint.
+
+    Every migrated image run ends by parking the page on ``about:blank``
+    (``_generate_images_locked``), which routes as ``labs``. Deriving the
+    capability from ``page.url`` alone therefore answered ``False`` on the next
+    call, sending it back to ``_mint_recaptcha_token`` on the pooled bootstrap
+    page — the exact ``RecaptchaError`` of #673 that the page-owned mint exists
+    to prevent. Reachable from ``gflow image batch``, which runs every prompt
+    through one ``FlowApiClient`` (``image_batch.py::_run_sequential``), so no
+    single-image test could see it.
+    """
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
+    reset_settings()
+    transport = UiAutomationTransport()
+    page = MagicMock()
+    transport._page = page  # noqa: SLF001
+
+    page.url = f"https://flow.google.com/project/{PROJECT}"
+    assert transport.uses_page_owned_image_recaptcha()
+
+    page.url = "about:blank"
+    assert transport.uses_page_owned_image_recaptcha(), (
+        "the parked page must not read as a labs account on the next generation"
+    )
+
+
+def test_a_never_migrated_transport_does_not_latch_into_the_page_owned_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The latch is one-way, but it must never arm without evidence — otherwise a
+    labs account would stop minting the token it genuinely needs.
+    """
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
+    reset_settings()
+    transport = UiAutomationTransport()
+    page = MagicMock()
+    transport._page = page  # noqa: SLF001
+
+    for url in ("about:blank", f"https://labs.google/fx/en/tools/flow/project/{PROJECT}"):
+        page.url = url
+        assert not transport.uses_page_owned_image_recaptcha(), url
+
+
+async def test_image_batch_is_refused_on_the_migrated_host_before_any_submit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`generate_images_batch` drives labs selectors only. Without this guard it ran
+    them against flow.google.com and died as UiSelectorDriftError (exit 23) — telling
+    the user to file a frontend-drift bug about a frontend that was working. The
+    single-image path had a guard from the start; the batch path had none, and the
+    parity gate could not see it because both are behind the same leaf command.
+    """
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    from gflow_cli.config import reset_settings
+    from gflow_cli.errors import FlowHostMigratedError
+
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
+    reset_settings()
+    transport = UiAutomationTransport()
+    page = MagicMock()
+    page.url = f"https://flow.google.com/project/{PROJECT}"
+    transport._page = page  # noqa: SLF001
+    transport._setup_done = True  # noqa: SLF001
+
+    with pytest.raises(FlowHostMigratedError):
+        await transport.generate_images_batch(prompts=[_request()], jitter_range=(0.0, 0.0))

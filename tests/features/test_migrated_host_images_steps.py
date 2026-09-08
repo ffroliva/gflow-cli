@@ -14,7 +14,10 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import GenerateImageRequest, ImageRef, Model
 from gflow_cli.api.transports.batchexecute import image_records
-from gflow_cli.api.transports.migrated_composer import migrated_image_can_serve
+from gflow_cli.api.transports.migrated_composer import (
+    _image_body_problem,
+    _unported_image_form,
+)
 from tests.api.transports.test_migrated_images import (
     MEDIA,
     PROJECT,
@@ -67,12 +70,24 @@ def _migrated_local_image(image_world: dict[str, Any], tmp_path: Path) -> None:
 
 @when("I request image-to-image with that local image")
 def _request_i2i(image_world: dict[str, Any]) -> None:
+    # Exercise the production guard, not the fixture: `_image_body_problem` is what
+    # decides whether Flow was actually asked for an i2i run, and it is the only
+    # thing standing between "the upload was dropped" and a plausible T2I result
+    # reported as image-to-image.
+    body = f'[["ogiZ0b", "GEM_PIX_2 {REFERENCE}"]]'
     image_world["result"] = image_world["records"][0]
+    image_world["body_problem"] = _image_body_problem(body, (REFERENCE,))
+    image_world["missing_ref_problem"] = _image_body_problem(body, (REFERENCE, MEDIA))
 
 
 @then("the outgoing image request contains the uploaded reference")
 def _i2i_result(image_world: dict[str, Any]) -> None:
-    assert image_world["result"].reference_ids == (REFERENCE,)
+    assert image_world["body_problem"] is None
+    # …and a reference Flow did NOT carry is caught rather than passed off as i2i.
+    problem = image_world["missing_ref_problem"]
+    assert problem is not None
+    assert MEDIA in problem
+    assert image_world["result"].media_id == MEDIA
 
 
 @given("a migrated image request using a Flow media UUID")
@@ -82,7 +97,7 @@ def _uuid_request(image_world: dict[str, Any]) -> None:
 
 @when("generation is requested")
 def _unsupported_request(image_world: dict[str, Any]) -> None:
-    image_world["supported"] = migrated_image_can_serve(image_world["request"], PROJECT)
+    image_world["supported"] = _unported_image_form(image_world["request"]) is None
 
 
 @then("the request is refused before the submit button is clicked")
@@ -94,9 +109,7 @@ class _ImageTransport:
     def __init__(self) -> None:
         self.request: GenerateImageRequest | None = None
 
-    def uses_page_owned_image_recaptcha(
-        self, project_id: str, request: GenerateImageRequest
-    ) -> bool:
+    def uses_page_owned_image_recaptcha(self) -> bool:
         return True
 
     async def generate_images(self, **kwargs: Any) -> list[GeneratedImage]:

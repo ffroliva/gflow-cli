@@ -85,7 +85,7 @@ Load `https://labs.google/fx/tools/flow/project/<id>` in the profile's Chrome an
 | Lands on | Lane | What runs there |
 |---|---|---|
 | `labs.google/fx/…` | **A, full** | everything |
-| `flow.google.com/project/…` | **B, partial** | `video t2v --project`, `video i2v --initial-frame <local file> --project`, and **`video r2v --ref <local file> --project`** (ported in v0.70.0, #683). Everything else — `image`, `character create`, `extend`, `scene create`, `movie run`, r2v by `@Name` or `--reference-entity`, and i2v by media UUID / `@Name` or with `--end-frame` — exits 36 **[CONSTRAINT]** |
+| `flow.google.com/project/…` | **B, partial** | `video t2v --project`, `video i2v --initial-frame <local file> --project`, **`video r2v --ref <local file> --project`** (ported in v0.70.0, #683), `character create` (v0.70.0), and **`image t2i` / `image i2i` with local `--ref` files (#639)**. Everything else — `image batch`, `extend`, `scene create`, `movie run`, r2v by `@Name` or `--reference-entity`, i2v by media UUID / `@Name` or with `--end-frame`, Imagen 4, and the 3:4 image aspect — exits 36 **[CONSTRAINT]** |
 
 Lane B grows as forms are ported, so **confirm the row rather than trusting it**: the
 maintained list is [CONFIGURATION § `GFLOW_CLI_FLOW_HOST`](../../docs/CONFIGURATION.md#gflow_cli_flow_host)

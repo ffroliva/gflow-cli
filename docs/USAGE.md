@@ -184,9 +184,12 @@ Generate 1–4 images from one text prompt, or run a shell-friendly batch of 1�
 prompts through one Flow session/project.
 
 > **Migrated `flow.google.com` accounts (#639):** T2I is supported with Nano Banana 2
-> (`nano2`) and Nano Banana Pro (`nano-pro`), every listed aspect, and count 1–4. The
-> migrated page owns its reCAPTCHA + `ogiZ0b` submit. Imagen 4, Agent instructions and
-> character/entity references remain unavailable on that host and fail before submit.
+> (`nano2`) and Nano Banana Pro (`nano-pro`), the four aspects measured there (`16:9`,
+> `4:3`, `1:1`, `9:16`), and count 1–4. **`--project <id>` is required** — a fresh project
+> can only be created through the labs gallery, so without it the run exits 11. The
+> migrated page owns its reCAPTCHA + `ogiZ0b` submit. Imagen 4, Agent instructions,
+> character/entity references, `3:4` and `image batch` remain unavailable on that host and
+> fail before submit.
 
 ```text
 gflow image t2i PROMPT [PROMPT ...] [OPTIONS]
@@ -328,9 +331,10 @@ A 4-image run with `--out ./logos/` produces:
 Generate 1–4 images by blending a text prompt with one or more reference images. Same flag set as `t2i`, plus a required `--ref` (repeatable).
 
 > **Migrated `flow.google.com` accounts (#639):** local-file `--ref` values are supported
-> and each uploaded media id is verified in the outgoing `ogiZ0b` body. UUID refs,
-> `@Name` / `--reference-entity`, Agent instructions and Imagen 4 remain unavailable on
-> that host and fail before submit rather than silently degrading to T2I.
+> and each uploaded media id is verified in the outgoing `ogiZ0b` body. **`--project <id>`
+> is required here** (exit 11 without it). UUID refs, `@Name` / `--reference-entity`, Agent
+> instructions, Imagen 4 and the `3:4` aspect remain unavailable on that host and fail
+> before submit rather than silently degrading to T2I.
 
 ```text
 gflow image i2i PROMPT --ref PATH_OR_UUID [--ref ...] [OPTIONS]
@@ -1781,7 +1785,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
-| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; and local-file `image i2i`. Image UUID/entity/instruction/Imagen-4 forms remain unsupported. Not selector drift (23) | **Not retryable.** Use one of the supported forms (and `--project` for video), or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
+| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; and local-file `image i2i`. Image UUID/entity/instruction/Imagen-4 forms, `image batch`, and the `3:4` image aspect remain unsupported. Not selector drift (23) | **Not retryable.** Use one of the supported forms — `--project` is required for images as well as video — or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
 | `37` | `InsufficientCreditsError` | The account's balance is short **for the model it asked for**, so Flow **replaced** the submit control with its `Insufficient credits warning` instead of disabling it. Short, not necessarily empty: measured 2026-09-07, an account holding **50** credits requesting `--model veo-quality` (**100**) rendered the warning. Explicitly **not** selector drift (23): reporting it as drift told users to file a frontend bug over a credit shortfall | Check the balance with `gflow credits user`, then pick a cheaper `--model` (`veo-lite` costs 10), top up, or wait for the allowance to reset. Nothing was submitted, so no credit was spent. `gflow image` draws on a separate daily quota and may still work |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 

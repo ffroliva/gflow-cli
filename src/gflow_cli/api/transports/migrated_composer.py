@@ -269,6 +269,10 @@ ASPECT_LIGATURE: dict[Aspect, str] = {
     Aspect.LANDSCAPE: "crop_16_9",
     Aspect.PORTRAIT: "crop_9_16",
 }
+#: Ligature per aspect. Only the four in :data:`IMAGE_ASPECT_LIGATURE_MEASURED`
+#: were observed on the migrated host; ``crop_portrait`` is this driver's guess at
+#: what a 3:4 radio WOULD be called, kept so that adding it later is a one-line
+#: change, and deliberately not reachable until something measures it.
 IMAGE_ASPECT_LIGATURE: dict[ImageAspect, str] = {
     ImageAspect.LANDSCAPE: "crop_16_9",
     ImageAspect.PORTRAIT: "crop_9_16",
@@ -276,6 +280,18 @@ IMAGE_ASPECT_LIGATURE: dict[ImageAspect, str] = {
     ImageAspect.LANDSCAPE_FOUR_THREE: "crop_landscape",
     ImageAspect.PORTRAIT_THREE_FOUR: "crop_portrait",
 }
+
+#: The aspects actually enumerated in the migrated composer's radiogroup —
+#: ``[crop_16_9*, crop_landscape, crop_square, crop_9_16]``, one account,
+#: 2026-09-08 (docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md).
+IMAGE_ASPECT_LIGATURE_MEASURED: frozenset[ImageAspect] = frozenset(
+    {
+        ImageAspect.LANDSCAPE,
+        ImageAspect.PORTRAIT,
+        ImageAspect.SQUARE,
+        ImageAspect.LANDSCAPE_FOUR_THREE,
+    },
+)
 IMAGE_MODEL_MENU_MATCHERS: dict[ImageModel, ModelMenuMatcher] = {
     # Exact enough to exclude the separate "Nano Banana 2 Lite" entry without
     # depending on the decorative banana glyph that precedes both live labels.
@@ -365,10 +381,11 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
 
 def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) -> bool:
     """Can the migrated composer take this request as it stands? Text-to-video, or
-    image-to-video from a **local** start frame, in an existing project, with a model
-    the new host offers (or none). Everything else — an end frame, a frame by UUID or
-    ``@Name``, r2v media, character references, a fresh project, a labs-only model —
-    is not ported yet, so an unmoved account keeps the labs driver for it.
+    image-to-video / reference-to-video from **local** files, in an existing project,
+    with a model the new host offers (or none). Everything else — an end frame, a
+    frame or reference by UUID or ``@Name``, character references, a fresh project,
+    a labs-only model — is not ported yet, so an unmoved account keeps the labs
+    driver for it.
 
     Gated on :data:`VIDEO_MODEL_MENU_LABELS`, not on the wider
     :data:`VIDEO_MODEL_MENU_MATCHERS`: this decides whether to *move* a request off
@@ -392,12 +409,15 @@ def _unported_image_form(request: GenerateImageRequest) -> str | None:
         return "Agent instructions"
     if request.model not in IMAGE_MODEL_MENU_MATCHERS:
         return f"the {request.model.value} model"
+    if request.aspect not in IMAGE_ASPECT_LIGATURE_MEASURED:
+        # The aspect radiogroup was enumerated once on this host and carried four
+        # radios — crop_16_9, crop_landscape, crop_square, crop_9_16 — with no
+        # crop_portrait. Refusing here is the difference between exit 36 ("gflow
+        # has not ported this") and exit 23 ("file a frontend-drift bug"), and the
+        # second is a lie: nothing is drifting. If a later enumeration finds the
+        # radio, move the aspect into the measured map rather than deleting this.
+        return f"the {request.aspect.value} aspect ratio"
     return None
-
-
-def migrated_image_can_serve(request: GenerateImageRequest, project_id: str | None) -> bool:
-    """Whether the measured migrated image path can represent this request safely."""
-    return bool(project_id) and _unported_image_form(request) is None
 
 
 def _exact(label: str) -> re.Pattern[str]:
@@ -1845,6 +1865,10 @@ class MigratedComposer:
                 )
             return result.result()
         finally:
+            # Consume the future's exception even on the paths that never read it
+            # (a route error raised first, a timeout): otherwise asyncio logs
+            # "exception was never retrieved" at GC, in a process that has already
+            # reported a different, correct error. Not a no-op — do not delete.
             if result.done() and not result.cancelled():
                 result.exception()
             page.remove_listener("request", on_request)
@@ -1971,19 +1995,21 @@ async def run_video(
     """The migrated-host twin of the labs ``_generate_video_locked`` tail: same
     inputs, same ``VideoResult``, so recorder, CLI, MCP and worker are untouched.
 
-    t2v, and i2v from a local start frame (uploaded through the editor and bound on
-    the Start chip by file name). An end frame, a frame by UUID / ``@Name`` and r2v
-    are not ported yet; a fresh project can only be created through the labs
-    gallery, so the caller must name one (``--project``).
+    t2v, i2v from a local start frame (uploaded through the editor and bound on the
+    Start chip by file name), and r2v from local ``--ref`` files. An end frame and a
+    frame or reference given by UUID / ``@Name`` are not ported yet; a fresh project
+    can only be created through the labs gallery, so the caller must name one
+    (``--project``).
     """
     unported = _unported_form(request)
     if unported is not None:
         raise FlowHostMigratedError(
             detail=(
                 f"this account's Flow lives on flow.google.com, where gflow drives "
-                f"text-to-video and image-to-video from a local start frame; {unported} "
-                f"is not ported yet (#639) — pass --initial-frame <local file> without "
-                f"an end frame"
+                f"text-to-video, image-to-video from a local start frame, and "
+                f"reference-to-video from local files; {unported} is not ported yet "
+                f"(#639) — pass --initial-frame / --ref as local files, without an "
+                f"end frame"
             ),
         )
     pid = project_id or extract_project_id(page.url)

@@ -2525,7 +2525,7 @@ class FlowApiClient:
                 msg,
             )
         page_owned = getattr(self.transport, "uses_page_owned_image_recaptcha", None)
-        if callable(page_owned) and page_owned(project_id, req):
+        if callable(page_owned) and page_owned():
             # The migrated Angular page mints and submits its own token on ogiZ0b.
             # Minting here first is not only redundant: the pooled bootstrap page is
             # flow.google.com/ (no enterprise.js), while /project/<id> is the page that

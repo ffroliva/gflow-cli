@@ -71,8 +71,9 @@ gflow image t2i "<prompt>" [--model {nano2|nano-pro|image4}] \
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]
 gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out DIR]  # shared project, up to 5 prompts
 # On migrated flow.google.com accounts (#639), t2i and i2i are ported for an
-# existing --project: i2i accepts local --ref files only; UUIDs, @Name/entity
-# references, Imagen 3.5 (image4), and image batch remain labs-only.
+# existing --project (required — exit 11 without it): i2i accepts local --ref
+# files only, aspects 16:9/4:3/1:1/9:16. UUIDs, @Name/entity references, Imagen 4
+# (image4), --aspect 3:4, and image batch are refused there with exit 36.
 
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--out-dir DIR] [--aspect ...]  # --project required on the migrated flow.google.com host (#639); 10s is omni-flash-only

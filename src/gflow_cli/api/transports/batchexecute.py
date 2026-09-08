@@ -84,7 +84,6 @@ class ImageGenerationRecord:
     image_url: str
     dimensions: tuple[int, int]
     display_name: str | None = None
-    reference_ids: tuple[str, ...] = ()
 
 
 def _as_list(node: object) -> list[Any] | None:
@@ -265,13 +264,6 @@ def image_records(rpcid: str, payload: Any) -> list[ImageGenerationRecord]:
             and meta is not None
         ):
             continue
-        nested_ids = {
-            value
-            for sub in _walk_lists(details[15] if len(details) > 15 else None)
-            for value in sub
-            if isinstance(value, str) and _UUID_RE.match(value)
-        }
-        nested_ids.difference_update((media_id, workflow_id, meta[0]))
         records.append(
             ImageGenerationRecord(
                 media_id=media_id,
@@ -282,7 +274,6 @@ def image_records(rpcid: str, payload: Any) -> list[ImageGenerationRecord]:
                 image_url=image_url,
                 dimensions=(width, height),
                 display_name=meta[1],
-                reference_ids=tuple(sorted(nested_ids)),
             )
         )
     if not records:

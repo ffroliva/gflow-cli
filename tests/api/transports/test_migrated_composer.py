@@ -464,7 +464,9 @@ class FakePage:
         self.gotos: list[str] = []
         self._handlers: dict[str, list[Any]] = {"response": [], "request": []}
         self._pending_lig: re.Pattern[str] | None = None
-        self.scripted_responses: list[tuple[str, str]] = []  # fired on submit click
+        # (url, text) or (url, text, http_status) — the status defaults to 200, so an
+        # existing 2-tuple keeps working and a non-200 reply is expressible.
+        self.scripted_responses: list[tuple[str, ...]] = []  # fired on submit click
         self.scripted_request: tuple[str, str] | None = None  # (rpcid, POST body) on submit
 
     async def goto(self, url: str, **_: Any) -> None:
@@ -495,8 +497,9 @@ class FakePage:
                 asyncio.get_event_loop().create_task(
                     _maybe_await(h(FakeRequest(_batch_url(rpcid), body)))
                 )
-        for url, text in self.scripted_responses:
-            self._fire_response(FakeResponse(url, text))
+        for scripted in self.scripted_responses:
+            url, text, *rest = scripted
+            self._fire_response(FakeResponse(url, text, *rest))
 
     def expect_file_chooser(self, **_: Any) -> FakeChooserContext:
         return FakeChooserContext(self)
@@ -2259,3 +2262,91 @@ async def test_ensure_editor_drift_message_does_not_blame_agent_mode_in_classic(
     with pytest.raises(UiSelectorDriftError) as exc:
         await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
     assert "agent mode" not in str(exc.value).casefold()
+
+
+# ----------------------------------------------------------------------------------
+# submit_images_and_observe — the migrated image drive path.
+#
+# These mirror the video `submit_and_observe` cases above against the same FakePage.
+# The path had no offline coverage at all: every image test mocked `run_images` away,
+# so the branches that decide whether a run is TRUSTWORTHY — the route-error listener
+# that refuses to report a text-only generation as i2i, and a non-200 submit — were
+# reachable only from a live account.
+# ----------------------------------------------------------------------------------
+
+
+def _image_frame(reference: str | None = None) -> str:
+    from tests.api.transports.test_migrated_images import image_payload
+
+    return _frame("ogiZ0b", image_payload(reference=reference))
+
+
+async def test_image_submit_decodes_the_ogiz0b_reply() -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_responses = [(_batch_url("ogiZ0b"), _image_frame())]
+
+    images = await MigratedComposer().submit_images_and_observe(
+        page, GenerateImageRequest(prompt="a blue cup")
+    )
+
+    assert len(images) == 1
+    assert images[0].fife_url.startswith("https://flow-content.google/image/")
+    assert images[0].dimensions == (1376, 768)
+    assert page.dom.submit_clicked == 1
+
+
+async def test_an_image_submit_missing_its_reference_is_refused_not_reported_as_i2i() -> None:
+    """The route-error listener is the only thing between a dropped upload and a
+    plausible T2I result handed back as image-to-image. Flow answers 200 either way.
+    """
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    missing = "44444444-4444-4444-8444-444444444444"
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_request = ("ogiZ0b", '[["ogiZ0b", "NARWHAL no-reference-here"]]')
+    page.scripted_responses = [(_batch_url("ogiZ0b"), _image_frame())]
+
+    with pytest.raises(WireFormatError) as info:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=(missing,)
+        )
+    assert missing in str(info.value)
+
+
+async def test_a_non_200_image_submit_is_a_wire_format_error_carrying_the_status() -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_responses = [(_batch_url("ogiZ0b"), "", 500)]
+
+    with pytest.raises(WireFormatError) as info:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+    assert "HTTP 500" in str(info.value)
+
+
+async def test_an_image_reply_that_never_arrives_is_a_timeout_not_a_hang(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "IMAGE_REPLY_BUDGET_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_responses = []  # Flow answers nothing
+
+    with pytest.raises(TransportTimeoutError, match="ogiZ0b"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )

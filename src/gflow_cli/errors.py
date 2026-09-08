@@ -721,8 +721,10 @@ class FlowHostMigratedError(GFlowError):
 
     The migrated frontend is a different build (Angular Material over
     ``batchexecute``): the labs drivers' ligature selectors miss there at once. The
-    migrated composer drives it for text-to-video; every other request still lands
-    here. That is NOT selector rot, and reporting it as
+    migrated composer drives it for text-to-video, image-to-video and
+    reference-to-video from local files, text-to-image, and image-to-image from
+    local files; every other request still lands here. That is NOT selector rot,
+    and reporting it as
     :class:`UiSelectorDriftError` (exit 23, "file a bug about the selector") sent
     operators hunting for the wrong cause.
 
@@ -740,8 +742,10 @@ class FlowHostMigratedError(GFlowError):
     title = "Flow served the migrated flow.google.com frontend"
     _default_remediation = (
         "Google has moved this account's Flow from labs.google to flow.google.com. "
-        "gflow drives that frontend for text-to-video and for image-to-video from a "
-        "local --initial-frame (no end frame, no UUID or @Name frame; --project required) "
+        "gflow drives that frontend for text-to-video, image-to-video from a local "
+        "--initial-frame, reference-to-video from local --ref files, text-to-image, "
+        "and image-to-image from local files (no end frame, no UUID or @Name frame, "
+        "no character entities; --project required) "
         "(GFLOW_CLI_FLOW_HOST=auto, the default, or flow.google.com); you see this "
         "error because GFLOW_CLI_FLOW_HOST=labs.google switched the migrated composer "
         "off, or because this request type is not ported to the migrated host yet. "

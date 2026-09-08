@@ -11,13 +11,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`gflow image t2i` and local-file `i2i` now run on migrated `flow.google.com`
   accounts** ([#639](https://github.com/ffroliva/gflow-cli/issues/639)). The Angular
-  composer binds Image mode, Nano Banana 2 / Pro, all five aspect ratios and counts 1–4,
+  composer binds Image mode, Nano Banana 2 / Pro, the four aspect ratios measured on that
+  host (16:9, 4:3, 1:1, 9:16) and counts 1–4,
   then observes the page-owned `ogiZ0b` `batchexecute` reply and returns the same
   `GeneratedImage` contract as the labs driver. Local references reuse the measured
   `maseQ` upload + mention path and are verified in the outgoing submit body before the
   result is trusted. The migrated page owns reCAPTCHA minting, avoiding the root-grid
   `RecaptchaError`; unsupported UUID/entity/instruction/Imagen-4 forms still fail before
   submit rather than silently dropping options.
+
+- **`gflow image batch` is refused on the migrated host instead of failing as selector
+  drift** ([#639](https://github.com/ffroliva/gflow-cli/issues/639)). The batch path
+  drives labs selectors only; it now raises `FlowHostMigratedError` (exit 36) before any
+  submit, rather than running those selectors against `flow.google.com` and reporting
+  exit 23 — which told the user to file a frontend-drift bug about a frontend that was
+  behaving correctly.
+
+### Fixed
+
+- **The second image in one session no longer falls back to the labs reCAPTCHA mint**
+  ([#673](https://github.com/ffroliva/gflow-cli/issues/673)). Every migrated image run
+  parks its page on `about:blank`, which routes as `labs` — so the page-owned-mint
+  capability, derived from `page.url`, answered `False` on the next call and sent it
+  back to minting on the pooled bootstrap page. The transport now latches the observed
+  host: `gflow image batch`, which runs every prompt through one `FlowApiClient`,
+  generated its first prompt and failed the rest with the exact `RecaptchaError` this
+  release exists to remove.
+- **`--aspect 3:4` is refused on the migrated host rather than reported as selector
+  drift.** The composer's aspect radiogroup was enumerated there with four radios —
+  `crop_16_9`, `crop_landscape`, `crop_square`, `crop_9_16` — and no `crop_portrait`, so
+  a 3:4 request missed its selector and raised exit 23. It is now an unported form
+  (exit 36). The "all five aspect ratios" claim has been corrected to the four measured
+  wherever it appeared.
+- **The exit-36 remediation no longer contradicts the error it accompanies.**
+  `FlowHostMigratedError._default_remediation` still described the migrated host as
+  driving only t2v and local-frame i2v, so an image refusal printed a `detail` saying
+  t2i/i2i are driven directly above a remediation saying they are not. Both it and the
+  class docstring now name the full ported matrix.
 
 ## [0.71.1] — 2026-09-08
 

@@ -954,6 +954,15 @@ class UiAutomationTransport(VideoGenerationMixin):
         self._page: Page | None = None
         self._setup_done: bool = False
         self._owns_playwright: bool = False
+        # Latches once this transport has seen Flow serve the migrated host. The
+        # handoff is a server-assigned per-account boolean applied on every load,
+        # so it does not flip back mid-session — and the image path parks the page
+        # on about:blank after every run, which reads back as `labs`. Without the
+        # latch the SECOND image in one client session mints on the labs path and
+        # dies with the RecaptchaError of #673, i.e. the exact bug the page-owned
+        # mint exists to fix. Reachable from `gflow image batch`, which runs every
+        # prompt through one FlowApiClient (image_batch.py::_run_sequential).
+        self._served_migrated_host: bool = False
         # Cross-process profile lease (D3). Held ONLY on the standalone-context
         # path (setup with page=None), where this transport owns the persistent
         # context. On the shared-page path the caller (FlowApiClient) owns both
@@ -3005,23 +3014,28 @@ class UiAutomationTransport(VideoGenerationMixin):
                 request, project_id=project_id, name_resolver=name_resolver
             )
 
-    def uses_page_owned_image_recaptcha(
-        self,
-        project_id: str,
-        request: GenerateImageRequest,
-    ) -> bool:
+    def uses_page_owned_image_recaptcha(self) -> bool:
         """Whether this run will let the migrated page own token mint + submit.
 
         Kept as a narrow optional transport capability rather than changing every
         strategy protocol: only UI automation can observe a page-owned request.
+
+        Answers from the LATCH as well as the current URL. Reading `page.url`
+        alone was wrong in a way no single-image test could see: every migrated
+        image run ends by parking the page on ``about:blank`` (see
+        ``_generate_images_locked``), which routes as ``labs``, so a second image
+        on one warm client fell back to minting on the labs bootstrap page — the
+        #673 failure this capability exists to prevent.
         """
-        del project_id, request
         if self._page is None:
-            return False
+            return self._served_migrated_host
         from gflow_cli.config import get_settings  # noqa: PLC0415
 
         route = migrated_route(self._page.url, get_settings().flow_host)
-        return route in {"migrated", "blocked"}
+        if route in {"migrated", "blocked"}:
+            self._served_migrated_host = True
+            return True
+        return self._served_migrated_host
 
     async def _generate_images_locked(
         self,
@@ -3049,12 +3063,18 @@ class UiAutomationTransport(VideoGenerationMixin):
             # of the editor before we click into settings / submit (#26).
             await self._dismiss_blocking_overlays(page, out_dir)
             route = migrated_route(page.url, flow_host)
+        if route in {"migrated", "blocked"}:
+            self._served_migrated_host = True
         if route == "blocked":
             raise_if_migrated(page, at="image_flow_host_kill_switch")
         if route == "migrated":
             try:
                 return await run_images(page, request, project_id=project_id)
             finally:
+                # Park off the project so the next borrower of this page does not
+                # inherit a mounted composer. The URL is therefore NOT a reliable
+                # record of which host served us — `_served_migrated_host` above
+                # is, and `uses_page_owned_image_recaptcha` reads that latch.
                 try:
                     await page.goto("about:blank", wait_until="commit", timeout=5_000)
                     await self._settle_if_redirecting(page)
@@ -3274,6 +3294,11 @@ class UiAutomationTransport(VideoGenerationMixin):
             raise RuntimeError(
                 msg,
             )
+        # The batch path drives labs selectors only — `run_images` is the single-image
+        # port. Without this it ran those selectors against flow.google.com and failed
+        # as selector drift (exit 23), blaming a frontend that was fine. Refuse before
+        # any submit so the user gets the non-retryable exit 36 and the real reason.
+        raise_if_migrated(self._page, at="image_batch_unported")
         async with self._generate_lock:
             return await self._generate_images_batch_locked(
                 prompts=prompts,
