@@ -60,4 +60,4 @@ async def test_bootstrap_chooser_absent_account_raises_flow_account_chooser_erro
         await client._handle_account_chooser(page, "recorded@example.com")
 
     assert "recorded@example.com" in str(exc_info.value)
-    assert EXIT_CODE_MAP[FlowAccountChooserError] == 33
+    assert EXIT_CODE_MAP[FlowAccountChooserError] == 38

@@ -1,4 +1,4 @@
-"""Tests for FlowAccountChooserError (exit code 33) and account auto-selection."""
+"""Tests for FlowAccountChooserError (exit code 38) and account auto-selection."""
 
 from __future__ import annotations
 
@@ -29,13 +29,13 @@ def test_flow_account_chooser_error_class_invariants() -> None:
     assert "--account" in err.remediation_hint
 
 
-def test_flow_account_chooser_error_exit_code_33() -> None:
-    """FlowAccountChooserError maps to exit code 33 in EXIT_CODE_MAP."""
+def test_flow_account_chooser_error_exit_code_38() -> None:
+    """FlowAccountChooserError maps to exit code 38 in EXIT_CODE_MAP."""
     err = FlowAccountChooserError(detail="test")
-    assert EXIT_CODE_MAP[FlowAccountChooserError] == 33
-    # Check isinstance walk correctly resolves to 33
+    assert EXIT_CODE_MAP[FlowAccountChooserError] == 38
+    # Check isinstance walk correctly resolves to 38
     code = next(c for cls, c in EXIT_CODE_MAP.items() if isinstance(err, cls))
-    assert code == 33
+    assert code == 38
 
 
 def test_exit_code_map_ordering_with_flow_account_chooser_error() -> None:
@@ -65,7 +65,7 @@ def test_read_account_file_returns_email(tmp_path: Path) -> None:
 def test_auth_login_with_account_mismatch_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """gflow auth login --account asserts against verified session email and fails with exit 33."""
+    """gflow auth login --account asserts against verified session email and fails with exit 38."""
     from click.testing import CliRunner
 
     from gflow_cli.cli import main as cli
@@ -85,7 +85,7 @@ def test_auth_login_with_account_mismatch_raises(
         cli,
         ["auth", "login", "--profile", "test", "--account", "expected@example.com"],
     )
-    assert result.exit_code == 33
+    assert result.exit_code == 38
     assert "Recorded Google account not selectable" in result.output or (
         "does not match" in result.output
     )
