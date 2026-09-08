@@ -75,6 +75,9 @@ def _rpcid_of(url: str) -> str | None:
 async def _main(profile: str, project_id: str, image: Path | None, out: Path) -> int:
     events: list[dict[str, Any]] = []
     t0 = time.monotonic()
+    #: Off during the noisy project load, on for the attach window — where a rpcid that is
+    #: NOT the upload may be the one refusing it, and its body is the only thing that says so.
+    capture_all_bodies = {"on": False}
 
     if image is None:
         image = default_out_path("spike_upload_1px", ".png")
@@ -129,7 +132,7 @@ async def _main(profile: str, project_id: str, image: Path | None, out: Path) ->
             # the same bug as a 200 it can. Body kept only for UPLOAD_RPC, and only as a
             # length, a UUID count and a head — enough to tell "Flow refused this file"
             # from "the reply shape moved", without parking a full payload on disk.
-            if row["rpcid"] == UPLOAD_RPC:
+            if row["rpcid"] == UPLOAD_RPC or capture_all_bodies["on"]:
                 try:
                     text = await response.text()
                 except Exception as exc:  # noqa: BLE001 - an unreadable body IS a finding
@@ -147,6 +150,7 @@ async def _main(profile: str, project_id: str, image: Path | None, out: Path) ->
         await composer.ensure_editor(page, project_id)
         step("editor", "ready; baseline traffic recorded")
         baseline = len(events)
+        capture_all_bodies["on"] = True
 
         outcome: dict[str, Any] = {}
         try:
