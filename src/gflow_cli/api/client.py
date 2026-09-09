@@ -789,7 +789,7 @@ class FlowApiClient:
         # S1 can share this context rather than opening its own.
         await self._setup_transport()
 
-    async def _handle_account_chooser(self, page: Any, account_email: str | None = None) -> bool:
+    async def _handle_account_chooser(self, page: Page, account_email: str | None = None) -> bool:
         """Select the recorded Google account on accountchooser if encountered (#763).
 
         Returns True if an account was clicked, False if not on chooser.
