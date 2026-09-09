@@ -1019,6 +1019,7 @@ class IncidentRecorder:
         from gflow_cli.errors import (
             AuthExpiredError,
             ContentPolicyError,
+            FlowAccountChooserError,
             GFlowError,
             ProfileLockedError,
         )
@@ -1027,8 +1028,12 @@ class IncidentRecorder:
             return False
         if not isinstance(exc, Exception):
             return False  # cancellation/KeyboardInterrupt/SystemExit are not incidents
-        if isinstance(exc, (ContentPolicyError, AuthExpiredError)):
-            return False  # deterministic operator remediation; DOM adds nothing
+        if isinstance(exc, (ContentPolicyError, AuthExpiredError, FlowAccountChooserError)):
+            # Deterministic operator remediation; DOM adds nothing. The chooser error
+            # additionally fires ONLY while the page is on accounts.google.com, so a
+            # bundle would carry a DOM dump and a full-page screenshot of a Google auth
+            # surface into the artifact users are prompted to attach to GitHub issues.
+            return False
         if isinstance(exc, ProfileLockedError):
             return True  # metadata-only incident
         if isinstance(exc, _capture_triggers()):
@@ -1847,7 +1852,6 @@ def _validate_overlay(raw: dict[str, object]) -> dict[str, object]:
 def _capture_triggers() -> tuple[type[BaseException], ...]:
     from gflow_cli.errors import (
         BrowserSessionClosedError,
-        FlowAccountChooserError,
         FlowAgentUiError,
         FlowAppError,
         FlowHostMigratedError,
@@ -1860,7 +1864,6 @@ def _capture_triggers() -> tuple[type[BaseException], ...]:
     )
 
     return (
-        FlowAccountChooserError,
         FlowAppError,
         FlowAgentUiError,
         # #639: this arm REPLACED UiSelectorDriftError on the migrated frontend.
@@ -1879,7 +1882,6 @@ def _capture_triggers() -> tuple[type[BaseException], ...]:
 
 def _screenshot_triggers() -> tuple[type[BaseException], ...]:
     from gflow_cli.errors import (
-        FlowAccountChooserError,
         FlowAgentUiError,
         FlowAppError,
         FlowHostMigratedError,
@@ -1889,7 +1891,6 @@ def _screenshot_triggers() -> tuple[type[BaseException], ...]:
     )
 
     return (
-        FlowAccountChooserError,
         FlowAppError,
         FlowAgentUiError,
         FlowHostMigratedError,

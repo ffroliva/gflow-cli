@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import structlog
 
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
@@ -103,3 +104,89 @@ def test_auth_login_with_account_match_succeeds(
     )
     assert result.exit_code == 0, result.output
     assert "Session saved" in result.output
+
+
+def test_account_mismatch_event_carries_signal_not_two_identical_tokens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """The mismatch event must say something a log-only operator can act on.
+
+    `redact_sensitive_text` maps EVERY address to the one constant
+    ``<redacted:email>``, so logging `required=` and `held=` through it emitted
+    two identical tokens — the event could not answer the only question it
+    exists for: was a different account held, or none at all? Meanwhile the
+    console prints both addresses in the clear on the very next line, so the
+    redaction bought nothing and cost the field its meaning.
+    """
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main as cli
+
+    async def _mock_login(name: str, browser: str = "auto", headless: bool = False) -> Path:
+        pdir = tmp_path / f"profile_{name}"
+        pdir.mkdir(parents=True, exist_ok=True)
+        (pdir / ".gflow_account").write_text("actual@example.com", encoding="utf-8")
+        return pdir
+
+    monkeypatch.setattr("gflow_cli.auth.login", _mock_login)
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    # The CLI reconfigures structlog on entry, which would replace the capture
+    # processor installed by the fixture and swallow every event.
+    monkeypatch.setattr("gflow_cli.cli.configure_logging", lambda *a, **k: None)
+
+    CliRunner().invoke(
+        cli, ["auth", "login", "--profile", "test", "--account", "expected@example.com"]
+    )
+
+    events = [
+        e for e in install_log_capture.entries if e.get("event") == "auth.account_assert_failed"
+    ]
+    assert events, "a mismatch must be logged"
+    event = events[0]
+
+    identical = [v for v in event.values() if v == "<redacted:email>"]
+    assert len(identical) < 2, f"two identical tokens carry no signal: {event}"
+    assert event["held_recorded"] is True, "must distinguish held-someone-else from held-nothing"
+
+
+class TestAccountFileIsUntrustedInput:
+    """`.gflow_account` is a file on disk, so its content is untrusted.
+
+    It is interpolated into a CSS attribute selector
+    (`[data-email="{email}" i]`). A value containing a double quote produces
+    `[data-email="a"b@x.com" i]`, and `locator.count()` then raises a raw
+    Playwright parse error that escapes `_handle_account_chooser` past every
+    FlowAccountChooserError handler — a generic exit 1, which is the symptom
+    class #763 exists to remove. Guarding the shared reader fixes every caller
+    at once: the chooser raises its own typed "nothing recorded" error, and
+    `gflow auth list` keeps working.
+    """
+
+    def test_a_quote_bearing_value_reads_as_absent(self, tmp_path: Path) -> None:
+        from gflow_cli.profile_store import ACCOUNT_FILE, read_account_file
+
+        (tmp_path / ACCOUNT_FILE).write_text('a"b@x.com', encoding="utf-8")
+        assert read_account_file(tmp_path) is None
+
+    def test_non_utf8_content_reads_as_absent(self, tmp_path: Path) -> None:
+        from gflow_cli.profile_store import ACCOUNT_FILE, read_account_file
+
+        # read_text catches only OSError today, so this raises UnicodeDecodeError
+        # out of every caller — including list_profiles(), breaking `gflow auth
+        # list` for every profile, not just the damaged one.
+        (tmp_path / ACCOUNT_FILE).write_bytes(b"\xff\xfe not utf 8")
+        assert read_account_file(tmp_path) is None
+
+    def test_a_value_with_no_at_sign_reads_as_absent(self, tmp_path: Path) -> None:
+        from gflow_cli.profile_store import ACCOUNT_FILE, read_account_file
+
+        (tmp_path / ACCOUNT_FILE).write_text("truncated-write", encoding="utf-8")
+        assert read_account_file(tmp_path) is None
+
+    def test_an_ordinary_address_still_reads(self, tmp_path: Path) -> None:
+        from gflow_cli.profile_store import ACCOUNT_FILE, read_account_file
+
+        (tmp_path / ACCOUNT_FILE).write_text("me@example.com\n", encoding="utf-8")
+        assert read_account_file(tmp_path) == "me@example.com"

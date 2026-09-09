@@ -34,7 +34,6 @@ from gflow_cli.cli_update import update as _update_command
 from gflow_cli.cli_video import video as _video_group
 from gflow_cli.config import get_settings, warn_if_removed_gemini_key_set
 from gflow_cli.observability import DEBUG_LEVEL, configure_logging
-from gflow_cli.redaction import redact_sensitive_text
 from gflow_cli.update_check import UpdateNotice, maybe_notify_update
 
 logger = structlog.get_logger(__name__)
@@ -299,8 +298,11 @@ def auth_login(profile: str | None, browser: str | None, account: str | None = N
                 held = actual_account or "nothing recorded"
                 logger.warning(
                     "auth.account_assert_failed",
-                    required=redact_sensitive_text(account.strip()),
-                    held=redact_sensitive_text(actual_account) if actual_account else None,
+                    # Not the addresses: redact_sensitive_text maps every address to
+                    # one constant, so those two fields were identical tokens and no
+                    # signal, while the console prints both in the clear below. What
+                    # the event can carry is the distinction it exists to make.
+                    held_recorded=actual_account is not None,
                 )
                 raise FlowAccountChooserError(
                     detail=(

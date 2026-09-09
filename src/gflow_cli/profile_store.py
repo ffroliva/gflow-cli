@@ -351,12 +351,26 @@ def account_locale_for(profile_name: str) -> str | None:
 
 
 def read_account_file(profile_path: Path) -> str | None:
-    """Read the Google account email from the profile's .gflow_account file."""
+    """Read the Google account email from the profile's .gflow_account file.
+
+    The file is untrusted input — a truncated write, a hand edit, a Google
+    display string. Its value is interpolated into a CSS attribute selector
+    (``[data-email="{email}" i]``), where a double quote closes the attribute
+    early and makes ``locator.count()`` raise a raw Playwright parse error that
+    escapes every typed handler as a generic exit 1. Guarding here rather than
+    at the call site fixes every caller at once: the chooser raises its own
+    "nothing recorded" error, and ``list_profiles`` keeps working on a profile
+    whose file is damaged (it decodes as UTF-8, so a non-UTF-8 file otherwise
+    breaks ``gflow auth list`` for every profile, not just the damaged one).
+    """
     account_file = profile_path / ACCOUNT_FILE
     try:
-        return account_file.read_text(encoding="utf-8").strip() or None
-    except OSError:
+        raw = account_file.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
         return None
+    if not raw or "@" not in raw or '"' in raw or any(c.isspace() for c in raw):
+        return None
+    return raw
 
 
 def _last_modified(path: Path) -> datetime | None:

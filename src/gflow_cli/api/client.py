@@ -822,6 +822,19 @@ class FlowApiClient:
         if not is_accounts_host or GOOGLE_REJECTED_BROWSER_ROUTE in url:
             return False
 
+        # Identify a chooser POSITIVELY. The host gate accepts every
+        # accounts.google.com landing, and most are not choosers — the email form, a
+        # password challenge, a consent interstitial — where there is nothing to pick.
+        # Reporting those as a chooser misdirects the operator and changes an exit code
+        # callers branch on: they otherwise reach the transport's 401 and classify as
+        # AuthExpiredError (exit 3). Two independent signals, because each covers the
+        # other's blind spot — Google renaming the path, or a chooser whose rows carry
+        # no data-email. Neither matching means we return False, which is exactly how
+        # this path behaved before the feature existed.
+        on_chooser_path = parts.path.rstrip("/").endswith("accountchooser")
+        if not on_chooser_path and await page.locator("[data-email]").count() == 0:
+            return False
+
         email = read_account_file(self.profile_dir)
         if not email:
             raise FlowAccountChooserError(
@@ -931,13 +944,18 @@ class FlowApiClient:
         )
         # #763: the chooser hop lands through the same post-goto redirect chain as
         # the locale hop, so it is observable only after the settle above.
-        # write_account_locale below runs whenever settle is True — chooser or
-        # not — but only folds a non-None from_url, which a chooser page never
-        # yields, so the on-disk cache is safe. self._account_locale is NOT:
-        # it would carry accounts.google.com's <html lang> for the rest of
-        # the run, so on a click-through it is re-read from the editor below.
+        # BOTH outputs of the first resolve are the chooser's, and both must be
+        # replaced. `self._account_locale` would otherwise carry
+        # accounts.google.com's <html lang> for the rest of the run. `from_url`
+        # is subtler and was wrong: a chooser yields None, and
+        # `next_locale_state(cached="pt", observed=None)` returns PROVISIONAL, so
+        # the fold below wrote a DEMOTION of a committed locale on every chooser
+        # hop (#643's bug class). The post-click resolve holds the editor's real
+        # segment — fold that.
         if await self._handle_account_chooser(self._page):
-            self._account_locale, _ = await self._resolve_account_locale(self._page, settle=False)
+            self._account_locale, from_url = await self._resolve_account_locale(
+                self._page, settle=False
+            )
         if not settle:
             # Kept (not merged into account_locale_state) because field reports key
             # on this event to tell "the settle was skipped" from "it timed out".

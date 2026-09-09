@@ -42,6 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded address whose case differs from Google's rendering still selects its
   row instead of reporting the account as absent.
 
+### Fixed
+
+- **`gflow auth list` no longer fails on a profile whose `.gflow_account` is
+  damaged.** The reader decoded as UTF-8 and caught only `OSError`, so a
+  non-UTF-8 or truncated file raised out of `list_profiles()` and broke the
+  listing for *every* profile, not just the damaged one. The value is also
+  interpolated into a DOM attribute selector, where a stray quote produced an
+  untyped failure; unusable content now reads as "no account recorded", which
+  every caller already handles.
+
 ### Changed
 
 - **`gflow auth login` closes the browser for you.** It drives your real Google Chrome

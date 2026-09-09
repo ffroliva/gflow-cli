@@ -250,3 +250,48 @@ async def test_e2e_chooser_case_insensitive_match_still_refuses_a_superset_row(
             assert "not found among selectable accounts" in str(exc_info.value)
         finally:
             await browser.close()
+
+
+async def test_e2e_signin_page_is_not_reported_as_a_chooser(tmp_path: Path) -> None:
+    """An ordinary expired session must not be misreported as a missing account row.
+
+    The host gate accepts ANY https accounts.google.com landing, so an expired
+    session redirected to the email form — no remembered accounts, nothing to
+    pick — reaches the row lookup, finds nothing, and raises
+    FlowAccountChooserError: exit 38, "recorded account was not found among
+    selectable accounts". Two things are wrong with that. It asserts a chooser
+    listing other accounts when there is no chooser at all, pointing the operator
+    at the wrong remediation; and it *changes an exit code callers branch on* —
+    this path previously continued to the transport's HTTP 401 and surfaced as
+    AuthExpiredError (exit 3), which is also deliberately excluded from incident
+    capture. Scripts keyed on exit 3 for re-auth would silently stop matching.
+
+    A chooser is identified structurally, by having account rows at all — not by
+    its URL, which is Google's to change. Same discipline as the host gate:
+    parse, never pattern-match a label.
+    """
+    profile = tmp_path / "profile_e2e"
+    profile.mkdir()
+    (profile / ACCOUNT_FILE).write_text(f"{ACCOUNT}\n", encoding="utf-8")
+
+    signin_form = """<!doctype html>
+<html><body>
+  <form><input type="email" name="identifier"><button>Next</button></form>
+</body></html>"""
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await (await browser.new_context()).new_page()
+            await _serve(page, signin_form)
+            await page.goto(
+                "https://accounts.google.com/v3/signin/identifier?continue=flow",
+                wait_until="domcontentloaded",
+            )
+
+            client = FlowApiClient(profile_dir=profile)
+            # False = "not a chooser", so the caller carries on and the real
+            # auth failure classifies itself downstream.
+            assert await client._handle_account_chooser(page) is False
+        finally:
+            await browser.close()

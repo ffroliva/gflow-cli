@@ -35,7 +35,19 @@ _SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Kept distinct from <redacted:secret>: an address is correlatable PII,
     # not a credential, and operators triage chooser failures by cohort.
     (
-        re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", re.IGNORECASE),
+        # Bounded so a path is not mistaken for an address: `C:/x@y.co/path` and
+        # `/var/x@y.io/cache` are ordinary paths, and this pattern runs on EVERY
+        # persisted error detail, transport snippet and worker payload — the one
+        # artifact left for debugging a failure, where a silent rewrite cannot be
+        # told apart from the original text. The lookbehind rejects a match starting
+        # mid-token or right after a path separator; the lookahead rejects one that
+        # continues into a path segment.
+        re.compile(
+            r"(?<![\w.%+/\\-])"
+            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+            r"(?![\w.-]*[/\\])",
+            re.IGNORECASE,
+        ),
         "<redacted:email>",
     ),
 )
