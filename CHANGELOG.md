@@ -37,7 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gains an optional `--account <email>` option to assert that login authenticates
   as the required account. When the click-through does not reach Flow, the error
   names the URL the session actually landed on, so a Google challenge that needs a
-  human is distinguishable from a click that never navigated.
+  human is distinguishable from a click that never navigated. Account matching is
+  case-insensitive on both tiers, matching `--account`'s own comparison, so a
+  recorded address whose case differs from Google's rendering still selects its
+  row instead of reporting the account as absent.
 
 ### Changed
 

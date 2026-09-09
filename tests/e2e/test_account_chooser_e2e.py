@@ -176,3 +176,77 @@ async def test_e2e_chooser_absent_row_raises_before_any_click(tmp_path: Path) ->
             assert "accounts.google.com" in page.url
         finally:
             await browser.close()
+
+
+async def test_e2e_chooser_matches_recorded_account_case_insensitively(tmp_path: Path) -> None:
+    """A case variant of the recorded address still selects the row.
+
+    `gflow auth login --account` compares case-insensitively (`cli.py`:
+    ``actual_account.lower() != account.strip().lower()``), but the row match is
+    a CSS attribute selector and an exact-text fallback, both case-SENSITIVE, and
+    ``read_account_file`` normalises nothing. So an address recorded in one case
+    and rendered by Google in another passes the `--account` assertion and then
+    misses the row — surfacing as "recorded account was not found among
+    selectable accounts", exit 38, telling the operator to re-login while the
+    account sits right there on the chooser. That is the exact false negative
+    this feature exists to remove.
+
+    Only a real locator engine can settle this: CSS attribute matching is
+    case-sensitive by default and case-insensitive only with the `i` flag, which
+    no mock can model. Zero credits — route interception, as above.
+    """
+    profile = tmp_path / "profile_e2e"
+    profile.mkdir()
+    # Chooser renders ACCOUNT lowercase; the profile records a case variant.
+    recorded = "E2E-Chooser@Example.com"
+    assert recorded.lower() == ACCOUNT, "variant must differ only by case"
+    (profile / ACCOUNT_FILE).write_text(f"{recorded}\n", encoding="utf-8")
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await (await browser.new_context()).new_page()
+            await _serve(page, _chooser_html(MIGRATED_LANDING))
+            await page.goto(CHOOSER_URL, wait_until="domcontentloaded")
+
+            client = FlowApiClient(profile_dir=profile)
+            assert await client._handle_account_chooser(page) is True
+            assert "accounts.google.com" not in page.url
+        finally:
+            await browser.close()
+
+
+async def test_e2e_chooser_case_insensitive_match_still_refuses_a_superset_row(
+    tmp_path: Path,
+) -> None:
+    """Relaxing case must not relax the anti-substring discipline.
+
+    The chooser's loose surfaces ("Remove <email>", "Sign out of <email>") are
+    why the match is exact. A case-insensitive match implemented with an
+    unanchored regex would start selecting those, and clicking "Sign out of" on
+    a real chooser signs the operator out instead of in. Here the ONLY row
+    carrying the address is a superset string, so a correct implementation finds
+    no exact row and raises rather than clicking it.
+    """
+    profile = tmp_path / "profile_e2e"
+    profile.mkdir()
+    (profile / ACCOUNT_FILE).write_text(f"{ACCOUNT}\n", encoding="utf-8")
+
+    superset_only = f"""<!doctype html>
+<html><body>
+  <ul><li><a href="{MIGRATED_LANDING}">Sign out of {ACCOUNT.upper()}</a></li></ul>
+</body></html>"""
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await (await browser.new_context()).new_page()
+            await _serve(page, superset_only)
+            await page.goto(CHOOSER_URL, wait_until="domcontentloaded")
+
+            client = FlowApiClient(profile_dir=profile)
+            with pytest.raises(FlowAccountChooserError) as exc_info:
+                await client._handle_account_chooser(page)
+            assert "not found among selectable accounts" in str(exc_info.value)
+        finally:
+            await browser.close()

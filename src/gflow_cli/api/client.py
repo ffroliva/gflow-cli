@@ -17,6 +17,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -833,10 +834,19 @@ class FlowApiClient:
         # Exact row match only (D3): data-email is the chooser's stable per-account
         # anchor. A substring/text-engine fallback would match "Remove <email>"
         # or "Sign out of <email>" and click a DOM-order-first wrong account.
-        row = page.locator(f'[data-email="{email}"]')
+        # Case-insensitive on BOTH tiers, because `gflow auth login --account`
+        # already compares with `.lower()` and `read_account_file` normalises
+        # nothing: an address recorded in one case and rendered by Google in
+        # another otherwise passes the --account assertion and then misses the
+        # row, raising "not found among selectable accounts" while the account
+        # sits on the chooser. CSS attribute matching is case-sensitive unless
+        # the `i` flag is given; the text fallback stays ANCHORED so relaxing
+        # case does not start matching "Remove <email>" / "Sign out of <email>"
+        # — clicking those signs the operator out instead of in.
+        row = page.locator(f'[data-email="{email}" i]')
         count = await row.count()
         if count == 0:
-            row = page.get_by_text(email, exact=True)
+            row = page.get_by_text(re.compile(rf"^{re.escape(email)}$", re.IGNORECASE))
             count = await row.count()
 
         if count == 0:

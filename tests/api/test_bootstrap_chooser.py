@@ -49,8 +49,10 @@ async def test_bootstrap_detects_chooser_and_autoselects_account(tmp_path: Path)
 
     res = await client._handle_account_chooser(page)
     assert res is True
-    # The exact row selector is used, and it is clicked
-    assert page.locator.call_args[0][0] == '[data-email="user@example.com"]'
+    # The exact row selector is used, and it is clicked. The trailing `i` is the CSS
+    # case-insensitivity flag: `--account` compares with `.lower()`, so the row match
+    # must too, or a case variant passes the assert and then misses its row.
+    assert page.locator.call_args[0][0] == '[data-email="user@example.com" i]'
     row.first.click.assert_awaited_once()
     page.wait_for_url.assert_awaited_once()
     # The landing predicate accepts BOTH Flow cohorts and rejects the chooser itself,
@@ -88,7 +90,15 @@ async def test_bootstrap_chooser_absent_account_raises_flow_account_chooser_erro
 
     assert "recorded@example.com" in str(exc_info.value)
     assert EXIT_CODE_MAP[FlowAccountChooserError] == 38
-    page.get_by_text.assert_called_once_with("recorded@example.com", exact=True)
+    # The fallback is an ANCHORED case-insensitive pattern, not `exact=True`. Assert the
+    # anchoring behaviourally rather than by repr: an unanchored relaxation would match
+    # the chooser's "Sign out of <email>" row, and clicking that signs the operator out
+    # instead of in — the precise hazard `exact=True` was there to prevent.
+    page.get_by_text.assert_called_once()
+    pattern = page.get_by_text.call_args[0][0]
+    assert pattern.search("RECORDED@example.com"), "must match a case variant"
+    assert not pattern.search("Sign out of recorded@example.com"), "must refuse a superset"
+    assert not pattern.search("Remove recorded@example.com"), "must refuse a superset"
 
 
 @pytest.mark.asyncio
