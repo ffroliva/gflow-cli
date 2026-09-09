@@ -165,3 +165,23 @@ async def test_bootstrap_rejected_browser_hop_is_not_a_chooser(tmp_path: Path) -
     res = await client._handle_account_chooser(page)
     assert res is False
     page.locator.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_chooser_non_string_url_is_not_a_chooser(
+    tmp_path: Path,
+) -> None:
+    """A mocked page whose url is not a string must not raise (probe totality)."""
+    from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.profile_store import ACCOUNT_FILE
+
+    profile = tmp_path / "profile_p1"
+    profile.mkdir()
+    (profile / ACCOUNT_FILE).write_text("user@example.com\n", encoding="utf-8")
+
+    client = FlowApiClient(profile_dir=profile)
+    page = MagicMock()
+    page.url = MagicMock(name="mock.url")
+
+    assert await client._handle_account_chooser(page) is False
+    page.locator.assert_not_called()

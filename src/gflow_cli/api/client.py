@@ -807,8 +807,16 @@ class FlowApiClient:
         # accounts.google.com in a ?continue= param must not read as a chooser.
         # The rejected-browser hop is not a chooser either and must surface as
         # its own error rather than a missing account.
-        parts = urlsplit(url)
-        host = (parts.hostname or "").lower()
+        # Total by construction (same discipline as flow_host_kind): a probe
+        # error must never displace the real bootstrap failure, and suites
+        # drive this path with mocked pages whose url is not a string.
+        if not isinstance(url, str):
+            return False
+        try:
+            parts = urlsplit(url)
+            host = (parts.hostname or "").lower()
+        except ValueError:
+            return False
         is_accounts_host = parts.scheme == "https" and host == "accounts.google.com"
         if not is_accounts_host or GOOGLE_REJECTED_BROWSER_ROUTE in url:
             return False
