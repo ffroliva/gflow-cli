@@ -13,7 +13,7 @@
 | `gflow image t2i` hangs ≥ 3 min then fails with `TimeoutError` | Re-run with `--verbose` and grep for `batch_response_seen` | [Listener log keys](#listener--http-layer-debugging) |
 | `aspect_ratio_set_failed` warning then wrong-aspect output | The aspect-tab selector cascade missed; capture a DOM snapshot of the gen-settings panel | [Inspecting Flow's live UI](#inspecting-flows-live-ui) |
 | `UnicodeEncodeError: 'charmap' codec can't encode` on Windows | Set `PYTHONUTF8=1` (PowerShell: `$env:PYTHONUTF8="1"`) before any `gflow` invocation | [Windows console](#windows-console-encoding) |
-| `AuthBrowserRejectedError` / exit 14 | Re-login with `--browser chrome` | [`AUTHENTICATION.md`](AUTHENTICATION.md), `/gflow:known-issues` |
+| `AuthBrowserRejectedError` / exit 14 | Re-run `gflow auth login` (the `chrome` strategy retries automatically) | [`AUTHENTICATION.md`](AUTHENTICATION.md), `/gflow:known-issues` |
 | `BrowserSessionClosedError` / exit 15 in a long-lived worker | Recreate the `FlowApiClient` via its async context manager | [Lifecycle errors](#lifecycle--browser-state) |
 | Test suite OOMs / sandbox crashes | Run dirs separately (`tests/api`, `tests/auth tests/cli`, `tests/features`, then the rest with `--ignore`) | [Test suite memory](#test-suite-memory) |
 | New Flow UI label breaks a selector | Add a candidate to `_ASPECT_TAB_CANDIDATES` (or the relevant cascade) and live-verify | [Selector cascades](#selector-cascades) |

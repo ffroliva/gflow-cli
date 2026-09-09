@@ -748,10 +748,41 @@ class TestSessionPollStaysOffTheOAuthHandshake:
         ctx.cookies = AsyncMock(return_value=[{"name": "SAPISID", "value": "x"}])
 
         with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()):
-            email = await poll_session_until_authenticated(ctx, page, 30, "chrome")
+            email = await poll_session_until_authenticated(ctx, page, 5, "chrome")
 
         assert email == "test@example.com"
         page.request.get.assert_awaited()
+
+    @pytest.mark.parametrize(
+        ("url", "safe"),
+        [
+            ("https://labs.google/fx/tools/flow", True),
+            ("https://flow.google.com/project/abc", True),
+            # NextAuth runs the callback on the APP's origin, so a host check alone
+            # sails straight through the one phase this guard exists to protect.
+            ("https://labs.google/fx/api/auth/callback/google?state=S&code=C", False),
+            ("https://labs.google/fx/api/auth/signin?error=OAuthCallback", False),
+            ("https://accounts.google.com/v3/signin/identifier", False),
+            # `urlparse(...).hostname` raises ValueError here; an earlier version let
+            # that escape into the loop's catch-all, which reported "browser closed"
+            # for a browser that was open.
+            ("https://[bad", False),
+            ("about:blank", False),
+        ],
+    )
+    def test_session_probe_is_gated_on_route_not_just_host(self, url: str, safe: bool) -> None:
+        """The probe gate must exclude NextAuth's own auth routes, not only Google's host."""
+        from gflow_cli.auth.internal_chromium import _is_safe_to_probe_session
+
+        page = MagicMock(name="page")
+        page.url = url
+        assert _is_safe_to_probe_session(page) is safe
+
+    def test_session_probe_rejects_a_bare_mock_url(self) -> None:
+        """A bare MagicMock attribute is truthy — it must not read as a Flow host."""
+        from gflow_cli.auth.internal_chromium import _is_safe_to_probe_session
+
+        assert _is_safe_to_probe_session(MagicMock(name="page")) is False
 
     @pytest.mark.asyncio
     async def test_close_during_2fa_is_noticed_immediately(self) -> None:
@@ -814,7 +845,7 @@ class TestSessionPollStaysOffTheOAuthHandshake:
         ctx.cookies = AsyncMock(return_value=[{"name": "SAPISID", "value": "x"}])
 
         with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()):
-            email = await poll_session_until_authenticated(ctx, page, 30, "chrome")
+            email = await poll_session_until_authenticated(ctx, page, 5, "chrome")
 
         assert email == "test@example.com"
         page.request.get.assert_awaited()

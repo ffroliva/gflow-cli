@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 import structlog
 from playwright.async_api import Error as PlaywrightError
@@ -24,17 +24,12 @@ _console = Console()
 GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
 GOOGLE_REJECTED_BROWSER_ROUTE = "accounts.google.com/v3/signin/rejected"
 POLL_INTERVAL_SECONDS = 3
-# Hosts the Flow app itself is served from. The session poll only runs while the page
-# is on one of these — see the comment in poll_session_until_authenticated. Structural
-# (a host, not display text), so it stays locale-invariant.
-#
-# BOTH hosts, not just labs: the labs app `location.replace`s a migrated account onto
-# flow.google.com right after the callback returns, one-way and server-decided per
-# account. Gating on labs alone would send every migrated account back into the exact
-# 600 s timeout this guard was written to fix — the poll would go False on the redirect
-# and never come back. Neither host is an OAuth handshake host, which is all the guard
-# actually needs to exclude.
-FLOW_APP_HOSTS = frozenset({"labs.google", "flow.google.com"})
+# NextAuth mounts its OAuth routes here — callback, signin, and the session endpoint
+# itself. The poll stays off the page while it is on one of them; see
+# `_is_safe_to_probe_session`. Host classification reuses `flow_host_kind`, which already
+# knows both cohorts (labs.google and the migrated flow.google.com), so there is no
+# host set to keep in sync here.
+_NEXTAUTH_ROUTE_PREFIX = "/fx/api/auth/"
 
 
 def login_launch_kwargs(
@@ -121,17 +116,19 @@ async def poll_session_until_authenticated(
             if _is_google_rejected_browser_page(page):
                 raise AuthBrowserRejectedError
 
-            # Do not touch the session endpoint while the browser is away on the
-            # OAuth handshake. `/fx/api/auth/session` is a NextAuth route that can
-            # rotate session cookies, and a poll landing mid-callback can clobber the
-            # `state`/PKCE cookies the callback needs — observed live 2026-09-08 as
+            # Do not touch the session endpoint while a sign-in is in flight.
+            # `/fx/api/auth/session` is a NextAuth route that can rotate session
+            # cookies, and a poll landing mid-callback can clobber the `state`/PKCE
+            # cookies the callback needs — observed live 2026-09-08 as
             # `labs.google/fx/api/auth/signin?error=OAuthCallback`, a sign-in that
-            # failed and then timed out at 600 s. The 2026-09-08 spike, which signed
-            # in successfully twice, never made this request: it read the jar locally
-            # over CDP and issued no HTTP at all during sign-in. Waiting until the
-            # page is back on the Flow host restores that property, and it is what
-            # notebooklm-py does (watch the URL first, read the session after).
-            if not _is_on_flow_host(page):
+            # failed and then timed out at 600 s. The spike that signed in twice
+            # never made this request at all: it read the jar locally over CDP.
+            #
+            # A HOST check alone does not do this. NextAuth's callback runs on the
+            # app's own origin, so `/fx/api/auth/callback/google` passes any
+            # labs.google test — see `_is_safe_to_probe_session`, which excludes the
+            # auth routes as well as the host.
+            if not _is_safe_to_probe_session(page):
                 await asyncio.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
@@ -188,7 +185,7 @@ async def poll_session_until_authenticated(
             )
             break
 
-        await asyncio.sleep(3)
+        await asyncio.sleep(POLL_INTERVAL_SECONDS)
     else:
         msg = f"Flow sign-in not completed within {timeout_seconds}s."
         raise AuthLoginTimeoutError(
@@ -222,17 +219,36 @@ def _is_google_rejected_browser_page(page: object) -> bool:
     return isinstance(url, str) and GOOGLE_REJECTED_BROWSER_ROUTE in url
 
 
-def _is_on_flow_host(page: object) -> bool:
-    """Return True when the page is on a Flow app host, not mid-OAuth on Google's.
+def _is_safe_to_probe_session(page: object) -> bool:
+    """Return True when the session endpoint can be read without disturbing a sign-in.
 
-    ``isinstance(url, str)`` is load-bearing, not defensive: a bare mock attribute is
-    truthy, so without it a test double would report "on the Flow host" and the guard
-    would pass for the wrong reason.
+    Two conditions, and the second is the one a host check alone gets wrong.
+
+    **On a Flow host.** ``flow_host_kind`` is the codebase's existing classifier
+    (``api/transports/_common.py``) rather than a fourth copy of the host set: it
+    requires https, matches the host exactly instead of by substring, and returns
+    ``None`` for a non-str or an unparseable URL. That last part is load-bearing —
+    ``urlparse("https://[bad").hostname`` raises ``ValueError``, which escaped an
+    earlier version of this helper into the loop's catch-all and reported "browser
+    closed" for a browser that was open.
+
+    **Not on NextAuth's own auth routes.** NextAuth runs the OAuth callback on the
+    *app's* origin, so a host test passes straight through it — verified:
+    ``/fx/api/auth/callback/google?state=…&code=…`` and
+    ``/fx/api/auth/signin?error=OAuthCallback`` both satisfy a labs.google host check.
+    Reading ``/fx/api/auth/session`` while that callback is in flight is precisely the
+    cookie-rotation hazard this guard exists to avoid, so excluding only
+    ``accounts.google.com`` excluded the one phase where the callback is NOT running.
     """
+    # Deferred: a module-level import cycles. `_common` reaches `profile_store`, which
+    # imports `gflow_cli.auth` — verified as
+    # "cannot import name 'default_profile_root' from partially initialized module".
+    from gflow_cli.api.transports._common import flow_host_kind
+
     url = getattr(page, "url", "")
-    if not isinstance(url, str):
+    if flow_host_kind(url) is None:
         return False
-    return (urlparse(url).hostname or "").lower() in FLOW_APP_HOSTS
+    return not urlsplit(str(url)).path.startswith(_NEXTAUTH_ROUTE_PREFIX)
 
 
 class InternalChromiumStrategy(AuthStrategy):
