@@ -47,7 +47,7 @@ async def test_bootstrap_detects_chooser_and_autoselects_account(tmp_path: Path)
     # not have, and it hid an inverted check that made every successful click raise.
     page.wait_for_url = AsyncMock(return_value=None)
 
-    res = await client._handle_account_chooser(page, "user@example.com")
+    res = await client._handle_account_chooser(page)
     assert res is True
     # The exact row selector is used, and it is clicked
     assert page.locator.call_args[0][0] == '[data-email="user@example.com"]'
@@ -84,7 +84,7 @@ async def test_bootstrap_chooser_absent_account_raises_flow_account_chooser_erro
     page.get_by_text = MagicMock(return_value=MagicMock(count=AsyncMock(return_value=0)))
 
     with pytest.raises(FlowAccountChooserError) as exc_info:
-        await client._handle_account_chooser(page, "recorded@example.com")
+        await client._handle_account_chooser(page)
 
     assert "recorded@example.com" in str(exc_info.value)
     assert EXIT_CODE_MAP[FlowAccountChooserError] == 38
@@ -116,7 +116,7 @@ async def test_bootstrap_chooser_exact_match_never_clicks_superset_account(
     page.get_by_text = MagicMock(return_value=MagicMock(count=AsyncMock(return_value=0)))
 
     with pytest.raises(FlowAccountChooserError):
-        await client._handle_account_chooser(page, "an@corp.com")
+        await client._handle_account_chooser(page)
     row.first.click.assert_not_awaited()
     page.wait_for_url.assert_not_called()
 
@@ -143,7 +143,7 @@ async def test_bootstrap_chooser_click_no_editor_raises_flow_account_chooser_err
     page.wait_for_url = AsyncMock(side_effect=PlaywrightTimeoutError("timed out"))
 
     with pytest.raises(FlowAccountChooserError) as exc_info:
-        await client._handle_account_chooser(page, "user@example.com")
+        await client._handle_account_chooser(page)
     assert "did not reach Flow" in str(exc_info.value)
     # The Playwright timeout is chained, not swallowed, so the bundle keeps the cause.
     assert isinstance(exc_info.value.__cause__, PlaywrightTimeoutError)
@@ -162,6 +162,6 @@ async def test_bootstrap_rejected_browser_hop_is_not_a_chooser(tmp_path: Path) -
     client = FlowApiClient(profile_dir=profile)
     page, row = _chooser_page("https://accounts.google.com/v3/signin/rejected", row_count=0)
 
-    res = await client._handle_account_chooser(page, "user@example.com")
+    res = await client._handle_account_chooser(page)
     assert res is False
     page.locator.assert_not_called()

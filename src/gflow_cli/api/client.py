@@ -80,6 +80,7 @@ from gflow_cli.api.video import (
     parse_video_status,
 )
 from gflow_cli.api.video_extend import ExtendStarted
+from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_incidents_root
@@ -789,7 +790,7 @@ class FlowApiClient:
         # S1 can share this context rather than opening its own.
         await self._setup_transport()
 
-    async def _handle_account_chooser(self, page: Page, account_email: str | None = None) -> bool:
+    async def _handle_account_chooser(self, page: Page) -> bool:
         """Select the recorded Google account on accountchooser if encountered (#763).
 
         Returns True if an account was clicked, False if not on chooser.
@@ -802,13 +803,17 @@ class FlowApiClient:
         from gflow_cli.profile_store import read_account_file
 
         url = getattr(page, "url", "") or ""
-        # accounts.google.com is a sign-in surface. Anything else is the caller's
-        # page, not a chooser; the rejected-browser hop is not a chooser either
-        # and must surface as its own error rather than a missing account.
-        if "accounts.google.com" not in url or "v3/signin/rejected" in url:
+        # Exact host match, never a substring test: a Flow URL merely carrying
+        # accounts.google.com in a ?continue= param must not read as a chooser.
+        # The rejected-browser hop is not a chooser either and must surface as
+        # its own error rather than a missing account.
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+        is_accounts_host = parts.scheme == "https" and host == "accounts.google.com"
+        if not is_accounts_host or GOOGLE_REJECTED_BROWSER_ROUTE in url:
             return False
 
-        email = account_email or read_account_file(self.profile_dir)
+        email = read_account_file(self.profile_dir)
         if not email:
             raise FlowAccountChooserError(
                 detail=(
@@ -897,11 +902,14 @@ class FlowApiClient:
             self._page, settle=settle
         )
         # #763: the chooser hop lands through the same post-goto redirect chain as
-        # the locale hop, so it is observable only after the settle above. On a
-        # chooser the settle reads <html lang> off accounts.google.com — safe:
-        # write_account_locale runs only on the redirected branch below, which
-        # the chooser never reaches.
-        await self._handle_account_chooser(self._page)
+        # the locale hop, so it is observable only after the settle above.
+        # write_account_locale below runs whenever settle is True — chooser or
+        # not — but only folds a non-None from_url, which a chooser page never
+        # yields, so the on-disk cache is safe. self._account_locale is NOT:
+        # it would carry accounts.google.com's <html lang> for the rest of
+        # the run, so on a click-through it is re-read from the editor below.
+        if await self._handle_account_chooser(self._page):
+            self._account_locale, _ = await self._resolve_account_locale(self._page, settle=False)
         if not settle:
             # Kept (not merged into account_locale_state) because field reports key
             # on this event to tell "the settle was skipped" from "it timed out".

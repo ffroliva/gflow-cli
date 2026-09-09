@@ -77,3 +77,29 @@ def test_auth_login_with_account_mismatch_raises(
     assert "Recorded Google account not selectable" in result.output or (
         "does not match" in result.output
     )
+
+
+def test_auth_login_with_account_match_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """gflow auth login --account passes when verified email matches (success path)."""
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main as cli
+
+    async def _mock_login(name: str, browser: str = "auto", headless: bool = False) -> Path:
+        pdir = tmp_path / f"profile_{name}"
+        pdir.mkdir(parents=True, exist_ok=True)
+        (pdir / ".gflow_account").write_text("actual@example.com", encoding="utf-8")
+        return pdir
+
+    monkeypatch.setattr("gflow_cli.auth.login", _mock_login)
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["auth", "login", "--profile", "test", "--account", "Actual@Example.com"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Session saved" in result.output

@@ -23,8 +23,12 @@ raises `FlowAccountChooserError` (exit 38), NOT `UiSelectorDriftError` (exit 23)
 The chooser is Google-auth UI, not the Flow editor: reporting it as drift would
 tell users to file a frontend bug about a working chooser, and the exit-23
 remediation (attach diagnostics, check for a release) cannot fix a missing
-account row. The miss is evidence about the *recorded account* (absent row,
-signed-out row, bot-rejection hop), so the typed error carries the observed URL
-kind and names `gflow auth login --profile <name>` as the recovery. Precedent:
+account row. The miss is evidence about the *recorded account* (absent row or
+a click-through that never reaches the editor). Each raise site interpolates the
+observed chooser URL verbatim — there is no URL-kind taxonomy. Explicitly out
+of scope: the bot-rejection hop (`.../v3/signin/rejected`) is excluded from the
+chooser gate and surfaces as its own error, never as a missing account.
+Recovery is `gflow auth login --profile <name>` while signed in as the recorded
+account. Precedent:
 exits 36 (`FlowHostMigratedError`) and 37 (`InsufficientCreditsError`) each got
 the same carve-out recorded when introduced.
