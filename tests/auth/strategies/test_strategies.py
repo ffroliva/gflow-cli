@@ -425,6 +425,10 @@ class TestInternalChromiumStrategy:
         # until the 600 s timeout instead of polling once.
         mock_page.url = "https://labs.google/fx/tools/flow"
         mock_page.goto = AsyncMock()
+        # Explicit, because a bare MagicMock attribute is TRUTHY: left unset,
+        # `page.is_closed()` reports "the user already closed the window" on the
+        # first poll and the loop breaks before doing anything under test.
+        mock_page.is_closed = MagicMock(return_value=False)
         mock_page.request.get = AsyncMock(return_value=mock_resp)
 
         mock_ctx = MagicMock(name="ctx")
@@ -499,6 +503,10 @@ class TestInternalChromiumStrategy:
         # until the 600 s timeout instead of polling once.
         mock_page.url = "https://labs.google/fx/tools/flow"
         mock_page.goto = AsyncMock()
+        # Explicit, because a bare MagicMock attribute is TRUTHY: left unset,
+        # `page.is_closed()` reports "the user already closed the window" on the
+        # first poll and the loop breaks before doing anything under test.
+        mock_page.is_closed = MagicMock(return_value=False)
         mock_page.request.get = AsyncMock(return_value=mock_resp)
         mock_ctx = MagicMock(name="ctx")
         mock_ctx.pages = [mock_page]
@@ -546,6 +554,10 @@ class TestInternalChromiumStrategy:
         # until the 600 s timeout instead of polling once.
         mock_page.url = "https://labs.google/fx/tools/flow"
         mock_page.goto = AsyncMock()
+        # Explicit, because a bare MagicMock attribute is TRUTHY: left unset,
+        # `page.is_closed()` reports "the user already closed the window" on the
+        # first poll and the loop breaks before doing anything under test.
+        mock_page.is_closed = MagicMock(return_value=False)
         mock_page.request.get = AsyncMock(return_value=mock_resp)
 
         mock_ctx = MagicMock(name="ctx")
@@ -591,6 +603,10 @@ class TestInternalChromiumStrategy:
         mock_page = MagicMock(name="page")
         mock_page.url = "https://accounts.google.com/v3/signin/rejected?continue=flow"
         mock_page.goto = AsyncMock()
+        # Explicit, because a bare MagicMock attribute is TRUTHY: left unset,
+        # `page.is_closed()` reports "the user already closed the window" on the
+        # first poll and the loop breaks before doing anything under test.
+        mock_page.is_closed = MagicMock(return_value=False)
         mock_page.get_by_text.return_value = mock_success_loc
 
         mock_ctx = MagicMock(name="ctx")
@@ -736,6 +752,38 @@ class TestSessionPollStaysOffTheOAuthHandshake:
 
         assert email == "test@example.com"
         page.request.get.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_close_during_2fa_is_noticed_immediately(self) -> None:
+        """Closing the window mid-2FA must end the poll, not run to the deadline.
+
+        The host guard `continue`s without touching Playwright, so on Google's host
+        nothing ever raises and the reactive `except PlaywrightError -> is_closed()`
+        detection never fires. Measured before the liveness check: a full run to the
+        deadline with the session endpoint touched 0 times — a user who abandoned a
+        2FA challenge after 30 s would wait the whole 600 s for exit 12.
+        """
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        page = MagicMock(name="page")
+        # Abandoned mid-challenge: still on Google's host, window gone.
+        page.url = "https://accounts.google.com/v3/signin/challenge/totp?x=1"
+        page.is_closed = MagicMock(return_value=True)
+        page.request.get = AsyncMock()
+
+        ctx = MagicMock(name="ctx")
+        ctx.cookies = AsyncMock(return_value=[])
+
+        with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()):
+            assert (
+                await poll_session_until_authenticated(
+                    ctx, page, 600, "chrome", raise_on_close=False
+                )
+                is None
+            )
+
+        # Never reached the session endpoint, and never waited out the deadline.
+        page.request.get.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_migrated_host_still_polls(self) -> None:

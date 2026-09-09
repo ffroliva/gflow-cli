@@ -108,6 +108,16 @@ async def poll_session_until_authenticated(
 
     while asyncio.get_running_loop().time() < timeout_at:
         try:
+            # Liveness FIRST, because the host guard below can `continue` without
+            # touching Playwright at all. A user who abandons a 2FA challenge closes
+            # the window while still on accounts.google.com, so the guard short-circuits
+            # every iteration, nothing raises, and the close is never noticed: measured
+            # as a full run to the deadline with the session endpoint touched 0 times.
+            # Reactive detection via `except PlaywrightError` only works once some
+            # operation actually runs, which on the Google host it never does.
+            if page.is_closed():
+                break
+
             if _is_google_rejected_browser_page(page):
                 raise AuthBrowserRejectedError
 
