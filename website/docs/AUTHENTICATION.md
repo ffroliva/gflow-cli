@@ -143,7 +143,7 @@ for you to sign in. The CLI automatically detects success and persists the sessi
 ```bash
 gflow auth login                   # default profile, auto browser
 gflow auth login --profile work    # named profile (creates if missing)
-gflow auth login --browser chrome  # force real Chrome (bypasses G12 block)
+gflow auth login --browser chrome  # force the chrome strategy (real Chrome + its profile marker)
 ```
 
 Re-running this command refreshes an expired session: it reuses the existing profile dir,

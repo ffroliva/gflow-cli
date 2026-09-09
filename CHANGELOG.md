@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.72.0] — 2026-09-09
+
 ### Added
 
 - **`gflow image t2i` and local-file `i2i` now run on migrated `flow.google.com`
@@ -76,6 +78,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed at launch with *"Chromium distribution 'chrome' is not found"*. Playwright honours a
   custom binary only via `executable_path=`, never via `channel=`, so the variable is now
   ignored by that check (it still resolves a Chrome binary everywhere else).
+
+### Security
+
+- **`httpx2` / `httpcore2` bumped to 2.12.0, clearing five newly published CVEs**
+  ([#766](https://github.com/ffroliva/gflow-cli/pull/766)). `httpcore2` CVE-2026-84381 and
+  `httpx2` CVE-2026-84378 / -84379 / -84380 / -84382, all against 2.9.1; both arrive
+  transitively through `mcp`. The advisories were published against an unchanged lockfile —
+  `Dependency audit (pip-audit)` went red on `develop` without any dependency change — so
+  this is not a regression introduced by a feature PR. `uvx pip-audit` on the exported
+  requirements now reports no known vulnerabilities. The bump also adds `httpx2-jsfetch`
+  1.0 to the lock, marked `sys_platform == 'emscripten'` (Pyodide/WASM only); it is never
+  installed on any platform gflow supports.
 
 ## [0.71.1] — 2026-09-08
 
@@ -4650,7 +4664,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...HEAD
+[0.72.0]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...v0.72.0
 [0.71.1]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...v0.71.1
 [0.71.0]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...v0.70.0

@@ -317,8 +317,9 @@ remediations. The most-hit categories:
   ([selector-cascades](#selector-cascades))
 - **Session expiry on a long-running worker** → use `health_check()`
   + recreate on `BrowserSessionClosedError`
-- **reCAPTCHA score too low** → must use real Chrome
-  (`--browser chrome`); never Playwright's bundled Chromium
+- **reCAPTCHA score too low** (generation, *not* sign-in) → must use real Chrome
+  (`--browser chrome`). Sign-in is a separate question: the 2026-09-08 spike measured
+  `navigator.webdriver`, not the binary, as what Google's sign-in rejects.
 
 ## See also
 
