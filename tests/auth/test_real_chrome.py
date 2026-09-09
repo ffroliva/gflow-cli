@@ -677,12 +677,21 @@ class TestPlaywrightAutoClose:
         """OAuth `state` / `code_challenge` live in these URLs and data/redaction.py
         matches neither — so no page URL may ever reach a log event."""
         gflow_home, profile_dir = self._home(tmp_path)
-        ap, _pw, _ctx = _build_fake_playwright(
+        ap, _pw, ctx = _build_fake_playwright(
             page_url=(
                 "https://accounts.google.com/v3/signin/identifier"
                 "?state=SECRETSTATE&code_challenge=SECRETCHALLENGE"
             ),
         )
+        page = ctx.pages[0]
+
+        # The page starts mid-handshake on Google and arrives on the Flow host while
+        # the poll is waiting — which is what a real sign-in does, and what the poll's
+        # host guard requires before it will touch the session endpoint. Without this
+        # the page never leaves accounts.google.com, the guard skips every iteration
+        # and the test hangs until the 600 s timeout instead of asserting anything.
+        async def _navigate_while_we_wait(_delay: float) -> None:
+            page.url = "https://labs.google/fx/tools/flow"
 
         with (
             patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
@@ -696,6 +705,10 @@ class TestPlaywrightAutoClose:
                 AsyncMock(return_value=_authenticated_status()),
             ),
             patch("gflow_cli.auth.real_chrome.asyncio.sleep", AsyncMock()),
+            patch(
+                "gflow_cli.auth.internal_chromium.asyncio.sleep",
+                AsyncMock(side_effect=_navigate_while_we_wait),
+            ),
             capture_logs() as logs,
         ):
             mock_settings.return_value.home = gflow_home
