@@ -26,7 +26,7 @@ def test_flow_account_chooser_error_class_invariants() -> None:
     assert err.problem_type == "https://gflow-cli.dev/errors/flow-account-chooser"
     assert err.title == "Recorded Google account not selectable"
     assert "gflow auth login" in err.remediation_hint
-    assert "--account" in err.remediation_hint
+    assert "complete the account chooser" in err.remediation_hint
 
 
 def test_flow_account_chooser_error_exit_code_38() -> None:
@@ -36,18 +36,6 @@ def test_flow_account_chooser_error_exit_code_38() -> None:
     # Check isinstance walk correctly resolves to 38
     code = next(c for cls, c in EXIT_CODE_MAP.items() if isinstance(err, cls))
     assert code == 38
-
-
-def test_exit_code_map_ordering_with_flow_account_chooser_error() -> None:
-    """Most-specific classes MUST appear before parent classes in EXIT_CODE_MAP."""
-    seen: list[type] = []
-    for cls in EXIT_CODE_MAP:
-        for prior in seen:
-            assert not issubclass(cls, prior), (
-                f"{cls.__name__} is a subclass of {prior.__name__} but appears AFTER it; "
-                f"swap their order in EXIT_CODE_MAP."
-            )
-        seen.append(cls)
 
 
 def test_read_account_file_returns_email(tmp_path: Path) -> None:

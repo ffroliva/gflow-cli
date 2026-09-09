@@ -107,7 +107,7 @@ def list_profiles() -> list[ProfileMeta]:
         name = entry.name[len(PROFILE_DIR_PREFIX) :]
         s = status(name)
         last_used = _last_modified(entry)
-        google_account = _read_account_file(entry)
+        google_account = read_account_file(entry)
         out.append(
             ProfileMeta(
                 name=name,
@@ -351,11 +351,6 @@ def account_locale_for(profile_name: str) -> str | None:
 
 
 def read_account_file(profile_path: Path) -> str | None:
-    """Read the Google account email from the profile's .gflow_account file."""
-    return _read_account_file(profile_path)
-
-
-def _read_account_file(profile_path: Path) -> str | None:
     """Read the Google account email from the profile's .gflow_account file."""
     account_file = profile_path / ACCOUNT_FILE
     try:

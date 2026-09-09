@@ -16,3 +16,15 @@ description: "Selector-probe failures = typed UiSelectorDriftError exit 23, neve
 **Remediation contract updated by PR #504 (2026-08-13, #493):** `UiSelectorDriftError._default_remediation` now asks for "the diagnostics JSON and/or debug screenshot referenced in this message, plus the incident bundle's report.md" — the old "debug screenshot from this message" was a false promise on the mode-switch probe, which writes `diag_mode_switch_miss.json` ONLY (no screenshot; the full-page screenshot lives in the incident bundle's `sensitive/`). The exit-23 mode-switch fall-through detail additionally names the unrecognized-new-variant hypothesis. See [[issue-493-third-editor-variant-predict-stop]].
 
 See [[pr-184-e2e-drift-sim-results]], [[flow-library-ui-drift-174]], [[exit-code-map-ordering-invariant-test-pitfall]].
+
+**Carve-out recorded by PR #764 (2026-09-08, #763):** a selector-cascade miss on
+`accounts.google.com` (the Google account chooser after the post-migration hop)
+raises `FlowAccountChooserError` (exit 38), NOT `UiSelectorDriftError` (exit 23).
+The chooser is Google-auth UI, not the Flow editor: reporting it as drift would
+tell users to file a frontend bug about a working chooser, and the exit-23
+remediation (attach diagnostics, check for a release) cannot fix a missing
+account row. The miss is evidence about the *recorded account* (absent row,
+signed-out row, bot-rejection hop), so the typed error carries the observed URL
+kind and names `gflow auth login --profile <name>` as the recovery. Precedent:
+exits 36 (`FlowHostMigratedError`) and 37 (`InsufficientCreditsError`) each got
+the same carve-out recorded when introduced.

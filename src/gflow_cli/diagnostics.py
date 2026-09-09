@@ -1847,6 +1847,7 @@ def _validate_overlay(raw: dict[str, object]) -> dict[str, object]:
 def _capture_triggers() -> tuple[type[BaseException], ...]:
     from gflow_cli.errors import (
         BrowserSessionClosedError,
+        FlowAccountChooserError,
         FlowAgentUiError,
         FlowAppError,
         FlowHostMigratedError,
@@ -1859,6 +1860,7 @@ def _capture_triggers() -> tuple[type[BaseException], ...]:
     )
 
     return (
+        FlowAccountChooserError,
         FlowAppError,
         FlowAgentUiError,
         # #639: this arm REPLACED UiSelectorDriftError on the migrated frontend.
@@ -1877,6 +1879,7 @@ def _capture_triggers() -> tuple[type[BaseException], ...]:
 
 def _screenshot_triggers() -> tuple[type[BaseException], ...]:
     from gflow_cli.errors import (
+        FlowAccountChooserError,
         FlowAgentUiError,
         FlowAppError,
         FlowHostMigratedError,
@@ -1886,6 +1889,7 @@ def _screenshot_triggers() -> tuple[type[BaseException], ...]:
     )
 
     return (
+        FlowAccountChooserError,
         FlowAppError,
         FlowAgentUiError,
         FlowHostMigratedError,

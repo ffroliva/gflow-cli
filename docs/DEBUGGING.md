@@ -107,7 +107,7 @@ at command startup).
 
 Captured: `FlowAppError` (31), `FlowAgentUiError` (25),
 `FlowHostMigratedError` (36), `UiModeUnavailableError` (28),
-`UiSelectorDriftError` (23),
+`UiSelectorDriftError` (23), `FlowAccountChooserError` (38),
 `TransportTimeoutError` (9), `BrowserSessionClosedError` (15),
 `WireFormatError` (7), `WafRejectionError` (10), `NetworkError` (6),
 unexpected exceptions while a page is alive, and `ProfileLockedError` (11)

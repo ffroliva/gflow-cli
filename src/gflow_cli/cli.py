@@ -36,6 +36,7 @@ from gflow_cli.config import get_settings, warn_if_removed_gemini_key_set
 from gflow_cli.observability import DEBUG_LEVEL, configure_logging
 from gflow_cli.update_check import UpdateNotice, maybe_notify_update
 
+logger = structlog.get_logger(__name__)
 console = Console()
 
 
@@ -290,14 +291,22 @@ def auth_login(profile: str | None, browser: str | None, account: str | None = N
     try:
         pdir = asyncio.run(auth_mod.login(name, browser=selected_browser))
         if account:
-            actual_account = profile_store.read_account_file(pdir)
-            if actual_account and actual_account.lower() != account.strip().lower():
-                from gflow_cli.errors import FlowAccountChooserError
+            from gflow_cli.errors import FlowAccountChooserError
 
+            actual_account = profile_store.read_account_file(pdir)
+            if actual_account is None or actual_account.lower() != account.strip().lower():
+                held = actual_account or "nothing recorded"
+                logger.warning(
+                    "auth.account_assert_failed",
+                    required=account.strip(),
+                    held=actual_account or None,
+                )
                 raise FlowAccountChooserError(
                     detail=(
-                        f"Login completed but verified account '{actual_account}' does not "
-                        f"match required --account '{account}'."
+                        f"Login completed but the profile now holds '{held}', which does not "
+                        f"match required --account '{account}'. Re-run "
+                        f"`gflow auth login --profile {name} --account {account.strip()}` "
+                        f"while signed in as the required account."
                     )
                 )
     except GFlowError as e:

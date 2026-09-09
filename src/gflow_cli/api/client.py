@@ -785,18 +785,22 @@ class FlowApiClient:
         await self._setup_transport()
 
     async def _handle_account_chooser(self, page: Any, account_email: str | None = None) -> bool:
-        """Select the recorded Google account on accountchooser if encountered (#750).
+        """Select the recorded Google account on accountchooser if encountered (#763).
 
         Returns True if an account was clicked, False if not on chooser.
         Raises FlowAccountChooserError if on chooser but account is missing/not selectable.
+
+        Matching is exact on the account row only: the chooser's loose surfaces
+        ("Remove <email>", "Sign out of <email>", signed-in-as subtitle) would
+        otherwise win a substring match and click the wrong account, billing it.
         """
         from gflow_cli.profile_store import read_account_file
 
         url = getattr(page, "url", "") or ""
-        # Check if URL looks like accountchooser or Google sign-in
-        is_chooser = "accounts.google.com" in url and ("accountchooser" in url or "signin" in url)
-        # Also check for presence of chooser DOM or landing page redirect
-        if not is_chooser:
+        # accounts.google.com is a sign-in surface. Anything else is the caller's
+        # page, not a chooser; the rejected-browser hop is not a chooser either
+        # and must surface as its own error rather than a missing account.
+        if "accounts.google.com" not in url or "v3/signin/rejected" in url:
             return False
 
         email = account_email or read_account_file(self.profile_dir)
@@ -808,18 +812,14 @@ class FlowApiClient:
                 )
             )
 
-        # Match row by email attribute, text, or data-email
-        # Google account chooser rows typically have data-email, or text containing the email
-        selector = (
-            f"div[data-email='{email}'], [aria-label*='{email}'], "
-            f"[role='link']:has-text('{email}'), [role='button']:has-text('{email}')"
-        )
-        locator = page.locator(selector)
-        count = await locator.count()
+        # Exact row match only (D3): data-email is the chooser's stable per-account
+        # anchor. A substring/text-engine fallback would match "Remove <email>"
+        # or "Sign out of <email>" and click a DOM-order-first wrong account.
+        row = page.locator(f'[data-email="{email}"]')
+        count = await row.count()
         if count == 0:
-            # Fallback broader text search
-            locator = page.locator(f"text={email}")
-            count = await locator.count()
+            row = page.get_by_text(email, exact=True)
+            count = await row.count()
 
         if count == 0:
             raise FlowAccountChooserError(
@@ -829,8 +829,19 @@ class FlowApiClient:
                 )
             )
 
-        # Click the row
-        await locator.first.click()
+        # The row is the account's entry; verify we actually leave the chooser.
+        await row.first.click()
+        if "project" not in (await page.wait_for_url("**/project/**", timeout=30_000) or ""):
+            raise FlowAccountChooserError(
+                detail=(
+                    f"Clicked recorded account '{email}' on the chooser but the session "
+                    f"did not reach the Flow editor."
+                )
+            )
+        logger.info(
+            "client.account_chooser_autoselected",
+            account=redact_sensitive_text(email),
+        )
         return True
 
     async def _bootstrap_and_resolve_locale(self) -> None:
@@ -857,8 +868,6 @@ class FlowApiClient:
             wait_until="domcontentloaded",
             timeout=60_000,
         )
-        # Check if landing redirected to account chooser
-        await self._handle_account_chooser(self._page)
         # #639: NOT_REDIRECTED means "there is no redirect to wait for". It must not
         # ALSO mean "do not read the locale" — which is what returning here made it
         # mean, and that made the state ABSORBING: `_resolve_account_locale` is the
@@ -871,6 +880,12 @@ class FlowApiClient:
         self._account_locale, from_url = await self._resolve_account_locale(
             self._page, settle=settle
         )
+        # #763: the chooser hop lands through the same post-goto redirect chain as
+        # the locale hop, so it is observable only after the settle above. On a
+        # chooser the settle reads <html lang> off accounts.google.com — safe:
+        # write_account_locale runs only on the redirected branch below, which
+        # the chooser never reaches.
+        await self._handle_account_chooser(self._page)
         if not settle:
             # Kept (not merged into account_locale_state) because field reports key
             # on this event to tell "the settle was skipped" from "it timed out".

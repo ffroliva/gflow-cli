@@ -770,7 +770,7 @@ class FlowAccountChooserError(GFlowError):
     title = "Recorded Google account not selectable"
     _default_remediation = (
         "Run `gflow auth login --profile <name>` and complete the account chooser "
-        "manually, or pass --account <email-present-on-chooser>."
+        "manually while signed in as the recorded account."
     )
 
 
