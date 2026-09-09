@@ -24,10 +24,17 @@ _console = Console()
 GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
 GOOGLE_REJECTED_BROWSER_ROUTE = "accounts.google.com/v3/signin/rejected"
 POLL_INTERVAL_SECONDS = 3
-# Host the Flow app itself is served from. The session poll only runs while the page
-# is here — see the comment in poll_session_until_authenticated. Structural (a host,
-# not display text), so it stays locale-invariant.
-FLOW_APP_HOST = "labs.google"
+# Hosts the Flow app itself is served from. The session poll only runs while the page
+# is on one of these — see the comment in poll_session_until_authenticated. Structural
+# (a host, not display text), so it stays locale-invariant.
+#
+# BOTH hosts, not just labs: the labs app `location.replace`s a migrated account onto
+# flow.google.com right after the callback returns, one-way and server-decided per
+# account. Gating on labs alone would send every migrated account back into the exact
+# 600 s timeout this guard was written to fix — the poll would go False on the redirect
+# and never come back. Neither host is an OAuth handshake host, which is all the guard
+# actually needs to exclude.
+FLOW_APP_HOSTS = frozenset({"labs.google", "flow.google.com"})
 
 
 def login_launch_kwargs(
@@ -206,7 +213,7 @@ def _is_google_rejected_browser_page(page: object) -> bool:
 
 
 def _is_on_flow_host(page: object) -> bool:
-    """Return True when the page is on the Flow app host, not mid-OAuth on Google's.
+    """Return True when the page is on a Flow app host, not mid-OAuth on Google's.
 
     ``isinstance(url, str)`` is load-bearing, not defensive: a bare mock attribute is
     truthy, so without it a test double would report "on the Flow host" and the guard
@@ -215,7 +222,7 @@ def _is_on_flow_host(page: object) -> bool:
     url = getattr(page, "url", "")
     if not isinstance(url, str):
         return False
-    return (urlparse(url).hostname or "").lower() == FLOW_APP_HOST
+    return (urlparse(url).hostname or "").lower() in FLOW_APP_HOSTS
 
 
 class InternalChromiumStrategy(AuthStrategy):

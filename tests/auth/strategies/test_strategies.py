@@ -721,3 +721,34 @@ class TestSessionPollStaysOffTheOAuthHandshake:
 
         assert email == "test@example.com"
         page.request.get.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_migrated_host_still_polls(self) -> None:
+        """A migrated account lands on flow.google.com and must still be detected.
+
+        The labs app `location.replace`s a migrated account onto flow.google.com right
+        after the callback returns. Gating the poll on labs alone would go False there
+        and never come back, reproducing the 600 s timeout this guard exists to fix —
+        on every account the maintainer actually owns.
+        """
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        resp = MagicMock(name="resp")
+        resp.status = 200
+        resp.text = AsyncMock(
+            return_value='{"user":{"email":"test@example.com"},"expires":"2099-01-01"}'
+        )
+
+        page = MagicMock(name="page")
+        page.url = "https://flow.google.com/project/abc123"
+        page.is_closed = MagicMock(return_value=False)
+        page.request.get = AsyncMock(return_value=resp)
+
+        ctx = MagicMock(name="ctx")
+        ctx.cookies = AsyncMock(return_value=[{"name": "SAPISID", "value": "x"}])
+
+        with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()):
+            email = await poll_session_until_authenticated(ctx, page, 30, "chrome")
+
+        assert email == "test@example.com"
+        page.request.get.assert_awaited()
