@@ -4,6 +4,46 @@
 
 ## Current release
 
+**v0.72.0 — alpha.** **`gflow auth login` closes the browser for you, and Flow's migrated
+host now generates images.**
+
+Sign-in no longer ends with an instruction. gflow drives your real Google Chrome through
+Playwright, watches for the completed Flow sign-in and closes the window itself; closing it
+yourself still verifies, because that is what three releases of docs told people to do. On a
+machine where Playwright cannot resolve a Chrome channel, or where Google rejects the browser
+anyway, login falls back automatically to the previous subprocess flow — there is no new flag
+and nothing to choose.
+
+That rests on a measured retraction. The standing claim was that Google rejects Playwright's
+bundled Chromium; the 2026-09-08 spike found the discriminator is **`navigator.webdriver`**,
+not the browser binary — real Chrome *without* the stealth flags was rejected at
+`/v3/signin/rejected` in 17.5 s, while bundled Chromium *with* them signed in normally. The
+`bare` control arm is the only reason that concludes anything: with just the two passing arms
+it would have read as "the block is gone".
+
+Four defects surfaced only by driving it live, none of which the offline suite could reach.
+The session poll was hitting Flow's NextAuth session endpoint every 3 s for the whole login —
+including while Google held the page for the OAuth callback — and it now stays off both
+Google's host and NextAuth's own routes, because the callback runs on the *app's* origin and
+a host check sails straight through it. Gating that poll on `labs.google` alone would have
+timed out on every migrated account. And `page.is_closed()` was reachable only from an
+exception handler, so a window closed during a 2FA challenge was never noticed: a full
+ten-minute deadline, session endpoint touched zero times, ending in the wrong error.
+
+`gflow image t2i` and local-file `i2i` also arrive on the migrated `flow.google.com` host
+(#692, @arjhinety), driving Angular Image mode and the page-owned `ogiZ0b` wire — Nano Banana
+2 / Pro, the four aspects measured there, counts 1–4, `--project` required, with the direct
+and queued MCP twins on one payload path. UUID/entity references, Agent instructions, Imagen
+4, `image batch` and the 3:4 aspect stay unported there and are refused before submit with
+exit 36 rather than reported as selector drift.
+
+See [LIVE_VERIFICATION_v0.72.0.md](LIVE_VERIFICATION_v0.72.0.md) for what was exercised
+against real Flow — and what was not. The OAuth-callback *mechanism* is inferred rather than
+proven; issue #769 carries the spike that would settle it.
+
+<details><summary>v0.71.1 — two migrated-host failures stop blaming the wrong thing</summary>
+
+
 **v0.71.1 — alpha.** **Two migrated-host failures stopped blaming the wrong thing — and
 both were found by asking what the app was *saying*, which this driver had never done.**
 
@@ -56,6 +96,16 @@ second failure shape (an upload request that leaves the page and is never answer
 4 on a consented account) is unfixed and the issue stays open; and the consent guard's firing
 branch is now **unrepeatable** here, because the dialog is one-off and all three available
 accounts have accepted it.
+
+**Unreleased — the migrated image slice of #639 is implemented and live-verified.**
+`gflow image t2i` and local-file `gflow image i2i` drive the Angular Image mode and the
+page-owned `ogiZ0b` wire on moved accounts (Nano Banana 2 / Pro, the four aspects measured
+there — 16:9, 4:3, 1:1, 9:16 — and counts 1–4, with `--project` required); the direct and
+queued MCP twins share the same payload path. UUID/entity references, Agent instructions,
+Imagen 4, `image batch` and the 3:4 aspect remain unported on that host and are refused
+before submit.
+
+</details>
 
 <details><summary>v0.71.0 — <code>character create --voice</code> verified, and two retractions</summary>
 
@@ -875,6 +925,7 @@ reporter-verified e2e on macOS).
 
 | Milestone | Status |
 |---|---|
+| `gflow auth login` closes the sign-in browser itself, on a measured retraction — G12 blocks `navigator.webdriver`, not bundled Chromium (#767); `gflow image t2i`/local-file `i2i` driven on the migrated host (#692) | ✅ done (v0.72.0) |
 | Two migrated-host error paths stop blaming the wrong thing: Flow's agent mode (three distinct outcomes, not one message) and its one-time upload-terms dialog (#749/#752, #719 shape A) | ✅ done (v0.71.1) |
 | `gflow character create --voice` verified end to end for the first time; a credit shortfall reports exit 37; incident bundles no longer blind on the migrated host | ✅ done (v0.71.0) |
 | `gflow character create` driven on the migrated `flow.google.com` host; `--model` made deterministic by chip read-back; spike promoted to Phase 0 of the workflow | ✅ done (v0.70.0) |

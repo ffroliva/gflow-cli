@@ -14,13 +14,13 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
-### Flow is migrating to `flow.google.com`; gflow drives the migrated frontend for t2v, i2v from a local start frame, and r2v from local reference files (rest of the matrix pending)
+### Flow is migrating to `flow.google.com`; generation coverage is partial but includes images
 
-- **Status:** Open (partially resolved) · **Severity:** High for everything except text-to-video, local-file image-to-video and local-file reference-to-video · **Affected:** on accounts the rollout has reached, `gflow video t2v`, `gflow video i2v --initial-frame <local file>` and `gflow video r2v --ref <local file>` now run on the migrated host (with `--project`); an end frame, a frame by UUID or `@Name`, references by `@Name` or `--reference-entity`, `image`, scenes, extend, instructions and tools are not ported yet and still exit 36. **`character` is NOT in that list any more** — `character create` was verified working on the migrated host in v0.70.0 and `character list` was re-verified there on 2026-09-07. This line claimed otherwise for a day, which is the dangerous direction for a stale doc to be stale in: a migrated user reading it concludes a working feature is impossible. Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker's tiles carry no media id); `scenes`, `extend`, `instructions` and `tools` have never had a probe run against them at all, so read them as *unported by gflow*, never as *impossible on the host*
+- **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i` now run on the migrated host. Image mode supports Nano Banana 2 / Pro, the four aspect ratios its radiogroup was enumerated with (16:9, 4:3, 1:1, 9:16), and count 1–4; `3:4` had no radio in that enumeration and is refused before submit rather than reported as selector drift. Image refs by UUID, `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video end frames, video refs by UUID/name, scenes, extend, instructions and tools are not ported yet and fail before submit. **`character` is NOT in that list any more** — `character create` and `character list` work on the migrated host. Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, `extend`, `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
 - **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
 - **`--reference-entity` was refused on `r2v` but not on `t2v`** ([#716](https://github.com/ffroliva/gflow-cli/issues/716), fixed in v0.71.0): the "not ported, exit 36" refusal above sat inside the r2v branch of the routing gate, so a `t2v` request carrying a character entity returned from that gate without its entities ever being inspected — and nothing downstream attaches one on this host. The generation was **submitted and billed** with the entity silently dropped, returning a plausible clip of the wrong person. The check is now mode-independent and ahead of every early return. If you ran `gflow video t2v @Name …` or `--reference-entity` on a moved account before this fix, the identity in those clips was never bound.
-- **The migrated composer DOES have an image mode** ([#692](https://github.com/ffroliva/gflow-cli/issues/692)): a code comment claimed, as "measured, not assumed", that it has none. Falsified 2026-09-07 — its settings overlay carries a `mode` radiogroup of `[imageImage, videocamVideo]`, present and hit-testable. Nothing was clicked on that axis and nothing was submitted, so this does **not** establish that `image` works on a moved account; it establishes only that the claim it cannot is unfounded. Read the remaining exit 36 as *gflow does not drive this yet*, never as *the host cannot do it*; see [the spike](docs/superpowers/spikes/2026-09-07-migrated-composer-has-an-image-mode.md).
+- **The migrated composer image path is now driven** ([#692](https://github.com/ffroliva/gflow-cli/issues/692)): the first probe established a hit-testable Image mode; the 2026-09-08 follow-up captured real T2I and local-file I2I submissions on `ogiZ0b`, including page-owned reCAPTCHA, upload ids, response records and signed JPEG downloads. See [the submit-wire spike](docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md).
 - **Image commands on a moved account** ([#673](https://github.com/ffroliva/gflow-cli/issues/673), fixed in v0.69.0): through v0.68.0 `image t2i` / `i2i` (and `upscale`, `extend`) died with exit 1 `RecaptchaError` within seconds, before any submit, instead of the exit 36 above, because the labs client minted the reCAPTCHA token on the `flow.google.com` project grid before any migration guard ran. The guard now runs at the mint. If you still see a `RecaptchaError` on a moved account right after `auth login`, that is the labs logged-out landing page from the [#644](https://github.com/ffroliva/gflow-cli/issues/644) cookie harvest, not this.
 
 Google is moving Flow off Labs onto its own origin. On a migrated page load,
@@ -48,7 +48,7 @@ This is **not** selector rot, not [#493](https://github.com/ffroliva/gflow-cli/i
 and not the agentic cohort — the agentic indicators are absent too. It is a
 different origin serving different markup.
 
-**What works now — text-to-video on the migrated host.** `gflow video t2v … --project <id>`
+**What works now — generation on the migrated host.** `gflow video t2v … --project <id>`
 drives the migrated editor directly (settings through its option groups, prompt,
 submit, then it observes the app's own `batchexecute` status replies and downloads
 the clip). Two real clips were generated this way on 2026-09-05 — spike
@@ -56,10 +56,11 @@ the clip). Two real clips were generated this way on 2026-09-05 — spike
 (`GFLOW_CLI_FLOW_HOST=auto`): flow.google.com is the **default** host for that
 command on every account — moved or not; `flow.google.com` forces it for
 everything, and `labs.google` switches the migrated composer off. Limits today: `--project` is required (project creation from the
-migrated editor is not ported), and only `t2v`, `i2v` from a local `--initial-frame` (no end frame,
+migrated editor is not ported), and `t2v`, `i2v` from a local `--initial-frame` (no end frame,
 no UUID/`@Name` frame — the migrated Frames picker exposes no media id in its DOM, so a frame is
 found by file name after gflow uploads it through the editor), and `r2v` from local `--ref` files
-(see the next paragraph) — everything else still exits 36.
+(see the next paragraph), plus `image t2i` and local-file `image i2i` — unsupported
+forms still exit 36.
 
 **`r2v` from local `--ref` files also runs there (2026-09-06).** Each file is uploaded
 through the same editor toolbar path i2v uses — so the app's own `maseQ` reply names the
@@ -72,6 +73,12 @@ submit, because the failure mode is a full-price clip with none of them on it.
 References by `@Name` and character entities stay on labs, for the same reason a frame by
 UUID does: the picker exposes no media id to anchor on. Capture:
 [2026-09-05-migrated-r2v-attach-surface](docs/superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md).
+
+**Images also run there (2026-09-08).** The driver selects Image mode, Nano Banana 2
+or Pro, any supported aspect and count 1–4, then observes the page's own synchronous
+`ogiZ0b` reply. Local I2I files use the existing `maseQ` upload and mention path; every
+uploaded id must appear in the submit body before the result is trusted. UUID/entity
+references, Agent instructions, and Imagen 4 remain pre-submit refusals on this host.
 
 **Models on the migrated host.** Its picker is driven for every tier the account's
 menu actually renders, `veo-lite-lp` included — matched by the `[Lower Priority]`
@@ -100,8 +107,9 @@ which Playwright updates in the same tick as the hand-off navigation — and fai
 with the distinct, non-retryable exit 36 instead of the misleading
 `UiSelectorDriftError` (exit 23, "file a selector bug"). `_check_logged_in` also
 accepts the migrated host, so a migrated load is no longer misread as a
-logged-out session. Text-to-video is driven (above); image, i2v/r2v, characters,
-scenes, extend, instructions, tools and project creation are the remaining work
+logged-out session. The generation forms listed above and characters are driven;
+scenes, extend, instructions, tools, project creation, and the named reference/model
+variants are the remaining work
 tracked here — no retry helps for those until each is ported.
 
 > **v0.66.1's fast-fail did not fire in the field, and v0.66.2 is the correction.**
@@ -1515,9 +1523,10 @@ End-to-end live-verified on the `ffroliva` profile across `9:16`, `16:9`, `1:1`,
 
 ### G12 "browser not secure" block — Google rejects automated sign-in
 
-- **Status:** Resolved · **Severity:** Critical (blocked `gflow auth login`) · **Fixed in:** v0.6.0a2
+- **Status:** Resolved · **Severity:** Critical (blocked `gflow auth login`) · **Fixed in:** v0.6.0a2 · **Mitigation reimplemented + re-measured:** 2026-09-08
 
-Google's sign-in flow (`accounts.google.com/v3/signin/rejected`) detected Playwright's bundled Chromium as an automated browser and refused the login with no user-facing error.
+Google's sign-in flow (`accounts.google.com/v3/signin/rejected`) rejects a browser that
+advertises itself as automated, and refuses the login with no user-facing error.
 
 **Root cause (timing race):** Without `--disable-blink-features=AutomationControlled`,
 Blink's C++ engine sets `navigator.webdriver = true` as a non-configurable, non-writable
@@ -1525,20 +1534,52 @@ native property at Chrome startup — before any JavaScript (including `add_init
 can run. The `Object.defineProperty` override silently fails. With the flag, the property
 is never set; the JS override then works as belt-and-suspenders.
 
-**Resolution:** `v0.6.0a2` adds `RealChromeStrategy` — a new auth strategy that launches
-the system's real Google Chrome via Playwright's `channel="chrome"` with stealth flags.
+**Resolution:** `gflow auth login` launches the system's real Google Chrome through
+Playwright's `channel="chrome"` with `chromium_sandbox=True`, `no_viewport=True`, and both
+stealth flags — `--disable-blink-features=AutomationControlled` and
+`ignore_default_args=["--enable-automation"]`. Because gflow owns that browser it also
+detects the completed Flow sign-in and closes the window itself; see
+[docs/AUTHENTICATION.md](docs/AUTHENTICATION.md). When no Chrome channel resolves, or
+Google rejects the browser anyway, login falls back automatically to launching Chrome as a
+plain subprocess and waiting for you to close the window. There is no flag and no choice to
+make, and closing the window yourself works on either path.
+
+> **This entry described that Playwright implementation long before it existed.**
+> It read *"`v0.6.0a2` adds `RealChromeStrategy` — launches the system's real Google Chrome
+> via Playwright's `channel="chrome"` with stealth flags."* `src/gflow_cli/auth/real_chrome.py`
+> was created at `eb0de133` (2026-07-19) as a bare `subprocess.Popen` passive capture, and
+> `git log -S'channel="chrome"' -- src/gflow_cli/auth/` returned **zero** commits until the
+> auto-close change. The paragraph above is the same shape restated deliberately as current
+> fact, not the same accident left standing.
 
 ```bash
-# Bypass G12 block explicitly:
+# Ask for real Chrome explicitly:
 gflow auth login --browser chrome
 
 # Or rely on auto-detection (default behaviour; picks real Chrome if installed):
 gflow auth login
 ```
 
-A cosmetic "You are using an unsupported command-line flag" notice may appear briefly in
-the Chrome window — this is harmless and can be dismissed. It is the accepted trade-off
-for bypassing G12.
+**The block is current Google behaviour — "Resolved" means the mitigation holds, not that
+Google stopped.** Re-measured 2026-09-08 across three throwaway *unauthenticated* profiles,
+each signed into by hand
+([spike](docs/superpowers/spikes/2026-09-08-g12-blocks-webdriver-not-playwright.md)): a
+browser advertising `navigator.webdriver === true` — real Chrome, no stealth flags — was
+rejected at `/v3/signin/rejected` **17.5 s** into the flow, while the same real Chrome
+*with* the flags reported `false`, never saw the rejection, and reached a Flow session
+cookie at 59.4 s. Playwright's bundled Chromium with the flags passed too, so the binary is
+not the discriminator; `navigator.webdriver` tracked the outcome in all three arms.
+
+> **This is N=1 — do not read it as a capability claim.** One account, one Windows host, one
+> residential IP, one Chrome build (`Chrome/149.0.0.0`), one day. Google's sign-in risk
+> scoring varies with account age and IP reputation, so it does not predict CI, a VPS, or a
+> fresh account. Every arm ran headed, so it says nothing about headless in either
+> direction. Sign-in is also a different gate from generation's reCAPTCHA Enterprise check;
+> a result on one does not move the other.
+
+The Chrome window no longer shows the "You are using an unsupported command-line flag"
+notice this entry used to warn about: that banner came from the `--no-sandbox` Playwright
+injects by default, and `chromium_sandbox=True` stops the injection.
 
 ---
 

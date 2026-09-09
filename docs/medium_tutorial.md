@@ -33,12 +33,12 @@ This download requires 150 MB of disk space.
 Authenticate your Google account. Run the following command:
 
 ```bash
-gflow auth login --browser chrome
+gflow auth login
 ```
 
-This command opens a Chrome window. Google blocks standard Playwright browsers. You must specify the `--browser chrome` flag to bypass this check. Log in to your Google account. Solve any CAPTCHA challenges.
+This command opens a Chrome window. Google rejects any browser that *advertises* automation (`navigator.webdriver`) — not Playwright as such — and both the default `auto` and an explicit `--browser chrome` launch with the flags that keep it `false`. Log in to your Google account. Solve any CAPTCHA challenges.
 
-After you see the Google Flow dashboard, return to the terminal. The CLI saves your cookies in a user-local directory (for example, `%LOCALAPPDATA%\gflow-cli\` on Windows or `~/Library/Application Support/gflow-cli/` on macOS).
+Keep going until the Flow editor itself loads. gflow detects the completed sign-in and closes Chrome for you; closing the window yourself also works. The CLI saves your cookies in a user-local directory (for example, `%LOCALAPPDATA%\gflow-cli\` on Windows or `~/Library/Application Support/gflow-cli/` on macOS).
 
 Verify your session status:
 

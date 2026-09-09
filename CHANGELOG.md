@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.72.0] — 2026-09-09
+
+### Added
+
+- **`gflow image t2i` and local-file `i2i` now run on migrated `flow.google.com`
+  accounts** ([#639](https://github.com/ffroliva/gflow-cli/issues/639)). The Angular
+  composer binds Image mode, Nano Banana 2 / Pro, the four aspect ratios measured on that
+  host (16:9, 4:3, 1:1, 9:16) and counts 1–4,
+  then observes the page-owned `ogiZ0b` `batchexecute` reply and returns the same
+  `GeneratedImage` contract as the labs driver. Local references reuse the measured
+  `maseQ` upload + mention path and are verified in the outgoing submit body before the
+  result is trusted. The migrated page owns reCAPTCHA minting, avoiding the root-grid
+  `RecaptchaError`; unsupported UUID/entity/instruction/Imagen-4 forms still fail before
+  submit rather than silently dropping options.
+
+- **`gflow image batch` is refused on the migrated host instead of failing as selector
+  drift** ([#639](https://github.com/ffroliva/gflow-cli/issues/639)). The batch path
+  drives labs selectors only; it now raises `FlowHostMigratedError` (exit 36) before any
+  submit, rather than running those selectors against `flow.google.com` and reporting
+  exit 23 — which told the user to file a frontend-drift bug about a frontend that was
+  behaving correctly.
+
+### Changed
+
+- **`gflow auth login` closes the browser for you.** It drives your real Google Chrome
+  through Playwright, watches for the completed Flow sign-in, and closes the window itself —
+  the "now close Chrome" step is gone. Closing the window yourself still works and still
+  verifies; it is not an error. On a machine where Playwright cannot resolve a Chrome
+  channel, or where Google rejects the browser anyway, login falls back automatically to the
+  previous flow (Chrome as a plain subprocess, you close the window). **There is no new flag
+  and nothing to choose.**
+  ([spike](docs/superpowers/spikes/2026-09-08-g12-blocks-webdriver-not-playwright.md))
+
+### Fixed
+
+- **The second image in one session no longer falls back to the labs reCAPTCHA mint**
+  ([#673](https://github.com/ffroliva/gflow-cli/issues/673)). Every migrated image run
+  parks its page on `about:blank`, which routes as `labs` — so the page-owned-mint
+  capability, derived from `page.url`, answered `False` on the next call and sent it
+  back to minting on the pooled bootstrap page. The transport now latches the observed
+  host: `gflow image batch`, which runs every prompt through one `FlowApiClient`,
+  generated its first prompt and failed the rest with the exact `RecaptchaError` this
+  release exists to remove.
+- **`--aspect 3:4` is refused on the migrated host rather than reported as selector
+  drift.** The composer's aspect radiogroup was enumerated there with four radios —
+  `crop_16_9`, `crop_landscape`, `crop_square`, `crop_9_16` — and no `crop_portrait`, so
+  a 3:4 request missed its selector and raised exit 23. It is now an unported form
+  (exit 36). The "all five aspect ratios" claim has been corrected to the four measured
+  wherever it appeared.
+- **The exit-36 remediation no longer contradicts the error it accompanies.**
+  `FlowHostMigratedError._default_remediation` still described the migrated host as
+  driving only t2v and local-frame i2v, so an image refusal printed a `detail` saying
+  t2i/i2i are driven directly above a remediation saying they are not. Both it and the
+  class docstring now name the full ported matrix.
+- **`gflow auth login --browser internal` launched a browser configuration measured as
+  rejected.** The bundled-Chromium path shipped with no anti-automation flags, which leaves
+  `navigator.webdriver` set. On 2026-09-08 a browser in that state — real Chrome with the
+  flags removed — was rejected at `/v3/signin/rejected` 17.5 s into the flow, while the same
+  browser *with* the flags signed in normally. Bundled Chromium was measured only in the
+  flagged configuration, so its unflagged rejection is inferred from the shared signal, not
+  observed directly. It now passes
+  `--disable-blink-features=AutomationControlled`, `ignore_default_args=["--enable-automation"]`
+  and `chromium_sandbox=True` — the last of which also removes Chrome's cosmetic *"You are
+  using an unsupported command-line flag"* banner — and signs in on the real OS window
+  instead of an emulated 1920×1080 viewport that pushed Google's sign-in form off-screen on
+  smaller or scaled displays.
+- **Setting `CHROME_BINARY` no longer makes Playwright's `channel="chrome"` look resolvable
+  when it is not.** The availability check treated the variable as proof, passed, and then
+  failed at launch with *"Chromium distribution 'chrome' is not found"*. Playwright honours a
+  custom binary only via `executable_path=`, never via `channel=`, so the variable is now
+  ignored by that check (it still resolves a Chrome binary everywhere else).
+
+### Security
+
+- **`httpx2` / `httpcore2` bumped to 2.12.0, clearing five newly published CVEs**
+  ([#766](https://github.com/ffroliva/gflow-cli/pull/766)). `httpcore2` CVE-2026-84381 and
+  `httpx2` CVE-2026-84378 / -84379 / -84380 / -84382, all against 2.9.1; both arrive
+  transitively through `mcp`. The advisories were published against an unchanged lockfile —
+  `Dependency audit (pip-audit)` went red on `develop` without any dependency change — so
+  this is not a regression introduced by a feature PR. `uvx pip-audit` on the exported
+  requirements now reports no known vulnerabilities. The bump also adds `httpx2-jsfetch`
+  1.0 to the lock, marked `sys_platform == 'emscripten'` (Pyodide/WASM only); it is never
+  installed on any platform gflow supports.
+
 ## [0.71.1] — 2026-09-08
 
 ### Fixed
@@ -4580,7 +4664,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...HEAD
+[0.72.0]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...v0.72.0
 [0.71.1]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...v0.71.1
 [0.71.0]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/ffroliva/gflow-cli/compare/v0.69.0...v0.70.0

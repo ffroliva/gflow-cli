@@ -603,8 +603,18 @@ class TestRemovedGeminiKeyNotice:
         env = {"GFLOW_CLI_GEMINI_API_KEY": "AIza-old", replacement: "set"}
         assert warn_if_removed_gemini_key_set(env) is False
 
-    def test_key_is_never_forwarded(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The notice reports; it must not resurrect the value as a fallback."""
+    def test_key_is_never_forwarded(self, clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The notice reports; it must not resurrect the value as a fallback.
+
+        ``clean_env`` is load-bearing, not decoration (#758). ``delenv`` clears the
+        process env var, but ``Settings`` also reads the dotenv files from
+        ``config._env_files()`` — so on any machine whose repo-root ``.env`` sets
+        ``GFLOW_CLI_LLM_API_KEY`` (the documented dev setup) pydantic-settings loaded it
+        straight back and this failed, while CI stayed green because CI has no ``.env``.
+        It failed, in other words, for exactly the developers whose environment could
+        exhibit the leak it guards against. ``clean_env`` fences both dotenv entries into
+        ``tmp_path`` — see ``TestCleanEnvHermeticity``, which documents this hazard.
+        """
         monkeypatch.setenv("GFLOW_CLI_GEMINI_API_KEY", "AIza-old")
         monkeypatch.delenv("GFLOW_CLI_LLM_API_KEY", raising=False)
         assert Settings().llm_api_key is None

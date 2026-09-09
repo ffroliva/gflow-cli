@@ -183,6 +183,14 @@ Notes:
 Generate 1–4 images from one text prompt, or run a shell-friendly batch of 1–50
 prompts through one Flow session/project.
 
+> **Migrated `flow.google.com` accounts (#639):** T2I is supported with Nano Banana 2
+> (`nano2`) and Nano Banana Pro (`nano-pro`), the four aspects measured there (`16:9`,
+> `4:3`, `1:1`, `9:16`), and count 1–4. **`--project <id>` is required** — a fresh project
+> can only be created through the labs gallery, so without it the run exits 11. The
+> migrated page owns its reCAPTCHA + `ogiZ0b` submit. Imagen 4, Agent instructions,
+> character/entity references, `3:4` and `image batch` remain unavailable on that host and
+> fail before submit.
+
 ```text
 gflow image t2i PROMPT [PROMPT ...] [OPTIONS]
 gflow image t2i --prompts-file FILE [OPTIONS]
@@ -321,6 +329,12 @@ A 4-image run with `--out ./logos/` produces:
 ## `gflow image i2i`
 
 Generate 1–4 images by blending a text prompt with one or more reference images. Same flag set as `t2i`, plus a required `--ref` (repeatable).
+
+> **Migrated `flow.google.com` accounts (#639):** local-file `--ref` values are supported
+> and each uploaded media id is verified in the outgoing `ogiZ0b` body. **`--project <id>`
+> is required here** (exit 11 without it). UUID refs, `@Name` / `--reference-entity`, Agent
+> instructions, Imagen 4 and the `3:4` aspect remain unavailable on that host and fail
+> before submit rather than silently degrading to T2I.
 
 ```text
 gflow image i2i PROMPT --ref PATH_OR_UUID [--ref ...] [OPTIONS]
@@ -590,7 +604,8 @@ Options:
 > `--initial-frame` and no `--end-frame` runs there too (see [`gflow video i2v`](#gflow-video-i2v)),
 > as does `r2v` from local `--ref` files (see [`gflow video r2v`](#gflow-video-r2v));
 > an end frame, a frame given by UUID or `@Name`, references given by `@Name` or
-> `--reference-entity`, and everything else still exit 36 on a moved account. `flow.google.com` forces the migrated composer,
+> `--reference-entity`. `image t2i` and local-file `image i2i` also run on a moved
+> account; UUID/entity/instruction/Imagen-4 image forms still exit 36. `flow.google.com` forces the migrated composer,
 > `labs.google` switches it off — see [CONFIGURATION § GFLOW_CLI_FLOW_HOST](CONFIGURATION.md#gflow_cli_flow_host).
 
 ```bash
@@ -1748,7 +1763,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `11` | `ConfigurationError`  | Local configuration or browser mode is invalid — on the migrated `flow.google.com` host also a request the host cannot take as given (no `--project`, a model its menu does not offer, a `--duration` its settings pane renders no control for); includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile) and `ProfileEngineDowngradeError` (the profile was last written by a newer Chromium major than the bundled engine about to open it — see [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)) | Fix the option/env var shown in the error; for lease contention wait, use a different `--profile`, or set `GFLOW_CLI_LEASE_WAIT_SECONDS=N` to wait bounded; upgrade gflow-cli/Playwright or re-run `gflow auth login` for a downgrade refusal |
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
-| `14` | `AuthBrowserRejectedError` | Google rejected the login browser             | `gflow auth login --browser chrome`                        |
+| `14` | `AuthBrowserRejectedError` | Sign-in rejected the browser for `navigator.webdriver` | Re-run `gflow auth login`; with Chrome installed the `chrome` strategy retries automatically |
 | `15` | `BrowserSessionClosedError` | The automation browser window was closed mid-operation | Re-run; keep the browser window open until the command finishes |
 | `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
 | `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode — today that is `omni-flash` for `chain` (issues #125, #626) | Use a Veo 3.1 model (`veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`) for `chain`. Single-clip `i2v` with omni-flash, `--end-frame` included, is accepted |
@@ -1770,7 +1785,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
-| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` (the origin Google is migrating accounts onto) and the request could not be routed to the migrated composer: `GFLOW_CLI_FLOW_HOST=labs.google` switched it off, or the request type is not ported to that host yet (today `video t2v`; `video i2v` from a local `--initial-frame` with no end frame; and `video r2v` from local `--ref` files — all with `--project`). Not selector drift (23) | **Not retryable.** The handoff is a per-account setting applied on every load. Use `gflow video t2v --project <id>`, `gflow video i2v --initial-frame <file> --project <id>` or `gflow video r2v --ref <file> --project <id>` on that host, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the rest of the matrix |
+| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; and local-file `image i2i`. Image UUID/entity/instruction/Imagen-4 forms, `image batch`, and the `3:4` image aspect remain unsupported. Not selector drift (23) | **Not retryable.** Use one of the supported forms — `--project` is required for images as well as video — or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
 | `37` | `InsufficientCreditsError` | The account's balance is short **for the model it asked for**, so Flow **replaced** the submit control with its `Insufficient credits warning` instead of disabling it. Short, not necessarily empty: measured 2026-09-07, an account holding **50** credits requesting `--model veo-quality` (**100**) rendered the warning. Explicitly **not** selector drift (23): reporting it as drift told users to file a frontend bug over a credit shortfall | Check the balance with `gflow credits user`, then pick a cheaper `--model` (`veo-lite` costs 10), top up, or wait for the allowance to reset. Nothing was submitted, so no credit was spent. `gflow image` draws on a separate daily quota and may still work |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
@@ -1810,7 +1825,7 @@ if [ "$rc" -ne 0 ]; then
     10)  echo "Flow rejected the request — adjust the prompt/request and retry"; exit 1 ;;
     11)  echo "Configuration error — fix the option or env var shown above"; exit 1 ;;
     13)  echo "Security guard blocked unsafe local state — follow the error guidance"; exit 1 ;;
-    14)  echo "Google rejected the login browser — run: gflow auth login --browser chrome"; exit 1 ;;
+    14)  echo "Sign-in rejected the browser (navigator.webdriver) — run: gflow auth login"; exit 1 ;;
     16)  echo "Database error — check permissions or upgrade gflow-cli"; exit 1 ;;
     130) echo "Cancelled with Ctrl-C"; exit 130 ;;
     *)   echo "Unknown failure (exit $rc)"; exit 1 ;;
