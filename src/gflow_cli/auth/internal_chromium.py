@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import structlog
 from playwright.async_api import Error as PlaywrightError
@@ -22,6 +23,11 @@ _console = Console()
 
 GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
 GOOGLE_REJECTED_BROWSER_ROUTE = "accounts.google.com/v3/signin/rejected"
+POLL_INTERVAL_SECONDS = 3
+# Host the Flow app itself is served from. The session poll only runs while the page
+# is here — see the comment in poll_session_until_authenticated. Structural (a host,
+# not display text), so it stays locale-invariant.
+FLOW_APP_HOST = "labs.google"
 
 
 def login_launch_kwargs(
@@ -98,6 +104,20 @@ async def poll_session_until_authenticated(
             if _is_google_rejected_browser_page(page):
                 raise AuthBrowserRejectedError
 
+            # Do not touch the session endpoint while the browser is away on the
+            # OAuth handshake. `/fx/api/auth/session` is a NextAuth route that can
+            # rotate session cookies, and a poll landing mid-callback can clobber the
+            # `state`/PKCE cookies the callback needs — observed live 2026-09-08 as
+            # `labs.google/fx/api/auth/signin?error=OAuthCallback`, a sign-in that
+            # failed and then timed out at 600 s. The 2026-09-08 spike, which signed
+            # in successfully twice, never made this request: it read the jar locally
+            # over CDP and issued no HTTP at all during sign-in. Waiting until the
+            # page is back on the Flow host restores that property, and it is what
+            # notebooklm-py does (watch the URL first, read the session after).
+            if not _is_on_flow_host(page):
+                await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                continue
+
             cookies = await ctx.cookies()
             google_session = any(c.get("name") == "SAPISID" for c in cookies)
             resp = await page.request.get(SESSION_API_URL, timeout=15_000)
@@ -113,6 +133,12 @@ async def poll_session_until_authenticated(
                     strategy=strategy_name,
                     source=status.source,
                     user_email=status.user_email,
+                    # Which oracle spoke. RealChromeStrategy runs BOTH — this live probe
+                    # decides when to close, then verify_flow_profile re-checks what
+                    # actually landed on disk — and a live run on 2026-09-08 emitted two
+                    # identical events, leaving "did the on-disk check pass?"
+                    # unanswerable from the log.
+                    probe="in_context",
                 )
                 success = True
                 _email = status.user_email
@@ -177,6 +203,19 @@ def _is_google_rejected_browser_page(page: object) -> bool:
     """Return True when Google has already routed login to its rejection page."""
     url = getattr(page, "url", "")
     return isinstance(url, str) and GOOGLE_REJECTED_BROWSER_ROUTE in url
+
+
+def _is_on_flow_host(page: object) -> bool:
+    """Return True when the page is on the Flow app host, not mid-OAuth on Google's.
+
+    ``isinstance(url, str)`` is load-bearing, not defensive: a bare mock attribute is
+    truthy, so without it a test double would report "on the Flow host" and the guard
+    would pass for the wrong reason.
+    """
+    url = getattr(page, "url", "")
+    if not isinstance(url, str):
+        return False
+    return (urlparse(url).hostname or "").lower() == FLOW_APP_HOST
 
 
 class InternalChromiumStrategy(AuthStrategy):

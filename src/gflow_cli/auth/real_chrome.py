@@ -451,6 +451,7 @@ class RealChromeStrategy(AuthStrategy):
                 strategy=self.name,
                 source=status.source,
                 user_email=status.user_email,
+                probe="on_disk",
             )
             # Marker read by browser_manager.channel_for_profile so FlowApiClient
             # selects the system Chrome channel. Load-bearing — must persist here.

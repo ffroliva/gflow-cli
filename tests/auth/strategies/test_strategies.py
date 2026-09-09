@@ -663,3 +663,61 @@ class TestRaiseOnCloseDefault:
             await poll_session_until_authenticated(ctx, page, 600, "chrome", raise_on_close=False)
             is None
         )
+
+
+class TestSessionPollStaysOffTheOAuthHandshake:
+    """The session poll must not touch `/fx/api/auth/session` mid-OAuth.
+
+    Observed live 2026-09-08: a sign-in driven through the owned browser landed on
+    `labs.google/fx/api/auth/signin?error=OAuthCallback` and then timed out at 600 s.
+    `/fx/api/auth/session` is a NextAuth route that can rotate session cookies, and the
+    poll was hitting it every 3 s for the whole login — including while Google held the
+    page for the callback. The spike that signed in successfully twice never made this
+    request at all: it read the cookie jar locally over CDP. This pins that property.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_session_request_while_on_google(self) -> None:
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        page = MagicMock(name="page")
+        # Mid-handshake on Google's host, not Flow's.
+        page.url = "https://accounts.google.com/v3/signin/challenge/pwd?flow=1"
+        page.is_closed = MagicMock(return_value=False)
+        page.request.get = AsyncMock()
+
+        ctx = MagicMock(name="ctx")
+        ctx.cookies = AsyncMock(return_value=[])
+
+        with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()):
+            # timeout_seconds=0 would skip the loop entirely; give it a real budget and
+            # let the patched sleep spin it, then assert on what it did NOT do.
+            with pytest.raises(AuthLoginTimeoutError):
+                await poll_session_until_authenticated(ctx, page, 1, "chrome")
+
+        page.request.get.assert_not_awaited()
+        ctx.cookies.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_session_request_resumes_once_back_on_flow(self) -> None:
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        resp = MagicMock(name="resp")
+        resp.status = 200
+        resp.text = AsyncMock(
+            return_value='{"user":{"email":"test@example.com"},"expires":"2099-01-01"}'
+        )
+
+        page = MagicMock(name="page")
+        page.url = "https://labs.google/fx/tools/flow"
+        page.is_closed = MagicMock(return_value=False)
+        page.request.get = AsyncMock(return_value=resp)
+
+        ctx = MagicMock(name="ctx")
+        ctx.cookies = AsyncMock(return_value=[{"name": "SAPISID", "value": "x"}])
+
+        with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()):
+            email = await poll_session_until_authenticated(ctx, page, 30, "chrome")
+
+        assert email == "test@example.com"
+        page.request.get.assert_awaited()
