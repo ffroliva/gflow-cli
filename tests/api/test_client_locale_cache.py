@@ -439,3 +439,37 @@ async def test_the_settle_wait_is_skipped_when_the_url_already_answered(
     assert client._account_locale == "pt"
     assert page.lang_probed is False, "the URL answered; do not touch <html lang>"
     assert page.lang_waited is False, "the URL answered; do not pay the settle-wait"
+
+
+async def test_chooser_hop_does_not_demote_a_learned_locale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A chooser click-through must fold the EDITOR's locale, not the chooser's.
+
+    The chooser page yields no locale segment, so the first resolve returns
+    ``from_url=None``. `next_locale_state(cached="pt", observed=None)` returns
+    PROVISIONAL — a demotion — and it is written to disk. The post-click resolve
+    holds the real segment and used to discard it (`self._account_locale, _ =`),
+    so every chooser hop quietly downgraded a committed locale, which is the bug
+    class of #643. The comment above the call claimed "the on-disk cache is safe";
+    it was not.
+    """
+    from unittest.mock import MagicMock
+
+    write_account_locale(tmp_path, "pt")
+
+    page = MagicMock()
+    page.goto = AsyncMock(return_value=None)
+    client = FlowApiClient(tmp_path)
+    client._page = page  # type: ignore[assignment]
+
+    # First resolve runs on the chooser: no segment. Second runs on the editor.
+    resolves = iter([("en", None), ("pt", "pt")])
+    monkeypatch.setattr(
+        client, "_resolve_account_locale", AsyncMock(side_effect=lambda *a, **k: next(resolves))
+    )
+    monkeypatch.setattr(client, "_handle_account_chooser", AsyncMock(return_value=True))
+
+    await client._bootstrap_and_resolve_locale()
+
+    assert read_account_locale(tmp_path) == "pt", "a chooser hop must not demote a learned locale"

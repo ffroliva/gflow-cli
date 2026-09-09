@@ -17,6 +17,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -27,6 +28,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api import routes, video_extend
 from gflow_cli.api._engine import (
@@ -61,7 +63,11 @@ from gflow_cli.api.transports import (
     make_transport,
     resolve_transport_name,
 )
-from gflow_cli.api.transports._common import await_url_settled, raise_if_migrated
+from gflow_cli.api.transports._common import (
+    await_url_settled,
+    flow_host_kind,
+    raise_if_migrated,
+)
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
     SupportsTransportSetup,
@@ -75,6 +81,7 @@ from gflow_cli.api.video import (
     parse_video_status,
 )
 from gflow_cli.api.video_extend import ExtendStarted
+from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_incidents_root
@@ -86,6 +93,7 @@ from gflow_cli.errors import (
     BrowserSessionClosedError,
     ConfigurationError,
     ContentPolicyError,
+    FlowAccountChooserError,
     FlowApiError,  # re-exported via gflow_cli.api.__init__
     FlowHostMigratedError,
     NetworkError,
@@ -783,6 +791,121 @@ class FlowApiClient:
         # S1 can share this context rather than opening its own.
         await self._setup_transport()
 
+    async def _handle_account_chooser(self, page: Page) -> bool:
+        """Select the recorded Google account on accountchooser if encountered (#763).
+
+        Returns True if an account was clicked, False if not on chooser.
+        Raises FlowAccountChooserError if on chooser but account is missing/not selectable.
+
+        Matching is exact on the account row only: the chooser's loose surfaces
+        ("Remove <email>", "Sign out of <email>", signed-in-as subtitle) would
+        otherwise win a substring match and click the wrong account, billing it.
+        """
+        from gflow_cli.profile_store import read_account_file
+
+        url = getattr(page, "url", "") or ""
+        # Exact host match, never a substring test: a Flow URL merely carrying
+        # accounts.google.com in a ?continue= param must not read as a chooser.
+        # The rejected-browser hop is not a chooser either and must surface as
+        # its own error rather than a missing account.
+        # Total by construction (same discipline as flow_host_kind): a probe
+        # error must never displace the real bootstrap failure, and suites
+        # drive this path with mocked pages whose url is not a string.
+        if not isinstance(url, str):
+            return False
+        try:
+            parts = urlsplit(url)
+            host = (parts.hostname or "").lower()
+        except ValueError:
+            return False
+        is_accounts_host = parts.scheme == "https" and host == "accounts.google.com"
+        if not is_accounts_host or GOOGLE_REJECTED_BROWSER_ROUTE in url:
+            return False
+
+        # Identify a chooser POSITIVELY. The host gate accepts every
+        # accounts.google.com landing, and most are not choosers — the email form, a
+        # password challenge, a consent interstitial — where there is nothing to pick.
+        # Reporting those as a chooser misdirects the operator and changes an exit code
+        # callers branch on: they otherwise reach the transport's 401 and classify as
+        # AuthExpiredError (exit 3). Two independent signals, because each covers the
+        # other's blind spot — Google renaming the path, or a chooser whose rows carry
+        # no data-email. Neither matching means we return False, which is exactly how
+        # this path behaved before the feature existed.
+        on_chooser_path = parts.path.rstrip("/").endswith("accountchooser")
+        if not on_chooser_path and await page.locator("[data-email]").count() == 0:
+            return False
+
+        email = read_account_file(self.profile_dir)
+        if not email:
+            raise FlowAccountChooserError(
+                detail=(
+                    f"Google sign-in/chooser displayed at {url} but no account is recorded "
+                    f"in this profile to auto-select."
+                )
+            )
+
+        # Exact row match only (D3): data-email is the chooser's stable per-account
+        # anchor. A substring/text-engine fallback would match "Remove <email>"
+        # or "Sign out of <email>" and click a DOM-order-first wrong account.
+        # Case-insensitive on BOTH tiers, because `gflow auth login --account`
+        # already compares with `.lower()` and `read_account_file` normalises
+        # nothing: an address recorded in one case and rendered by Google in
+        # another otherwise passes the --account assertion and then misses the
+        # row, raising "not found among selectable accounts" while the account
+        # sits on the chooser. CSS attribute matching is case-sensitive unless
+        # the `i` flag is given; the text fallback stays ANCHORED so relaxing
+        # case does not start matching "Remove <email>" / "Sign out of <email>"
+        # — clicking those signs the operator out instead of in.
+        row = page.locator(f'[data-email="{email}" i]')
+        count = await row.count()
+        if count == 0:
+            row = page.get_by_text(re.compile(rf"^{re.escape(email)}$", re.IGNORECASE))
+            count = await row.count()
+
+        if count == 0:
+            raise FlowAccountChooserError(
+                detail=(
+                    f"Account chooser displayed at {url} but recorded account '{email}' "
+                    f"was not found among selectable accounts."
+                )
+            )
+
+        # The row is the account's entry; verify we actually leave the chooser.
+        await row.first.click()
+        # `wait_for_url` returns None and signals a miss by RAISING, so its return value
+        # is falsy on success as well as failure — testing it inverted the check and made
+        # every successful click raise. Catch the raise instead.
+        #
+        # The landing predicate is "on any Flow host", not a `**/project/**` glob: the
+        # bootstrap URL is `labs.google/fx/tools/flow` with no /project/ segment, and only
+        # the migrated origin serves /project/<id>. `flow_host_kind` is the codebase's
+        # exact-host classifier (a substring test matches any URL merely mentioning the
+        # host in a ?continue= param), and it answers for both cohorts.
+        try:
+            await page.wait_for_url(lambda u: flow_host_kind(u) is not None, timeout=30_000)
+        except PlaywrightTimeoutError as exc:
+            # Where the click left us IS the diagnosis, so the detail has to carry it
+            # (its sibling raise above interpolates the chooser URL for the same
+            # reason). `flow_host_kind` is a host-only match that accepts every Flow
+            # landing this codebase knows, `/about` included, so a timeout here is
+            # never the predicate being too narrow — the session is still on a Google
+            # surface. WHICH surface is the whole question: a challenge needs a human,
+            # a consent screen needs a click, and a URL still equal to `url` above
+            # means the click never navigated at all. Shipped without this, the branch
+            # fired live on 2026-09-09 and said only "did not reach Flow within 30s".
+            landed = page.url
+            raise FlowAccountChooserError(
+                detail=(
+                    f"Clicked recorded account '{email}' on the chooser but the session "
+                    f"did not reach Flow within 30s — it is at {landed}."
+                )
+            ) from exc
+        logger.info(
+            "client.account_chooser_autoselected",
+            account=redact_sensitive_text(email),
+        )
+        return True
+
     async def _bootstrap_and_resolve_locale(self) -> None:
         """Navigate the bootstrap page and settle the account locale (#580, #587).
 
@@ -819,6 +942,20 @@ class FlowApiClient:
         self._account_locale, from_url = await self._resolve_account_locale(
             self._page, settle=settle
         )
+        # #763: the chooser hop lands through the same post-goto redirect chain as
+        # the locale hop, so it is observable only after the settle above.
+        # BOTH outputs of the first resolve are the chooser's, and both must be
+        # replaced. `self._account_locale` would otherwise carry
+        # accounts.google.com's <html lang> for the rest of the run. `from_url`
+        # is subtler and was wrong: a chooser yields None, and
+        # `next_locale_state(cached="pt", observed=None)` returns PROVISIONAL, so
+        # the fold below wrote a DEMOTION of a committed locale on every chooser
+        # hop (#643's bug class). The post-click resolve holds the editor's real
+        # segment — fold that.
+        if await self._handle_account_chooser(self._page):
+            self._account_locale, from_url = await self._resolve_account_locale(
+                self._page, settle=False
+            )
         if not settle:
             # Kept (not merged into account_locale_state) because field reports key
             # on this event to tell "the settle was skipped" from "it timed out".

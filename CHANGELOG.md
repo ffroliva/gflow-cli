@@ -29,6 +29,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exit 23 — which told the user to file a frontend-drift bug about a frontend that was
   behaving correctly.
 
+- **Account auto-selection at post-migration sign-in chooser**
+  ([#763](https://github.com/ffroliva/gflow-cli/issues/763)). When Google
+  Flow hands the session over to `flow.google.com` and redirects to an account
+  chooser, `FlowApiClient` now auto-selects the profile's recorded account from
+  `.gflow_account`. If the recorded account is absent or cannot be selected, the
+  client raises a dedicated, non-retryable `FlowAccountChooserError` (exit code 38),
+  avoiding generic `UnexpectedError` or selector drift stalls. `gflow auth login`
+  gains an optional `--account <email>` option to assert that login authenticates
+  as the required account. When the click-through does not reach Flow, the error
+  names the URL the session actually landed on, so a Google challenge that needs a
+  human is distinguishable from a click that never navigated. Account matching is
+  case-insensitive on both tiers, matching `--account`'s own comparison, so a
+  recorded address whose case differs from Google's rendering still selects its
+  row instead of reporting the account as absent.
+
+### Fixed
+
+- **`gflow auth list` no longer fails on a profile whose `.gflow_account` is
+  damaged.** The reader decoded as UTF-8 and caught only `OSError`, so a
+  non-UTF-8 or truncated file raised out of `list_profiles()` and broke the
+  listing for *every* profile, not just the damaged one. The value is also
+  interpolated into a DOM attribute selector, where a stray quote produced an
+  untyped failure; unusable content now reads as "no account recorded", which
+  every caller already handles.
+
 ### Changed
 
 - **`gflow auth login` closes the browser for you.** It drives your real Google Chrome

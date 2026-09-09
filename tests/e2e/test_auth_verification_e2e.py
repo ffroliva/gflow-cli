@@ -88,3 +88,27 @@ async def test_e2e_verify_flow_profile_falls_back_to_playwright(
 
     assert status.outcome is FlowSessionOutcome.AUTHENTICATED
     assert isinstance(status.user_email, str) and status.user_email
+
+
+async def test_e2e_bootstrap_completes_with_chooser_callsite_present(
+    e2e_profile_dir: Path,
+) -> None:
+    """Bootstrap still completes with the chooser-autoselect callsite wired in (#763).
+
+    Zero credits: enters the client (bootstrap + locale settle + the new
+    ``_handle_account_chooser`` call) and asserts the page lands on the Flow
+    editor, not on an account chooser. On a signed-in profile no chooser
+    renders, so this pins the no-op path; a maintainer can run it against a
+    profile signed out of Flow to exercise the click-through branch.
+    """
+    from gflow_cli.profile_store import ACCOUNT_FILE
+
+    account_file = e2e_profile_dir / ACCOUNT_FILE
+    recorded = account_file.read_text(encoding="utf-8").strip() if account_file.exists() else ""
+
+    async with FlowApiClient(profile_dir=e2e_profile_dir, transport="evaluate_fetch") as client:
+        assert await client.health_check() is True
+        url = getattr(client._page, "url", "") or ""
+        assert "accounts.google.com" not in url, (
+            f"bootstrap stalled on the account chooser for recorded account {recorded!r}"
+        )

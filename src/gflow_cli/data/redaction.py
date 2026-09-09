@@ -16,17 +16,39 @@ SENSITIVE_QUERY_KEYS = ("signature=", "x-goog-signature=", "x-goog-credential=",
 # exception message ("HTTP 403: ... Bearer ya29.xxx") would pass through it
 # verbatim — these patterns cover the prose case. All case-insensitive: header
 # dumps are frequently lowercased ("cookie: sapisid=...").
-_SECRET_TEXT_PATTERNS = (
-    re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
-    re.compile(r"SAPISIDHASH\s+\S+", re.IGNORECASE),
+_SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE), "<redacted:secret>"),
+    (re.compile(r"SAPISIDHASH\s+\S+", re.IGNORECASE), "<redacted:secret>"),
     # Google auth cookie pairs — both header ("SAPISID=x") and equals forms.
     # SAPISIDHASH before SAPISID before the bare SID family so the longest
     # name wins; \b keeps bare SID from firing inside unrelated words.
-    re.compile(
-        r"\b(?:__Secure-(?:next-auth\.session-token|[13]PSID[A-Z]*)"
-        r"|SAPISIDHASH|SAPISID|APISID|SSID|HSID|OSID|LSID|SID)"
-        r"\s*=\s*\S+",
-        re.IGNORECASE,
+    (
+        re.compile(
+            r"\b(?:__Secure-(?:next-auth\.session-token|[13]PSID[A-Z]*)"
+            r"|SAPISIDHASH|SAPISID|APISID|SSID|HSID|OSID|LSID|SID)"
+            r"\s*=\s*\S+",
+            re.IGNORECASE,
+        ),
+        "<redacted:secret>",
+    ),
+    # Account addresses (chooser/login identity in error details and logs).
+    # Kept distinct from <redacted:secret>: an address is correlatable PII,
+    # not a credential, and operators triage chooser failures by cohort.
+    (
+        # Bounded so a path is not mistaken for an address: `C:/x@y.co/path` and
+        # `/var/x@y.io/cache` are ordinary paths, and this pattern runs on EVERY
+        # persisted error detail, transport snippet and worker payload — the one
+        # artifact left for debugging a failure, where a silent rewrite cannot be
+        # told apart from the original text. The lookbehind rejects a match starting
+        # mid-token or right after a path separator; the lookahead rejects one that
+        # continues into a path segment.
+        re.compile(
+            r"(?<![\w.%+/\\-])"
+            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+            r"(?![\w.-]*[/\\])",
+            re.IGNORECASE,
+        ),
+        "<redacted:email>",
     ),
 )
 # Any whitespace-delimited token carrying signed-query material — covers full
@@ -85,11 +107,11 @@ def redact_error_detail(detail: str) -> str:
     """Scrub a free-text error detail before it is persisted to the DB (#341).
 
     Applied to ``GFlowError.to_problem_details()['detail']`` on the FAILED
-    operation write path. Scrubs bearer/SAPISIDHASH/cookie-pair secrets, drops
+    operation write path. Scrubs bearer/SAPISIDHASH/cookie-pair secrets and account addresses, drops
     URLs carrying signed-query material, and truncates post-redaction as
     defense-in-depth against a scrub bypass.
     """
-    for pattern in _SECRET_TEXT_PATTERNS:
-        detail = pattern.sub("<redacted:secret>", detail)
+    for pattern, replacement in _SECRET_TEXT_PATTERNS:
+        detail = pattern.sub(replacement, detail)
     detail = _SIGNED_QUERY_TOKEN_PATTERN.sub("<redacted:url>", detail)
     return detail[:ERROR_DETAIL_MAX_CHARS]

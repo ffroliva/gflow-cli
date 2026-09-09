@@ -174,6 +174,18 @@ Set ffroliva as default profile.
 If a profile named after the email local-part already exists, the rename is skipped
 and the profile keeps the name `default`.
 
+#### `--account <email>`
+
+Asserts that the login authenticates as one exact Google account. After the
+session verifies, the CLI compares the verified email against `--account`
+(case-insensitive) and fails with `FlowAccountChooserError` (exit 38) on a
+mismatch — including when no verified email was recorded at all, since an
+identity assertion that cannot read the identity must not pass.
+
+A mismatch means the profile now holds the *other* account's session: re-run
+`gflow auth login --profile <name> --account <email>` while signed in as the
+required account.
+
 #### `--browser [auto|chrome|internal]`
 
 | Value | Browser used | When to use |
