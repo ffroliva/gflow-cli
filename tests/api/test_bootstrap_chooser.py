@@ -185,3 +185,46 @@ async def test_bootstrap_chooser_non_string_url_is_not_a_chooser(
 
     assert await client._handle_account_chooser(page) is False
     page.locator.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_chooser_landing_timeout_names_where_the_page_landed(
+    tmp_path: Path,
+) -> None:
+    """A landing timeout must report the URL the click actually left us on.
+
+    The sibling raise above interpolates the chooser URL; this branch shipped
+    without it and fired live on 2026-09-09 saying only "did not reach Flow
+    within 30s". `flow_host_kind` is a host-only match that accepts every known
+    Flow landing (including `/about`), so a timeout means the session is still on
+    a Google surface — and *which* surface is the whole diagnosis: a password
+    challenge needs a human, a consent screen needs a click, and an unchanged
+    chooser URL means our click never navigated at all. Without the URL those
+    are one indistinguishable exit 38.
+    """
+    from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.profile_store import ACCOUNT_FILE
+
+    profile = tmp_path / "profile_p1"
+    profile.mkdir()
+    (profile / ACCOUNT_FILE).write_text("user@example.com\n", encoding="utf-8")
+
+    client = FlowApiClient(profile_dir=profile)
+    page, row = _chooser_page(
+        "https://accounts.google.com/v3/signin/accountchooser",
+        row_count=1,
+    )
+    interstitial = "https://accounts.google.com/signin/v2/challenge/pwd"
+
+    async def _click_moves_to_interstitial(*_args: object, **_kwargs: object) -> None:
+        page.url = interstitial
+
+    row.first.click = AsyncMock(side_effect=_click_moves_to_interstitial)
+    page.wait_for_url = AsyncMock(side_effect=PlaywrightTimeoutError("timed out"))
+
+    with pytest.raises(FlowAccountChooserError) as exc_info:
+        await client._handle_account_chooser(page)
+
+    # The CURRENT url, not the chooser url captured on entry: reporting the entry
+    # url would claim "still on the chooser" for a click that did navigate.
+    assert interstitial in str(exc_info.value)

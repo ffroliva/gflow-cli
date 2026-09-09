@@ -861,10 +861,20 @@ class FlowApiClient:
         try:
             await page.wait_for_url(lambda u: flow_host_kind(u) is not None, timeout=30_000)
         except PlaywrightTimeoutError as exc:
+            # Where the click left us IS the diagnosis, so the detail has to carry it
+            # (its sibling raise above interpolates the chooser URL for the same
+            # reason). `flow_host_kind` is a host-only match that accepts every Flow
+            # landing this codebase knows, `/about` included, so a timeout here is
+            # never the predicate being too narrow — the session is still on a Google
+            # surface. WHICH surface is the whole question: a challenge needs a human,
+            # a consent screen needs a click, and a URL still equal to `url` above
+            # means the click never navigated at all. Shipped without this, the branch
+            # fired live on 2026-09-09 and said only "did not reach Flow within 30s".
+            landed = page.url
             raise FlowAccountChooserError(
                 detail=(
                     f"Clicked recorded account '{email}' on the chooser but the session "
-                    f"did not reach Flow within 30s."
+                    f"did not reach Flow within 30s — it is at {landed}."
                 )
             ) from exc
         logger.info(

@@ -35,7 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client raises a dedicated, non-retryable `FlowAccountChooserError` (exit code 38),
   avoiding generic `UnexpectedError` or selector drift stalls. `gflow auth login`
   gains an optional `--account <email>` option to assert that login authenticates
-  as the required account.
+  as the required account. When the click-through does not reach Flow, the error
+  names the URL the session actually landed on, so a Google challenge that needs a
+  human is distinguishable from a click that never navigated.
 
 ### Changed
 
