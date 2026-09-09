@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.errors import FlowAccountChooserError
 
@@ -41,14 +42,24 @@ async def test_bootstrap_detects_chooser_and_autoselects_account(tmp_path: Path)
         "https://accounts.google.com/v3/signin/accountchooser?continue=flow.google.com",
         row_count=1,
     )
-    page.wait_for_url = AsyncMock(return_value="https://flow.google.com/project/p1")
+    # `Page.wait_for_url` is annotated `-> None`: it returns nothing and signals a miss
+    # by raising. A mock that returns a URL string encodes a contract Playwright does
+    # not have, and it hid an inverted check that made every successful click raise.
+    page.wait_for_url = AsyncMock(return_value=None)
 
     res = await client._handle_account_chooser(page, "user@example.com")
     assert res is True
     # The exact row selector is used, and it is clicked
     assert page.locator.call_args[0][0] == '[data-email="user@example.com"]'
     row.first.click.assert_awaited_once()
-    page.wait_for_url.assert_awaited_once_with("**/project/**", timeout=30_000)
+    page.wait_for_url.assert_awaited_once()
+    # The landing predicate accepts BOTH Flow cohorts and rejects the chooser itself,
+    # so it cannot be satisfied by simply still being on accounts.google.com.
+    predicate = page.wait_for_url.call_args[0][0]
+    assert predicate("https://labs.google/fx/tools/flow?hl=en") is True
+    assert predicate("https://flow.google.com/project/p1") is True
+    assert predicate("https://accounts.google.com/v3/signin/accountchooser") is False
+    assert page.wait_for_url.call_args[1]["timeout"] == 30_000
 
 
 @pytest.mark.asyncio
@@ -127,13 +138,15 @@ async def test_bootstrap_chooser_click_no_editor_raises_flow_account_chooser_err
         "https://accounts.google.com/v3/signin/accountchooser",
         row_count=1,
     )
-    page.wait_for_url = AsyncMock(
-        return_value="https://accounts.google.com/v3/signin/accountchooser"
-    )
+    # A landing that never happens is a Playwright TimeoutError out of wait_for_url —
+    # the real failure signal, not a returned URL.
+    page.wait_for_url = AsyncMock(side_effect=PlaywrightTimeoutError("timed out"))
 
     with pytest.raises(FlowAccountChooserError) as exc_info:
         await client._handle_account_chooser(page, "user@example.com")
-    assert "did not reach the Flow editor" in str(exc_info.value)
+    assert "did not reach Flow" in str(exc_info.value)
+    # The Playwright timeout is chained, not swallowed, so the bundle keeps the cause.
+    assert isinstance(exc_info.value.__cause__, PlaywrightTimeoutError)
 
 
 @pytest.mark.asyncio

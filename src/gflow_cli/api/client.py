@@ -27,6 +27,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api import routes, video_extend
 from gflow_cli.api._engine import (
@@ -61,7 +62,11 @@ from gflow_cli.api.transports import (
     make_transport,
     resolve_transport_name,
 )
-from gflow_cli.api.transports._common import await_url_settled, raise_if_migrated
+from gflow_cli.api.transports._common import (
+    await_url_settled,
+    flow_host_kind,
+    raise_if_migrated,
+)
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
     SupportsTransportSetup,
@@ -831,13 +836,24 @@ class FlowApiClient:
 
         # The row is the account's entry; verify we actually leave the chooser.
         await row.first.click()
-        if "project" not in (await page.wait_for_url("**/project/**", timeout=30_000) or ""):
+        # `wait_for_url` returns None and signals a miss by RAISING, so its return value
+        # is falsy on success as well as failure — testing it inverted the check and made
+        # every successful click raise. Catch the raise instead.
+        #
+        # The landing predicate is "on any Flow host", not a `**/project/**` glob: the
+        # bootstrap URL is `labs.google/fx/tools/flow` with no /project/ segment, and only
+        # the migrated origin serves /project/<id>. `flow_host_kind` is the codebase's
+        # exact-host classifier (a substring test matches any URL merely mentioning the
+        # host in a ?continue= param), and it answers for both cohorts.
+        try:
+            await page.wait_for_url(lambda u: flow_host_kind(u) is not None, timeout=30_000)
+        except PlaywrightTimeoutError as exc:
             raise FlowAccountChooserError(
                 detail=(
                     f"Clicked recorded account '{email}' on the chooser but the session "
-                    f"did not reach the Flow editor."
+                    f"did not reach Flow within 30s."
                 )
-            )
+            ) from exc
         logger.info(
             "client.account_chooser_autoselected",
             account=redact_sensitive_text(email),
