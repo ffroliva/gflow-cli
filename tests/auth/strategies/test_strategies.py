@@ -781,9 +781,7 @@ class TestSessionPollStaysOffTheOAuthHandshake:
         # a ten-minute hang instead of a red test.
         with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()):
             assert (
-                await poll_session_until_authenticated(
-                    ctx, page, 5, "chrome", raise_on_close=False
-                )
+                await poll_session_until_authenticated(ctx, page, 5, "chrome", raise_on_close=False)
                 is None
             )
 
