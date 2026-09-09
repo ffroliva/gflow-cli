@@ -419,6 +419,11 @@ class TestInternalChromiumStrategy:
         mock_resp.text = AsyncMock(return_value='{"user": {"email": "test@example.com"}}')
 
         mock_page = MagicMock(name="page")
+        # Mirror the runtime contract: the strategy has just navigated to GEMINI_URL,
+        # so the page IS on the Flow host. Left as a bare MagicMock attribute this is
+        # not a str, the poll's host guard reads "still mid-OAuth" and the loop spins
+        # until the 600 s timeout instead of polling once.
+        mock_page.url = "https://labs.google/fx/tools/flow"
         mock_page.goto = AsyncMock()
         mock_page.request.get = AsyncMock(return_value=mock_resp)
 
@@ -488,6 +493,11 @@ class TestInternalChromiumStrategy:
         mock_resp.status = 200
         mock_resp.text = AsyncMock(return_value='{"user": {"email": "test@example.com"}}')
         mock_page = MagicMock(name="page")
+        # Mirror the runtime contract: the strategy has just navigated to GEMINI_URL,
+        # so the page IS on the Flow host. Left as a bare MagicMock attribute this is
+        # not a str, the poll's host guard reads "still mid-OAuth" and the loop spins
+        # until the 600 s timeout instead of polling once.
+        mock_page.url = "https://labs.google/fx/tools/flow"
         mock_page.goto = AsyncMock()
         mock_page.request.get = AsyncMock(return_value=mock_resp)
         mock_ctx = MagicMock(name="ctx")
@@ -530,6 +540,11 @@ class TestInternalChromiumStrategy:
         mock_resp.text = AsyncMock(return_value="{}")
 
         mock_page = MagicMock(name="page")
+        # Mirror the runtime contract: the strategy has just navigated to GEMINI_URL,
+        # so the page IS on the Flow host. Left as a bare MagicMock attribute this is
+        # not a str, the poll's host guard reads "still mid-OAuth" and the loop spins
+        # until the 600 s timeout instead of polling once.
+        mock_page.url = "https://labs.google/fx/tools/flow"
         mock_page.goto = AsyncMock()
         mock_page.request.get = AsyncMock(return_value=mock_resp)
 
