@@ -774,10 +774,15 @@ class TestSessionPollStaysOffTheOAuthHandshake:
         ctx = MagicMock(name="ctx")
         ctx.cookies = AsyncMock(return_value=[])
 
+        # A SMALL deadline on purpose. The passing path returns instantly, so the
+        # value only matters when this regresses — and then it decides whether CI
+        # fails in seconds or hangs for the full production timeout. Verified by
+        # neutering the check: the run spins to the deadline, so 600 here would be
+        # a ten-minute hang instead of a red test.
         with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()):
             assert (
                 await poll_session_until_authenticated(
-                    ctx, page, 600, "chrome", raise_on_close=False
+                    ctx, page, 5, "chrome", raise_on_close=False
                 )
                 is None
             )
