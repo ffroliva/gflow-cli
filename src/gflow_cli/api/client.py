@@ -590,7 +590,7 @@ class FlowApiClient:
                 "Playwright's bundled Chromium. On macOS the bundled Chromium cannot "
                 "decrypt cookies written by real Chrome (Keychain 'Chrome Safe Storage'), "
                 "yielding a logged-out session and an HTTP 401 at project.createProject. "
-                "Install Google Chrome in its default location (or set CHROME_BINARY), "
+                "Install Google Chrome in its default location, "
                 "then retry; or re-run `gflow auth login` to re-capture the session."
             )
             if sys.platform == "darwin":

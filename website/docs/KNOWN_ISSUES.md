@@ -1523,9 +1523,10 @@ End-to-end live-verified on the `ffroliva` profile across `9:16`, `16:9`, `1:1`,
 
 ### G12 "browser not secure" block — Google rejects automated sign-in
 
-- **Status:** Resolved · **Severity:** Critical (blocked `gflow auth login`) · **Fixed in:** v0.6.0a2
+- **Status:** Resolved · **Severity:** Critical (blocked `gflow auth login`) · **Fixed in:** v0.6.0a2 · **Mitigation reimplemented + re-measured:** 2026-09-08
 
-Google's sign-in flow (`accounts.google.com/v3/signin/rejected`) detected Playwright's bundled Chromium as an automated browser and refused the login with no user-facing error.
+Google's sign-in flow (`accounts.google.com/v3/signin/rejected`) rejects a browser that
+advertises itself as automated, and refuses the login with no user-facing error.
 
 **Root cause (timing race):** Without `--disable-blink-features=AutomationControlled`,
 Blink's C++ engine sets `navigator.webdriver = true` as a non-configurable, non-writable
@@ -1533,20 +1534,52 @@ native property at Chrome startup — before any JavaScript (including `add_init
 can run. The `Object.defineProperty` override silently fails. With the flag, the property
 is never set; the JS override then works as belt-and-suspenders.
 
-**Resolution:** `v0.6.0a2` adds `RealChromeStrategy` — a new auth strategy that launches
-the system's real Google Chrome via Playwright's `channel="chrome"` with stealth flags.
+**Resolution:** `gflow auth login` launches the system's real Google Chrome through
+Playwright's `channel="chrome"` with `chromium_sandbox=True`, `no_viewport=True`, and both
+stealth flags — `--disable-blink-features=AutomationControlled` and
+`ignore_default_args=["--enable-automation"]`. Because gflow owns that browser it also
+detects the completed Flow sign-in and closes the window itself; see
+[docs/AUTHENTICATION.md](AUTHENTICATION.md). When no Chrome channel resolves, or
+Google rejects the browser anyway, login falls back automatically to launching Chrome as a
+plain subprocess and waiting for you to close the window. There is no flag and no choice to
+make, and closing the window yourself works on either path.
+
+> **This entry described that Playwright implementation long before it existed.**
+> It read *"`v0.6.0a2` adds `RealChromeStrategy` — launches the system's real Google Chrome
+> via Playwright's `channel="chrome"` with stealth flags."* `src/gflow_cli/auth/real_chrome.py`
+> was created at `eb0de133` (2026-07-19) as a bare `subprocess.Popen` passive capture, and
+> `git log -S'channel="chrome"' -- src/gflow_cli/auth/` returned **zero** commits until the
+> auto-close change. The paragraph above is the same shape restated deliberately as current
+> fact, not the same accident left standing.
 
 ```bash
-# Bypass G12 block explicitly:
+# Ask for real Chrome explicitly:
 gflow auth login --browser chrome
 
 # Or rely on auto-detection (default behaviour; picks real Chrome if installed):
 gflow auth login
 ```
 
-A cosmetic "You are using an unsupported command-line flag" notice may appear briefly in
-the Chrome window — this is harmless and can be dismissed. It is the accepted trade-off
-for bypassing G12.
+**The block is current Google behaviour — "Resolved" means the mitigation holds, not that
+Google stopped.** Re-measured 2026-09-08 across three throwaway *unauthenticated* profiles,
+each signed into by hand
+([spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-09-08-g12-blocks-webdriver-not-playwright.md)): a
+browser advertising `navigator.webdriver === true` — real Chrome, no stealth flags — was
+rejected at `/v3/signin/rejected` **17.5 s** into the flow, while the same real Chrome
+*with* the flags reported `false`, never saw the rejection, and reached a Flow session
+cookie at 59.4 s. Playwright's bundled Chromium with the flags passed too, so the binary is
+not the discriminator; `navigator.webdriver` tracked the outcome in all three arms.
+
+> **This is N=1 — do not read it as a capability claim.** One account, one Windows host, one
+> residential IP, one Chrome build (`Chrome/149.0.0.0`), one day. Google's sign-in risk
+> scoring varies with account age and IP reputation, so it does not predict CI, a VPS, or a
+> fresh account. Every arm ran headed, so it says nothing about headless in either
+> direction. Sign-in is also a different gate from generation's reCAPTCHA Enterprise check;
+> a result on one does not move the other.
+
+The Chrome window no longer shows the "You are using an unsupported command-line flag"
+notice this entry used to warn about: that banner came from the `--no-sandbox` Playwright
+injects by default, and `chromium_sandbox=True` stops the injection.
 
 ---
 

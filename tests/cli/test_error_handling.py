@@ -525,11 +525,26 @@ class TestAuthLoginErrors:
         assert result.exit_code == 11, result.output
         assert "Session saved" not in result.output
 
-    def test_browser_rejected_exits_14_with_chrome_guidance(self) -> None:
-        """AuthBrowserRejectedError points users at real Chrome instead of another retry."""
+    def test_browser_rejected_exits_14_names_the_real_discriminator(self) -> None:
+        """AuthBrowserRejectedError blames the automation signal, not the binary.
+
+        This test previously asserted the guidance "rerun with `--browser chrome`"
+        and "set GFLOW_CLI_AUTH_BROWSER=chrome", on the premise that Google rejects
+        Playwright's bundled Chromium. The 2026-09-08 spike disproved that premise:
+        bundled Chromium signed in normally *with* the stealth flags, while real
+        Chrome *without* them was rejected at /v3/signin/rejected in 17.5 s. The
+        discriminator is `navigator.webdriver`, not the browser.
+
+        So the old assertions were pinning advice that would send a user to swap
+        browsers over a setting — a test protecting a defect. They are inverted here
+        deliberately: the disproved advice must NOT come back.
+        """
         result = self._invoke_auth_login(AuthBrowserRejectedError())
         assert result.exit_code == 14, result.output
         assert "Login browser rejected" in result.output
-        assert "--browser chrome" in result.output
-        assert "GFLOW_CLI_AUTH_BROWSER=chrome" in result.output
+        assert "navigator.webdriver" in result.output
+        assert "retries automatically" in result.output
+        # The disproved guidance must stay gone.
+        assert "--browser chrome" not in result.output
+        assert "GFLOW_CLI_AUTH_BROWSER=chrome" not in result.output
         assert "Session saved" not in result.output

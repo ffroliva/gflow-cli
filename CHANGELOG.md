@@ -27,6 +27,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exit 23 — which told the user to file a frontend-drift bug about a frontend that was
   behaving correctly.
 
+### Changed
+
+- **`gflow auth login` closes the browser for you.** It drives your real Google Chrome
+  through Playwright, watches for the completed Flow sign-in, and closes the window itself —
+  the "now close Chrome" step is gone. Closing the window yourself still works and still
+  verifies; it is not an error. On a machine where Playwright cannot resolve a Chrome
+  channel, or where Google rejects the browser anyway, login falls back automatically to the
+  previous flow (Chrome as a plain subprocess, you close the window). **There is no new flag
+  and nothing to choose.**
+  ([spike](docs/superpowers/spikes/2026-09-08-g12-blocks-webdriver-not-playwright.md))
+
 ### Fixed
 
 - **The second image in one session no longer falls back to the labs reCAPTCHA mint**
@@ -48,6 +59,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driving only t2v and local-frame i2v, so an image refusal printed a `detail` saying
   t2i/i2i are driven directly above a remediation saying they are not. Both it and the
   class docstring now name the full ported matrix.
+- **`gflow auth login --browser internal` launched a browser configuration measured as
+  rejected.** The bundled-Chromium path shipped with no anti-automation flags, which leaves
+  `navigator.webdriver` set. On 2026-09-08 a browser in that state — real Chrome with the
+  flags removed — was rejected at `/v3/signin/rejected` 17.5 s into the flow, while the same
+  browser *with* the flags signed in normally. Bundled Chromium was measured only in the
+  flagged configuration, so its unflagged rejection is inferred from the shared signal, not
+  observed directly. It now passes
+  `--disable-blink-features=AutomationControlled`, `ignore_default_args=["--enable-automation"]`
+  and `chromium_sandbox=True` — the last of which also removes Chrome's cosmetic *"You are
+  using an unsupported command-line flag"* banner — and signs in on the real OS window
+  instead of an emulated 1920×1080 viewport that pushed Google's sign-in form off-screen on
+  smaller or scaled displays.
+- **Setting `CHROME_BINARY` no longer makes Playwright's `channel="chrome"` look resolvable
+  when it is not.** The availability check treated the variable as proof, passed, and then
+  failed at launch with *"Chromium distribution 'chrome' is not found"*. Playwright honours a
+  custom binary only via `executable_path=`, never via `channel=`, so the variable is now
+  ignored by that check (it still resolves a Chrome binary everywhere else).
 
 ## [0.71.1] — 2026-09-08
 

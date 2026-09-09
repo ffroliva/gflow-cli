@@ -124,7 +124,7 @@ class TestPlaywrightChromeChannelAvailable:
 
     def test_chromium_only_host_returns_false(self) -> None:
         """Chromium on PATH but no Google Chrome at Playwright's paths → False."""
-        from gflow_cli.browser_manager import _is_playwright_chrome_channel_available
+        from gflow_cli.browser_manager import is_playwright_chrome_channel_available
 
         env_without = {k: v for k, v in os.environ.items() if k != "CHROME_BINARY"}
         with (
@@ -134,11 +134,11 @@ class TestPlaywrightChromeChannelAvailable:
             patch("gflow_cli.browser_manager.shutil.which", return_value="/usr/bin/chromium"),
             patch.object(Path, "exists", return_value=False),
         ):
-            assert _is_playwright_chrome_channel_available() is False
+            assert is_playwright_chrome_channel_available() is False
 
     def test_returns_true_when_google_chrome_present(self) -> None:
         """Google Chrome at Playwright's expected path → True."""
-        from gflow_cli.browser_manager import _is_playwright_chrome_channel_available
+        from gflow_cli.browser_manager import is_playwright_chrome_channel_available
 
         env_without = {k: v for k, v in os.environ.items() if k != "CHROME_BINARY"}
         with (
@@ -146,18 +146,38 @@ class TestPlaywrightChromeChannelAvailable:
             patch("sys.platform", "linux"),
             patch.object(Path, "exists", return_value=True),
         ):
-            assert _is_playwright_chrome_channel_available() is True
+            assert is_playwright_chrome_channel_available() is True
 
-    def test_env_override_returns_true(self, tmp_path: Path) -> None:
-        """CHROME_BINARY override is honoured for parity with _find_chrome_binary."""
-        from gflow_cli.browser_manager import _is_playwright_chrome_channel_available
+    def test_env_override_alone_returns_false(self, tmp_path: Path) -> None:
+        """CHROME_BINARY set but no Google Chrome at Playwright's paths → False.
 
-        with patch.dict(os.environ, {"CHROME_BINARY": str(tmp_path / "chrome")}):
-            assert _is_playwright_chrome_channel_available() is True
+        Playwright's ``channel="chrome"`` ignores ``CHROME_BINARY`` (only
+        ``executable_path=`` honours a custom binary), so treating the env var as
+        proof of a resolvable channel passed the gate and then failed at launch.
+        """
+        from gflow_cli.browser_manager import is_playwright_chrome_channel_available
+
+        with (
+            patch.dict(os.environ, {"CHROME_BINARY": str(tmp_path / "chrome")}),
+            patch("sys.platform", "linux"),
+            patch.object(Path, "exists", return_value=False),
+        ):
+            assert is_playwright_chrome_channel_available() is False
+
+    def test_env_override_does_not_mask_a_real_chrome(self, tmp_path: Path) -> None:
+        """CHROME_BINARY is ignored, not inverted: real Chrome present still → True."""
+        from gflow_cli.browser_manager import is_playwright_chrome_channel_available
+
+        with (
+            patch.dict(os.environ, {"CHROME_BINARY": str(tmp_path / "chrome")}),
+            patch("sys.platform", "linux"),
+            patch.object(Path, "exists", return_value=True),
+        ):
+            assert is_playwright_chrome_channel_available() is True
 
     def test_win32_probes_program_files_chrome(self) -> None:
         """On win32, the Program Files Google-Chrome path is probed → True when present."""
-        from gflow_cli.browser_manager import _is_playwright_chrome_channel_available
+        from gflow_cli.browser_manager import is_playwright_chrome_channel_available
 
         expected = "C:/Program Files/Google/Chrome/Application/chrome.exe"
         env_without = {
@@ -173,11 +193,11 @@ class TestPlaywrightChromeChannelAvailable:
             patch("sys.platform", "win32"),
             patch.object(Path, "exists", path_exists_mock),
         ):
-            assert _is_playwright_chrome_channel_available() is True
+            assert is_playwright_chrome_channel_available() is True
 
     def test_darwin_probes_app_bundle(self) -> None:
         """On darwin, the /Applications Google Chrome.app path is probed."""
-        from gflow_cli.browser_manager import _is_playwright_chrome_channel_available
+        from gflow_cli.browser_manager import is_playwright_chrome_channel_available
 
         env_without = {k: v for k, v in os.environ.items() if k != "CHROME_BINARY"}
         with (
@@ -185,7 +205,23 @@ class TestPlaywrightChromeChannelAvailable:
             patch("sys.platform", "darwin"),
             patch.object(Path, "exists", return_value=True),
         ):
-            assert _is_playwright_chrome_channel_available() is True
+            assert is_playwright_chrome_channel_available() is True
+
+    def test_public_name_is_what_channel_for_profile_gates_on(self, tmp_path: Path) -> None:
+        """The predicate is public API, and ``channel_for_profile`` routes through it.
+
+        ``factory.py`` needs to gate strategy selection on the same predicate, so it
+        must be importable without reaching for a private name.
+        """
+        import gflow_cli.browser_manager as bm
+
+        assert callable(bm.is_playwright_chrome_channel_available)
+        (tmp_path / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
+
+        with patch.object(bm, "is_playwright_chrome_channel_available", return_value=True):
+            assert bm.channel_for_profile(tmp_path) == "chrome"
+        with patch.object(bm, "is_playwright_chrome_channel_available", return_value=False):
+            assert bm.channel_for_profile(tmp_path) is None
 
 
 # ---------------------------------------------------------------------------
