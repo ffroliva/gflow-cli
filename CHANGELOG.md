@@ -26,6 +26,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     value of the message; only the credentials are gone.
 
 ### Fixed
+- **A click that never lands now says what was true instead of nothing at all**
+  ([#776](https://github.com/ffroliva/gflow-cli/issues/776)). On `flow.google.com`,
+  `video r2v` reached `migrated.editor_ready` and died 5.039 s later as a bare
+  Playwright `TimeoutError` — exit 1, no locator, no cause, no MP4. By elimination that
+  is `migrated_composer.py`'s `trigger.click(timeout=5000)`: the `wait_for(visible)` one
+  line above it is guarded and would have raised exit 23, so the control was *visible*
+  and the *click* expired. [#752](https://github.com/ffroliva/gflow-cli/issues/752)
+  finding #7 predicted exactly this, at exactly this function, before #776 was filed —
+  its `count()`→visibility half was fixed and the click half was not, leaving a comment
+  that describes the failure the next line went on producing.
+  - **It reads; it does not diagnose.** Two causes were live and *neither could be
+    measured*: Flow's announcement overlay ([#593](https://github.com/ffroliva/gflow-cli/issues/593),
+    measured on labs.google, never on this host) and a mid-run agent-mode flip. A guard
+    built on either would answer confidently and be wrong half the time. So on a timeout
+    the driver reads Playwright's four actionability conditions back — agent chip,
+    `hidden`/`disabled`, body pointer-events, and a hit-test naming what is on top — and
+    reports the ones that fired. When every reading is healthy it **says so**, which
+    eliminates three conditions and leaves *stable*, rather than inventing a fourth.
+  - **Costs nothing when healthy** — the read runs only in the `except` branch, the rule
+    `raise_if_known_landing` already states: a guard ahead of the probe deletes the
+    evidence that would correct it.
+  - **MCP gains more than the CLI.** A non-`GFlowError` on the queued path shipped
+    `"detail": "sha256:…"` — a hash, not even the class name. The typed error routes it
+    to the Problem Details branch instead, so an agent now gets the locator and exit 23.
+  - Applied to four sites with a named reason each, not all nineteen: the reported one,
+    the composer click `_close_pane`'s own docstring records as failing this way, and
+    both credit-spending submits, where a bare timeout left "did it submit?" unanswerable.
+  - **The occluder report is a closed allowlist** — tag name plus at most three
+    framework-prefixed class tokens, never `aria-label`, `title`, `src` or `outerHTML`.
+    Typing the error moves the text from SHA-256-hashed telemetry to a message printed
+    raw, logged, and invited into a GitHub issue; a signed-in Flow page carries the
+    account email and signed media URLs on exactly the elements that occlude things.
+  - `retryable` is unchanged and **preserved, not measured** — the condition did not
+    reproduce, and a flag that moves as a side effect of retyping is a claim nobody made.
 - **A known Flow landing page is no longer reported as selector drift**
   ([#756](https://github.com/ffroliva/gflow-cli/issues/756), and the 2026-09-10 RED
   nightly canary). `flow_host_kind()` classifies the *origin*; `/about`,
