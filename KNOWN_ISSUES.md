@@ -1260,6 +1260,28 @@ The occluder is named by tag plus framework class only. That is deliberate — a
 Flow page carries the account email and signed media URLs on exactly the elements that
 tend to occlude things, and this message is printed, logged, and pasted into issues.
 
+### `gflow auth login --account` reports a mismatch but leaves the profile in place
+
+- **Status:** Open · **Severity:** Medium (no data loss; the risk is *which account pays*) · **Affects:** `gflow auth login --account <email>`, v0.73.0 onward · **Tracked:** [#773](https://github.com/ffroliva/gflow-cli/issues/773) item 3
+
+`--account` asserts that the login authenticated as the account you named, and a mismatch
+raises **exit 38** with one `auth.account_assert_failed` log line. What it does **not** do is
+quarantine, rename or otherwise mark the profile — so a later run re-reads a profile
+authenticated as somebody else, with nothing persisted to say so. On a product that bills
+generations to the signed-in Google account, that is the wrong account paying.
+
+This was a deliberate "minimum" in review round 4 of
+[#764](https://github.com/ffroliva/gflow-cli/pull/764), recorded here so the decision stays
+revisitable rather than lost in a merged thread.
+
+**Workaround:** after any exit 38 from `--account`, check `gflow auth list` and re-run
+`gflow auth login --account <email>` for that profile before generating. Do not assume the
+failed assert left the profile unusable — it is usable, just possibly as the wrong person.
+
+Two further items on the same issue are unfixed and worth knowing about: a second chooser
+hop (chooser → consent → chooser) is not handled and degrades into the landing timeout, and
+that timeout is still an unmeasured number.
+
 ### Auth verification depends on Google's NextAuth session endpoint
 
 - **Status:** Mitigated · **Severity:** Low (degrades fail-closed) · **Affects:** issue #15 fix onward · **Tracked:** issue #15
