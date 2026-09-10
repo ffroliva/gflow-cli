@@ -297,6 +297,14 @@ class FakeLocator:
     async def is_visible(self) -> bool:
         return bool(self.items) and self._visible_now
 
+    async def scroll_into_view_if_needed(self, **_: Any) -> None:
+        await asyncio.sleep(0)
+
+    async def bounding_box(self) -> dict[str, float] | None:
+        if not self.items:
+            return None
+        return {"x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0}
+
     async def is_enabled(self) -> bool:
         if self.kind == "submit":
             dom = self.page.dom
@@ -587,6 +595,11 @@ class FakePage:
 
     def expect_file_chooser(self, **_: Any) -> FakeChooserContext:
         return FakeChooserContext(self)
+
+    async def evaluate(self, expression: str, argument: Any = None) -> Any:
+        if "elementFromPoint" in expression:
+            return {"target": True, "top": None}
+        return {}
 
     def locator(self, css: str, *, scope: FakeLocator | None = None) -> FakeLocator:
         dom = self.dom
@@ -3076,3 +3089,20 @@ async def test_an_image_submit_that_stays_disabled_is_drift_not_a_hang(
             page, GenerateImageRequest(prompt="a blue cup")
         )
     assert page.dom.submit_clicked == 0
+
+
+async def test_pre_submit_gate_refuses_blocking_overlay_before_network_observers() -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _image_page()
+    page.dom.pane_open = True
+
+    with pytest.raises(UiSelectorDriftError, match="blocking overlay"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+
+    assert page.dom.submit_clicked == 0
+    assert page.listeners("request") == []
+    assert page.listeners("response") == []
