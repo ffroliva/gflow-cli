@@ -89,6 +89,108 @@ def flow_host_kind(url: object) -> str | None:
     return _FLOW_HOSTS.get(host)
 
 
+#: NextAuth mounts Flow's OAuth routes on the *app's own origin*, so a host check
+#: passes straight through them: `/fx/api/auth/callback/google?...` and
+#: `/fx/api/auth/signin?error=Callback` are both `labs.google`. Verified in
+#: `auth/internal_chromium.py`, which is where this constant used to live —
+#: privately, and used only to gate a session poll, so no transport could see it.
+_NEXTAUTH_ROUTE_PREFIX = "/fx/api/auth/"
+
+#: Flow's public marketing page. The migrated app redirects here when it will not
+#: open a project for this session (#756). Measured, not guessed — WHY it redirects
+#: is not measured, and this map must never be read as saying.
+_PUBLIC_LANDING_PATHS = ("/about",)
+
+
+def flow_landing_kind(url: object) -> str | None:
+    """Name a known **non-app** landing on a Flow origin: ``"signin"``, ``"public"``, or ``None``.
+
+    :func:`flow_host_kind` answers *which Flow origin*; this answers *whether the
+    origin served the app at all*. They are different questions, and conflating them
+    is how a sign-in error page and a project editor became indistinguishable —
+    `/about`, `/project/<id>` and `/fx/api/auth/signin?error=Callback` all pass a
+    host check, so a readiness wait that missed had nothing left to blame but its own
+    anchor (#756, #773, the 2026-09-10 RED canary).
+
+    ``None`` means **"nothing recognised"**, never "this is the app". A caller may
+    only use a positive answer to REPLACE a diagnosis it was already about to make.
+    Never call this ahead of a probe to decide whether to look: a fail-fast that runs
+    before the evidence is collected deletes the evidence that would correct it
+    (`skills/spike/SKILL.md`), and `page.url` read too early misses Flow's redirect
+    entirely, because it is client-side and lands after ``goto`` returns (#639).
+
+    Total by construction, like its sibling: anything unparseable — or not even a
+    string — is ``None``, so a probe error can never displace the real failure.
+    """
+    if flow_host_kind(url) is None:
+        return None
+    try:
+        path = urlsplit(str(url)).path
+    except ValueError:  # pragma: no cover - flow_host_kind already parsed it
+        return None
+    if path.startswith(_NEXTAUTH_ROUTE_PREFIX):
+        return "signin"
+    if path.rstrip("/") in _PUBLIC_LANDING_PATHS:
+        return "public"
+    return None
+
+
+def raise_for_known_landing(page: object, *, requested: str, at: str) -> None:
+    """Replace an about-to-be-raised drift report when the page is a **known landing**.
+
+    Call this from **inside a failure branch** — after a readiness wait has already
+    timed out, never before it. Two reasons, both learned the hard way: a guard placed
+    ahead of the probe deletes the evidence that would correct it
+    (`skills/spike/SKILL.md`), and Flow's hop to a landing page is client-side, so
+    ``page.url`` read right after ``goto`` is read too early and sees nothing (#639).
+    By the time the wait has failed, the URL has settled and is simply true.
+
+    Returns silently when nothing is recognised, which is the common case and means
+    the caller's own diagnosis stands. It never *adds* a failure — the caller was
+    already raising.
+
+    ``requested`` is what the caller asked Flow for; the whole complaint in #756 is
+    that the operator could not tell what was asked for and what arrived.
+    """
+    from gflow_cli.errors import AuthExpiredError, FlowAppError
+
+    url = str(getattr(page, "url", "") or "")
+    kind = flow_landing_kind(url)
+    if kind is None:
+        return
+    log.info("ui_driver.known_landing", at=at, kind=kind, url=url, requested=requested)
+    if kind == "signin":
+        raise AuthExpiredError(
+            detail=(
+                f"Flow served its sign-in page ({url}) instead of {requested} — this "
+                f"session is not signed in to Flow on that host, so none of the controls "
+                f"gflow drives are on the page. This is not selector drift."
+            )
+        )
+    # Deliberately says WHAT arrived and stops. #756 measured the redirect and did not
+    # measure its cause — `gflow auth status` reports the session verified while this
+    # happens — so naming one here would just be a second confident wrong diagnosis.
+    raise FlowAppError(
+        detail=(
+            f"Flow redirected to its public landing page ({url}) instead of {requested}. "
+            f"gflow cannot tell from here why it declined — this account may not have "
+            f"access to that project on this host. It is not selector drift, and no "
+            f"gflow-cli release changes it."
+        ),
+        # NOT a claim that a retry fails — it is the ABSENCE of a claim. Exit 31's
+        # class default is retryable because the shape it was built for (Flow's React
+        # crash page) genuinely is. Whether the /about redirect is transient could not
+        # be measured: it stopped reproducing on `ci-probe` between 2026-09-08 (#756)
+        # and 2026-09-10 (5/5 attempts reached the editor —
+        # docs/superpowers/spikes/2026-09-10-about-redirect-stability.md), which is
+        # equally consistent with "transient" and with "a session/access state changed".
+        # This shape raised exit 23 before, which was already non-retryable, so False
+        # PRESERVES the existing answer rather than inventing a new one. Flip it when
+        # somebody catches the redirect live and measures whether a second attempt wins.
+        retryable=False,
+    )
+
+
 def migrated_route(url: object, flow_host: str, *, prefer_migrated: bool = False) -> str:
     """Which driver a page gets: ``"labs"``, ``"migrated"`` or ``"blocked"``.
 

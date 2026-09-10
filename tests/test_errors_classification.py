@@ -156,3 +156,66 @@ def test_classify_content_safety_handles_multiple_details() -> None:
         }
     )
     assert classify_content_safety(body) == "PUBLIC_ERROR_UNSAFE_GENERATION"
+
+
+class TestPerInstanceRetryability:
+    """`GFlowError.retryable` overrides the class answer for one raise site.
+
+    It exists because `FlowAppError` (exit 31) now covers two shapes with different
+    retry semantics: Flow's client-side crash page, where a retry genuinely works,
+    and its `/about` redirect (#756), where retryability is UNMEASURED — the redirect
+    stopped reproducing on `ci-probe` between 2026-09-08 and 2026-09-10
+    (docs/superpowers/spikes/2026-09-10-about-redirect-stability.md). One flag for
+    both would have made the class answer an assertion nobody checked.
+    """
+
+    def test_class_answer_is_unchanged_when_no_override(self) -> None:
+        from gflow_cli.errors import FlowAppError, is_retryable
+
+        assert is_retryable(FlowAppError(detail="the React error boundary rendered")) is True
+
+    def test_instance_override_wins(self) -> None:
+        from gflow_cli.errors import FlowAppError, is_retryable
+
+        assert is_retryable(FlowAppError(detail="/about", retryable=False)) is False
+
+    def test_override_can_also_opt_a_non_retryable_class_in(self) -> None:
+        """Both directions, so the mechanism is not silently one-way."""
+        from gflow_cli.errors import UiSelectorDriftError, is_retryable
+
+        assert is_retryable(UiSelectorDriftError(detail="drift")) is False
+        assert is_retryable(UiSelectorDriftError(detail="drift", retryable=True)) is True
+
+    def test_the_about_landing_is_not_flagged_retryable(self) -> None:
+        """The raise site itself, not just the constructor.
+
+        Pins the non-claim: this shape raised exit 23 before (already non-retryable),
+        so routing it to exit 31 must not quietly flip consumers into retrying it.
+        """
+        from gflow_cli.api.transports._common import raise_for_known_landing
+        from gflow_cli.errors import EXIT_CODE_MAP, FlowAppError, is_retryable
+
+        page = type("P", (), {"url": "https://flow.google.com/about"})()
+        with pytest.raises(FlowAppError) as exc_info:
+            raise_for_known_landing(page, requested="project abc", at="test")
+
+        assert is_retryable(exc_info.value) is False
+        assert EXIT_CODE_MAP[FlowAppError] == 31
+
+    def test_a_mock_does_not_read_as_retryable(self) -> None:
+        """A MagicMock answers every getattr with a truthy child mock, so a
+        truthiness test here would report EVERY mocked error as retryable and no
+        assertion in the suite would catch it (memory
+        `magicmock-truthy-getattr-silences-guards`). `is_retryable` pins on
+        `isinstance(..., bool)`; this proves that is load-bearing."""
+        from unittest.mock import MagicMock
+
+        from gflow_cli.errors import UiSelectorDriftError, is_retryable
+
+        mock_exc = MagicMock(spec=UiSelectorDriftError)
+        assert not isinstance(mock_exc.retryable, bool), (
+            "precondition: a spec'd mock answers `.retryable` with a child mock, "
+            "not a bool — which is exactly what would fool a truthiness test"
+        )
+        assert bool(mock_exc.retryable) is True, "precondition: that child mock IS truthy"
+        assert is_retryable(mock_exc) is False

@@ -106,6 +106,12 @@ scenarios("../features/account_chooser_landing.feature")
 # step defs here; tests/e2e/conftest.py fixtures (e2e_profile_dir, …) apply
 ```
 
+**Feature-level tags propagate to every scenario** — measured on pytest-bdd 8.1, not
+assumed: a scenario carrying no tags of its own was still selected by `-m e2e_auth` from
+its Feature's tags. So tag the Feature once; per-scenario tags are for narrowing a single
+scenario to a different tier (an `@e2e_video` case inside an otherwise `@e2e_auth`
+feature), not for repeating the feature's own.
+
 | Rule | Why |
 |---|---|
 | Feature file stays in `tests/features/` | one home for Gherkin; the guard scans one directory |

@@ -52,6 +52,35 @@ proven at `<file>:<line>`, skipping the debug step") so the skip is reviewable.
 Steps **3–5 have no gate.** There is no bug small enough to fix without a test
 that failed first, and no Flow-surface change that a unit test discharges.
 
+### A flag is a claim — decide it with evidence or don't change it
+
+`retryable`, an exit code, a capability-table entry, a `skip_if_*` predicate: these are
+read by code that **acts** on them. `retryable=True` is not a hint, it is an instruction
+to try again. So metadata obeys the same rule as prose — *a claim you have not run is a
+guess with formatting.* The trap is that a flag changes for free when you re-route a
+raise to a different class, so a refactor smuggles in an assertion nobody reviewed.
+
+**How to decide, in order:**
+
+| Can you reproduce the condition? | Then |
+|---|---|
+| **Yes** | Measure it. N sequential attempts, cheapest surface that reaches it. N/N = stable · mixed = it flaps · and **write down which reading means what before you run** |
+| **No, but the surface already gave an answer** | **Preserve that answer** and record that it is preserved, not measured. The status quo is not a claim; changing it is |
+| **No, and the condition is new** | Leave the class default and say so at the raise site. An unset flag is honest; a guessed one is not |
+
+Never let a class default speak for a raise site it was not written for. When one class
+covers shapes with genuinely different semantics, give the raise site an override rather
+than picking one answer for both — `GFlowError.retryable` exists for exactly this.
+
+> **Written from a near-miss in the same session that wrote this file.** Routing #756's
+> `/about` landing to `FlowAppError` (exit 31) would have flipped it from non-retryable
+> to retryable purely as a side effect of the exit-code change, and the first draft
+> shipped that with a confident remediation string saying a retry was "unlikely to help"
+> — also unmeasured. The maintainer caught it: *"I need evidence and test. otherwise
+> everything will be a guess."* The measurement came back **inconclusive** (the redirect
+> had stopped reproducing), which is why the rule's middle row exists: inconclusive is a
+> real result, and it means preserve, not pick.
+
 ### Step 5 is the one that gets rationalised away
 
 ```
