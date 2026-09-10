@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import unquote_plus, urlsplit
 
 import structlog
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect as ImageAspect
@@ -69,6 +70,7 @@ from gflow_cli.errors import (
     UiSelectorDriftError,
     WireFormatError,
 )
+from gflow_cli.redaction import redact_sensitive_text
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -195,6 +197,48 @@ FRAME_SEARCH_RETRY_PAUSE_S = 2.0
 FRAME_UPLOAD_S = 60.0
 FRAME_COMMIT_HIDDEN_S = 15.0
 FRAME_THUMB_VISIBLE_S = 5.0
+#: What a click that expired may be asked about — Playwright's four actionability
+#: conditions, read back after the fact. See :meth:`MigratedComposer._click`.
+#:
+#: **Everything returned here is a closed vocabulary.** Tag names, booleans, and class
+#: tokens matching a fixed framework prefix — never ``outerHTML``, ``textContent``,
+#: ``aria-label``, ``title``, ``alt``, ``src`` or ``href``. An occluding element on a
+#: signed-in Flow page routinely carries the account email in ``aria-label`` and a signed
+#: media URL in ``src``, and this string is printed raw to the console, shipped through
+#: structlog, emitted under ``--json``, and invited into a GitHub issue by the error
+#: class's own remediation hint. PR #777 fixed exactly this bug one surface over.
+_CLICK_POSTMORTEM_JS = r"""
+(el) => {
+  const cs = getComputedStyle(el);
+  const box = el.getBoundingClientRect();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  const top = (box.width && box.height) ? document.elementFromPoint(cx, cy) : null;
+  const hit = !!top && (top === el || el.contains(top) || top.contains(el));
+  // Angular/CDK, Material and Flow's own components. A layout class on a bare <div>
+  // is an accident; `cdk-overlay-backdrop` is a component boundary and says what the
+  // thing IS, in any locale.
+  const structural = (n) =>
+    [...n.classList].filter(c => /^(cdk|mat|mdc|flow)-/.test(c)).slice(0, 3).join('.');
+  return {
+    visible: cs.display !== 'none' && cs.visibility !== 'hidden'
+             && box.width > 0 && box.height > 0,
+    hidden_attr: el.hasAttribute('hidden'),
+    enabled: !el.hasAttribute('disabled') && el.getAttribute('aria-disabled') !== 'true',
+    hit_testable: hit,
+    // The #593 mechanism. Measured on labs.google, never on this host — kept because a
+    // reading that never fires costs nothing, and a missing one costs a wrong answer.
+    body_blocked: getComputedStyle(document.body).pointerEvents === 'none',
+    occluder: (top && !hit)
+      ? (top.tagName.toLowerCase() + (structural(top) ? '.' + structural(top) : ''))
+      : null,
+  };
+}
+"""
+
+#: Names the submit control in a message. No CSS string can express the `arrow_forward`
+#: ligature filter that builds it, so there is nothing here to rot into a selector.
+SUBMIT_BUTTON = "the submit button (ligature 'arrow_forward')"
+
 #: The submit reply arrived 4.0–4.6 s after the click in both measured runs.
 SUBMIT_REPLY_BUDGET_S = 60.0
 # Angular enables the arrow_forward button ~100 ms after `insert_text` lands in the
@@ -759,6 +803,104 @@ class MigratedComposer:
         except Exception as e:  # noqa: BLE001 - best-effort, never the failure itself
             log.warning("migrated.dialog_not_dismissed", error=str(e)[:200])
 
+    # --- clicking, and saying why a click did not land ---------------------------
+
+    async def _click(self, page: Page, locator: Any, *, named: str, timeout: int) -> None:
+        """Click, and when it expires report what was actually TRUE — never why.
+
+        Playwright's actionability gate has four conditions — visible, stable, receives
+        events, enabled — and a click that fails any of them expires as a bare
+        ``TimeoutError`` carrying no locator, no exit code and no cause. That is #776:
+        `editor_ready`, five seconds, exit 1, nothing to act on.
+
+        **This reads; it does not diagnose.** Two candidate causes (#593, #752 finding #7)
+        were unmeasurable on this host as of the 2026-09-10 spike, and a guard built on
+        either would sometimes answer confidently and wrong (#770). So it states
+        observations; "every reading was healthy" is one of them.
+
+        Costs nothing on a healthy run — the read happens only in the except branch, which
+        is also the rule :func:`_common.raise_if_known_landing` already states: a guard
+        placed ahead of the probe deletes the evidence that would correct it.
+
+        Only a Playwright timeout is reinterpreted. A closed page or a detached frame is a
+        different failure and travels unchanged.
+        """
+        try:
+            await locator.click(timeout=timeout)
+        except PlaywrightTimeoutError as e:
+            raise UiSelectorDriftError(
+                detail=await self._why_the_click_missed(page, locator, named, timeout)
+            ) from e
+
+    async def _why_the_click_missed(
+        self, page: Page, locator: Any, named: str, timeout: int
+    ) -> str:
+        """The message for a click that expired: locator first, observations after.
+
+        Locator first is not cosmetic. ``redact_sensitive_text`` truncates to 500 chars
+        at this raise site (``data/redaction.py``), so every surface sees the same cap and
+        anything variable-length — the occluder's class list — has to sit behind the one
+        part that must always survive it.
+        """
+        head = f"migrated host: {named} did not accept a click within {timeout} ms"
+        try:
+            # Through the LOCATOR, not a selector string. Half this driver's controls are
+            # built by filtering on a ligature (`button` + `arrow_forward`), which no
+            # `document.querySelector` can express — and the submit button, where losing
+            # attribution costs the most, is one of them.
+            state: dict[str, Any] = await locator.evaluate(_CLICK_POSTMORTEM_JS)
+        except Exception as e:  # noqa: BLE001 - a diagnostic never replaces the failure
+            # Detached, cross-origin, or the document replaced under us. All three are
+            # "we could not look", and none of them may swallow the failure itself.
+            return redact_sensitive_text(
+                f"{head} — it could not be read back ({str(e)[:120]}) (host=migrated)"
+            )
+
+        seen: list[str] = []
+        # Agent mode first: it is the one cause here with a user action attached, and
+        # it hides the trigger with a bare `hidden` that touches neither the body's
+        # pointer-events nor the hit-test — so nothing else below would notice it.
+        if await self._agent_chip_pressed(page):
+            seen.append(
+                "the account is in Flow's agent mode, which hides it — turn the Agent "
+                "chip off in a browser and re-run"
+            )
+        # One chain, because these are competing readings of the SAME question — can a
+        # pointer reach it — ordered most specific first. The JS only hit-tests
+        # `if (box.width && box.height)`, so an unrendered element always reports no hit
+        # test too; as independent `if`s that said "it is not rendered" and "it answers no
+        # hit test" about one fact.
+        if state.get("hidden_attr"):
+            seen.append("it carries a bare `hidden` attribute")
+        elif not state.get("visible"):
+            seen.append("it is not rendered (display, visibility, or a zero-sized box)")
+        elif state.get("occluder"):
+            seen.append(f"it is covered by {state['occluder']}")
+        elif not state.get("hit_testable"):
+            # Rendered, nothing named itself: whatever is on top is outside the document.
+            # Not "healthy" — letting it fall through would claim hit-testable of an
+            # element that had just failed the hit test.
+            seen.append("it answers no hit test at its own centre")
+
+        # Separate axes: an element can be disabled, or the whole page blocked, whatever
+        # the chain above found.
+        if not state.get("enabled"):
+            seen.append("it is disabled")
+        if state.get("body_blocked"):
+            seen.append("the page is accepting no pointer events at all")
+
+        if not seen:
+            # Every readable condition is healthy. Saying so eliminates three of
+            # Playwright's four checks instead of inventing one of them.
+            seen.append(
+                "it was visible, enabled and hit-testable at the moment the click "
+                "expired, so nothing readable on the page explains it — Playwright also "
+                "requires a stable bounding box, so the control was most likely still "
+                "moving or being re-rendered"
+            )
+        # Belt and braces over the JS allowlist above.
+        return redact_sensitive_text(f"{head} — {'; '.join(seen)} (host=migrated)")
+
     # --- settings ---------------------------------------------------------------
 
     async def apply_video_settings(self, page: Page, request: GenerateVideoRequest) -> None:
@@ -881,7 +1023,9 @@ class MigratedComposer:
                     f"{why} (host=migrated)"
                 ),
             ) from e
-        await trigger.click(timeout=5000)
+        # The other half of #752 finding #7: the guard above became a visibility wait,
+        # this click stayed bare, and the comment above describes what it went on doing.
+        await self._click(page, trigger, named=READY_ANCHOR, timeout=5000)
         # THE overlay that holds the option groups — not `.last`: once the model
         # menu (a second overlay) has opened and closed, a detached menu pane can
         # still be the last one in the DOM, and every axis after `--model` then
@@ -1595,7 +1739,9 @@ class MigratedComposer:
                 detail=f"migrated host: composer ({COMPOSER}) not found (host=migrated)",
             )
         if not append:
-            await composer.click(timeout=5000)
+            # _close_pane's docstring names THIS click as the one that surfaced a
+            # stuck settings pane as a bare 5 s TimeoutError naming only the composer.
+            await self._click(page, composer, named=COMPOSER, timeout=5000)
         # insert_text dispatches input events without key presses: a newline in the
         # prompt lands as text instead of an Enter that might submit early.
         await page.keyboard.insert_text(prompt)
@@ -1722,7 +1868,9 @@ class MigratedComposer:
                     )
                 await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
             deadline = time.monotonic() + poll_timeout_s
-            await submit.click(timeout=5000)
+            # The credit-spending click: a bare timeout here leaves "did it submit?"
+            # unanswerable, which is the worst place in this driver to lose attribution.
+            await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             log.info("migrated.submit_clicked")
             budget = min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s)
             await asyncio.wait(
@@ -1855,7 +2003,7 @@ class MigratedComposer:
                         detail="migrated host: image submit stayed disabled (host=migrated)"
                     )
                 await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
-            await submit.click(timeout=5000)
+            await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             done, _ = await asyncio.wait(
                 {result, route_error},
                 timeout=IMAGE_REPLY_BUDGET_S,

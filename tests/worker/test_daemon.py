@@ -10,7 +10,13 @@ import pytest
 
 from gflow_cli.api.video import VideoResult, VideoStatus
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataIntegrityError, DataStoreError, FlowApiError, MediaAttributionError
+from gflow_cli.errors import (
+    DataIntegrityError,
+    DataStoreError,
+    FlowApiError,
+    MediaAttributionError,
+    UiSelectorDriftError,
+)
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
 
@@ -785,3 +791,69 @@ async def test_migrated_host_error_crosses_the_queued_path(temp_db: DataStore) -
     assert updated.error["retryable"] is False
     assert updated.error["retryable"] is is_retryable(exc)
     worker.close()
+
+
+# ---------------------------------------------------------------------------
+# #776 — what an MCP caller actually receives when a click never lands
+#
+# The Iron Law applies to the MCP twin separately: the CLI and the queued path are
+# two doors, and the adapter — not the shared transport — was always the risk. These
+# two run the SAME `process_task` branch with the two exception shapes, so the
+# difference between them is attributable to the retyping and nothing else.
+# ---------------------------------------------------------------------------
+
+
+async def _fail_t2v_with(temp_db: DataStore, exc: BaseException, task_id: str) -> dict:
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id=task_id,
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "a click that never lands"},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.generate_video.side_effect = exc
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+    updated = repo.get_task(task_id)
+    worker.close()
+    assert updated is not None and updated.error is not None
+    return updated.error
+
+
+@pytest.mark.asyncio
+async def test_a_bare_timeout_reaches_an_mcp_caller_as_a_hash(temp_db: DataStore) -> None:
+    """The control, and the reason #776 was unactionable over MCP.
+
+    A non-``GFlowError`` takes `daemon.py`'s `else` branch, which ships a SHA-256 of the
+    message and nothing else — not the locator, not even the exception class. An agent
+    receiving this cannot tell a covered button from a dead network.
+    """
+    error = await _fail_t2v_with(temp_db, TimeoutError("Timeout 5000ms exceeded"), "task-776-bare")
+    assert error["exit_code"] == 1
+    assert error["detail"].startswith("sha256:")
+    assert "settings-trigger" not in error["detail"]
+
+
+@pytest.mark.asyncio
+async def test_the_typed_failure_reaches_an_mcp_caller_as_problem_details(
+    temp_db: DataStore,
+) -> None:
+    """The fix, measured on the surface it changes most.
+
+    Retyping the raise site is the whole MCP repair: the same failure now takes the
+    ``isinstance(exc, GFlowError)`` branch and arrives as RFC 9457 problem details with
+    exit 23 and the locator intact.
+    """
+    detail = (
+        "migrated host: .settings-trigger-button did not accept a click within 5000 ms "
+        "— it is covered by div.cdk-overlay-backdrop (host=migrated)"
+    )
+    error = await _fail_t2v_with(temp_db, UiSelectorDriftError(detail=detail), "task-776-typed")
+    assert error["exit_code"] == 23
+    assert not error["detail"].startswith("sha256:")
+    assert ".settings-trigger-button" in error["detail"]
+    assert "cdk-overlay-backdrop" in error["detail"]
+    # A flag is a claim: retyping must not have made this retryable by side effect.
+    assert error["retryable"] is False

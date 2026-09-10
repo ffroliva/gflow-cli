@@ -132,6 +132,18 @@ directories, whose scenarios would run twice.
 > browser — that is the nightly canary's job (`scripts/canary/`), on a machine that has
 > one. Hosted CI cannot run the live tiers and never could.
 
+**Two worked examples, deliberately different in kind:**
+
+| Feature | Binder | What only a browser could prove |
+|---|---|---|
+| `landing_state_diagnosis.feature` | `test_landing_state_diagnosis_bdd.py` | Flow's hop to `/about` is a **client-side** redirect, so `goto` returns before it runs (#639). A mocked page whose `url` the test assigns cannot fail that way |
+| `click_attribution.feature` | `test_click_attribution_bdd.py` | Playwright's **actionability** gate — visible, stable, receives-events, enabled (#776). Each scenario breaks a different one *for real*: a stacked `div` that intercepts pointers, and a CSS animation that never lets the box settle while visibility and the hit test stay healthy |
+
+Both are route-intercepted and cost **$0** — real Chromium, `page.route(...).fulfill(...)`,
+no Google, no profile, no credits. That combination is what makes a browser-only scenario
+cheap enough to be non-negotiable: if a scenario needs a browser, the answer is an e2e
+test, not a mocked proxy — the Bug Lane's step 5.
+
 ---
 
 ## Environment variables
