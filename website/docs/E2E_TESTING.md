@@ -77,6 +77,55 @@ e2e ─┬─ e2e_auth     (auth/session, health check — zero credits)
 
 ---
 
+## BDD-bound e2e
+
+A live test can be written as Gherkin. This is the required form for a bug whose
+scenario can only happen in a browser — see
+[`skills/issue-resolve/SKILL.md`](../skills/issue-resolve/SKILL.md) § The Bug Lane,
+step 5. It needs **no new machinery**: pytest-bdd (already a dependency) converts every
+Gherkin tag into a pytest marker, so a tagged scenario is filtered by the same
+`addopts` and selected by the same `-m <tier>` as a hand-written e2e test.
+
+**The three moving parts:**
+
+```gherkin
+# tests/features/account_chooser_landing.feature
+@e2e @e2e_auth                                   # ← tags become pytest markers
+Feature: A known landing state is named, not reported as selector drift
+  Scenario: the OAuth callback error page
+    Given a profile whose Flow session is authenticated
+    When the UI transport lands on /fx/api/auth/signin?error=Callback
+    Then it names the sign-in state, not a missing 'New project' CTA
+```
+
+```python
+# tests/e2e/test_account_chooser_landing_bdd.py
+from pytest_bdd import given, scenarios, then, when
+
+scenarios("../features/account_chooser_landing.feature")
+# step defs here; tests/e2e/conftest.py fixtures (e2e_profile_dir, …) apply
+```
+
+| Rule | Why |
+|---|---|
+| Feature file stays in `tests/features/` | one home for Gherkin; the guard scans one directory |
+| Step module lives in `tests/e2e/` | inherits `tests/e2e/conftest.py` — profile gating, `e2e_env`, `skip_on_migrated_host` |
+| `@e2e` **plus** a cost tier | a bare `@e2e` cannot be selected by `-m e2e_auth`, so the nightly canary never runs it |
+| One feature file, one binding module | bound from two modules, every scenario runs twice |
+
+**Enforced offline** by `tests/features/test_e2e_binding_guard.py` (no browser, normal
+CI): an `@e2e` feature with no binder under `tests/e2e/` fails, so does one with no cost
+tier, and so does the dangerous inverse — a feature bound from `tests/e2e/` but left
+untagged, which carries no `e2e` marker, escapes `addopts`, and makes hosted CI try to
+drive Chrome.
+
+> **What this does and does not prove.** The guard proves the test **exists and is
+> wired**, and runs anywhere. Proving it **passes** needs a warm profile and a real
+> browser — that is the nightly canary's job (`scripts/canary/`), on a machine that has
+> one. Hosted CI cannot run the live tiers and never could.
+
+---
+
 ## Environment variables
 
 | Variable | Default | Purpose |

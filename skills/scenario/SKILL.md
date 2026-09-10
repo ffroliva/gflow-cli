@@ -187,14 +187,29 @@ Test category: **Unit** (no I/O) · **Integration** (mocked HTTP/Playwright) · 
 ## Deferred (Medium + Low — log as issues, not blockers)
 1. …
 
-## Suggested BDD scenarios (for `tests/features/`)
+## Suggested BDD scenarios
 ```gherkin
+@e2e @e2e_auth
 Feature: <feature name>
   Scenario: <scenario title>
     Given …
     When …
     Then …
 ```
+
+**Tag by surface — the tag is the binding, not decoration.** pytest-bdd turns each
+Gherkin tag into a pytest marker, and `addopts`' `-m 'not e2e …'` filters on exactly
+that. So the tag decides where the scenario runs and who must run it:
+
+| The scenario can only happen… | Feature-level tags | Bound from |
+|---|---|---|
+| in a real browser / against real Flow | `@e2e` + one cost tier (`@e2e_auth`, `@e2e_image`, `@e2e_video`, …) | `tests/e2e/test_<slug>_bdd.py` |
+| in our own code (parsing, routing, exit codes, redaction) | none | `tests/features/test_<slug>_steps.py` |
+
+One feature file is bound by exactly **one** module — bound twice, its scenarios run
+twice. `tests/features/test_e2e_binding_guard.py` enforces both directions offline, so
+an `@e2e` scenario nobody wrote a test for fails normal CI. Mechanics:
+[`docs/E2E_TESTING.md`](../../docs/E2E_TESTING.md) § BDD-bound e2e.
 
 ## Known-issues cross-reference
 <Any scenario that maps to an existing KNOWN_ISSUES entry — link and note whether the proposed implementation resolves, mitigates, or is blocked by it.>
@@ -207,7 +222,10 @@ Feature: <feature name>
 1. Run `/gflow:predict` first to validate the approach (GO/CAUTION/STOP).
 2. Run `/gflow:scenario` to enumerate edge cases and build the test matrix.
 3. Use the "Must-cover before merge" list as the acceptance criteria for the PLAN.md task.
-4. Add BDD scenarios to `tests/features/` **before** coding (TDD is non-negotiable per AGENTS.md).
+4. Add BDD scenarios **before** coding (TDD is non-negotiable per AGENTS.md), each
+   tagged by its surface per the table above — a browser-only scenario is bound from
+   `tests/e2e/`, and a mocked stand-in does not discharge it
+   ([`skills/issue-resolve`](../issue-resolve/SKILL.md) § The Bug Lane, step 5).
 5. **Next step:** Proactively announce: **"BDD Scenarios generated. Next step: Phase 4 Implementation Plan (`/gflow:plan <feature>`)."**
 
 ---
