@@ -137,7 +137,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"How do we use Copilot review on PRs?"** → [GITHUB § GitHub Copilot Code Review](GITHUB.md#github-copilot-code-review)
 **"Why did SonarCloud skip or fail on a forked PR?"** → [GITHUB § Forked PRs And SonarCloud](GITHUB.md#forked-prs-and-sonarcloud)
 **"How do I run e2e tests before a release?"** → [DEVELOPMENT § E2e gate](DEVELOPMENT.md#e2e-gate-before-merging-develop--main)
-**"A bug came in — what is the route from symptom to shipped fix?"** → [skills/issue-resolve § The Bug Lane](../skills/issue-resolve/SKILL.md) (spike → debug → BDD → TDD → e2e, and which steps a given bug may skip)
+**"A bug came in — what is the route from symptom to shipped fix?"** → [skills/issue-resolve § The Bug Lane](../skills/issue-resolve/SKILL.md) (spike → debug → BDD → TDD → fix → e2e, and which steps a given bug may skip)
 **"The scenario only reproduces in a browser — where does its test go?"** → [E2E_TESTING § BDD-bound e2e](E2E_TESTING.md#bdd-bound-e2e)
 **"What does each e2e marker cost? How do I run only the cheap tests?"** → [E2E_TESTING § Run commands](E2E_TESTING.md#run-commands)
 **"Has Flow drifted since the last release? What is the nightly canary telling me?"** → [E2E_TESTING § Nightly canary](E2E_TESTING.md#nightly-canary-502)

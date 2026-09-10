@@ -700,20 +700,45 @@ class FlowAgentUiError(GFlowError):
 
 
 class FlowAppError(GFlowError):
-    """Raised when Google Flow's web app itself crashed — a client-side exception
-    (its React error boundary), not a gflow-cli issue. The editor never rendered,
-    so no generation control exists to drive. **Transient and retryable** (exit
-    code 31). Detected at the mode-switch raise site via the Flow error-page title,
-    which otherwise surfaces as a misleading ``UiSelectorDriftError`` "file a bug".
+    """Raised when Google Flow's own app did not give us the page we asked for —
+    not a gflow-cli issue. Either way the editor never rendered, so no generation
+    control exists to drive (exit code 31). **Two measured shapes:**
+
+    1. **Its React error boundary** — the app crashed client-side. Transient;
+       retry works. Detected at the mode-switch raise site via the error-page title.
+    2. **A redirect to Flow's public landing page** (``/about``, #756) — the app
+       declined to open the project for this session. *Why* is not measured:
+       ``gflow auth status`` reports the session verified while it happens, so the
+       message names the redirect and stops rather than inventing a cause. Nor is it
+       known whether a retry helps — the redirect stopped reproducing before it could
+       be measured (spike 2026-09-10), so this raise site passes ``retryable=False``
+       to PRESERVE the answer it gave as exit 23, not to claim a retry fails.
+
+    Both otherwise surface as a misleading ``UiSelectorDriftError`` "file a bug" —
+    which is the whole reason this class exists. See
+    ``api/transports/_common.py::raise_if_known_landing``.
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-app"
     title = "Google Flow web app error"
+
+    #: Per-instance override of this class's ``RETRYABLE_ERRORS`` membership; ``None``
+    #: keeps it. It lives HERE and not on ``GFlowError`` because there is exactly one
+    #: producer (``_common.py::raise_if_known_landing``) and one class with two shapes
+    #: that disagree about retrying. ``is_retryable`` reads it by ``getattr``, so a base
+    #: declaration would buy no typing and no test-double visibility — only a field on
+    #: every error in the project. Move it up if, and only if, a second class needs it.
+    retryable: bool | None = None
     _default_remediation = (
-        "Google Flow's web app failed to load (a client-side exception on "
-        "labs.google) — a transient Flow-side error, not a gflow-cli bug. Retry in a "
-        "moment; if it persists, check https://labs.google/fx and try a fresh session."
+        "Google Flow did not serve the page gflow asked for — a Flow-side condition, "
+        "not a gflow-cli bug. If it crashed (client-side exception), retry in a moment. "
+        "If it redirected to flow.google.com/about, open the project in a browser on "
+        "that host and confirm this account can reach it."
     )
+
+    def __init__(self, *args: Any, retryable: bool | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.retryable = retryable
 
 
 class FlowHostMigratedError(GFlowError):
@@ -1339,5 +1364,18 @@ RETRYABLE_ERRORS: tuple[type[GFlowError], ...] = (
 
 
 def is_retryable(exc: GFlowError) -> bool:
-    """Shared retry classification consumed by every machine-readable error surface."""
+    """Shared retry classification consumed by every machine-readable error surface.
+
+    The class answer (``RETRYABLE_ERRORS``) unless the raise site overrode it — see
+    ``FlowAppError.retryable``.
+
+    ``isinstance(..., bool)`` rather than a truthiness test, deliberately: a
+    ``MagicMock`` answers every ``getattr`` with a truthy child mock, so
+    ``if override is not None`` would silently report **every** mocked error as
+    retryable and no assertion in the suite would notice
+    (memory ``magicmock-truthy-getattr-silences-guards``).
+    """
+    override = getattr(exc, "retryable", None)
+    if isinstance(override, bool):
+        return override
     return isinstance(exc, RETRYABLE_ERRORS)

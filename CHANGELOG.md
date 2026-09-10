@@ -7,8 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+### Fixed
+- **A known Flow landing page is no longer reported as selector drift**
+  ([#756](https://github.com/ffroliva/gflow-cli/issues/756), and the 2026-09-10 RED
+  nightly canary). `flow_host_kind()` classifies the *origin*; `/about`,
+  `/project/<id>` and `/fx/api/auth/signin?error=Callback` all share one, so when a
+  readiness wait timed out it had nothing left to blame but its own anchor — sending
+  the operator to "check for a newer release, then file a bug" over a session state
+  no release changes. The fourth instance of one pattern (after #721 credits, #749
+  agent mode, and `FlowAppError`'s own crash page), so it is fixed once, shared:
+  - New `flow_landing_kind()` beside `flow_host_kind()` in `api/transports/_common.py`
+    names a known non-app landing (`"signin"` / `"public"` / `None`), and
+    `raise_if_known_landing()` converts the diagnosis at **three** raise sites — the
+    migrated readiness wait, the labs gallery sweep, and the labs prompt-box sweep,
+    where a bare `RuntimeError` was being SHA-256 hashed into "Unexpected error" with
+    the URL destroyed. Consulted **only inside an already-failed branch** — never ahead of a probe, which would delete the evidence
+    that corrects a wrong absence claim, and never as a new bounded wait after `goto`,
+    which reads the URL before Flow's client-side redirect lands
+    ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).
+  - `flow.google.com/about` instead of the project → `FlowAppError` (exit 31), naming
+    the landing and the project it did not open. It deliberately does **not** say why:
+    #756 measured the redirect and not its cause, and `gflow auth status` reports the
+    session verified while it happens.
+  - `labs.google/fx/api/auth/signin?error=Callback` instead of the gallery →
+    `AuthExpiredError` (exit 3), remediation `gflow auth login`. This is the exact
+    page behind the 2026-09-10 RED canary, which reported
+    `Could not find 'New project' CTA`.
+  - `auth/internal_chromium.py` drops its private `_NEXTAUTH_ROUTE_PREFIX` and reuses
+    the shared classifier — the knowledge existed there since #767 and no transport
+    could reach it.
+  - `FlowAppError`'s docstring and `docs/USAGE.md`'s exit-code table now describe both
+    shapes; previously both stated the crash page as the only one. `docs/USAGE.md`'s
+    exit-3 row and `docs/MCP.md`'s retryable list are corrected to match, and
+    `docs/DEBUGGING.md` records that the sign-in landing is now capture-exempt —
+    deliberate (a bundle there would screenshot a Google auth surface into the artifact
+    users attach to issues), but a class swap switches capture off silently.
+  - The landing URL is stripped to scheme+host+path before it reaches the message or
+    the log: the NextAuth family includes `/fx/api/auth/callback/google?state=…&code=…`,
+    and this message is precisely what users paste into issues.
+  - `"public"` is scoped to the migrated host, the only one where `/about` was measured.
+  - **`accounts.google.com` is recognised too — found by live-verifying, not by
+    reasoning.** The first version returned `None` there on the grounds that "the
+    chooser has its own handler", which is true at bootstrap
+    (`client._handle_account_chooser`) and false for a hop that happens *after* it. A
+    live A/B on profile `denon82` (2026-09-10, $0) landed exactly there mid-run and
+    still produced `RuntimeError: Could not find 'New project' CTA` — with the OAuth
+    `state`, `code_challenge` and `client_id` interpolated into the message. It now
+    raises `FlowAccountChooserError` (38) for a chooser and `AuthExpiredError` (3) for
+    other Google sign-in surfaces, URL stripped. The bot-rejection hop
+    (`/v3/signin/rejected`) keeps returning `None` — it has its own error.
 
+### Added
+- **`FlowAppError.retryable`** — a per-instance override of that class's
+  `RETRYABLE_ERRORS` membership. `None` (the default) keeps the class answer, so no
+  existing raise changes. Scoped to the one class that needs it: `is_retryable()` reads
+  it by `getattr`, so a base-class field would have sat on every error in the project
+  to serve a single raise site.
+  - It exists because routing `/about` to exit 31 would otherwise have silently flipped
+    that shape from non-retryable (its exit-23 past) to retryable, asserting on every
+    occurrence that a retry is worth making. **That was measured, and could not be
+    settled:** the redirect stopped reproducing on `ci-probe` between 2026-09-08 and
+    2026-09-10 (5/5 attempts reached the editor —
+    [spike](docs/superpowers/spikes/2026-09-10-about-redirect-stability.md)), which is
+    equally consistent with "transient" and with "a session state changed". So the
+    `/about` raise site passes `retryable=False` to **preserve** the previous answer,
+    not to claim a retry fails. Flip it when someone catches the redirect live and
+    measures whether a second attempt wins.
+  - `is_retryable()` pins the override with `isinstance(..., bool)` rather than a
+    truthiness test: a `MagicMock` answers every attribute with a truthy child mock, so
+    a truthiness test would report **every** mocked error as retryable with nothing in
+    the suite noticing. Covered by a test that asserts that precondition explicitly.
+- **BDD scenarios can now be bound as e2e tests**, with no new machinery: pytest-bdd
+  converts Gherkin tags into pytest markers, so a Feature tagged `@e2e @e2e_auth`
+  is filtered by the existing `addopts` and selected by the existing `-m <tier>`.
+  Feature files stay in `tests/features/`; their step module lives in `tests/e2e/`
+  so it inherits that suite's profile-gating fixtures. See
+  [docs/E2E_TESTING.md § BDD-bound e2e](docs/E2E_TESTING.md#bdd-bound-e2e).
+- `tests/features/test_e2e_binding_guard.py` — offline guard (no browser, runs in
+  hosted CI) for three ways that binding breaks silently: an `@e2e` scenario nobody
+  wrote a test for, an `@e2e` Feature with no cost sub-marker (invisible to the
+  nightly canary), and the inverse hazard — a Feature bound from `tests/e2e/` but
+  left untagged, which escapes `addopts` and makes hosted CI try to drive Chrome.
+  It carries its own fire-test, so a green run means "no orphans", not "never looked".
+
+### Changed
 - **Workflow: the Bug Lane is now the documented route from symptom to fix.**
   `skills/issue-resolve/SKILL.md` gains a canonical `spike → systematic-debugging →
   BDD → TDD → fix → e2e` chain, gated by *surface* (steps 0–2 are skippable for a
@@ -22,21 +104,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     see it.
   - "Browser-free" is no longer accepted as a verification blocker: only a **named**
     external blocker is (an account you do not control, a Mac, an exhausted quota).
-
-### Added
-
-- **BDD scenarios can now be bound as e2e tests**, with no new machinery: pytest-bdd
-  converts Gherkin tags into pytest markers, so a Feature tagged `@e2e @e2e_auth`
-  is filtered by the existing `addopts` and selected by the existing `-m <tier>`.
-  Feature files stay in `tests/features/`; their step module lives in `tests/e2e/`
-  so it inherits that suite's profile-gating fixtures. See
-  [docs/E2E_TESTING.md § BDD-bound e2e](docs/E2E_TESTING.md#bdd-bound-e2e).
-- `tests/features/test_e2e_binding_guard.py` — offline guard (no browser, runs in
-  hosted CI) for three ways that binding breaks silently: an `@e2e` scenario nobody
-  wrote a test for, an `@e2e` Feature with no cost sub-marker (invisible to the
-  nightly canary), and the inverse hazard — a Feature bound from `tests/e2e/` but
-  left untagged, which escapes `addopts` and makes hosted CI try to drive Chrome.
-  It carries its own fire-test, so a green run means "no orphans", not "never looked".
 
 ## [0.72.0] — 2026-09-09
 

@@ -19,6 +19,7 @@ Two concerns:
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 import types
 from typing import Any
@@ -42,8 +43,31 @@ _E2E_TEST_DIR = pathlib.Path(__file__).parent / "e2e"
 # ---------------------------------------------------------------------------
 
 
+#: A BDD-bound e2e module declares no `pytest.mark.*` at all — pytest-bdd derives its
+#: markers from the Gherkin tags at collection time. Reading Python source alone
+#: therefore sees nothing and reports a correctly-tiered file as untiered. Resolving
+#: the tags keeps the Gherkin the SINGLE source of truth: duplicating the tier into a
+#: `pytestmark` would satisfy this check and then drift the moment a Feature is
+#: retagged. See docs/E2E_TESTING.md § BDD-bound e2e.
+_SCENARIOS_CALL = re.compile(r"scenarios?\(\s*[\"']([^\"']+)[\"']")
+_TAG_LINE = re.compile(r"^\s*@[\w@\s]+$")
+
+
 def _collect_e2e_test_files() -> list[pathlib.Path]:
     return sorted(_E2E_TEST_DIR.glob("test_*.py"))
+
+
+def _bound_feature_tags(test_file: pathlib.Path) -> list[str]:
+    """Gherkin tags of every feature file this module binds via ``scenarios(...)``."""
+    tags: list[str] = []
+    for ref in _SCENARIOS_CALL.findall(test_file.read_text(encoding="utf-8")):
+        feature = (test_file.parent / ref).resolve()
+        if not feature.is_file():  # pragma: no cover - a broken bind fails at collection
+            continue
+        for line in feature.read_text(encoding="utf-8").splitlines():
+            if _TAG_LINE.match(line):
+                tags.extend(token.lstrip("@") for token in line.split() if token.startswith("@"))
+    return tags
 
 
 def _extract_pytestmarks(source: str) -> list[str]:
@@ -78,14 +102,37 @@ def test_e2e_file_has_cost_sub_marker(test_file: pathlib.Path) -> None:
     importing test modules.  A file-level ``pytestmark`` that covers all tests
     is the canonical approach; individual ``@pytest.mark.*`` decorators on
     every function are also accepted.
+
+    A **BDD-bound** e2e module is the third accepted shape: it carries no
+    ``pytest.mark.*`` at all, because pytest-bdd derives the markers from its
+    feature file's Gherkin tags. Source text alone cannot see those, so the tags
+    are resolved through the ``scenarios(...)`` call — which keeps the Gherkin the
+    one place a tier is written, instead of a ``pytestmark`` copy free to drift.
     """
     source = test_file.read_text(encoding="utf-8")
-    found = set(_extract_pytestmarks(source)) & _COST_SUB_MARKERS
+    declared = set(_extract_pytestmarks(source)) | set(_bound_feature_tags(test_file))
+    found = declared & _COST_SUB_MARKERS
     assert found, (
         f"{test_file.name} has no cost sub-marker. "
-        f"Add at least one of {sorted(_COST_SUB_MARKERS)} to pytestmark or "
-        "individual test functions so callers can filter by cost tier."
+        f"Add at least one of {sorted(_COST_SUB_MARKERS)} to pytestmark, to "
+        "individual test functions, or as a Gherkin tag on the feature it binds, "
+        "so callers can filter by cost tier."
     )
+
+
+def test_bdd_bound_tier_resolution_actually_reads_the_gherkin() -> None:
+    """Prove the resolution above works, and is not passing for another reason.
+
+    Without this, a BDD module that happened to mention ``pytest.mark.e2e_auth`` in
+    a docstring would satisfy the check and nobody would learn the tag path is dead.
+    """
+    bdd = _E2E_TEST_DIR / "test_landing_state_diagnosis_bdd.py"
+    assert bdd.is_file(), "the reference BDD-bound e2e module is missing"
+    assert not set(_extract_pytestmarks(bdd.read_text(encoding="utf-8"))) & _COST_SUB_MARKERS, (
+        "this module is supposed to declare NO Python-level cost marker — if it now "
+        "does, it is no longer exercising the Gherkin-tag path"
+    )
+    assert set(_bound_feature_tags(bdd)) & _COST_SUB_MARKERS == {"e2e_auth"}
 
 
 # ---------------------------------------------------------------------------

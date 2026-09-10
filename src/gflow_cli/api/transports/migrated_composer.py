@@ -43,7 +43,7 @@ import structlog
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
-from gflow_cli.api.transports._common import extract_project_id
+from gflow_cli.api.transports._common import extract_project_id, raise_if_known_landing
 from gflow_cli.api.transports.batchexecute import (
     GenerationRecord,
     generation_record,
@@ -597,6 +597,13 @@ class MigratedComposer:
         try:
             await trigger.wait_for(state="visible", timeout=int(timeout_s * 1000))
         except Exception as e:
+            # Before blaming the anchor, ask the prior question: is this even the page
+            # we asked for? Flow answers a project navigation with its public /about
+            # landing when it will not open that project for this session (#756), and
+            # `flow_host_kind` cannot see it — /about and /project/<id> share an origin.
+            # Reaching this line on a landing page means the trigger was never going to
+            # be here, so probing for the agent chip below is meaningless too.
+            raise_if_known_landing(page, requested=target, at="migrated.ensure_editor")
             # Only now look for agent mode. Probing for the chip BEFORE this wait raced
             # the SPA: `goto` returns on `domcontentloaded` and Angular mounts the
             # composer seconds later, so the chip was reliably absent at that point, the

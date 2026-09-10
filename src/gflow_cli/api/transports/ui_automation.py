@@ -38,6 +38,7 @@ from gflow_cli.api.transports._common import (
     generation_error,
     migrated_route,
     offered_menu_labels,
+    raise_if_known_landing,
     raise_if_migrated,
 )
 from gflow_cli.api.transports.migrated_composer import MENU_ITEM, ModelMenuMatcher
@@ -1599,6 +1600,16 @@ class UiAutomationTransport(VideoGenerationMixin):
             except Exception:
                 continue
 
+        # Before blaming the anchor, ask the prior question: is this the gallery at all?
+        # NextAuth mounts Flow's OAuth routes on labs.google itself, so a signed-out
+        # session sits at `/fx/api/auth/signin?error=Callback` and passes every host
+        # check this file makes — `auth/internal_chromium.py` has known that since #767;
+        # no transport could see it. The 2026-09-10 RED canary is this exact page,
+        # reported as a missing CTA. Consulted only HERE, after the sweep has already
+        # run: an early bail would delete the DOM evidence that corrects a wrong
+        # absence claim, which is how #739 shipped one (see the note below).
+        raise_if_known_landing(page, requested="the Flow gallery", at="labs.enter_editor")
+
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_new_project.png")
         # NO migrated-host branch here. #739 added one asserting that
         # flow.google.com "renders no '+ New project' control gflow can drive". That was an
@@ -1683,6 +1694,14 @@ class UiAutomationTransport(VideoGenerationMixin):
                 return loc
             except Exception:
                 continue
+
+        # The third site, and the worst of the three. `_enter_editor(project_id=...)`
+        # has no readiness gate of its own — it navigates, settles, checks overlays and
+        # returns — so a landing page passes all of it and the FIRST thing to fail is
+        # this sweep. It raises a bare RuntimeError, which `observability.py` SHA-256
+        # hashes because it is not a GFlowError, so the operator is shown "Unexpected
+        # error" with even the URL destroyed. Worse than the drift report #756 is about.
+        raise_if_known_landing(page, requested="the Flow editor", at="labs.locate_prompt_box")
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_prompt_not_found.png")
         msg = f"Prompt input not found in Flow UI. URL: {page.url}.{screenshot_clause(shot_path)}"
