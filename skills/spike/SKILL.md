@@ -138,4 +138,19 @@ gap named is a lead; an unmeasured gap implied is the next day lost.
 Feeds: [`issue-assessment`](../issue-assessment/SKILL.md) (triage needs evidence, not a
 hypothesis), [`predict`](../predict/SKILL.md) (persona claims about a live surface must
 cite a capture), [`live-verify`](../live-verify/SKILL.md) (proves the fix; this proves
-the diagnosis).
+the diagnosis), and — for a bug — [`scenario`](../scenario/SKILL.md), where what you
+observed becomes the `Given`/`When`/`Then` of a test.
+
+## A spike is step 0, never the deliverable
+
+A spike answers a question. It does not close an issue, and its script is not the
+regression test — nothing re-runs it, so nothing notices when Flow changes again.
+
+**The observation you just made is the body of a scenario.** What you drove is the
+`Given`, what you triggered is the `When`, what the DOM or the wire actually returned
+is the `Then`. Carry it into [`scenario`](../scenario/SKILL.md) and, if it can only
+happen in a browser, into `tests/e2e/test_<slug>_bdd.py` — the route is
+[`issue-resolve`](../issue-resolve/SKILL.md) § The Bug Lane.
+
+A spike whose finding never became a test has bought you one answer, once, at full
+price.

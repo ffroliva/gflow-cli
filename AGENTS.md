@@ -16,6 +16,8 @@ that did not run.
 |---|---|---|
 | Claim a Flow surface is broken, missing, or impossible | `/gflow:spike <question>` | A selector that misses is evidence about the SELECTOR; "labs-only, ever" came from one 20 s timeout and cost a day |
 | Touch a GitHub issue | `/gflow:issue-assessment <N>` | Read-only triage precedes any fix; classification changes what "fixing" means |
+| Explain a symptom, or fix a bug whose cause is not yet proven | The **Bug Lane** — [`skills/issue-resolve/SKILL.md`](skills/issue-resolve/SKILL.md) | The issue names a symptom; the cause is usually a caller above it. Skipping to the fix patches one path and leaves its siblings broken |
+| Write the test for a scenario that can only happen in a browser | [`docs/E2E_TESTING.md`](docs/E2E_TESTING.md) § BDD-bound e2e | A mocked page asserts *our* code; the bug was that Flow did something else. The Gherkin tag is what makes it an e2e test |
 | Propose a transport, auth, selector, or schema change | `/gflow:predict <proposal>` | Five adversarial personas return GO / CAUTION / STOP before code exists |
 | Start a feature | `/gflow:scenario` → `/gflow:plan` | Edge cases before tasks; tasks before code |
 | Resume work / ask "where are we?" | `/gflow:status` | The current plan's next unchecked task is the answer, not your guess |
@@ -159,7 +161,10 @@ captured, and it cannot prove the surface an agent or a user actually calls is w
 the code under test. Everything not exercised is unknown, and unknown ships as a bug.
 
 If no e2e test covers the change, **write one** — that is part of the change, not
-follow-up work.
+follow-up work. For a bug, the lane that gets you there — spike → debug → BDD → TDD
+→ e2e, and which steps a given bug may skip — is
+[`skills/issue-resolve/SKILL.md`](skills/issue-resolve/SKILL.md) § The Bug Lane. It is
+written once, there; this section states the law, that one states the route.
 
 **The only permitted exception is a named external blocker** you cannot remove: an
 exhausted API quota, hardware you do not have, an account you do not control, a cohort
@@ -235,8 +240,9 @@ All AI agents and harnesses working on `gflow-cli` follow this standard 10-phase
 |---|---|---|---|
 | 0. Spike | `/gflow:spike <question>` | Evidence from the live surface (DOM / network / HAR) whenever a claim of absence is in play | `scripts/dev/spike_*.py` + `docs/superpowers/spikes/<date>-<slug>.md` |
 | 1. Triage | `/gflow:issue-assessment <N>` | Read-only issue analysis & root cause hypothesis | `issue_assessment_<N>.md` |
+| 1b. Root cause | `superpowers:systematic-debugging` (the **Bug Lane**, [`skills/issue-resolve`](skills/issue-resolve/SKILL.md)) | Turn the triage *hypothesis* into a proven cause at `<file>:<line>`, then grep every caller so the fix lands at the root | Root cause + the callers it covers |
 | 2. Pre-Implementation | `/gflow:predict <proposal>` | Adversarial audit (D14 YAGNI, security, risks) | GO / CAUTION / STOP verdict |
-| 3. BDD Scaffolding | `/gflow:scenario <feature>` | Edge-case explorer & BDD Gherkin spec | `Scenario:` blocks & test scaffold |
+| 3. BDD Scaffolding | `/gflow:scenario <feature>` | Edge-case explorer & BDD Gherkin spec | `Scenario:` blocks + the binding its **surface** dictates: a browser-only scenario is tagged `@e2e @e2e_<tier>` and bound from `tests/e2e/`, everything else stays offline in `tests/features/` |
 | 4. Implementation Plan | `/gflow:plan <feature>` | Task-by-task atomic implementation plan | `docs/superpowers/plans/<date>-<slug>/PLAN.md` |
 | 5. Council Review | `/gflow:pr-council-review` / `llm-council` | Multi-dimensional audit across 6 core dimensions | Consensus verdict report |
 | 6. Task Execution | `/gflow:status` | Track unchecked tasks during TDD execution | Next unchecked task |
@@ -251,7 +257,8 @@ Every AI agent executing any phase of this pipeline MUST proactively state the c
 
 | Current Phase | Completed Artifact / Gate | Next Sequential Phase & Command |
 |---|---|---|
-| Phase 1: Triage | `issue_assessment_<N>.md` | ➔ Phase 2: Pre-Implementation (`/gflow:predict <proposal>`) |
+| Phase 1: Triage | `issue_assessment_<N>.md` | ➔ Phase 1b: Root cause (`superpowers:systematic-debugging`) — skip only when the cause is already proven, and say so |
+| Phase 1b: Root cause | Proven cause at `<file>:<line>` + its callers | ➔ Phase 3: BDD Scaffolding (`/gflow:scenario`), written at the **root**, not the symptom |
 | Phase 2: Pre-Implementation | Verdict `GO` or `CAUTION` | ➔ Phase 3: BDD Scaffolding (`/gflow:scenario <feature>`) |
 | Phase 3: BDD Scaffolding | `Scenario:` blocks & test scaffold | ➔ Phase 4: Implementation Plan (`/gflow:plan <feature>`) |
 | Phase 4: Implementation Plan | `PLAN.md` created & approved | ➔ Phase 6: Task Execution (`/gflow:status`) |

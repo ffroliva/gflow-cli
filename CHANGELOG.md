@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Workflow: the Bug Lane is now the documented route from symptom to fix.**
+  `skills/issue-resolve/SKILL.md` gains a canonical `spike → systematic-debugging →
+  BDD → TDD → fix → e2e` chain, gated by *surface* (steps 0–2 are skippable for a
+  one-line fix whose cause is proven — but a skip is a claim and must be stated;
+  steps 3–5 never are). AGENTS.md, `skills/spike`, `skills/scenario`,
+  `docs/E2E_TESTING.md` and `docs/INDEX.md` cite it; none restate it.
+  - Removes a real contradiction: `issue-resolve` step 3 previously permitted "the
+    closest browser-free proxy" while AGENTS.md's Iron Law said a change with no e2e
+    coverage must get one and listed "covered by unit tests" among the excuses that
+    are *not* blockers. Two disjoint files, no merge conflict, no gate that could
+    see it.
+  - "Browser-free" is no longer accepted as a verification blocker: only a **named**
+    external blocker is (an account you do not control, a Mac, an exhausted quota).
+
+### Added
+
+- **BDD scenarios can now be bound as e2e tests**, with no new machinery: pytest-bdd
+  converts Gherkin tags into pytest markers, so a Feature tagged `@e2e @e2e_auth`
+  is filtered by the existing `addopts` and selected by the existing `-m <tier>`.
+  Feature files stay in `tests/features/`; their step module lives in `tests/e2e/`
+  so it inherits that suite's profile-gating fixtures. See
+  [docs/E2E_TESTING.md § BDD-bound e2e](docs/E2E_TESTING.md#bdd-bound-e2e).
+- `tests/features/test_e2e_binding_guard.py` — offline guard (no browser, runs in
+  hosted CI) for three ways that binding breaks silently: an `@e2e` scenario nobody
+  wrote a test for, an `@e2e` Feature with no cost sub-marker (invisible to the
+  nightly canary), and the inverse hazard — a Feature bound from `tests/e2e/` but
+  left untagged, which escapes `addopts` and makes hosted CI try to drive Chrome.
+  It carries its own fire-test, so a green run means "no orphans", not "never looked".
+
 ## [0.72.0] — 2026-09-09
 
 ### Added
