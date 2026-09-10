@@ -20,6 +20,7 @@ from gflow_cli.api.transports._common import (
     flow_landing_kind,
     interpret_response,
     mint_batch_id,
+    safe_page_url,
 )
 from gflow_cli.errors import (
     AuthExpiredError,
@@ -383,3 +384,51 @@ class TestFlowLandingKind:
         probe error must never displace the real failure. Anything unparseable — or
         not even a string — is None, exactly like its sibling `flow_host_kind`."""
         assert flow_landing_kind(url) is None
+
+
+class TestSafePageUrl:
+    """`safe_page_url` is what keeps credentials out of user-pasteable error text.
+
+    Google's auth URLs carry `state`, `code_challenge`, `client_id` and challenge
+    tokens in the query, and a real `gflow image t2i` printed all of them on
+    2026-09-10 before this existed. Every branch is pinned here: the helper runs
+    while another failure is already being reported, so it must never raise.
+    """
+
+    def test_strips_query_and_fragment_but_keeps_the_landing(self) -> None:
+        url = (
+            "https://accounts.google.com/v3/signin/challenge/pwd"
+            "?TL=ACv9tzFkh8ZJ&state=PKOA6qjxDh&client_id=365941595420-x#frag"
+        )
+        assert safe_page_url(url) == "https://accounts.google.com/v3/signin/challenge/pwd"
+
+    def test_a_clean_url_is_unchanged(self) -> None:
+        assert safe_page_url("https://flow.google.com/about") == "https://flow.google.com/about"
+
+    def test_keeps_the_path_when_there_is_no_query(self) -> None:
+        url = "https://flow.google.com/project/abc-123"
+        assert safe_page_url(url) == url
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (None, ""),
+            ("", ""),
+            # Not a URL at all: returned verbatim, because a caller printing "the page
+            # is at <whatever playwright gave us>" is still more useful than an empty
+            # string, and there is no query to strip.
+            ("not a url", "not a url"),
+            ("about:blank", "about:blank"),
+        ],
+    )
+    def test_degenerate_inputs(self, value: object, expected: str) -> None:
+        assert safe_page_url(value) == expected
+
+    def test_unparseable_url_returns_empty_rather_than_raising(self) -> None:
+        """`urlsplit("https://[bad")` raises ValueError. This helper is only ever
+        called while another failure is being reported, so a probe error here would
+        displace the real one."""
+        assert safe_page_url("https://[bad") == ""
+
+    def test_non_string_input_is_coerced_not_crashed(self) -> None:
+        assert safe_page_url(12345) == "12345"

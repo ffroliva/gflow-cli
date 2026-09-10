@@ -278,3 +278,35 @@ async def test_chooser_error_message_carries_no_oauth_query_params(tmp_path: Pat
     )
     for secret in ("client_id", "code_challenge", "state=", "TL=", "PKOA6qjxDh", "ACv9tzFkh8ZJ"):
         assert secret not in detail, f"{secret!r} leaked into a user-pasteable message"
+
+
+async def test_chooser_with_no_recorded_account_raises_and_redacts(tmp_path: Path) -> None:
+    """A profile with no `.gflow_account` file, landing on a chooser.
+
+    This branch had no test at all — every other chooser test writes an account file
+    first — which is how the line stayed uncovered while the two raise sites beside it
+    were exercised. Found by SonarCloud's `new_coverage` gate on the redaction PR.
+
+    It is a real path: a profile authenticated before `.gflow_account` existed, or one
+    whose file was removed, has nothing to auto-select with.
+    """
+    from gflow_cli.api.client import FlowApiClient
+
+    profile = tmp_path / "profile_p1"
+    profile.mkdir()  # deliberately NO ACCOUNT_FILE
+
+    noisy = (
+        "https://accounts.google.com/v3/signin/accountchooser"
+        "?client_id=365941595420-x.apps.googleusercontent.com&state=PKOA6qjxDh"
+    )
+    client = FlowApiClient(profile_dir=profile)
+    page, _row = _chooser_page(noisy, row_count=1)
+
+    with pytest.raises(FlowAccountChooserError) as exc_info:
+        await client._handle_account_chooser(page)
+
+    detail = str(exc_info.value)
+    assert "no account is recorded" in detail.lower() or "auto-select" in detail
+    assert "https://accounts.google.com/v3/signin/accountchooser" in detail
+    for secret in ("client_id", "state=", "PKOA6qjxDh"):
+        assert secret not in detail, f"{secret!r} leaked into a user-pasteable message"
