@@ -168,3 +168,70 @@ async def _drift(composer: MigratedComposer, *, state: dict[str, Any]) -> UiSele
             timeout=5000,
         )
     return caught.value
+
+
+# ---------------------------------------------------------------------------
+# One case per reading the post-mortem can report.
+#
+# The e2e proves the BROWSER really produces these states; these prove the message
+# for each one. They are here and not only there because CI's coverage run excludes
+# `-m e2e`, so a branch exercised solely by the browser reads as dead code to
+# SonarCloud's new-code gate — the exact way PR #777 went red at 70%.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        ({"hidden_attr": True}, "bare `hidden` attribute"),
+        ({"visible": False}, "not rendered"),
+        ({"enabled": False}, "it is disabled"),
+        ({"body_blocked": True}, "accepting no pointer events at all"),
+    ],
+    ids=["hidden", "not-rendered", "disabled", "body-blocked"],
+)
+@pytest.mark.asyncio
+async def test_each_readable_condition_is_named(
+    composer: MigratedComposer, override: dict[str, Any], expected: str
+) -> None:
+    detail = (await _drift(composer, state={**_HEALTHY, **override})).detail or ""
+    assert expected in detail, detail
+    # Whatever fired, the locator is still the first thing the reader sees.
+    assert ".settings-trigger-button" in detail
+
+
+@pytest.mark.asyncio
+async def test_agent_mode_leads_the_message_when_the_chip_is_pressed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#752 finding #7's cause, and the only one here with a user action attached.
+
+    It is reported FIRST because it is the only reading a user can act on directly, and
+    because agent mode hides the trigger with a bare `hidden` that touches neither the
+    body's pointer-events nor the hit test — nothing else in the probe would notice it.
+    """
+
+    async def _true(_page: object) -> bool:
+        return True
+
+    monkeypatch.setattr(MigratedComposer, "_agent_chip_pressed", staticmethod(_true))
+    state = {**_HEALTHY, "hit_testable": False, "occluder": "div.cdk-overlay-backdrop"}
+    detail = (await _drift(MigratedComposer(), state=state)).detail or ""
+    assert "agent mode" in detail
+    # Both facts are reported — the occluder is real too — but the actionable one leads.
+    assert detail.index("agent mode") < detail.index("covered by")
+
+
+@pytest.mark.asyncio
+async def test_a_missing_reading_is_not_mistaken_for_health(
+    composer: MigratedComposer,
+) -> None:
+    """An empty state dict must not read as "everything was fine".
+
+    `locator.evaluate` returning a shape we did not expect (an older Chromium, a JS
+    error swallowed into a partial object) would make every `.get()` falsy. Falling
+    through to the healthy branch there would report "visible, enabled and hit-testable"
+    about an element nothing was ever read from.
+    """
+    detail = (await _drift(composer, state={})).detail or ""
+    assert "visible, enabled and hit-testable" not in detail, detail

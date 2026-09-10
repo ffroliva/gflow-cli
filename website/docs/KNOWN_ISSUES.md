@@ -1251,6 +1251,8 @@ mid-run agent-mode flip is equally consistent with the evidence.
 | `… it is covered by <tag>.<class>` | something is stacked over the control — the class names it | dismiss it in a browser; re-run |
 | `… the page is accepting no pointer events at all` | an overlay has the whole app blocked (#593's shape) | dismiss it in a browser; re-run |
 | `… it carries a bare `hidden` attribute` / `it is disabled` | the control is present but not usable | usually agent mode or a cohort difference; check the Agent chip first |
+| `… it is not rendered (display, visibility, or a zero-sized box)` | it is in the DOM but not on screen | as above — check the Agent chip, then file a bug with the log |
+| `… it answers no hit test at its own centre` | nothing named itself as the cover, but the click still landed elsewhere | re-run once; if it repeats, file a bug — an overlay outside the document is the usual shape |
 | `… it was visible, enabled and hit-testable … most likely still moving` | nothing readable was wrong | Playwright also needs a *stable* box; re-run once. If it repeats, file a bug — this message means we looked and found nothing, which is a real finding worth having |
 | `… it could not be read back` | the page changed under the diagnosis | re-run; if it repeats, attach the log |
 

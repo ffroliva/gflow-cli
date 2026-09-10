@@ -609,10 +609,18 @@ class ExtendUnavailableError(GFlowError):
 
 
 class UiSelectorDriftError(GFlowError):
-    """Raised when a UI-automation selector cascade finds no matching element.
+    """Raised when a UI-automation selector cascade cannot reach the control it needs.
+
+    Two shapes, and the second is easy to forget: the selector **finds nothing**, or it
+    finds the element and the element **will not take the interaction** — occluded,
+    disabled, or never holding still (#593's blocked overlay, #776's click that expired
+    while the control read visible and enabled). Both mean the same thing to a caller —
+    gflow cannot drive this control — which is why they share an exit code, and why the
+    ``detail`` has to say which one happened.
 
     Indicates that Flow's frontend has changed in a way that invalidates one
-    of the selector probes (mode-switch trigger, mode tab, sub-mode tab, etc.).
+    of the selector probes (mode-switch trigger, mode tab, sub-mode tab, etc.),
+    or that something on the page is in the way.
     The ``detail`` names the probe label and includes the debug screenshot or
     diagnostics JSON path when one was captured.
 
