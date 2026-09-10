@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.73.0] — 2026-09-10
+
 ### Security
 
 - **Google auth URLs no longer reach user-facing error messages with their query
@@ -52,7 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     to the Problem Details branch instead, so an agent now gets the locator and exit 23.
   - Applied to four sites with a named reason each, not all nineteen: the reported one,
     the composer click `_close_pane`'s own docstring records as failing this way, and
-    both credit-spending submits, where a bare timeout left "did it submit?" unanswerable.
+    both submit sites, where a bare timeout left "did it submit?" unanswerable — the
+    video one spends Veo credits, the image one spends only daily quota.
   - **The occluder report is a closed allowlist** — tag name plus at most three
     framework-prefixed class tokens, never `aria-label`, `title`, `src` or `outerHTML`.
     Typing the error moves the text from SHA-256-hashed telemetry to a message printed
@@ -108,8 +111,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     raises `FlowAccountChooserError` (38) for a chooser and `AuthExpiredError` (3) for
     other Google sign-in surfaces, URL stripped. The bot-rejection hop
     (`/v3/signin/rejected`) keeps returning `None` — it has its own error.
+- **`gflow auth list` no longer fails on a profile whose `.gflow_account` is damaged**
+  (PR [#764](https://github.com/ffroliva/gflow-cli/pull/764)). The reader decoded as
+  UTF-8 and caught only `OSError`, so a non-UTF-8 or truncated file raised out of
+  `list_profiles()` and broke the listing for *every* profile, not just the damaged one.
+  The value is also interpolated into a DOM attribute selector, where a stray quote
+  produced an untyped failure. Unusable content now reads as "no account recorded",
+  which every caller already handles.
+- **Google's post-migration account chooser no longer stalls a run**
+  ([#763](https://github.com/ffroliva/gflow-cli/issues/763), PR
+  [#764](https://github.com/ffroliva/gflow-cli/pull/764) — thanks @stgmt). When Google
+  hands the session to `flow.google.com` and redirects to a chooser, `FlowApiClient`
+  now auto-selects the profile's recorded account from `.gflow_account` instead of
+  stalling into an opaque `RecaptchaError`/exit 1.
+  - The row match is exact and case-insensitive on both tiers, and **anchored so the
+    chooser's `Remove <email>` / `Sign out of <email>` rows can never be clicked**.
+  - A chooser is identified *positively* (chooser path, or account rows), so an
+    ordinary expired session still classifies as `AuthExpiredError` (exit 3) rather
+    than being swept into the new class.
+  - Cases that cannot be selected raise a typed, non-retryable
+    `FlowAccountChooserError` (**exit 38**) naming the URL the session actually
+    landed on.
+  - `.gflow_account` is treated as untrusted input — this fixes an untyped failure in
+    the selector and a crash in `gflow auth list` on a damaged file.
+  - Follow-up hardening is tracked in
+    [#773](https://github.com/ffroliva/gflow-cli/issues/773).
 
 ### Added
+- **`gflow auth login --account <email>`** asserts the login authenticated as the
+  required account, failing closed on a mismatch rather than leaving a profile signed
+  in as somebody else (PR [#764](https://github.com/ffroliva/gflow-cli/pull/764)).
 - **`FlowAppError.retryable`** — a per-instance override of that class's
   `RETRYABLE_ERRORS` membership. `None` (the default) keeps the class answer, so no
   existing raise changes. Scoped to the one class that needs it: `is_retryable()` reads
@@ -178,31 +209,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   submit, rather than running those selectors against `flow.google.com` and reporting
   exit 23 — which told the user to file a frontend-drift bug about a frontend that was
   behaving correctly.
-
-- **Account auto-selection at post-migration sign-in chooser**
-  ([#763](https://github.com/ffroliva/gflow-cli/issues/763)). When Google
-  Flow hands the session over to `flow.google.com` and redirects to an account
-  chooser, `FlowApiClient` now auto-selects the profile's recorded account from
-  `.gflow_account`. If the recorded account is absent or cannot be selected, the
-  client raises a dedicated, non-retryable `FlowAccountChooserError` (exit code 38),
-  avoiding generic `UnexpectedError` or selector drift stalls. `gflow auth login`
-  gains an optional `--account <email>` option to assert that login authenticates
-  as the required account. When the click-through does not reach Flow, the error
-  names the URL the session actually landed on, so a Google challenge that needs a
-  human is distinguishable from a click that never navigated. Account matching is
-  case-insensitive on both tiers, matching `--account`'s own comparison, so a
-  recorded address whose case differs from Google's rendering still selects its
-  row instead of reporting the account as absent.
-
-### Fixed
-
-- **`gflow auth list` no longer fails on a profile whose `.gflow_account` is
-  damaged.** The reader decoded as UTF-8 and caught only `OSError`, so a
-  non-UTF-8 or truncated file raised out of `list_profiles()` and broke the
-  listing for *every* profile, not just the damaged one. The value is also
-  interpolated into a DOM attribute selector, where a stray quote produced an
-  untyped failure; unusable content now reads as "no account recorded", which
-  every caller already handles.
 
 ### Changed
 
@@ -4839,7 +4845,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...HEAD
+[0.73.0]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...v0.72.0
 [0.71.1]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...v0.71.1
 [0.71.0]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...v0.71.0

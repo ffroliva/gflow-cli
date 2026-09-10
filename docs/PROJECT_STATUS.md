@@ -4,6 +4,53 @@
 
 ## Current release
 
+**v0.73.0 — alpha.** **Four error paths stopped lying about what went wrong.**
+
+Every fix in this release is the same shape: gflow knew something had failed, and blamed the
+wrong thing. None of them changed what the tool can do — they changed what it says when it
+cannot, which is the difference between a user filing a useful bug and re-running blind.
+
+**A click that never lands now reports what was actually true** (#776). On the migrated host
+a run reached `migrated.editor_ready` and died five seconds later as a bare Playwright
+`TimeoutError`: exit 1, no locator, no cause, no file. The control was *visible* — the guard
+above it proves that — and the *click* expired. Two causes were live and **neither could be
+measured**: Flow's announcement overlay (measured on labs.google, never on this host — a
+spike read `body{pointer-events}` as `auto` in 159/159 samples, including while Flow's own
+pane was open) and a mid-run agent-mode flip. So the driver reads Playwright's four
+actionability conditions back and reports the ones that fired; when every reading is healthy
+it **says so**, eliminating three and pointing at the fourth rather than inventing one. The
+MCP surface gains more than the CLI, where the same failure had been arriving as
+`detail: "sha256:…"` — a hash, not even the exception class.
+
+**A known Flow landing page is no longer reported as selector drift** (#756). `flow_host_kind()`
+classifies the *origin*, and `/about`, `/project/<id>` and `/fx/api/auth/signin` all share
+one — so a readiness wait that timed out had nothing left to blame but its own anchor,
+sending the operator to "check for a newer release, then file a bug" over a session state no
+release changes.
+
+**Google's auth URLs no longer reach error messages with their query intact** (#777). Those
+messages are the artifact users are asked to paste into an issue, and Google's auth URLs
+carry `state`, `code_challenge`, `client_id` and challenge tokens. Measured, not theorised:
+a real run printed five secret matches before the fix and **zero** after, with the landing
+still named — knowing *where* the session stopped is the whole value of the message.
+
+**Google's post-migration account chooser no longer stalls a run** (#763/#764, thanks
+@stgmt). gflow now auto-selects the profile's recorded account instead of stalling into an
+opaque exit 1 — with the row match anchored so the chooser's *Remove* and *Sign out* rows can
+never be clicked, and unselectable cases raising a typed exit 38.
+
+Also shipped: **the Bug Lane is now the documented route from symptom to fix** (#774) —
+spike → debug → BDD → TDD → fix → e2e, written once and cited everywhere, with an offline
+guard that fails CI when a browser-only scenario has no e2e test bound to it.
+
+See [LIVE_VERIFICATION_v0.73.0.md](LIVE_VERIFICATION_v0.73.0.md) for what was exercised
+against real Flow — and what was not. Four arms verified live, one in a real browser against
+a page we wrote, and three recorded as **not** verified with named reasons: `/about` stopped
+reproducing (0/5), the `/fx/api/auth/*` landing moved before it could be reached, and #764's
+success path needs an account currently behind a Google password challenge.
+
+<details><summary>v0.72.0 — auth login closes the browser, and the migrated host generates images</summary>
+
 **v0.72.0 — alpha.** **`gflow auth login` closes the browser for you, and Flow's migrated
 host now generates images.**
 
@@ -40,6 +87,8 @@ exit 36 rather than reported as selector drift.
 See [LIVE_VERIFICATION_v0.72.0.md](LIVE_VERIFICATION_v0.72.0.md) for what was exercised
 against real Flow — and what was not. The OAuth-callback *mechanism* is inferred rather than
 proven; issue #769 carries the spike that would settle it.
+
+</details>
 
 <details><summary>v0.71.1 — two migrated-host failures stop blaming the wrong thing</summary>
 
@@ -925,6 +974,7 @@ reporter-verified e2e on macOS).
 
 | Milestone | Status |
 |---|---|
+| Four error paths stop lying about what went wrong: a click that never lands reports the actionability condition that failed instead of a bare timeout (#776), a known Flow landing is named rather than blamed on the selector (#756), Google's auth URLs are stripped from error messages (#777), and the post-migration account chooser auto-selects instead of stalling (#763/#764) | ✅ done (v0.73.0) |
 | `gflow auth login` closes the sign-in browser itself, on a measured retraction — G12 blocks `navigator.webdriver`, not bundled Chromium (#767); `gflow image t2i`/local-file `i2i` driven on the migrated host (#692) | ✅ done (v0.72.0) |
 | Two migrated-host error paths stop blaming the wrong thing: Flow's agent mode (three distinct outcomes, not one message) and its one-time upload-terms dialog (#749/#752, #719 shape A) | ✅ done (v0.71.1) |
 | `gflow character create --voice` verified end to end for the first time; a credit shortfall reports exit 37; incident bundles no longer blind on the migrated host | ✅ done (v0.71.0) |

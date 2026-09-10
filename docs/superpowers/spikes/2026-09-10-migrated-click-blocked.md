@@ -105,6 +105,17 @@ is structural, so no locale can hide it.)
 
 ## What this means for the fix
 
+> **This result turned a `predict` GO into a STOP.** The proposal it was gating was
+> "port #593's overlay guard to the migrated driver". Four of five personas returned
+> GO/CAUTION on the mechanics; the Devil's Advocate returned **STOP on the premise**,
+> having found [#752](https://github.com/ffroliva/gflow-cli/issues/752) finding #7 —
+> which predicted #776's symptom at #776's function before it was filed, and whose cause
+> (a mid-run agent-mode flip) touches neither `body{pointer-events}` nor the hit test. A
+> guard built on the overlay would have reported the wrong cause with confidence. The
+> spike above agreed from the other direction, and the fix was redesigned to **read**
+> rather than diagnose.
+
+
 The confirmed defect in #776 is **unattributability**, and that is independent of what
 covers the trigger. A guard built only on `body{pointer-events:none}` would catch one of
 Playwright's four actionability conditions (receives-events) and stay silent on the other
