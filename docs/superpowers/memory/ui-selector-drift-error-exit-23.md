@@ -32,3 +32,26 @@ Recovery is `gflow auth login --profile <name>` while signed in as the recorded
 account. Precedent:
 exits 36 (`FlowHostMigratedError`) and 37 (`InsufficientCreditsError`) each got
 the same carve-out recorded when introduced.
+
+## Carve-out 4 — a known landing page is not drift (#756, 2026-09-10)
+
+The broadest one, and the one that names the shared cause under the other three.
+`flow_host_kind` classifies the **ORIGIN, not the page**: `/about`, `/project/<id>`
+and `/fx/api/auth/signin?error=Callback` all satisfy the same host check. So every
+readiness wait that timed out had nothing left to blame but its own anchor — which
+is #756 (`/about` -> exit 23), #773 item 2 (a sign-in page reported as an account
+chooser), and the 2026-09-10 RED canary (`Could not find 'New project' CTA` on a
+NextAuth error page), all one defect at three sites.
+
+`api/transports/_common.py::flow_landing_kind` answers the missing question
+(`"signin"` / `"public"` / `None`) and `raise_if_known_landing` converts the
+diagnosis: sign-in routes -> `AuthExpiredError` (3), the migrated host's `/about`
+-> `FlowAppError` (31, with `retryable=False`). Consulted **only inside an
+already-failed branch** — never ahead of a probe, which would delete the DOM
+evidence that corrects a wrong absence claim, and never as a bounded wait after
+`goto`, which reads the URL before Flow's client-side redirect lands (#639).
+
+**The transferable lesson:** before reporting an anchor as drifted, ask whether the
+page is the page you asked for. Three prior special cases (#721 credits, #749 agent
+mode, `FlowAppError`'s crash page) were the same question answered one surface at a
+time.

@@ -116,7 +116,15 @@ also shows the recorded lock owner's PID/start-time evidence — advisory
 only, the kernel lock stays authoritative and nothing is ever reclaimed).
 
 Never captured: expected `ContentPolicyError`, ordinary `AuthExpiredError`,
-usage/config validation, cancellation (Ctrl-C). Successful commands write
+usage/config validation, cancellation (Ctrl-C). **That `AuthExpiredError` exclusion
+now covers one more path than it used to:** since
+[#756](https://github.com/ffroliva/gflow-cli/issues/756), landing on one of Flow's
+OAuth/sign-in routes raises `AuthExpiredError` where it previously raised
+`UiSelectorDriftError`, which *is* captured. The change is deliberate — the remediation
+is `gflow auth login` either way, and a bundle there would put a DOM dump and a
+full-page screenshot of a Google auth surface into the artifact users are prompted to
+attach to issues. It is recorded here because swapping a class silently switches
+capture off, which is exactly the trap `docs/PROJECT_STATUS.md` records. Successful commands write
 nothing. At most 3 bundles per command; repeats of the same failure
 fingerprint increment `suppressed_count` in the manifest instead.
 

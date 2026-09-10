@@ -159,7 +159,7 @@ def test_classify_content_safety_handles_multiple_details() -> None:
 
 
 class TestPerInstanceRetryability:
-    """`GFlowError.retryable` overrides the class answer for one raise site.
+    """`FlowAppError.retryable` overrides the class answer for one raise site.
 
     It exists because `FlowAppError` (exit 31) now covers two shapes with different
     retry semantics: Flow's client-side crash page, where a retry genuinely works,
@@ -179,12 +179,40 @@ class TestPerInstanceRetryability:
 
         assert is_retryable(FlowAppError(detail="/about", retryable=False)) is False
 
-    def test_override_can_also_opt_a_non_retryable_class_in(self) -> None:
-        """Both directions, so the mechanism is not silently one-way."""
+    def test_only_flow_app_error_carries_the_override(self) -> None:
+        """Scoped to the one class that needs it (council D14).
+
+        A base-class field would sit on every error in the project to serve one
+        raise site. `is_retryable` reads it by `getattr`, so narrowing costs nothing
+        — and this test is what makes the narrowing visible if someone widens it back
+        without a second producer to justify it.
+        """
         from gflow_cli.errors import UiSelectorDriftError, is_retryable
 
         assert is_retryable(UiSelectorDriftError(detail="drift")) is False
-        assert is_retryable(UiSelectorDriftError(detail="drift", retryable=True)) is True
+        with pytest.raises(TypeError):
+            UiSelectorDriftError(detail="drift", retryable=True)  # type: ignore[call-arg]
+
+    def test_the_signin_landing_raises_auth_expired(self) -> None:
+        """The `"signin"` arm, which only the e2e reached before — and `addopts`
+        excludes that, so the offline suite never executed this branch (council D4).
+
+        Also pins the redaction: the NextAuth family includes the OAuth callback,
+        whose query carries `code=` and `state=`. This message is what users paste
+        into issues (council D3).
+        """
+        from gflow_cli.api.transports._common import raise_if_known_landing
+        from gflow_cli.errors import AuthExpiredError
+
+        url = "https://labs.google/fx/api/auth/callback/google?state=s3cr3t&code=4/0Aabc"
+        page = type("P", (), {"url": url})()
+        with pytest.raises(AuthExpiredError) as exc_info:
+            raise_if_known_landing(page, requested="the Flow gallery", at="test")
+
+        detail = str(exc_info.value)
+        assert "https://labs.google/fx/api/auth/callback/google" in detail
+        assert "code=" not in detail and "state=" not in detail and "s3cr3t" not in detail
+        assert "sign-in page" not in detail, "the family includes callback and /session"
 
     def test_the_about_landing_is_not_flagged_retryable(self) -> None:
         """The raise site itself, not just the constructor.
@@ -192,30 +220,35 @@ class TestPerInstanceRetryability:
         Pins the non-claim: this shape raised exit 23 before (already non-retryable),
         so routing it to exit 31 must not quietly flip consumers into retrying it.
         """
-        from gflow_cli.api.transports._common import raise_for_known_landing
+        from gflow_cli.api.transports._common import raise_if_known_landing
         from gflow_cli.errors import EXIT_CODE_MAP, FlowAppError, is_retryable
 
         page = type("P", (), {"url": "https://flow.google.com/about"})()
         with pytest.raises(FlowAppError) as exc_info:
-            raise_for_known_landing(page, requested="project abc", at="test")
+            raise_if_known_landing(page, requested="project abc", at="test")
 
         assert is_retryable(exc_info.value) is False
         assert EXIT_CODE_MAP[FlowAppError] == 31
 
-    def test_a_mock_does_not_read_as_retryable(self) -> None:
-        """A MagicMock answers every getattr with a truthy child mock, so a
-        truthiness test here would report EVERY mocked error as retryable and no
-        assertion in the suite would catch it (memory
-        `magicmock-truthy-getattr-silences-guards`). `is_retryable` pins on
-        `isinstance(..., bool)`; this proves that is load-bearing."""
+    def test_a_truthy_non_bool_override_does_not_flip_the_class_answer(self) -> None:
+        """`is_retryable` pins the override with `isinstance(..., bool)`, not truthiness.
+
+        A `MagicMock` answers every `getattr` with a truthy child mock. Under a
+        truthiness test that child would read as "retryable: yes" for any object
+        carrying it, and no assertion in the suite would notice (memory
+        `magicmock-truthy-getattr-silences-guards`).
+
+        Deliberately a BARE mock, not `spec=FlowAppError`: a spec'd mock satisfies
+        `isinstance(exc, RETRYABLE_ERRORS)`, so the class answer is `True` anyway and
+        the guard becomes unobservable through it. Bare, the class answer is `False`,
+        so the truthy child is the only thing that could flip it — which makes this a
+        real test of the guard rather than a test that agrees with itself by accident.
+        """
         from unittest.mock import MagicMock
 
-        from gflow_cli.errors import UiSelectorDriftError, is_retryable
+        from gflow_cli.errors import is_retryable
 
-        mock_exc = MagicMock(spec=UiSelectorDriftError)
-        assert not isinstance(mock_exc.retryable, bool), (
-            "precondition: a spec'd mock answers `.retryable` with a child mock, "
-            "not a bool — which is exactly what would fool a truthiness test"
-        )
-        assert bool(mock_exc.retryable) is True, "precondition: that child mock IS truthy"
+        mock_exc = MagicMock()
+        assert not isinstance(mock_exc.retryable, bool), "precondition: not a bool"
+        assert bool(mock_exc.retryable) is True, "precondition: but it IS truthy"
         assert is_retryable(mock_exc) is False

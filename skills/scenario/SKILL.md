@@ -207,8 +207,9 @@ that. So the tag decides where the scenario runs and who must run it:
 | in our own code (parsing, routing, exit codes, redaction) | none | `tests/features/test_<slug>_steps.py` |
 
 One feature file is bound by exactly **one** module — bound twice, its scenarios run
-twice. `tests/features/test_e2e_binding_guard.py` enforces both directions offline, so
-an `@e2e` scenario nobody wrote a test for fails normal CI. Mechanics:
+twice. `tests/features/test_e2e_binding_guard.py` enforces this offline in four directions
+(orphan, missing tier, untagged live binding, double binding), so an `@e2e` scenario
+nobody wrote a test for fails normal CI. Mechanics:
 [`docs/E2E_TESTING.md`](../../docs/E2E_TESTING.md) § BDD-bound e2e.
 
 ## Known-issues cross-reference

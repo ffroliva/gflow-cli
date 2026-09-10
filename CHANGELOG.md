@@ -19,8 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent mode, and `FlowAppError`'s own crash page), so it is fixed once, shared:
   - New `flow_landing_kind()` beside `flow_host_kind()` in `api/transports/_common.py`
     names a known non-app landing (`"signin"` / `"public"` / `None`), and
-    `raise_for_known_landing()` converts the diagnosis. Consulted **only inside an
-    already-failed branch** — never ahead of a probe, which would delete the evidence
+    `raise_if_known_landing()` converts the diagnosis at **three** raise sites — the
+    migrated readiness wait, the labs gallery sweep, and the labs prompt-box sweep,
+    where a bare `RuntimeError` was being SHA-256 hashed into "Unexpected error" with
+    the URL destroyed. Consulted **only inside an already-failed branch** — never ahead of a probe, which would delete the evidence
     that corrects a wrong absence claim, and never as a new bounded wait after `goto`,
     which reads the URL before Flow's client-side redirect lands
     ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).
@@ -36,14 +38,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the shared classifier — the knowledge existed there since #767 and no transport
     could reach it.
   - `FlowAppError`'s docstring and `docs/USAGE.md`'s exit-code table now describe both
-    shapes; previously both stated the crash page as the only one.
+    shapes; previously both stated the crash page as the only one. `docs/USAGE.md`'s
+    exit-3 row and `docs/MCP.md`'s retryable list are corrected to match, and
+    `docs/DEBUGGING.md` records that the sign-in landing is now capture-exempt —
+    deliberate (a bundle there would screenshot a Google auth surface into the artifact
+    users attach to issues), but a class swap switches capture off silently.
+  - The landing URL is stripped to scheme+host+path before it reaches the message or
+    the log: the NextAuth family includes `/fx/api/auth/callback/google?state=…&code=…`,
+    and this message is precisely what users paste into issues.
+  - `"public"` is scoped to the migrated host, the only one where `/about` was measured.
 
 ### Added
 
-- **`GFlowError.retryable`** — a per-instance override of the class-level
-  `RETRYABLE_ERRORS` answer, in the same class-default/instance-override shape
-  `remediation_hint` already used. `None` (the default) keeps the class answer, so no
-  existing raise changes.
+- **`FlowAppError.retryable`** — a per-instance override of that class's
+  `RETRYABLE_ERRORS` membership. `None` (the default) keeps the class answer, so no
+  existing raise changes. Scoped to the one class that needs it: `is_retryable()` reads
+  it by `getattr`, so a base-class field would have sat on every error in the project
+  to serve a single raise site.
   - It exists because routing `/about` to exit 31 would otherwise have silently flipped
     that shape from non-retryable (its exit-23 past) to retryable, asserting on every
     occurrence that a retry is worth making. **That was measured, and could not be

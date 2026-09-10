@@ -94,11 +94,6 @@ class GFlowError(Exception):
     #: projection; the local path/artifacts stay CLI-local (S21).
     incident_ref: IncidentRef | None = None
 
-    #: Per-instance override of the class-level ``RETRYABLE_ERRORS`` answer; ``None``
-    #: keeps it. Declared at class level so it is typed and visible to ``spec=``'d
-    #: test doubles, and assigned per instance in ``__init__``.
-    retryable: bool | None = None
-
     def __init__(
         self,
         detail: str = "",
@@ -107,7 +102,6 @@ class GFlowError(Exception):
         instance: str | None = None,
         route: str = "",
         remediation_hint: str | None = None,
-        retryable: bool | None = None,
     ) -> None:
         message = self.title if not detail else f"{self.title}: {detail}"
         super().__init__(message)
@@ -115,7 +109,6 @@ class GFlowError(Exception):
         self.status = status
         self.instance = instance or ""
         self.route = route
-        self.retryable = retryable
         self.remediation_hint = (
             remediation_hint if remediation_hint is not None else self._default_remediation
         )
@@ -177,10 +170,6 @@ class FlowApiError(GFlowError):
                 instance=kwargs.pop("instance", None),
                 route=route_kw,
                 remediation_hint=kwargs.pop("remediation_hint", None),
-                # Carried explicitly: this branch enumerates kwargs, so anything not
-                # listed is dropped in silence — and a silently-dropped retry override
-                # reads as "the class answer", which is the bug this field exists to stop.
-                retryable=kwargs.pop("retryable", None),
             )
             self.body = body
         else:
@@ -727,17 +716,29 @@ class FlowAppError(GFlowError):
 
     Both otherwise surface as a misleading ``UiSelectorDriftError`` "file a bug" —
     which is the whole reason this class exists. See
-    ``api/transports/_common.py::raise_for_known_landing``.
+    ``api/transports/_common.py::raise_if_known_landing``.
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-app"
     title = "Google Flow web app error"
+
+    #: Per-instance override of this class's ``RETRYABLE_ERRORS`` membership; ``None``
+    #: keeps it. It lives HERE and not on ``GFlowError`` because there is exactly one
+    #: producer (``_common.py::raise_if_known_landing``) and one class with two shapes
+    #: that disagree about retrying. ``is_retryable`` reads it by ``getattr``, so a base
+    #: declaration would buy no typing and no test-double visibility — only a field on
+    #: every error in the project. Move it up if, and only if, a second class needs it.
+    retryable: bool | None = None
     _default_remediation = (
         "Google Flow did not serve the page gflow asked for — a Flow-side condition, "
         "not a gflow-cli bug. If it crashed (client-side exception), retry in a moment. "
         "If it redirected to flow.google.com/about, open the project in a browser on "
         "that host and confirm this account can reach it."
     )
+
+    def __init__(self, *args: Any, retryable: bool | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.retryable = retryable
 
 
 class FlowHostMigratedError(GFlowError):
@@ -1366,7 +1367,7 @@ def is_retryable(exc: GFlowError) -> bool:
     """Shared retry classification consumed by every machine-readable error surface.
 
     The class answer (``RETRYABLE_ERRORS``) unless the raise site overrode it — see
-    ``GFlowError.retryable``.
+    ``FlowAppError.retryable``.
 
     ``isinstance(..., bool)`` rather than a truthiness test, deliberately: a
     ``MagicMock`` answers every ``getattr`` with a truthy child mock, so

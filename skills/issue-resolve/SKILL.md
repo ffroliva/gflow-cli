@@ -49,8 +49,13 @@ fix whose cause is self-evident and whose blast radius is one line — a typo, a
 exit-code string, a doc correction. **A skip is a claim; say it out loud** ("cause
 proven at `<file>:<line>`, skipping the debug step") so the skip is reviewable.
 
-Steps **3–5 have no gate.** There is no bug small enough to fix without a test
-that failed first, and no Flow-surface change that a unit test discharges.
+Steps **3–5 have no gate** — but read step 3 correctly when step 2 was skipped.
+There is no bug small enough to fix without a test that failed first, and no
+Flow-surface change that a unit test discharges. What step 3 requires is **the
+reproduction, red first**; Gherkin is its form only when step 2 produced Gherkin.
+Skip step 2 and step 3 still owes you a failing test — an ordinary `test_*` that
+reproduces the bug — it just is not a scenario. The gate is *red before green*,
+never *Gherkin before green*.
 
 ### A flag is a claim — decide it with evidence or don't change it
 
@@ -70,7 +75,8 @@ raise to a different class, so a refactor smuggles in an assertion nobody review
 
 Never let a class default speak for a raise site it was not written for. When one class
 covers shapes with genuinely different semantics, give the raise site an override rather
-than picking one answer for both — `GFlowError.retryable` exists for exactly this.
+than picking one answer for both — `FlowAppError.retryable` exists for exactly this,
+and lives on that class alone until a second one needs it.
 
 > **Written from a near-miss in the same session that wrote this file.** Routing #756's
 > `/about` landing to `FlowAppError` (exit 31) would have flipped it from non-retryable

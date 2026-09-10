@@ -89,20 +89,21 @@ Gherkin tag into a pytest marker, so a tagged scenario is filtered by the same
 **The three moving parts:**
 
 ```gherkin
-# tests/features/account_chooser_landing.feature
+# tests/features/landing_state_diagnosis.feature
 @e2e @e2e_auth                                   # ← tags become pytest markers
-Feature: A known landing state is named, not reported as selector drift
-  Scenario: the OAuth callback error page
-    Given a profile whose Flow session is authenticated
-    When the UI transport lands on /fx/api/auth/signin?error=Callback
-    Then it names the sign-in state, not a missing 'New project' CTA
+Feature: A known landing state is named, never reported as selector drift
+  Scenario: the labs gallery is answered with a NextAuth sign-in error
+    Given the labs Flow gallery URL
+    When Flow answers it with a NextAuth sign-in error page
+    Then the failure says the session is signed out
+    And the failure does not blame the New project anchor
 ```
 
 ```python
-# tests/e2e/test_account_chooser_landing_bdd.py
+# tests/e2e/test_landing_state_diagnosis_bdd.py
 from pytest_bdd import given, scenarios, then, when
 
-scenarios("../features/account_chooser_landing.feature")
+scenarios("../features/landing_state_diagnosis.feature")
 # step defs here; tests/e2e/conftest.py fixtures (e2e_profile_dir, …) apply
 ```
 
@@ -120,10 +121,11 @@ feature), not for repeating the feature's own.
 | One feature file, one binding module | bound from two modules, every scenario runs twice |
 
 **Enforced offline** by `tests/features/test_e2e_binding_guard.py` (no browser, normal
-CI): an `@e2e` feature with no binder under `tests/e2e/` fails, so does one with no cost
-tier, and so does the dangerous inverse — a feature bound from `tests/e2e/` but left
-untagged, which carries no `e2e` marker, escapes `addopts`, and makes hosted CI try to
-drive Chrome.
+CI), in four directions: an `@e2e` feature with no binder under `tests/e2e/` fails; so
+does one with no cost tier; so does the dangerous inverse — a feature bound from
+`tests/e2e/` but left untagged, which carries no `e2e` marker, escapes `addopts`, and
+makes hosted CI try to drive Chrome; and so does a feature bound from **both**
+directories, whose scenarios would run twice.
 
 > **What this does and does not prove.** The guard proves the test **exists and is
 > wired**, and runs anywhere. Proving it **passes** needs a warm profile and a real

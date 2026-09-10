@@ -25,6 +25,7 @@ from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
     FlowApiError,
+    FlowAppError,
     FlowHostMigratedError,
     NetworkError,
     RateLimitError,
@@ -94,12 +95,13 @@ def flow_host_kind(url: object) -> str | None:
 #: `/fx/api/auth/signin?error=Callback` are both `labs.google`. Verified in
 #: `auth/internal_chromium.py`, which is where this constant used to live —
 #: privately, and used only to gate a session poll, so no transport could see it.
+#:
+#: It matches the whole `/fx/api/auth/` family, NOT just `/signin` — callback and
+#: `/session` too — so anything derived from it must not claim "the sign-in page".
+#: NOTE: `auth/internal_chromium.py::_is_safe_to_probe_session` gates the login
+#: session poll on `flow_landing_kind(...) != "signin"`. Reclassifying a NextAuth
+#: path here re-opens the cookie-rotation hole that poll exists to avoid (#769).
 _NEXTAUTH_ROUTE_PREFIX = "/fx/api/auth/"
-
-#: Flow's public marketing page. The migrated app redirects here when it will not
-#: open a project for this session (#756). Measured, not guessed — WHY it redirects
-#: is not measured, and this map must never be read as saying.
-_PUBLIC_LANDING_PATHS = ("/about",)
 
 
 def flow_landing_kind(url: object) -> str | None:
@@ -119,52 +121,70 @@ def flow_landing_kind(url: object) -> str | None:
     (`skills/spike/SKILL.md`), and `page.url` read too early misses Flow's redirect
     entirely, because it is client-side and lands after ``goto`` returns (#639).
 
+    ``"public"`` is deliberately scoped to the **migrated** host: `/about` was measured
+    there (#756) and nowhere else, and the remediation text names `flow.google.com`.
+    A `labs.google/about` landing would be a different, unmeasured thing, so it stays
+    ``None`` and the caller's own diagnosis stands rather than a message about the
+    wrong host.
+
+    Not measured, and so not encoded: whether a NextAuth route can carry a locale
+    segment (`/fx/pt/api/auth/...`). `routes.py` shows Flow does that for the app's
+    own paths. A non-EN profile would settle it; until then the prefix stays exact,
+    exactly as ``internal_chromium`` had it.
+
     Total by construction, like its sibling: anything unparseable — or not even a
     string — is ``None``, so a probe error can never displace the real failure.
     """
-    if flow_host_kind(url) is None:
+    host_kind = flow_host_kind(url)
+    if host_kind is None:
         return None
-    try:
-        path = urlsplit(str(url)).path
-    except ValueError:  # pragma: no cover - flow_host_kind already parsed it
-        return None
+    path = urlsplit(str(url)).path
     if path.startswith(_NEXTAUTH_ROUTE_PREFIX):
         return "signin"
-    if path.rstrip("/") in _PUBLIC_LANDING_PATHS:
+    if host_kind == "migrated" and path.rstrip("/") == "/about":
         return "public"
     return None
 
 
-def raise_for_known_landing(page: object, *, requested: str, at: str) -> None:
+def raise_if_known_landing(page: object, *, requested: str, at: str) -> None:
     """Replace an about-to-be-raised drift report when the page is a **known landing**.
 
-    Call this from **inside a failure branch** — after a readiness wait has already
-    timed out, never before it. Two reasons, both learned the hard way: a guard placed
-    ahead of the probe deletes the evidence that would correct it
-    (`skills/spike/SKILL.md`), and Flow's hop to a landing page is client-side, so
-    ``page.url`` read right after ``goto`` is read too early and sees nothing (#639).
-    By the time the wait has failed, the URL has settled and is simply true.
+    Call this from **inside a failure branch**, at a point where the caller is already
+    committed to raising — after a readiness wait has timed out, never before it. Two
+    reasons, both learned the hard way: a guard placed ahead of the probe deletes the
+    evidence that would correct it (`skills/spike/SKILL.md`), and Flow's hop to a
+    landing page is client-side, so ``page.url`` read right after ``goto`` is read too
+    early and sees nothing (#639). By the time the wait has failed, the URL has settled
+    and is simply true.
 
-    Returns silently when nothing is recognised, which is the common case and means
-    the caller's own diagnosis stands. It never *adds* a failure — the caller was
-    already raising.
+    Returns silently when nothing is recognised, which is the common case and means the
+    caller's own diagnosis stands. **It does not follow that the call is safe anywhere:**
+    put it in a branch that can still recover and it converts a recoverable state into a
+    raise. `migrated_composer.ensure_editor`'s ``except`` has such a recovery path — the
+    call sits before it because agent-mode recovery cannot succeed on a landing page,
+    which is a property of THAT branch, not of this function.
 
-    ``requested`` is what the caller asked Flow for; the whole complaint in #756 is
-    that the operator could not tell what was asked for and what arrived.
+    ``requested`` is what the caller asked Flow for; the whole complaint in #756 is that
+    the operator could not tell what was asked for and what arrived.
+
+    The URL is stripped to scheme+host+path before it goes anywhere. The NextAuth family
+    includes `/fx/api/auth/callback/google?state=...&code=...`, and this message is the
+    artifact users paste into issues — an auth code is single-use, but it has no business
+    being in it.
     """
-    from gflow_cli.errors import AuthExpiredError, FlowAppError
-
     url = str(getattr(page, "url", "") or "")
     kind = flow_landing_kind(url)
     if kind is None:
         return
-    log.info("ui_driver.known_landing", at=at, kind=kind, url=url, requested=requested)
+    parts = urlsplit(url)
+    safe_url = f"{parts.scheme}://{parts.netloc}{parts.path}" if parts.scheme else url
+    log.info("ui_driver.known_landing", at=at, kind=kind, url=safe_url, requested=requested)
     if kind == "signin":
         raise AuthExpiredError(
             detail=(
-                f"Flow served its sign-in page ({url}) instead of {requested} — this "
-                f"session is not signed in to Flow on that host, so none of the controls "
-                f"gflow drives are on the page. This is not selector drift."
+                f"Flow served one of its OAuth/sign-in routes ({safe_url}) instead of "
+                f"{requested} — this session is not signed in to Flow on that host, so "
+                f"none of the controls gflow drives are on the page. Not selector drift."
             )
         )
     # Deliberately says WHAT arrived and stops. #756 measured the redirect and did not
@@ -172,21 +192,14 @@ def raise_for_known_landing(page: object, *, requested: str, at: str) -> None:
     # happens — so naming one here would just be a second confident wrong diagnosis.
     raise FlowAppError(
         detail=(
-            f"Flow redirected to its public landing page ({url}) instead of {requested}. "
-            f"gflow cannot tell from here why it declined — this account may not have "
-            f"access to that project on this host. It is not selector drift, and no "
-            f"gflow-cli release changes it."
+            f"Flow redirected to its public landing page ({safe_url}) instead of "
+            f"{requested}. gflow cannot tell from here why it declined — this account "
+            f"may not have access to that project on this host. It is not selector "
+            f"drift, and no gflow-cli release changes it."
         ),
-        # NOT a claim that a retry fails — it is the ABSENCE of a claim. Exit 31's
-        # class default is retryable because the shape it was built for (Flow's React
-        # crash page) genuinely is. Whether the /about redirect is transient could not
-        # be measured: it stopped reproducing on `ci-probe` between 2026-09-08 (#756)
-        # and 2026-09-10 (5/5 attempts reached the editor —
-        # docs/superpowers/spikes/2026-09-10-about-redirect-stability.md), which is
-        # equally consistent with "transient" and with "a session/access state changed".
-        # This shape raised exit 23 before, which was already non-retryable, so False
-        # PRESERVES the existing answer rather than inventing a new one. Flip it when
-        # somebody catches the redirect live and measures whether a second attempt wins.
+        # NOT a claim that a retry fails — the ABSENCE of one. See FlowAppError's
+        # docstring for the measurement that could not be made and why False preserves
+        # the answer this shape already gave as exit 23.
         retryable=False,
     )
 

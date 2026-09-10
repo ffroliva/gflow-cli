@@ -14,6 +14,9 @@ Three ways that binding silently breaks, all caught here without a browser:
 3. **Untagged live binding** — a feature bound from ``tests/e2e/`` but *not*
    tagged carries no `e2e` marker, so `addopts` does not exclude it and hosted
    CI runs it: Chrome launch, no profile, red for a reason nobody can read.
+4. **Double binding** — one feature bound from BOTH directories runs every
+   scenario twice. This is the rule `docs/E2E_TESTING.md` states and, until the
+   council pointed it out, the only one nothing enforced (D12).
 
 Static text checks only. Proving these tests **pass** is a different job, done
 on a machine with a warm profile (`scripts/canary/`), never in hosted CI.
@@ -55,10 +58,15 @@ def _tags(feature: Path) -> set[str]:
 
 
 def _binders(feature_name: str, search_dir: Path) -> list[Path]:
-    """Modules under `search_dir` whose `scenarios(...)` call names this feature."""
+    """Modules under `search_dir` whose `scenarios(...)` call names this feature.
+
+    Anchored on the path separator so `driver.feature` is not reported as bound by
+    `scenarios("../features/migrated_driver.feature")` — no such pair exists today,
+    and this keeps it that way (council D12).
+    """
     if not search_dir.is_dir():
         return []
-    call = re.compile(rf"scenarios?\(\s*[\"'][^\"']*{re.escape(feature_name)}[\"']")
+    call = re.compile(rf"scenarios?\(\s*[\"'][^\"']*[/\"']{re.escape(feature_name)}[\"']")
     return sorted(
         path for path in search_dir.rglob("*.py") if call.search(path.read_text(encoding="utf-8"))
     )
@@ -93,6 +101,20 @@ def test_every_e2e_tagged_feature_declares_a_cost_tier() -> None:
     )
 
 
+def test_no_feature_is_bound_from_both_directories() -> None:
+    """`docs/E2E_TESTING.md` states "one feature file, one binding module". Bound
+    from both, pytest-bdd generates the scenarios twice — a live tier would run
+    twice and an offline one would double-count. This branch is what made
+    cross-directory binding possible, so it is also what has to guard it."""
+    doubled = {
+        feature.name: [str(p.relative_to(_REPO_ROOT)) for p in binders]
+        for feature in _feature_files()
+        if len(binders := _binders(feature.name, _E2E_DIR) + _binders(feature.name, _FEATURES_DIR))
+        > 1
+    }
+    assert not doubled, f"feature files bound more than once (scenarios run twice): {doubled}"
+
+
 def test_every_feature_bound_from_tests_e2e_is_tagged_e2e() -> None:
     """The dangerous direction: an untagged live binding runs in hosted CI."""
     untagged = [
@@ -114,6 +136,11 @@ def test_the_guard_actually_fires(tmp_path: Path) -> None:
     proves each one is seen — so a green suite above means "no orphans", not
     "the check never looked".
     """
+    assert _feature_files(), (
+        "the detector scanned zero feature files — every assert-not-empty check above "
+        "would pass vacuously. Check _FEATURES_DIR resolution."
+    )
+
     orphan = tmp_path / "orphan.feature"
     orphan.write_text("@e2e\nFeature: nobody binds me\n", encoding="utf-8")
     assert _tags(orphan) == {"e2e"}

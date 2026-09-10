@@ -161,8 +161,8 @@ captured, and it cannot prove the surface an agent or a user actually calls is w
 the code under test. Everything not exercised is unknown, and unknown ships as a bug.
 
 If no e2e test covers the change, **write one** — that is part of the change, not
-follow-up work. For a bug, the lane that gets you there — spike → debug → BDD → TDD
-→ e2e, and which steps a given bug may skip — is
+follow-up work. For a bug, the lane that gets you there — spike → debug → BDD → TDD →
+fix → e2e, and which steps a given bug may skip — is
 [`skills/issue-resolve/SKILL.md`](skills/issue-resolve/SKILL.md) § The Bug Lane. It is
 written once, there; this section states the law, that one states the route.
 
@@ -258,7 +258,7 @@ Every AI agent executing any phase of this pipeline MUST proactively state the c
 | Current Phase | Completed Artifact / Gate | Next Sequential Phase & Command |
 |---|---|---|
 | Phase 1: Triage | `issue_assessment_<N>.md` | ➔ Phase 1b: Root cause (`superpowers:systematic-debugging`) — skip only when the cause is already proven, and say so |
-| Phase 1b: Root cause | Proven cause at `<file>:<line>` + its callers | ➔ Phase 3: BDD Scaffolding (`/gflow:scenario`), written at the **root**, not the symptom |
+| Phase 1b: Root cause | Proven cause at `<file>:<line>` + its callers | ➔ Phase 2 (`/gflow:predict`) **if the fix touches a transport, auth, selectors or a schema** — a proven cause does not make the remedy safe; otherwise straight to Phase 3: BDD Scaffolding (`/gflow:scenario`), written at the **root**, not the symptom |
 | Phase 2: Pre-Implementation | Verdict `GO` or `CAUTION` | ➔ Phase 3: BDD Scaffolding (`/gflow:scenario <feature>`) |
 | Phase 3: BDD Scaffolding | `Scenario:` blocks & test scaffold | ➔ Phase 4: Implementation Plan (`/gflow:plan <feature>`) |
 | Phase 4: Implementation Plan | `PLAN.md` created & approved | ➔ Phase 6: Task Execution (`/gflow:status`) |

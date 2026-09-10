@@ -8,8 +8,11 @@ redirect and explicitly declined to measure its cause; this measures only whethe
 it *repeats*, which is a different and answerable question.
 
 **Method.** N sequential ``MigratedComposer.ensure_editor`` calls against one
-project on one profile, recording where each landed. No generation, no upload,
-no prompt submitted: **zero credits.** Same shape as the 2026-09-04 migrated-host
+project on one profile, recording where each landed via the production
+``flow_landing_kind`` — never a local copy of the predicate. No generation, no
+upload, no prompt submitted: **zero credits.** Not read-only, though: a
+non-``/about`` failure reaches ``_exit_agent_mode``, which clicks a chip Flow
+remembers per account. Same shape as the 2026-09-04 migrated-host
 mechanism spike that settled ``FlowHostMigratedError``'s retryability (5/5, 7/7).
 
 **How to read the result.**
@@ -50,6 +53,7 @@ from _spike_common import (  # noqa: E402, isort: skip
 
 async def _one_attempt(client: Any, project_id: str, timeout_s: float) -> dict[str, Any]:
     """One ensure_editor call. Records where it landed and what it raised."""
+    from gflow_cli.api.transports._common import flow_landing_kind
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = client._page  # noqa: SLF001 — dev instrument
@@ -59,11 +63,18 @@ async def _one_attempt(client: Any, project_id: str, timeout_s: float) -> dict[s
         await MigratedComposer().ensure_editor(page, project_id, timeout_s=timeout_s)
         outcome["result"] = "editor_ready"
         outcome["error"] = None
-    except BaseException as exc:  # noqa: BLE001 — the failure IS the measurement
+    except Exception as exc:  # noqa: BLE001 — the failure IS the measurement
+        # NOT BaseException: that swallowed Ctrl-C, recorded it as a non-/about
+        # sample, and advanced the loop — so an interrupted run could print
+        # "DOES NOT REPRODUCE" built from interrupts (council D13).
         outcome["result"] = "raised"
         outcome["error"] = f"{type(exc).__name__}: {exc}"
     outcome["landed_url"] = str(getattr(page, "url", ""))
-    outcome["is_about"] = outcome["landed_url"].rstrip("/").endswith("/about")
+    # The PRODUCTION classifier, never a local re-implementation: `endswith("/about")`
+    # scores `/about?hl=en` as a non-reproduction, and would drift from
+    # `_PUBLIC_LANDING_PATHS` the moment either changes. That is the #743 shape — a
+    # verdict computed from an incomplete set (council D13).
+    outcome["is_about"] = flow_landing_kind(outcome["landed_url"]) == "public"
     outcome["elapsed_s"] = round(time.monotonic() - started, 2)
     return outcome
 

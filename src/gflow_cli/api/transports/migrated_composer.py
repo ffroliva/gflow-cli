@@ -43,7 +43,7 @@ import structlog
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
-from gflow_cli.api.transports._common import extract_project_id, raise_for_known_landing
+from gflow_cli.api.transports._common import extract_project_id, raise_if_known_landing
 from gflow_cli.api.transports.batchexecute import (
     GenerationRecord,
     generation_record,
@@ -603,7 +603,7 @@ class MigratedComposer:
             # `flow_host_kind` cannot see it — /about and /project/<id> share an origin.
             # Reaching this line on a landing page means the trigger was never going to
             # be here, so probing for the agent chip below is meaningless too.
-            raise_for_known_landing(page, requested=target, at="migrated.ensure_editor")
+            raise_if_known_landing(page, requested=target, at="migrated.ensure_editor")
             # Only now look for agent mode. Probing for the chip BEFORE this wait raced
             # the SPA: `goto` returns on `domcontentloaded` and Angular mounts the
             # composer seconds later, so the chip was reliably absent at that point, the
