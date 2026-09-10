@@ -77,6 +77,75 @@ e2e ─┬─ e2e_auth     (auth/session, health check — zero credits)
 
 ---
 
+## BDD-bound e2e
+
+A live test can be written as Gherkin. This is the required form for a bug whose
+scenario can only happen in a browser — see
+[`skills/issue-resolve/SKILL.md`](../skills/issue-resolve/SKILL.md) § The Bug Lane,
+step 5. It needs **no new machinery**: pytest-bdd (already a dependency) converts every
+Gherkin tag into a pytest marker, so a tagged scenario is filtered by the same
+`addopts` and selected by the same `-m <tier>` as a hand-written e2e test.
+
+**The three moving parts:**
+
+```gherkin
+# tests/features/landing_state_diagnosis.feature
+@e2e @e2e_auth                                   # ← tags become pytest markers
+Feature: A known landing state is named, never reported as selector drift
+  Scenario: the labs gallery is answered with a NextAuth sign-in error
+    Given the labs Flow gallery URL
+    When Flow answers it with a NextAuth sign-in error page
+    Then the failure says the session is signed out
+    And the failure does not blame the New project anchor
+```
+
+```python
+# tests/e2e/test_landing_state_diagnosis_bdd.py
+from pytest_bdd import given, scenarios, then, when
+
+scenarios("../features/landing_state_diagnosis.feature")
+# step defs here; tests/e2e/conftest.py fixtures (e2e_profile_dir, …) apply
+```
+
+**Feature-level tags propagate to every scenario** — measured on pytest-bdd 8.1, not
+assumed: a scenario carrying no tags of its own was still selected by `-m e2e_auth` from
+its Feature's tags. So tag the Feature once; per-scenario tags are for narrowing a single
+scenario to a different tier (an `@e2e_video` case inside an otherwise `@e2e_auth`
+feature), not for repeating the feature's own.
+
+| Rule | Why |
+|---|---|
+| Feature file stays in `tests/features/` | one home for Gherkin; the guard scans one directory |
+| Step module lives in `tests/e2e/` | inherits `tests/e2e/conftest.py` — profile gating, `e2e_env`, `skip_on_migrated_host` |
+| `@e2e` **plus** a cost tier | a bare `@e2e` cannot be selected by `-m e2e_auth`, so the nightly canary never runs it |
+| One feature file, one binding module | bound from two modules, every scenario runs twice |
+
+**Enforced offline** by `tests/features/test_e2e_binding_guard.py` (no browser, normal
+CI), in four directions: an `@e2e` feature with no binder under `tests/e2e/` fails; so
+does one with no cost tier; so does the dangerous inverse — a feature bound from
+`tests/e2e/` but left untagged, which carries no `e2e` marker, escapes `addopts`, and
+makes hosted CI try to drive Chrome; and so does a feature bound from **both**
+directories, whose scenarios would run twice.
+
+> **What this does and does not prove.** The guard proves the test **exists and is
+> wired**, and runs anywhere. Proving it **passes** needs a warm profile and a real
+> browser — that is the nightly canary's job (`scripts/canary/`), on a machine that has
+> one. Hosted CI cannot run the live tiers and never could.
+
+**Two worked examples, deliberately different in kind:**
+
+| Feature | Binder | What only a browser could prove |
+|---|---|---|
+| `landing_state_diagnosis.feature` | `test_landing_state_diagnosis_bdd.py` | Flow's hop to `/about` is a **client-side** redirect, so `goto` returns before it runs (#639). A mocked page whose `url` the test assigns cannot fail that way |
+| `click_attribution.feature` | `test_click_attribution_bdd.py` | Playwright's **actionability** gate — visible, stable, receives-events, enabled (#776). Each scenario breaks a different one *for real*: a stacked `div` that intercepts pointers, and a CSS animation that never lets the box settle while visibility and the hit test stay healthy |
+
+Both are route-intercepted and cost **$0** — real Chromium, `page.route(...).fulfill(...)`,
+no Google, no profile, no credits. That combination is what makes a browser-only scenario
+cheap enough to be non-negotiable: if a scenario needs a browser, the answer is an e2e
+test, not a mocked proxy — the Bug Lane's step 5.
+
+---
+
 ## Environment variables
 
 | Variable | Default | Purpose |

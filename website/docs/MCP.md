@@ -143,7 +143,12 @@ transport timeout (`TransportTimeoutError`), network blip (`NetworkError`), a
 dropped browser session (`BrowserSessionClosedError`), a Flow web-app crash
 (`FlowAppError`), an agentic-cohort flap (`FlowAgentUiError`), an unreachable
 UI arm (`UiModeUnavailableError`), and a partially-completed sync
-(`SyncPartialError`). That list is the whole of `errors.RETRYABLE_ERRORS`.
+(`SyncPartialError`). That list is `errors.RETRYABLE_ERRORS`, but it is no longer
+the whole answer: `errors.is_retryable` consults the **instance** first, so a raise
+site can override its class. One does today — Flow's `/about` redirect raises
+`FlowAppError` with `retryable: false`, because whether a retry helps there was
+measured and could not be settled ([#756](https://github.com/ffroliva/gflow-cli/issues/756)).
+Read the flag off the envelope; never re-derive it from the class list.
 Everything
 else (auth, content-policy, configuration, security) is terminal
 (`retryable: false`): retrying the identical request fails the same way. This

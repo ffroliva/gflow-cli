@@ -1237,6 +1237,51 @@ now names which of three things happened rather than blaming drift:
 **On 0.71.0 and earlier there is no recovery.** Open the project on
 `flow.google.com`, click the **Agent** chip off, and the account works again.
 
+**Follow-up ([#776](https://github.com/ffroliva/gflow-cli/issues/776)) — the same
+confusion survived one gate later, on the *click*.** The table above covers the readiness
+*wait*. A control that passes that wait and then refuses the click used to expire as a bare
+Playwright `TimeoutError`: exit 1, no locator, no cause. It now reports what was observed
+at the moment it expired, because the cause could not be measured — Flow's announcement
+overlay is a labs.google measurement that has never been reproduced on this host, and a
+mid-run agent-mode flip is equally consistent with the evidence.
+
+| The message says | What it means | What to do |
+|---|---|---|
+| `… did not accept a click … the account is in Flow's agent mode` | the mode flipped after the editor was ready | turn the **Agent** chip off in a browser; re-run |
+| `… it is covered by <tag>.<class>` | something is stacked over the control — the class names it | dismiss it in a browser; re-run |
+| `… the page is accepting no pointer events at all` | an overlay has the whole app blocked (#593's shape) | dismiss it in a browser; re-run |
+| `… it carries a bare `hidden` attribute` / `it is disabled` | the control is present but not usable | usually agent mode or a cohort difference; check the Agent chip first |
+| `… it is not rendered (display, visibility, or a zero-sized box)` | it is in the DOM but not on screen | as above — check the Agent chip, then file a bug with the log |
+| `… it answers no hit test at its own centre` | nothing named itself as the cover, but the click still landed elsewhere | re-run once; if it repeats, file a bug — an overlay outside the document is the usual shape |
+| `… it was visible, enabled and hit-testable … most likely still moving` | nothing readable was wrong | Playwright also needs a *stable* box; re-run once. If it repeats, file a bug — this message means we looked and found nothing, which is a real finding worth having |
+| `… it could not be read back` | the page changed under the diagnosis | re-run; if it repeats, attach the log |
+
+The occluder is named by tag plus framework class only. That is deliberate — a signed-in
+Flow page carries the account email and signed media URLs on exactly the elements that
+tend to occlude things, and this message is printed, logged, and pasted into issues.
+
+### `gflow auth login --account` reports a mismatch but leaves the profile in place
+
+- **Status:** Open · **Severity:** Medium (no data loss; the risk is *which account pays*) · **Affects:** `gflow auth login --account <email>`, v0.73.0 onward · **Tracked:** [#773](https://github.com/ffroliva/gflow-cli/issues/773) item 3
+
+`--account` asserts that the login authenticated as the account you named, and a mismatch
+raises **exit 38** with one `auth.account_assert_failed` log line. What it does **not** do is
+quarantine, rename or otherwise mark the profile — so a later run re-reads a profile
+authenticated as somebody else, with nothing persisted to say so. On a product that bills
+generations to the signed-in Google account, that is the wrong account paying.
+
+This was a deliberate "minimum" in review round 4 of
+[#764](https://github.com/ffroliva/gflow-cli/pull/764), recorded here so the decision stays
+revisitable rather than lost in a merged thread.
+
+**Workaround:** after any exit 38 from `--account`, check `gflow auth list` and re-run
+`gflow auth login --account <email>` for that profile before generating. Do not assume the
+failed assert left the profile unusable — it is usable, just possibly as the wrong person.
+
+Two further items on the same issue are unfixed and worth knowing about: a second chooser
+hop (chooser → consent → chooser) is not handled and degrades into the landing timeout, and
+that timeout is still an unmeasured number.
+
 ### Auth verification depends on Google's NextAuth session endpoint
 
 - **Status:** Mitigated · **Severity:** Low (degrades fail-closed) · **Affects:** issue #15 fix onward · **Tracked:** issue #15

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 import structlog
 from playwright.async_api import Error as PlaywrightError
@@ -24,12 +23,6 @@ _console = Console()
 GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
 GOOGLE_REJECTED_BROWSER_ROUTE = "accounts.google.com/v3/signin/rejected"
 POLL_INTERVAL_SECONDS = 3
-# NextAuth mounts its OAuth routes here — callback, signin, and the session endpoint
-# itself. The poll stays off the page while it is on one of them; see
-# `_is_safe_to_probe_session`. Host classification reuses `flow_host_kind`, which already
-# knows both cohorts (labs.google and the migrated flow.google.com), so there is no
-# host set to keep in sync here.
-_NEXTAUTH_ROUTE_PREFIX = "/fx/api/auth/"
 
 
 def login_launch_kwargs(
@@ -243,12 +236,16 @@ def _is_safe_to_probe_session(page: object) -> bool:
     # Deferred: a module-level import cycles. `_common` reaches `profile_store`, which
     # imports `gflow_cli.auth` — verified as
     # "cannot import name 'default_profile_root' from partially initialized module".
-    from gflow_cli.api.transports._common import flow_host_kind
+    from gflow_cli.api.transports._common import flow_host_kind, flow_landing_kind
 
     url = getattr(page, "url", "")
     if flow_host_kind(url) is None:
         return False
-    return not urlsplit(str(url)).path.startswith(_NEXTAUTH_ROUTE_PREFIX)
+    # The NextAuth prefix used to be a private constant here. It is now
+    # `flow_landing_kind`, next to `flow_host_kind`, because the transports need the
+    # same knowledge and could not reach it: a signed-out session sits on one of these
+    # routes while passing every host check, which is #756 / the 2026-09-10 RED canary.
+    return flow_landing_kind(url) != "signin"
 
 
 class InternalChromiumStrategy(AuthStrategy):

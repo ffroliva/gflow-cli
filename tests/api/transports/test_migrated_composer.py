@@ -354,7 +354,15 @@ class FakeLocator:
 
 
 class PlaywrightTimeoutError(Exception):
-    pass
+    """A stand-in, NOT ``playwright.async_api.TimeoutError`` — and that matters now.
+
+    Since #776, ``MigratedComposer._click`` catches the *real* Playwright class to
+    convert a click timeout into ``UiSelectorDriftError``. Raising this one from a fake
+    locator therefore does **not** match that ``except``, so the post-mortem never runs
+    and the test silently exercises nothing. If you are writing a click-timeout
+    regression test, import the real class — see
+    ``tests/api/transports/test_click_attribution.py``.
+    """
 
 
 class FakeFileChooser:

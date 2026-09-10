@@ -119,6 +119,30 @@ If you write a spike that launches Chrome itself rather than through `FlowApiCli
 wrap it: `async with ProfileLease(profile_dir), async_playwright() as pw:`. Chrome must
 never start on a profile this process does not own.
 
+## Pre-register the reading before you run
+
+Write down what each possible outcome will mean **before** the spike executes — in the
+script's own docstring, where it is timestamped by the commit. Then the result cannot be
+reinterpreted to suit whatever change the spike was gating.
+
+| Outcome | Reading |
+|---|---|
+| N/N | stable |
+| mixed | it flaps |
+| 0/N | **does not reproduce; settles nothing** |
+
+That last row is the one worth pre-writing, because it is the one you will be tempted to
+spin. **A condition that has stopped reproducing has not been shown to be transient.** It
+is equally consistent with some state having changed underneath it, and a spike that
+cannot distinguish those has produced one honest result: *unmeasured*.
+
+Unmeasured is a real finding. Report it as the answer, not as a failed run — and say what
+would settle it, so the next person who sees the condition live knows what to capture.
+
+> **Worked example:** [`2026-09-10-about-redirect-stability.md`](../../docs/superpowers/spikes/2026-09-10-about-redirect-stability.md)
+> — asked whether Flow's `/about` redirect is transient, got 0/5, and shipped
+> "unmeasured" rather than letting a disappearance argue for a retry flag.
+
 ## Output
 
 - Evidence → `scripts/dev/_spike_out/` (**gitignored**; captures carry Bearer tokens,
@@ -138,4 +162,19 @@ gap named is a lead; an unmeasured gap implied is the next day lost.
 Feeds: [`issue-assessment`](../issue-assessment/SKILL.md) (triage needs evidence, not a
 hypothesis), [`predict`](../predict/SKILL.md) (persona claims about a live surface must
 cite a capture), [`live-verify`](../live-verify/SKILL.md) (proves the fix; this proves
-the diagnosis).
+the diagnosis), and — for a bug — [`scenario`](../scenario/SKILL.md), where what you
+observed becomes the `Given`/`When`/`Then` of a test.
+
+## A spike is step 0, never the deliverable
+
+A spike answers a question. It does not close an issue, and its script is not the
+regression test — nothing re-runs it, so nothing notices when Flow changes again.
+
+**The observation you just made is the body of a scenario.** What you drove is the
+`Given`, what you triggered is the `When`, what the DOM or the wire actually returned
+is the `Then`. Carry it into [`scenario`](../scenario/SKILL.md) and, if it can only
+happen in a browser, into `tests/e2e/test_<slug>_bdd.py` — the route is
+[`issue-resolve`](../issue-resolve/SKILL.md) § The Bug Lane.
+
+A spike whose finding never became a test has bought you one answer, once, at full
+price.

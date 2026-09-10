@@ -16,6 +16,7 @@ from gflow_cli.errors import (
     AuthExpiredError,
     ConfigurationError,
     ContentPolicyError,
+    FlowAccountChooserError,
     FlowAgentUiError,
     FlowAppError,
     NetworkError,
@@ -91,6 +92,15 @@ class TestShouldCapture:
             ContentPolicyError("expected"),
             AuthExpiredError("expected"),
             ConfigurationError("usage"),
+            # Same policy class as AuthExpiredError: deterministic operator
+            # remediation, and it fires ONLY while the page is on
+            # accounts.google.com — so a bundle would carry a DOM dump and a
+            # full-page screenshot of a Google auth surface (every signed-in
+            # identity's address, name and avatar; on a sign-in form, the input
+            # and hidden-field DOM) into the artifact users are told to attach
+            # to GitHub issues. docs/DEBUGGING.md: "Never captured: ... ordinary
+            # AuthExpiredError". This has the same remediation, so same rule.
+            FlowAccountChooserError(detail="expected"),
         ):
             assert not rec.should_capture(exc), type(exc).__name__
 

@@ -7,6 +7,187 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.73.0] — 2026-09-10
+
+### Security
+
+- **Google auth URLs no longer reach user-facing error messages with their query
+  intact.** `client._handle_account_chooser`'s three raise sites interpolated
+  `page.url` verbatim, and Google's auth URLs carry `state`, `code_challenge`,
+  `client_id` and challenge tokens (`TL=…`). That text is the artifact users are
+  asked to paste into a GitHub issue.
+  - **Measured, not theorised:** a real `gflow image t2i --profile <name>` on
+    2026-09-10 exited 38 and printed
+    `accounts.google.com/v3/signin/challenge/pwd?TL=ACv9tzFkh8ZJ…` along with the
+    OAuth `state` and `client_id`. Re-running the identical command after the fix:
+    same exit 38, same landing named, **zero** secret matches.
+  - New `safe_page_url()` in `api/transports/_common.py` keeps scheme+host+path and
+    drops query+fragment; all four raise sites (the three in `client.py` plus
+    `raise_if_known_landing`) route through it rather than stripping inline.
+  - The landing is still named — knowing *where* the session stopped is the whole
+    value of the message; only the credentials are gone.
+
+### Fixed
+- **A click that never lands now says what was true instead of nothing at all**
+  ([#776](https://github.com/ffroliva/gflow-cli/issues/776)). On `flow.google.com`,
+  `video r2v` reached `migrated.editor_ready` and died 5.039 s later as a bare
+  Playwright `TimeoutError` — exit 1, no locator, no cause, no MP4. By elimination that
+  is `migrated_composer.py`'s `trigger.click(timeout=5000)`: the `wait_for(visible)` one
+  line above it is guarded and would have raised exit 23, so the control was *visible*
+  and the *click* expired. [#752](https://github.com/ffroliva/gflow-cli/issues/752)
+  finding #7 predicted exactly this, at exactly this function, before #776 was filed —
+  its `count()`→visibility half was fixed and the click half was not, leaving a comment
+  that describes the failure the next line went on producing.
+  - **It reads; it does not diagnose.** Two causes were live and *neither could be
+    measured*: Flow's announcement overlay ([#593](https://github.com/ffroliva/gflow-cli/issues/593),
+    measured on labs.google, never on this host) and a mid-run agent-mode flip. A guard
+    built on either would answer confidently and be wrong half the time. So on a timeout
+    the driver reads Playwright's four actionability conditions back — agent chip,
+    `hidden`/`disabled`, body pointer-events, and a hit-test naming what is on top — and
+    reports the ones that fired. When every reading is healthy it **says so**, which
+    eliminates three conditions and leaves *stable*, rather than inventing a fourth.
+  - **Costs nothing when healthy** — the read runs only in the `except` branch, the rule
+    `raise_if_known_landing` already states: a guard ahead of the probe deletes the
+    evidence that would correct it.
+  - **MCP gains more than the CLI.** A non-`GFlowError` on the queued path shipped
+    `"detail": "sha256:…"` — a hash, not even the class name. The typed error routes it
+    to the Problem Details branch instead, so an agent now gets the locator and exit 23.
+  - Applied to four sites with a named reason each, not all nineteen: the reported one,
+    the composer click `_close_pane`'s own docstring records as failing this way, and
+    both submit sites, where a bare timeout left "did it submit?" unanswerable — the
+    video one spends Veo credits, the image one spends only daily quota.
+  - **The occluder report is a closed allowlist** — tag name plus at most three
+    framework-prefixed class tokens, never `aria-label`, `title`, `src` or `outerHTML`.
+    Typing the error moves the text from SHA-256-hashed telemetry to a message printed
+    raw, logged, and invited into a GitHub issue; a signed-in Flow page carries the
+    account email and signed media URLs on exactly the elements that occlude things.
+  - `retryable` is unchanged and **preserved, not measured** — the condition did not
+    reproduce, and a flag that moves as a side effect of retyping is a claim nobody made.
+- **A known Flow landing page is no longer reported as selector drift**
+  ([#756](https://github.com/ffroliva/gflow-cli/issues/756), and the 2026-09-10 RED
+  nightly canary). `flow_host_kind()` classifies the *origin*; `/about`,
+  `/project/<id>` and `/fx/api/auth/signin?error=Callback` all share one, so when a
+  readiness wait timed out it had nothing left to blame but its own anchor — sending
+  the operator to "check for a newer release, then file a bug" over a session state
+  no release changes. The fourth instance of one pattern (after #721 credits, #749
+  agent mode, and `FlowAppError`'s own crash page), so it is fixed once, shared:
+  - New `flow_landing_kind()` beside `flow_host_kind()` in `api/transports/_common.py`
+    names a known non-app landing (`"signin"` / `"public"` / `None`), and
+    `raise_if_known_landing()` converts the diagnosis at **three** raise sites — the
+    migrated readiness wait, the labs gallery sweep, and the labs prompt-box sweep,
+    where a bare `RuntimeError` was being SHA-256 hashed into "Unexpected error" with
+    the URL destroyed. Consulted **only inside an already-failed branch** — never ahead of a probe, which would delete the evidence
+    that corrects a wrong absence claim, and never as a new bounded wait after `goto`,
+    which reads the URL before Flow's client-side redirect lands
+    ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).
+  - `flow.google.com/about` instead of the project → `FlowAppError` (exit 31), naming
+    the landing and the project it did not open. It deliberately does **not** say why:
+    #756 measured the redirect and not its cause, and `gflow auth status` reports the
+    session verified while it happens.
+  - `labs.google/fx/api/auth/signin?error=Callback` instead of the gallery →
+    `AuthExpiredError` (exit 3), remediation `gflow auth login`. This is the exact
+    page behind the 2026-09-10 RED canary, which reported
+    `Could not find 'New project' CTA`.
+  - `auth/internal_chromium.py` drops its private `_NEXTAUTH_ROUTE_PREFIX` and reuses
+    the shared classifier — the knowledge existed there since #767 and no transport
+    could reach it.
+  - `FlowAppError`'s docstring and `docs/USAGE.md`'s exit-code table now describe both
+    shapes; previously both stated the crash page as the only one. `docs/USAGE.md`'s
+    exit-3 row and `docs/MCP.md`'s retryable list are corrected to match, and
+    `docs/DEBUGGING.md` records that the sign-in landing is now capture-exempt —
+    deliberate (a bundle there would screenshot a Google auth surface into the artifact
+    users attach to issues), but a class swap switches capture off silently.
+  - The landing URL is stripped to scheme+host+path before it reaches the message or
+    the log: the NextAuth family includes `/fx/api/auth/callback/google?state=…&code=…`,
+    and this message is precisely what users paste into issues.
+  - `"public"` is scoped to the migrated host, the only one where `/about` was measured.
+  - **`accounts.google.com` is recognised too — found by live-verifying, not by
+    reasoning.** The first version returned `None` there on the grounds that "the
+    chooser has its own handler", which is true at bootstrap
+    (`client._handle_account_chooser`) and false for a hop that happens *after* it. A
+    live A/B on profile `denon82` (2026-09-10, $0) landed exactly there mid-run and
+    still produced `RuntimeError: Could not find 'New project' CTA` — with the OAuth
+    `state`, `code_challenge` and `client_id` interpolated into the message. It now
+    raises `FlowAccountChooserError` (38) for a chooser and `AuthExpiredError` (3) for
+    other Google sign-in surfaces, URL stripped. The bot-rejection hop
+    (`/v3/signin/rejected`) keeps returning `None` — it has its own error.
+- **`gflow auth list` no longer fails on a profile whose `.gflow_account` is damaged**
+  (PR [#764](https://github.com/ffroliva/gflow-cli/pull/764)). The reader decoded as
+  UTF-8 and caught only `OSError`, so a non-UTF-8 or truncated file raised out of
+  `list_profiles()` and broke the listing for *every* profile, not just the damaged one.
+  The value is also interpolated into a DOM attribute selector, where a stray quote
+  produced an untyped failure. Unusable content now reads as "no account recorded",
+  which every caller already handles.
+- **Google's post-migration account chooser no longer stalls a run**
+  ([#763](https://github.com/ffroliva/gflow-cli/issues/763), PR
+  [#764](https://github.com/ffroliva/gflow-cli/pull/764) — thanks @stgmt). When Google
+  hands the session to `flow.google.com` and redirects to a chooser, `FlowApiClient`
+  now auto-selects the profile's recorded account from `.gflow_account` instead of
+  stalling into an opaque `RecaptchaError`/exit 1.
+  - The row match is exact and case-insensitive on both tiers, and **anchored so the
+    chooser's `Remove <email>` / `Sign out of <email>` rows can never be clicked**.
+  - A chooser is identified *positively* (chooser path, or account rows), so an
+    ordinary expired session still classifies as `AuthExpiredError` (exit 3) rather
+    than being swept into the new class.
+  - Cases that cannot be selected raise a typed, non-retryable
+    `FlowAccountChooserError` (**exit 38**) naming the URL the session actually
+    landed on.
+  - `.gflow_account` is treated as untrusted input — this fixes an untyped failure in
+    the selector and a crash in `gflow auth list` on a damaged file.
+  - Follow-up hardening is tracked in
+    [#773](https://github.com/ffroliva/gflow-cli/issues/773).
+
+### Added
+- **`gflow auth login --account <email>`** asserts the login authenticated as the
+  required account, failing closed on a mismatch rather than leaving a profile signed
+  in as somebody else (PR [#764](https://github.com/ffroliva/gflow-cli/pull/764)).
+- **`FlowAppError.retryable`** — a per-instance override of that class's
+  `RETRYABLE_ERRORS` membership. `None` (the default) keeps the class answer, so no
+  existing raise changes. Scoped to the one class that needs it: `is_retryable()` reads
+  it by `getattr`, so a base-class field would have sat on every error in the project
+  to serve a single raise site.
+  - It exists because routing `/about` to exit 31 would otherwise have silently flipped
+    that shape from non-retryable (its exit-23 past) to retryable, asserting on every
+    occurrence that a retry is worth making. **That was measured, and could not be
+    settled:** the redirect stopped reproducing on `ci-probe` between 2026-09-08 and
+    2026-09-10 (5/5 attempts reached the editor —
+    [spike](docs/superpowers/spikes/2026-09-10-about-redirect-stability.md)), which is
+    equally consistent with "transient" and with "a session state changed". So the
+    `/about` raise site passes `retryable=False` to **preserve** the previous answer,
+    not to claim a retry fails. Flip it when someone catches the redirect live and
+    measures whether a second attempt wins.
+  - `is_retryable()` pins the override with `isinstance(..., bool)` rather than a
+    truthiness test: a `MagicMock` answers every attribute with a truthy child mock, so
+    a truthiness test would report **every** mocked error as retryable with nothing in
+    the suite noticing. Covered by a test that asserts that precondition explicitly.
+- **BDD scenarios can now be bound as e2e tests**, with no new machinery: pytest-bdd
+  converts Gherkin tags into pytest markers, so a Feature tagged `@e2e @e2e_auth`
+  is filtered by the existing `addopts` and selected by the existing `-m <tier>`.
+  Feature files stay in `tests/features/`; their step module lives in `tests/e2e/`
+  so it inherits that suite's profile-gating fixtures. See
+  [docs/E2E_TESTING.md § BDD-bound e2e](docs/E2E_TESTING.md#bdd-bound-e2e).
+- `tests/features/test_e2e_binding_guard.py` — offline guard (no browser, runs in
+  hosted CI) for three ways that binding breaks silently: an `@e2e` scenario nobody
+  wrote a test for, an `@e2e` Feature with no cost sub-marker (invisible to the
+  nightly canary), and the inverse hazard — a Feature bound from `tests/e2e/` but
+  left untagged, which escapes `addopts` and makes hosted CI try to drive Chrome.
+  It carries its own fire-test, so a green run means "no orphans", not "never looked".
+
+### Changed
+- **Workflow: the Bug Lane is now the documented route from symptom to fix.**
+  `skills/issue-resolve/SKILL.md` gains a canonical `spike → systematic-debugging →
+  BDD → TDD → fix → e2e` chain, gated by *surface* (steps 0–2 are skippable for a
+  one-line fix whose cause is proven — but a skip is a claim and must be stated;
+  steps 3–5 never are). AGENTS.md, `skills/spike`, `skills/scenario`,
+  `docs/E2E_TESTING.md` and `docs/INDEX.md` cite it; none restate it.
+  - Removes a real contradiction: `issue-resolve` step 3 previously permitted "the
+    closest browser-free proxy" while AGENTS.md's Iron Law said a change with no e2e
+    coverage must get one and listed "covered by unit tests" among the excuses that
+    are *not* blockers. Two disjoint files, no merge conflict, no gate that could
+    see it.
+  - "Browser-free" is no longer accepted as a verification blocker: only a **named**
+    external blocker is (an account you do not control, a Mac, an exhausted quota).
+
 ## [0.72.0] — 2026-09-09
 
 ### Added
@@ -4664,7 +4845,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...HEAD
+[0.73.0]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...v0.72.0
 [0.71.1]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...v0.71.1
 [0.71.0]: https://github.com/ffroliva/gflow-cli/compare/v0.70.0...v0.71.0

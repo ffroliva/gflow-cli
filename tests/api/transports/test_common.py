@@ -17,8 +17,10 @@ from gflow_cli.api.transports._common import (
     REFRESH_SAFETY_MARGIN_S,
     await_url_settled,
     flow_host_kind,
+    flow_landing_kind,
     interpret_response,
     mint_batch_id,
+    safe_page_url,
 )
 from gflow_cli.errors import (
     AuthExpiredError,
@@ -336,3 +338,97 @@ class TestAwaitUrlSettledOnMigratedHost:
         page.url = "https://labs.google/fx/pt/tools/flow"
         page.wait_for_url = AsyncMock(side_effect=AssertionError("must not wait"))
         assert await await_url_settled(page) == "https://labs.google/fx/pt/tools/flow"
+
+
+class TestFlowLandingKind:
+    """`flow_landing_kind` answers *did the origin serve the app*, which
+    `flow_host_kind` cannot — /about, /project/<id> and a NextAuth sign-in error
+    page all share one origin (#756, #773, the 2026-09-10 RED canary)."""
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            # The two shapes that were reported as selector drift.
+            ("https://flow.google.com/about", "public"),
+            ("https://labs.google/fx/api/auth/signin?error=Callback", "signin"),
+            # The one `auth/internal_chromium.py` already knew about, from #767.
+            ("https://labs.google/fx/api/auth/callback/google?state=x&code=y", "signin"),
+            ("https://flow.google.com/about/", "public"),
+            # Real app pages: nothing recognised, so the caller's own diagnosis stands.
+            ("https://flow.google.com/project/abc-123", None),
+            ("https://labs.google/fx/tools/flow", None),
+            ("https://labs.google/fx/pt/tools/flow", None),
+            # Google's auth host. The first version of this returned None here,
+            # reasoning "the chooser has its own handler" — true at BOOTSTRAP
+            # (`client._handle_account_chooser`) and false for a mid-run hop, which
+            # is what a live run on `denon82` produced on 2026-09-10: the labs
+            # gallery sweep reported a missing CTA on Google's sign-in page.
+            ("https://accounts.google.com/v3/signin/accountchooser?client_id=x", "chooser"),
+            ("https://accounts.google.com/v3/signin/identifier", "signin"),
+            # The bot-rejection hop keeps its own error — never a missing account
+            # and never an expired session.
+            ("https://accounts.google.com/v3/signin/rejected", None),
+            # Substring impostors — the host must match exactly, never by mention.
+            ("https://evil.example/?next=https://flow.google.com/about", None),
+            ("https://evil.example/?n=https://accounts.google.com/v3/signin/accountchooser", None),
+            ("http://accounts.google.com/v3/signin/accountchooser", None),
+            ("http://flow.google.com/about", None),
+        ],
+    )
+    def test_classifies_known_landings(self, url: str, expected: str | None) -> None:
+        assert flow_landing_kind(url) == expected
+
+    @pytest.mark.parametrize("url", [None, 123, object(), "", "not a url", "https://[bad"])
+    def test_total_by_construction(self, url: object) -> None:
+        """Callers read this straight off `page.url` inside a failure branch, where a
+        probe error must never displace the real failure. Anything unparseable — or
+        not even a string — is None, exactly like its sibling `flow_host_kind`."""
+        assert flow_landing_kind(url) is None
+
+
+class TestSafePageUrl:
+    """`safe_page_url` is what keeps credentials out of user-pasteable error text.
+
+    Google's auth URLs carry `state`, `code_challenge`, `client_id` and challenge
+    tokens in the query, and a real `gflow image t2i` printed all of them on
+    2026-09-10 before this existed. Every branch is pinned here: the helper runs
+    while another failure is already being reported, so it must never raise.
+    """
+
+    def test_strips_query_and_fragment_but_keeps_the_landing(self) -> None:
+        url = (
+            "https://accounts.google.com/v3/signin/challenge/pwd"
+            "?TL=ACv9tzFkh8ZJ&state=PKOA6qjxDh&client_id=365941595420-x#frag"
+        )
+        assert safe_page_url(url) == "https://accounts.google.com/v3/signin/challenge/pwd"
+
+    def test_a_clean_url_is_unchanged(self) -> None:
+        assert safe_page_url("https://flow.google.com/about") == "https://flow.google.com/about"
+
+    def test_keeps_the_path_when_there_is_no_query(self) -> None:
+        url = "https://flow.google.com/project/abc-123"
+        assert safe_page_url(url) == url
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (None, ""),
+            ("", ""),
+            # Not a URL at all: returned verbatim, because a caller printing "the page
+            # is at <whatever playwright gave us>" is still more useful than an empty
+            # string, and there is no query to strip.
+            ("not a url", "not a url"),
+            ("about:blank", "about:blank"),
+        ],
+    )
+    def test_degenerate_inputs(self, value: object, expected: str) -> None:
+        assert safe_page_url(value) == expected
+
+    def test_unparseable_url_returns_empty_rather_than_raising(self) -> None:
+        """`urlsplit("https://[bad")` raises ValueError. This helper is only ever
+        called while another failure is being reported, so a probe error here would
+        displace the real one."""
+        assert safe_page_url("https://[bad") == ""
+
+    def test_non_string_input_is_coerced_not_crashed(self) -> None:
+        assert safe_page_url(12345) == "12345"

@@ -24,7 +24,9 @@ from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
+    FlowAccountChooserError,
     FlowApiError,
+    FlowAppError,
     FlowHostMigratedError,
     NetworkError,
     RateLimitError,
@@ -87,6 +89,186 @@ def flow_host_kind(url: object) -> str | None:
     except ValueError:
         return None
     return _FLOW_HOSTS.get(host)
+
+
+#: NextAuth mounts Flow's OAuth routes on the *app's own origin*, so a host check
+#: passes straight through them: `/fx/api/auth/callback/google?...` and
+#: `/fx/api/auth/signin?error=Callback` are both `labs.google`. Verified in
+#: `auth/internal_chromium.py`, which is where this constant used to live —
+#: privately, and used only to gate a session poll, so no transport could see it.
+#:
+#: It matches the whole `/fx/api/auth/` family, NOT just `/signin` — callback and
+#: `/session` too — so anything derived from it must not claim "the sign-in page".
+#: NOTE: `auth/internal_chromium.py::_is_safe_to_probe_session` gates the login
+#: session poll on `flow_landing_kind(...) != "signin"`. Reclassifying a NextAuth
+#: path here re-opens the cookie-rotation hole that poll exists to avoid (#769).
+_NEXTAUTH_ROUTE_PREFIX = "/fx/api/auth/"
+
+
+def flow_landing_kind(url: object) -> str | None:
+    """Name a known **non-app** landing on a Flow origin: ``"signin"``, ``"public"``, or ``None``.
+
+    :func:`flow_host_kind` answers *which Flow origin*; this answers *whether the
+    origin served the app at all*. They are different questions, and conflating them
+    is how a sign-in error page and a project editor became indistinguishable —
+    `/about`, `/project/<id>` and `/fx/api/auth/signin?error=Callback` all pass a
+    host check, so a readiness wait that missed had nothing left to blame but its own
+    anchor (#756, #773, the 2026-09-10 RED canary).
+
+    ``None`` means **"nothing recognised"**, never "this is the app". A caller may
+    only use a positive answer to REPLACE a diagnosis it was already about to make.
+    Never call this ahead of a probe to decide whether to look: a fail-fast that runs
+    before the evidence is collected deletes the evidence that would correct it
+    (`skills/spike/SKILL.md`), and `page.url` read too early misses Flow's redirect
+    entirely, because it is client-side and lands after ``goto`` returns (#639).
+
+    ``"chooser"`` and ``"signin"`` also cover ``accounts.google.com`` — Google's auth
+    host, which is not a Flow origin but IS a known place to land. Reaching it mid-run
+    is measured, not theoretical (2026-09-10, profile ``denon82``): the session hopped
+    there after bootstrap and the labs gallery sweep reported a missing CTA on Google's
+    sign-in page. The rejected-browser route keeps returning ``None`` — it has its own
+    error and must never read as a missing account or an expired session.
+
+    ``"public"`` is deliberately scoped to the **migrated** host: `/about` was measured
+    there (#756) and nowhere else, and the remediation text names `flow.google.com`.
+    A `labs.google/about` landing would be a different, unmeasured thing, so it stays
+    ``None`` and the caller's own diagnosis stands rather than a message about the
+    wrong host.
+
+    Not measured, and so not encoded: whether a NextAuth route can carry a locale
+    segment (`/fx/pt/api/auth/...`). `routes.py` shows Flow does that for the app's
+    own paths. A non-EN profile would settle it; until then the prefix stays exact,
+    exactly as ``internal_chromium`` had it.
+
+    Total by construction, like its sibling: anything unparseable — or not even a
+    string — is ``None``, so a probe error can never displace the real failure.
+    """
+    if not isinstance(url, str):
+        return None
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if parts.scheme != "https":
+        return None
+    host = (parts.hostname or "").lower()
+    path = parts.path
+
+    # Google's own auth host. Measured live on 2026-09-10: a session can hop here
+    # MID-RUN, after bootstrap has already passed, and `_enter_editor` then sweeps
+    # for a "+ New project" CTA on Google's sign-in page and reports the anchor.
+    # `client._handle_account_chooser` covers the bootstrap hop and only that, so
+    # this file's first version returned None here on the reasoning "the chooser has
+    # its own handler" — true at bootstrap, false everywhere else.
+    if host == "accounts.google.com":
+        # The bot-rejection hop. Path-tested rather than importing
+        # `auth.internal_chromium.GOOGLE_REJECTED_BROWSER_ROUTE`: `_common` -> `auth`
+        # is a real import cycle (`_common` reaches `profile_store`, which imports
+        # `gflow_cli.auth`), which is why that module imports THIS one deferred.
+        # It has its own error and must never read as a missing account or an
+        # expired session — same exclusion `client._handle_account_chooser` makes.
+        if path.rstrip("/").endswith("/v3/signin/rejected"):
+            return None
+        return "chooser" if path.rstrip("/").endswith("accountchooser") else "signin"
+
+    host_kind = _FLOW_HOSTS.get(host)
+    if host_kind is None:
+        return None
+    if path.startswith(_NEXTAUTH_ROUTE_PREFIX):
+        return "signin"
+    if host_kind == "migrated" and path.rstrip("/") == "/about":
+        return "public"
+    return None
+
+
+def safe_page_url(url: object) -> str:
+    """A page URL reduced to scheme+host+path — safe to put in a user-facing message.
+
+    Google's auth URLs carry `state`, `code_challenge`, `client_id`, and challenge
+    tokens (`TL=...`) in the query. Error text is the artifact users are asked to paste
+    into GitHub issues, so the query and fragment have no business in it. Measured live
+    on 2026-09-10: a real `gflow image t2i` failure printed all of those.
+
+    Anything unparseable comes back as the empty string rather than raising — this is
+    only ever called while another failure is already being reported.
+    """
+    text = str(url or "")
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return ""
+    if not parts.scheme or not parts.netloc:
+        return text
+    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+
+def raise_if_known_landing(page: object, *, requested: str, at: str) -> None:
+    """Replace an about-to-be-raised drift report when the page is a **known landing**.
+
+    Call this from **inside a failure branch**, at a point where the caller is already
+    committed to raising — after a readiness wait has timed out, never before it. Two
+    reasons, both learned the hard way: a guard placed ahead of the probe deletes the
+    evidence that would correct it (`skills/spike/SKILL.md`), and Flow's hop to a
+    landing page is client-side, so ``page.url`` read right after ``goto`` is read too
+    early and sees nothing (#639). By the time the wait has failed, the URL has settled
+    and is simply true.
+
+    Returns silently when nothing is recognised, which is the common case and means the
+    caller's own diagnosis stands. **It does not follow that the call is safe anywhere:**
+    put it in a branch that can still recover and it converts a recoverable state into a
+    raise. `migrated_composer.ensure_editor`'s ``except`` has such a recovery path — the
+    call sits before it because agent-mode recovery cannot succeed on a landing page,
+    which is a property of THAT branch, not of this function.
+
+    ``requested`` is what the caller asked Flow for; the whole complaint in #756 is that
+    the operator could not tell what was asked for and what arrived.
+
+    The URL is stripped to scheme+host+path before it goes anywhere. The NextAuth family
+    includes `/fx/api/auth/callback/google?state=...&code=...`, and this message is the
+    artifact users paste into issues — an auth code is single-use, but it has no business
+    being in it.
+    """
+    url = str(getattr(page, "url", "") or "")
+    kind = flow_landing_kind(url)
+    if kind is None:
+        return
+    safe_url = safe_page_url(url)
+    log.info("ui_driver.known_landing", at=at, kind=kind, url=safe_url, requested=requested)
+    if kind == "chooser":
+        # The existing class for "we are at the chooser and cannot proceed" (#763/#764,
+        # exit 38). Path-only, so no DOM probe is needed here — the bootstrap handler
+        # does the `[data-email]` work and this is the raise for a hop that never
+        # reaches it.
+        raise FlowAccountChooserError(
+            detail=(
+                f"Google's account chooser is displayed ({safe_url}) instead of "
+                f"{requested} — the session needs a person to pick an account. "
+                f"Not selector drift."
+            )
+        )
+    if kind == "signin":
+        raise AuthExpiredError(
+            detail=(
+                f"Flow served one of its OAuth/sign-in routes ({safe_url}) instead of "
+                f"{requested} — this session is not signed in to Flow on that host, so "
+                f"none of the controls gflow drives are on the page. Not selector drift."
+            )
+        )
+    # Deliberately says WHAT arrived and stops. #756 measured the redirect and did not
+    # measure its cause — `gflow auth status` reports the session verified while this
+    # happens — so naming one here would just be a second confident wrong diagnosis.
+    raise FlowAppError(
+        detail=(
+            f"Flow redirected to its public landing page ({safe_url}) instead of "
+            f"{requested}. gflow cannot tell from here why it declined — this account "
+            f"may not have access to that project on this host. It is not selector "
+            f"drift, and no gflow-cli release changes it."
+        ),
+        # NOT a claim that a retry fails — the ABSENCE of one. See FlowAppError's
+        # docstring for the measurement that could not be made and why False preserves
+        # the answer this shape already gave as exit 23.
+        retryable=False,
+    )
 
 
 def migrated_route(url: object, flow_host: str, *, prefer_migrated: bool = False) -> str:

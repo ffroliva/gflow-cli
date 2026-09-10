@@ -51,6 +51,18 @@ Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in adva
 - **Location:** stdout/stderr by default. No log file unless you redirect.
 - **Content scrubbing:** Prompts, asset UUIDs, job IDs, profile names. No cookies, no tokens, no API keys.
 - The structured `error_unhandled` telemetry event is **always** SHA-256-hashed, regardless of any debug flag below — this guarantee is unconditional.
+- **Google auth URLs are stripped before they reach a message** (v0.73.0). A typed
+  `GFlowError`'s `detail` is printed raw to the console, shipped through structlog and
+  emitted under `--json` — it is the artifact users are asked to paste into an issue — and
+  Google's auth URLs carry `state`, `code_challenge`, `client_id` and challenge tokens
+  (`TL=…`). `safe_page_url()` keeps scheme + host + path and drops query and fragment; the
+  landing is still named, because knowing *where* the session stopped is the whole value of
+  the message. Measured, not assumed: an identical real run went from five secret matches
+  to zero.
+- **Note the asymmetry this creates.** An *unhandled* exception is hashed (above); a
+  **typed** one is not. Retyping a raise site therefore moves its text from hashed
+  telemetry into plain output, so any DOM- or URL-derived content added to a `detail` must
+  be an allowlist at the raise site — nothing downstream will catch it.
 
 ### Automatic incident bundles (`GFLOW_CLI_INCIDENT_CAPTURE`, default on)
 

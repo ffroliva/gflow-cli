@@ -30,6 +30,7 @@ __all__ = [
     "FlowAgentUiError",
     "FlowApiError",
     "FlowAppError",
+    "FlowAccountChooserError",
     "FlowHostMigratedError",
     "FrameExtractionError",
     "GFlowError",
@@ -608,10 +609,18 @@ class ExtendUnavailableError(GFlowError):
 
 
 class UiSelectorDriftError(GFlowError):
-    """Raised when a UI-automation selector cascade finds no matching element.
+    """Raised when a UI-automation selector cascade cannot reach the control it needs.
+
+    Two shapes, and the second is easy to forget: the selector **finds nothing**, or it
+    finds the element and the element **will not take the interaction** — occluded,
+    disabled, or never holding still (#593's blocked overlay, #776's click that expired
+    while the control read visible and enabled). Both mean the same thing to a caller —
+    gflow cannot drive this control — which is why they share an exit code, and why the
+    ``detail`` has to say which one happened.
 
     Indicates that Flow's frontend has changed in a way that invalidates one
-    of the selector probes (mode-switch trigger, mode tab, sub-mode tab, etc.).
+    of the selector probes (mode-switch trigger, mode tab, sub-mode tab, etc.),
+    or that something on the page is in the way.
     The ``detail`` names the probe label and includes the debug screenshot or
     diagnostics JSON path when one was captured.
 
@@ -699,20 +708,45 @@ class FlowAgentUiError(GFlowError):
 
 
 class FlowAppError(GFlowError):
-    """Raised when Google Flow's web app itself crashed — a client-side exception
-    (its React error boundary), not a gflow-cli issue. The editor never rendered,
-    so no generation control exists to drive. **Transient and retryable** (exit
-    code 31). Detected at the mode-switch raise site via the Flow error-page title,
-    which otherwise surfaces as a misleading ``UiSelectorDriftError`` "file a bug".
+    """Raised when Google Flow's own app did not give us the page we asked for —
+    not a gflow-cli issue. Either way the editor never rendered, so no generation
+    control exists to drive (exit code 31). **Two measured shapes:**
+
+    1. **Its React error boundary** — the app crashed client-side. Transient;
+       retry works. Detected at the mode-switch raise site via the error-page title.
+    2. **A redirect to Flow's public landing page** (``/about``, #756) — the app
+       declined to open the project for this session. *Why* is not measured:
+       ``gflow auth status`` reports the session verified while it happens, so the
+       message names the redirect and stops rather than inventing a cause. Nor is it
+       known whether a retry helps — the redirect stopped reproducing before it could
+       be measured (spike 2026-09-10), so this raise site passes ``retryable=False``
+       to PRESERVE the answer it gave as exit 23, not to claim a retry fails.
+
+    Both otherwise surface as a misleading ``UiSelectorDriftError`` "file a bug" —
+    which is the whole reason this class exists. See
+    ``api/transports/_common.py::raise_if_known_landing``.
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-app"
     title = "Google Flow web app error"
+
+    #: Per-instance override of this class's ``RETRYABLE_ERRORS`` membership; ``None``
+    #: keeps it. It lives HERE and not on ``GFlowError`` because there is exactly one
+    #: producer (``_common.py::raise_if_known_landing``) and one class with two shapes
+    #: that disagree about retrying. ``is_retryable`` reads it by ``getattr``, so a base
+    #: declaration would buy no typing and no test-double visibility — only a field on
+    #: every error in the project. Move it up if, and only if, a second class needs it.
+    retryable: bool | None = None
     _default_remediation = (
-        "Google Flow's web app failed to load (a client-side exception on "
-        "labs.google) — a transient Flow-side error, not a gflow-cli bug. Retry in a "
-        "moment; if it persists, check https://labs.google/fx and try a fresh session."
+        "Google Flow did not serve the page gflow asked for — a Flow-side condition, "
+        "not a gflow-cli bug. If it crashed (client-side exception), retry in a moment. "
+        "If it redirected to flow.google.com/about, open the project in a browser on "
+        "that host and confirm this account can reach it."
     )
+
+    def __init__(self, *args: Any, retryable: bool | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.retryable = retryable
 
 
 class FlowHostMigratedError(GFlowError):
@@ -753,6 +787,23 @@ class FlowHostMigratedError(GFlowError):
         "land the old frontend. The REST surface (gflow project list, gflow data ...) "
         "still works. Follow https://github.com/ffroliva/gflow-cli/issues/639 for "
         "the migrated-frontend feature matrix."
+    )
+
+
+class FlowAccountChooserError(GFlowError):
+    """Raised when Google Flow lands on an account chooser or sign-in hop
+    and the profile's recorded Google account cannot be selected automatically.
+
+    **Not retryable** (exit code 38). Retrying with the same profile and recorded
+    account into a signed-out or missing chooser row cannot succeed without
+    manual operator interaction via gflow auth login.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/flow-account-chooser"
+    title = "Recorded Google account not selectable"
+    _default_remediation = (
+        "Run `gflow auth login --profile <name>` and complete the account chooser "
+        "manually while signed in as the recorded account."
     )
 
 
@@ -1245,6 +1296,11 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # frontend" (per-account, not retryable) from genuine selector drift
     # (23), which it used to masquerade as.
     FlowHostMigratedError: 36,
+    # FlowAccountChooserError: Google Flow landed on account chooser
+    # and the recorded account row could not be selected automatically.
+    # Direct GFlowError subclass; exit 38 distinguishes account chooser stall
+    # from generic errors (1) without parsing stderr.
+    FlowAccountChooserError: 38,
     # UiModeUnavailableError (issue #299): a command's required arm (--ui-mode /
     # inferred) couldn't be reached after a best-effort switch. Direct GFlowError
     # subclass — retryable policy abort, distinct from FlowAgentUiError (25).
@@ -1316,5 +1372,18 @@ RETRYABLE_ERRORS: tuple[type[GFlowError], ...] = (
 
 
 def is_retryable(exc: GFlowError) -> bool:
-    """Shared retry classification consumed by every machine-readable error surface."""
+    """Shared retry classification consumed by every machine-readable error surface.
+
+    The class answer (``RETRYABLE_ERRORS``) unless the raise site overrode it — see
+    ``FlowAppError.retryable``.
+
+    ``isinstance(..., bool)`` rather than a truthiness test, deliberately: a
+    ``MagicMock`` answers every ``getattr`` with a truthy child mock, so
+    ``if override is not None`` would silently report **every** mocked error as
+    retryable and no assertion in the suite would notice
+    (memory ``magicmock-truthy-getattr-silences-guards``).
+    """
+    override = getattr(exc, "retryable", None)
+    if isinstance(override, bool):
+        return override
     return isinstance(exc, RETRYABLE_ERRORS)
