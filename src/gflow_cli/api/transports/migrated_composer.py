@@ -837,9 +837,10 @@ class MigratedComposer:
     ) -> str:
         """The message for a click that expired: locator first, observations after.
 
-        Locator first is not cosmetic. The queued MCP path raw-slices ``detail`` to 500
-        chars (``data/redaction.py``) while the CLI path does not, so anything
-        variable-length has to sit behind the one part both surfaces must always show.
+        Locator first is not cosmetic. ``redact_sensitive_text`` truncates to 500 chars
+        at this raise site (``data/redaction.py``), so every surface sees the same cap and
+        anything variable-length — the occluder's class list — has to sit behind the one
+        part that must always survive it.
         """
         head = f"migrated host: {named} did not accept a click within {timeout} ms"
         try:

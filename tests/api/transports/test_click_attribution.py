@@ -88,8 +88,8 @@ async def test_a_non_timeout_click_failure_is_not_reinterpreted(
 async def test_a_click_timeout_names_the_locator_first(composer: MigratedComposer) -> None:
     """The locator leads the message, ahead of anything variable-length.
 
-    The queued MCP path raw-slices ``detail`` to 500 chars while the CLI path does not
-    (``data/redaction.py``), so whatever both surfaces must always show has to come first.
+    The detail is truncated to 500 chars at the raise site (``data/redaction.py``), so
+    whatever must survive that cut has to come before the occluder's class list.
     """
     error = await _drift(composer, state=_HEALTHY)
     assert error.detail is not None

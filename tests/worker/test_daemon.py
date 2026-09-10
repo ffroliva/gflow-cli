@@ -803,7 +803,7 @@ async def test_migrated_host_error_crosses_the_queued_path(temp_db: DataStore) -
 # ---------------------------------------------------------------------------
 
 
-async def _fail_r2v_with(temp_db: DataStore, exc: BaseException, task_id: str) -> dict:
+async def _fail_t2v_with(temp_db: DataStore, exc: BaseException, task_id: str) -> dict:
     repo = QueueRepository(temp_db)
     task = repo.enqueue_task(
         task_id=task_id,
@@ -830,7 +830,7 @@ async def test_a_bare_timeout_reaches_an_mcp_caller_as_a_hash(temp_db: DataStore
     message and nothing else — not the locator, not even the exception class. An agent
     receiving this cannot tell a covered button from a dead network.
     """
-    error = await _fail_r2v_with(temp_db, TimeoutError("Timeout 5000ms exceeded"), "task-776-bare")
+    error = await _fail_t2v_with(temp_db, TimeoutError("Timeout 5000ms exceeded"), "task-776-bare")
     assert error["exit_code"] == 1
     assert error["detail"].startswith("sha256:")
     assert "settings-trigger" not in error["detail"]
@@ -850,7 +850,7 @@ async def test_the_typed_failure_reaches_an_mcp_caller_as_problem_details(
         "migrated host: .settings-trigger-button did not accept a click within 5000 ms "
         "— it is covered by div.cdk-overlay-backdrop (host=migrated)"
     )
-    error = await _fail_r2v_with(temp_db, UiSelectorDriftError(detail=detail), "task-776-typed")
+    error = await _fail_t2v_with(temp_db, UiSelectorDriftError(detail=detail), "task-776-typed")
     assert error["exit_code"] == 23
     assert not error["detail"].startswith("sha256:")
     assert ".settings-trigger-button" in error["detail"]
