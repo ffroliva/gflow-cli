@@ -183,8 +183,8 @@ async def _drift(composer: MigratedComposer, *, state: dict[str, Any]) -> UiSele
 @pytest.mark.parametrize(
     ("override", "expected"),
     [
-        ({"hidden_attr": True}, "bare `hidden` attribute"),
-        ({"visible": False}, "not rendered"),
+        ({"hidden_attr": True, "hit_testable": False}, "bare `hidden` attribute"),
+        ({"visible": False, "hit_testable": False}, "not rendered"),
         ({"enabled": False}, "it is disabled"),
         ({"body_blocked": True}, "accepting no pointer events at all"),
     ],
@@ -235,3 +235,40 @@ async def test_a_missing_reading_is_not_mistaken_for_health(
     """
     detail = (await _drift(composer, state={})).detail or ""
     assert "visible, enabled and hit-testable" not in detail, detail
+
+
+@pytest.mark.asyncio
+async def test_an_unrendered_element_reports_one_fact_once(composer: MigratedComposer) -> None:
+    """ "Not rendered" and "answers no hit test" are the same fact, not two.
+
+    `_CLICK_POSTMORTEM_JS` only calls `elementFromPoint` `if (box.width && box.height)`,
+    so a zero-box element ALWAYS comes back `hit_testable: false, occluder: null` as well.
+    Reported as independent readings that told the user the same thing twice in one
+    sentence — the shape of over-reporting that makes a diagnostic harder to act on than
+    a short one.
+    """
+    state = {**_HEALTHY, "visible": False, "hit_testable": False, "occluder": None}
+    detail = (await _drift(composer, state=state)).detail or ""
+    assert "not rendered" in detail
+    assert "no hit test" not in detail
+
+
+@pytest.mark.asyncio
+async def test_disabled_and_blocked_are_reported_alongside_occlusion(
+    composer: MigratedComposer,
+) -> None:
+    """Enabled-ness and a page-wide block are separate axes from occlusion.
+
+    Chaining them onto the same `elif` ladder would hide a disabled control behind
+    whatever covered it — two different remedies collapsed into one message.
+    """
+    state = {
+        **_HEALTHY,
+        "enabled": False,
+        "body_blocked": True,
+        "hit_testable": False,
+        "occluder": "div.cdk-overlay-backdrop",
+    }
+    detail = (await _drift(composer, state=state)).detail or ""
+    for fact in ("covered by", "it is disabled", "accepting no pointer events"):
+        assert fact in detail, f"missing {fact!r}: {detail}"

@@ -235,9 +235,8 @@ _CLICK_POSTMORTEM_JS = r"""
 }
 """
 
-#: How the submit control is NAMED in a failure message. Not a selector — it is built by
-#: filtering `button` on the `arrow_forward` ligature, which no CSS string can express, so
-#: there is nothing to anchor on and nothing here can rot into one.
+#: Names the submit control in a message. No CSS string can express the `arrow_forward`
+#: ligature filter that builds it, so there is nothing here to rot into a selector.
 SUBMIT_BUTTON = "the submit button (ligature 'arrow_forward')"
 
 #: The submit reply arrived 4.0–4.6 s after the click in both measured runs.
@@ -814,16 +813,10 @@ class MigratedComposer:
         ``TimeoutError`` carrying no locator, no exit code and no cause. That is #776:
         `editor_ready`, five seconds, exit 1, nothing to act on.
 
-        **This reads; it does not diagnose.** Two candidate causes were live when this was
-        written and neither could be measured: Flow's announcement overlay (#593, measured
-        on labs.google, never on this host — the 2026-09-10 spike saw
-        ``body{pointer-events}`` stay ``auto`` in 159/159 samples) and a mid-run agent-mode
-        flip (#752 finding #7, which predicted this exact symptom at this exact function
-        before #776 was filed). A guard built on either would answer confidently and be
-        wrong half the time — #770 is the live precedent for what that costs a reporter.
-        So the post-mortem states observations, and when every observation reads healthy it
-        says *that*, which is a real finding: it eliminates three conditions and leaves
-        *stable*.
+        **This reads; it does not diagnose.** Two candidate causes (#593, #752 finding #7)
+        were unmeasurable on this host as of the 2026-09-10 spike, and a guard built on
+        either would sometimes answer confidently and wrong (#770). So it states
+        observations; "every reading was healthy" is one of them.
 
         Costs nothing on a healthy run — the read happens only in the except branch, which
         is also the rule :func:`_common.raise_if_known_landing` already states: a guard
@@ -871,22 +864,29 @@ class MigratedComposer:
                 "the account is in Flow's agent mode, which hides it — turn the Agent "
                 "chip off in a browser and re-run"
             )
+        # One chain, because these are competing readings of the SAME question — can a
+        # pointer reach it — ordered most specific first. The JS only hit-tests
+        # `if (box.width && box.height)`, so an unrendered element always reports no hit
+        # test too; as independent `if`s that said "it is not rendered" and "it answers no
+        # hit test" about one fact.
         if state.get("hidden_attr"):
             seen.append("it carries a bare `hidden` attribute")
         elif not state.get("visible"):
             seen.append("it is not rendered (display, visibility, or a zero-sized box)")
+        elif state.get("occluder"):
+            seen.append(f"it is covered by {state['occluder']}")
+        elif not state.get("hit_testable"):
+            # Rendered, nothing named itself: whatever is on top is outside the document.
+            # Not "healthy" — letting it fall through would claim hit-testable of an
+            # element that had just failed the hit test.
+            seen.append("it answers no hit test at its own centre")
+
+        # Separate axes: an element can be disabled, or the whole page blocked, whatever
+        # the chain above found.
         if not state.get("enabled"):
             seen.append("it is disabled")
         if state.get("body_blocked"):
             seen.append("the page is accepting no pointer events at all")
-        if state.get("occluder"):
-            seen.append(f"it is covered by {state['occluder']}")
-        elif not state.get("hit_testable"):
-            # No named occluder AND no hit: the element has no rendered box, or whatever
-            # is on top is outside the document. Either way it is not "healthy", and
-            # letting it fall through to the branch below would claim hit-testable of an
-            # element that just failed the hit test.
-            seen.append("it answers no hit test at its own centre")
 
         if not seen:
             # Every readable condition is healthy. Saying so eliminates three of
@@ -897,9 +897,7 @@ class MigratedComposer:
                 "requires a stable bounding box, so the control was most likely still "
                 "moving or being re-rendered"
             )
-        # Belt and braces over the JS allowlist: `detail` is printed raw to the console,
-        # shipped through structlog and emitted under --json, and PR #777 shipped the same
-        # bug class one surface over.
+        # Belt and braces over the JS allowlist above.
         return redact_sensitive_text(f"{head} — {'; '.join(seen)} (host=migrated)")
 
     # --- settings ---------------------------------------------------------------
@@ -1024,10 +1022,8 @@ class MigratedComposer:
                     f"{why} (host=migrated)"
                 ),
             ) from e
-        # #752 finding #7 predicted this line's failure before #776 reported it: the
-        # `count()` guard above became a visibility wait, and the click below it — the
-        # other half of the same finding — stayed bare. The comment above describes the
-        # failure this line went on producing.
+        # The other half of #752 finding #7: the guard above became a visibility wait,
+        # this click stayed bare, and the comment above describes what it went on doing.
         await self._click(page, trigger, named=READY_ANCHOR, timeout=5000)
         # THE overlay that holds the option groups — not `.last`: once the model
         # menu (a second overlay) has opened and closed, a detached menu pane can
