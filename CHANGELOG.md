@@ -8,7 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-
 - **A known Flow landing page is no longer reported as selector drift**
   ([#756](https://github.com/ffroliva/gflow-cli/issues/756), and the 2026-09-10 RED
   nightly canary). `flow_host_kind()` classifies the *origin*; `/about`,
@@ -59,7 +58,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`/v3/signin/rejected`) keeps returning `None` — it has its own error.
 
 ### Added
-
 - **`FlowAppError.retryable`** — a per-instance override of that class's
   `RETRYABLE_ERRORS` membership. `None` (the default) keeps the class answer, so no
   existing raise changes. Scoped to the one class that needs it: `is_retryable()` reads
@@ -79,9 +77,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     truthiness test: a `MagicMock` answers every attribute with a truthy child mock, so
     a truthiness test would report **every** mocked error as retryable with nothing in
     the suite noticing. Covered by a test that asserts that precondition explicitly.
+- **BDD scenarios can now be bound as e2e tests**, with no new machinery: pytest-bdd
+  converts Gherkin tags into pytest markers, so a Feature tagged `@e2e @e2e_auth`
+  is filtered by the existing `addopts` and selected by the existing `-m <tier>`.
+  Feature files stay in `tests/features/`; their step module lives in `tests/e2e/`
+  so it inherits that suite's profile-gating fixtures. See
+  [docs/E2E_TESTING.md § BDD-bound e2e](docs/E2E_TESTING.md#bdd-bound-e2e).
+- `tests/features/test_e2e_binding_guard.py` — offline guard (no browser, runs in
+  hosted CI) for three ways that binding breaks silently: an `@e2e` scenario nobody
+  wrote a test for, an `@e2e` Feature with no cost sub-marker (invisible to the
+  nightly canary), and the inverse hazard — a Feature bound from `tests/e2e/` but
+  left untagged, which escapes `addopts` and makes hosted CI try to drive Chrome.
+  It carries its own fire-test, so a green run means "no orphans", not "never looked".
 
 ### Changed
-
 - **Workflow: the Bug Lane is now the documented route from symptom to fix.**
   `skills/issue-resolve/SKILL.md` gains a canonical `spike → systematic-debugging →
   BDD → TDD → fix → e2e` chain, gated by *surface* (steps 0–2 are skippable for a
@@ -95,21 +104,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     see it.
   - "Browser-free" is no longer accepted as a verification blocker: only a **named**
     external blocker is (an account you do not control, a Mac, an exhausted quota).
-
-### Added
-
-- **BDD scenarios can now be bound as e2e tests**, with no new machinery: pytest-bdd
-  converts Gherkin tags into pytest markers, so a Feature tagged `@e2e @e2e_auth`
-  is filtered by the existing `addopts` and selected by the existing `-m <tier>`.
-  Feature files stay in `tests/features/`; their step module lives in `tests/e2e/`
-  so it inherits that suite's profile-gating fixtures. See
-  [docs/E2E_TESTING.md § BDD-bound e2e](docs/E2E_TESTING.md#bdd-bound-e2e).
-- `tests/features/test_e2e_binding_guard.py` — offline guard (no browser, runs in
-  hosted CI) for three ways that binding breaks silently: an `@e2e` scenario nobody
-  wrote a test for, an `@e2e` Feature with no cost sub-marker (invisible to the
-  nightly canary), and the inverse hazard — a Feature bound from `tests/e2e/` but
-  left untagged, which escapes `addopts` and makes hosted CI try to drive Chrome.
-  It carries its own fire-test, so a green run means "no orphans", not "never looked".
 
 ## [0.72.0] — 2026-09-09
 
