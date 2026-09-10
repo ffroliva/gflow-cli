@@ -47,6 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the log: the NextAuth family includes `/fx/api/auth/callback/google?state=…&code=…`,
     and this message is precisely what users paste into issues.
   - `"public"` is scoped to the migrated host, the only one where `/about` was measured.
+  - **`accounts.google.com` is recognised too — found by live-verifying, not by
+    reasoning.** The first version returned `None` there on the grounds that "the
+    chooser has its own handler", which is true at bootstrap
+    (`client._handle_account_chooser`) and false for a hop that happens *after* it. A
+    live A/B on profile `denon82` (2026-09-10, $0) landed exactly there mid-run and
+    still produced `RuntimeError: Could not find 'New project' CTA` — with the OAuth
+    `state`, `code_challenge` and `client_id` interpolated into the message. It now
+    raises `FlowAccountChooserError` (38) for a chooser and `AuthExpiredError` (3) for
+    other Google sign-in surfaces, URL stripped. The bot-rejection hop
+    (`/v3/signin/rejected`) keeps returning `None` — it has its own error.
 
 ### Added
 

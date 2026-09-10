@@ -357,11 +357,20 @@ class TestFlowLandingKind:
             ("https://flow.google.com/project/abc-123", None),
             ("https://labs.google/fx/tools/flow", None),
             ("https://labs.google/fx/pt/tools/flow", None),
-            # Not a Flow origin at all. The chooser has its own handler; answering
-            # "signin" here would let a transport raise over a page it does not own.
-            ("https://accounts.google.com/v3/signin/identifier", None),
+            # Google's auth host. The first version of this returned None here,
+            # reasoning "the chooser has its own handler" — true at BOOTSTRAP
+            # (`client._handle_account_chooser`) and false for a mid-run hop, which
+            # is what a live run on `denon82` produced on 2026-09-10: the labs
+            # gallery sweep reported a missing CTA on Google's sign-in page.
+            ("https://accounts.google.com/v3/signin/accountchooser?client_id=x", "chooser"),
+            ("https://accounts.google.com/v3/signin/identifier", "signin"),
+            # The bot-rejection hop keeps its own error — never a missing account
+            # and never an expired session.
+            ("https://accounts.google.com/v3/signin/rejected", None),
             # Substring impostors — the host must match exactly, never by mention.
             ("https://evil.example/?next=https://flow.google.com/about", None),
+            ("https://evil.example/?n=https://accounts.google.com/v3/signin/accountchooser", None),
+            ("http://accounts.google.com/v3/signin/accountchooser", None),
             ("http://flow.google.com/about", None),
         ],
     )

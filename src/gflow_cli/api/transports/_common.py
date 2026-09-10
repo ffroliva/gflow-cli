@@ -24,6 +24,7 @@ from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
+    FlowAccountChooserError,
     FlowApiError,
     FlowAppError,
     FlowHostMigratedError,
@@ -121,6 +122,13 @@ def flow_landing_kind(url: object) -> str | None:
     (`skills/spike/SKILL.md`), and `page.url` read too early misses Flow's redirect
     entirely, because it is client-side and lands after ``goto`` returns (#639).
 
+    ``"chooser"`` and ``"signin"`` also cover ``accounts.google.com`` — Google's auth
+    host, which is not a Flow origin but IS a known place to land. Reaching it mid-run
+    is measured, not theoretical (2026-09-10, profile ``denon82``): the session hopped
+    there after bootstrap and the labs gallery sweep reported a missing CTA on Google's
+    sign-in page. The rejected-browser route keeps returning ``None`` — it has its own
+    error and must never read as a missing account or an expired session.
+
     ``"public"`` is deliberately scoped to the **migrated** host: `/about` was measured
     there (#756) and nowhere else, and the remediation text names `flow.google.com`.
     A `labs.google/about` landing would be a different, unmeasured thing, so it stays
@@ -135,10 +143,37 @@ def flow_landing_kind(url: object) -> str | None:
     Total by construction, like its sibling: anything unparseable — or not even a
     string — is ``None``, so a probe error can never displace the real failure.
     """
-    host_kind = flow_host_kind(url)
+    if not isinstance(url, str):
+        return None
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if parts.scheme != "https":
+        return None
+    host = (parts.hostname or "").lower()
+    path = parts.path
+
+    # Google's own auth host. Measured live on 2026-09-10: a session can hop here
+    # MID-RUN, after bootstrap has already passed, and `_enter_editor` then sweeps
+    # for a "+ New project" CTA on Google's sign-in page and reports the anchor.
+    # `client._handle_account_chooser` covers the bootstrap hop and only that, so
+    # this file's first version returned None here on the reasoning "the chooser has
+    # its own handler" — true at bootstrap, false everywhere else.
+    if host == "accounts.google.com":
+        # The bot-rejection hop. Path-tested rather than importing
+        # `auth.internal_chromium.GOOGLE_REJECTED_BROWSER_ROUTE`: `_common` -> `auth`
+        # is a real import cycle (`_common` reaches `profile_store`, which imports
+        # `gflow_cli.auth`), which is why that module imports THIS one deferred.
+        # It has its own error and must never read as a missing account or an
+        # expired session — same exclusion `client._handle_account_chooser` makes.
+        if path.rstrip("/").endswith("/v3/signin/rejected"):
+            return None
+        return "chooser" if path.rstrip("/").endswith("accountchooser") else "signin"
+
+    host_kind = _FLOW_HOSTS.get(host)
     if host_kind is None:
         return None
-    path = urlsplit(str(url)).path
     if path.startswith(_NEXTAUTH_ROUTE_PREFIX):
         return "signin"
     if host_kind == "migrated" and path.rstrip("/") == "/about":
@@ -179,6 +214,18 @@ def raise_if_known_landing(page: object, *, requested: str, at: str) -> None:
     parts = urlsplit(url)
     safe_url = f"{parts.scheme}://{parts.netloc}{parts.path}" if parts.scheme else url
     log.info("ui_driver.known_landing", at=at, kind=kind, url=safe_url, requested=requested)
+    if kind == "chooser":
+        # The existing class for "we are at the chooser and cannot proceed" (#763/#764,
+        # exit 38). Path-only, so no DOM probe is needed here — the bootstrap handler
+        # does the `[data-email]` work and this is the raise for a hop that never
+        # reaches it.
+        raise FlowAccountChooserError(
+            detail=(
+                f"Google's account chooser is displayed ({safe_url}) instead of "
+                f"{requested} — the session needs a person to pick an account. "
+                f"Not selector drift."
+            )
+        )
     if kind == "signin":
         raise AuthExpiredError(
             detail=(

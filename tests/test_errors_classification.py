@@ -214,6 +214,31 @@ class TestPerInstanceRetryability:
         assert "code=" not in detail and "state=" not in detail and "s3cr3t" not in detail
         assert "sign-in page" not in detail, "the family includes callback and /session"
 
+    def test_a_midrun_chooser_hop_raises_the_chooser_error_not_drift(self) -> None:
+        """Measured live, not imagined (2026-09-10, `denon82`): a session can land on
+        `accounts.google.com` AFTER bootstrap, where `client._handle_account_chooser`
+        no longer runs — and the labs gallery sweep then reported a missing
+        "+ New project" CTA on Google's sign-in page, with the OAuth `state` and
+        `code_challenge` interpolated into the message.
+        """
+        from gflow_cli.api.transports._common import raise_if_known_landing
+        from gflow_cli.errors import EXIT_CODE_MAP, FlowAccountChooserError
+
+        url = (
+            "https://accounts.google.com/v3/signin/accountchooser"
+            "?client_id=365941595420-x.apps.googleusercontent.com&state=PKOA6qjxDh"
+            "&code_challenge=rNzAdlPk4Ed"
+        )
+        page = type("P", (), {"url": url})()
+        with pytest.raises(FlowAccountChooserError) as exc_info:
+            raise_if_known_landing(page, requested="the Flow gallery", at="test")
+
+        detail = str(exc_info.value)
+        assert "accounts.google.com/v3/signin/accountchooser" in detail
+        assert "state=" not in detail and "code_challenge" not in detail
+        assert "New project" not in detail
+        assert EXIT_CODE_MAP[FlowAccountChooserError] == 38
+
     def test_the_about_landing_is_not_flagged_retryable(self) -> None:
         """The raise site itself, not just the constructor.
 
