@@ -181,6 +181,27 @@ def flow_landing_kind(url: object) -> str | None:
     return None
 
 
+def safe_page_url(url: object) -> str:
+    """A page URL reduced to scheme+host+path — safe to put in a user-facing message.
+
+    Google's auth URLs carry `state`, `code_challenge`, `client_id`, and challenge
+    tokens (`TL=...`) in the query. Error text is the artifact users are asked to paste
+    into GitHub issues, so the query and fragment have no business in it. Measured live
+    on 2026-09-10: a real `gflow image t2i` failure printed all of those.
+
+    Anything unparseable comes back as the empty string rather than raising — this is
+    only ever called while another failure is already being reported.
+    """
+    text = str(url or "")
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return ""
+    if not parts.scheme or not parts.netloc:
+        return text
+    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+
 def raise_if_known_landing(page: object, *, requested: str, at: str) -> None:
     """Replace an about-to-be-raised drift report when the page is a **known landing**.
 
@@ -211,8 +232,7 @@ def raise_if_known_landing(page: object, *, requested: str, at: str) -> None:
     kind = flow_landing_kind(url)
     if kind is None:
         return
-    parts = urlsplit(url)
-    safe_url = f"{parts.scheme}://{parts.netloc}{parts.path}" if parts.scheme else url
+    safe_url = safe_page_url(url)
     log.info("ui_driver.known_landing", at=at, kind=kind, url=safe_url, requested=requested)
     if kind == "chooser":
         # The existing class for "we are at the chooser and cannot proceed" (#763/#764,

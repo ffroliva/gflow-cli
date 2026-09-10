@@ -238,3 +238,43 @@ async def test_bootstrap_chooser_landing_timeout_names_where_the_page_landed(
     # The CURRENT url, not the chooser url captured on entry: reporting the entry
     # url would claim "still on the chooser" for a click that did navigate.
     assert interstitial in str(exc_info.value)
+
+
+async def test_chooser_error_message_carries_no_oauth_query_params(tmp_path: Path) -> None:
+    """Google's auth URLs carry `state`, `code_challenge`, `client_id` and challenge
+    tokens in the query, and this message is the artifact users are asked to paste into
+    a GitHub issue.
+
+    Measured, not imagined: a real `gflow image t2i --profile denon82` on 2026-09-10
+    exited 38 and printed
+    `accounts.google.com/v3/signin/challenge/pwd?TL=ACv9tzFkh8ZJ...` together with the
+    OAuth `state` and `client_id`. The raise sites now route the URL through
+    `safe_page_url`, which keeps scheme+host+path and drops query+fragment.
+    """
+    from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.profile_store import ACCOUNT_FILE
+
+    profile = tmp_path / "profile_p1"
+    profile.mkdir()
+    (profile / ACCOUNT_FILE).write_text("recorded@example.com\n", encoding="utf-8")
+
+    noisy = (
+        "https://accounts.google.com/v3/signin/accountchooser"
+        "?client_id=365941595420-x.apps.googleusercontent.com"
+        "&code_challenge=rNzAdlPk4Ed_h7i0aIDLCGm6ZN4cAjFgfh_ZarFeUr8"
+        "&state=PKOA6qjxDhhwJkvwuMMWmPBAp0XlLtDinoP-RwgAz84"
+        "&TL=ACv9tzFkh8ZJPujsxSa7PrWFaArmMhVj"
+    )
+    client = FlowApiClient(profile_dir=profile)
+    page, _row = _chooser_page(noisy, row_count=0)
+    page.get_by_text = MagicMock(return_value=MagicMock(count=AsyncMock(return_value=0)))
+
+    with pytest.raises(FlowAccountChooserError) as exc_info:
+        await client._handle_account_chooser(page)
+
+    detail = str(exc_info.value)
+    assert "https://accounts.google.com/v3/signin/accountchooser" in detail, (
+        "the landing must still be named — knowing WHERE it stopped is the whole point"
+    )
+    for secret in ("client_id", "code_challenge", "state=", "TL=", "PKOA6qjxDh", "ACv9tzFkh8ZJ"):
+        assert secret not in detail, f"{secret!r} leaked into a user-pasteable message"
