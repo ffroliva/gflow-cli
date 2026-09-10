@@ -129,6 +129,7 @@ class Dom:
     page_dies_on_upload: bool = False
     dialog_probe_raises: bool = False
     dialog_closed: int = 0
+    cookie_bar_present: bool = False
     # --- #749: Flow's agent mode ------------------------------------------------------
     # Pressed, the chip leaves `.settings-trigger-button` in the DOM under a bare `hidden`
     # — present to `count()`, never visible. The knobs below are the states the driver has
@@ -246,6 +247,8 @@ class FakeLocator:
 
     # --- reads --------------------------------------------------------------
     async def count(self) -> int:
+        if self.kind == "cookie_bar":
+            return 1 if self.page.dom.cookie_bar_present else 0
         if self.kind == "dialog" and self.page.dom.dialog_probe_raises:
             raise PlaywrightTimeoutError("count: Target page, context or browser has been closed")
         if self.kind == "agent_chip":
@@ -261,6 +264,14 @@ class FakeLocator:
 
     async def is_visible(self) -> bool:
         return bool(self.items) and self._visible_now
+
+    async def scroll_into_view_if_needed(self, **_: Any) -> None:
+        await asyncio.sleep(0)
+
+    async def bounding_box(self) -> dict[str, float] | None:
+        if not self.items:
+            return None
+        return {"x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0}
 
     async def is_enabled(self) -> bool:
         if self.kind == "submit":
@@ -342,6 +353,8 @@ class FakeLocator:
             dom.picker_open = False
             if dom.chip_binds:
                 dom.chip_bound = True
+        elif self.kind == "cookie_button":
+            dom.cookie_bar_present = False
         elif self.kind == "dialog_close":
             dom.dialog_present = False
             dom.dialog_closed += 1
@@ -514,8 +527,19 @@ class FakePage:
     def expect_file_chooser(self, **_: Any) -> FakeChooserContext:
         return FakeChooserContext(self)
 
+    async def evaluate(self, expression: str, argument: Any = None) -> Any:
+        if "elementFromPoint" in expression:
+            return {"target": True, "top": None}
+        return {}
+
     def locator(self, css: str, *, scope: FakeLocator | None = None) -> FakeLocator:
         dom = self.dom
+        if css == migrated_composer.COOKIE_BAR:
+            return FakeLocator(
+                self, "cookie_bar", ["cookie"], visible=lambda: dom.cookie_bar_present
+            )
+        if css == "button" and scope is not None and scope.kind == "cookie_bar":
+            return FakeLocator(self, "cookie_button", ["button"] if dom.cookie_bar_present else [])
         if css == ".settings-trigger-button":
             # In agent mode it is still THERE (count 1) — just `hidden`. The reporter
             # counted 57 locator matches on an element that never became visible.
@@ -2511,3 +2535,20 @@ async def test_an_image_submit_that_stays_disabled_is_drift_not_a_hang(
             page, GenerateImageRequest(prompt="a blue cup")
         )
     assert page.dom.submit_clicked == 0
+
+
+async def test_pre_submit_gate_refuses_blocking_overlay_before_network_observers() -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _image_page()
+    page.dom.pane_open = True
+
+    with pytest.raises(UiSelectorDriftError, match="blocking overlay"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+
+    assert page.dom.submit_clicked == 0
+    assert page.listeners("request") == []
+    assert page.listeners("response") == []

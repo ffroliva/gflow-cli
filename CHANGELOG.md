@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Migrated image submits prove the composer before any network observer arms:
+  cookie-bar dismissal, blocking-overlay refusal, and submit pointer hit-test,
+  each raising typed `UiSelectorDriftError` with bounded redacted diagnostics
+  instead of bare Playwright timeouts.
+
+### Fixed
+
+- Image requests that the migrated composer serves, with a named project,
+  from a pre-navigation page prefer the migrated host on `auto`, so the
+  page-owned recaptcha path wins the post-goto handoff race instead of a
+  doomed pre-navigation mint (#692). Labs editors, unported forms, and
+  project-less runs keep the served host (and their pre-minted token); the
+  `labs.google` kill-switch behavior is unchanged.
+
 ## [0.73.0] — 2026-09-10
 
 ### Security
