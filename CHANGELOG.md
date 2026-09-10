@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Google auth URLs no longer reach user-facing error messages with their query
+  intact.** `client._handle_account_chooser`'s three raise sites interpolated
+  `page.url` verbatim, and Google's auth URLs carry `state`, `code_challenge`,
+  `client_id` and challenge tokens (`TL=…`). That text is the artifact users are
+  asked to paste into a GitHub issue.
+  - **Measured, not theorised:** a real `gflow image t2i --profile <name>` on
+    2026-09-10 exited 38 and printed
+    `accounts.google.com/v3/signin/challenge/pwd?TL=ACv9tzFkh8ZJ…` along with the
+    OAuth `state` and `client_id`. Re-running the identical command after the fix:
+    same exit 38, same landing named, **zero** secret matches.
+  - New `safe_page_url()` in `api/transports/_common.py` keeps scheme+host+path and
+    drops query+fragment; all four raise sites (the three in `client.py` plus
+    `raise_if_known_landing`) route through it rather than stripping inline.
+  - The landing is still named — knowing *where* the session stopped is the whole
+    value of the message; only the credentials are gone.
+
 ### Fixed
 - **A known Flow landing page is no longer reported as selector drift**
   ([#756](https://github.com/ffroliva/gflow-cli/issues/756), and the 2026-09-10 RED

@@ -67,6 +67,7 @@ from gflow_cli.api.transports._common import (
     await_url_settled,
     flow_host_kind,
     raise_if_migrated,
+    safe_page_url,
 )
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
@@ -839,8 +840,8 @@ class FlowApiClient:
         if not email:
             raise FlowAccountChooserError(
                 detail=(
-                    f"Google sign-in/chooser displayed at {url} but no account is recorded "
-                    f"in this profile to auto-select."
+                    f"Google sign-in/chooser displayed at {safe_page_url(url)} but no "
+                    f"account is recorded in this profile to auto-select."
                 )
             )
 
@@ -865,8 +866,8 @@ class FlowApiClient:
         if count == 0:
             raise FlowAccountChooserError(
                 detail=(
-                    f"Account chooser displayed at {url} but recorded account '{email}' "
-                    f"was not found among selectable accounts."
+                    f"Account chooser displayed at {safe_page_url(url)} but recorded "
+                    f"account '{email}' was not found among selectable accounts."
                 )
             )
 
@@ -897,7 +898,7 @@ class FlowApiClient:
             raise FlowAccountChooserError(
                 detail=(
                     f"Clicked recorded account '{email}' on the chooser but the session "
-                    f"did not reach Flow within 30s — it is at {landed}."
+                    f"did not reach Flow within 30s — it is at {safe_page_url(landed)}."
                 )
             ) from exc
         logger.info(
