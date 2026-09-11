@@ -41,7 +41,11 @@ from gflow_cli.api.transports._common import (
     raise_if_known_landing,
     raise_if_migrated,
 )
-from gflow_cli.api.transports.migrated_composer import MENU_ITEM, ModelMenuMatcher
+from gflow_cli.api.transports.migrated_composer import (
+    MENU_ITEM,
+    ModelMenuMatcher,
+    migrated_images_prefer,
+)
 from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
@@ -3050,7 +3054,22 @@ class UiAutomationTransport(VideoGenerationMixin):
             return self._served_migrated_host
         from gflow_cli.config import get_settings  # noqa: PLC0415
 
-        route = migrated_route(self._page.url, get_settings().flow_host)
+        url = self._page.url
+        if (
+            url.startswith("https://labs.google/fx/")
+            and extract_project_id(url) is None
+            and get_settings().flow_host != "labs.google"
+        ):
+            # Pre-navigation bootstrap page (bare or locale-prefixed, no project
+            # segment): Flow may still redirect it client-side, so assume the
+            # migrated host and let the page-owned recaptcha path win the
+            # post-goto handoff race (#692). Deliberately WITHOUT arming the
+            # latch — an assumption is not evidence, and arming it here would
+            # stop a labs account minting the token it genuinely needs.
+            # `_drive_images_generation` re-checks servability before skipping
+            # the mint, so a wrong assumption costs a redundant mint, never a run.
+            return True
+        route = migrated_route(url, get_settings().flow_host)
         if route in {"migrated", "blocked"}:
             self._served_migrated_host = True
             return True
@@ -3075,20 +3094,22 @@ class UiAutomationTransport(VideoGenerationMixin):
         from gflow_cli.config import get_settings  # noqa: PLC0415
 
         flow_host = get_settings().flow_host
-        route = migrated_route(page.url, flow_host)
+        prefer = migrated_images_prefer(request, page_url=page.url, project_id=project_id)
+        route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
         if route == "labs":
             await self._enter_editor(page, out_dir, project_id=project_id)
             # Dismiss any Flow changelog / "What's new" overlay that may be on top
             # of the editor before we click into settings / submit (#26).
             await self._dismiss_blocking_overlays(page, out_dir)
-            route = migrated_route(page.url, flow_host)
+            prefer = migrated_images_prefer(request, page_url=page.url, project_id=project_id)
+            route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
         if route in {"migrated", "blocked"}:
             self._served_migrated_host = True
         if route == "blocked":
             raise_if_migrated(page, at="image_flow_host_kill_switch")
         if route == "migrated":
             try:
-                return await run_images(page, request, project_id=project_id)
+                return await run_images(page, request, project_id=project_id, out_dir=out_dir)
             finally:
                 # Park off the project so the next borrower of this page does not
                 # inherit a mounted composer. The URL is therefore NOT a reliable

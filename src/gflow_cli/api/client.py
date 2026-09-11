@@ -2663,7 +2663,19 @@ class FlowApiClient:
                 msg,
             )
         page_owned = getattr(self.transport, "uses_page_owned_image_recaptcha", None)
+        serve_migrated = False
         if callable(page_owned) and page_owned():
+            from gflow_cli.api.transports.migrated_composer import (  # noqa: PLC0415
+                migrated_images_prefer,
+            )
+
+            # The capability answers from the page URL alone and cannot see the
+            # request: re-check servability here so entity/instruction runs and
+            # project-less runs keep their pre-minted token. A redundant mint on
+            # a migrated run is harmless (the page mints its own); a missing mint
+            # on a labs run is a terminal auth failure.
+            serve_migrated = migrated_images_prefer(req, project_id=project_id)
+        if serve_migrated:
             # The migrated Angular page mints and submits its own token on ogiZ0b.
             # Minting here first is not only redundant: the pooled bootstrap page is
             # flow.google.com/ (no enterprise.js), while /project/<id> is the page that
