@@ -174,30 +174,83 @@ def _rpcids(arm: dict[str, Any]) -> dict[str, list[int]]:
     return out
 
 
+#: Hosts that are Google furniture rather than Flow's API: fonts, tag manager, analytics,
+#: the OneGoogle account bar, Play logging. Listed so EVERY response can be classified —
+#: "zero batchexecute calls" is a statement about one route shape and would leave any
+#: other Flow request unexamined, which is not the same claim at all.
+_NON_FLOW_HOSTS = (
+    "fonts.googleapis.com",
+    "fonts.gstatic.com",
+    "www.googletagmanager.com",
+    "region1.google-analytics.com",
+    "www.google-analytics.com",
+    "ogads-pa.clients6.google.com",
+    "play.google.com",
+    "lh3.google.com",
+    "www.gstatic.com",
+)
+
+
+def _classify(arm: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Every response, bucketed — so nothing is left unexamined by omission."""
+    buckets: dict[str, list[dict[str, Any]]] = {
+        "flow_batchexecute": [],
+        "flow_other": [],
+        "non_flow": [],
+    }
+    for r in arm["responses"]:
+        host = urlsplit(r["route"]).netloc
+        if "rpcids=" in r["route"]:
+            buckets["flow_batchexecute"].append(r)
+        elif any(host == h for h in _NON_FLOW_HOSTS):
+            buckets["non_flow"].append(r)
+        else:
+            buckets["flow_other"].append(r)
+    return buckets
+
+
 def report(failing: dict[str, Any], control: dict[str, Any]) -> dict[str, Any]:
     f_rpc, c_rpc = _rpcids(failing), _rpcids(control)
-    f_bad = [r for r in failing["responses"] if r["status"] >= 400]
-    c_bad = [r for r in control["responses"] if r["status"] >= 400]
+    f_cls, c_cls = _classify(failing), _classify(control)
     return {
-        "document_status": {
-            "failing": (failing.get("document") or {}).get("status"),
-            "control": (control.get("document") or {}).get("status"),
+        "document": {
+            # `page.goto` resolves to the FINAL main resource after following any server
+            # redirect, so `status` alone cannot tell 200-then-client-hop from
+            # 302-to-/about: both end 200 with no Location. The discriminators are the
+            # resolved URL (a server redirect resolves to /about) and the 3xx list below.
+            "failing_status": (failing.get("document") or {}).get("status"),
+            "failing_resolved_url": (failing.get("document") or {}).get("url"),
             "failing_location": (failing.get("document") or {}).get("location"),
+            "failing_requested": failing["requested"],
+            "control_status": (control.get("document") or {}).get("status"),
+        },
+        "redirect_responses_3xx": {
+            "failing": [r for r in failing["responses"] if 300 <= r["status"] < 400],
+            "control": [r for r in control["responses"] if 300 <= r["status"] < 400],
         },
         "landed": {"failing": failing["landed"], "control": control["landed"]},
         "navigation_count": {
             "failing": len(failing["navigations"]),
             "control": len(control["navigations"]),
         },
+        "response_classes": {
+            arm: {k: len(v) for k, v in cls.items()}
+            for arm, cls in (("failing", f_cls), ("control", c_cls))
+        },
+        # Named in full, because "0 batchexecute" is not "no Flow request".
+        "failing_flow_requests_other_than_batchexecute": f_cls["flow_other"],
+        "failing_all_routes": [r["route"] for r in failing["responses"]],
         "rpcids_only_in_control": sorted(set(c_rpc) - set(f_rpc)),
         "rpcids_only_in_failing": sorted(set(f_rpc) - set(c_rpc)),
+        # Multiset, not set: [200] and [200, 200] are different answers, and collapsing
+        # them would hide a call the failing arm made half as often.
         "rpcids_in_both_differing_status": {
-            k: {"failing": f_rpc[k], "control": c_rpc[k]}
+            k: {"failing": sorted(f_rpc[k]), "control": sorted(c_rpc[k])}
             for k in sorted(set(f_rpc) & set(c_rpc))
-            if set(f_rpc[k]) != set(c_rpc[k])
+            if sorted(f_rpc[k]) != sorted(c_rpc[k])
         },
-        "non_2xx_failing": f_bad,
-        "non_2xx_control": c_bad,
+        "non_2xx_failing": [r for r in failing["responses"] if r["status"] >= 400],
+        "non_2xx_control": [r for r in control["responses"] if r["status"] >= 400],
     }
 
 

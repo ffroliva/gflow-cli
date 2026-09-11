@@ -4,7 +4,7 @@
 - **Script:** [`scripts/dev/spike_about_redirect_cause.py`](../../../scripts/dev/spike_about_redirect_cause.py)
 - **Arms:** `denon82` (redirects) vs `ci-probe` (opens) — an **A/B**, not an inspection
 - **Cost:** $0 — navigations and response *metadata* only. No bodies, no headers, no generation.
-- **Raw:** `scripts/dev/_spike_out/spike_about_redirect_cause_20260911_154808.json` (gitignored)
+- **Raw:** `scripts/dev/_spike_out/spike_about_redirect_cause_20260911_{154808,192135}.json` (gitignored)
 - **Refs:** [#756](https://github.com/ffroliva/gflow-cli/issues/756)
 
 ## Why it was askable at all
@@ -35,24 +35,39 @@ declines to open it.
 | | `denon82` (fails) | `ci-probe` (control) |
 |---|---|---|
 | document response | **200**, no `Location` | **200**, no `Location` |
+| document **resolved** URL | `/project/<id>` | `/project/<id>` |
+| any 3xx response at all | **none** | one — an avatar on `lh3.google.com` |
 | first navigation | 146 ms, `/project/<id>` | 90 ms, `/project/<id>` |
 | second navigation | **338 ms, `/about`** | 700 ms, same `/project/<id>` |
 | total responses | 7 | 43 |
-| `batchexecute` calls | **0** | 20, first at **275 ms** |
+| Flow requests: `batchexecute` | **0** | 20, first at **275 ms** |
+| Flow requests: **anything else** | **1 — the document itself** | 15 |
+| non-Flow (fonts, GTM, analytics, OneGoogle, Play) | 6 | 8 |
 | non-2xx from any Flow endpoint | **none** | none |
 
-The only non-2xx on the failing arm is `play.google.com/log` 401 — telemetry, on a
-different origin, and unrelated.
+Every response is classified, not just the `batchexecute` ones: "zero `batchexecute`
+calls" is a statement about one route shape and would leave any other Flow request
+unexamined. Classified in full, the failing arm's **only** request to `flow.google.com`
+is the document. The single non-2xx anywhere is `play.google.com/log` 401 — telemetry, a
+different origin, present regardless.
+
+Two runs, ~3.5 hours apart, identical on every row above.
 
 ## Verdict
 
-**Not a server-side redirect.** Both documents are served `200` with no `Location`. This
-is the app deciding, client-side, 192 ms after its own first navigation commits.
+**Not a server-side redirect.** `page.goto` resolves to the *final* main resource after
+following any server redirect, so a `200` with no `Location` is on its own consistent
+with both a client hop and a 302 to `/about` — the status alone settles nothing. Two
+things do: the document's **resolved URL is `/project/<id>`**, not `/about` (a server
+redirect would have resolved to the destination), and there is **no 3xx response
+anywhere** in the failing arm. So this is the app deciding, client-side, 192 ms after its
+own first navigation commits.
 
-**And it decides without asking Flow.** The failing arm issued **zero** `batchexecute`
-calls — not "called and was refused", *never called*. There is no 401, no 403, no 404 to
-point at, because there is no request. The sixteen rpcids the control makes
-(`Zzl0ze`, `as29s`, `tRARke`, …) are simply absent.
+**And it decides without asking Flow.** The failing arm's only request to
+`flow.google.com` is the document itself — zero `batchexecute`, and zero of anything
+else. Not "called and was refused", *never called*. There is no 401, no 403, no 404 to
+point at, because there is no request. The sixteen rpcids the control makes (`Zzl0ze`,
+`as29s`, `tRARke`, …) are simply absent, as are its other fifteen Flow calls.
 
 The cross-arm timing is what makes that a finding rather than a race: the control had
 already made its **first** rpc at 275 ms, before the failing arm hopped at 338 ms. Two
