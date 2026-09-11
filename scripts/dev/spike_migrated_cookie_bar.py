@@ -316,7 +316,15 @@ async def main() -> int:
             "does the glue cookie bar render on flow.google.com/project/<id>, and does it "
             "win elementFromPoint over the settings trigger or the image submit? (#780/#781)"
         ),
-        "cost": "credit-free: navigation and DOM reads only; the bar is observed, never clicked",
+        "cost": (
+            "credit-free: navigation and DOM reads"
+            + (
+                "; one consent REJECT click in the control arm"
+                if args.dismiss
+                else "; the bar is observed, never clicked"
+            )
+        ),
+        "dismiss_arm": args.dismiss,
         "cookie_bar_selector": COOKIE_BAR,
         "cookie_bar_buttons_selector": COOKIE_BAR_BUTTONS,
         "visits": [],

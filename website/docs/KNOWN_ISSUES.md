@@ -218,11 +218,13 @@ Installs from PyPI are unaffected.
 Google's `glue` consent bar (`#glue-cookie-notification-bar-1`) is `position: fixed`
 at `z-index: 1000`, and Flow's composer is bottom-anchored in the same band. The bar
 therefore lands **on** the settings trigger *and* on the image submit button.
-Measured 2026-09-11: `elementFromPoint` over each returned the bar's label span in
-5/5 rendered samples, on the same profile and project where the click had landed 3/3
-the day before — so it arrives whenever Google re-prompts for consent, not once per
-profile. The labs driver survives it by accident; `_bypass_onboarding` carries a text
-match on "Agree". The migrated driver had no equivalent.
+Measured 2026-09-11 on the `ci-probe` profile: `elementFromPoint` over each returned
+the bar's label span in 5/5 rendered samples, on the same profile and project where
+the click had landed 3/3 the day before. **How widely it fires is unmeasured** — one
+account observed blocked, one observed already-consented — so treat the recurrence
+pattern as unknown rather than as once-per-profile. The labs driver survives it by
+accident; `_bypass_onboarding` carries a text match on "Agree". The migrated driver
+had no equivalent.
 
 Through 0.73.0 the run fails at exit 23 with `it is covered by span` — the element on
 top is the bar's label, whose identity lives in an `id` the occluder allowlist drops,

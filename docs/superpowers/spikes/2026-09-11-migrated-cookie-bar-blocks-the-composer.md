@@ -118,10 +118,16 @@ dismiss.
 ## A finding the control arm produced by accident
 
 The bar's buttons are, in DOM order, `glue-cookie-notification-bar__accept` ("Agree") then
-`glue-cookie-notification-bar__reject` ("No thanks"). PR #781 dismisses with
-`buttons.first`, so it **accepts** cookies on the user's behalf. `scripts/smoke_video_editor.py`
-already does the same. Rejecting unblocks the composer identically — the bar just has to
-go — so index 1 is the same fix without making a consent decision for the operator.
+`glue-cookie-notification-bar__reject` ("No thanks"). PR #781 dismissed with
+`buttons.first`, so it **accepted** cookies on the user's behalf — and because the control
+arm ran that version, this spike accepted on `ci-probe` before anyone noticed.
+`scripts/smoke_video_editor.py` still does the same. Rejecting unblocks the composer
+identically, so index 1 is the same fix without making a consent decision for the operator.
+
+The shipped fix (PR #782) therefore anchors on `.glue-cookie-notification-bar__reject`,
+and re-running this spike's `--dismiss` arm today rejects rather than accepts: it imports
+the driver's own `_dismiss_cookie_bar` instead of clicking the bar itself, so the control
+arm always measures whatever actually ships.
 
 ## What this means for the fix
 
