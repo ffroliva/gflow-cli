@@ -76,7 +76,36 @@ without spending quota a second time.
 
 ---
 
-## What was NOT verified, and why
+## Addendum, same day — the two open items closed
+
+Both were recorded below as *not verified* at tag time. Both were then measured, and this
+section is the record rather than a rewrite of what shipped.
+
+**Prevalence — answered by mechanism.** A count of users is not obtainable here (no
+telemetry), but the gate is: `localStorage["glue.CookieNotificationBar"]` on the
+`flow.google.com` origin. Not a cookie, which is why no profile carried `SOCS`. A clean
+browser profile reads the bar visible **4/4**; a second untouched authenticated profile
+(`pr389fresh2`) read **5/5**. Removing that one key on `ci-probe` — touching no cookie,
+so no auth — flipped the editor from *both controls hit-testable* to **both covered by
+`span#glue-cookie-notification-bar-1-label`**. So the bar is the origin's default state
+and a stored dismissal is what removes it: every fresh profile meets it, and any profile
+whose dismissal Google resets meets it again.
+
+**The cure, against a live bar, on the released build.** With the bar restored by that
+intervention, the ordinary CLI command ran on `cli_version: 0.73.1`:
+`migrated.editor_ready` → **`migrated.cookie_bar_dismissed`** 86 ms later →
+`image_settings_applied` → `prompt_typed` → `status: ok`, media `257d8f79-…`, a
+651,576-byte `ffd8ffe0` JPEG that Pillow reads as 1024×1024 RGB.
+
+Still not measured: the *covering* geometry on a second account's editor. `denon82` and
+`pr389fresh2` both redirect to `/about`, so origin-level presence is measured on three
+profiles and the occlusion on one.
+
+---
+
+## What was NOT verified at tag time, and why
+
+*(The first two are closed by the addendum above; kept as written for the record.)*
 
 **The cure against a live bar, outside the browser.** The consent state is not summonable
 on demand, and this release's own control arm consumed it on the only profile that had it.
