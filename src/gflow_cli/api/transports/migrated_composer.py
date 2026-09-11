@@ -136,6 +136,21 @@ DIALOG = "[role='dialog']"
 CREDITS_WARNING = "button.prompt-warning-button, [aria-label*='Insufficient credits']"
 DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
 
+#: Google's `glue` consent bar — a Google-wide component, not one of Flow's. It is
+#: `position: fixed`, `z-index: 1000`, and Flow's composer is bottom-anchored in the
+#: same band, so the bar lands ON the settings trigger and on the submit button:
+#: `elementFromPoint` over each returned the bar's label span in 5/5 rendered samples
+#: (2026-09-11, `ci-probe`, same profile and project where the click had landed 3/3 the
+#: day before). The labs driver survives this by accident — `_bypass_onboarding`'s
+#: Tier 2 carries `button:has-text('Agree')` — and this host had no equivalent.
+#: Evidence: docs/superpowers/spikes/2026-09-11-migrated-cookie-bar-blocks-the-composer.md
+COOKIE_BAR = "#glue-cookie-notification-bar-1, .glue-cookie-notification-bar"
+#: REJECT, not accept. Both buttons remove the bar and unblock the composer identically,
+#: and only one of them answers a consent question on the operator's behalf. The class is
+#: structural (glue's own BEM modifier), so this stays locale-invariant where matching
+#: "No thanks" would not.
+COOKIE_BAR_REJECT = "button.glue-cookie-notification-bar__reject"
+
 #: ``YhhmEf`` is the text-to-video submit; ``eb1hJf`` the image-to-video one (a bound
 #: Start chip switches the app between them — 2026-09-05 frames spike).
 #: t2v submits on ``YhhmEf``, i2v on ``eb1hJf``, and an Ingredients (r2v) run on
@@ -214,11 +229,21 @@ _CLICK_POSTMORTEM_JS = r"""
   const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
   const top = (box.width && box.height) ? document.elementFromPoint(cx, cy) : null;
   const hit = !!top && (top === el || el.contains(top) || top.contains(el));
-  // Angular/CDK, Material and Flow's own components. A layout class on a bare <div>
-  // is an accident; `cdk-overlay-backdrop` is a component boundary and says what the
-  // thing IS, in any locale.
+  // Angular/CDK, Material, Flow's own components, and Google's `glue` design system.
+  // A layout class on a bare <div> is an accident; `cdk-overlay-backdrop` is a
+  // component boundary and says what the thing IS, in any locale.
   const structural = (n) =>
-    [...n.classList].filter(c => /^(cdk|mat|mdc|flow)-/.test(c)).slice(0, 3).join('.');
+    [...n.classList].filter(c => /^(cdk|mat|mdc|flow|glue)-/.test(c)).slice(0, 3).join('.');
+  // The element on top is often an inner node that names nothing — a consent bar's
+  // label is a bare <span> whose identity lives in an `id` the allowlist deliberately
+  // drops, so the report read "it is covered by span". Climb to the nearest ancestor
+  // that DOES name itself. Bounded by <body>; when nothing on the chain qualifies the
+  // tag name is still reported, exactly as before.
+  const carrier = (n) => {
+    let cur = n;
+    while (cur && cur !== document.body && !structural(cur)) cur = cur.parentElement;
+    return (cur && structural(cur)) ? cur : n;
+  };
   return {
     visible: cs.display !== 'none' && cs.visibility !== 'hidden'
              && box.width > 0 && box.height > 0,
@@ -229,7 +254,8 @@ _CLICK_POSTMORTEM_JS = r"""
     // reading that never fires costs nothing, and a missing one costs a wrong answer.
     body_blocked: getComputedStyle(document.body).pointerEvents === 'none',
     occluder: (top && !hit)
-      ? (top.tagName.toLowerCase() + (structural(top) ? '.' + structural(top) : ''))
+      ? ((c) => c.tagName.toLowerCase() + (structural(c) ? '.' + structural(c) : ''))(
+          carrier(top))
       : null,
   };
 }
@@ -1002,7 +1028,32 @@ class MigratedComposer:
             raise
         await self._close_pane(page, strict=True)
 
+    async def _dismiss_cookie_bar(self, page: Page) -> None:
+        """Clear Google's consent bar, which sits on top of the controls we click.
+
+        Called from :meth:`_open_pane` — the one place both the image and the video path
+        take their FIRST click, and early enough that consent is stored before anything
+        else on the page is touched. The bar was already up 114 ms after
+        ``domcontentloaded`` in every measured sample, so nothing here has to wait for it.
+
+        **Best-effort on purpose.** A bar that refuses to go is not turned into a second
+        error path: the click one line later fails through :meth:`_click`, whose
+        post-mortem now names ``div.glue-cookie-notification-bar`` as the occluder. One
+        attributed failure beats two competing ones, and it costs no code.
+        """
+        bar = page.locator(COOKIE_BAR).first
+        try:
+            if not await bar.is_visible():
+                return
+            await bar.locator(COOKIE_BAR_REJECT).first.click(timeout=3000)
+            await bar.wait_for(state="hidden", timeout=3000)
+        except Exception as e:  # noqa: BLE001 - the click post-mortem reports what is left
+            log.warning("migrated.cookie_bar_not_dismissed", error=str(e)[:120])
+            return
+        log.info("migrated.cookie_bar_dismissed")
+
     async def _open_pane(self, page: Page) -> Any:
+        await self._dismiss_cookie_bar(page)
         trigger = page.locator(READY_ANCHOR).first
         try:
             # Visibility, not `count()`. Agent mode leaves the trigger in the DOM under a

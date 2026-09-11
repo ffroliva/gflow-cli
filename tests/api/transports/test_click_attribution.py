@@ -159,6 +159,66 @@ async def test_a_failed_hit_test_without_an_occluder_is_not_called_healthy(
     assert "hit-testable at the moment" not in detail
 
 
+@pytest.mark.asyncio
+async def test_a_stuck_consent_bar_does_not_become_its_own_error(
+    composer: MigratedComposer,
+) -> None:
+    """The dismissal is best-effort, and that is load-bearing rather than lazy.
+
+    A bar that refuses to go must fall through to the click post-mortem, which names it.
+    Raising here instead would produce a second, competing error for one fact — and it
+    would fire on a page where the bar is visible but harmless, which the labs surface
+    shows is the common case.
+
+    The browser proves the whole path in ``tests/e2e/test_click_attribution_bdd.py``;
+    this pins the contract that no exception escapes, which no e2e assertion states.
+    """
+
+    class _StuckBar:
+        first = property(lambda self: self)  # type: ignore[assignment]
+
+        async def is_visible(self) -> bool:
+            return True
+
+        def locator(self, _sel: str) -> Any:
+            return self
+
+        async def click(self, **_: object) -> None:
+            raise PlaywrightTimeoutError("Timeout 3000ms exceeded")
+
+        async def wait_for(self, **_: object) -> None:  # pragma: no cover - never reached
+            raise AssertionError("the click failed; the postcondition must not be waited on")
+
+    class _PageWithBar:
+        def locator(self, _sel: str) -> Any:
+            return _StuckBar()
+
+    await composer._dismiss_cookie_bar(_PageWithBar())  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_no_consent_bar_costs_one_visibility_read(composer: MigratedComposer) -> None:
+    """The common case — no bar — must not click, wait, or raise."""
+    clicked: list[str] = []
+
+    class _AbsentBar:
+        first = property(lambda self: self)  # type: ignore[assignment]
+
+        async def is_visible(self) -> bool:
+            return False
+
+        def locator(self, sel: str) -> Any:
+            clicked.append(sel)
+            return self
+
+    class _PageWithoutBar:
+        def locator(self, _sel: str) -> Any:
+            return _AbsentBar()
+
+    await composer._dismiss_cookie_bar(_PageWithoutBar())  # noqa: SLF001
+    assert clicked == [], f"reached for a dismiss button with no bar present: {clicked}"
+
+
 async def _drift(composer: MigratedComposer, *, state: dict[str, Any]) -> UiSelectorDriftError:
     with pytest.raises(UiSelectorDriftError) as caught:
         await composer._click(  # noqa: SLF001
