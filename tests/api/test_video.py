@@ -122,6 +122,16 @@ class TestGenerateVideoRequest:
         with pytest.raises(ValueError, match="prompt must not be empty"):
             GenerateVideoRequest(prompt="   ")
 
+    def test_resolution_accepts_360p_and_720p(self) -> None:
+        req360 = GenerateVideoRequest(prompt="x", resolution="360p")
+        assert req360.resolution == "360p"
+        req720 = GenerateVideoRequest(prompt="x", resolution="720p")
+        assert req720.resolution == "720p"
+
+    def test_resolution_rejects_invalid(self) -> None:
+        with pytest.raises(ValueError, match="resolution must be '360p' or '720p'"):
+            GenerateVideoRequest(prompt="x", resolution="1080p")
+
     def test_t2v_must_not_carry_image_inputs(self) -> None:
         with pytest.raises(ValueError, match="T2V request must not carry image inputs"):
             GenerateVideoRequest(prompt="x", mode=Mode.T2V, start_image=Path("a.png"))

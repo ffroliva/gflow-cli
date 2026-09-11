@@ -106,6 +106,10 @@ class TestImageModel:
     def test_nano_pro_alias(self) -> None:
         assert Model.from_cli("nano-pro") is Model.GEM_PIX_2
 
+    def test_nano2_lite_alias(self) -> None:
+        assert Model.from_cli("nano2-lite") is Model.HARBOR_SEAL
+        assert Model.from_cli("nano-banana-2-lite") is Model.HARBOR_SEAL
+
     def test_image4_alias(self) -> None:
         assert Model.from_cli("image4") is Model.IMAGEN_3_5
 
@@ -115,6 +119,7 @@ class TestImageModel:
     def test_wire_value(self) -> None:
         assert Model.NARWHAL.value == "NARWHAL"
         assert Model.GEM_PIX_2.value == "GEM_PIX_2"
+        assert Model.HARBOR_SEAL.value == "HARBOR_SEAL"
         assert Model.IMAGEN_3_5.value == "IMAGEN_3_5"
 
     def test_unknown_alias_raises(self) -> None:
@@ -187,6 +192,7 @@ class TestReferenceCap:
     def test_cap_values(self) -> None:
         assert reference_cap_for(Model.NARWHAL) == 10
         assert reference_cap_for(Model.GEM_PIX_2) == 10
+        assert reference_cap_for(Model.HARBOR_SEAL) == 10
         assert reference_cap_for(Model.IMAGEN_3_5) == 3
 
     def test_at_cap_is_allowed(self) -> None:

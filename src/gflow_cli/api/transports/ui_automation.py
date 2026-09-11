@@ -130,6 +130,7 @@ IMAGE_MODEL_OPTION_SELECTORS: dict[Model, tuple[str, ...]] = {
     # governance test bless something that cannot work against Flow.
     Model.NARWHAL: ("[role='menuitem']:has-text('Nano Banana 2'):not(:has-text('Lite'))",),
     Model.GEM_PIX_2: ("[role='menuitem']:has-text('Nano Banana Pro')",),
+    Model.HARBOR_SEAL: ("[role='menuitem']:has-text('Nano Banana 2 Lite')",),
     Model.IMAGEN_3_5: ("[role='menuitem']:has-text('Imagen 4')",),
 }
 

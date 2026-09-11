@@ -13,7 +13,11 @@ from typing import Any
 import pytest
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from gflow_cli.api.transports.migrated_composer import MigratedComposer
+from gflow_cli.api.transports.migrated_composer import (
+    COOKIE_BAR_ACCEPT,
+    COOKIE_BAR_REJECT,
+    MigratedComposer,
+)
 from gflow_cli.errors import UiSelectorDriftError
 
 
@@ -180,6 +184,9 @@ async def test_a_stuck_consent_bar_does_not_become_its_own_error(
         async def is_visible(self) -> bool:
             return True
 
+        async def count(self) -> int:
+            return 1
+
         def locator(self, _sel: str) -> Any:
             return self
 
@@ -194,6 +201,42 @@ async def test_a_stuck_consent_bar_does_not_become_its_own_error(
             return _StuckBar()
 
     await composer._dismiss_cookie_bar(_PageWithBar())  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_single_button_accept_cookie_bar_is_dismissed(composer: MigratedComposer) -> None:
+    """When the bar only carries an accept button (no reject), dismiss clicks accept."""
+    clicked: list[str] = []
+
+    class _SingleButtonBar:
+        first = property(lambda self: self)  # type: ignore[assignment]
+
+        async def is_visible(self) -> bool:
+            return True
+
+        def locator(self, sel: str) -> Any:
+            class _Inner:
+                first = property(lambda self: self)
+
+                async def count(self) -> int:
+                    if sel == COOKIE_BAR_REJECT:
+                        return 0
+                    return 1
+
+                async def click(self, **_: object) -> None:
+                    clicked.append(sel)
+
+            return _Inner()
+
+        async def wait_for(self, **_: object) -> None:
+            pass
+
+    class _PageWithSingleButtonBar:
+        def locator(self, _sel: str) -> Any:
+            return _SingleButtonBar()
+
+    await composer._dismiss_cookie_bar(_PageWithSingleButtonBar())  # noqa: SLF001
+    assert clicked == [COOKIE_BAR_ACCEPT]
 
 
 @pytest.mark.asyncio

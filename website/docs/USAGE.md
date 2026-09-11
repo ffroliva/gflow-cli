@@ -211,7 +211,7 @@ Options:
                             to disable. Widen (e.g. 10-30) if runs hit WAF
                             403s. [default: 0.5-1.5; GFLOW_CLI_JITTER_RANGE
                             overrides the default]
-  --model [nano2|nano-pro|image4]
+  --model [nano2|nano-pro|nano2-lite|image4]
                             Image model alias.                [default: nano2]
   --aspect [9:16|16:9|1:1|4:3|3:4]
                             Aspect ratio.                     [default: 9:16]
@@ -245,6 +245,7 @@ Options:
 |---|---|---|
 | `nano2` | Nano Banana 2 (`NARWHAL`) | Default. Fast, balanced quality. |
 | `nano-pro` | Nano Banana Pro (`GEM_PIX_2`) | Higher quality, slower. |
+| `nano2-lite` | Nano Banana 2 Lite (`HARBOR_SEAL`) | Lightweight, faster Nano Banana 2 variant. |
 | `image4` | Imagen 4 (`IMAGEN_3_5`) | Photoreal-leaning Imagen variant. |
 
 **Multi-prompt shortcut.**
@@ -344,7 +345,7 @@ Arguments:
 
 Options:
   --ref PATH_OR_UUID        Reference image. Repeat for multiple. [required]
-  --model [nano2|nano-pro|image4]
+  --model [nano2|nano-pro|nano2-lite|image4]
                             Image model alias.                [default: nano2]
   --aspect [9:16|16:9|1:1|4:3|3:4]
                             Aspect ratio.                     [default: 9:16]
@@ -582,9 +583,12 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 Generate a video from a text prompt only.
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [-o/--output]
+gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [-o/--output]
 
 Options:
+  --resolution [360p|720p]
+                        Video resolution ('360p' or '720p', supported on omni-flash).
+                        Omit for Flow's default.
   -o, --output PATH     Explicit destination file path for the generated asset
                         (e.g., `./out/clip.mp4`). Overrides automatic filename.
   --project ID          Generate in this EXISTING Flow project instead of a
@@ -641,7 +645,7 @@ the editor's frame slot via the media dialog, then Flow fires
 > driver for those.
 
 ```text
-gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [--ui-mode] [...]
+gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [...]
 
 # Back-compat positional form (still supported):
 gflow video i2v IMAGE PROMPT [--end-frame LAST] [...]
@@ -653,6 +657,8 @@ Options:
   --initial-frame PATH|UUID  Initial frame to animate: local image path or in-project
                              asset media UUID. Canonical form; replaces the positional IMAGE.
   --end-frame PATH|UUID      Optional end frame — Flow interpolates initial frame -> end frame.
+  --resolution [360p|720p]   Video resolution ('360p' or '720p', supported on omni-flash).
+                             Omit for Flow's default.
   --project ID               Generate in this EXISTING Flow project instead of a
                              scratch project (see "Sharing one project across calls").
   -o, --output PATH          Explicit destination file path for the mp4 (parents
@@ -685,12 +691,14 @@ images. Per-model cap: `omni-flash` ≤7, the `veo-*` models ≤3. Fires
 `batchAsyncGenerateVideoReferenceImages`.
 
 ```text
-gflow video r2v PROMPT --ref IMG [--ref IMG ...] [--model] [--duration] [--count] [--aspect] [...]
+gflow video r2v PROMPT --ref IMG [--ref IMG ...] [--model] [--duration] [--resolution] [--count] [--aspect] [...]
 
 Options:
-  --ref PATH    Reference image; repeat for up to 7 (omni-flash) / 3 (veo). [required]
-  --project ID  Generate in this EXISTING Flow project instead of a scratch
-                project (see "Sharing one project across calls").
+  --ref PATH                Reference image; repeat for up to 7 (omni-flash) / 3 (veo). [required]
+  --resolution [360p|720p]  Video resolution ('360p' or '720p', supported on omni-flash).
+                            Omit for Flow's default.
+  --project ID              Generate in this EXISTING Flow project instead of a scratch
+                            project (see "Sharing one project across calls").
 ```
 
 ```bash

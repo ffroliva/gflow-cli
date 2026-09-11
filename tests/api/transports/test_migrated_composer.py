@@ -631,6 +631,8 @@ class FakePage:
             return FakeLocator(self, "cookie_bar", ["bar"], visible=lambda: dom.cookie_bar_visible)
         if css == migrated_composer.COOKIE_BAR_REJECT:
             return FakeLocator(self, "cookie_reject", ["reject"] if dom.cookie_bar_visible else [])
+        if css == migrated_composer.COOKIE_BAR_ACCEPT:
+            return FakeLocator(self, "cookie_accept", ["accept"] if dom.cookie_bar_visible else [])
         raise AssertionError(f"composer used an unmodelled selector: {css!r}")
 
 
@@ -738,6 +740,32 @@ async def test_apply_video_settings_selects_each_axis_and_reads_back() -> None:
     assert page.dom.groups["duration"][1].checked  # 6s
     assert page.dom.groups["count"][1].checked  # x2
     assert not page.dom.pane_open  # closed afterwards
+
+
+async def test_apply_video_settings_selects_resolution() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    assert page.dom.groups["resolution"][1].checked  # default 720p
+
+    await MigratedComposer().apply_video_settings(page, _t2v(resolution="360p"))
+    assert page.dom.groups["resolution"][0].checked  # 360p
+    assert not page.dom.groups["resolution"][1].checked
+
+    await MigratedComposer().apply_video_settings(page, _t2v(resolution="720p"))
+    assert page.dom.groups["resolution"][1].checked
+    assert not page.dom.groups["resolution"][0].checked
+
+
+async def test_apply_video_settings_resolution_row_absent_raises() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import ConfigurationError
+
+    page = FakePage()
+    del page.dom.groups["resolution"]
+
+    with pytest.raises(ConfigurationError, match="renders no resolution control offering '360p'"):
+        await MigratedComposer().apply_video_settings(page, _t2v(resolution="360p"))
 
 
 async def test_the_consent_bar_is_cleared_on_the_video_path_too() -> None:
