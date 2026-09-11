@@ -210,6 +210,34 @@ on the first try.
 with `uv tool run --from gflow-cli python -c "import importlib.metadata as m; print(m.version('playwright'))"`.
 Installs from PyPI are unaffected.
 
+### Google's cookie-consent bar covers the composer on the migrated host — fixed in 0.73.1
+
+- **Status:** Fixed in 0.73.1 ([#780](https://github.com/ffroliva/gflow-cli/issues/780)) · **Affects:** `flow.google.com`, all versions through 0.73.0
+- **Severity:** High while it fires (every image and video run on that profile fails) · **Cost:** none — it fails before any submit, so no credits are spent
+
+Google's `glue` consent bar (`#glue-cookie-notification-bar-1`) is `position: fixed`
+at `z-index: 1000`, and Flow's composer is bottom-anchored in the same band. The bar
+therefore lands **on** the settings trigger *and* on the image submit button.
+Measured 2026-09-11: `elementFromPoint` over each returned the bar's label span in
+5/5 rendered samples, on the same profile and project where the click had landed 3/3
+the day before — so it arrives whenever Google re-prompts for consent, not once per
+profile. The labs driver survives it by accident; `_bypass_onboarding` carries a text
+match on "Agree". The migrated driver had no equivalent.
+
+Through 0.73.0 the run fails at exit 23 with `it is covered by span` — the element on
+top is the bar's label, whose identity lives in an `id` the occluder allowlist drops,
+so the message named nothing actionable.
+
+0.73.1 dismisses the bar before the first click, choosing **reject** over accept
+(both clear it; only one answers a consent question for you), and teaches the
+post-mortem to climb to the nearest ancestor that names itself, so any bar that
+still refuses to go is reported as `div.glue-cookie-notification-bar`.
+
+**Workaround on 0.73.0 and earlier:** open that profile once in Chrome and dismiss
+the bar by hand. Consent persists in the profile.
+
+Evidence: [`docs/superpowers/spikes/2026-09-11-migrated-cookie-bar-blocks-the-composer.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-09-11-migrated-cookie-bar-blocks-the-composer.md).
+
 ### One-time Flow banner/modal can cover the composer on first load
 
 - **Status:** Open ([#369](https://github.com/ffroliva/gflow-cli/issues/369))

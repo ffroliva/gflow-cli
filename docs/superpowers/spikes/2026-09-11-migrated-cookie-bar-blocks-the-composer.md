@@ -82,7 +82,28 @@ it could not measure was one "you cannot summon on demand — a first visit afte
 deployment". This is that state, arriving on its own. It is the reason that spike declined
 to call 0/3 evidence of transience, and it was right to.
 
-## Two things this did NOT measure
+## How widely does it fire? Still n=1
+
+A second profile was attempted specifically to answer this, and it did not answer it.
+
+`denon82` — an independent account, never touched by this spike — was driven at both
+hosts. **Both arms landed on `https://flow.google.com/about`**, not the project, so no
+composer ever mounted: `trigger_rendered_in` and `submit_rendered_in` were 0/5 in both.
+That run measured a marketing page. It is not a second sample and must not be counted as
+one.
+
+The one thing it does say: on that origin the bar was **in the DOM but hidden** (5/5), so
+consent is already stored for `denon82`. Which is consistent with the mechanism — the bar
+is consent-state dependent, so it fires on a rolling subset of profiles rather than on
+everyone at once — but it is corroboration, not a measurement of prevalence.
+
+**So: one account confirmed blocked, one account confirmed already-consented, prevalence
+unmeasured.** What would settle it: the same probe on several profiles that reach the
+editor. The `/about` redirect that stopped this one is separately recorded in
+[`2026-09-10-about-redirect-stability.md`](2026-09-10-about-redirect-stability.md) and was
+not investigated here.
+
+## Two more things this did NOT measure
 
 **The labs contrast arm failed.** `ci-probe` is a moved account, so
 `labs.google/fx/tools/flow/project/<id>` redirected straight to `flow.google.com` and the

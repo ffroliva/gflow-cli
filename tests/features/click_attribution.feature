@@ -60,6 +60,28 @@ Feature: A click that never lands says why
     Then it fails with exit 23
     And the message contains neither the account email nor the signed URL
 
+  Scenario: Google's consent bar is cleared before the first click
+    # Measured 2026-09-11 on `ci-probe`: the glue bar is fixed at z-index 1000 and Flow's
+    # composer is bottom-anchored in the same band, so the bar lands on the settings
+    # trigger AND on the submit button — 0/5 hit-testable until it goes. The labs driver
+    # survives this by accident (`_bypass_onboarding` carries a text match on "Agree");
+    # this host had nothing.
+    Given a Flow project page whose settings trigger is under Google's consent bar
+    When the driver opens the settings pane
+    Then the pane opens and nothing is raised
+    And the consent bar was rejected, not accepted
+
+  Scenario: A consent bar that will not close is named, never swallowed
+    # The dismissal is best-effort by design: rather than a second error path, a bar that
+    # refuses to go falls through to the click post-mortem. That only works if the
+    # post-mortem can NAME it — and before this fix it could not. The element on top is
+    # the bar's label span, which carries its identity in an `id` the allowlist drops, so
+    # the message read "it is covered by span".
+    Given a Flow project page whose consent bar ignores its own dismiss button
+    When the driver opens the settings pane
+    Then it fails with exit 23
+    And the message names the covering element by tag and structural class
+
   Scenario: A page that cannot be read still reports the failed locator
     # #722's shape: by the time the failure is diagnosed, the document the click was made
     # against is gone and the post-mortem read has nothing to answer with. A diagnostic
