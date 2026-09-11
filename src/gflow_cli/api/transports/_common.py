@@ -264,9 +264,12 @@ def raise_if_known_landing(page: object, *, requested: str, at: str) -> None:
             f"may not have access to that project on this host. It is not selector "
             f"drift, and no gflow-cli release changes it."
         ),
-        # NOT a claim that a retry fails — the ABSENCE of one. See FlowAppError's
-        # docstring for the measurement that could not be made and why False preserves
-        # the answer this shape already gave as exit 23.
+        # MEASURED, as of 2026-09-11: 5/5 consecutive attempts over ~3 minutes on a
+        # live occurrence all landed here, on the account's own project, with a healthy
+        # session. A retry is doomed for an account in this state and costs ~35 s each.
+        # (This was a PRESERVED default until that run — the 2026-09-10 spike got 0/5
+        # because the redirect had stopped reproducing. See
+        # docs/superpowers/spikes/2026-09-11-about-redirect-is-stable-for-an-account.md.)
         retryable=False,
     )
 
