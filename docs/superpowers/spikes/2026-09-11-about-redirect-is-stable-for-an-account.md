@@ -61,10 +61,13 @@ repo's Iron Law is about.
 
 ## What is still NOT measured
 
-**Why the redirect happens**, in either direction. Unchanged and deliberately so — #756
-warns against a fix that asserts an unmeasured cause, and nothing here names one. What is
-now *excluded* is narrower but real: not an expired session, not a missing project, and
-not transience.
+**Why the redirect happens**, in either direction. Narrowed the same day by
+[`2026-09-11-about-redirect-is-decided-client-side.md`](2026-09-11-about-redirect-is-decided-client-side.md),
+which A/B'd the wire against a working account: the document is served **200** with no
+`Location`, the hop is client-side at 338 ms, and the failing arm makes **zero**
+`batchexecute` calls — so there is no refused permissions call to point at. Still not
+named, and #756's warning still stands. What is *excluded* is narrower but real: not an
+expired session, not a missing project, not transience, and not a server-side redirect.
 
 **Whether it ever clears for this account**, and on what timescale. Five attempts over
 three minutes is stability at that scale, not forever. `ci-probe` went from reproducing
@@ -72,6 +75,9 @@ three minutes is stability at that scale, not forever. `ci-probe` went from repr
 
 **Any wider population.** Two accounts have now shown it — `denon82` today, `ci-probe`
 before 2026-09-10 — and one account is still not a cohort.
+
+It is, however, **account-wide rather than project-specific**: a second `denon82` project
+(`5200b87d-…`) redirects identically, 2/2.
 
 ## A consequence worth naming
 
