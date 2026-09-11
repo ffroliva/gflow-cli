@@ -109,6 +109,50 @@ attribution that was never observed, on every migrated image, for every tier. A 
 reading that field — or a future recorder persisting it — believes something no surface
 confirmed. Filed separately; it is pre-existing on `develop` and not #787's doing.
 
+## Addendum — the search was widened, and the boundary moved
+
+"Unverifiable" was challenged as too strong, and fairly. A second pass
+([`spike_image_model_attribution.py`](../../../scripts/dev/spike_image_model_attribution.py))
+removed the filter: **every** `batchexecute` reply on a project load, 20-21 of them, all
+checked for model tokens and for the two media ids.
+
+| rpcid | Size | Model tokens | Media ids |
+|---|---|---|---|
+| `HTrJv` | 24,760 B | **all six** | **none** |
+| `Zzl0ze` | 41,906 B | **none** | **both** |
+| `tRARke` | 31,883 B | none | none |
+| 17 others | 139-3,964 B | none | none |
+
+**No reply carries both.** The join is absent from a whole project load, not just from the
+two surfaces first checked.
+
+The page was checked too, since a UI that displays it proves the data is reachable. Two
+tier labels exist — `span.settings-summary` and `span.model-select-trigger-content` — but
+the first appears **on load, before any interaction**, so both are composer picker state,
+not a property of an image.
+
+**One reading remains open and would flip this:** whether a tier label *tracks the media
+you open*. In one run the label read `Nano Banana 2` on load and `Nano Banana 2 Lite`
+after a thumbnail click — either the settings pane simply showing current state, or the
+opened media loading its own settings into the composer, which would be attribution. The
+two could not be separated: thumbnail `src` does not carry the media id, so a per-media
+A/B could not be targeted, and a later run matched zero tiles.
+
+**What would settle it:** find how the grid identifies a tile (`Zzl0ze` carries the ids,
+so the DOM plausibly does too), then open two media generated with *different* tiers and
+read the label after each.
+
+Two further notes. gflow drives the **same web app** a user drives, so there is no
+privileged surface being missed — the difference is between hosts: labs REST returns
+`modelNameType` per image and the migrated `batchexecute` wire does not appear to. And
+Flow **does** store a model per media for **video** on the labs shape
+(`videoModelControlInput.videoModelName`), so the concept exists in their data model.
+
+No evidence this is regional. Region and cohort gating change *which models an account is
+offered* — and this account is offered Lite — not whether a reply carries a field. The
+account is served UK-region Google cookies; the same probe from another region is
+untested, so no claim is made either way.
+
 ## Not measured
 
 - **Daily quota**, per the oracle problem above. Whether Lite carries a *different* quota
