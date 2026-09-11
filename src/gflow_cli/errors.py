@@ -715,12 +715,15 @@ class FlowAppError(GFlowError):
     1. **Its React error boundary** — the app crashed client-side. Transient;
        retry works. Detected at the mode-switch raise site via the error-page title.
     2. **A redirect to Flow's public landing page** (``/about``, #756) — the app
-       declined to open the project for this session. *Why* is not measured:
+       declined to open the project for this session. *Why* is still not measured:
        ``gflow auth status`` reports the session verified while it happens, so the
-       message names the redirect and stops rather than inventing a cause. Nor is it
-       known whether a retry helps — the redirect stopped reproducing before it could
-       be measured (spike 2026-09-10), so this raise site passes ``retryable=False``
-       to PRESERVE the answer it gave as exit 23, not to claim a retry fails.
+       message names the redirect and stops rather than inventing a cause. Whether a
+       retry helps **is** now measured, on a live occurrence caught 2026-09-11: 5/5
+       consecutive attempts landed on ``/about``, over ~3 minutes, on the account's
+       own project with a healthy session — so ``retryable=False`` at that raise site
+       is the measured answer, not the preserved one it was through 2026-09-10.
+       Excluded by that run, narrowly: not an expired session, not a missing project,
+       not transience. Still open: the cause, and whether it ever clears.
 
     Both otherwise surface as a misleading ``UiSelectorDriftError`` "file a bug" —
     which is the whole reason this class exists. See

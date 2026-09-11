@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `/about` landing's `retryable=False` is now a measurement, not a preserved
+  default.** A live occurrence was caught on a second account and the #756 stability
+  probe re-run unmodified: **5/5** attempts landed on `/about` over ~3 minutes, on the
+  account's own project, with a healthy session — so a retry is doomed and costs ~35 s
+  each. Two comments that said the measurement *could not* be made are corrected;
+  behaviour is unchanged. Still unmeasured: the cause, and whether it ever clears.
+- **An auth-status test no longer depends on how wide the terminal is.** Several steps
+  assert a substring of Rich's output, which hard-wraps — so a temp path landing near
+  the wrap column split `experiments` into `profile_e` + `xperiments` and failed on
+  formatting rather than behaviour. Pinned at the shared `CliRunner` fixture, which is
+  the one chokepoint for every invoke in that file.
+
 ## [0.73.1] — 2026-09-11
 
 ### Fixed

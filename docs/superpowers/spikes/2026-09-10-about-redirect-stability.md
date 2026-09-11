@@ -60,9 +60,12 @@ existing answer instead of inventing a new one under cover of an exit-code chang
 
 - **Why the redirect happened at all**, in either direction. Out of scope by design;
   #756 warns against a fix that asserts an unmeasured cause.
-- **Whether a *second* attempt wins during a live occurrence.** This is the question
-  that actually settles the flag, and it needs someone to catch the redirect while it
-  is happening. Re-run this script with `--attempts 5` at that moment and the answer
-  falls out.
+- ~~**Whether a *second* attempt wins during a live occurrence.**~~ **ANSWERED
+  2026-09-11 — see [`2026-09-11-about-redirect-is-stable-for-an-account.md`](2026-09-11-about-redirect-is-stable-for-an-account.md).**
+  A live occurrence was caught on `denon82` while measuring something else, this script
+  was re-run unmodified at `--attempts 5`, and it came back **5/5 `/about`** over ~3
+  minutes on the account's own project with a healthy session. Per the reading
+  pre-registered above, that is *stable*: a retry is doomed, and `retryable=False` is now
+  the measured answer rather than the preserved one.
 - **Any other account.** One profile is one account; per
   `flow-capabilities-are-cohort-dependent`, an account is not a cohort.
