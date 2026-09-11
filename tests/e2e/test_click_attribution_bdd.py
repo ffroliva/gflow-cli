@@ -81,7 +81,7 @@ def _page(
     chip_html = "<button class='agent-mode-chip' aria-pressed='true'>agent</button>" if chip else ""
     cls = "settings-trigger-button jitter" if jitter else "settings-trigger-button"
     return (
-        f"<!doctype html><html><head><style>{_STYLE}</style></head><body>"
+        f"<!doctype html><html><head><style>{_STYLE}{_CONSENT_STYLE}</style></head><body>"
         f"{chip_html}"
         f"<button class='{cls}' aria-label='Settings trigger'>settings</button>"
         f"{cover}"
@@ -103,12 +103,45 @@ _LEAKY_COVER = (
 )
 
 
+def _consent_bar(*, reject_works: bool = True) -> str:
+    """Google's glue consent bar, in the shape measured on 2026-09-11.
+
+    Two details are load-bearing and both come from the capture, not from convenience:
+    the element that actually wins `elementFromPoint` is the **label span**, which
+    carries an `id` and NO classes at all; and the accept button precedes the reject
+    button in DOM order, so anything reaching for "the first button" takes Agree.
+
+    Accepting is therefore made *visibly wrong* here — it records itself in the title
+    and leaves the bar up, so a driver that accepts fails the scenario instead of
+    passing it for the wrong reason.
+    """
+    dismiss = "this.closest('.glue-cookie-notification-bar').remove()" if reject_works else ""
+    return (
+        "<div id='glue-cookie-notification-bar-1' class='glue-cookie-notification-bar'>"
+        "<span id='glue-cookie-notification-bar-1-label'>We use cookies</span>"
+        "<button class='glue-cookie-notification-bar__accept' "
+        "onclick=\"document.title='ACCEPTED'\">Agree</button>"
+        f"<button class='glue-cookie-notification-bar__reject' "
+        f"onclick=\"document.title='REJECTED';{dismiss}\">No thanks</button>"
+        "</div>"
+    )
+
+
+#: The bar is `position: fixed; z-index: 1000` over the trigger's band — the geometry
+#: measured live, not an invented stack.
+_CONSENT_STYLE = """
+  .glue-cookie-notification-bar { position: fixed; top: 90px; left: 0;
+      width: 100vw; height: 108px; z-index: 1000; background: #eee; }
+  #glue-cookie-notification-bar-1-label { display: block; width: 100vw; height: 108px; }
+"""
+
+
 @pytest.fixture
 def world() -> dict[str, Any]:
     return {}
 
 
-async def _drive(html: str, run: Any) -> BaseException | None:
+async def _drive(html: str, run: Any, world: dict[str, Any] | None = None) -> BaseException | None:
     """Launch a real browser, serve `html` for every Flow URL, run `run(page)`."""
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
@@ -122,9 +155,17 @@ async def _drive(html: str, run: Any) -> BaseException | None:
             await page.goto(PROJECT_URL, wait_until="domcontentloaded")
             try:
                 await run(page)
+                return None
             except BaseException as exc:  # noqa: BLE001 - the failure IS the assertion
                 return exc
-            return None
+            finally:
+                # Read the page's own record of what was clicked BEFORE the browser
+                # goes away. The title is the carrier because it survives a failed run.
+                if world is not None:
+                    try:
+                        world["title"] = await page.title()
+                    except Exception:  # noqa: BLE001 - a readback never masks the result
+                        world["title"] = ""
         finally:
             await browser.close()
 
@@ -134,6 +175,7 @@ def _open_pane(world: dict[str, Any]) -> None:
         _drive(
             world["html"],
             lambda page: MigratedComposer()._open_pane(page),  # noqa: SLF001
+            world,
         )
     )
 
@@ -169,6 +211,20 @@ def _chip_pressed(world: dict[str, Any]) -> None:
 @given("the covering element carries an account email and a signed media URL")
 def _leaky(world: dict[str, Any]) -> None:
     world["html"] = _page(cover=_LEAKY_COVER)
+
+
+@given("a Flow project page whose settings trigger is under Google's consent bar")
+def _under_consent_bar(world: dict[str, Any]) -> None:
+    world["html"] = _page(cover=_consent_bar())
+    world["occluder"] = "glue-cookie-notification-bar"
+
+
+@given("a Flow project page whose consent bar ignores its own dismiss button")
+def _stuck_consent_bar(world: dict[str, Any]) -> None:
+    # The dismissal is best-effort, so this must NOT become a second error path — it
+    # has to fall through to the click post-mortem and be named there.
+    world["html"] = _page(cover=_consent_bar(reject_works=False))
+    world["occluder"] = "glue-cookie-notification-bar"
 
 
 @given("the page navigates away while the click is pending")
@@ -229,9 +285,23 @@ def _not_an_overlay(world: dict[str, Any]) -> None:
 
 @then("the message names the covering element by tag and structural class")
 def _names_occluder(world: dict[str, Any]) -> None:
+    # Each Given names the class it expects, because the two covers fail differently:
+    # the CDK backdrop IS the element on top, while the consent bar puts an unnamed
+    # label span there and keeps its identity one level up.
     text = _text(world)
+    expected = world.get("occluder", "cdk-overlay-backdrop")
     assert "div" in text, text
-    assert "cdk-overlay-backdrop" in text, text
+    assert expected in text, f"expected {expected!r}, got: {text}"
+
+
+@then("the consent bar was rejected, not accepted")
+def _rejected_not_accepted(world: dict[str, Any]) -> None:
+    # Both buttons clear the bar on the real surface, so "the pane opened" cannot tell
+    # them apart. The page records which one was pressed.
+    assert world.get("title") == "REJECTED", (
+        f"expected the reject button, page recorded {world.get('title')!r} — accepting "
+        "answers a consent question on the operator's behalf"
+    )
 
 
 @then("the message reports the control as visible, enabled and hit-testable")

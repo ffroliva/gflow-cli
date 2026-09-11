@@ -94,6 +94,10 @@ class Dom:
     # would trade a false "file a frontend bug" for a false "top up your account".
     submit_anchor_present: bool = True
     credits_warning_present: bool = False
+    # Google's `glue` consent bar. Default False because that is the ordinary page —
+    # it appears only when Google re-prompts, which is exactly why it went unnoticed
+    # until it covered the settings trigger and the submit button on 2026-09-11.
+    cookie_bar_visible: bool = False
     events: list[str] = field(default_factory=list)
     # --- i2v: the toolbar upload path and the Frames picker (2026-09-05 frames spike) ---
     add_button_present: bool = True  # the toolbar `+` outside flow-prompt-box
@@ -298,7 +302,18 @@ class FakeLocator:
         dom = self.page.dom
         target = self.items[0]
         if self.kind == "trigger":
+            if dom.cookie_bar_visible:
+                # The real bar wins elementFromPoint over this control, so a driver that
+                # clicks without clearing it first gets Playwright's actionability
+                # timeout — the 2026-09-11 failure, reproduced here rather than assumed.
+                raise PlaywrightTimeoutError(
+                    "Locator.click: Timeout 5000ms exceeded. waiting for element to "
+                    "receive pointer events (the consent bar is covering it)"
+                )
             dom.pane_open = not dom.pane_open
+        elif self.kind == "cookie_reject":
+            dom.cookie_bar_visible = False
+            dom.events.append("cookie_bar_rejected")
         elif self.kind == "agent_close":
             dom.agent_panel_expanded = False
         elif self.kind == "agent_toggle":
@@ -609,6 +624,13 @@ class FakePage:
         if css == migrated_composer.CREDITS_WARNING:
             hits = ["warning"] if dom.credits_warning_present else []
             return FakeLocator(self, "credits_warning", hits)
+        if css == migrated_composer.COOKIE_BAR:
+            # Always in the DOM, visibility read LAZILY: the driver holds this locator
+            # across the dismiss click and then waits for it to go hidden, so a bool
+            # snapshotted here would make a working dismissal look stuck.
+            return FakeLocator(self, "cookie_bar", ["bar"], visible=lambda: dom.cookie_bar_visible)
+        if css == migrated_composer.COOKIE_BAR_REJECT:
+            return FakeLocator(self, "cookie_reject", ["reject"] if dom.cookie_bar_visible else [])
         raise AssertionError(f"composer used an unmodelled selector: {css!r}")
 
 
@@ -716,6 +738,26 @@ async def test_apply_video_settings_selects_each_axis_and_reads_back() -> None:
     assert page.dom.groups["duration"][1].checked  # 6s
     assert page.dom.groups["count"][1].checked  # x2
     assert not page.dom.pane_open  # closed afterwards
+
+
+async def test_the_consent_bar_is_cleared_on_the_video_path_too() -> None:
+    """The bar covers the trigger for BOTH surfaces, so the fix belongs where they meet.
+
+    `_open_pane` is the one place the image and video paths take their first click, which
+    is why the dismissal lives there rather than in each caller. The fake refuses the
+    trigger click while the bar is up — the 2026-09-11 geometry — so this fails if the
+    dismissal is removed or moved above only the image path.
+    """
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.cookie_bar_visible = True
+
+    await MigratedComposer().apply_video_settings(page, _t2v())
+
+    assert "cookie_bar_rejected" in page.dom.events, page.dom.events
+    assert not page.dom.cookie_bar_visible
+    assert not page.dom.pane_open  # opened, bound, and closed again
 
 
 async def test_apply_image_settings_selects_mode_model_aspect_and_count() -> None:

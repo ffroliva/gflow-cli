@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.73.1] — 2026-09-11
+
+### Fixed
+
+- **Google's cookie-consent bar no longer blocks generation on `flow.google.com`.**
+  The `glue` bar is fixed at `z-index: 1000` and Flow's composer is bottom-anchored in
+  the same band, so the bar sat on the settings trigger *and* on the image submit:
+  `elementFromPoint` over each returned the bar in 5/5 rendered samples, on the same
+  profile and project where the click had landed 3/3 the day before. Every image and
+  video run on a re-prompted profile failed, before any submit, so nothing was billed.
+  The driver now clears the bar before its first click. It **rejects** rather than
+  accepts — both remove the bar, and only one answers a consent question on your
+  behalf. Reported by @stgmt in [#780](https://github.com/ffroliva/gflow-cli/issues/780);
+  measured in [the 2026-09-11 spike](docs/superpowers/spikes/2026-09-11-migrated-cookie-bar-blocks-the-composer.md).
+- **A click post-mortem now names the thing on top, not its inner node.** The occluder
+  allowlist matched `cdk|mat|mdc|flow` class prefixes on the element `elementFromPoint`
+  returned — but a consent bar puts an unnamed label span there and keeps its identity
+  in an `id` the allowlist deliberately drops, so #776's attribution reported
+  `it is covered by span`. It now adds Google's `glue` prefix and climbs to the nearest
+  ancestor that names itself, reporting `div.glue-cookie-notification-bar`. Unchanged
+  for the CDK overlays that already worked, and the `id` is still never echoed.
+
 ## [0.73.0] — 2026-09-10
 
 ### Security
@@ -4845,7 +4867,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...HEAD
+[0.73.1]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...v0.73.1
 [0.73.0]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...v0.72.0
 [0.71.1]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...v0.71.1
