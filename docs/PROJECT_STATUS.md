@@ -4,6 +4,40 @@
 
 ## Current release
 
+**v0.73.1 — alpha.** **Google's cookie bar was sitting on the composer, and the error said "span".**
+
+A patch with one cause and two halves, on the migrated `flow.google.com` driver.
+
+**The bar blocks generation** (#780, reported by @stgmt). Google's `glue` consent bar is
+`position: fixed` at `z-index: 1000`, and Flow's composer is bottom-anchored in the same band
+— so the bar lands **on** the settings trigger *and* on the image submit. Measured on
+`ci-probe`: `elementFromPoint` over each returned the bar's label span in 5/5 rendered samples,
+on the same profile and project where the click had landed 3/3 the day before. Every image and
+video run on a re-prompted profile failed, before any submit, so nothing was billed. The driver
+now clears the bar before its first click, and **rejects** rather than accepts — both remove it,
+and only one answers a consent question on the operator's behalf.
+
+The premise was nearly rejected. Both prior sightings of that selector in this repo are
+labs.google, and the 2026-09-10 spike had read 159 DOM samples on this exact host and found
+zero overlays. That spike never looked for a cookie bar, and it was right to record its 0/3 as
+*unmeasured* rather than as transience — it even named "a first visit after a Flow deployment"
+as the state it could not summon. This is that state.
+
+**And the failure could not name it** (#776's follow-up). The occluder allowlist matched
+`cdk|mat|mdc|flow` class prefixes on whatever `elementFromPoint` returned — but a consent bar
+puts an unnamed label span there and keeps its identity in an `id` the allowlist deliberately
+drops. So a blocked user on 0.73.0 got `it is covered by span`. It now adds Google's `glue`
+prefix and climbs to the nearest ancestor that names itself. Because that makes a stuck bar
+self-describing, the dismissal is deliberately best-effort and raises nothing — which is why it
+is about twenty lines rather than ninety.
+
+See [LIVE_VERIFICATION_v0.73.1.md](LIVE_VERIFICATION_v0.73.1.md). Three items are recorded as
+**not** verified: the cure against a live bar outside the browser (the control arm consumed the
+consent on the only profile that had it), how widely it fires (one account blocked, one already
+consented), and the video path live (same function, same control, but it spends Veo credits).
+
+<details><summary>v0.73.0 — four error paths stopped lying about what went wrong</summary>
+
 **v0.73.0 — alpha.** **Four error paths stopped lying about what went wrong.**
 
 Every fix in this release is the same shape: gflow knew something had failed, and blamed the
@@ -48,6 +82,8 @@ against real Flow — and what was not. Four arms verified live, one in a real b
 a page we wrote, and three recorded as **not** verified with named reasons: `/about` stopped
 reproducing (0/5), the `/fx/api/auth/*` landing moved before it could be reached, and #764's
 success path needs an account currently behind a Google password challenge.
+
+</details>
 
 <details><summary>v0.72.0 — auth login closes the browser, and the migrated host generates images</summary>
 
@@ -975,6 +1011,7 @@ reporter-verified e2e on macOS).
 | Milestone | Status |
 |---|---|
 | Four error paths stop lying about what went wrong: a click that never lands reports the actionability condition that failed instead of a bare timeout (#776), a known Flow landing is named rather than blamed on the selector (#756), Google's auth URLs are stripped from error messages (#777), and the post-migration account chooser auto-selects instead of stalling (#763/#764) | ✅ done (v0.73.0) |
+| Google's `glue` consent bar no longer blocks the migrated composer: it is cleared before the driver's first click, rejecting rather than accepting, and a bar that will not go is named as `div.glue-cookie-notification-bar` instead of `span` (#780) | ✅ done (v0.73.1) |
 | `gflow auth login` closes the sign-in browser itself, on a measured retraction — G12 blocks `navigator.webdriver`, not bundled Chromium (#767); `gflow image t2i`/local-file `i2i` driven on the migrated host (#692) | ✅ done (v0.72.0) |
 | Two migrated-host error paths stop blaming the wrong thing: Flow's agent mode (three distinct outcomes, not one message) and its one-time upload-terms dialog (#749/#752, #719 shape A) | ✅ done (v0.71.1) |
 | `gflow character create --voice` verified end to end for the first time; a credit shortfall reports exit 37; incident bundles no longer blind on the migrated host | ✅ done (v0.71.0) |

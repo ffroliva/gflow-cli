@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.73.1] — 2026-09-11
+
 ### Fixed
 
 - **Google's cookie-consent bar no longer blocks generation on `flow.google.com`.**
@@ -4865,7 +4867,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...HEAD
+[0.73.1]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...v0.73.1
 [0.73.0]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...v0.72.0
 [0.71.1]: https://github.com/ffroliva/gflow-cli/compare/v0.71.0...v0.71.1
