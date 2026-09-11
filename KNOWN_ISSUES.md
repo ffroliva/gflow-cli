@@ -220,11 +220,19 @@ at `z-index: 1000`, and Flow's composer is bottom-anchored in the same band. The
 therefore lands **on** the settings trigger *and* on the image submit button.
 Measured 2026-09-11 on the `ci-probe` profile: `elementFromPoint` over each returned
 the bar's label span in 5/5 rendered samples, on the same profile and project where
-the click had landed 3/3 the day before. **How widely it fires is unmeasured** — one
-account observed blocked, one observed already-consented — so treat the recurrence
-pattern as unknown rather than as once-per-profile. The labs driver survives it by
-accident; `_bypass_onboarding` carries a text match on "Agree". The migrated driver
-had no equivalent.
+the click had landed 3/3 the day before.
+
+**Who gets it:** anyone who has not yet dismissed it on that origin. The gate is a
+single key, `localStorage["glue.CookieNotificationBar"]` on `flow.google.com` — not a
+cookie, which is why no profile here carries `SOCS`. A clean browser profile reads the
+bar visible 4/4, and removing that key on a consented profile brings it straight back
+with both controls covered again. So it is the **default state**, and a stored
+dismissal is what removes it: every new gflow profile meets it on its first Flow load,
+and any profile whose stored dismissal Google resets meets it again — as `ci-probe` did
+within seventeen hours.
+
+The labs driver survives it by accident; `_bypass_onboarding` carries a text match on
+"Agree". The migrated driver had no equivalent.
 
 Through 0.73.0 the run fails at exit 23 with `it is covered by span` — the element on
 top is the bar's label, whose identity lives in an `id` the occluder allowlist drops,
