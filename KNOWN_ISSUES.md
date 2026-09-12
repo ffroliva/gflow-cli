@@ -98,7 +98,7 @@ is a per-account setting the labs.google app applies on every load (measured
 once the account is flagged, re-running will not land the old frontend. Earlier text here said the rollout
 "flaps" and told you to retry; that observation straddled the account's one-time
 switch and is withdrawn. The REST surface (`gflow project list`, `gflow data …`)
-is unaffected. Automated callers now receive `retryable: false` so retry loops
+is unaffected; `gflow credits` is **not** — its token comes from `labs.google`, which mints none for a moved account ([#795](https://github.com/ffroliva/gflow-cli/issues/795), open; see the quota entry below). Automated callers now receive `retryable: false` so retry loops
 stop instead of burning a doomed attempt each time.
 
 **What gflow does today for the rest of the matrix:** recognises the migrated
@@ -808,15 +808,26 @@ A block that survives dismissal now aborts pre-submit with exit 23 (probe `overl
 
 ---
 
-### No in-CLI quota visibility — resolved
+### No in-CLI quota visibility — resolved on labs, still open on the migrated host
 
-- **Status:** Resolved 2026-09-05
+- **Status:** Resolved 2026-09-05 for `labs.google` accounts · **Open** on accounts Google has migrated to `flow.google.com` · **Tracked:** [#795](https://github.com/ffroliva/gflow-cli/issues/795)
 
 Use `gflow credits user` for the selected profile or `gflow credits list` for all saved
 profiles. Both commands query Flow's current read-only credits endpoint with the saved browser
 session; `--json` provides a stable automation contract. The equivalent MCP surface is
 `gflow_get_credits`. The reported balance funds Veo video generation; image generation consumes
 separate per-model daily quotas.
+
+**On a migrated account there is still no in-CLI quota visibility.** The credits endpoint is
+reached with a token minted by `labs.google`, and for an account Google has moved to
+`flow.google.com` that session answers `200` with no `access_token` — it never mints one. So
+`gflow credits user` / `list` and `gflow_get_credits` fail on that cohort with "the labs.google
+session returned no access token". Through 0.73.1 this was reported as "aisandbox-pa
+authentication failed … SAPISID cookie missing, expired, or unreadable", which sent migrated
+users into a re-login loop that cannot terminate: aisandbox-pa had not been contacted and
+SAPISID was present and fine. 0.73.2 fixes the *message* only — the remediation now names the
+real cause. Reading a balance on the migrated host is **not** implemented
+([#795](https://github.com/ffroliva/gflow-cli/issues/795), open). Generation is unaffected.
 
 ---
 

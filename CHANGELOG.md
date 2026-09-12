@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.73.2] — 2026-09-12
+
 ### Fixed
 
 - **A missing browser-strategy marker no longer reports as a network problem (#796).**
@@ -47,8 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default.** A live occurrence was caught on a second account and the #756 stability
   probe re-run unmodified: **5/5** attempts landed on `/about` over ~3 minutes, on the
   account's own project, with a healthy session — so a retry is doomed and costs ~35 s
-  each. Two comments that said the measurement *could not* be made are corrected;
-  behaviour is unchanged. Still unmeasured: the cause, and whether it ever clears.
+  each. Four places that said the measurement *could not* be made are corrected — two
+  code comments, the exit-31 row in [USAGE](docs/USAGE.md) and the `retryable` note in
+  [MCP](docs/MCP.md); behaviour is unchanged. Still unmeasured: the cause, and whether
+  it ever clears.
 - **An auth-status test no longer depends on how wide the terminal is.** Several steps
   assert a substring of Rich's output, which hard-wraps — so a temp path landing near
   the wrap column split `experiments` into `profile_e` + `xperiments` and failed on
@@ -4915,7 +4919,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...HEAD
+[0.73.2]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...v0.73.2
 [0.73.1]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...v0.73.1
 [0.73.0]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...v0.72.0

@@ -113,14 +113,15 @@ When the project converges on the hexagonal target above, modules graduate to la
 > **Note: this document describes the TARGET architecture, not the current
 > package layout.** The current shape (per [PLAN.md § 2](../PLAN.md#2-architecture-steady-state)
 > and [ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)) is the simpler
-> `src/gflow_cli/{api/, auth/, data/, mcp/, services/, tools/, ui/, worker/}`
-> packages plus flat modules — the `cli*.py` adapters, `browser_manager.py`,
-> `chain*.py`, `composition.py`, `config.py`, `diagnostics.py`, `errors.py`,
-> `image_batch.py`, `json_output.py`, `media.py`, `movie_manifest.py`,
-> `observability.py`, `paths.py`, `profile_lease.py`, `profile_store.py`,
-> `storage.py`, `update_check.py` (the once-a-day notice and `gflow update`'s
-> `run_update`; its Click surface is `cli_update.py`), and `winsec.py` (inventory refreshed for
-> v0.56.0, #507 — it had drifted a dozen modules behind).
+> `src/gflow_cli/{api/, auth/, data/, flow_selectors/, mcp/, services/, tools/, ui/,
+> worker/}` packages plus flat modules — the `cli*.py` adapters, `_cli_helpers.py`,
+> `browser_manager.py`, `chain*.py`, `composition.py`, `config.py`, `diagnostics.py`,
+> `errors.py`, `exceptions.py`, `file_integrity.py`, `image_batch.py`, `json_output.py`,
+> `media.py`, `movie_manifest.py`, `observability.py`, `paths.py`, `profile_lease.py`,
+> `profile_store.py`, `redaction.py`, `storage.py`, `update_check.py` (the once-a-day
+> notice and `gflow update`'s `run_update`; its Click surface is `cli_update.py`), and
+> `winsec.py` (inventory refreshed for v0.73.2 — it had drifted again since the v0.56.0
+> refresh in #507; `AGENTS.md` carries the same list and is the one to diff against).
 > The DDD layout below was deferred indefinitely; converge toward it incrementally
 > if/when a second `Provider` justifies the split (`gflow serve` shipped as a
 > thin adapter over the same core rather than forcing it).

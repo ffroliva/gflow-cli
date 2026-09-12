@@ -68,8 +68,14 @@ This is a ~150 MB download. It happens once per user.
 ### 1.3 Authenticate
 
 ```bash
-gflow auth login
+gflow auth login --browser chrome
 ```
+
+`--browser chrome` is the recommended form: it is the only strategy that marks the profile
+as a real-Chrome profile, which is what later generation runs open it with. The default
+`--browser auto` picks it whenever Chrome is installed, but can fall back to the internal
+strategy — and generation then fails fast on that profile. See
+[AUTHENTICATION.md](AUTHENTICATION.md).
 
 A browser window opens (real Chrome where it's installed). Sign in to the Google account you use for Flow. **Solve any captchas Google shows you** — `gflow-cli` cannot solve them; that's intentional (anti-bot detection). Keep going until the Flow dashboard loads; **gflow detects the completed sign-in and closes the window for you**, then prints the verified account in your terminal. Closing the window yourself works too.
 

@@ -84,7 +84,7 @@ _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
 class FlowSessionStatus:
     """The verdict of a Flow-session probe.
 
-    `detail` is a derived property — always one of the four fixed strings in
+    `detail` is a derived property — always one of the fixed strings in
     `_DETAIL_BY_OUTCOME`, never built from response, cookie, or exception
     content. Deriving it (rather than storing a free string) makes it
     structurally impossible to leak a secret through this field.
