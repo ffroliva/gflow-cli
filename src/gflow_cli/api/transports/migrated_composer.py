@@ -1346,10 +1346,26 @@ class MigratedComposer:
         from gflow_cli.api.client import validate_image_file  # noqa: PLC0415 - cycle
 
         await validate_image_file(image_path)
-        # No outer budget: each leg is bounded, and an outer one firing first would
-        # replace the stage-named failure with a generic "attach timed out".
-        media_id = await self._upload_via_toolbar(page, project_id, image_path)
-        await self._pick_frame_by_name(page, image_path.name, media_id)
+        # ai4u delta (2026-09-12): the picker lists assets by display name and the
+        # submit body is asserted to carry THIS upload's media id. Repeated runs with
+        # the same file name leave look-alike assets in the library, and the name
+        # search then binds a stale duplicate — the submit body carries the wrong id
+        # and the run dies WireFormatError post-click (credits spent). Upload a
+        # run-unique COPY so the name search has exactly one match.
+        import shutil  # noqa: PLC0415
+        import uuid as _uuid  # noqa: PLC0415
+
+        unique_image = image_path.with_name(
+            f"{image_path.stem}-{_uuid.uuid4().hex[:8]}{image_path.suffix}"
+        )
+        shutil.copy2(image_path, unique_image)
+        try:
+            # No outer budget: each leg is bounded, and an outer one firing first would
+            # replace the stage-named failure with a generic "attach timed out".
+            media_id = await self._upload_via_toolbar(page, project_id, unique_image)
+            await self._pick_frame_by_name(page, unique_image.name, media_id)
+        finally:
+            unique_image.unlink(missing_ok=True)
         return media_id
 
     async def _upload_via_toolbar(self, page: Page, project_id: str, image_path: Path) -> str:
@@ -1747,6 +1763,22 @@ class MigratedComposer:
                 # Outside the except above on purpose: a click that fails here is not
                 # "the picker never listed it", and must not be reported as one.
                 await options.first.click(timeout=4000)
+                # ai4u delta (2026-09-12): Flow's picker no longer auto-closes on pick —
+                # it now requires an explicit confirm button ("Add to prompt" in en).
+                # Without clicking it the overlay stays up and the wait-for-hidden below
+                # raised UiSelectorDriftError on every i2v (observed 5/5 on a migrated
+                # account; landscape t2v unaffected — no picker). Grace-wait, confirm if
+                # the picker is still up, else fall through to the auto-close wait.
+                try:
+                    await page.wait_for_timeout(1200)
+                    if await picker.is_visible():
+                        confirm = page.locator(
+                            "button:has-text('Add to prompt')"
+                        ).first
+                        await confirm.wait_for(state="visible", timeout=3000)
+                        await confirm.click(timeout=3000)
+                except Exception:
+                    pass  # auto-close variant, or confirm already gone — wait below decides
                 break
         try:
             # Re-queried, and `.last` like the open: the picker overlay is detached
