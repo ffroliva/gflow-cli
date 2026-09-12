@@ -65,10 +65,22 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
         "access_token"
     )
     if not isinstance(token, str) or not token:
+        # #795: this is the labs session BFF answering 200 with no token — most
+        # often an account Google has migrated to flow.google.com, for which it
+        # never mints one. aisandbox-pa has not been contacted at this point, and
+        # SAPISID is present and fine (it is what made the session probe report a
+        # Google session at all), so the class default remediation would send the
+        # user to re-authenticate something that is not broken.
         raise AisandboxAuthError(
-            detail="no access_token in Flow session",
+            detail="the labs.google session returned no access token",
             status=session_status,
             route="auth/session",
+            remediation_hint=(
+                "Flow's labs.google session carries no API token for this account. "
+                "On accounts Google has migrated to flow.google.com this is expected "
+                "and re-authenticating will not help — generation still works, but "
+                "`gflow credits` reads a labs-only endpoint. See issue #795."
+            ),
         )
 
     async with httpx.AsyncClient(follow_redirects=False, timeout=15.0) as client:

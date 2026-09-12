@@ -1511,7 +1511,24 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "profile": resolved,
             "user_email": status.user_email,
         }
-    if status.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
+    if status.outcome is verification.FlowSessionOutcome.PROFILE_MARKER_MISSING:
+        # #796: a local profile-state fault. Not retryable (the marker will not
+        # reappear on its own) and not an expired session, so neither 503 nor 401
+        # describes it — an agent that retries or re-logins here learns nothing.
+        error = {
+            "type": "https://gflow-cli.dev/errors/profile-marker-missing",
+            "title": "Profile is missing its browser-strategy marker",
+            "status": 409,
+            "detail": status.detail,
+            "message": status.detail,
+            "retryable": False,
+            "remediation_hint": (
+                "This profile has no `.gflow_browser_strategy` marker, so its "
+                "cookies cannot be read. Re-run `gflow auth login --browser "
+                "chrome` for this profile to rewrite it."
+            ),
+        }
+    elif status.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
         # A network/endpoint problem is not fixed by re-login — the
         # machine-readable discriminators must say so too (post-merge review:
         # labeling this 401/auth-expired sent type-dispatching agents into an

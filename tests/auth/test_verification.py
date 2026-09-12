@@ -333,7 +333,13 @@ class TestVerifyFlowSession:
             mock_settings.return_value.home = gflow_home
             status = await verify_flow_profile(profile)
 
-        assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
+        # #796: the gate itself is unchanged (Playwright is never launched), but a
+        # missing marker is local profile state, not a network fault. Reporting it
+        # as VERIFICATION_ERROR told the user to "check network connectivity" for a
+        # file on their own disk — and that is precisely the state a failed first
+        # login leaves behind, since it rolls the marker back (real_chrome.py:433).
+        assert status.outcome is FlowSessionOutcome.PROFILE_MARKER_MISSING
+        assert not status.authenticated
         fake_async_playwright.assert_not_called()
 
     @pytest.mark.asyncio
@@ -352,6 +358,12 @@ class TestVerifyFlowSession:
         fake_bc3.chrome.side_effect = BrowserCookieError("Unable to get key for cookie decryption")
 
         fake_httpx = MagicMock()
+        # The marker must EXIST here, or the run stops at the marker gate and is
+        # classified PROFILE_MARKER_MISSING (#796) — which the sibling test above
+        # already covers. This test is about the decryption path itself: the
+        # fallback is entered and then fails, which is a genuine VERIFICATION_ERROR.
+        (profile / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
+        fake_async_playwright = MagicMock(side_effect=RuntimeError("no browser here"))
 
         with (
             patch("gflow_cli.auth.verification.get_settings") as mock_settings,
@@ -360,6 +372,7 @@ class TestVerifyFlowSession:
                 return_value=Path("/fake/Cookies"),
             ),
             patch.dict(sys.modules, {"browser_cookie3": fake_bc3, "httpx": fake_httpx}),
+            patch("gflow_cli.auth.strategies.async_playwright", fake_async_playwright),
         ):
             mock_settings.return_value.home = gflow_home
             status = await verify_flow_profile(profile)
