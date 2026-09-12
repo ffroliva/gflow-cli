@@ -25,7 +25,11 @@ from gflow_cli.api.video import (
     VideoStatus,
 )
 from gflow_cli.config import reset_settings
-from gflow_cli.errors import ConfigurationError, FlowHostMigratedError
+from gflow_cli.errors import (
+    ConfigurationError,
+    FlowHostMigratedError,
+    UiSelectorDriftError,
+)
 
 _LABS = "https://labs.google/fx/en/tools/flow/project/p1"
 _MIGRATED = "https://flow.google.com/project/p1"
@@ -366,3 +370,43 @@ async def test_a_chain_shaped_link_on_a_moved_account_names_the_missing_project(
             url="https://flow.google.com/",
             project_id=None,
         )
+
+
+async def test_a_failed_composer_run_leaves_the_page_unparked_for_the_incident_capture(
+    harness: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#792: the incident bundle is staged by ``FlowApiClient._capture_incident``
+    "while the page is still alive". The park ran in a bare ``finally``, so on the
+    FAILURE path it navigated to about:blank before the capture — every migrated
+    video failure shipped ``tag_counts.div = 0``, a white screenshot and
+    ``host_category = "other"`` while the run's own network journal showed the app
+    alive. The park is deferred past the capture instead; the client runs it."""
+
+    async def _boom(*_: Any, **__: Any) -> VideoResult:
+        raise UiSelectorDriftError(
+            detail="migrated host: the frame picker stayed open 15s after picking 'k.jpg'"
+        )
+
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.run_video", _boom)
+    with pytest.raises(UiSelectorDriftError):
+        await harness["transport"].generate_video(request=_req(), project_id="p1")
+    assert harness["page"].url != "about:blank", "evidence destroyed before capture"
+    assert harness["transport"]._deferred_park_pending is True  # noqa: SLF001
+
+
+async def test_the_deferred_park_still_happens_once_the_bundle_is_staged(
+    harness: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deferring must not drop the park: the stale project URL would otherwise
+    route the NEXT request on this client (the invariant
+    ``test_a_composer_run_does_not_route_the_next_request_by_its_page`` pins)."""
+
+    async def _boom(*_: Any, **__: Any) -> VideoResult:
+        raise UiSelectorDriftError(detail="drift")
+
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.run_video", _boom)
+    with pytest.raises(UiSelectorDriftError):
+        await harness["transport"].generate_video(request=_req(), project_id="p1")
+    await harness["transport"].park_deferred_page()
+    assert harness["page"].url == "about:blank"
+    assert harness["transport"]._deferred_park_pending is False  # noqa: SLF001

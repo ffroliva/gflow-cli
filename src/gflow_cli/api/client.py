@@ -1470,9 +1470,30 @@ class FlowApiClient:
         if _is_target_closed(e):
             wrapped = BrowserSessionClosedError()
             await self._capture_incident(wrapped, phase=phase)
+            await self._run_deferred_park()
             raise wrapped from e
         await self._capture_incident(e, phase=phase)
+        await self._run_deferred_park()
         raise e
+
+    async def _run_deferred_park(self) -> None:
+        """Park a composer page whose park a failed migrated run deferred (#792).
+
+        The transport cannot park on its own failure path without destroying the
+        incident bundle — `_capture_incident` above reads the live page — so it
+        flags the park and this boundary runs it once the bundle is staged. Guarded
+        with `is True` so a MagicMock transport in a test never trips it.
+        """
+        transport = self.transport
+        if getattr(transport, "_deferred_park_pending", None) is not True:
+            return
+        park = getattr(transport, "park_deferred_page", None)
+        if park is None:
+            return
+        try:
+            await park()
+        except Exception as exc:  # noqa: BLE001 - parking is best-effort
+            logger.warning("deferred_page_park_failed", error=str(exc)[:120])
 
     async def _checkout_page(self) -> Page:
         """Block until a Page is available from the pool; FIFO.

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Incident bundles from a `flow.google.com` failure are no longer blank (#792).** The
+  migrated composer parked its pooled page on `about:blank` in a bare `finally`, so on
+  the FAILURE path it navigated away *before* `FlowApiClient._capture_incident` read the
+  page — whose own contract is to stage the bundle "while the page is still alive".
+  Every migrated video and image failure therefore shipped `tag_counts.div = 0`, a white
+  screenshot and `host_category = "other"` beside a network journal that proved the app
+  was alive, which reads exactly like a lost browser tab and is unusable as evidence.
+  The park is deferred past the capture and run at the client's failure boundary, so the
+  routing invariant it protects (a stale project URL must not route the NEXT request)
+  still holds. Cancellation still parks inline, since no bundle is staged for it.
+
 - **The `/about` landing's `retryable=False` is now a measurement, not a preserved
   default.** A live occurrence was caught on a second account and the #756 stability
   probe re-run unmodified: **5/5** attempts landed on `/about` over ~3 minutes, on the

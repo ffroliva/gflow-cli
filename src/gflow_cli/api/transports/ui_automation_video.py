@@ -908,8 +908,11 @@ class VideoGenerationMixin:
     _setup_done: bool
     _generate_lock: asyncio.Lock
     _out_dir: Path | None
+    _deferred_park_pending: bool
 
     if TYPE_CHECKING:
+
+        async def _park_composer_page(self, page: Any, *, event: str) -> None: ...
 
         async def _enter_editor(
             self,
@@ -3979,7 +3982,7 @@ class VideoGenerationMixin:
             raise_if_migrated(page, at="flow_host_kill_switch")
         if route == "migrated":
             try:
-                return await run_video(
+                result = await run_video(
                     page,
                     request,
                     project_id=project_id,
@@ -3988,15 +3991,24 @@ class VideoGenerationMixin:
                     download=download,
                     on_started=on_started,
                 )
-            finally:
-                # The pooled page would otherwise stay on flow.google.com/project/<id>,
-                # and the NEXT request on this client would be routed by that URL
-                # instead of by its own shape (an unmoved account's i2v → exit 36,
-                # or a silently reused project). Park it; the next run navigates.
-                try:
-                    await page.goto("about:blank", wait_until="commit", timeout=5_000)
-                except Exception as exc:  # noqa: BLE001 - parking is best-effort
-                    log.warning("migrated.page_park_failed", error=str(exc)[:120])
+            except Exception:
+                # #792: do NOT park here. The bundle is staged from THIS page by
+                # FlowApiClient._capture_incident ("while the page is still
+                # alive"); parking first handed the triager an about:blank DOM and
+                # a white screenshot. Deferred to park_deferred_page().
+                self._deferred_park_pending = True
+                raise
+            except BaseException:
+                # Cancellation/KeyboardInterrupt: no bundle is staged for these, so
+                # nothing is waiting on the page — park now, as before.
+                await self._park_composer_page(page, event="migrated.page_park_failed")
+                raise
+            # The pooled page would otherwise stay on flow.google.com/project/<id>,
+            # and the NEXT request on this client would be routed by that URL
+            # instead of by its own shape (an unmoved account's i2v → exit 36,
+            # or a silently reused project). Park it; the next run navigates.
+            await self._park_composer_page(page, event="migrated.page_park_failed")
+            return result
 
         # #299: the video path binds through the mode policy like images do —
         # get_ui_driver switches to the required arm, VERIFIES via a DOM
