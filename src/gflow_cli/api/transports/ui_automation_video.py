@@ -913,6 +913,7 @@ class VideoGenerationMixin:
     if TYPE_CHECKING:
 
         async def _park_composer_page(self, page: Any, *, event: str) -> None: ...
+        async def park_deferred_page(self) -> None: ...
 
         async def _enter_editor(
             self,
@@ -3968,6 +3969,14 @@ class VideoGenerationMixin:
         )
         from gflow_cli.config import get_settings  # noqa: PLC0415
 
+        # #792: a FAILED migrated run leaves this page on the project URL on
+        # purpose, so the incident bundle is captured from a live page instead of
+        # about:blank. Drain that deferred park HERE — before the route decision
+        # reads page.url, and before anything re-enters a still-mounted composer.
+        # This is also the retry path: generate_images runs inside
+        # post_with_retry, so a retryable 5xx never reaches the client's failure
+        # boundary and attempt 2 would otherwise resume on a dirty composer.
+        await self.park_deferred_page()
         flow_host = get_settings().flow_host
         prefer = migrated_can_serve(request, project_id)
         route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
@@ -4000,7 +4009,11 @@ class VideoGenerationMixin:
                 raise
             except BaseException:
                 # Cancellation/KeyboardInterrupt: no bundle is staged for these, so
-                # nothing is waiting on the page — park now, as before.
+                # nothing is waiting on the page. Attempt the park inline -- but a
+                # re-delivered cancel can pre-empt it at the `goto` await, and
+                # `except Exception` cannot catch that. The next run's drain is the
+                # guarantee; this is the courtesy.
+                self._deferred_park_pending = True
                 await self._park_composer_page(page, event="migrated.page_park_failed")
                 raise
             # The pooled page would otherwise stay on flow.google.com/project/<id>,

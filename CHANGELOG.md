@@ -16,9 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every migrated video and image failure therefore shipped `tag_counts.div = 0`, a white
   screenshot and `host_category = "other"` beside a network journal that proved the app
   was alive, which reads exactly like a lost browser tab and is unusable as evidence.
-  The park is deferred past the capture and run at the client's failure boundary, so the
-  routing invariant it protects (a stale project URL must not route the NEXT request)
-  still holds. Cancellation still parks inline, since no bundle is staged for it.
+  The park is deferred past the capture and drained at the **top of the next run**, before
+  the route decision reads `page.url` — which is where the invariant it protects (a stale
+  project URL must not route the next request) is actually consumed, and the only place
+  that also covers the `post_with_retry` path, where a retryable 5xx re-enters the
+  transport without passing the client's failure boundary at all. Cancellation still
+  attempts the park inline and latches, since no bundle is staged for it.
+  Note a failure bundle's `sensitive/screenshot.png` is now a real capture of the
+  logged-in page rather than a blank frame — the review-before-sharing posture in
+  SECURITY.md applies to it as it already did to every other screenshot.
 
 - **The `/about` landing's `retryable=False` is now a measurement, not a preserved
   default.** A live occurrence was caught on a second account and the #756 stability

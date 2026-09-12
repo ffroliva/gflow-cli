@@ -397,3 +397,38 @@ async def test_a_failed_migrated_image_run_defers_its_park_for_the_incident_capt
     await transport.park_deferred_page()
     assert page.url == "about:blank"
     assert transport._deferred_park_pending is False  # noqa: SLF001
+
+
+async def test_a_cancelled_migrated_image_run_still_parks_inline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#792: the BaseException arm is the only one still parking inline — nothing
+    stages a bundle for a cancel, so nothing is waiting on the page. It latches too,
+    because a re-delivered cancel can pre-empt the park at its own `await`."""
+    import asyncio
+
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
+    reset_settings()
+    transport = UiAutomationTransport()
+    page = MagicMock()
+    page.url = f"https://flow.google.com/project/{PROJECT}"
+
+    async def goto(url: str, **_: Any) -> None:
+        page.url = url
+
+    page.goto = goto
+    transport._page = page  # noqa: SLF001
+    transport._setup_done = True  # noqa: SLF001
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_composer.run_images",
+        AsyncMock(side_effect=asyncio.CancelledError),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await transport.generate_images(project_id=PROJECT, request=_request())
+
+    assert page.url == "about:blank"
+    assert transport._deferred_park_pending is True  # noqa: SLF001

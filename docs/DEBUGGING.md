@@ -157,7 +157,14 @@ bundle a user emails you:
 It prints a scorecard (grade, per-question YES/NO/N/A, privacy verdict). The
 live e2e benchmark (`tests/e2e/test_incident_quality_e2e.py`, credit-free)
 enforces quality floors on real bundles so a regression that hollows out the
-evidence fails CI even though the artifacts still exist.
+evidence is caught even though the artifacts still exist.
+
+**It is an opt-in gate, not a CI one** — it needs `-m e2e` and
+`GFLOW_CLI_E2E_PROFILE`, so nothing runs it on a pull request. And until #792 it
+graded only bundles captured deliberately on a *healthy* page, which is how a bug
+that hollowed out every **failure** bundle on the migrated host survived it. The
+file now also drives a real failed generation and asserts the DOM capture is not
+blank; run it before shipping anything that touches capture or page lifecycle.
 
 ### Worker / daemon correlation
 

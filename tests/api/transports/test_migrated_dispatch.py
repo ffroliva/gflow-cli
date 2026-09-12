@@ -9,12 +9,14 @@ keeps exit 36 exactly as before the driver existed.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gflow_cli.api.transports import ui_automation_video
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
 from gflow_cli.api.video import (
@@ -380,7 +382,7 @@ async def test_a_failed_composer_run_leaves_the_page_unparked_for_the_incident_c
     FAILURE path it navigated to about:blank before the capture — every migrated
     video failure shipped ``tag_counts.div = 0``, a white screenshot and
     ``host_category = "other"`` while the run's own network journal showed the app
-    alive. The park is deferred past the capture instead; the client runs it."""
+    alive. The park is deferred; the next run drains it."""
 
     async def _boom(*_: Any, **__: Any) -> VideoResult:
         raise UiSelectorDriftError(
@@ -394,12 +396,24 @@ async def test_a_failed_composer_run_leaves_the_page_unparked_for_the_incident_c
     assert harness["transport"]._deferred_park_pending is True  # noqa: SLF001
 
 
-async def test_the_deferred_park_still_happens_once_the_bundle_is_staged(
+async def test_the_deferred_park_is_drained_before_the_next_route_decision(
     harness: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Deferring must not drop the park: the stale project URL would otherwise
-    route the NEXT request on this client (the invariant
-    ``test_a_composer_run_does_not_route_the_next_request_by_its_page`` pins)."""
+    """Deferring must not drop the park: a stale project URL would route the NEXT
+    request (the invariant ``test_a_composer_run_does_not_route_the_next_request_by
+    _its_page`` pins). Draining at the client's failure boundary was NOT enough —
+    ``generate_images`` is retried inside ``post_with_retry``, so a retryable 5xx
+    never reaches that boundary and attempt 2 resumed on a mounted composer. The
+    drain therefore runs at the top of the next locked body, and this pins that it
+    happens BEFORE the route decision reads ``page.url``."""
+    routed: list[str] = []
+    real_route = ui_automation_video.migrated_route
+
+    def _spy(url: str, *a: Any, **kw: Any) -> Any:
+        routed.append(url)
+        return real_route(url, *a, **kw)
+
+    monkeypatch.setattr(ui_automation_video, "migrated_route", _spy)
 
     async def _boom(*_: Any, **__: Any) -> VideoResult:
         raise UiSelectorDriftError(detail="drift")
@@ -407,6 +421,32 @@ async def test_the_deferred_park_still_happens_once_the_bundle_is_staged(
     monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.run_video", _boom)
     with pytest.raises(UiSelectorDriftError):
         await harness["transport"].generate_video(request=_req(), project_id="p1")
-    await harness["transport"].park_deferred_page()
-    assert harness["page"].url == "about:blank"
+    assert routed[0] == _LABS  # the failing run routed by the live URL
+    assert harness["page"].url != "about:blank"
+
+    async def _ok(_p: Any, request: Any, **kw: Any) -> VideoResult:
+        harness["run_video"].append((request, kw))
+        return _result()
+
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.run_video", _ok)
+    await harness["transport"].generate_video(request=_req(), project_id="p1")
+
+    assert routed[1] == "about:blank", "the next run routed by the stale project URL"
     assert harness["transport"]._deferred_park_pending is False  # noqa: SLF001
+
+
+async def test_a_cancelled_composer_run_still_parks_inline(
+    harness: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The BaseException arm is the only one still parking inline — nothing stages a
+    bundle for a cancel, so nothing is waiting on the page. It also latches, because
+    a re-delivered cancel can pre-empt the park at its own `await`."""
+
+    async def _cancel(*_: Any, **__: Any) -> VideoResult:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.run_video", _cancel)
+    with pytest.raises(asyncio.CancelledError):
+        await harness["transport"].generate_video(request=_req(), project_id="p1")
+    assert harness["page"].url == "about:blank"
+    assert harness["transport"]._deferred_park_pending is True  # noqa: SLF001
