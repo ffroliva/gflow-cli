@@ -142,3 +142,65 @@ async def test_incident_bundle_diagnostic_quality(e2e_profile_dir: Path) -> None
         json.dumps([r.to_dict() for r in reports], indent=2), encoding="utf-8"
     )
     time.sleep(0.2)  # let Windows release the sensitive/ screenshot handle
+
+
+@pytest.mark.asyncio
+async def test_a_failed_generation_bundle_is_not_hollow(e2e_profile_dir: Path) -> None:
+    """#792: the bundle from a REAL failed generation must show the page that failed.
+
+    The migrated composer parked its pooled page on about:blank in a bare
+    ``finally``, so on the failure path it navigated away before
+    ``_capture_incident`` read the page. Field bundles came back with
+    ``tag_counts.div = 0``, ``title.length = 0``, ``host_category = "other"`` and a
+    ~4 KB white screenshot, beside a network journal proving the app was alive —
+    unreadable as evidence, and it reads exactly like a lost browser tab.
+
+    The benchmark above captures deliberately on a HEALTHY page, which is why it
+    never saw this. This drives a genuine failure instead: a syntactically valid but
+    nonexistent project id, which lands on Flow's 404 and fails the settings-trigger
+    probe with exit 23. No generation is submitted, so it costs zero credits.
+    """
+    settings = get_settings()
+    incidents_root = settings.home / "incidents"
+    profile_name = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
+    before = _bundles(incidents_root)
+
+    result = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "-m",
+            "gflow_cli.cli",
+            "image",
+            "t2i",
+            "a blue ceramic cup on oak",
+            "--profile",
+            profile_name,
+            "--project",
+            "00000000-0000-0000-0000-000000000000",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env={**os.environ, "PYTHONUTF8": "1", "GFLOW_CLI_HOME": str(settings.home)},
+    )
+    assert result.returncode != 0, "the bogus project id was expected to fail"
+
+    new = sorted(_bundles(incidents_root) - before)
+    assert new, f"a failed generation produced no incident bundle (exit {result.returncode})"
+
+    ui_path = new[-1] / "ui.json"
+    assert ui_path.exists(), "the failure bundle carries no ui.json"
+    ui = json.loads(ui_path.read_text(encoding="utf-8"))
+
+    # The four fields that were ALL zero/"other" on a parked page. Any one of them
+    # regressing means the capture is photographing about:blank again.
+    assert ui["tag_counts"]["div"] > 0, f"hollow DOM capture — the page was parked: {ui}"
+    assert ui["title"]["length"] > 0, f"no document title — the page was parked: {ui}"
+    assert ui["url"]["host_category"] == "flow_app", (
+        f"captured off a Flow host — the page was parked: {ui['url']}"
+    )
+
+    shot = new[-1] / "sensitive" / "screenshot.png"
+    if shot.exists():
+        # A blank 1280x720 PNG compresses to ~4 KB; a real Flow page is ~10x that.
+        assert shot.stat().st_size > 10_000, f"screenshot is blank ({shot.stat().st_size} B)"

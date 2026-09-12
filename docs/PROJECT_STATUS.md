@@ -209,8 +209,8 @@ control on the audio engine.
 
 A credit shortfall reports **exit 37** instead of "file a frontend bug", and the actionable
 half is that it is *short for the selected model*, not empty: the measured account held **50**
-credits and asked for `veo-quality`, which costs **100**. Incident bundles are no longer blind
-on the migrated host — the DOM dump queried `i.google-symbols` only, so **every bundle a
+credits and asked for `veo-quality`, which costs **100**. Migrated-host incident bundles now
+report their ligatures — the DOM dump queried `i.google-symbols` only, so **every bundle a
 migrated user sent carried an empty ligature list**, which is why #727 and #731 stayed
 invisible. The "+ New project" CTA is anchored structurally on `add` rather than on English
 text.
@@ -1014,7 +1014,7 @@ reporter-verified e2e on macOS).
 | Google's `glue` consent bar no longer blocks the migrated composer: it is cleared before the driver's first click, rejecting rather than accepting, and a bar that will not go is named as `div.glue-cookie-notification-bar` instead of `span` (#780) | ✅ done (v0.73.1) |
 | `gflow auth login` closes the sign-in browser itself, on a measured retraction — G12 blocks `navigator.webdriver`, not bundled Chromium (#767); `gflow image t2i`/local-file `i2i` driven on the migrated host (#692) | ✅ done (v0.72.0) |
 | Two migrated-host error paths stop blaming the wrong thing: Flow's agent mode (three distinct outcomes, not one message) and its one-time upload-terms dialog (#749/#752, #719 shape A) | ✅ done (v0.71.1) |
-| `gflow character create --voice` verified end to end for the first time; a credit shortfall reports exit 37; incident bundles no longer blind on the migrated host | ✅ done (v0.71.0) |
+| `gflow character create --voice` verified end to end for the first time; a credit shortfall reports exit 37; migrated-host incident bundles report their ligatures (the DOM dump had queried `i.google-symbols` only) | ✅ done (v0.71.0) |
 | `gflow character create` driven on the migrated `flow.google.com` host; `--model` made deterministic by chip read-back; spike promoted to Phase 0 of the workflow | ✅ done (v0.70.0) |
 | Read-only credit balance in the CLI and MCP (`gflow credits user` / `list`, `gflow_get_credits`) over a browser-free HTTP path; image-to-video from a local start frame on the migrated `flow.google.com` host (#639 slice 1) | ✅ done (v0.69.0) |
 | `gflow update` self-update through the installing manager (uv tool / pipx / pip), venv-verified outcome; the update notice as a stderr banner; CONTRIBUTING routes contributors and agents through the AGENTS.md lifecycle | ✅ done (v0.68.0) |
