@@ -192,3 +192,22 @@ async def test_http_fast_path_rejects_profile_outside_home_before_cookie_access(
         await credits_api.fetch_credits_http(Path("/outside-gflow-home"))
 
     cookie_snapshot.assert_not_awaited()
+
+
+async def test_a_tokenless_labs_session_does_not_blame_sapisid(
+    monkeypatch: pytest.MonkeyPatch, profile_dir: Path
+) -> None:
+    """#795: labs answering 200 with no access_token is not an aisandbox-pa auth
+    failure — aisandbox-pa has not been contacted, and SAPISID is present and fine
+    (it is what made the probe report a Google session at all). The class default
+    remediation sent the user to re-authenticate something that is not broken; on a
+    migrated account that loop can never terminate."""
+    _install_http(monkeypatch, session_responses=[(200, {"user": {}})])
+
+    with pytest.raises(AisandboxAuthError) as caught:
+        await credits_api.fetch_credits_http(profile_dir)
+
+    hint = caught.value.remediation_hint
+    assert "SAPISID" not in hint
+    assert "flow.google.com" in hint
+    assert "no access token" in caught.value.detail

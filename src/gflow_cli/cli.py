@@ -375,7 +375,16 @@ def auth_status(profile: str | None) -> None:
         verification.verify_flow_profile(auth_mod.profile_dir(name), source="status")
     )
     if not status_result.authenticated:
-        if status_result.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
+        if status_result.outcome is verification.FlowSessionOutcome.PROFILE_MARKER_MISSING:
+            # #796: local profile state, not the network. Sending this user to
+            # "check connectivity" is the wrong place to look — and it is exactly
+            # the state a failed first login leaves behind (real_chrome.py:433).
+            console.print(
+                f"[yellow]{status_result.detail}[/yellow] "
+                f"Re-run [bold]gflow auth login --browser chrome --profile {name}[/bold] "
+                "to rewrite it.",
+            )
+        elif status_result.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
             # Re-login cannot fix an unreachable endpoint — don't send the
             # user into an interactive browser flow for a network problem.
             console.print(

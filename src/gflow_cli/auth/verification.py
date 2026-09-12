@@ -61,6 +61,12 @@ class FlowSessionOutcome(StrEnum):
     GOOGLE_SESSION_ONLY = "google_session_only"
     NO_SESSION = "no_session"
     VERIFICATION_ERROR = "verification_error"
+    #: The profile's `.gflow_browser_strategy` marker is missing, so the
+    #: Playwright cookie reader refuses to open it (#796). Distinct from
+    #: VERIFICATION_ERROR because the cause is local profile state, not the
+    #: network — and telling the user to "check connectivity" sends them
+    #: looking in the wrong place, on a profile a failed login just rolled back.
+    PROFILE_MARKER_MISSING = "profile_marker_missing"
 
 
 _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
@@ -68,6 +74,9 @@ _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
     FlowSessionOutcome.GOOGLE_SESSION_ONLY: "Signed in to Google, but not to the Flow app.",
     FlowSessionOutcome.NO_SESSION: "No sign-in detected.",
     FlowSessionOutcome.VERIFICATION_ERROR: "Could not verify the Flow session.",
+    FlowSessionOutcome.PROFILE_MARKER_MISSING: (
+        "This profile is missing its Chrome-strategy marker."
+    ),
 }
 
 
@@ -338,6 +347,20 @@ async def verify_flow_profile(
     body: str
     try:
         status_code, body, google_session = await fetch_flow_session_httpx(profile_dir)
+
+    # #796: the marker gate is local profile state, not a network fault. It was
+    # flattened into VERIFICATION_ERROR, whose remediation says "check network
+    # connectivity" — wrong advice, and specifically wrong on a profile whose
+    # marker a failed login had just rolled back (real_chrome.py:433-434).
+    # `_validate_profile_in_home` raises SecurityError too, but above the try, so
+    # a path violation still propagates instead of being classified here.
+    except SecurityError:
+        logger.warning("auth_profile_marker_missing", source=source)
+        return FlowSessionStatus(
+            outcome=FlowSessionOutcome.PROFILE_MARKER_MISSING,
+            user_email=None,
+            source=source,
+        )
 
     # Fail-closed: any failure here yields VERIFICATION_ERROR, never AUTHENTICATED.
     except Exception as exc:
