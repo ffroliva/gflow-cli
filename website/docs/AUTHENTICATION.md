@@ -242,7 +242,7 @@ Probing Flow session (may take up to ~45s on a slow network)...
 Flow session verified as you@example.com.
 ```
 
-> Note: `cookies_present: True` only confirms the file exists. The final verdict line is the live probe result: a dead session prints a `gflow auth login` remediation hint and exits 1; a probe that cannot reach the endpoint (offline, 5xx) also exits 1 but suggests checking connectivity instead of re-logging in.
+> Note: `cookies_present: True` only confirms the file exists. The final verdict line is the live probe result, and it has three failing shapes — all exit 1, each with a different hint. A **dead session** prints a `gflow auth login` remediation hint. A probe that **cannot reach the endpoint** (offline, 5xx) suggests checking connectivity instead of re-logging in. And a profile **missing its `.gflow_browser_strategy` marker** — the state a failed *first* login leaves behind, since that rolls the marker back — says so and points at `gflow auth login --browser chrome --profile <name>`; it is local profile state, not a network fault, and "check connectivity" would send you to the wrong place ([#796](https://github.com/ffroliva/gflow-cli/issues/796), 0.73.2). The MCP twin `gflow_auth_status` reports the same three as HTTP 401, 503 (`retryable: true`) and 409 (`retryable: false`) — see [MCP.md](MCP.md).
 
 ### `gflow auth list`
 

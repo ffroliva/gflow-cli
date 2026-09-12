@@ -41,6 +41,9 @@ _UNVERIFIED_MESSAGE: dict[FlowSessionOutcome, str] = {
     FlowSessionOutcome.VERIFICATION_ERROR: (
         "Could not verify the Flow session — this is often a network problem."
     ),
+    FlowSessionOutcome.PROFILE_MARKER_MISSING: (
+        "This profile is missing its Chrome-strategy marker, so its cookies cannot be read."
+    ),
 }
 _UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
     FlowSessionOutcome.GOOGLE_SESSION_ONLY: (
@@ -51,6 +54,9 @@ _UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
         "Re-run `gflow auth login`, sign in to Google, and continue until the Flow editor loads."
     ),
     FlowSessionOutcome.VERIFICATION_ERROR: ("Check your connection and re-run `gflow auth login`."),
+    FlowSessionOutcome.PROFILE_MARKER_MISSING: (
+        "Re-run `gflow auth login --browser chrome` to rewrite the profile marker."
+    ),
 }
 
 

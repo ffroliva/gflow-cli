@@ -94,8 +94,8 @@ The server registers three protocol surfaces:
 > different axis entirely: it buys a *look*, not an identity. Use
 > `gflow_character_list` to discover ids. See [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md).
 
-* `gflow_auth_status(profile)`: Credit-free, non-interactive Flow session probe (#497) — wraps the same fail-closed `verify_flow_profile` check as `gflow auth status`. Returns `{"status": "authenticated", "profile", "user_email"}` or a problem-details error with a `remediation_hint`; a `verification_error` outcome means a network/endpoint problem, which re-login does not fix. Call it before a generation tool to fail fast on dead auth (the queue is async — without it, an auth failure surfaces only later from the daemon). Login/logout remain CLI-only (genuinely interactive).
-* `gflow_get_credits(profile, all_profiles)`: Read-only current Flow balance query. With `all_profiles=true`, inspects every saved profile sequentially and preserves successful balances plus `total_credits` when another profile fails. This tool spends no credits and returns no cookies, bearer tokens, or browser API keys. The balance funds Veo video generation; image generation uses separate per-model daily quotas.
+* `gflow_auth_status(profile)`: Credit-free, non-interactive Flow session probe (#497) — wraps the same fail-closed `verify_flow_profile` check as `gflow auth status`. Returns `{"status": "authenticated", "profile", "user_email"}` or a problem-details error with a `remediation_hint`; a `verification_error` outcome (HTTP 503, `retryable: true`) means a network/endpoint problem, which re-login does not fix, and a `profile_marker_missing` outcome (HTTP 409, `retryable: false`, #796) means the profile lost its `.gflow_browser_strategy` marker so its cookies cannot be read — neither a retry nor a re-login helps; re-run `gflow auth login --browser chrome` for that profile. Any other unauthenticated outcome is a dead session (HTTP 401). Call it before a generation tool to fail fast on dead auth (the queue is async — without it, an auth failure surfaces only later from the daemon). Login/logout remain CLI-only (genuinely interactive).
+* `gflow_get_credits(profile, all_profiles)`: Read-only current Flow balance query. With `all_profiles=true`, inspects every saved profile sequentially and preserves successful balances plus `total_credits` when another profile fails. This tool spends no credits and returns no cookies, bearer tokens, or browser API keys. The balance funds Veo video generation; image generation uses separate per-model daily quotas. **Labs-only:** on an account Google has migrated to `flow.google.com`, Flow's labs.google session mints no API token, so no balance can be read there — the tool reports that the labs session returned no access token, which is expected on that cohort and is not an auth fault. Open, tracked in #795.
 * `gflow_character_list(project, profile)`: Lists a project's saved Flow CHARACTER entities with their **entity ids** — read-only, spends no credits, drives a browser session. This is how an agent discovers what it can attach: an `entity_id` goes to `reference_entities`, a `display_name` can be used as an `@Name` mention. An empty list means the project genuinely has none.
 * `gflow_character_show(project, entity_id, name, profile)`: Shows one character by id or exact display name (exactly one selector required). An ambiguous name is refused rather than resolved arbitrarily — which is the reason to prefer the id. Read-only; drives a browser session.
 * `gflow_character_voices()`: Lists the preset voices available for Character TTS (name, description, sample URL). A static in-process lookup — no network, no browser, no profile, no cost. Call it to pick a valid voice name.
@@ -146,8 +146,11 @@ UI arm (`UiModeUnavailableError`), and a partially-completed sync
 (`SyncPartialError`). That list is `errors.RETRYABLE_ERRORS`, but it is no longer
 the whole answer: `errors.is_retryable` consults the **instance** first, so a raise
 site can override its class. One does today — Flow's `/about` redirect raises
-`FlowAppError` with `retryable: false`, because whether a retry helps there was
-measured and could not be settled ([#756](https://github.com/ffroliva/gflow-cli/issues/756)).
+`FlowAppError` with `retryable: false`, and since 2026-09-11 that is a **measurement**, not a
+preserved default: caught during a live occurrence, 5/5 consecutive attempts over ~3 minutes
+landed on `/about` again, on the account's own project with a healthy session — so a retry is
+doomed and costs ~35 s each ([#756](https://github.com/ffroliva/gflow-cli/issues/756)). The
+*cause*, and whether it ever clears, remain unmeasured.
 Read the flag off the envelope; never re-derive it from the class list.
 Everything
 else (auth, content-policy, configuration, security) is terminal

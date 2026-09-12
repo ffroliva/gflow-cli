@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.73.2] — 2026-09-12
+
+### Fixed
+
+- **A missing browser-strategy marker no longer reports as a network problem (#796).**
+  The Playwright cookie reader refuses a profile whose `.gflow_browser_strategy` marker
+  is absent, and that `SecurityError` was flattened into `VERIFICATION_ERROR` — whose
+  guidance is "check network connectivity", for a file on the user's own disk. It is
+  also precisely the state a failed first login leaves behind, since that rolls the
+  marker back. A new `PROFILE_MARKER_MISSING` outcome carries its own message and the
+  remediation that actually works (`gflow auth login --browser chrome`), on the CLI and
+  on the MCP twin (HTTP 409, `retryable: false` — it is neither a network blip nor an
+  expired session).
+- **`gflow credits` no longer blames SAPISID for a host it never contacted (#795).** When
+  labs.google answers 200 with no `access_token` — the normal shape for an account Google
+  has migrated to `flow.google.com` — the failure was raised as "aisandbox-pa
+  authentication failed" with the remediation "SAPISID cookie missing, expired, or
+  unreadable". aisandbox-pa had not been contacted, and SAPISID was present and fine, so
+  the advice sent users into a re-login loop that cannot terminate on that cohort. The
+  remediation now names the real cause. `credits` itself remains labs-only on migrated
+  accounts — tracked in #795.
+- **Incident bundles from a `flow.google.com` failure are no longer blank (#792).** The
+  migrated composer parked its pooled page on `about:blank` in a bare `finally`, so on
+  the FAILURE path it navigated away *before* `FlowApiClient._capture_incident` read the
+  page — whose own contract is to stage the bundle "while the page is still alive".
+  Every migrated video and image failure therefore shipped `tag_counts.div = 0`, a white
+  screenshot and `host_category = "other"` beside a network journal that proved the app
+  was alive, which reads exactly like a lost browser tab and is unusable as evidence.
+  The park is deferred past the capture and drained at the **top of the next run**, before
+  the route decision reads `page.url` — which is where the invariant it protects (a stale
+  project URL must not route the next request) is actually consumed, and the only place
+  that also covers the `post_with_retry` path, where a retryable 5xx re-enters the
+  transport without passing the client's failure boundary at all. Cancellation still
+  attempts the park inline and latches, since no bundle is staged for it.
+  Note a failure bundle's `sensitive/screenshot.png` is now a real capture of the
+  logged-in page rather than a blank frame — the review-before-sharing posture in
+  SECURITY.md applies to it as it already did to every other screenshot.
+
+- **The `/about` landing's `retryable=False` is now a measurement, not a preserved
+  default.** A live occurrence was caught on a second account and the #756 stability
+  probe re-run unmodified: **5/5** attempts landed on `/about` over ~3 minutes, on the
+  account's own project, with a healthy session — so a retry is doomed and costs ~35 s
+  each. Four places that said the measurement *could not* be made are corrected — two
+  code comments, the exit-31 row in [USAGE](docs/USAGE.md) and the `retryable` note in
+  [MCP](docs/MCP.md); behaviour is unchanged. Still unmeasured: the cause, and whether
+  it ever clears.
+- **An auth-status test no longer depends on how wide the terminal is.** Several steps
+  assert a substring of Rich's output, which hard-wraps — so a temp path landing near
+  the wrap column split `experiments` into `profile_e` + `xperiments` and failed on
+  formatting rather than behaviour. Pinned at the shared `CliRunner` fixture, which is
+  the one chokepoint for every invoke in that file.
+
 ## [0.73.1] — 2026-09-11
 
 ### Fixed
@@ -4867,7 +4919,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...HEAD
+[0.73.2]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...v0.73.2
 [0.73.1]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...v0.73.1
 [0.73.0]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...v0.72.0

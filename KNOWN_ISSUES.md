@@ -98,7 +98,7 @@ is a per-account setting the labs.google app applies on every load (measured
 once the account is flagged, re-running will not land the old frontend. Earlier text here said the rollout
 "flaps" and told you to retry; that observation straddled the account's one-time
 switch and is withdrawn. The REST surface (`gflow project list`, `gflow data …`)
-is unaffected. Automated callers now receive `retryable: false` so retry loops
+is unaffected; `gflow credits` is **not** — its token comes from `labs.google`, which mints none for a moved account ([#795](https://github.com/ffroliva/gflow-cli/issues/795), open; see the quota entry below). Automated callers now receive `retryable: false` so retry loops
 stop instead of burning a doomed attempt each time.
 
 **What gflow does today for the rest of the matrix:** recognises the migrated
@@ -220,11 +220,19 @@ at `z-index: 1000`, and Flow's composer is bottom-anchored in the same band. The
 therefore lands **on** the settings trigger *and* on the image submit button.
 Measured 2026-09-11 on the `ci-probe` profile: `elementFromPoint` over each returned
 the bar's label span in 5/5 rendered samples, on the same profile and project where
-the click had landed 3/3 the day before. **How widely it fires is unmeasured** — one
-account observed blocked, one observed already-consented — so treat the recurrence
-pattern as unknown rather than as once-per-profile. The labs driver survives it by
-accident; `_bypass_onboarding` carries a text match on "Agree". The migrated driver
-had no equivalent.
+the click had landed 3/3 the day before.
+
+**Who gets it:** anyone who has not yet dismissed it on that origin. The gate is a
+single key, `localStorage["glue.CookieNotificationBar"]` on `flow.google.com` — not a
+cookie, which is why no profile here carries `SOCS`. A clean browser profile reads the
+bar visible 4/4, and removing that key on a consented profile brings it straight back
+with both controls covered again. So it is the **default state**, and a stored
+dismissal is what removes it: every new gflow profile meets it on its first Flow load,
+and any profile whose stored dismissal Google resets meets it again — as `ci-probe` did
+within seventeen hours.
+
+The labs driver survives it by accident; `_bypass_onboarding` carries a text match on
+"Agree". The migrated driver had no equivalent.
 
 Through 0.73.0 the run fails at exit 23 with `it is covered by span` — the element on
 top is the bar's label, whose identity lives in an `id` the occluder allowlist drops,
@@ -800,15 +808,26 @@ A block that survives dismissal now aborts pre-submit with exit 23 (probe `overl
 
 ---
 
-### No in-CLI quota visibility — resolved
+### No in-CLI quota visibility — resolved on labs, still open on the migrated host
 
-- **Status:** Resolved 2026-09-05
+- **Status:** Resolved 2026-09-05 for `labs.google` accounts · **Open** on accounts Google has migrated to `flow.google.com` · **Tracked:** [#795](https://github.com/ffroliva/gflow-cli/issues/795)
 
 Use `gflow credits user` for the selected profile or `gflow credits list` for all saved
 profiles. Both commands query Flow's current read-only credits endpoint with the saved browser
 session; `--json` provides a stable automation contract. The equivalent MCP surface is
 `gflow_get_credits`. The reported balance funds Veo video generation; image generation consumes
 separate per-model daily quotas.
+
+**On a migrated account there is still no in-CLI quota visibility.** The credits endpoint is
+reached with a token minted by `labs.google`, and for an account Google has moved to
+`flow.google.com` that session answers `200` with no `access_token` — it never mints one. So
+`gflow credits user` / `list` and `gflow_get_credits` fail on that cohort with "the labs.google
+session returned no access token". Through 0.73.1 this was reported as "aisandbox-pa
+authentication failed … SAPISID cookie missing, expired, or unreadable", which sent migrated
+users into a re-login loop that cannot terminate: aisandbox-pa had not been contacted and
+SAPISID was present and fine. 0.73.2 fixes the *message* only — the remediation now names the
+real cause. Reading a balance on the migrated host is **not** implemented
+([#795](https://github.com/ffroliva/gflow-cli/issues/795), open). Generation is unaffected.
 
 ---
 

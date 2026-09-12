@@ -4,6 +4,48 @@
 
 ## Current release
 
+**v0.73.2 — alpha.** **Your bug reports become readable again.**
+
+A diagnostics and error-clarity patch. It does **not** fix migrated login (#791) or the
+i2v dispatch failure (#792) — both are open. It fixes the layer underneath them: the
+evidence a failure produces, and the advice a failure prints.
+
+**Every failure on `flow.google.com` was shipping a blank incident bundle** (#792,
+reported by @ai4U23). The migrated composer parked its own page on `about:blank` inside a
+bare `finally` — which runs on the failure path too — and only *then* did the exception
+reach `_capture_incident`, whose own contract is to stage the bundle "while the page is
+still alive". So every migrated video and image failure shipped `tag_counts.div = 0`, a
+~4 KB white screenshot and `host_category = "other"`, next to a network journal proving
+the app was alive. That reads exactly like a lost browser tab, and the reporter filed it
+as one; the viewport in their own bundle (1280×720) was the tell that it was the driven
+page all along, captured one navigation too late.
+
+The park protects something real — a stale project URL would route the *next* request —
+so it is deferred, not dropped, and drained at the top of the next run, before the route
+decision reads `page.url`. That placement matters: `generate_images` is retried inside
+`post_with_retry`, so a retryable 5xx never reaches the client's failure boundary, and
+draining there would have let attempt 2 resume on a still-mounted composer. The same
+change removes a 4 s stall from every parked run.
+
+**Two auth errors stopped blaming the wrong thing** (#795, #796). A profile missing its
+`.gflow_browser_strategy` marker was reported as `VERIFICATION_ERROR` — "check network
+connectivity", for a file on the user's own disk, and specifically the state a failed
+*first* login leaves behind. It now has its own outcome and the remediation that works,
+on the CLI and on the MCP twin (409, `retryable: false`). And `gflow credits` no longer
+raises "aisandbox-pa authentication failed … SAPISID cookie missing" when labs answers
+200 with no token — the normal shape for a migrated account, where aisandbox-pa was never
+contacted and SAPISID is fine. That advice sent migrated users into a re-login loop that
+could not terminate.
+
+See [LIVE_VERIFICATION_v0.73.2.md](LIVE_VERIFICATION_v0.73.2.md). The headline fix is
+verified live with a control arm by a committed e2e test (`div` 0 → 25, `host_category`
+`other` → `flow_app`, screenshot 4 KB → 38 KB, zero cost). Recorded as **not** verified
+live: #796's trigger is a macOS Keychain decryption failure and there is no Mac here
+(#768) — a named blocker, and the issue stays open. `gflow credits` remains labs-only on
+migrated accounts (#795).
+
+<details><summary>v0.73.1 — Google's cookie bar was sitting on the composer</summary>
+
 **v0.73.1 — alpha.** **Google's cookie bar was sitting on the composer, and the error said "span".**
 
 A patch with one cause and two halves, on the migrated `flow.google.com` driver.
@@ -35,6 +77,8 @@ See [LIVE_VERIFICATION_v0.73.1.md](LIVE_VERIFICATION_v0.73.1.md). Three items ar
 **not** verified: the cure against a live bar outside the browser (the control arm consumed the
 consent on the only profile that had it), how widely it fires (one account blocked, one already
 consented), and the video path live (same function, same control, but it spends Veo credits).
+
+</details>
 
 <details><summary>v0.73.0 — four error paths stopped lying about what went wrong</summary>
 
@@ -209,8 +253,8 @@ control on the audio engine.
 
 A credit shortfall reports **exit 37** instead of "file a frontend bug", and the actionable
 half is that it is *short for the selected model*, not empty: the measured account held **50**
-credits and asked for `veo-quality`, which costs **100**. Incident bundles are no longer blind
-on the migrated host — the DOM dump queried `i.google-symbols` only, so **every bundle a
+credits and asked for `veo-quality`, which costs **100**. Migrated-host incident bundles now
+report their ligatures — the DOM dump queried `i.google-symbols` only, so **every bundle a
 migrated user sent carried an empty ligature list**, which is why #727 and #731 stayed
 invisible. The "+ New project" CTA is anchored structurally on `add` rather than on English
 text.
@@ -1012,9 +1056,10 @@ reporter-verified e2e on macOS).
 |---|---|
 | Four error paths stop lying about what went wrong: a click that never lands reports the actionability condition that failed instead of a bare timeout (#776), a known Flow landing is named rather than blamed on the selector (#756), Google's auth URLs are stripped from error messages (#777), and the post-migration account chooser auto-selects instead of stalling (#763/#764) | ✅ done (v0.73.0) |
 | Google's `glue` consent bar no longer blocks the migrated composer: it is cleared before the driver's first click, rejecting rather than accepting, and a bar that will not go is named as `div.glue-cookie-notification-bar` instead of `span` (#780) | ✅ done (v0.73.1) |
+| Incident bundles from a migrated-host failure stop arriving blank — the composer's `about:blank` park ran before the capture, so every failure shipped `div = 0` and a white screenshot (#792); a missing browser-strategy marker and a token-less labs session stop being reported as network and SAPISID faults (#796, #795) | ✅ done (v0.73.2) |
 | `gflow auth login` closes the sign-in browser itself, on a measured retraction — G12 blocks `navigator.webdriver`, not bundled Chromium (#767); `gflow image t2i`/local-file `i2i` driven on the migrated host (#692) | ✅ done (v0.72.0) |
 | Two migrated-host error paths stop blaming the wrong thing: Flow's agent mode (three distinct outcomes, not one message) and its one-time upload-terms dialog (#749/#752, #719 shape A) | ✅ done (v0.71.1) |
-| `gflow character create --voice` verified end to end for the first time; a credit shortfall reports exit 37; incident bundles no longer blind on the migrated host | ✅ done (v0.71.0) |
+| `gflow character create --voice` verified end to end for the first time; a credit shortfall reports exit 37; migrated-host incident bundles report their ligatures (the DOM dump had queried `i.google-symbols` only) | ✅ done (v0.71.0) |
 | `gflow character create` driven on the migrated `flow.google.com` host; `--model` made deterministic by chip read-back; spike promoted to Phase 0 of the workflow | ✅ done (v0.70.0) |
 | Read-only credit balance in the CLI and MCP (`gflow credits user` / `list`, `gflow_get_credits`) over a browser-free HTTP path; image-to-video from a local start frame on the migrated `flow.google.com` host (#639 slice 1) | ✅ done (v0.69.0) |
 | `gflow update` self-update through the installing manager (uv tool / pipx / pip), venv-verified outcome; the update notice as a stderr banner; CONTRIBUTING routes contributors and agents through the AGENTS.md lifecycle | ✅ done (v0.68.0) |

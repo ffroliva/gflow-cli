@@ -82,38 +82,78 @@ it could not measure was one "you cannot summon on demand — a first visit afte
 deployment". This is that state, arriving on its own. It is the reason that spike declined
 to call 0/3 evidence of transience, and it was right to.
 
-## How widely does it fire? Still n=1
+## How widely does it fire? Answered — by mechanism, not by a count
 
-A second profile was attempted specifically to answer this, and it did not answer it.
+A count of affected users is not obtainable from here: there is no telemetry. The
+mechanism is, and it is the more durable answer.
 
-`denon82` — an independent account, never touched by this spike — was driven at both
-hosts. **Both arms landed on `https://flow.google.com/about`**, not the project, so no
-composer ever mounted: `trigger_rendered_in` and `submit_rendered_in` were 0/5 in both.
-That run measured a marketing page. It is not a second sample and must not be counted as
-one.
+**A clean browser profile gets the bar.** A brand-new persistent context in a temp dir —
+no consent state by construction, not signed in — loaded `flow.google.com` and read the
+bar visible in **4/4** samples, same geometry (`position: fixed`, `z-index: 1000`, pinned
+to the bottom of the viewport), same `__accept` then `__reject` button order.
 
-The one thing it does say: on that origin the bar was **in the DOM but hidden** (5/5), so
-consent is already stored for `denon82`. Which is consistent with the mechanism — the bar
-is consent-state dependent, so it fires on a rolling subset of profiles rather than on
-everyone at once — but it is corroboration, not a measurement of prevalence.
+**A second authenticated profile had it up, untouched.** `pr389fresh2` — a different
+gflow profile that this spike had never opened — read **5/5** visible.
 
-**So: one account confirmed blocked, one account confirmed already-consented, prevalence
-unmeasured.** What would settle it: the same probe on several profiles that reach the
-editor. The `/about` redirect that stopped this one is separately recorded in
-[`2026-09-10-about-redirect-stability.md`](2026-09-10-about-redirect-stability.md) and was
-not investigated here.
+**And the gate is one localStorage key.** Diffed across a reject click on a throwaway
+profile: no cookie changes at all, and one key appears —
 
-## Two more things this did NOT measure
+```
+localStorage["glue.CookieNotificationBar"]   on the flow.google.com origin
+  → [{"category":"2A","date":"2026-09-11T…","siteId":…}]
+```
 
-**The labs contrast arm failed.** `ci-probe` is a moved account, so
+That is why no profile here carries `SOCS`, and why grepping for a consent *cookie*
+finds nothing.
+
+**Proven by intervention, not correlation.** Removing that one key on `ci-probe` — which
+touches no cookie and therefore no auth — and reloading the editor:
+
+| | key present | key removed |
+|---|---|---|
+| visible bars | 0 | 1 |
+| settings trigger | hit-testable | **covered by `span#glue-cookie-notification-bar-1-label`** |
+| image submit | hit-testable | **covered by `span#glue-cookie-notification-bar-1-label`** |
+
+So the bar is the **default state of the origin**, and stored consent is what removes it.
+`ci-probe` was not singled out. Every profile that has not yet dismissed it is exposed,
+which includes every freshly created gflow profile on its first Flow load, and any
+profile whose stored consent Google expires or resets — as happened to `ci-probe` within
+seventeen hours of a run where the click landed 3/3.
+
+## The cure, verified against a live bar
+
+With the bar restored by the intervention above, the ordinary CLI command was run on the
+**released** build:
+
+```
+gflow image t2i "a plain grey pebble on white paper, flat lighting"   --profile ci-probe --project 1e4efe0d-… --model nano-pro --aspect 1:1
+```
+
+`cli_version: 0.73.1` · `migrated.editor_ready` → **`migrated.cookie_bar_dismissed`** (86 ms
+later) → `image_settings_applied` → `prompt_typed` → `status: ok`, media
+`257d8f79-…`, a 651,576-byte `ffd8ffe0` JPEG that Pillow reads as 1024×1024 RGB.
+
+This is the item the release shipped as *not verified*. It is now measured.
+
+## Two things this did NOT measure
+
+**The labs contrast arm still failed.** `ci-probe` is a moved account, so
 `labs.google/fx/tools/flow/project/<id>` redirected straight to `flow.google.com` and the
 second arm re-measured the first. Whether an **unmoved** account sees the same bar on the
 labs editor is still unknown. It matters for PR #781's other half, which routes unmoved
 accounts onto the migrated host for images.
 
-**The state is now consumed.** The control arm clicked the bar's first button to dismiss
-it, so a re-run on `ci-probe` will read 0/N until Google re-prompts. Capture before you
-dismiss.
+**No second account reached an editor with the bar up.** `denon82` and `pr389fresh2` both
+redirect to `flow.google.com/about`, so the *covering* geometry is measured on one account
+only — the origin-level presence is measured on three. The `/about` redirect is separately
+recorded in [`2026-09-10-about-redirect-stability.md`](2026-09-10-about-redirect-stability.md)
+and was not investigated here.
+
+**The state is no longer scarce.** Deleting `localStorage["glue.CookieNotificationBar"]`
+on the flow.google.com origin restores the bar on demand, and the driver's own dismissal
+writes it back. Capture before you dismiss anyway — but a consumed reproducer is now one
+line to recreate, not a wait for Google.
 
 ## A finding the control arm produced by accident
 

@@ -29,6 +29,14 @@ _TRANSPORTS = Path(__file__).resolve().parents[3] / "src" / "gflow_cli" / "api"
 _ABSORBED_BY_EXISTING_WAIT = {
     ("ui_automation.py", "networkidle"),
     ("bearer.py", "networkidle"),
+    # `about:blank` is not a Flow navigation, so the redirect this ratchet exists
+    # to catch cannot happen: `_settle_if_redirecting` matches neither the
+    # localised-URL short-circuit nor the migrated-host one, and falls through to
+    # `wait_for_url` waiting for a pattern a blank page can never take — burning
+    # the full URL_SETTLE_TIMEOUT_MS (4 s) to return None, on every parked run of
+    # a locale-resolved account. The only `wait_until="commit"` goto in this file
+    # is that park (#792). On the record, per this module's own rule.
+    ("ui_automation.py", "commit"),
 }
 
 
