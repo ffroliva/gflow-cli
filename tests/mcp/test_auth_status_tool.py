@@ -81,3 +81,25 @@ async def test_verification_error_does_not_advise_relogin(
     # A network problem is not fixed by re-login (mirrors the CLI's guidance).
     assert "auth login" not in result["error"]["remediation_hint"]
     assert "retry" in result["error"]["remediation_hint"].lower()
+
+
+async def test_a_missing_profile_marker_is_not_retryable_and_not_a_dead_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#796 + MCP parity: the CLI now distinguishes a missing browser-strategy
+    marker from a network fault, so the machine-readable surface must too. It is
+    neither retryable (the marker will not reappear) nor an expired session, so an
+    agent that retries or re-logins on 503/401 would learn nothing."""
+    from gflow_cli.mcp import tools
+
+    monkeypatch.setattr(tools, "_resolve_and_validate_profile", lambda p: "denon")
+    monkeypatch.setattr(
+        tools.verification,
+        "verify_flow_profile",
+        _probe(FlowSessionOutcome.PROFILE_MARKER_MISSING),
+    )
+    result = await tools.gflow_auth_status()
+    assert result["status"] == "profile_marker_missing"
+    assert result["error"]["retryable"] is False
+    assert result["error"]["status"] == 409
+    assert "--browser chrome" in result["error"]["remediation_hint"]

@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A missing browser-strategy marker no longer reports as a network problem (#796).**
+  The Playwright cookie reader refuses a profile whose `.gflow_browser_strategy` marker
+  is absent, and that `SecurityError` was flattened into `VERIFICATION_ERROR` — whose
+  guidance is "check network connectivity", for a file on the user's own disk. It is
+  also precisely the state a failed first login leaves behind, since that rolls the
+  marker back. A new `PROFILE_MARKER_MISSING` outcome carries its own message and the
+  remediation that actually works (`gflow auth login --browser chrome`), on the CLI and
+  on the MCP twin (HTTP 409, `retryable: false` — it is neither a network blip nor an
+  expired session).
+- **`gflow credits` no longer blames SAPISID for a host it never contacted (#795).** When
+  labs.google answers 200 with no `access_token` — the normal shape for an account Google
+  has migrated to `flow.google.com` — the failure was raised as "aisandbox-pa
+  authentication failed" with the remediation "SAPISID cookie missing, expired, or
+  unreadable". aisandbox-pa had not been contacted, and SAPISID was present and fine, so
+  the advice sent users into a re-login loop that cannot terminate on that cohort. The
+  remediation now names the real cause. `credits` itself remains labs-only on migrated
+  accounts — tracked in #795.
+
 - **The `/about` landing's `retryable=False` is now a measurement, not a preserved
   default.** A live occurrence was caught on a second account and the #756 stability
   probe re-run unmodified: **5/5** attempts landed on `/about` over ~3 minutes, on the
