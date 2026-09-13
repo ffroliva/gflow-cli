@@ -362,11 +362,19 @@ aisandbox REST reads fail.
 > believe `auth status`.** Through v0.73.2 the second site carried the class-default
 > SAPISID advice instead — see the CHANGELOG for why.
 
-The migrated composer itself also comes in more than one shape. If `gflow_generate_video`
-fails pre-submit with a selector-drift envelope naming `.settings-trigger-button` as
-present-but-hidden, and no `agent-mode-chip` exists on the page, the account is on the
-**agent-only composer**, which has no classic composer at all — there is nothing to drive
-yet ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).
+The migrated composer itself also comes in more than one shape. Since v0.74.0 an account
+whose composer is **agent-only** — no classic composer at all — is named as such before
+submit: `FlowAgentUiError`, **exit 25**, `retryable: false`, saying the settings trigger is
+present but hidden and that no `agent-mode-chip` exists to turn off. Through v0.73.2 that
+same account got a generic selector-drift envelope (exit 23), which reads as *our* bug and
+invites a retry that cannot work ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).
+
+The distinction that matters, because the DOM is identical either way: a **pressed chip**
+means the classic arm exists and gflow turns it back on itself
+([#749](https://github.com/ffroliva/gflow-cli/issues/749)); **no chip at all** means there
+is no classic arm to return to, aspect / model / count are Agent-settings defaults rather
+than per-request controls, and no flag or profile change helps. Generating from the Flow
+web UI still works.
 
 ### 6.2 Envelope → cause → what to do
 

@@ -64,6 +64,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.errors import (
     ConfigurationError,
+    FlowAgentUiError,
     FlowHostMigratedError,
     InsufficientCreditsError,
     MediaUploadRejectedError,
@@ -114,6 +115,11 @@ COMPOSER = "[contenteditable='true']"
 #: Accounts, measurements and the transition inventory:
 #: docs/superpowers/spikes/2026-09-08-migrated-composer-agent-mode-hides-settings.md
 AGENT_MODE_CHIP = "button.agent-mode-chip[aria-pressed='true']"
+#: The same chip in ANY state. :data:`AGENT_MODE_CHIP` matches only a PRESSED chip, so it
+#: cannot tell "this account has no agent/classic split" from "the split exists and is
+#: currently off" — the distinction #799 turns on. Never click this one: it is not
+#: self-guarding, and a click would toggle a healthy composer INTO agent mode.
+AGENT_MODE_CHIP_ANY = "button.agent-mode-chip"
 #: How long the classic composer gets to come back after the chip is clicked. The swap is
 #: a local Angular re-render, not a navigation — measured well under a second on both
 #: accounts — so this is headroom, not an expectation.
@@ -726,6 +732,39 @@ class MigratedComposer:
             # healthy run nothing — no extra query is issued unless the gate has failed.
             state, click_error = await self._exit_agent_mode(page)
             if state == "absent":
+                # #799. Before calling this drift, separate the third cohort from our own
+                # bug, because the DOM they leave is the same one: the trigger present
+                # under a bare `hidden`. With a pressed chip that is agent mode and the
+                # branch above recovers it. With NO chip in the page at all, there is no
+                # classic arm to return to — the account's only composer is the agent
+                # panel, so model/aspect/count live in Agent settings as defaults and
+                # nothing gflow drives is on the page. A trigger that has LEFT the DOM is
+                # the opposite finding, a renamed selector, and stays drift.
+                if await self._is_agent_only_composer(page, trigger):
+                    log.info("migrated.agent_only_composer", issue_ref="#799", url=page.url)
+                    raise FlowAgentUiError(
+                        detail=(
+                            f"migrated host: this account's composer is agent-only — the "
+                            f"settings trigger ({READY_ANCHOR}) is in the page but hidden, "
+                            f"and no agent-mode chip ({AGENT_MODE_CHIP_ANY}) exists to turn "
+                            f"off, so there is no classic composer to drive on {page.url} "
+                            f"(host=migrated). Not selector drift, and not the recoverable "
+                            f"agent mode of #749. Readiness gate: {e}"
+                        ),
+                        remediation_hint=(
+                            "Google has put this account on Flow's agent-only composer, "
+                            "where aspect, model and count are Agent-settings defaults "
+                            "rather than per-request controls. gflow-cli has no driver for "
+                            "it yet, so no flag or profile change helps and a re-run will "
+                            "not either — this is tracked in issue #799. Generating from "
+                            "the Flow web UI still works."
+                        ),
+                        # Not retryable: #749's chip flips per click, but which composer an
+                        # account gets is server-assigned per account, so a retry lands the
+                        # same page. Same reasoning that keeps FlowHostMigratedError out of
+                        # RETRYABLE_ERRORS; FlowAgentUiError is in it for the labs A/B.
+                        retryable=False,
+                    ) from e
                 raise UiSelectorDriftError(
                     detail=(
                         f"migrated host: the settings trigger ({READY_ANCHOR}) did not "
@@ -812,6 +851,30 @@ class MigratedComposer:
         except Exception as e:  # noqa: BLE001 - an unreadable page is not an answer
             log.warning("migrated.agent_mode_probe_failed", error=str(e)[:200])
             return None
+
+    @staticmethod
+    async def _is_agent_only_composer(page: Page, trigger: Any) -> bool:
+        """True when the page is #799's agent-only cohort rather than selector drift.
+
+        Two facts, and it takes both. The readiness anchor is **in the DOM but not
+        visible** — a trigger that is simply gone is a renamed selector, our bug, and
+        must keep saying so. And **no agent-mode chip exists at all**, pressed or not:
+        the chip is what makes a hidden trigger recoverable (#749), so its absence is
+        what says this account has no classic arm to go back to.
+
+        Reading the chip un-pressed is deliberately excluded from the claim. That state
+        was never observed and contradicts the measured mechanism (pressed ⇒ hidden), so
+        it falls through to drift rather than being asserted as a cohort.
+
+        Fail-closed: an unreadable page is not evidence of a cohort.
+        """
+        try:
+            if not await trigger.count() or await trigger.is_visible():
+                return False
+            return not await page.locator(AGENT_MODE_CHIP_ANY).first.count()
+        except Exception as exc:  # noqa: BLE001 - an unreadable page is not an answer
+            log.warning("migrated.agent_only_probe_failed", error=str(exc)[:200])
+            return False
 
     @classmethod
     async def _exit_agent_mode(cls, page: Page) -> tuple[AgentModeExit, Exception | None]:

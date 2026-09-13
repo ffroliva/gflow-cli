@@ -94,6 +94,15 @@ class GFlowError(Exception):
     #: projection; the local path/artifacts stay CLI-local (S21).
     incident_ref: IncidentRef | None = None
 
+    #: Per-instance override of this class's ``RETRYABLE_ERRORS`` membership; ``None``
+    #: keeps it. It lived on ``FlowAppError`` while that was the only producer, whose
+    #: comment set the condition for promoting it: "move it up if, and only if, a second
+    #: class needs it." #799 is the second — a migrated account whose composer is
+    #: agent-only raises ``FlowAgentUiError``, which is in ``RETRYABLE_ERRORS`` for the
+    #: labs A/B cohort that flaps, while which composer an account gets does not.
+    #: ``is_retryable`` reads it by ``getattr``.
+    retryable: bool | None = None
+
     def __init__(
         self,
         detail: str = "",
@@ -102,6 +111,7 @@ class GFlowError(Exception):
         instance: str | None = None,
         route: str = "",
         remediation_hint: str | None = None,
+        retryable: bool | None = None,
     ) -> None:
         message = self.title if not detail else f"{self.title}: {detail}"
         super().__init__(message)
@@ -109,6 +119,7 @@ class GFlowError(Exception):
         self.status = status
         self.instance = instance or ""
         self.route = route
+        self.retryable = retryable
         self.remediation_hint = (
             remediation_hint if remediation_hint is not None else self._default_remediation
         )
@@ -733,23 +744,12 @@ class FlowAppError(GFlowError):
     problem_type = "https://gflow-cli.dev/errors/flow-app"
     title = "Google Flow web app error"
 
-    #: Per-instance override of this class's ``RETRYABLE_ERRORS`` membership; ``None``
-    #: keeps it. It lives HERE and not on ``GFlowError`` because there is exactly one
-    #: producer (``_common.py::raise_if_known_landing``) and one class with two shapes
-    #: that disagree about retrying. ``is_retryable`` reads it by ``getattr``, so a base
-    #: declaration would buy no typing and no test-double visibility — only a field on
-    #: every error in the project. Move it up if, and only if, a second class needs it.
-    retryable: bool | None = None
     _default_remediation = (
         "Google Flow did not serve the page gflow asked for — a Flow-side condition, "
         "not a gflow-cli bug. If it crashed (client-side exception), retry in a moment. "
         "If it redirected to flow.google.com/about, open the project in a browser on "
         "that host and confirm this account can reach it."
     )
-
-    def __init__(self, *args: Any, retryable: bool | None = None, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.retryable = retryable
 
 
 class FlowHostMigratedError(GFlowError):

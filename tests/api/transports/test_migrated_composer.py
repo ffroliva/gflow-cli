@@ -32,6 +32,7 @@ from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     ConfigurationError,
+    FlowAgentUiError,
     FlowHostMigratedError,
     InsufficientCreditsError,
     MediaUploadRejectedError,
@@ -39,6 +40,7 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
+    is_retryable,
 )
 
 # --- a tiny DOM -------------------------------------------------------------
@@ -155,8 +157,10 @@ class Dom:
     # to tell apart; `migrated_composer.AGENT_MODE_CHIP` carries the selector rationale
     # and points at the spike that measured all of this.
     agent_mode: bool = False
-    #: The mode is on but the chip is not in the DOM — nothing to click, so the driver
-    #: must fall back to the ordinary drift message rather than promise a recovery.
+    #: The chip is not in the DOM at all. With the trigger still present-but-hidden this
+    #: is #799's agent-only cohort — no classic arm to return to, so nothing to click and
+    #: nothing to promise; the driver names the cohort (exit 25) instead of calling it
+    #: drift. With the trigger GONE too it stays ordinary drift, a renamed selector.
     agent_chip_present: bool = True
     # A chip that will not toggle off. NOT observed on either of our accounts — kept
     # because the reporter's might pin the mode, and a fix that cannot say "I tried and
@@ -585,6 +589,10 @@ class FakePage:
         if css == migrated_composer.AGENT_MODE_CHIP:
             pressed = dom.agent_mode and dom.agent_chip_present
             return FakeLocator(self, "agent_chip", ["chip"] if pressed else [])
+        if css == migrated_composer.AGENT_MODE_CHIP_ANY:
+            # Presence alone, independent of `agent_mode` — that is the whole point of
+            # the second selector: #799's cohort renders no chip in any state.
+            return FakeLocator(self, "agent_chip_any", ["chip"] if dom.agent_chip_present else [])
         if css == "flow-agent-panel button":
             buttons = [Radio("close", "Close")] if dom.agent_panel_expanded else []
             return FakeLocator(self, "agent_close", buttons)
@@ -2372,19 +2380,59 @@ async def test_ensure_editor_still_names_agent_mode_when_the_chip_click_fails() 
     assert "migrated.agent_mode_exit_failed" in [e["event"] for e in logs]
 
 
-async def test_ensure_editor_falls_back_to_drift_when_agent_mode_renders_no_chip() -> None:
-    """Mode on, chip absent — a cohort that hides it, or a renamed class. There is
-    nothing to click, so nothing may be promised: the ordinary drift message is the
-    honest one, and the `agent_chip_present` knob exists for exactly this state."""
+async def test_ensure_editor_names_the_agent_only_cohort_instead_of_drift(
+    install_log_capture,
+) -> None:
+    """#799: the trigger is in the DOM under a bare `hidden` and there is NO chip.
+
+    This used to be ordinary selector drift, on the reasoning that with nothing to
+    click nothing may be promised. That was right about the recovery and wrong about
+    the diagnosis: #799 supplied the ground truth this state had been missing — a
+    third cohort whose composer is agent-only, with no classic arm to return to and
+    therefore no chip to un-press. The DOM is identical to a pressed chip's (#749),
+    which is why it read as drift, and why the chip's ABSENCE is what separates them.
+
+    Exit 25, not 23, and not retryable: a driver that does not exist will not appear
+    on a re-run.
+    """
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = FakePage()
     page.dom.agent_mode = True
     page.dom.agent_chip_present = False
+
+    with pytest.raises(FlowAgentUiError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+
+    assert page.dom.agent_chip_clicks == 0
+    assert EXIT_CODE_MAP[FlowAgentUiError] == 25
+    assert is_retryable(exc.value) is False
+    assert "agent-only" in str(exc.value).casefold()
+    # The class default talks about an A/B cohort and suggests another Chrome profile;
+    # neither applies when the composer is a property of the Google account.
+    hint = exc.value.remediation_hint
+    assert "#799" in hint
+    assert "A/B" not in hint
+    events = [e["event"] for e in install_log_capture.entries]
+    assert "migrated.agent_only_composer" in events
+
+
+async def test_ensure_editor_still_reports_drift_when_the_trigger_is_gone_entirely() -> None:
+    """The discriminator is present-but-hidden, not merely "not visible".
+
+    A trigger that has left the DOM is a renamed or restructured selector — our bug,
+    filed against us — and must not be dressed up as somebody else's cohort.
+    """
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_chip_present = False
+    page.dom.trigger_present = False
+
     with pytest.raises(UiSelectorDriftError) as exc:
         await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
-    assert page.dom.agent_chip_clicks == 0
-    assert "agent mode" not in str(exc.value).casefold()
+    assert "agent-only" not in str(exc.value).casefold()
 
 
 async def test_ensure_editor_reports_drift_once_agent_mode_is_actually_off() -> None:

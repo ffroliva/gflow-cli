@@ -61,6 +61,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `credits` itself is still unavailable on migrated accounts; the balance surface for that
   cohort has not been located. #795 stays open for it.
 
+- **The migrated agent-only composer is named before submit instead of reported as
+  selector drift (#799).** Google has put some accounts on a `flow.google.com` composer
+  that has **no classic arm at all** — the prompt box is the agent panel, and aspect,
+  model and count live in Agent settings as defaults rather than per-request controls.
+  gflow waited 30 s for a control that is structurally absent and raised
+  `UiSelectorDriftError` (exit 23), which reads as *our* frontend bug and invites a retry
+  that cannot work.
+
+  It now raises `FlowAgentUiError` — **exit 25, `retryable: false`** — naming the cohort
+  and saying plainly that no flag or profile change helps. The discriminator is the chip:
+  the DOM is identical to #749's recoverable agent mode (settings trigger present under a
+  bare `hidden`), and what separates them is that a recoverable account still has a
+  `button.agent-mode-chip` to turn off while this one has none. A trigger that has left
+  the DOM entirely is unchanged — that is a renamed selector, our bug, and still drift.
+
+  Reported with the DOM evidence that made it diagnosable by **@Cstanish127**. gflow-cli
+  still has no driver for that composer; #799 stays open for it.
+- **`retryable` is now a per-raise override on every error, not just `FlowAppError`.**
+  Its own comment set the condition — *"move it up if, and only if, a second class needs
+  it"* — and #799 is the second: `FlowAgentUiError` is in `RETRYABLE_ERRORS` because the
+  labs A/B cohort flaps, while which composer a migrated account gets does not.
+
 ## [0.73.2] — 2026-09-12
 
 ### Fixed

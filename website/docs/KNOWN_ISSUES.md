@@ -1247,6 +1247,35 @@ continue as a seeded I2V generation — tracked as backlog.
 
 ## Mitigated
 
+### Migrated accounts can have an agent-only composer, which gflow cannot drive
+
+Some accounts on `flow.google.com` are served a composer with **no classic arm at all**:
+the only prompt box is the agent panel, there is no `agent-mode-chip` to turn off, and
+aspect / model / count are Agent-settings **defaults** rather than per-request controls.
+Every control the migrated driver reaches for is structurally absent, so `gflow video`
+and `gflow image` cannot run there at all.
+
+**Mitigation (v0.74.0):** the state is named before submit — `FlowAgentUiError`, exit 25,
+`retryable: false`, $0 spent — instead of the generic `UiSelectorDriftError` (exit 23)
+that reads as a gflow frontend bug and invites a doomed retry. The discriminator is the
+chip, because the DOM is otherwise identical to the *recoverable* agent mode of
+[#749](https://github.com/ffroliva/gflow-cli/issues/749): a hidden settings trigger **with**
+a chip is recoverable and gflow turns it back itself; a hidden trigger with **no chip
+anywhere** is this cohort.
+
+**No workaround inside gflow.** No flag, `--ui-mode`, or profile change reaches it — the
+composer is a property of the Google account. Generating from the Flow web UI still works.
+A driver for the agent panel is not implemented;
+[#799](https://github.com/ffroliva/gflow-cli/issues/799) stays open for it.
+
+**Prevalence is unmeasured.** One reporter, one account (Windows 11, ru locale), whose DOM
+capture is what made this diagnosable. No account available to the maintainers is in this
+cohort, so the guard is verified against the reporter's captured markup driven by a real
+Chromium (`tests/api/transports/test_agent_only_composer.py`) and **not** against live
+Flow — that needs an account in the cohort and is the named blocker on #799.
+
+---
+
 ### Flow can pin the agentic cohort server-side for hours
 
 The classic↔agentic editor arm is server-assigned per page load and normally
