@@ -57,3 +57,11 @@ The lesson generalises past capabilities: an **absent menu entry** is cohort evi
 exactly like a present one, and "missing on N accounts" never by itself indicts the
 selector. Duration and credits for that tier remain unmeasured — it has only ever been
 selected at $0, never generated on.
+
+**Ask "does it EXIST here", not "is it required here" (2026-09-13, #792).** When a
+cohort cannot reproduce a reported failure, the fix still needs an anchor, and guessing one
+is how a selector lands on the wrong element. The second question is answerable on a cohort
+that never needs the control: #792's confirm button was measured **present, visible and
+enabled** on an account whose picker auto-closes, which anchored the fix on a class instead
+of on the reporter's translated label — with no recon round-trip, and at $0. A control you
+cannot trigger is not thereby a control you cannot observe.

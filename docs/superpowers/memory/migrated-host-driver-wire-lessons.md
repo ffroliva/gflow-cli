@@ -87,6 +87,22 @@ Evidence: `docs/LIVE_VERIFICATION_v0.69.0.md`; recon
 - **The Start-frame picker exposes no media id in its DOM.** Uploads are listed by *file
   name*, so binding is a name search — not an id lookup. Plan for name collisions rather
   than assuming identity.
+- **That collision arrived, as #792 — and the tie-break that lost was a sort assumption.**
+  A second run of one file leaves two identical library entries; i2v leaned on the
+  picker's newest-first order to pick the right one, which is an assumption about
+  someone else's app. Every local upload is now a run-unique COPY
+  (`<stem>-<8hex><suffix>`) made in `_staged_upload`, shared by i2v's picker search and
+  r2v's `@` mention, so the match is exact by construction and no ordering is trusted.
+  **Opposite policies now hold per host, deliberately:** labs image i2i *reuses* an
+  upload found by filename (`prefer_existing`, shipped for #314/#334 to stop duplicate
+  library entries); the migrated driver *guarantees a new one* every run. Porting
+  `prefer_existing` to the migrated host would silently never match.
+- **The picker does not always commit on the option click.** Some cohorts wait for
+  `button.detail-add-to-prompt-btn`; the maintainer's commits on the click and merely
+  *carries* that button. Clicking it where the pick already committed is a no-op — a
+  closing picker no longer has it — so no capability predicate is needed: grace-wait,
+  try the confirm, re-wait. Report **which** drift it was; a picker that ignored its
+  confirm is not a picker that never offered one.
 - **The picker's search is server-side (`UpteDb`) and indexes a fresh upload late.** On a
   32-asset project both e2e tests missed an upload within 8 s and the identical test passed
   minutes later. The composer reopens the popover and searches up to

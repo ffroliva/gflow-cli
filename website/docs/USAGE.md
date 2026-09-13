@@ -640,7 +640,8 @@ the editor's frame slot via the media dialog, then Flow fires
 > `GFLOW_CLI_FLOW_HOST=flow.google.com` — only a **local** `--initial-frame` is served, with
 > `--project <id>`: gflow uploads the file through the editor's own Upload entry (it stays in
 > the project's library like any upload — a second run uploads it again), finds it in the
-> Start-frame picker under that name, and refuses to submit unless the app's own
+> Start-frame picker under the name it was uploaded with (see below), and refuses
+> to submit unless the app's own
 > submit body carries that upload's media id with an image-to-video model key (exit 7
 > otherwise: the labs #125 shape, where an unbound frame silently goes out as text-to-video).
 > `--end-frame`, a UUID or `@Name` frame exit 36 there; an unmoved account keeps the labs
@@ -712,7 +713,9 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 
 > **On Flow's migrated `flow.google.com` host (#639)** — a moved account, or
 > `GFLOW_CLI_FLOW_HOST=flow.google.com` — only **local `--ref` files** are served, with
-> `--project <id>`. Each file is uploaded through the editor's own Upload entry (the same
+> `--project <id>`. Each file is uploaded through the editor's own Upload entry under a
+> **run-unique** name — `hero.png` uploads as `hero-a1b2c3d4.png` (#792), so re-using the
+> same reference across runs cannot bind an earlier copy — (the same
 > path i2v uses, so it stays in the project's library like any upload) and then attached as
 > an `@` **mention** in the prompt — references are not a chip slot on this host. A run
 > whose references have not all attached is refused **before** submit (exit 32), and the
@@ -723,7 +726,7 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 >
 > **`--duration` is refused on this path (exit 11).** The host offers reference-to-video
 > only at its base 8s tier. At 4s or 6s it does not refuse — it drops the references,
-> types their file *names* into the prompt and bills a text-to-video clip (measured at
+> types their uploaded *names* into the prompt and bills a text-to-video clip (measured at
 > zero credits, 2026-09-06). Because the editor remembers the last duration used, an r2v
 > run pins 8s itself rather than inheriting it. Pass no `--duration`, or `--duration 8`.
 

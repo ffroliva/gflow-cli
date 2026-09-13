@@ -1010,8 +1010,11 @@ async def gflow_generate_video(  # NOSONAR
         aspect: Aspect ratio — '9:16' or '16:9'.
         initial_frame: Path to start frame image (required for i2v). On an
             account Google has moved to flow.google.com a **local file** is the
-            only form served there (uploaded through the editor, bound by file
-            name); a Flow media UUID returns the exit-36-equivalent envelope.
+            only form served there — uploaded through the editor, then bound from
+            the Frames picker under a **run-unique** name (``hero.png`` is listed
+            as ``hero-<8 hex>.png``), so a re-run of the same file cannot bind an
+            earlier upload (#792); a Flow media UUID returns the
+            exit-36-equivalent envelope.
         end_frame: Path to end frame image (optional for i2v). Not ported to
             flow.google.com yet — exit-36-equivalent envelope on a moved account.
         reference_images: List of reference image paths (ingredients) for r2v.

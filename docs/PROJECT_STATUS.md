@@ -338,7 +338,7 @@ which the docs now say in three places
 ([#639](https://github.com/ffroliva/gflow-cli/issues/639), slice 1) — on a moved account, and
 by default on an unmoved one. The port is UI-driven and observed rather than replayed: the
 composer picks the Frames submode, uploads through the editor's own toolbar entry, reads the
-media id off the app's `maseQ` reply, finds the upload in the picker by file name (the picker
+media id off the app's `maseQ` reply, finds the upload in the picker by its run-unique display name (#792) (the picker
 exposes no media id in its DOM, and indexes a fresh upload late — hence up to three searches),
 and inspects the submit *request* as it leaves. An unbound chip is refused before the click,
 exit 23 at zero credits, because an empty Frames submit silently goes out as text-to-video.

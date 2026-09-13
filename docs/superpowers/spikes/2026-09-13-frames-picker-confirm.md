@@ -61,11 +61,43 @@ so it is now measured on **both** entries, ten days apart.
    constant. Measuring cost one $0 run; guessing would have silently cancelled the pick and
    re-raised as the same selector drift it was meant to fix.
 
+## Driving the branch anyway — what a $0 run could still settle
+
+The first draft of this note claimed the whole confirm branch was unreachable here. That
+was **over-scoped**, and the council caught it: *"listing something as unverified that you
+could have verified is the same failure as omitting it, plus a false paper trail."*
+
+Two different questions were hiding behind one blocker:
+
+| Question | Reachable here? |
+|---|---|
+| Does a picker that **refuses to close** get rescued by the confirm? | **No** — needs the reporter's cohort |
+| Does the branch gflow will run **resolve and behave safely** on the live DOM? | **Yes**, with one constant |
+
+The second was forced by driving `FRAME_COMMIT_GRACE_S` to 1 ms, so the grace wait expires
+on every run and the branch is always entered
+(`test_e2e_the_pickers_confirm_is_clickable_on_the_real_frames_picker`, `e2e_auth`, $0).
+
+**Result, 2026-09-13, against live Flow: PASSED, with `confirm_clicked=False`.** Even at a
+1 ms grace the picker had already gone, `is_visible()` returned False, the click was
+correctly **skipped**, and the chip bound normally.
+
+That is the measurement the code's own safety claim needed. The comment says clicking the
+confirm "is a no-op where the click already committed, because a closing picker no longer
+carries it" — previously an argument, now an observation, and it retires the review's
+concern that a slow auto-close could make this branch *worse* than the 15 s wait it
+replaced. `is_visible()` rather than `count()` is what makes that true: a detached pane
+still counts.
+
 ## What is still NOT verified
 
-The confirm click **fixing a stuck picker** cannot be observed here — this cohort's picker
-closes on its own, so the new branch is never entered against live Flow. Per the Iron Law
-that is a **named external blocker**: *a cohort Google has not put us in.* The branch is
-covered offline (`test_attach_clicks_the_pickers_confirm_when_the_pick_does_not_commit`,
-A/B-controlled: neutering the click turns it red) and the verifier is the #792 reporter.
-Anything else would be a "recorded, not omitted" label standing in for a run.
+**The confirm click itself has never executed against live Flow.** Every arm available
+here skips it, because no picker on this cohort stays open — which is exactly the state
+the reporter has and we do not. Per the Iron Law that remainder is a **named external
+blocker**: *a cohort Google has not put us in.*
+
+It is covered offline across all three outcomes — clicked and committed, clicked and
+ignored, and no confirm offered — and A/B-controlled: neutering the click turns
+`test_attach_clicks_the_pickers_confirm_when_the_pick_does_not_commit` red. The verifier
+is the #792 reporter. The **r2v** half of the naming fix is likewise offline-only: it
+shares the upload leg the i2v e2e exercised live, but its own attach was not re-run.

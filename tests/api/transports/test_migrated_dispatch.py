@@ -386,7 +386,7 @@ async def test_a_failed_composer_run_leaves_the_page_unparked_for_the_incident_c
 
     async def _boom(*_: Any, **__: Any) -> VideoResult:
         raise UiSelectorDriftError(
-            detail="migrated host: the frame picker stayed open 15s after picking 'k.jpg'"
+            detail="migrated host: the frame picker stayed open 16.5s after picking 'k.jpg'"
         )
 
     monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.run_video", _boom)

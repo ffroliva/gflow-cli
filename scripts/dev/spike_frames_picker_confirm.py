@@ -1,5 +1,8 @@
 """$0 spike (#792): does Flow's Frames picker carry an explicit confirm button?
 
+Side effect worth knowing before you run it: the probe image is uploaded, so it stays in
+the account's Flow project library like any upload. No generation is submitted.
+
 Two cohorts disagree. The reporter on #792 measured a picker that STAYS OPEN after an
 asset is clicked and needs an "Add to prompt" confirm; the maintainer's cohort still
 auto-closes (tests/e2e/test_migrated_i2v_e2e.py passes unchanged). Before gflow clicks a
@@ -14,7 +17,7 @@ a signed-in Flow page carries the account email in aria-label (the _CLICK_POSTMO
 rule, one surface over).
 
     GFLOW_CLI_E2E_PROFILE=<profile> GFLOW_CLI_E2E_PROJECT=<uuid> \
-        .venv/Scripts/python.exe scripts/dev/spike_frames_picker_confirm.py
+        uv run python scripts/dev/spike_frames_picker_confirm.py
 """
 
 from __future__ import annotations
@@ -55,8 +58,14 @@ _DUMP_JS = r"""
 
 
 async def main() -> int:
-    profile = os.environ["GFLOW_CLI_E2E_PROFILE"]
-    project = os.environ["GFLOW_CLI_E2E_PROJECT"]
+    profile = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
+    project = os.environ.get("GFLOW_CLI_E2E_PROJECT", "").strip()
+    if not profile or not project:
+        # The named re-runner of this spike is an external reporter on an unknown box;
+        # a bare KeyError is not a thing to hand them.
+        print(__doc__)
+        print("ERROR: set GFLOW_CLI_E2E_PROFILE and GFLOW_CLI_E2E_PROJECT.")
+        return 2
     from PIL import Image, ImageDraw
 
     from gflow_cli.config import Settings
@@ -67,6 +76,15 @@ async def main() -> int:
     img.save(frame, format="PNG")
 
     out: dict[str, object] = {"project": "<redacted>"}
+    path = default_out_path("frames_picker_confirm")
+
+    def _dump() -> None:
+        # BEFORE teardown, and on the failure path too. A bare `finally` that parks the
+        # page first is exactly the defect #792's sibling half shipped (v0.73.2): the run
+        # that FAILS is the one whose dump matters, and it was the one being discarded.
+        Path(path).write_text(json.dumps(out, indent=1), encoding="utf-8")
+        print(f"wrote {path}")
+
     transport = UiAutomationTransport()
     try:
         await transport.setup(Settings(_env_file=None).profile_subdir(profile))  # pyright: ignore[reportCallIssue]
@@ -98,11 +116,9 @@ async def main() -> int:
         out["picker_after_click"] = await page.evaluate(_DUMP_JS, PICKER)
         out["picker_still_present"] = bool(await page.locator(PICKER).count())
     finally:
+        _dump()
         await transport.teardown()
 
-    path = default_out_path("frames_picker_confirm")
-    Path(path).write_text(json.dumps(out, indent=1), encoding="utf-8")
-    print(f"wrote {path}")
     print(json.dumps({k: v for k, v in out.items() if k != "picker_before_click"}, indent=1))
     return 0
 

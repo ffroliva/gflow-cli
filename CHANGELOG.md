@@ -24,7 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   could bind the older one and the submit-body check then failed with `eb1hJf does not
   carry the uploaded start frame`. What is uploaded is now a run-unique copy
   (`<stem>-<8 hex>.<ext>`), so the search has exactly one match by construction and the
-  library's sort order is no longer trusted.
+  library's sort order is no longer trusted. **This applies to every local file this
+  driver uploads on the migrated host** — `video i2v --initial-frame`, `video r2v --ref`
+  and `image i2i --ref` alike, since all three find their upload again by display name.
+  Expect the tagged names when you browse the project's library on flow.google.com.
 
   Reported, root-caused and verified end-to-end on the affected cohort by **@ai4U23**.
 

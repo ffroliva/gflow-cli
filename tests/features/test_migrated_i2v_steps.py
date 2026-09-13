@@ -26,6 +26,7 @@ from gflow_cli.errors import (
     FlowHostMigratedError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
+    UiSelectorDriftError,
     WireFormatError,
 )
 from tests.api.transports.test_migrated_composer import (
@@ -121,6 +122,41 @@ def _unmoved(world: dict[str, Any]) -> None:
 @given(parsers.parse('a local start frame "{name}"'))
 def _frame_named(world: dict[str, Any], name: str) -> None:
     world["frame"] = _png(world["frame"].parent, name)
+
+
+@given('the library already lists an older "hero.png"')
+def _stale_lookalike(world: dict[str, Any]) -> None:
+    world["hop"] = True  # the default picker_options already carry it; make it visible
+
+
+@given("the picker does not commit on the option click")
+def _picker_needs_confirm(world: dict[str, Any]) -> None:
+    world["hop"] = True
+    world["page"].dom.picker_needs_confirm = True
+
+
+@given("the picker offers no confirm")
+def _picker_no_confirm(world: dict[str, Any]) -> None:
+    world["hop"] = True
+    world["page"].dom.picker_has_confirm = False
+
+
+@then("the picker's confirm is clicked and the Start chip binds")
+def _confirm_clicked(world: dict[str, Any]) -> None:
+    assert "error" not in world, world.get("error")
+    dom = world["page"].dom
+    assert dom.confirm_clicks == 1
+    assert dom.chip_bound and not dom.picker_open
+
+
+@then("the run fails with exit 23 naming the missing confirm")
+def _exit_23_no_confirm(world: dict[str, Any]) -> None:
+    exc = world.get("error")
+    assert isinstance(exc, UiSelectorDriftError), exc
+    assert EXIT_CODE_MAP[UiSelectorDriftError] == 23
+    assert "carries no confirm" in str(exc)
+    assert world["page"].dom.confirm_clicks == 0
+    assert world["page"].dom.submit_clicked == 0
 
 
 @given("the library never lists the upload")
