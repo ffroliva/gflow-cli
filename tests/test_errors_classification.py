@@ -206,6 +206,39 @@ class TestPerInstanceRetryability:
         # Available to any error now, not a TypeError as it was before.
         assert is_retryable(UiSelectorDriftError(detail="drift", retryable=True)) is True
 
+    def test_which_subclasses_accept_the_override_is_pinned_not_assumed(self) -> None:
+        """The override is NOT universal, and the split must fail loudly (CodeRabbit, D1, D4).
+
+        Subclasses that declare their own `__init__` do not forward `retryable`. Rather
+        than thread it through six constructors no raise site passes it to, the contract
+        is narrowed — but then the narrowing has to be pinned, or the base's docstring
+        rots into a lie. What matters is that the rejection is a `TypeError` and never a
+        silent drop: a swallowed `retryable=False` hands a caller a doomed retry with
+        nothing to explain it.
+        """
+        from gflow_cli import errors
+        from gflow_cli.errors import is_retryable
+
+        accepts = {
+            name
+            for name, obj in vars(errors).items()
+            if isinstance(obj, type)
+            and issubclass(obj, errors.GFlowError)
+            and obj is not errors.GFlowError
+            and "__init__" not in obj.__dict__
+        }
+        # A class inheriting the base __init__ accepts it...
+        assert errors.UiSelectorDriftError.__name__ in accepts
+        assert is_retryable(errors.UiSelectorDriftError(detail="x", retryable=True)) is True
+
+        # ...one declaring its own does not, and says so out loud.
+        with pytest.raises(TypeError, match="retryable"):
+            errors.WireFormatError(detail="x", retryable=False)  # type: ignore[call-arg]
+
+        # FlowApiError is the exception: it forwards **kwargs, including the legacy
+        # positional branch, which used to pop named kwargs one at a time and drop this.
+        assert is_retryable(errors.FlowApiError(503, "body", retryable=False)) is False
+
     def test_the_signin_landing_raises_auth_expired(self) -> None:
         """The `"signin"` arm, which only the e2e reached before — and `addopts`
         excludes that, so the offline suite never executed this branch (council D4).

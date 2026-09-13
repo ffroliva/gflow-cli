@@ -101,6 +101,16 @@ class GFlowError(Exception):
     #: agent-only raises ``FlowAgentUiError``, which is in ``RETRYABLE_ERRORS`` for the
     #: labs A/B cohort that flaps, while which composer an account gets does not.
     #: ``is_retryable`` reads it by ``getattr``.
+    #:
+    #: **Not every subclass accepts it.** Those declaring their own ``__init__``
+    #: (``RateLimitError``, ``WireFormatError``, ``BatchPartialError``,
+    #: ``BatchIntegrityError``, ``ChainPartialError``, ``SyncPartialError``) do not
+    #: forward it and raise ``TypeError`` — deliberately left that way rather than
+    #: threaded through six constructors no raise site passes it to. The failure is
+    #: LOUD, which is the property that matters: a silently dropped ``retryable=False``
+    #: would hand a caller a doomed retry nobody could explain. Add it to a subclass
+    #: when a raise site there actually needs it; ``test_errors_classification.py`` pins
+    #: the current split so this note cannot quietly go stale.
     retryable: bool | None = None
 
     def __init__(
