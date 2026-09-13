@@ -32,11 +32,15 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shutil
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import unquote_plus, urlsplit
+from uuid import uuid4
 
 import structlog
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -73,6 +77,8 @@ from gflow_cli.errors import (
 from gflow_cli.redaction import redact_sensitive_text
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from playwright.async_api import Page
 
     from gflow_cli.api.image import GenerateImageRequest
@@ -210,7 +216,23 @@ FRAME_SEARCH_ATTEMPTS = 3
 FRAME_SEARCH_RETRY_PAUSE_S = 2.0
 #: ``maseQ`` answered in 1–3 s for a 120 KB PNG; a 20 MB file on a slow link needs more.
 FRAME_UPLOAD_S = 60.0
+#: The picker's own confirm ("Add to prompt"). Anchored on the class, never the label —
+#: the copy is translated on this host. Measured on the FRAMES entry into the picker on
+#: 2026-09-13 (``scripts/dev/spike_frames_picker_confirm.py``): present, visible and
+#: enabled on the maintainer's cohort, where the option click ALSO commits, so it is
+#: simply never needed there. #792 reports a cohort where the option click does NOT
+#: commit and this button is the only way through. The r2v spike
+#: (``2026-09-05-migrated-r2v-attach-surface.md:72``) named the same class on the
+#: ``@``-mention entry into the same component.
+#:
+#: Do not replace this with "the picker button that is not an asset option": the other
+#: visible button in that popover is ``header-close-btn``, so that guess clicks CLOSE.
+PICKER_CONFIRM = "button.detail-add-to-prompt-btn"
 FRAME_COMMIT_HIDDEN_S = 15.0
+#: How long a picker is allowed to close on its own before the confirm is looked for. A
+#: cohort that auto-closes is gone well inside this; one that does not is still up, and
+#: clicking a confirm that a closing picker no longer has is a no-op count()==0.
+FRAME_COMMIT_GRACE_S = 1.5
 FRAME_THUMB_VISIBLE_S = 5.0
 #: What a click that expired may be asked about — Playwright's four actionability
 #: conditions, read back after the fact. See :meth:`MigratedComposer._click`.
@@ -492,6 +514,35 @@ def _unported_image_form(request: GenerateImageRequest) -> str | None:
 
 def _exact(label: str) -> re.Pattern[str]:
     return re.compile(r"^\s*" + re.escape(label) + r"\s*$")
+
+
+@contextmanager
+def _staged_upload(image_path: Path) -> Generator[tuple[Path, str], None, None]:
+    """Yield a run-unique COPY of *image_path* and the name Flow will list it under.
+
+    Every local file this driver uploads is found again **by display name** — the
+    Frames picker searches by it (i2v) and the ``@`` mention queries it (r2v). An
+    upload is listed under its file name, so a second run of the same file leaves two
+    identical entries and the lookup can bind the stale one. i2v used to lean on the
+    picker's newest-first sort to break that tie; that is a sort assumption about
+    someone else's app, and it lost — #792, reported with the submit-body check
+    firing ``eb1hJf does not carry the uploaded start frame``.
+
+    A random tag makes the match exact by construction, for both callers, and trusts
+    no ordering. It also closes the #723 hazard one step further: Flow lists
+    characters and media in one picker without ranking them, so a media file that
+    merely shares a character's name can outrank the character — a tagged upload
+    cannot collide with a character name at all.
+
+    The stem is kept so the asset stays recognisable in the user's library.
+    """
+    name = f"{image_path.stem}-{uuid4().hex[:8]}{image_path.suffix}"
+    # ignore_cleanup_errors: on Windows the browser can still hold the handle when
+    # the upload returns, and a failed rmtree must not fail an attach that worked.
+    with TemporaryDirectory(prefix="gflow-upload-", ignore_cleanup_errors=True) as staging:
+        staged = Path(staging) / name
+        shutil.copyfile(image_path, staged)
+        yield staged, name
 
 
 def _ligature(page: Any, name: str) -> Any:
@@ -1338,18 +1389,17 @@ class MigratedComposer:
         named for it — the id the submit body is then asserted to carry.
 
         The upload is permanent in the Flow project (it lands in the library like any
-        other asset). The picker is library-only and searched by display name; an
-        upload is listed under its file name, and two uploads of one file list twice —
-        the picker's default sort puts the newest first, and the submit-body check is
-        what catches a wrong pick.
+        other asset). The picker is library-only and searched by display name, so what
+        is uploaded is a run-unique COPY of ``image_path`` — see below.
         """
         from gflow_cli.api.client import validate_image_file  # noqa: PLC0415 - cycle
 
         await validate_image_file(image_path)
         # No outer budget: each leg is bounded, and an outer one firing first would
         # replace the stage-named failure with a generic "attach timed out".
-        media_id = await self._upload_via_toolbar(page, project_id, image_path)
-        await self._pick_frame_by_name(page, image_path.name, media_id)
+        with _staged_upload(image_path) as (staged, staged_name):
+            media_id = await self._upload_via_toolbar(page, project_id, staged)
+        await self._pick_frame_by_name(page, staged_name, media_id)
         return media_id
 
     async def _upload_via_toolbar(self, page: Page, project_id: str, image_path: Path) -> str:
@@ -1537,13 +1587,19 @@ class MigratedComposer:
         failure that would otherwise generate a clip with no references on it.
         """
         media_ids: list[str] = []
+        staged_names: list[str] = []
         for path in paths:
-            media_ids.append(await self._upload_via_toolbar(page, project_id, path))
+            # Run-unique, for the same reason i2v is — see :func:`_staged_upload`. r2v is
+            # if anything the likelier victim: reference images are re-used across runs
+            # by design, so the duplicates accumulate every time.
+            with _staged_upload(path) as (staged, name):
+                media_ids.append(await self._upload_via_toolbar(page, project_id, staged))
+            staged_names.append(name)
         # Compose after every upload: the file chooser takes keyboard focus, so mentions
         # cannot be interleaved with uploading.
         await self.clear_composer(page)
-        for i, path in enumerate(paths):
-            await self._mention_by_name(page, path.name, expect_chips=i + 1)
+        for i, name in enumerate(staged_names):
+            await self._mention_by_name(page, name, expect_chips=i + 1)
         log.info("migrated.references_attached", count=len(paths), media_ids=media_ids)
         return tuple(media_ids)
 
@@ -1748,22 +1804,46 @@ class MigratedComposer:
                 # "the picker never listed it", and must not be reported as one.
                 await options.first.click(timeout=4000)
                 break
+        # Re-queried, and `.last` like the open: the picker overlay is detached
+        # after the pick, and a detached-but-hidden earlier pane would let a
+        # `.first` hidden-wait pass while the live picker is still up.
+        commit = page.locator(OVERLAY).filter(has=page.locator(PICKER)).last
         try:
-            # Re-queried, and `.last` like the open: the picker overlay is detached
-            # after the pick, and a detached-but-hidden earlier pane would let a
-            # `.first` hidden-wait pass while the live picker is still up.
-            await (
-                page.locator(OVERLAY)
-                .filter(has=page.locator(PICKER))
-                .last.wait_for(state="hidden", timeout=int(FRAME_COMMIT_HIDDEN_S * 1000))
-            )
-        except Exception as e:
-            raise UiSelectorDriftError(
-                detail=(
-                    f"migrated host: the frame picker stayed open {FRAME_COMMIT_HIDDEN_S:.0f}s "
-                    f"after picking {name!r} (host=migrated)"
-                ),
-            ) from e
+            await commit.wait_for(state="hidden", timeout=int(FRAME_COMMIT_GRACE_S * 1000))
+        except Exception:  # noqa: BLE001 - not the failure yet; the confirm may still close it
+            # Cohort split (#792): on some accounts the option click no longer commits
+            # and the picker waits for its own confirm. Clicking it is a no-op where the
+            # click already committed, because a closing picker no longer carries it.
+            confirm = page.locator(f"{PICKER} {PICKER_CONFIRM}").first
+            had_confirm = bool(await confirm.count())
+            if had_confirm:
+                await self._click(page, confirm, named=PICKER_CONFIRM, timeout=4000)
+                log.info("migrated.frame_confirm_clicked")
+            # Re-queried after the click for the same reason the grace wait above is:
+            # the pane that wait held is the PRE-confirm one, and a locator that
+            # resolved before the click cannot observe it closing.
+            try:
+                await (
+                    page.locator(OVERLAY)
+                    .filter(has=page.locator(PICKER))
+                    .last.wait_for(state="hidden", timeout=int(FRAME_COMMIT_HIDDEN_S * 1000))
+                )
+            except Exception as e:
+                # Say WHICH of the two it was: a picker that ignored its own confirm is
+                # a different drift from one that never offered it, and reporting both
+                # as "stayed open" is how the next cohort change reads as this one.
+                why = (
+                    "and stayed open after its confirm was clicked"
+                    if had_confirm
+                    else f"and carries no confirm ({PICKER_CONFIRM})"
+                )
+                raise UiSelectorDriftError(
+                    detail=(
+                        "migrated host: the frame picker stayed open "
+                        f"{FRAME_COMMIT_GRACE_S + FRAME_COMMIT_HIDDEN_S:.0f}s after picking "
+                        f"{name!r} {why} (host=migrated)"
+                    ),
+                ) from e
         try:
             await page.locator(BOUND_CHIP).first.wait_for(
                 state="visible", timeout=int(FRAME_THUMB_VISIBLE_S * 1000)

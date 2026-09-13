@@ -4,17 +4,21 @@ Feature: image-to-video on the migrated flow.google.com host
   binds it through the Start-frame picker by file name, and asserts the eb1hJf submit
   body carries that id before treating the run as an i2v generation.
 
+  What is uploaded is a RUN-UNIQUE COPY of the local file (#792): the picker is searched
+  by display name, so two runs of one file would otherwise leave two identical entries
+  and the search could bind the stale one.
+
   Scenario: a moved account generates from a local start frame
     Given the editor hands the session to flow.google.com after entering the project
     And a local start frame "hero.png"
     When gflow video i2v runs with an 8 s request
     Then the composer uploads the file and the maseQ reply names a media id
-    And the Start chip binds the asset listed under "hero.png"
+    And the Start chip binds the asset uploaded from "hero.png"
     And the eb1hJf submit body carries that media id and an i2v model key
     And the result reports success with the workflow id
 
   Scenario: the frame did not bind, so nothing is submitted
-    Given the picker lists no asset named "hero.png"
+    Given the library never lists the upload
     When gflow video i2v runs with an 8 s request
     Then the run fails with exit 32 before any submit
     And the detail names the file and the picker

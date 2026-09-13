@@ -640,11 +640,17 @@ the editor's frame slot via the media dialog, then Flow fires
 > `GFLOW_CLI_FLOW_HOST=flow.google.com` — only a **local** `--initial-frame` is served, with
 > `--project <id>`: gflow uploads the file through the editor's own Upload entry (it stays in
 > the project's library like any upload — a second run uploads it again), finds it in the
-> Start-frame picker under its file name, and refuses to submit unless the app's own
+> Start-frame picker under that name, and refuses to submit unless the app's own
 > submit body carries that upload's media id with an image-to-video model key (exit 7
 > otherwise: the labs #125 shape, where an unbound frame silently goes out as text-to-video).
 > `--end-frame`, a UUID or `@Name` frame exit 36 there; an unmoved account keeps the labs
 > driver for those.
+>
+> What lands in the library is a **run-unique copy** — `hero.png` uploads as
+> `hero-a1b2c3d4.png` (#792). The picker is searched by display name, so identical names
+> from earlier runs used to be indistinguishable and the search could bind a stale one;
+> the random tag makes the match exact by construction. Expect the tagged names when you
+> browse the project's library on flow.google.com.
 
 ```text
 gflow video i2v --initial-frame INITIAL [--end-frame LAST] PROMPT [--model] [--duration] [--count] [--aspect] [--ui-mode] [...]

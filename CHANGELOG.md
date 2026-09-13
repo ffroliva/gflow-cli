@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Migrated-host i2v: the Frames picker is confirmed when it does not commit on the
+  pick (#792).** On some cohorts Flow's Frames picker no longer closes when an asset is
+  clicked — it waits for its own "Add to prompt" confirm. gflow sat out
+  `FRAME_COMMIT_HIDDEN_S` waiting for an auto-close that never came and raised
+  `UiSelectorDriftError` with the asset already picked, so i2v dispatch failed before
+  submit (no credits spent). The picker is now given a short grace period and, if it is
+  still up, its confirm is clicked. Anchored on `button.detail-add-to-prompt-btn`, a
+  class measured on this exact surface — never on the translated label. Where the pick
+  already commits, nothing changes: a closing picker no longer carries the button.
+- **A re-run of the same start frame no longer binds a stale look-alike (#792).** The
+  Frames picker is searched by display name and an upload is listed under its file name,
+  so attaching the same keyframe twice left two identical library entries; the search
+  could bind the older one and the submit-body check then failed with `eb1hJf does not
+  carry the uploaded start frame`. What is uploaded is now a run-unique copy
+  (`<stem>-<8 hex>.<ext>`), so the search has exactly one match by construction and the
+  library's sort order is no longer trusted.
+
+  Reported, root-caused and verified end-to-end on the affected cohort by **@ai4U23**.
+
 ## [0.73.2] — 2026-09-12
 
 ### Fixed

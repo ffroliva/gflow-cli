@@ -316,3 +316,92 @@ Because the MCP server runs locally, inheriting the host user's permissions and 
 4. **Local Rate-Limiting:** Enforces a token-bucket rate limiter with a capacity of 8 tokens and a refill rate of 1 token every 20 seconds (allowing burst filmmaking tasks without timeouts). This is the **only** spend brake — there is no credit-budget accounting or per-session/daily cap (#495; a registration-time `--no-spend` gate is tracked in #496).
 5. **CLI-MCP Parameter Symmetry:** Two CI layers guard the surfaces against drift: `tests/mcp/test_cli_parity.py` forces an explicit MCP decision (mapped tool or stated exemption) for every CLI leaf command, and `tests/mcp/test_server.py::TestCliMcpParameterSymmetry` compares CLI Click parameters against registered tool signatures for the two generate tools. Parameter-level comparison does not yet cover the other tools.
 6. **No-Spend Mode (#496):** `gflow mcp run --no-spend` (or `GFLOW_MCP_NO_SPEND=1`, which also covers `gflow serve`) never registers the credit-spending generate tools — `gflow_generate_image` and `gflow_generate_video` are absent from `tools/list` entirely, rather than present-but-refusing. Both are gated because image generation is only empirically free and no-spend is a hard guarantee. Listing, instructions, and other read-only tools remain available.
+
+---
+
+## 6. Troubleshooting a failed tool call
+
+A failing MCP tool call gives an agent much less to go on than a CLI run gives a human:
+there is no `--help` to re-read, no stderr to scroll, and the envelope is deliberately
+narrow (no local paths, no raw exception text — see [§ Error envelope](#error-envelope)).
+This section is the decoder.
+
+**Read the envelope in this order:** `retryable` → `status` → `title` → `detail`. Never
+re-derive `retryable` from the class name; a raise site can override its class, and one
+does today.
+
+### 6.1 First question: which cohort is this account in?
+
+Google is moving accounts from `labs.google/fx/tools/flow` onto `flow.google.com`, and
+**the move is not one step**. Several distinct account states exist at once, they change
+without notice, and most confusing migrated-host failures are really "this account is in a
+different state than the one the message assumes". Establish the state before diagnosing
+anything else — it is a $0, read-only check:
+
+```bash
+gflow auth status          # which host minted the session, and for whom
+gflow credits user         # does the Bearer path still work for this account?
+```
+
+| `auth status` | `credits user` | What you are on | Consequence |
+|---|---|---|---|
+| verified | a balance | labs session alive | Everything documented works |
+| verified | **401 from aisandbox-pa** | migrated; labs still authenticates but the `ya29` Bearer is gone | `credits` and other aisandbox REST reads fail. Generation over the migrated composer still works. Tracked in [#795](https://github.com/ffroliva/gflow-cli/issues/795) |
+| "Signed in to Google, but not to the Flow app" **forever** | — | migrated; labs no longer mints a Flow session at all | Login cannot complete on the released build. Tracked in [#791](https://github.com/ffroliva/gflow-cli/issues/791) |
+
+> **A 401 from `aisandbox-pa` does not mean your cookies are stale.** The remediation
+> string on that path still says SAPISID is "missing, expired, or unreadable". On a
+> migrated account it is usually present and fine, and **re-running `gflow auth login`
+> will not help** — on some cohorts it makes things worse, because a failed first login
+> rolls back the profile's browser-strategy marker. If `auth status` says *verified* and
+> only `credits` fails, believe `auth status`.
+
+The migrated composer itself also comes in more than one shape. If `gflow_generate_video`
+fails pre-submit with a selector-drift envelope naming `.settings-trigger-button` as
+present-but-hidden, and no `agent-mode-chip` exists on the page, the account is on the
+**agent-only composer**, which has no classic composer at all — there is nothing to drive
+yet ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).
+
+### 6.2 Envelope → cause → what to do
+
+| What you see | Almost always | Do this |
+|---|---|---|
+| `retryable: true`, WAF / rate-limit / timeout | Transient | Re-run once. If it repeats immediately, stop — it is not transient |
+| selector drift, *"the frame picker stayed open … and stayed open after its confirm was clicked"* | Flow changed the Frames picker again | File it with the verbatim `detail`; the four raise sites are textually distinct and the string identifies which one |
+| selector drift, *"… and carries no confirm"* | A cohort whose picker neither commits nor offers a confirm | As above — this is a new shape, not [#792](https://github.com/ffroliva/gflow-cli/issues/792) |
+| *"the Start chip did not bind"* | The pick landed, the bind did not | Retry once; the picker's search is server-side and a fresh upload is not always indexed |
+| exit-27-equivalent, upload rejected, a dialog opened and no request left the page | Flow's **one-time** "rights to use this image" confirmation | Open the project on flow.google.com, upload any image **by hand**, accept it. gflow will not click it for you: it affirms that *you* hold the rights. Once per account, then uploads run unattended |
+| exit-11-equivalent, missing `project` | Migrated host requires an existing project | Pass `project`; project creation is not ported |
+| exit-36-equivalent | The capability is not ported to the migrated host | See [CONFIGURATION § GFLOW_CLI_FLOW_HOST](CONFIGURATION.md#gflow_cli_flow_host) for exactly what is served there |
+| `PROFILE_MARKER_MISSING` (409, `retryable: false`) | The profile's browser-strategy marker is gone — typically after a failed first login | `gflow auth login --browser chrome`. It is **not** a network problem, whatever an older build told you |
+| `"Unexpected <Class>; details were logged server-side."` (500) | A non-gflow exception; the text is masked on purpose | Read the server's structured log for `mcp.tool.unexpected_error` — the traceback is there, not in the envelope |
+
+### 6.3 Getting evidence an agent can actually send
+
+The envelope carries an `incident` object (`{id, capture_status}` only — never a path).
+Resolve it on the machine running the server:
+
+```
+<GFLOW_CLI_HOME>/incidents/<YYYY-MM-DD>/<stamp>-<incident-id>-<rand>/
+```
+
+Layout, what triggers a capture, and how to judge whether a bundle is worth reading are in
+[DEBUGGING § Automatic incident bundles](DEBUGGING.md#automatic-incident-bundles).
+
+**Judge the bundle before you trust it.** A bundle whose `ui.json` has all tag counts at
+`0` and a blank white screenshot photographed an `about:blank` page, not your failure —
+that was a real defect in gflow (fixed in v0.73.2), so a bundle with that signature from an
+older build carries **no** information about what went wrong. It is not evidence that the
+page was blank.
+
+For a run you can reproduce, raise the log level on the server process
+(`GFLOW_CLI_LOG_LEVEL=DEBUG`) and capture stderr — MCP writes every structured log line
+there, never to the stdio pipe.
+
+### 6.4 Before filing
+
+Include the verbatim `detail` string, the `retryable`/`status` pair, the two cohort
+commands from §6.1, and `gflow --version`. **Redact** account identifiers, cookie and token
+values, and signed media URLs before pasting anything into an issue. If you have an
+incident bundle, say so — but do not paste it: it contains prompts and can contain
+identity-bearing attributes.
