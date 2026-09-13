@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -57,8 +58,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 JUNIT_PATH = REPO_ROOT / "tmp" / "canary-junit.xml"
+#: Last run's failure fingerprint, so a report can say whether today's red is the same
+#: red. Local-only and disposable (``tmp/`` is gitignored): losing it costs one run's
+#: worth of continuity, which is why nothing here fails when it cannot be read.
+STATE_PATH = REPO_ROOT / "tmp" / "canary-state.json"
 
 GREEN, RED, AUTH_EXPIRED, DEFERRED = "GREEN", "RED", "AUTH-EXPIRED", "DEFERRED"
+#: Joining test ids on a character no test id can contain keeps the fingerprint
+#: honest — a separator that could appear in a name would collide sets.
+NUL_SEP = chr(0)
 
 # Wall-clock cap on the tier. Task Scheduler's own limit is an hour, but hitting
 # THAT kills the process before it can publish — a hung browser would produce
@@ -138,6 +146,71 @@ def classify(
         # Healthy at the start and not now: genuine rot.
         return AUTH_EXPIRED
     return RED
+
+
+def continuity(
+    previous: dict[str, object] | None, failing: tuple[str, ...]
+) -> tuple[dict[str, object], str]:
+    """Pure — how this run's failure set relates to the last one's.
+
+    RED is never demoted here, and that is deliberate: the module docstring's whole
+    warning is that labelling a real regression "ignore me" is how the signal dies.
+    This only ADDS what a single run cannot say.
+
+    The distinction it restores is the one #559 lost. A canary that posts an identical
+    comment every night makes a **standing condition** — a capability Flow took away
+    from this account, already understood and tracked — indistinguishable from **fresh
+    drift**, which is the thing the canary exists to catch. Three nights of the same six
+    failures were read as noise for exactly this reason: the set being *unchanged* was
+    the informative part, and nothing reported it.
+
+    Order-insensitive: pytest promises no stable order, and a reshuffle is not new.
+    """
+    fingerprint = hashlib.sha256(NUL_SEP.join(sorted(failing)).encode()).hexdigest()[:12]
+    if not failing:
+        return {"fingerprint": "", "runs": 0}, ""
+    prior_fp = str((previous or {}).get("fingerprint", ""))
+    try:
+        prior_runs = int((previous or {}).get("runs", 0) or 0)  # pyright: ignore[reportArgumentType]
+    except (TypeError, ValueError):
+        # The state file is disposable and hand-editable; a bad `runs` means "no
+        # continuity known", never a crashed nightly run.
+        prior_runs = 0
+    if prior_fp == fingerprint and prior_runs:
+        runs = prior_runs + 1
+        return {"fingerprint": fingerprint, "runs": runs}, (
+            f"**Unchanged for {runs} consecutive runs.** The same tests failing the same "
+            "way is the shape of a standing condition — a capability this account lost, "
+            "or a known-broken surface — not of fresh drift. If an issue already tracks "
+            "it, link that issue here and stop re-triaging it nightly. If none does, it "
+            "needs one: a red nobody owns is how a canary trains red-blindness."
+        )
+    note = ""
+    if prior_fp and prior_runs:
+        note = (
+            "**The failing set changed since the last run.** Whatever else is standing, "
+            "something here is new — this is the arm worth looking at today."
+        )
+    return {"fingerprint": fingerprint, "runs": 1}, note
+
+
+def load_state(path: Path = STATE_PATH) -> dict[str, object] | None:
+    """Never raises: a missing, truncated or hand-edited state file must degrade to
+    "no continuity known", never take the nightly run down with it."""
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def save_state(state: dict[str, object], path: Path = STATE_PATH) -> None:
+    """Best-effort, same reason."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _run(
@@ -232,7 +305,7 @@ def preserve_evidence(stamp: str) -> Path | None:
     return kept
 
 
-def render(result: Result, sha: str, markers: str, stamp: str) -> str:
+def render(result: Result, sha: str, markers: str, stamp: str, streak_note: str = "") -> str:
     headline = {
         GREEN: "All selected $0 tiers passed.",
         RED: "A $0 tier failed while auth was healthy — real drift or regression.",
@@ -259,7 +332,11 @@ def render(result: Result, sha: str, markers: str, stamp: str) -> str:
         lines += ["", "**Failing:**", ""]
         lines += [f"- `{name}`" for name in result.failing]
     if result.state == RED:
-        lines += ["", "> Canary gates nothing. Triage at your convenience."]
+        # The streak note REPLACES the flat line rather than sitting beside it:
+        # "triage at your convenience" next to "this has been red for four nights"
+        # is a report arguing with itself, and a reader believes the softer half.
+        tail = streak_note or "Canary gates nothing. Triage at your convenience."
+        lines += ["", f"> {tail}"]
     return "\n".join(lines)
 
 
@@ -414,7 +491,22 @@ def main() -> int:
     if result.state == RED:
         preserve_evidence(stamp)
 
-    publish(args.issue, result.state, render(result, sha, args.markers, stamp), stamp, args.dry_run)
+    # Continuity is only meaningful for runs that actually reached a verdict about
+    # Flow. AUTH-EXPIRED and DEFERRED learned nothing, so they must leave the streak
+    # untouched rather than reset it — otherwise one night with Chrome open erases
+    # the fact that a red has been standing for a week.
+    streak_note = ""
+    if result.state in (RED, GREEN):
+        state, streak_note = continuity(load_state(), result.failing)
+        save_state(state)
+
+    publish(
+        args.issue,
+        result.state,
+        render(result, sha, args.markers, stamp, streak_note),
+        stamp,
+        args.dry_run,
+    )
     return 0
 
 

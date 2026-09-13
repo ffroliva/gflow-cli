@@ -12,6 +12,8 @@ failure arm.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from scripts.canary.run_canary import (
@@ -21,9 +23,12 @@ from scripts.canary.run_canary import (
     RED,
     Result,
     classify,
+    continuity,
     is_precondition_failure,
+    load_state,
     parse_junit,
     render,
+    save_state,
 )
 
 _LEASE_TRACEBACK = (
@@ -324,3 +329,83 @@ def test_tier_run_captures_logs_into_the_junit(monkeypatch) -> None:
     argv = calls[0]
     assert "-o" in argv, "no pytest -o override present"
     assert argv[argv.index("-o") + 1] == "junit_logging=all"
+
+
+# --- failure-set continuity (#559) -------------------------------------------
+#
+# RED is correct and must not be demoted — the module docstring is emphatic that
+# demoting a real regression under an ignore-me label is how the signal dies. But a
+# red that has been IDENTICAL for three nights says something a fresh red does not,
+# and the canary was throwing that away: every run posted the same comment, so a
+# standing condition and brand-new drift looked the same. These pin the distinction.
+
+
+def test_a_first_ever_failure_set_is_not_called_a_streak() -> None:
+    state, note = continuity(None, ("tests.a::test_x",))
+    assert state["runs"] == 1
+    assert "consecutive" not in note
+
+
+def test_an_unchanged_failure_set_counts_up_and_says_so() -> None:
+    state, _ = continuity(None, ("tests.a::test_x", "tests.b::test_y"))
+    for expected in (2, 3):
+        state, note = continuity(
+            state, ("tests.b::test_y", "tests.a::test_x")
+        )  # order must not matter
+        assert state["runs"] == expected
+    assert "3 consecutive runs" in note
+    assert "standing condition" in note
+
+
+def test_a_changed_failure_set_resets_the_count_and_flags_it_as_new() -> None:
+    state, _ = continuity(None, ("tests.a::test_x",))
+    state, _ = continuity(state, ("tests.a::test_x",))
+    assert state["runs"] == 2
+    state, note = continuity(state, ("tests.a::test_x", "tests.c::test_z"))
+    assert state["runs"] == 1
+    assert "changed" in note.lower()
+
+
+def test_a_green_run_clears_the_streak() -> None:
+    state, _ = continuity(None, ("tests.a::test_x",))
+    state, note = continuity(state, ())
+    assert state["runs"] == 0 and note == ""
+
+
+def test_the_streak_note_reaches_the_rendered_report() -> None:
+    result = Result(RED, passed=1, failed=1, failing=("tests.a::test_x",))
+    body = render(result, "abc1234", "e2e_auth", "2026-09-13 02:00 UTC", streak_note="UNCHANGED x4")
+    assert "UNCHANGED x4" in body
+    # The old flat line must not survive alongside it, or the report says both
+    # "triage at your convenience" and "this has been broken for four nights".
+    assert "Triage at your convenience" not in body
+
+
+def test_render_without_a_streak_note_keeps_the_original_line() -> None:
+    result = Result(RED, passed=1, failed=1, failing=("tests.a::test_x",))
+    assert "Triage at your convenience" in render(result, "abc1234", "e2e_auth", "stamp")
+
+
+def test_state_round_trips(tmp_path: Path) -> None:
+    path = tmp_path / "canary-state.json"
+    assert load_state(path) is None  # nothing yet is not an error
+    save_state({"fingerprint": "abc", "runs": 3}, path)
+    assert load_state(path) == {"fingerprint": "abc", "runs": 3}
+
+
+@pytest.mark.parametrize("junk", ["", "{", "[]", "null"])
+def test_a_corrupt_state_file_degrades_to_no_continuity(tmp_path: Path, junk: str) -> None:
+    """The nightly run must never die because a disposable cache went bad."""
+    path = tmp_path / "canary-state.json"
+    path.write_text(junk, encoding="utf-8")
+    assert load_state(path) is None
+
+
+def test_save_state_survives_an_unwritable_path(tmp_path: Path) -> None:
+    save_state({"runs": 1}, tmp_path / "no" / "such" / "dir" / "s.json")  # must not raise
+
+
+def test_continuity_tolerates_a_hand_edited_state(tmp_path: Path) -> None:
+    """`runs` arriving as a string, or missing, must not crash the report."""
+    state, note = continuity({"fingerprint": "x", "runs": "not-a-number"}, ("t::a",))
+    assert state["runs"] == 1 and note == ""
