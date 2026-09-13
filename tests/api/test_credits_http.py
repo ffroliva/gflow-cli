@@ -211,3 +211,28 @@ async def test_a_tokenless_labs_session_does_not_blame_sapisid(
     assert "SAPISID" not in hint
     assert "flow.google.com" in hint
     assert "no access token" in caught.value.detail
+
+
+async def test_an_aisandbox_rejection_does_not_blame_sapisid(
+    monkeypatch: pytest.MonkeyPatch, profile_dir: Path
+) -> None:
+    """#795: labs minted a token and aisandbox-pa rejected it. SAPISID is not the
+    cause — it is what let labs mint that token in the first place — so the class
+    default remediation sends the user to re-authenticate something that is working.
+    On an account Google has moved to flow.google.com it is worse than useless:
+    re-running `gflow auth login` can roll the profile's browser-strategy marker
+    back and start the #791 spiral. This is the raise the maintainer account
+    actually hits; the tokenless one above is a different cohort stage."""
+    _install_http(
+        monkeypatch,
+        session_responses=[(200, {"access_token": "ya29.test"})],
+        credits_response=(401, {}),
+    )
+
+    with pytest.raises(AisandboxAuthError) as caught:
+        await credits_api.fetch_credits_http(profile_dir)
+
+    hint = caught.value.remediation_hint
+    assert "SAPISID" not in hint
+    assert "flow.google.com" in hint
+    assert "auth login" not in hint

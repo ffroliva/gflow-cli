@@ -12,7 +12,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credits import fetch_credits_http
 from gflow_cli.api.dto import CreditsInfo
 from gflow_cli.config import get_settings
-from gflow_cli.errors import GFlowError, SecurityError
+from gflow_cli.errors import AisandboxAuthError, GFlowError, SecurityError
 
 log = structlog.get_logger(__name__)
 
@@ -45,6 +45,18 @@ async def _fetch(meta: profile_store.ProfileMeta) -> dict[str, Any]:
     try:
         return _success(meta, await fetch_credits_http(meta.profile_dir))
     except SecurityError:
+        raise
+    except AisandboxAuthError:
+        # #795: an auth verdict from the server, not a transport failure — so the
+        # fallback below cannot improve on it. The browser asks the SAME endpoints with
+        # the SAME credentials: the fast path's cookie read already falls back to Chrome
+        # on its own (`auth/cookies.py::get_chrome_cookie_snapshot`), so there is no jar
+        # the browser holds and httpx did not. What the fallback did do was overwrite an
+        # accurate diagnosis with a worse one — it fails inside the SHARED aisandbox
+        # retry helper (`api/client.py::_run_with_aisandbox_retry`), which is route-blind
+        # and so carries the class-default "SAPISID missing, re-run `gflow auth login`".
+        # Measured on a migrated profile: ~7 s of Chrome launch to turn the right answer
+        # into advice that cannot work and can roll the profile's strategy marker back.
         raise
     except Exception as exc:  # noqa: BLE001 — browser fallback is the recovery boundary
         # Log only the class and profile label. Exception messages can include

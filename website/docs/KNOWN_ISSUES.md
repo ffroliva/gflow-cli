@@ -819,14 +819,23 @@ session; `--json` provides a stable automation contract. The equivalent MCP surf
 separate per-model daily quotas.
 
 **On a migrated account there is still no in-CLI quota visibility.** The credits endpoint is
-reached with a token minted by `labs.google`, and for an account Google has moved to
-`flow.google.com` that session answers `200` with no `access_token` — it never mints one. So
-`gflow credits user` / `list` and `gflow_get_credits` fail on that cohort with "the labs.google
-session returned no access token". Through 0.73.1 this was reported as "aisandbox-pa
-authentication failed … SAPISID cookie missing, expired, or unreadable", which sent migrated
-users into a re-login loop that cannot terminate: aisandbox-pa had not been contacted and
-SAPISID was present and fine. 0.73.2 fixes the *message* only — the remediation now names the
-real cause. Reading a balance on the migrated host is **not** implemented
+reached with a token minted by `labs.google`, and the migration takes that away in **two
+stages**, so `gflow credits user` / `list` and `gflow_get_credits` fail on that cohort in one
+of two ways:
+
+- labs answers `200` with no `access_token` — it never mints one → *"the labs.google session
+  returned no access token"*.
+- labs still mints one and **aisandbox-pa rejects it** → *"credits endpoint returned 401"*.
+  This is the later stage; an account can move into it with no other visible change.
+
+Both now name the real cause. Through 0.73.1 the first was reported as "aisandbox-pa
+authentication failed … SAPISID cookie missing, expired, or unreadable", and through 0.73.2
+the second still was — which sent migrated users into a re-login loop that cannot terminate:
+aisandbox-pa had either not been contacted or had answered, and SAPISID was present and fine.
+On a profile with no browser-strategy marker that advice is worse than useless, since a failed
+*first* login rolls the marker back ([#791](https://github.com/ffroliva/gflow-cli/issues/791)).
+
+Reading a balance on the migrated host is **not** implemented
 ([#795](https://github.com/ffroliva/gflow-cli/issues/795), open). Generation is unaffected.
 
 ---

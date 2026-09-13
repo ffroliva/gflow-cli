@@ -94,10 +94,24 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
             },
         )
         if response.status_code in {401, 403}:
+            # #795: labs minted a token and aisandbox-pa refused it. SAPISID is not the
+            # cause — it is what let labs mint that token at all — so the class default
+            # sends the user to re-authenticate a credential that is working. Say what
+            # was actually rejected, and do not name a fix we cannot stand behind: on an
+            # account Google has moved to flow.google.com, `gflow auth login` can roll
+            # the profile's browser-strategy marker back and start the #791 spiral.
             raise AisandboxAuthError(
                 detail=f"credits endpoint returned {response.status_code}",
                 status=response.status_code,
                 route="credits",
+                remediation_hint=(
+                    "Flow's labs.google session issued an API token and aisandbox-pa "
+                    "rejected it. Your Google sign-in is not the problem. This is the "
+                    "expected state on accounts Google has migrated to flow.google.com, "
+                    "which lose the aisandbox-pa read endpoints while generation keeps "
+                    "working — `gflow credits` has no migrated-host equivalent yet. See "
+                    "issue #795."
+                ),
             )
         if response.status_code != 200:
             raise FlowApiError(
