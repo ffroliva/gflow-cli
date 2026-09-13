@@ -1832,7 +1832,7 @@ if [ "$rc" -ne 0 ]; then
 
   case "$rc" in
     2)   echo "Bad CLI usage (missing arg, bad flag)"; exit 1 ;;
-    3)   echo "Auth expired — run: gflow auth login"; exit 1 ;;
+    3)   echo "Auth rejected — read the error's remediation_hint; it is NOT always a re-login"; exit 1 ;;
     4|6) echo "Transient infra issue (rate limit / network) — try again later"; exit 1 ;;
     5)   echo "Content policy rejected the prompt — rewrite and retry"; exit 1 ;;
     7)   echo "Flow API shape changed — upgrade gflow-cli or file a bug"; exit 1 ;;

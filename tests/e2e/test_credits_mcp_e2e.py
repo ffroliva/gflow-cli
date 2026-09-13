@@ -119,13 +119,17 @@ async def test_mcp_credits_never_sends_a_live_profile_to_re_login(
 
     Cohort-agnostic like its CLI twin: a served balance is equally correct.
     """
+    from gflow_cli.auth import cookies
     from gflow_cli.mcp import tools
     from gflow_cli.services import credits as credits_service
 
     def reject_browser(*args: object, **kwargs: object) -> None:
         pytest.fail("credits launched a browser to re-derive an answer it already had")
 
+    # Both doors, as in the CLI twin: the service-level fallback, and the cookie
+    # reader's own PermissionError-gated Playwright fallback inside the fast path.
     monkeypatch.setattr(credits_service, "FlowApiClient", reject_browser)
+    monkeypatch.setattr(cookies, "_get_chrome_cookies_playwright", reject_browser)
 
     profile = e2e_profile_dir.name.removeprefix("profile_")
     result: dict[str, Any] = await tools.gflow_get_credits(profile=profile)
