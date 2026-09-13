@@ -106,11 +106,12 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
                 route="credits",
                 remediation_hint=(
                     "Flow's labs.google session issued an API token and aisandbox-pa "
-                    "rejected it. Your Google sign-in is not the problem. This is the "
-                    "expected state on accounts Google has migrated to flow.google.com, "
-                    "which lose the aisandbox-pa read endpoints while generation keeps "
-                    "working — `gflow credits` has no migrated-host equivalent yet. See "
-                    "issue #795."
+                    "rejected it. Your Google sign-in is not the problem — minting that "
+                    "token is what proves it works. Most commonly this is an account "
+                    "Google has migrated to flow.google.com, which loses the aisandbox-pa "
+                    "read endpoints while generation keeps working; `gflow credits` has no "
+                    "migrated-host equivalent yet. A 403 can also be an entitlement or "
+                    "region refusal. See issue #795."
                 ),
             )
         if response.status_code != 200:

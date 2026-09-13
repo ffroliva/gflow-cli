@@ -6,7 +6,6 @@ two read-only GET requests and spends no Flow credits.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -14,8 +13,6 @@ import pytest
 from gflow_cli.api.credits import fetch_credits_http
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
-
-_E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 
 
 async def test_credits_http_fast_path_live(
@@ -54,15 +51,20 @@ async def test_credits_never_sends_a_live_profile_to_re_login(
     (~7 s), which is where the SAPISID wording came from — the shared aisandbox
     retry helper in `api/client.py` is route-blind and carries the class default.
     """
+    from gflow_cli.auth import cookies
     from gflow_cli.errors import AisandboxAuthError
     from gflow_cli.services import credits as credits_service
 
-    profile = os.environ[_E2E_PROFILE_ENV].strip()
+    profile = e2e_profile_dir.name.removeprefix("profile_")
 
     def reject_browser(*args: object, **kwargs: object) -> None:
         pytest.fail("credits launched a browser to re-derive an answer it already had")
 
+    # Both doors to a browser, so "no browser launched" is literal rather than
+    # path-true: the service-level fallback, and the cookie reader's own
+    # PermissionError-gated Playwright fallback.
     monkeypatch.setattr(credits_service, "FlowApiClient", reject_browser)
+    monkeypatch.setattr(cookies, "_get_chrome_cookies_playwright", reject_browser)
 
     try:
         result = await credits_service.inspect_profile(profile)
@@ -74,3 +76,7 @@ async def test_credits_never_sends_a_live_profile_to_re_login(
     else:
         assert result["authenticated"] is True
         assert result["credits"] >= 0
+        # A served balance is a correct outcome, but it exercised none of #795. Skip
+        # rather than pass: the nightly canary runs -m e2e_auth, so a silent green here
+        # would let a cohort change retire this test without anyone noticing.
+        pytest.skip("labs cohort — the #795 honest-failure branch was not exercised")

@@ -186,12 +186,15 @@ def test_failure_uses_gflow_error_title_and_all_dto_fields() -> None:
     assert all(result[field.name] is None for field in fields(CreditsInfo))
 
 
-class _NeverLaunches:
-    """A FlowApiClient stand-in that fails the test if it is ever constructed."""
+def _never_launches(*args: object, **kwargs: object) -> None:
+    """Stand in for FlowApiClient and fail the test if it is ever constructed.
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        msg = "the browser fallback must not run on an auth verdict (#795)"
-        raise AssertionError(msg)
+    `pytest.fail`, not `raise AssertionError`: `inspect_all_profiles` catches
+    `Exception` per profile to preserve partial results, so an AssertionError here
+    is swallowed into a recorded failure and the guard silently stops guarding.
+    `Failed` derives from BaseException, so it propagates through that handler.
+    """
+    pytest.fail("the browser fallback must not run on an auth verdict (#795)")
 
 
 def _install_auth_verdict(monkeypatch: pytest.MonkeyPatch, profiles: list[ProfileMeta]) -> None:
@@ -201,12 +204,12 @@ def _install_auth_verdict(monkeypatch: pytest.MonkeyPatch, profiles: list[Profil
         raise AisandboxAuthError(
             detail="credits endpoint returned 401",
             status=401,
-            route="credits",
+            route="credits",  # aisandbox-pa answered — the browser cannot overturn it
             remediation_hint="the accurate one",
         )
 
     monkeypatch.setattr(credits, "fetch_credits_http", fast)
-    monkeypatch.setattr(credits, "FlowApiClient", _NeverLaunches)
+    monkeypatch.setattr(credits, "FlowApiClient", _never_launches)
     monkeypatch.setattr(credits.profile_store, "resolve_profile", lambda value: profiles[0].name)
     monkeypatch.setattr(credits.profile_store, "list_profiles", lambda: profiles)
 
@@ -247,3 +250,91 @@ async def test_an_auth_verdict_is_a_recorded_failure_not_a_browser_launch_per_pr
         "AisandboxAuthError",
         "AisandboxAuthError",
     ]
+
+
+async def test_a_tokenless_verdict_still_gets_its_browser_rescue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#795: only the aisandbox refusal is proven unreachable by the browser.
+
+    `labs answered 200 with no token` is a different claim: httpx sends labs.google
+    cookies only, while the browser carries the full jar and bootstraps a real
+    navigation, which can renew a session httpx cannot. That rescue is kept — assuming
+    it away would trade one silent wrong answer for another.
+    """
+    from gflow_cli.services import credits
+
+    async def fast(profile_dir: Path) -> CreditsInfo:
+        raise AisandboxAuthError(
+            detail="the labs.google session returned no access token",
+            status=200,
+            route="auth/session",
+        )
+
+    _FakeClient.responses = {"one": CreditsInfo(credits=9)}
+    monkeypatch.setattr(credits, "fetch_credits_http", fast)
+    monkeypatch.setattr(credits, "FlowApiClient", _FakeClient)
+    monkeypatch.setattr(credits.profile_store, "resolve_profile", lambda value: "one")
+    monkeypatch.setattr(credits.profile_store, "list_profiles", lambda: [_meta("one")])
+
+    assert (await credits.inspect_profile(None))["credits"] == 9
+
+
+async def test_a_failed_rescue_reports_the_fast_paths_diagnosis_not_the_browsers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the rescue fails too, the accurate verdict must survive it.
+
+    The browser's own error comes from the route-blind shared retry helper and carries
+    the class default; the fast path knew which endpoint refused and why.
+    """
+    from gflow_cli.services import credits
+
+    async def fast(profile_dir: Path) -> CreditsInfo:
+        raise AisandboxAuthError(
+            detail="the labs.google session returned no access token",
+            status=200,
+            route="auth/session",
+            remediation_hint="the accurate one",
+        )
+
+    _FakeClient.responses = {
+        "one": AisandboxAuthError(
+            detail="aisandbox-pa returned 401 after token refresh",
+            status=401,
+            route="credits",
+        )
+    }
+    monkeypatch.setattr(credits, "fetch_credits_http", fast)
+    monkeypatch.setattr(credits, "FlowApiClient", _FakeClient)
+    monkeypatch.setattr(credits.profile_store, "resolve_profile", lambda value: "one")
+    monkeypatch.setattr(credits.profile_store, "list_profiles", lambda: [_meta("one")])
+
+    with pytest.raises(AisandboxAuthError) as caught:
+        await credits.inspect_profile(None)
+
+    assert caught.value.remediation_hint == "the accurate one"
+    assert "no access token" in caught.value.detail
+
+
+def test_a_recorded_failure_carries_the_remediation_not_just_the_title() -> None:
+    """#795: `credits list` renders `error` (the generic class title), so without the
+    hint the multi-profile surface is the one place that still cannot say why."""
+    from gflow_cli.services import credits
+
+    result = credits._failure(  # pyright: ignore[reportPrivateUsage]
+        _meta("one"),
+        AisandboxAuthError(status=401, route="credits", remediation_hint="do not re-login"),
+    )
+
+    assert result["error"] == "aisandbox-pa authentication failed"
+    assert result["remediation_hint"] == "do not re-login"
+
+
+def test_a_recorded_failure_has_a_remediation_key_even_for_an_unexpected_error() -> None:
+    """The key is part of the shape both doors read — never conditionally absent."""
+    from gflow_cli.services import credits
+
+    result = credits._failure(_meta("one"), RuntimeError("boom"))  # pyright: ignore[reportPrivateUsage]
+
+    assert result["remediation_hint"] is None

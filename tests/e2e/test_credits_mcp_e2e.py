@@ -106,6 +106,7 @@ async def test_mcp_get_credits_rejects_an_unknown_profile_without_raising(
 
 async def test_mcp_credits_never_sends_a_live_profile_to_re_login(
     e2e_profile_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """#795 on the MCP surface — the twin of the CLI test in `test_credits_e2e.py`.
 
@@ -119,16 +120,23 @@ async def test_mcp_credits_never_sends_a_live_profile_to_re_login(
     Cohort-agnostic like its CLI twin: a served balance is equally correct.
     """
     from gflow_cli.mcp import tools
+    from gflow_cli.services import credits as credits_service
 
-    profile = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
+    def reject_browser(*args: object, **kwargs: object) -> None:
+        pytest.fail("credits launched a browser to re-derive an answer it already had")
+
+    monkeypatch.setattr(credits_service, "FlowApiClient", reject_browser)
+
+    profile = e2e_profile_dir.name.removeprefix("profile_")
     result: dict[str, Any] = await tools.gflow_get_credits(profile=profile)
 
     if result.get("status") == "ok":
         assert result["authenticated"] is True
         assert result["credits"] >= 0
-        return
+        pytest.skip("labs cohort — the #795 honest-failure branch was not exercised")
 
     hint = str(result.get("error", {}).get("remediation_hint", ""))
     assert hint, f"the MCP envelope dropped the remediation entirely: {result}"
     assert "SAPISID" not in hint, f"blames SAPISID for a credential that is fine: {hint}"
     assert "auth login" not in hint, f"prescribes a re-login that cannot help: {hint}"
+    assert "flow.google.com" in hint, f"does not name the cohort: {hint}"

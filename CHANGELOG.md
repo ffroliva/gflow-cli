@@ -41,13 +41,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answered, SAPISID is what let labs mint the token, and on a migrated account re-login can
   roll the profile's strategy marker back and start #791.
 
-  The browser is no longer consulted on an auth verdict — it asks the same endpoint with
-  the same credentials, and the fast path's cookie read already falls back to Chrome on its
-  own, so it never held a credential the fast path lacked. The 401 now names its own raise
-  site and says the sign-in is not the problem. Measured on a migrated profile: `gflow
-  credits user` went from ~7 s to ~2 s, and `credits list` from one Chrome launch **per
-  profile** to none (9 profiles, 8.9 s). Applies to the MCP twin `gflow_get_credits`
-  identically — both doors share the service and the envelope.
+  The browser is no longer consulted once aisandbox-pa has **answered**: it asks the same
+  endpoint for the same Bearer and gets the same refusal. The other raise site — labs
+  answering with no token — keeps its browser rescue, because that one is not proven
+  unreachable: httpx sends labs.google cookies only, while the browser carries the full jar
+  and bootstraps a real navigation, which can renew a session httpx cannot. If that rescue
+  fails too, the fast path's diagnosis is what survives, not the route-blind default.
+
+  `gflow credits list` also reports the remediation per profile now. It rendered only the
+  class title, so the multi-profile surface — and `gflow_get_credits(all_profiles=true)`
+  with it — was the one place that still could not say why, or that re-login would not help.
+
+  Measured on a migrated profile: `gflow credits user` went from ~7 s to ~2 s with no
+  browser launch, and across 9 saved profiles `credits list` dropped from 9 Chrome launches
+  to 6 — the 3 on the aisandbox-401 cohort skip it, the rest keep their rescue. Applies to
+  the MCP twin `gflow_get_credits` identically: both doors share the service and the
+  envelope.
 
   `credits` itself is still unavailable on migrated accounts; the balance surface for that
   cohort has not been located. #795 stays open for it.

@@ -826,9 +826,9 @@ of two ways:
 - labs answers `200` with no `access_token` — it never mints one → *"the labs.google session
   returned no access token"*.
 - labs still mints one and **aisandbox-pa rejects it** → *"credits endpoint returned 401"*.
-  This is the later stage; an account can move into it with no other visible change.
+  An account can move into either with no other visible change.
 
-Both now name the real cause. Through 0.73.1 the first was reported as "aisandbox-pa
+Since v0.74.0 both name the real cause. Through 0.73.1 the first was reported as "aisandbox-pa
 authentication failed … SAPISID cookie missing, expired, or unreadable", and through 0.73.2
 the second still was — which sent migrated users into a re-login loop that cannot terminate:
 aisandbox-pa had either not been contacted or had answered, and SAPISID was present and fine.
