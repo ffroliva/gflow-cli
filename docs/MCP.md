@@ -141,15 +141,19 @@ marks a transient failure a scheduler can re-run without operator intervention �
 WAF/reCAPTCHA bounce (`WafRejectionError`), rate-limit (`RateLimitError`),
 transport timeout (`TransportTimeoutError`), network blip (`NetworkError`), a
 dropped browser session (`BrowserSessionClosedError`), a Flow web-app crash
-(`FlowAppError`), an agentic-cohort flap (`FlowAgentUiError`), an unreachable
+(`FlowAppError`), an agentic-cohort flap (`FlowAgentUiError` — but see the
+agent-only exception in § 6.1, which overrides it to `false`), an unreachable
 UI arm (`UiModeUnavailableError`), and a partially-completed sync
 (`SyncPartialError`). That list is `errors.RETRYABLE_ERRORS`, but it is no longer
 the whole answer: `errors.is_retryable` consults the **instance** first, so a raise
-site can override its class. One does today — Flow's `/about` redirect raises
+site can override its class. Two do today — Flow's `/about` redirect raises
 `FlowAppError` with `retryable: false`, and since 2026-09-11 that is a **measurement**, not a
 preserved default: caught during a live occurrence, 5/5 consecutive attempts over ~3 minutes
 landed on `/about` again, on the account's own project with a healthy session — so a retry is
 doomed and costs ~35 s each ([#756](https://github.com/ffroliva/gflow-cli/issues/756)). The
+second is the migrated **agent-only composer**, which raises `FlowAgentUiError` with
+`retryable: false` because which composer an account gets is server-assigned and does not
+flap ([#799](https://github.com/ffroliva/gflow-cli/issues/799)). The
 *cause*, and whether it ever clears, remain unmeasured.
 Read the flag off the envelope; never re-derive it from the class list.
 Everything
@@ -350,8 +354,9 @@ gflow credits user         # does the Bearer path still work for this account?
 | verified | fails, `"credits endpoint returned 401"` | migrated; a token exists but aisandbox-pa rejects it | Same outcome, different raise site. Since v0.74.0 this one names the cause too ([#795](https://github.com/ffroliva/gflow-cli/issues/795)); through v0.73.2 it read `"aisandbox-pa returned 401 after token refresh"`. Measured on a migrated account, 2026-09-13 |
 | "Signed in to Google, but not to the Flow app" **forever** | — | migrated; labs no longer mints a Flow session at all | Login cannot complete on the released build. Tracked in [#791](https://github.com/ffroliva/gflow-cli/issues/791) |
 
-In every migrated row, **generation over the migrated composer still works** — only the
-aisandbox REST reads fail.
+In every migrated row above, **generation over the migrated composer still works** — only
+the aisandbox REST reads fail. The one exception is the agent-only composer described
+below, where there is no composer for gflow to drive at all.
 
 > **A `credits` failure does not mean your cookies are stale.** Two raise sites produce it
 > — labs answering with no token, and aisandbox-pa rejecting the token labs did issue —
@@ -364,7 +369,7 @@ aisandbox REST reads fail.
 
 The migrated composer itself also comes in more than one shape. Since v0.74.0 an account
 whose composer is **agent-only** — no classic composer at all — is named as such before
-submit: `FlowAgentUiError`, **exit 25**, `retryable: false`, saying the settings trigger is
+submit: `FlowAgentUiError`, **exit-25-equivalent**, `retryable: false`, saying the settings trigger is
 present but hidden and that no `agent-mode-chip` exists to turn off. Through v0.73.2 that
 same account got a generic selector-drift envelope (exit 23), which reads as *our* bug and
 invites a retry that cannot work ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).

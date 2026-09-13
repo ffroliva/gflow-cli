@@ -41,8 +41,6 @@ from gflow_cli.api.transports.ui_automation import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import AsyncIterator
-
     from playwright.async_api import Page
 
 # Both carriers, same ligature, plus decoys: a span that also carries the class (the repo's
@@ -57,25 +55,6 @@ _TWO_CARRIER_PAGE = """
 <button id="decoy-longer"><mat-icon class="google-symbols">arrow_forward_ios</mat-icon></button>
 <button id="decoy-no-class"><i>arrow_forward</i></button>
 """
-
-
-@pytest.fixture
-async def page() -> AsyncIterator[Page]:
-    """A real headless Chromium page, or skip if the browser isn't installed."""
-    playwright_api = pytest.importorskip("playwright.async_api")
-    try:
-        async with playwright_api.async_playwright() as pw:
-            try:
-                browser = await pw.chromium.launch()
-            except Exception as exc:  # pragma: no cover - environment dependent
-                pytest.skip(f"chromium unavailable: {type(exc).__name__}: {exc}")
-            page = await browser.new_page()
-            try:
-                yield page
-            finally:
-                await browser.close()
-    except NotImplementedError as exc:  # pragma: no cover - environment dependent
-        pytest.skip(f"playwright cannot start here: {exc}")
 
 
 @pytest.mark.asyncio

@@ -8,11 +8,26 @@ A fake answers whatever it was written to answer, so it cannot settle that — o
 real browser can, and AGENTS.md asks for exactly this before wiring in an assumption
 about someone else's runtime.
 
-The markup is the reporter's own, from the issue body — the `hidden` attribute, the
-`settings-trigger-button` class among others, the `aria-label`. What this does NOT
-prove is that Flow still serves it; that needs an account in that cohort, which is a
-named external blocker on #799. It proves the discriminator is sound on the DOM we
-were given, and that its three negative controls do not fire.
+Provenance, precisely: the reporter's issue posts an elided `<button hidden="" ...
+aria-label="Settings trigger" class="... settings-trigger-button ...">`, and those
+attributes are theirs verbatim. The surrounding component chain
+(`flow-creative-agent-prompt-box`, `agent-footer-actions`) comes from the #749 spike
+that measured this host. That is not circular — neither selector under test touches
+any of it; only the `hidden` attribute and the two class names are load-bearing.
+
+What this does NOT prove is that Flow still serves it; that needs an account in that
+cohort, which is a named external blocker on #799. It proves the discriminator is
+sound on the DOM we were given, and that its negative controls do not fire.
+
+Two of those controls were also measured against LIVE Flow at $0 (council D6), since
+synthetic markup is not the live arm:
+
+* healthy migrated composer (`ffroliva`, a real project page) — trigger present and
+  visible, `button.agent-mode-chip` present and **un-pressed**, verdict `False`. This
+  is the load-bearing one: a normal account on this host HAS a chip, so having none
+  is genuinely anomalous rather than merely unmatched.
+* live `/about` landing (`denon82`, #756) — trigger absent, verdict `False`, i.e. the
+  `TRIGGER_GONE` arm reached on a real page rather than a written one.
 
 No account, no network, no credits; skips when Chromium is absent.
 """
@@ -26,8 +41,6 @@ import pytest
 from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
 if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import AsyncIterator
-
     from playwright.async_api import Page
 
 #: The composer as #799 captured it: the trigger is in the page under a bare `hidden`,
@@ -64,27 +77,6 @@ HEALTHY = """
   <button aria-label="Settings trigger" class="settings-trigger-button">tune</button>
 </flow-prompt-box>
 """
-
-
-@pytest.fixture
-async def page() -> AsyncIterator[Page]:
-    """A real headless Chromium page, or skip if the browser isn't installed."""
-    playwright_api = pytest.importorskip("playwright.async_api")
-    try:
-        async with playwright_api.async_playwright() as pw:
-            try:
-                browser = await pw.chromium.launch()
-            except Exception as exc:  # pragma: no cover — environment-dependent
-                pytest.skip(f"chromium unavailable: {type(exc).__name__}: {exc}")
-            ctx = await browser.new_context()
-            new_page = await ctx.new_page()
-            try:
-                yield new_page
-            finally:
-                await ctx.close()
-                await browser.close()
-    except NotImplementedError as exc:  # pragma: no cover — no subprocess loop
-        pytest.skip(f"playwright cannot start here: {exc}")
 
 
 async def _verdict(page: Page, markup: str) -> bool:

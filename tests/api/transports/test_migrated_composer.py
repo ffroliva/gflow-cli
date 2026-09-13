@@ -272,7 +272,7 @@ class FakeLocator:
     async def count(self) -> int:
         if self.kind == "dialog" and self.page.dom.dialog_probe_raises:
             raise PlaywrightTimeoutError("count: Target page, context or browser has been closed")
-        if self.kind == "agent_chip":
+        if self.kind in {"agent_chip", "agent_chip_any"}:
             dom = self.page.dom
             index, dom.agent_chip_probes = dom.agent_chip_probes, dom.agent_chip_probes + 1
             if dom.agent_chip_probe_raises_from is not None and (
@@ -2417,6 +2417,34 @@ async def test_ensure_editor_names_the_agent_only_cohort_instead_of_drift(
     assert "migrated.agent_only_composer" in events
 
 
+async def test_ensure_editor_does_not_claim_the_cohort_from_an_unreadable_page(
+    install_log_capture,
+) -> None:
+    """The fail-closed half of the discriminator (council D4 — it was uncovered).
+
+    `_agent_chip_pressed` already returns None on an unreadable page, which reaches
+    the same `"absent"` branch as a genuinely chip-less one. So the cohort probe has
+    to fail closed too, or a closed/detached page would be reported as somebody
+    else's composer. Here the pressed-probe answers and the any-state probe goes
+    dark: the run must come out as ordinary drift, not exit 25.
+    """
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_chip_present = False
+    page.dom.agent_chip_probe_raises_from = 1  # answers the pressed read, dark for ANY
+
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+
+    assert "agent-only" not in str(exc.value).casefold()
+    assert page.dom.agent_chip_clicks == 0
+    events = [e["event"] for e in install_log_capture.entries]
+    assert "migrated.agent_only_probe_failed" in events
+    assert "migrated.agent_only_composer" not in events
+
+
 async def test_ensure_editor_still_reports_drift_when_the_trigger_is_gone_entirely() -> None:
     """The discriminator is present-but-hidden, not merely "not visible".
 
@@ -2433,6 +2461,7 @@ async def test_ensure_editor_still_reports_drift_when_the_trigger_is_gone_entire
     with pytest.raises(UiSelectorDriftError) as exc:
         await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
     assert "agent-only" not in str(exc.value).casefold()
+    assert page.dom.agent_chip_clicks == 0
 
 
 async def test_ensure_editor_reports_drift_once_agent_mode_is_actually_off() -> None:

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **On `flow.google.com`, an agent-only composer now exits `25` (`FlowAgentUiError`) where
+  it previously exited `23` (`UiSelectorDriftError`)** — and reports `retryable: false`
+  rather than inheriting that class's retryable default. Scripts branching on `23` for
+  this failure must add `25`. Nothing else moved: a trigger missing from the DOM is still
+  exit 23. See the `### Fixed` entry below for why
+  ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).
+
 ### Fixed
 
 - **Migrated-host i2v: the Frames picker is confirmed when it does not commit on the
@@ -76,13 +85,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `button.agent-mode-chip` to turn off while this one has none. A trigger that has left
   the DOM entirely is unchanged — that is a renamed selector, our bug, and still drift.
 
+  `retryable` moved from `FlowAppError` to the error base to make that possible — its own
+  comment set the condition, *"move it up if, and only if, a second class needs it"*, and
+  this is the second. No existing error's retryability changed.
+
   Reported with the DOM evidence that made it diagnosable by **@Cstanish127**. gflow-cli
   still has no driver for that composer; #799 stays open for it.
-- **`retryable` is now a per-raise override on every error, not just `FlowAppError`.**
-  Its own comment set the condition — *"move it up if, and only if, a second class needs
-  it"* — and #799 is the second: `FlowAgentUiError` is in `RETRYABLE_ERRORS` because the
-  labs A/B cohort flaps, while which composer a migrated account gets does not.
-
 ## [0.73.2] — 2026-09-12
 
 ### Fixed

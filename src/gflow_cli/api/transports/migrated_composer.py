@@ -862,9 +862,13 @@ class MigratedComposer:
         the chip is what makes a hidden trigger recoverable (#749), so its absence is
         what says this account has no classic arm to go back to.
 
-        Reading the chip un-pressed is deliberately excluded from the claim. That state
-        was never observed and contradicts the measured mechanism (pressed ⇒ hidden), so
-        it falls through to drift rather than being asserted as a cohort.
+        An un-pressed chip is deliberately excluded from the claim, and measuring it is
+        what makes the rest of this worth doing: on a live healthy migrated composer
+        (ffroliva, 2026-09-13, $0) the chip IS present and un-pressed while the trigger
+        is visible — so a normal account on this host has a chip, and having none is the
+        anomaly. An un-pressed chip beside a HIDDEN trigger is the state never observed;
+        it contradicts the measured mechanism (pressed ⇒ hidden) and falls through to
+        drift rather than being asserted as a cohort.
 
         Fail-closed: an unreadable page is not evidence of a cohort.
         """

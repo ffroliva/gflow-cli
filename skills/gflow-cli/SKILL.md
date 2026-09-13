@@ -280,6 +280,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
 | Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
 | `gflow video t2v`/`i2v`/`r2v` without `--project` on an account Google moved to `flow.google.com` (exit 11), or an unported UUID/entity reference or model (exit 36) | Pass `--project <id>` — migrated hosts support video t2v, local-file i2v/r2v, and image t2i/i2i (local refs) only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |
+| Telling a user on `flow.google.com` whose run exits **25** to retry, switch profile or pass `--ui-mode classic` | Their account's composer is **agent-only** — no classic arm exists, so aspect/model/count are Agent-settings defaults and gflow has no driver for it (`retryable: false`, $0, pre-submit). Nothing in gflow reaches it; the Flow web UI still works ([#799](https://github.com/ffroliva/gflow-cli/issues/799)). Exit 25 on `labs.google` IS the retryable A/B cohort — check the host before advising |
 | Suggesting a native `batch` subcommand under `gflow video` | It doesn't exist — that stub never worked and was removed. Loop `gflow video t2v`/`i2v` from the shell for multi-clip runs (`gflow image batch manifest.tsv\|json` is the real, working batch command, but it's image-only) |
 
 ## Disclaimer

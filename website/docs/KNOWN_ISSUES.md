@@ -1270,9 +1270,14 @@ A driver for the agent panel is not implemented;
 
 **Prevalence is unmeasured.** One reporter, one account (Windows 11, ru locale), whose DOM
 capture is what made this diagnosable. No account available to the maintainers is in this
-cohort, so the guard is verified against the reporter's captured markup driven by a real
-Chromium (`tests/api/transports/test_agent_only_composer.py`) and **not** against live
-Flow — that needs an account in the cohort and is the named blocker on #799.
+cohort, so the **positive** case is verified against the reporter's captured markup driven
+by a real Chromium (`tests/api/transports/test_agent_only_composer.py`) and **not** against
+live Flow — that needs an account in the cohort and is the named blocker on #799.
+
+The **negative** controls were measured live at $0 on 2026-09-13, which is what makes the
+discriminator more than a guess: a healthy migrated composer carries
+`button.agent-mode-chip` **present and un-pressed** with its settings trigger visible. So a
+migrated account normally has a chip, and having none is the anomaly this keys on.
 
 ---
 

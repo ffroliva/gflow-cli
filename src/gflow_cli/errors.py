@@ -181,6 +181,12 @@ class FlowApiError(GFlowError):
                 instance=kwargs.pop("instance", None),
                 route=route_kw,
                 remediation_hint=kwargs.pop("remediation_hint", None),
+                # Forwarded like its siblings above. This branch pops named kwargs one
+                # by one, so an unlisted one is dropped in silence — and since
+                # `retryable` moved onto the base it now LOOKS accepted here while
+                # doing nothing (council D1). No caller passes it today; the cost of
+                # it being wrong later is a doomed retry nobody can explain.
+                retryable=kwargs.pop("retryable", None),
             )
             self.body = body
         else:
@@ -698,11 +704,17 @@ class InsufficientCreditsError(GFlowError):
 
 
 class FlowAgentUiError(GFlowError):
-    """Raised when Google Flow's new Agentic UI cohort is detected at runtime.
+    """Raised when a Flow composer replaces the classic generation controls with a
+    chat interface gflow-cli cannot drive. Exit 25 instead of a timeout or a drift
+    error.
 
-    This cohort replaces the classic generation controls with a chat interface
-    that is not supported by gflow-cli. Raising this error allows the CLI to
-    fail cleanly with exit code 25 instead of timing out or raising drift errors.
+    **Two producers, and they differ on retry.** On labs.google this is the Agentic
+    UI A/B cohort, which is server-assigned per page load and flaps — hence class
+    membership in ``RETRYABLE_ERRORS``, and hence the default remediation's advice to
+    try another profile. On the migrated ``flow.google.com`` host it is also raised
+    for an account whose composer is **agent-only** (#799): no classic arm exists at
+    all, so that raise site passes ``retryable=False`` and its own
+    ``remediation_hint``, because no retry or profile change can reach it.
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-agent-ui"
@@ -1378,7 +1390,7 @@ def is_retryable(exc: GFlowError) -> bool:
     """Shared retry classification consumed by every machine-readable error surface.
 
     The class answer (``RETRYABLE_ERRORS``) unless the raise site overrode it — see
-    ``FlowAppError.retryable``.
+    ``GFlowError.retryable``.
 
     ``isinstance(..., bool)`` rather than a truthiness test, deliberately: a
     ``MagicMock`` answers every ``getattr`` with a truthy child mock, so
