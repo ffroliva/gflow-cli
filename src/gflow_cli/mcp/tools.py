@@ -741,8 +741,9 @@ def _build_video_media_inputs(
         "(resolves to referenceEntities/referenceImages). Reference a SAVED named asset via "
         "@Name; reference an arbitrary one-off image via reference_images. See "
         "docs/REFERENCE_STRATEGIES.md. "
-        "On migrated flow.google.com accounts, use an existing project and local reference "
-        "files; UUID/entity references and image4 are labs-only. "
+        "On accounts served from flow.google.com, use an existing project and local "
+        "reference files; UUID/entity references and image4 are not ported to that "
+        "composer yet — a gflow limitation, not a Flow one. "
         "Returns local file paths to the generated images."
     ),
 )

@@ -278,13 +278,21 @@ def migrated_route(url: object, flow_host: str, *, prefer_migrated: bool = False
     """Which driver a page gets: ``"labs"``, ``"migrated"`` or ``"blocked"``.
 
     ``flow_host`` is ``Settings.flow_host``. ``flow.google.com`` forces the migrated
-    composer; ``labs.google`` refuses it, so a moved account keeps exit 36
-    (``blocked``). ``auto`` — the default — makes flow.google.com the default host
-    for every request it can serve (``prefer_migrated``, decided by the caller from
-    the request: t2v with a project today), on moved and unmoved accounts alike;
-    anything else follows the served host, so an unmoved account keeps the labs
-    driver for the features the new host has not been ported for. An unreadable
-    URL with nothing to prefer routes to the labs driver, exactly as before.
+    composer; ``labs.google`` refuses it, so an account served the new host keeps
+    exit 36 (``blocked``). ``auto`` — the default — makes flow.google.com the default
+    host for every request it can serve (``prefer_migrated``, decided by the caller
+    from the request: t2v with a project today); anything else follows the host that
+    was actually served. An unreadable URL with nothing to prefer routes to the labs
+    driver, exactly as before.
+
+    **This function routes on the host SERVED, never on a property of the account.**
+    The distinction is not pedantry: a 2026-09-14 survey (3 accounts x 2 entry points
+    x 2 runs) found ``labs.google/fx/tools/flow`` answering **HTTP 308** every time,
+    while those same accounts differed in which capabilities worked. Host membership
+    is therefore uniform where capability is not, so it predicts nothing — and the
+    labs arm below has never been observed to be taken. It stays because we hold no
+    account that could disprove it, which is a reason to keep code, never a reason to
+    make a claim. See docs/superpowers/spikes/2026-09-14-two-domain-protocol-survey.md.
     """
     if flow_host == "flow.google.com":
         return "migrated"

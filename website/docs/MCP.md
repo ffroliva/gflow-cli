@@ -336,11 +336,14 @@ does today.
 
 ### 6.1 First question: which cohort is this account in?
 
-Google is moving accounts from `labs.google/fx/tools/flow` onto `flow.google.com`, and
-**the move is not one step**. Several distinct account states exist at once, they change
-without notice, and most confusing migrated-host failures are really "this account is in a
-different state than the one the message assumes". Establish the state before diagnosing
-anything else — it is a $0, read-only check:
+Google has moved Flow from `labs.google/fx/tools/flow` onto `flow.google.com`, and **the
+move is not one step**. Measured 2026-09-14 (3 accounts x 2 entry points x 2 runs): the old
+labs URL answers **HTTP 308 Permanent Redirect** on every account tested, yet those same
+accounts differ in which capabilities work. So the host you are served does **not** tell
+you what works — several capability states coexist behind one frontend, they change without
+notice, and most confusing failures here are really "this account is in a different state
+than the one the message assumes". Establish the state before diagnosing anything else — it
+is a $0, read-only check:
 
 ```bash
 gflow auth status          # which host minted the session, and for whom

@@ -77,9 +77,10 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
             route="auth/session",
             remediation_hint=(
                 "Flow's labs.google session carries no API token for this account. "
-                "On accounts Google has migrated to flow.google.com this is expected "
-                "and re-authenticating will not help — generation still works, but "
-                "`gflow credits` reads a labs-only endpoint. See issue #795."
+                "On accounts Google serves from flow.google.com this is expected and "
+                "re-authenticating will not help — generation still works. `gflow "
+                "credits` needs a token only the labs.google session mints, and this "
+                "account no longer gets one. See issue #795."
             ),
         )
 

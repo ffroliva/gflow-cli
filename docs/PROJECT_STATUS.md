@@ -41,8 +41,9 @@ See [LIVE_VERIFICATION_v0.73.2.md](LIVE_VERIFICATION_v0.73.2.md). The headline f
 verified live with a control arm by a committed e2e test (`div` 0 → 25, `host_category`
 `other` → `flow_app`, screenshot 4 KB → 38 KB, zero cost). Recorded as **not** verified
 live: #796's trigger is a macOS Keychain decryption failure and there is no Mac here
-(#768) — a named blocker, and the issue stays open. `gflow credits` remains labs-only on
-migrated accounts (#795).
+(#768) — a named blocker, and the issue stays open. `gflow credits` still needs a token only the
+labs.google session mints, and accounts served from flow.google.com no longer get one
+(#795) — a gap in what gflow can reach, not a statement about Flow's service.
 
 <details><summary>v0.73.1 — Google's cookie bar was sitting on the composer</summary>
 

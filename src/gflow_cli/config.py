@@ -550,12 +550,12 @@ class Settings(BaseSettings):
         description=(
             "Which Flow frontend gflow drives. 'auto' (default): flow.google.com is the "
             "default host for every video request it can serve today (text-to-video, and "
-            "image-to-video from a local start frame, in an existing project), on moved "
-            "and unmoved accounts alike; requests it cannot "
-            "serve yet keep the labs driver on an unmoved account. Migrated accounts also "
-            "use it for t2i and local-file i2i. 'flow.google.com': force "
-            "the migrated composer for everything. 'labs.google': never use it — a moved "
-            "account fails with exit 36 (kill switch). Override via GFLOW_CLI_FLOW_HOST."
+            "image-to-video from a local start frame, in an existing project); requests "
+            "it cannot serve yet fall back to the labs driver if labs is what Flow "
+            "serves you. It is also used for t2i and local-file i2i. 'flow.google.com': "
+            "force the migrated composer for everything. 'labs.google': never use it — "
+            "if Flow serves you flow.google.com, requests fail with exit 36 (kill "
+            "switch). Override via GFLOW_CLI_FLOW_HOST."
         ),
     )
     ui_mode: UiMode | None = Field(

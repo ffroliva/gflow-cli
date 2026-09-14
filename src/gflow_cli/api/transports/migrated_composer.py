@@ -478,8 +478,14 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     image-to-video / reference-to-video from **local** files, in an existing project,
     with a model the new host offers (or none). Everything else — an end frame, a
     frame or reference by UUID or ``@Name``, character references, a fresh project,
-    a labs-only model — is not ported yet, so an unmoved account keeps the labs
-    driver for it.
+    a model this host has not been observed to offer — is not ported yet, so an
+    account still served labs.google keeps the labs driver for it.
+
+    Note what that last clause does NOT claim. A 2026-09-14 survey found
+    ``labs.google/fx/tools/flow`` returning **HTTP 308** on all three accounts we
+    hold, so we have never observed an account that keeps the labs driver. The
+    branch stays because absence of evidence is not evidence of absence — but no
+    capability claim may rest on it.
 
     Gated on :data:`VIDEO_MODEL_MENU_LABELS`, not on the wider
     :data:`VIDEO_MODEL_MENU_MATCHERS`: this decides whether to *move* a request off

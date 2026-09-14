@@ -818,9 +818,9 @@ session; `--json` provides a stable automation contract. The equivalent MCP surf
 `gflow_get_credits`. The reported balance funds Veo video generation; image generation consumes
 separate per-model daily quotas.
 
-**On a migrated account there is still no in-CLI quota visibility.** The credits endpoint is
-reached with a token minted by `labs.google`, and the migration takes that away in **two
-stages**, so `gflow credits user` / `list` and `gflow_get_credits` fail on that cohort in one
+**On accounts served from `flow.google.com` there is still no in-CLI quota visibility.** The
+credits endpoint is reached with a token minted by `labs.google`, and the move takes that
+away in **two stages**, so `gflow credits user` / `list` and `gflow_get_credits` fail in one
 of two ways:
 
 - labs answers `200` with no `access_token` — it never mints one → *"the labs.google session
