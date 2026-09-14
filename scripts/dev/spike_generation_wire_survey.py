@@ -174,19 +174,46 @@ async def run_once(client: Any, project_id: str, run: int) -> dict[str, Any]:
             {"t": round(time.monotonic() - t0, 3), "event": "pw.websocket", "url": ws.url}
         )
 
+    # Request DISPATCH time, not just response arrival. Without it a reply that lands
+    # 32 s after submit is indistinguishable between "sent late" and "held open for
+    # 32 s" -- and the second is a long-poll, i.e. server push by another name. The
+    # first run of this spike could not tell them apart.
+    sent_at: dict[str, float] = {}
+
+    def _on_request(req: Any) -> None:
+        try:
+            url = str(req.url)
+            if "batchexecute" in url:
+                sent_at[url[:200]] = round(time.monotonic() - t0, 3)
+        except Exception:  # noqa: BLE001
+            return
+
+    page.on("request", _on_request)
     page.on("response", _on_response)
     page.on("websocket", _on_websocket)
 
     error = None
     try:
         composer = mc.MigratedComposer()
+        # Reload first: a previous run that died mid-flow can leave the settings pane
+        # open, and the next run then fails inside apply_image_settings with "no
+        # option groups" -- a dirty starting state masquerading as a fresh
+        # observation. Replication is only replication from the same start.
+        await page.goto("about:blank", wait_until="domcontentloaded", timeout=30_000)
         await composer.ensure_editor(page, project_id)
         events.append({"t": round(time.monotonic() - t0, 3), "marker": "editor_ready"})
         from gflow_cli.api.image import GenerateImageRequest
 
         request = GenerateImageRequest(prompt=PROMPT)
-        events.append({"t": round(time.monotonic() - t0, 3), "marker": "submit_begin"})
         await composer.apply_image_settings(page, request)
+        # send_prompt is NOT optional, and leaving it out is not a Flow finding.
+        # `run_images` types the prompt before submitting; without it the submit
+        # control is correctly disabled and the run dies as "submit stayed disabled",
+        # which reads exactly like selector drift. Measured on the first attempt of
+        # this very spike -- a selector that does not match is evidence about the
+        # selector, and here it was evidence about the harness.
+        await composer.send_prompt(page, request.prompt)
+        events.append({"t": round(time.monotonic() - t0, 3), "marker": "submit_begin"})
         result = await composer.submit_images_and_observe(page, request)
         events.append(
             {
@@ -201,6 +228,7 @@ async def run_once(client: Any, project_id: str, run: int) -> dict[str, Any]:
 
     # Detach BEFORE snapshotting: the page is pooled, and a listener left attached
     # appends into THIS run's arrays (survey #1's evidence was corrupted exactly so).
+    page.remove_listener("request", _on_request)
     page.remove_listener("response", _on_response)
     page.remove_listener("websocket", _on_websocket)
     try:
@@ -213,6 +241,10 @@ async def run_once(client: Any, project_id: str, run: int) -> dict[str, Any]:
     for e in events:
         if "url" in e:
             e["protocol"] = protocols.get(e["url"], "")
+            sent = sent_at.get(e["url"])
+            if sent is not None:
+                e["sent_t"] = sent
+                e["in_flight_s"] = round(e["t"] - sent, 3)
 
     polls = [e for e in events if e.get("rpcid")]
     gaps = [round(b["t"] - a["t"], 3) for a, b in zip(polls, polls[1:], strict=False)]
@@ -229,6 +261,12 @@ async def run_once(client: Any, project_id: str, run: int) -> dict[str, Any]:
             e for e in events if e.get("no_content_length") and e.get("status") == 200
         ],
         "rpcid_sequence": [(e["t"], e["rpcid"]) for e in polls],
+        # The discriminator: a reply held open for tens of seconds is a long-poll,
+        # not a late request. Anything over a few seconds is the interesting case.
+        "in_flight": sorted(
+            ((e.get("in_flight_s"), e["rpcid"], e["t"]) for e in polls if e.get("in_flight_s")),
+            reverse=True,
+        )[:8],
         "poll_gaps_s": gaps,
         "markers": [e for e in events if "marker" in e],
         "events": events,
