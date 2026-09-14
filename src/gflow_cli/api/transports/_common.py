@@ -288,11 +288,14 @@ def migrated_route(url: object, flow_host: str, *, prefer_migrated: bool = False
     **This function routes on the host SERVED, never on a property of the account.**
     The distinction is not pedantry: a 2026-09-14 survey (3 accounts x 2 entry points
     x 2 runs) found ``labs.google/fx/tools/flow`` answering **HTTP 308** every time,
-    while those same accounts differed in which capabilities worked. Host membership
-    is therefore uniform where capability is not, so it predicts nothing — and the
-    labs arm below has never been observed to be taken. It stays because we hold no
-    account that could disprove it, which is a reason to keep code, never a reason to
-    make a claim. See docs/superpowers/spikes/2026-09-14-two-domain-protocol-survey.md.
+    while those same accounts differed in which capabilities worked. Host membership is
+    therefore uniform where capability is not, so it does not predict capability.
+
+    That says nothing about the labs arm below, which is reached for reasons that are
+    not about host membership at all — an unreadable URL, ``about:blank``, or any
+    request the caller did not prefer the migrated host for. Those are the common path,
+    not a legacy one. See
+    docs/superpowers/spikes/2026-09-14-two-domain-protocol-survey.md.
     """
     if flow_host == "flow.google.com":
         return "migrated"

@@ -743,8 +743,7 @@ def _build_video_media_inputs(
         "docs/REFERENCE_STRATEGIES.md. "
         "On accounts served from flow.google.com, use an existing project and local "
         "reference files; UUID/entity references and image4 are not ported to that "
-        "composer yet and fail before submit — a gflow limitation, not a Flow one, "
-        "and retrying will not clear it. "
+        "composer yet and fail before submit; retrying will not clear it. "
         "Returns local file paths to the generated images."
     ),
 )

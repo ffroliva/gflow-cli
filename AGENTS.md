@@ -141,9 +141,12 @@ the five other mirror axes), which no command here can check and no CI gate can 
   not merely unproven — it is unfalsifiable here.** A 2026-09-14 survey (3 accounts x 2
   entry points x 2 runs, [spike](docs/superpowers/spikes/2026-09-14-two-domain-protocol-survey.md))
   found `labs.google/fx/tools/flow` answering **HTTP 308 Permanent Redirect** to
-  flow.google.com on *every* account we hold — so no account here can reach labs to test
-  such a claim, while those same accounts differ in which capabilities work. Host
-  membership is uniform where capability is not; it predicts nothing.
+  flow.google.com on all three profiles here that still hold a live Flow session (6/6
+  visits) — so none of those can reach labs to test such a claim, while those same three
+  differ in which capabilities work. Host membership is uniform where capability is not;
+  it does not predict capability. An account served labs *has* been driven before
+  (v0.67.0, a pt-locale profile), so this is about what we can test today, not about labs
+  being gone.
 
   The same survey found the graduated app's Angular root is **`aisandbox-root`** — the
   same name as `aisandbox-pa.googleapis.com`. One product lineage, two frontends. So a

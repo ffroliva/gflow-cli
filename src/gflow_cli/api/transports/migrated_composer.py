@@ -482,10 +482,12 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     account still served labs.google keeps the labs driver for it.
 
     Note what that last clause does NOT claim. A 2026-09-14 survey found
-    ``labs.google/fx/tools/flow`` returning **HTTP 308** on all three accounts we
-    hold, so we have never observed an account that keeps the labs driver. The
-    branch stays because absence of evidence is not evidence of absence — but no
-    capability claim may rest on it.
+    ``labs.google/fx/tools/flow`` returning **HTTP 308** on the three profiles here
+    that still hold a live Flow session — so none of *those* is served labs today.
+    An account that is has been driven before: v0.67.0 ran a pt-locale profile on
+    the labs route end to end (``docs/PROJECT_STATUS.md``, and
+    ``tests/api/transports/test_migrated_dispatch.py`` pins the behaviour). So this
+    branch is live code with live precedent, not a legacy arm.
 
     Gated on :data:`VIDEO_MODEL_MENU_LABELS`, not on the wider
     :data:`VIDEO_MODEL_MENU_MATCHERS`: this decides whether to *move* a request off
@@ -1354,8 +1356,9 @@ class MigratedComposer:
         if matcher is None:
             raise ConfigurationError(
                 detail=(
-                    f"model '{model.value}' is not available on the migrated Flow host; "
-                    f"offered: {', '.join(VIDEO_MODEL_MENU_LABELS.values())}"
+                    f"gflow has no flow.google.com selector for model '{model.value}' — "
+                    f"this is a gap in gflow's table, not a reading of Flow's menu. "
+                    f"Selectors exist for: {', '.join(VIDEO_MODEL_MENU_LABELS.values())}"
                 ),
                 remediation_hint="Pass --model with one of the offered names, or omit it.",
             )
@@ -1418,8 +1421,14 @@ class MigratedComposer:
         matcher = IMAGE_MODEL_MENU_MATCHERS.get(model)
         if matcher is None:
             raise ConfigurationError(
-                detail=f"image model '{model.value}' is not available on the migrated Flow host",
-                remediation_hint="Use nano-banana-2 or nano-pro, or force the labs host.",
+                detail=(
+                    f"gflow has no flow.google.com selector for image model "
+                    f"'{model.value}' — a gap in gflow's table, not a reading of Flow's menu"
+                ),
+                remediation_hint=(
+                    "Use nano-banana-2 or nano-pro. GFLOW_CLI_FLOW_HOST=labs.google only "
+                    "helps if Flow still serves you labs."
+                ),
             )
         button = pane.locator("button").filter(has=_ligature(page, "arrow_drop_down")).first
         if not await button.count():

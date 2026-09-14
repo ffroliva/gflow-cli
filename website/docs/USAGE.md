@@ -82,7 +82,7 @@ Read the current Google Flow balance through an existing authenticated profile. 
 read-only request: it does not generate media or spend credits. The displayed balance funds Veo
 video generation; image generation uses separate per-model daily quotas.
 
-> **Labs-only on migrated accounts.** The balance comes from a `labs.google` endpoint. On an
+> **Unavailable where Flow serves `flow.google.com`.** The balance comes from a `labs.google` endpoint. On an
 > account Google has moved to `flow.google.com`, the labs session answers `200` with no access
 > token, so the command fails with "the labs.google session returned no access token". That is
 > expected on that cohort — the session is fine and re-authenticating will not help; generation

@@ -222,7 +222,7 @@ async def test_an_aisandbox_rejection_does_not_blame_sapisid(
     On an account Google has moved to flow.google.com it is worse than useless:
     re-running `gflow auth login` can roll the profile's browser-strategy marker
     back and start the #791 spiral. This is the raise the maintainer account
-    actually hits; the tokenless one above is a different cohort stage."""
+    actually hits; the tokenless one above is a different stage of the same move."""
     _install_http(
         monkeypatch,
         session_responses=[(200, {"access_token": "ya29.test"})],

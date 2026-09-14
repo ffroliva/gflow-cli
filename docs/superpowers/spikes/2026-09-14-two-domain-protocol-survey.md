@@ -100,11 +100,16 @@ project is **not transient**, corroborating
 
 ## What this changes
 
-**"labs-only" is not a live capability axis for any account we hold.** labs 308s to
-flow.google.com for all three. Code, docs or issue replies that branch on "labs vs
-migrated" are branching on something that no longer varies here — and a claim that a
-feature is "labs-only" cannot be tested on our accounts at all, which makes it
-unfalsifiable rather than true.
+**"labs-only" is not a testable capability axis on the profiles surveyed.** labs 308s to
+flow.google.com for all three of them. Scope this precisely: nine profiles exist here, but
+only these three still hold a live Flow session, so the other six were not surveyed and say
+nothing either way. A "labs-only" claim cannot be tested on any of the three, which makes it
+unfalsifiable *here* rather than false.
+
+It is also **not** a claim that labs is gone. v0.67.0 drove a pt-locale profile through the
+labs route end to end (`docs/PROJECT_STATUS.md`), and `migrated_route()`'s labs arm is
+still reached routinely for reasons unrelated to host — an unreadable URL, `about:blank`,
+or any request the caller did not prefer the migrated host for.
 
 **The right vocabulary is per-surface uplift, not per-account cohort.** An account is not
 "on labs" or "migrated". Surfaces graduate independently, which is why `auth` and

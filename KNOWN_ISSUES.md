@@ -1247,7 +1247,7 @@ continue as a seeded I2V generation — tracked as backlog.
 
 ## Mitigated
 
-### Migrated accounts can have an agent-only composer, which gflow cannot drive
+### Some accounts get an agent-only composer on flow.google.com, which gflow cannot drive
 
 Some accounts on `flow.google.com` are served a composer with **no classic arm at all**:
 the only prompt box is the agent panel, there is no `agent-mode-chip` to turn off, and
