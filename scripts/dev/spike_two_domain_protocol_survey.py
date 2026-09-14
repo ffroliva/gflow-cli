@@ -204,7 +204,11 @@ async def survey(client: Any, label: str, url: str) -> dict[str, Any]:
             return
 
     page.on("response", _on_response)
-    page.on("websocket", lambda ws: websockets.append({"event": "pw.websocket", "url": ws.url}))
+
+    def _on_websocket(ws: Any) -> None:
+        websockets.append({"event": "pw.websocket", "url": ws.url})
+
+    page.on("websocket", _on_websocket)
 
     nav_error = None
     try:
@@ -220,10 +224,18 @@ async def survey(client: Any, label: str, url: str) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         dom = {"error": f"{type(exc).__name__}: {str(exc)[:160]}"}
 
+    # Detach the listeners BEFORE snapshotting. The page comes from a pool and is
+    # reused by the next observation, so a listener left attached keeps appending into
+    # THIS observation's array -- which is how a labs.google 308 turned up in rows
+    # whose navigation never touched labs.google, and how the survey's own findings
+    # table came to report it. The derived aggregates were computed pre-leak and were
+    # always clean; the raw list was not, and the raw list is what outlives us.
+    page.remove_listener("response", _on_response)
+    page.remove_listener("websocket", _on_websocket)
+
     landed = str(getattr(page, "url", ""))
-    # Snapshot FIRST: `requests` is still being appended to by in-flight response
-    # events, and a late arrival that never got a protocol key crashes every reader
-    # downstream. Measured: the labs 308 landed in exactly that gap on run 1.
+    # Snapshot after detaching: an in-flight response can still land between the
+    # remove_listener call and here, and a row with no protocol key breaks readers.
     requests = list(requests)
     for r in requests:
         r["protocol"] = cdp_protocols.get(r["url"], "")
