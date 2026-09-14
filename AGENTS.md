@@ -161,6 +161,14 @@ the five other mirror axes), which no command here can check and no CI gate can 
   Identifiers stay put: `FlowHostMigratedError`, `GFLOW_CLI_FLOW_HOST` and
   `migrated_composer.py` are public contracts, and renaming them is churn, not accuracy.
 
+  **This governs CLAIMS, not routing.** `migrated_route()` and `migrated_can_serve()`
+  branch on the host Flow actually **served**, which is an observation, not a membership —
+  keep them. "Host membership predicts nothing" is about what you may *assert* to a user or
+  write into a doc, never a licence to delete a branch. In particular the labs arm of
+  `migrated_route()` has never been observed taken on our accounts, and it stays: we hold
+  no account that could disprove it, which is a reason to keep code and never a reason to
+  make a claim.
+
 ## PR instructions
 
 - Branch naming: `feature/`, `bugfix/`, `hotfix/`, `chore/`, `docs/`, `test/`, `release/` — never `claude/` or unprefixed.

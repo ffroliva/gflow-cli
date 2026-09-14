@@ -79,8 +79,9 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
                 "Flow's labs.google session carries no API token for this account. "
                 "On accounts Google serves from flow.google.com this is expected and "
                 "re-authenticating will not help — generation still works. `gflow "
-                "credits` needs a token only the labs.google session mints, and this "
-                "account no longer gets one. See issue #795."
+                "credits` needs a token that only the labs.google session mints, and "
+                "this account no longer gets one; check your balance in Flow instead. "
+                "See issue #795."
             ),
         )
 
@@ -108,11 +109,11 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
                 remediation_hint=(
                     "Flow's labs.google session issued an API token and aisandbox-pa "
                     "rejected it. Your Google sign-in is not the problem — minting that "
-                    "token is what proves it works. Most commonly this is an account "
-                    "Google has migrated to flow.google.com, which loses the aisandbox-pa "
-                    "read endpoints while generation keeps working; `gflow credits` has no "
-                    "migrated-host equivalent yet. A 403 can also be an entitlement or "
-                    "region refusal. See issue #795."
+                    "token is what proves it works. Most commonly Flow now serves this "
+                    "account from flow.google.com, where the aisandbox-pa read endpoints "
+                    "have not answered for us; generation keeps working, and `gflow "
+                    "credits` has no equivalent there yet — check your balance in Flow. "
+                    "A 403 can also be an entitlement or region refusal. See issue #795."
                 ),
             )
         if response.status_code != 200:

@@ -43,7 +43,7 @@ verified live with a control arm by a committed e2e test (`div` 0 → 25, `host_
 live: #796's trigger is a macOS Keychain decryption failure and there is no Mac here
 (#768) — a named blocker, and the issue stays open. `gflow credits` still needs a token only the
 labs.google session mints, and accounts served from flow.google.com no longer get one
-(#795) — a gap in what gflow can reach, not a statement about Flow's service.
+(#795).
 
 <details><summary>v0.73.1 — Google's cookie bar was sitting on the composer</summary>
 
