@@ -367,6 +367,17 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 **Default:** `auto`
 **Scope today:** the migrated composer covers `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i`. Images support Nano Banana 2 / Pro, the four aspect ratios enumerated on that host (16:9, 4:3, 1:1, 9:16 — `3:4` was not present and is refused before submit) and count 1–4; the page owns the `ogiZ0b` reCAPTCHA + submit and the response already contains completed signed image URLs. An end frame, UUID/name references, character entities, Agent instructions, Imagen 4, scenes, extend, instructions and tools are not ported yet and fail before submit where Flow serves flow.google.com. MCP uses the same image service and queue payload, and inherits this setting from the server/daemon environment rather than per call.
 
+### `GFLOW_CLI_AGENT_CONFIRM`
+
+**What:** On an account Flow serves the agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), Agent settings carries a **Confirm before generating** choice. This sets it before a run.
+**Values:**
+- `account` (default) — leave the account's setting as it is. If Flow asks for confirmation, gflow approves exactly one request its own submit produced, and stops without approving if a second one appears.
+- `always` — set **Always**. The approval step is the only point where an agent that queues more generations than requested can be stopped before credits are spent.
+- `never` — set **Never**. No approval step; a result count that differs from the request is detected only after the credits are spent.
+**Default:** `account`
+**Persistence:** unlike model / aspect / count (applied per run and restored afterwards), this value is saved to the Flow account and **not** restored — it is your standing choice, and it also applies when you use Flow in the browser.
+**MCP:** inherited from the server/daemon environment, not per call.
+
 ### `GFLOW_CLI_PREFER_CLASSIC` *(deprecated — use `GFLOW_CLI_UI_MODE=classic`)*
 
 **Deprecated** in favor of [`GFLOW_CLI_UI_MODE`](#gflow_cli_ui_mode). `true` now maps to `ui_mode=classic` (emits a `DeprecationWarning`). **Behavior change:** the old silent fallback to agentic when the toggle was unavailable is gone — a classic-required run now **aborts with exit 28** instead of producing an agentic-cohort result. `GFLOW_CLI_UI_MODE` (and `--ui-mode`) take precedence when both are set.

@@ -14,11 +14,11 @@
    snapshots the pane, applies the request, Saves, generates, and **restores in `finally`**.
    This supersedes Predict's "never click Save" mitigation.
 2. **Count > 1:** measure in the image e2e, enable if it holds, refuse otherwise.
-3. **Credit gate:** keep "Confirm before generating" as found; approve exactly one gate our
-   own submit produced. "Never" was considered (owner suggestion) and not used by default:
-   the gate is the only pre-spend check against an agent that queues more than requested.
-   If the account is already on "Never", the driver proceeds and relies on the post-hoc
-   count check.
+3. **Credit gate is a user choice:** `GFLOW_CLI_AGENT_CONFIRM=account|always|never`
+   (default `account` = leave as found). Applied to the pane before a run and **not
+   restored** — it is a standing preference. With a gate present gflow approves exactly one
+   its own submit produced and stops on a second; with `never` there is no gate and the
+   post-hoc count check is the only guard. Setting shipped in Task 0 (config + docs + test).
 
 **Goal:** `gflow image t2i` and `gflow video t2v` (CLI and MCP) succeed on accounts Flow serves
 the agent-only composer, instead of exiting 25.
