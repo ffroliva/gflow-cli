@@ -1,0 +1,70 @@
+name: MCP Registry
+
+# Publishes server.json to the Official MCP Registry — the listing that feeds the
+# downstream directories (PulseMCP ingests it; GitHub's MCP gallery is built on it).
+#
+# Ordering matters and is why this hangs off `release: published` rather than the
+# tag push. `mcp-publisher` proves namespace ownership by reading the `mcp-name:`
+# token out of the PUBLISHED PyPI README, and PyPI metadata is frozen per release —
+# so the wheel has to be up first. `release.yml` publishes to PyPI and only then
+# creates the GitHub Release, so by the time this fires the token is live.
+#
+# Auth is GitHub Actions OIDC. There is no PAT and no device-code flow: the runner
+# exchanges its own short-lived identity token for registry credentials, which is
+# why this needs `id-token: write` and nothing else.
+
+on:
+  release:
+    types: [published]
+  # Manual re-run, e.g. a release whose registry publish failed after PyPI
+  # succeeded. `validate` runs first either way, so a bad server.json stops
+  # before anything is sent.
+  workflow_dispatch:
+
+# Write scopes live at JOB level (Scorecard Token-Permissions: a workflow-level
+# write grant reaches every job, current and future).
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC exchange with registry.modelcontextprotocol.io
+    env:
+      # Pinned by version AND digest: this step runs in a job holding id-token
+      # write and publishes publicly under io.github.ffroliva, so a moved tag
+      # must not silently change the binary that does it.
+      MCP_PUBLISHER_VERSION: "1.8.1"
+      MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install mcp-publisher
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/mcp-publisher_linux_amd64.tar.gz"
+          gh release download "v${MCP_PUBLISHER_VERSION}" \
+            --repo modelcontextprotocol/registry \
+            --pattern 'mcp-publisher_linux_amd64.tar.gz' \
+            --output "${archive}" --clobber
+          echo "${MCP_PUBLISHER_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}" mcp-publisher
+          "${RUNNER_TEMP}/mcp-publisher" --version
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Validate server.json
+        # Never `init` here: it only writes a TEMPLATE server.json, refuses when a
+        # real one exists, and exits 1 — which would abort the run before login.
+        run: mcp-publisher validate
+
+      - name: Authenticate with the registry (GitHub Actions OIDC)
+        run: mcp-publisher login github-oidc
+
+      - name: Publish
+        run: mcp-publisher publish

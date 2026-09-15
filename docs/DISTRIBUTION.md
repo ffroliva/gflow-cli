@@ -59,11 +59,13 @@ thing, and it is not a distribution task.
    GitHub's gallery is built on it). **v0.75.0 is the release that unblocks it**, and this document
    ships in it: PyPI metadata is frozen per release, so the rewritten summary, the three sidebar
    links and the ten classifiers take effect on that upload, and `mcp-publisher` can only verify
-   ownership once the `mcp-name:` token is in the *published* README. The moment the wheel is live:
+   ownership once the `mcp-name:` token is in the *published* README.
 
-   ```
-   mcp-publisher validate && mcp-publisher login github && mcp-publisher publish
-   ```
+   **This is now automated.** `.github/workflows/mcp-registry.yml` runs on `release: published`,
+   which fires after `release.yml` has uploaded the wheel, and authenticates with GitHub Actions
+   OIDC — no PAT, no device-code flow, no human step. It becomes live once it reaches the default
+   branch at the next release; `v0.75.0` itself therefore still needs either one manual publish or
+   the arrival of `v0.76.0`.
 2. **Check Glama after the next release.** The Dockerfile is built and 0.75.0 is released, which
    met punkpeye's Glama gate. Auto-Release is meant to publish each GitHub release by itself, but
    it has never fired for us yet, and an unpinned build has already used a commit hours out of
@@ -128,11 +130,16 @@ Use `uvx --from gflow-cli <EXECUTABLE-NAME>` instead.
 so `uvx gflow-cli mcp run` works — which is also what a user types first, the package being what they
 just installed.
 
-Publish sequence (needs the next release on PyPI first, so the token is in the published README):
+Publishing runs in CI: `.github/workflows/mcp-registry.yml`, on `release: published` (plus
+`workflow_dispatch` for a re-run). It authenticates with **GitHub Actions OIDC**, so no personal
+access token is ever created or handed to the registry, and the `mcp-publisher` download is pinned
+by version *and* sha256 because that job holds `id-token: write`.
+
+The equivalent by hand, if you ever need it locally:
 
 ```
 mcp-publisher validate         # NOT `init` - see below
-mcp-publisher login github     # namespace becomes io.github.ffroliva/*
+mcp-publisher login github     # device-code flow; namespace becomes io.github.ffroliva/*
 mcp-publisher publish
 ```
 

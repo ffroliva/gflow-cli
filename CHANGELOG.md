@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Official MCP Registry listing now publishes itself.** A new `MCP Registry` workflow runs
+  on `release: published` — after `release.yml` has uploaded the wheel, which matters because
+  `mcp-publisher` proves namespace ownership by reading the `mcp-name:` token out of the
+  *published* PyPI README. It authenticates with **GitHub Actions OIDC**, so no personal access
+  token is created, stored or handed to the registry, and the `mcp-publisher` download is pinned
+  by version *and* sha256 since that job holds `id-token: write`. `workflow_dispatch` is there
+  for a re-run when a release's PyPI upload succeeded but the registry publish did not. Registry
+  listings feed the downstream directories: PulseMCP ingests it and GitHub's MCP gallery is built
+  on it.
 - **A gate for the MCP→worker payload-key round trip (#628).** `tests/mcp/test_cli_parity.py`
   checks parity at the command and option level; neither can see the queue payload, where a
   key written under one name and read under another type-checks, lints, passes every test and
