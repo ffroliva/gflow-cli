@@ -3,7 +3,22 @@
 > **For agentic workers:** Run `/gflow:status --feature agent-only-composer-driver` to find
 > the next unchecked task. One task at a time. `/gflow:check` before every commit.
 
-**Status:** DRAFT — awaiting answers to the open questions below.
+**Status:** APPROVED WITH DECISIONS (2026-09-15, account owner):
+1. **Model / aspect / count are set in Agent settings, not asked for in the directive.**
+   Measured $0 (`scripts/dev/spike_agent_settings_defaults.py`, capture `…_190331.json`):
+   the video model menu is `[role=menuitem]` (Omni 1.1 Flash, Veo 3.1 Lite/Fast/Quality — the
+   existing `VIDEO_MODEL_MENU_MATCHERS` apply), aspect/count are `button[role=radio]
+   [aria-checked]` in `mat-button-toggle-group`s (DOM order: image aspect, image count, video
+   aspect, video count), Save closes the pane and **persists across reload**, and a
+   set → Save → restore → Save round trip returned the account to its originals. The driver
+   snapshots the pane, applies the request, Saves, generates, and **restores in `finally`**.
+   This supersedes Predict's "never click Save" mitigation.
+2. **Count > 1:** measure in the image e2e, enable if it holds, refuse otherwise.
+3. **Credit gate:** keep "Confirm before generating" as found; approve exactly one gate our
+   own submit produced. "Never" was considered (owner suggestion) and not used by default:
+   the gate is the only pre-spend check against an agent that queues more than requested.
+   If the account is already on "Never", the driver proceeds and relies on the post-hoc
+   count check.
 
 **Goal:** `gflow image t2i` and `gflow video t2v` (CLI and MCP) succeed on accounts Flow serves
 the agent-only composer, instead of exiting 25.
@@ -25,15 +40,12 @@ worker are untouched.
 | High | 30 s dead wait before detection | Race trigger-visible vs agent-prompt-box-visible |
 | Medium | Directive phrasing on non-en accounts unmeasured | Record in KNOWN_ISSUES; e2e on en only (named blocker: no non-en cohort profile) |
 
-## Open questions (answer before EXECUTE)
-
-1. **`--model`**: the agent composer has no per-request model control. Refuse when the
-   requested model is not the Agent-settings default (read-only, $0) — *recommended* — or put
-   the model name in the directive and log it as unverified?
-2. **`--count > 1`**: measure in the e2e and enable if it holds (*recommended*, costs quota
-   only for images; video count>1 would cost 7 credits × N), or refuse count>1 in slice 1?
-3. **Credit gate**: auto-approve one gate that our own submit produced (*recommended* — the
-   classic path already spends without asking), or require an explicit opt-in flag?
+## New risks from decision 1
+| Severity | Risk | Mitigation |
+|---|---|---|
+| High | Run dies between Save and restore → account left on the requested defaults | Restore in `finally`; log `migrated.agent_only.defaults_restore_failed` with the originals so the user can reset by hand |
+| Medium | User edits settings in the web UI mid-run; restore overwrites it | Accepted; documented in KNOWN_ISSUES |
+| Medium | Image model menu entries unmeasured (video only was opened) | Measure in Task 4's e2e before enabling image `--model` |
 
 ---
 
@@ -95,7 +107,8 @@ KNOWN_ISSUES.md, docs/MCP.md (if it mentions the cohort), CHANGELOG.md, src/gflo
 **Files:** `migrated_composer.py`
 - [ ] Anchor race in `ensure_editor`; return kind
 - [ ] `run_images` / `run_video` branch; unported-form checks for the agent composer
-- [ ] Model policy per Q1
+- [ ] `AgentSettings.snapshot/apply/restore` reusing `_select` / `_select_model` matchers;
+      `finally` restore; red test first: restore runs when generation raises
 
 ## Task 5 — CLI surface
 
