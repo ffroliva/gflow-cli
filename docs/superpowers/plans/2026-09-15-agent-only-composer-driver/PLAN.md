@@ -119,20 +119,22 @@ No new options. `--help` unchanged. Verify exit-code mapping only.
 
 ## Task 6 — MCP surface mirror
 
-- [ ] Six mirror axes (`skills/check/SKILL.md` step 1b): no new keys; confirm docstrings of
-      `gflow_generate_image` / `gflow_generate_video` make no "cannot drive" claim
-- [ ] MCP e2e: one image through the MCP tool on the cohort profile (S20)
+- [x] Six mirror axes (`skills/check/SKILL.md` step 1b): no new CLI option or payload key; the
+      tool docstrings made no "cannot drive" claim; `docs/MCP.md` did, and is corrected
+- [x] MCP e2e scenario written (S20) — result recorded under Task 8
 
 ## Task 7 — Docs
 
-- [ ] KNOWN_ISSUES: move t2i/t2v out of Mitigated; list still-unported forms + non-en caveat
-- [ ] `errors.py` / remediation text no longer says "no driver"
-- [ ] CHANGELOG `[Unreleased]`
+- [x] KNOWN_ISSUES: t2i/t2v driven; still-unported forms, rough edges and non-en caveat listed
+- [x] `errors.py` docstring names the error's meaning on this composer
+- [x] CHANGELOG `[Unreleased]`; `docs/CONFIGURATION.md` for `GFLOW_CLI_AGENT_CONFIRM`
 
 ## Task 8 — Gates, e2e, live-verify
 
 - [ ] `/gflow:check` green
-- [ ] `pytest -m e2e` image BDD (quota) + video BDD (`GFLOW_CLI_E2E_RUN_VIDEO=1`, ~7 credits)
+- [x] `pytest -m e2e tests/e2e/test_agent_only_composer_bdd.py` with `GFLOW_CLI_E2E_RUN_VIDEO=1`,
+      profile `burner`, 2026-09-15: **3 passed in 245.9 s** — CLI t2i 3:4 × 2, MCP
+      `gflow_generate_image` (queued worker path), CLI t2v 4 s 9:16; each asserted restore
 - [ ] `/gflow:branch-review`
 - [ ] Ask the user before opening the PR (`Refs #799` unless every form is covered)
 
