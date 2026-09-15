@@ -106,6 +106,58 @@ _GATE_JS = r"""
 }
 """
 
+
+def _tap_network(page: Any, findings: dict[str, Any]) -> None:
+    """Record every batchexecute rpcid, and run the classic driver's decoders on the ones it
+    already reads. Question: does the agent composer fire the same RPCs, so the wire (not the
+    DOM) can stay the completion signal? Media ids only — no bodies, no URLs are kept."""
+    from gflow_cli.api.transports.batchexecute import (
+        generation_record,
+        image_records,
+        parse_frames,
+    )
+    from gflow_cli.api.transports.migrated_composer import (
+        IMAGE_SUBMIT_RPC,
+        STATUS_RPCS,
+        SUBMIT_RPCS,
+    )
+
+    known = {IMAGE_SUBMIT_RPC, *SUBMIT_RPCS, *STATUS_RPCS}
+    calls: list[dict[str, Any]] = findings.setdefault("rpc_calls", [])
+    t0 = time.monotonic()
+
+    async def on_response(response: Any) -> None:
+        url = str(response.url)
+        if "batchexecute" not in url:
+            return
+        rpcids = url.split("rpcids=", 1)[1].split("&", 1)[0] if "rpcids=" in url else "?"
+        entry: dict[str, Any] = {
+            "t": round(time.monotonic() - t0),
+            "rpcids": rpcids,
+            "status": response.status,
+        }
+        if known & set(rpcids.split(",")):
+            try:
+                decoded: list[str] = []
+                for rpcid, payload in parse_frames(await response.text()):
+                    try:
+                        if rpcid == IMAGE_SUBMIT_RPC:
+                            decoded += [
+                                f"image:{r.media_id}" for r in image_records(rpcid, payload)
+                            ]
+                        elif rpcid in known:
+                            rec = generation_record(rpcid, payload)
+                            decoded.append(f"gen:{rec.media_id}:{rec.status}")
+                    except Exception as exc:  # noqa: BLE001 - the decode failure IS the finding
+                        decoded.append(f"{rpcid}:undecodable:{type(exc).__name__}")
+                entry["decoded"] = decoded
+            except Exception as exc:  # noqa: BLE001
+                entry["decoded"] = [f"body_unreadable:{type(exc).__name__}"]
+        calls.append(entry)
+
+    page.on("response", on_response)
+
+
 GENERATE = "button:has(mat-icon:text-is('arrow_forward'))"
 SETTINGS = "button:has(mat-icon:text-is('tune'))"
 BACK = "button:has(mat-icon:text-is('arrow_back'))"
@@ -157,6 +209,7 @@ async def main() -> int:
     url = f"https://flow.google.com/project/{args.project}"
     async with build_client(resolve_profile_dir(args.profile)) as client:
         page = await client._context.new_page()  # noqa: SLF001 - spike reads the live context
+        _tap_network(page, findings)
         step("goto", url)
         await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         await page.wait_for_timeout(8_000)
