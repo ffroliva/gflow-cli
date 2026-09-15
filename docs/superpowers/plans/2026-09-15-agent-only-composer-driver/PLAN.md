@@ -101,6 +101,10 @@ KNOWN_ISSUES.md, docs/MCP.md (if it mentions the cohort), CHANGELOG.md, src/gflo
 - [x] `AgentOnlyComposer.generate`: clear ProseMirror, `insert_text`, submit, gate handling + tile uuid diff
 - [x] results → `list[GeneratedImage]` (fife_url = signed src) / `GenerationRecord` for the existing `MigratedComposer.download`
 - [x] Slice-1 limits: video count must be 1 (`VideoResult` carries one clip)
+- [x] Video readiness re-measured after a live timeout (spike § "Readiness, measured"): ready =
+      no `flow-pending-tile` + newest finished tile changed + a uuid named by the tile or the
+      chat option; opaque `/asb/` tiles are hovered for the `<video>` src; `download_video`
+      follows redirects only to `*.googlevideo.com` / allowed Google hosts and checks `ftyp`
 
 ## Task 4 — Wire readiness + routing (green Task 1)
 
