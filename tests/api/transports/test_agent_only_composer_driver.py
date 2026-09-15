@@ -355,6 +355,38 @@ async def test_run_images_and_run_video_route_the_agent_only_composer_here(
     assert video == "video:p1"
 
 
+@pytest.mark.asyncio
+async def test_a_form_only_the_agent_composer_takes_is_not_refused_up_front(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live 2026-09-15: `--aspect 3:4` exited 36 before the page was opened, because the
+    classic pane has no 3:4 radio. The agent-only pane does, so that refusal belongs to
+    the classic composer only."""
+    from gflow_cli.api.transports import migrated_composer as mc
+
+    async def agent_only(*_: Any, **__: Any) -> str:
+        return "agent_only"
+
+    async def fake_images(*_: Any, **__: Any) -> list[str]:
+        return ["driven"]
+
+    async def classic(*_: Any, **__: Any) -> str:
+        return "classic"
+
+    request = image_api.GenerateImageRequest(
+        prompt="x", aspect=image_api.Aspect.PORTRAIT_THREE_FOUR
+    )
+    page = MagicMock(url="https://flow.google.com/project/p1")
+    monkeypatch.setattr(aoc, "run_agent_images", fake_images)
+
+    monkeypatch.setattr(mc.MigratedComposer, "ensure_editor", agent_only)
+    assert await mc.run_images(page, request, project_id="p1") == ["driven"]
+
+    monkeypatch.setattr(mc.MigratedComposer, "ensure_editor", classic)
+    with pytest.raises(FlowHostMigratedError, match="aspect"):
+        await mc.run_images(page, request, project_id="p1")
+
+
 # --- refused before touching the page -------------------------------------------------------
 
 
