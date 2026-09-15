@@ -75,9 +75,10 @@ KNOWN_ISSUES.md, docs/MCP.md (if it mentions the cohort), CHANGELOG.md, src/gflo
 ## Task 1 — Red tests: readiness returns the composer kind
 
 **Files:** `tests/api/transports/test_agent_only_composer.py`
-- [ ] Agent-only fixture → `ensure_editor` returns `"agent_only"` within ≤5 s (no 30 s wait)
-- [ ] Classic fixture → `"classic"`; #749 pressed-chip fixture → recovered, `"classic"`
-- [ ] Trigger absent from DOM → still `UiSelectorDriftError`
+- [x] Agent-only fixture → `ensure_editor` returns `"agent_only"` after `AGENT_ONLY_EARLY_S` (5 s), not 30 s (real Chromium via `page.route`)
+- [x] Classic fixture → `"classic"`; #749 pressed-chip fixture → recovered, `"classic"`
+- [x] Trigger absent from DOM → still `UiSelectorDriftError` (existing tests unchanged)
+- [x] Callers keep exit 25 via `_agent_only_not_driven` until Task 4 routes to the driver
 
 ## Task 2 — Red tests: driver behaviour on fixture DOM
 
