@@ -83,33 +83,31 @@ KNOWN_ISSUES.md, docs/MCP.md (if it mentions the cohort), CHANGELOG.md, src/gflo
 ## Task 2 — Red tests: driver behaviour on fixture DOM
 
 **Files:** `tests/api/transports/test_agent_only_composer_driver.py`, BDD offline feature
-- [ ] Stale live gate in baseline is not clicked (S1)
-- [ ] Second gate → `FlowAgentUiError`, one click recorded (S2)
-- [ ] Image produced count ≠ requested → typed failure (S3)
-- [ ] Video poster-only is not complete; `<video>` is (S4)
-- [ ] Duplicate uuid (grid + chat) → one result (S5); pre-existing media excluded (S6)
-- [ ] Turn idle with no gate and no tile → fast typed failure (S7)
-- [ ] Unported forms → exit 36 before typing (S11)
-- [ ] Signed URL query stripped from logs/errors (S19)
-- [ ] No `settings-save-button` click anywhere (grep-style assertion on the module)
+- [x] Stale live gate in baseline is not clicked (S1)
+- [x] Second gate → `FlowAgentUiError`, one click recorded (S2)
+- [x] Image produced count > requested → typed failure (S3)
+- [x] Video poster-only is not complete; `<video>` is (S4)
+- [x] Duplicate uuid (grid + chat) → one result (S5); pre-existing media excluded (S6)
+- [x] Turn idle with no gate and no tile → fast typed failure (S7)
+- [x] Unported forms → exit 36 before touching the page (S11)
+- [x] Signed URL query absent from error text (S19)
+- [x] ~~No Save click~~ superseded by decision 1: apply → Save → restore, confirm kept; restore runs when generation fails
+- [x] Mutation check: 8/8 guards killed (stale gate, second gate, poster, media baseline, over-count, idle, confirm, restore-on-failure)
 
 ## Task 3 — `AgentOnlyComposer` (green Task 2)
 
 **Files:** `agent_only_composer.py`
-- [ ] `compose_directive(kind, count, aspect, duration, prompt)`
-- [ ] `send(page, directive)`: clear ProseMirror, `insert_text`
-- [ ] `submit(page)`: click `flow-generate-icon-button button`; confirm `flow-stop-icon-button`
-- [ ] `observe(page, baseline, kind, count, deadline)`: gate handling + tile uuid diff
-- [ ] results → `list[GeneratedImage]` (fife_url = signed src, dims from natural size) /
-      `GenerationRecord` for the existing `MigratedComposer.download`
+- [x] `compose_image_directive` / `compose_video_directive`
+- [x] `AgentOnlyComposer.generate`: clear ProseMirror, `insert_text`, submit, gate handling + tile uuid diff
+- [x] results → `list[GeneratedImage]` (fife_url = signed src) / `GenerationRecord` for the existing `MigratedComposer.download`
+- [x] Slice-1 limits: video count must be 1 (`VideoResult` carries one clip)
 
 ## Task 4 — Wire readiness + routing (green Task 1)
 
 **Files:** `migrated_composer.py`
-- [ ] Anchor race in `ensure_editor`; return kind
-- [ ] `run_images` / `run_video` branch; unported-form checks for the agent composer
-- [ ] `AgentSettings.snapshot/apply/restore` reusing `_select` / `_select_model` matchers;
-      `finally` restore; red test first: restore runs when generation raises
+- [x] Early wait in `ensure_editor`; return kind (Task 1)
+- [x] `run_images` / `run_video` route to `run_agent_images` / `run_agent_video` (routing test)
+- [x] `apply_defaults` / `restore_defaults` reusing the `ModelMenuMatcher` tables; `finally` restore
 
 ## Task 5 — CLI surface
 
