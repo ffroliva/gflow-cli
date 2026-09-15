@@ -12,8 +12,22 @@
 services:
   # One-time interactive sign-in. Needs a display you can actually see, so this is the
   # arm that a headless CI box cannot run.
-  #   Linux : xhost +local: && docker compose run --rm login
-  #   others: use the VNC service below instead
+  #
+  #   Linux          : xhost +local: && docker compose run --rm login
+  #   Windows (WSLg) : run it FROM INSIDE WSL, with
+  #                    X11_SOCKET=/mnt/wslg/.X11-unix docker compose run --rm login
+  #   macOS          : needs XQuartz; not verified here.
+  #
+  # `X11_SOCKET` exists because the socket is not always at /tmp/.X11-unix. Measured on
+  # Windows 11 + WSL2 (Ubuntu) on 2026-09-15: WSLg publishes a live `X0` socket at
+  # /mnt/wslg/.X11-unix, while /tmp/.X11-unix inside that same distro is an EMPTY
+  # directory. Mounting the default there yields a container with no reachable display
+  # and a Chrome that exits immediately — so the override is the difference between
+  # working and a confusing failure, not a convenience.
+  #
+  # Docker Desktop users: this must run from a WSL distro that has Docker's WSL
+  # integration switched on (Settings → Resources → WSL Integration). Without it the
+  # docker CLI inside WSL cannot reach the daemon at all.
   login:
     build:
       context: .
@@ -23,7 +37,7 @@ services:
       DISPLAY: ${DISPLAY:-:0}
     volumes:
       - gflow-auth:/data
-      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ${X11_SOCKET:-/tmp/.X11-unix}:/tmp/.X11-unix:ro
     command: ["gflow", "auth", "login", "--browser", "chrome"]
 
   # Everything after login. Runs headed under Xvfb — a real X server with no monitor,

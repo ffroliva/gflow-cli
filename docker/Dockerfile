@@ -27,7 +27,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
  && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir gflow-cli==0.75.0
+# The version lives in an ARG so a bump is a one-line change (or `--build-arg`), and
+# `tests/test_dockerfile_version_pin.py` fails when this default drifts from
+# pyproject.toml — otherwise the image silently keeps installing an old release while
+# docker/README.md goes on claiming the new one was verified.
+#
+# Declared HERE rather than beside FROM, and the placement is load-bearing. Measured
+# 2026-09-15 with an A/B on a throwaway image, using a unique marker so no stale cache
+# entry could match:
+#
+#   ARG after  the expensive layer -> that layer CACHED on a version bump
+#   ARG before the expensive layer -> that layer REBUILT
+#
+# Chrome above is most of this image's ~1.6 GB, so the wrong placement would turn every
+# gflow bump into a full Chrome reinstall. Keep this ARG below the apt layer.
+#
+# Deliberately NOT pinned: google-chrome-stable. Chrome's apt repo keeps only the current
+# build, so a pinned version stops resolving within weeks. The trade-off is that this
+# layer caches indefinitely and a rebuild is what picks up a newer Chrome.
+ARG GFLOW_VERSION=0.75.0
+RUN pip install --no-cache-dir "gflow-cli==${GFLOW_VERSION}"
 
 VOLUME ["/data"]
 WORKDIR /data

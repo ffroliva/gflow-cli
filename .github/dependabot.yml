@@ -88,6 +88,26 @@ updates:
           - "version-update:semver-minor"
           - "version-update:semver-patch"
 
+  # Docker — the base image in docker/Dockerfile (python:3.14-slim).
+  #
+  # This covers the FROM line and nothing else. Dependabot has no view into packages
+  # installed by a RUN, so `google-chrome-stable` is NOT tracked here: it is pulled
+  # unpinned from Google's apt repo, which keeps only the current build, and a rebuild
+  # is what picks up a newer Chrome. The gflow-cli version is pinned separately via
+  # `ARG GFLOW_VERSION` and gated by tests/test_dockerfile_version_pin.py, so between
+  # the three of them every input to the image has a named owner.
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Europe/Lisbon"
+    open-pull-requests-limit: 3
+    # Kept in sync with .github/workflows/labels.yml — see the note above.
+    labels:
+      - "dependencies"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

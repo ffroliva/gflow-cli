@@ -42,8 +42,7 @@ headless UA marker?    : False
 docker compose build
 
 # 2. Sign in ONCE, into the volume. This is the only step a headless box cannot do —
-#    it needs a real display.
-#    Linux:  xhost +local: && docker compose run --rm login
+#    it needs a real display. See "Where the display comes from" below for Windows.
 xhost +local: && docker compose run --rm login
 
 # 3. Everything else runs headed under Xvfb against that volume
@@ -54,6 +53,70 @@ docker compose run --rm gflow gflow credits user   # read-only, $0
 export GFLOW_CLI_DAEMON_TOKEN=$(openssl rand -hex 32)
 docker compose up serve
 ```
+
+## Where the display comes from
+
+Step 2 is the only step that needs a screen you can see, and the socket is not in the
+same place on every host. The `login` service mounts `${X11_SOCKET:-/tmp/.X11-unix}`,
+so the default suits Linux and everything else sets one variable.
+
+| Host | Command |
+|---|---|
+| Linux | `xhost +local: && docker compose run --rm login` |
+| Windows (WSL2 + WSLg) | run **from inside WSL**: `X11_SOCKET=/mnt/wslg/.X11-unix docker compose run --rm login` |
+| macOS | needs XQuartz; not verified here |
+
+**Why Windows needs the override.** Measured on Windows 11 + WSL2 (Ubuntu), 2026-09-15:
+WSLg publishes a live `X0` socket at `/mnt/wslg/.X11-unix`, and `DISPLAY` is already `:0`.
+But `/tmp/.X11-unix` **inside that same distro is an empty directory** — so the Linux
+default mounts nothing useful and Chrome exits immediately against a display that is not
+there. The variable is the difference between working and a confusing failure.
+
+Two things to check before blaming the compose file:
+
+- Run it **from inside WSL**, not Git Bash or PowerShell. On the Windows side
+  `/tmp/.X11-unix` does not exist at all, and Git Bash will additionally rewrite the path
+  (`/mnt/wslg/...` becomes `C:/Program Files/Git/mnt/wslg/...`).
+- Docker's **WSL integration must be on** for that distro — Docker Desktop → Settings →
+  Resources → WSL Integration. Without it the `docker` CLI inside WSL cannot reach the
+  daemon at all: `Cannot connect to the Docker daemon at unix:///var/run/docker.sock`.
+
+## Rebuilding is cheap, and which layer moves is deliberate
+
+The image is two layers that matter, in this order:
+
+1. **Chrome + Xvfb** via `apt-get` — most of the ~1.6 GB, and the slow one.
+2. **`pip install gflow-cli==${GFLOW_VERSION}`** — small and fast.
+
+Because the expensive layer comes first, bumping the gflow version reuses it from cache
+and only the last layer rebuilds. A version bump is seconds, not minutes.
+
+That property is fragile in one specific way: **`ARG GFLOW_VERSION` must stay below the
+apt layer.** An ARG declared before an expensive layer invalidates it whenever the value
+changes. Measured 2026-09-15 on a throwaway image, with a unique marker so no stale cache
+entry could match:
+
+| `ARG` placement | expensive layer on a version bump |
+|---|---|
+| after it | `CACHED` |
+| before it | rebuilt |
+
+`tests/test_dockerfile_version_pin.py` asserts the ordering, so the cache contract cannot
+be undone by a tidy-up that moves the ARG next to `FROM`.
+
+### Who owns each input
+
+| Input | Pinned by | Updated by |
+|---|---|---|
+| `python:3.14-slim` base | the `FROM` line | Dependabot (`docker` ecosystem, `/docker`, weekly) |
+| `gflow-cli` | `ARG GFLOW_VERSION` | a release, gated by `tests/test_dockerfile_version_pin.py` |
+| `google-chrome-stable` | not pinned | a rebuild |
+
+Chrome is the deliberate gap. Google's apt repo keeps only the current build, so a pinned
+version stops resolving within weeks — and Dependabot cannot see packages installed by a
+`RUN` in any case. The consequence is worth stating plainly: **that layer caches
+indefinitely, so an image rebuilt from a warm cache keeps whatever Chrome it first
+installed.** `docker compose build --no-cache` (or pruning the cache) is what refreshes it.
 
 ## `serve` refuses to start without a token — on purpose
 
