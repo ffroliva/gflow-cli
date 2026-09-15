@@ -112,6 +112,45 @@ Reading: completion stays a DOM observation — a `flow-image-tile` / `flow-vide
 across all three runs. `WuwhI`'s payload was not captured; decoding it is future work,
 not a prerequisite.
 
+### A loaded page's grid tiles carry no media id (fourth and fifth runs, $0)
+
+A driver t2v run (7 credits) **timed out on a clip that existed**: its incident `ui.json`
+counted zero `<video>` elements. `scripts/dev/spike_agent_only_video_tile.py` then read the
+tiles on a reloaded page:
+
+- `flow-video-tile` media are **opaque `https://flow.google.com/asb/…`** URLs — thumbnail
+  `<img class=thumbnail>`, and a `<video aria-label=…>` that mounts **only on hover**. No uuid.
+- The hover `<video>`'s `/asb/` src **downloads**: 200, redirected to `*.googlevideo.com`,
+  `video/mp4`, 1,242,845 B, `ftyp` present.
+- The chat reply's `flow-a2ui-video-option` keeps `flow-content.google/image/<uuid>`, and
+  that uuid **is the clip's**: opening the tile loaded `flow-content.google/video/<same uuid>`.
+- Opening a tile routes to `/project/<id>/edit/<other-uuid>` — a **different** id from the
+  media uuid (not used).
+
+So "a grid tile with a new `flow-content.google/video/<uuid>`" is not a completion signal
+on its own.
+
+### Readiness, measured (sixth run, 7 credits)
+
+`scripts/dev/spike_agent_only_video_ready.py`, capture `…_195901.json`, confirm = Never.
+Polled every 5 s from submit:
+
+| t | newest `flow-video-tile` | chat `flow-a2ui-video-option` |
+|---|---|---|
+| 20–27 s | `flow-pending-tile` + `flow-soupy-overlay`, prompt text, no media | present, **no poster** |
+| 33 s | `flow-pending-tile.queued`, `div.header-leading.queued` | present, no poster |
+| 40–53 s | `flow-pending-tile` with `div.loading-percentage` (13 % → 23 %) | present, no poster |
+| 60 s | `flow-pending-tile`, percentage gone | present, no poster |
+| **66 s** | pending tile **replaced**: `<video src="flow-content.google/video/<uuid>">`, footer title | poster `flow-content.google/image/<same uuid>` |
+
+- **Readiness = no `flow-pending-tile` left and a new finished `flow-video-tile`.** The
+  percentage is not needed.
+- The chat option's poster appeared with readiness here, but 30 s **before** it in the first
+  drive run — so it identifies the clip, and does not mark readiness.
+- The wire: `jwpduf` every ~5 s while pending; an `as29s` at 61 s carried one
+  `flow-content.google/video/…` URL (whether it was this uuid was not captured — the uuid
+  was learned from the DOM 5 s later). DOM remains the signal.
+
 ## What this means for #799
 
 The labs `AgenticFlowUiDriver` design carries over; its anchors do not:

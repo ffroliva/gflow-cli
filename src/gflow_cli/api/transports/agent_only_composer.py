@@ -18,9 +18,11 @@ Shape of a run:
    without approving it.
 4. Completion is observed in the **DOM**, not on the wire: this composer never fires the
    classic ``ogiZ0b`` image reply, and ``as29s`` records name uuids absent from the page.
-   A result is a grid tile whose ``flow-content.google/{image,video}/<uuid>`` was not in
-   the pre-submit baseline; a video counts only once its ``<video>`` exists (the poster
-   ``<img>`` precedes it by ~30 s).
+   An image is a grid tile whose ``flow-content.google/image/<uuid>`` was not in the
+   pre-submit baseline. A video is ready when no ``flow-pending-tile`` is left, the newest
+   finished tile has changed, and a new uuid is named by that tile or by the chat reply's
+   poster — the tile's own media may be opaque ``/asb/`` (no uuid), and its ``<video>``
+   then mounts only on hover.
 
 Every selector is structural (component tags, classes, ``mat-icon`` ligatures, roles).
 """
@@ -31,19 +33,19 @@ import asyncio
 import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlsplit
 
 import structlog
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect as ImageAspect
-from gflow_cli.api.transports.batchexecute import STATUS_DONE, GenerationRecord
 from gflow_cli.api.transports.migrated_composer import (
     ASPECT_LIGATURE,
     IMAGE_ASPECT_LIGATURE,
     IMAGE_MODEL_MENU_MATCHERS,
     VIDEO_MODEL_MENU_MATCHERS,
-    MigratedComposer,
     ModelMenuMatcher,
     _raise_if_out_of_credits,  # pyright: ignore[reportPrivateUsage]
 )
@@ -54,12 +56,11 @@ from gflow_cli.errors import (
     FlowHostMigratedError,
     TransportTimeoutError,
     UiSelectorDriftError,
+    WireFormatError,
 )
 from gflow_cli.redaction import redact_sensitive_text
 
 if TYPE_CHECKING:  # pragma: no cover
-    from pathlib import Path
-
     from playwright.async_api import Page
 
     from gflow_cli.api.image import GenerateImageRequest
@@ -123,6 +124,27 @@ _TILES_JS = r"""
 })
 """
 
+#: Video state, measured 2026-09-15: a tile holds `flow-pending-tile` (queued, then a
+#: percentage) until the finished tile REPLACES it. The finished tile's media is
+#: `flow-content.google/video/<uuid>` on the session that made it and opaque `/asb/` once
+#: the grid re-renders; the chat option's poster names the uuid either way.
+_VIDEO_JS = r"""
+() => ({
+  pending: document.querySelectorAll('flow-video-tile flow-pending-tile').length,
+  finished: [...document.querySelectorAll('flow-video-tile')]
+    .filter(t => !t.querySelector('flow-pending-tile'))
+    .map(t => {
+      const src = (e) => e ? (e.currentSrc || e.src || '') : '';
+      return { video: src(t.querySelector('video')), img: src(t.querySelector('img')) };
+    }),
+  options: [...document.querySelectorAll('flow-a2ui-video-option img')]
+    .map(i => i.currentSrc || i.src || ''),
+})
+"""
+FINISHED_VIDEO_TILE = "flow-video-tile:not(:has(flow-pending-tile))"
+#: `/asb/` clips redirect to Google's video CDN (measured: `*.googlevideo.com`).
+_VIDEO_REDIRECT_HOST = "googlevideo.com"
+
 _IMAGE_ASPECT_LABEL = {
     ImageAspect.PORTRAIT: "9:16",
     ImageAspect.LANDSCAPE: "16:9",
@@ -170,6 +192,21 @@ def _cdn_uuid(src: str, kind: str) -> str | None:
 
 def _picker_label(text: str) -> str:
     return text.replace("arrow_drop_down", "").strip()
+
+
+def _video_uuids(state: dict[str, Any]) -> list[str]:
+    """Every clip uuid the grid or the chat names, tiles first, in page order."""
+    srcs = [t["video"] for t in state["finished"]] + [t["img"] for t in state["finished"]]
+    seen: dict[str, None] = {}
+    for src in [*srcs, *state["options"]]:
+        m = _CDN_MEDIA_RE.match(src or "")
+        if m:
+            seen.setdefault(m.group(2).lower(), None)
+    return list(seen)
+
+
+def _tile_key(tile: dict[str, str]) -> str:
+    return tile["video"] or tile["img"]
 
 
 class AgentOnlyComposer:
@@ -314,19 +351,26 @@ class AgentOnlyComposer:
 
     # --- generation ----------------------------------------------------------------------
 
-    async def _media(self, page: Page, kind: Section) -> dict[str, TileMedia]:
-        """Finished results on the grid, by uuid (a tile and its chat twin share one)."""
+    async def _media(self, page: Page) -> dict[str, TileMedia]:
+        """Finished images on the grid, by uuid (a tile and its chat twin share one)."""
         found: dict[str, TileMedia] = {}
         for tile in await page.evaluate(_TILES_JS):
-            if kind == "image" and tile["tile"] == "flow-image-tile":
-                uuid, src = _cdn_uuid(tile["poster"], "image"), tile["poster"]
-            elif kind == "video" and tile["tile"] == "flow-video-tile":
-                uuid, src = _cdn_uuid(tile["video"], "video"), tile["video"]
-            else:
-                continue
+            uuid = _cdn_uuid(tile["poster"], "image") if tile["tile"] == "flow-image-tile" else None
             if uuid:
-                found.setdefault(uuid, TileMedia(uuid, src, int(tile["w"]), int(tile["h"])))
+                found.setdefault(
+                    uuid, TileMedia(uuid, tile["poster"], int(tile["w"]), int(tile["h"]))
+                )
         return found
+
+    async def _hover_video_src(self, page: Page) -> str:
+        """The newest finished tile mounts its `<video>` only while hovered (measured)."""
+        tile = page.locator(FINISHED_VIDEO_TILE).first
+        await tile.hover(timeout=5000)
+        video = tile.locator("video").first
+        await video.wait_for(state="attached", timeout=5000)
+        src = await video.get_attribute("src") or ""
+        await page.mouse.move(0, 0)
+        return src
 
     async def _any_uuids(self, page: Page) -> set[str]:
         uuids: set[str] = set()
@@ -368,8 +412,14 @@ class AgentOnlyComposer:
         on_first_media: object = None,
     ) -> list[TileMedia]:
         """Submit ``directive`` and return the ``count`` new results it produced."""
-        baseline = await self._any_uuids(page)
         baseline_gates = await page.locator(LIVE_GATE).count()
+        baseline_head: str | None = None
+        if kind == "video":
+            state0 = await page.evaluate(_VIDEO_JS)
+            baseline = set(_video_uuids(state0))
+            baseline_head = _tile_key(state0["finished"][0]) if state0["finished"] else None
+        else:
+            baseline = await self._any_uuids(page)
 
         editor = page.locator(EDITOR).last
         if not await editor.count():
@@ -395,7 +445,11 @@ class AgentOnlyComposer:
                     detail=(
                         f"agent-only composer: no finished {kind} within {budget_s:.0f}s of "
                         f"submit (approvals={approvals})"
-                    )
+                    ),
+                    remediation_hint=(
+                        "The generation may still finish in Flow — check the project before "
+                        "re-running, because a re-run submits (and bills) again."
+                    ),
                 )
             if await page.locator(LIVE_GATE).count() > baseline_gates:
                 if approvals:
@@ -412,15 +466,27 @@ class AgentOnlyComposer:
                 approvals += 1
                 continue
 
-            fresh = {u: m for u, m in (await self._media(page, kind)).items() if u not in baseline}
-            if kind == "video" and not started and callable(on_first_media):
-                posters = await self._any_uuids(page) - baseline
-                if posters:
+            in_flight = bool(await page.locator(IN_FLIGHT).count())
+            if kind == "video":
+                state = await page.evaluate(_VIDEO_JS)
+                named = [u for u in _video_uuids(state) if u not in baseline]
+                if named and not started and callable(on_first_media):
                     started = True
-                    maybe = on_first_media(sorted(posters)[0])
+                    maybe = on_first_media(named[0])
                     if asyncio.iscoroutine(maybe):
                         await maybe
-            in_flight = bool(await page.locator(IN_FLIGHT).count())
+                head = state["finished"][0] if state["finished"] else None
+                # All three: a uuid names THIS clip, nothing is still pending, and the
+                # newest finished tile is not the one that was newest before submit (a
+                # re-render alone swaps a tile's cdn media for /asb/ — not a new clip).
+                if named and head and not state["pending"] and _tile_key(head) != baseline_head:
+                    uuid = _cdn_uuid(head["video"], "video") or named[-1]
+                    src = head["video"] or await self._hover_video_src(page)
+                    log.info("migrated.agent_only.video_ready", media_id=uuid)
+                    return [TileMedia(uuid, src)]
+                await asyncio.sleep(POLL_S)
+                continue
+            fresh = {u: m for u, m in (await self._media(page)).items() if u not in baseline}
             if len(fresh) >= count and not in_flight:
                 if len(fresh) > count:
                     raise FlowAgentUiError(
@@ -504,6 +570,57 @@ async def _restore_quietly(
             model=snapshot.model_text,
             error=str(exc)[:200],
         )
+
+
+async def download_video(page: Page, src: str, uuid: str, out_dir: Path | None) -> Path:
+    """Fetch a finished clip from its tile src and prove it is an MP4.
+
+    The src is refused unless it is on an allowed Google host, and the response unless it
+    ENDED on one: `/asb/` answers with a redirect to Google's video CDN, so redirects are
+    followed here (unlike the signed-URL path), and the final host is what is checked.
+    """
+    from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415 - cycle
+        _is_allowed_download_host,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    if not _is_allowed_download_host(src):
+        raise WireFormatError(
+            detail=(
+                f"agent-only composer: refusing to download a clip from "
+                f"{urlsplit(src).hostname!r} (not an allowed Google host)"
+            ),
+            route="agent-only:video",
+        )
+    resp = await page.request.get(src, timeout=180_000, max_redirects=5)
+    final_host = urlsplit(str(resp.url)).hostname or ""
+    on_video_cdn = final_host == _VIDEO_REDIRECT_HOST or final_host.endswith(
+        f".{_VIDEO_REDIRECT_HOST}"
+    )
+    if not (on_video_cdn or _is_allowed_download_host(str(resp.url))):
+        raise WireFormatError(
+            detail=f"agent-only composer: clip download was redirected to {final_host!r}",
+            route="agent-only:video",
+        )
+    if resp.status >= 300:
+        raise WireFormatError(
+            detail=f"agent-only composer: clip download answered HTTP {resp.status}",
+            status=resp.status,
+            route="agent-only:video",
+        )
+    body = await resp.body()
+    if body[4:8] != b"ftyp":
+        raise WireFormatError(
+            detail=(
+                f"agent-only composer: the finished clip did not download as an MP4 ({len(body)} B)"
+            ),
+            route="agent-only:video",
+        )
+    target = out_dir or Path.cwd()
+    target.mkdir(parents=True, exist_ok=True)
+    path = target / f"{uuid}.mp4"
+    path.write_bytes(body)
+    log.info("migrated.agent_only.video_downloaded", path=str(path), bytes=len(body))
+    return path
 
 
 async def run_agent_images(
@@ -595,14 +712,7 @@ async def run_agent_video(
         )
     finally:
         await _restore_quietly(composer, page, snapshot)
-    record = GenerationRecord(
-        workflow_id="",
-        project_id=project_id,
-        media_id=media.uuid,
-        status=STATUS_DONE,
-        video_url=media.src,
-    )
-    local_path = await MigratedComposer().download(page, record, out_dir) if download else None
+    local_path = await download_video(page, media.src, media.uuid, out_dir) if download else None
     return VideoResult(
         status=VideoStatus(media_id=media.uuid, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
         local_path=local_path,

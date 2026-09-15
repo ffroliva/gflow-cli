@@ -69,13 +69,38 @@ function setSubmit(inFlight) {
 function tile(kind, n) {
   const t = document.createElement(kind === 'image' ? 'flow-image-tile' : 'flow-video-tile');
   t.innerHTML = `<img src="${cdn('image', n)}">`;
-  document.getElementById('grid').appendChild(t);
+  document.getElementById('grid').prepend(t);  // newest first, as measured
   if (S.dupe) {
     const o = document.createElement('flow-a2ui-image-option');
     o.innerHTML = `<img src="${cdn('image', n)}">`;
     document.getElementById('chat').appendChild(o);
   }
   return t;
+}
+// Measured 2026-09-15: a video tile is a `flow-pending-tile` (queued, then a percentage)
+// until it is REPLACED by the finished tile. On a fresh session the finished tile carries
+// `<video src=flow-content.google/video/<uuid>>`; on a re-rendered grid it carries opaque
+// `/asb/` media and mounts `<video>` only on hover. The chat option's poster names the uuid,
+// and may appear before the clip is ready.
+function videoTile(n) {
+  const t = document.createElement('flow-video-tile');
+  t.innerHTML = '<flow-pending-tile class="queued"><div class="header-leading queued">Queued</div></flow-pending-tile>';
+  document.getElementById('grid').prepend(t);
+  const opt = document.createElement('flow-a2ui-video-option');
+  opt.innerHTML = S.optionEarly ? `<img src="${cdn('image', n)}">` : '<img>';
+  document.getElementById('chat').appendChild(opt);
+  setTimeout(() => { t.innerHTML = '<flow-pending-tile><div class="loading-percentage">40%</div></flow-pending-tile>'; }, S.delay);
+  if (S.posterOnly) return;
+  setTimeout(() => {
+    opt.querySelector('img').src = cdn('image', n);
+    if (S.readyMedia === 'asb') {
+      const asb = `https://flow.google.com/asb/opaque-${n}`;
+      t.innerHTML = `<img class="thumbnail" src="${asb}">`;
+      t.onmouseenter = () => { if (!t.querySelector('video')) t.insertAdjacentHTML('beforeend', `<video src="${asb}"></video>`); };
+    } else {
+      t.innerHTML = `<video src="${cdn('video', n)}"></video>`;
+    }
+  }, S.delay * 2);
 }
 function gate() {
   const m = document.createElement('flow-permission-message');
@@ -93,15 +118,18 @@ function produce() {
   setTimeout(() => {
     for (let i = 0; i < S.produce; i++) {
       const n = seq++;
-      const t = tile(S.kind, n);
-      if (S.kind === 'video' && !S.posterOnly) setTimeout(() =>
-        t.insertAdjacentHTML('beforeend', `<video src="${cdn('video', n)}"></video>`), S.delay);
+      if (S.kind === 'video') videoTile(n); else tile('image', n);
     }
     setTimeout(() => setSubmit(false), S.delay * 2);
   }, S.delay);
 }
 function submit() {
   window.log.submitted = document.querySelector('.ProseMirror').innerText;
+  // Measured: a re-render swaps an existing tile's cdn media for opaque /asb/ — same clip.
+  if (S.rerenderOld) setTimeout(() => {
+    const old = document.getElementById('old-video');
+    old.innerHTML = '<img class="thumbnail" src="https://flow.google.com/asb/opaque-old">';
+  }, S.delay);
   setSubmit(true);
   setTimeout(() => {
     if (S.idle) { setSubmit(false); return; }
@@ -153,6 +181,12 @@ function renderPane() {
 document.getElementById('tune').onclick = renderPane;
 setSubmit(false);
 if (S.preMedia) tile('image', 1);
+if (S.rerenderOld) {
+  const old = document.createElement('flow-video-tile');
+  old.id = 'old-video';
+  old.innerHTML = `<video src="${cdn('video', 1)}"></video>`;
+  document.getElementById('grid').prepend(old);
+}
 if (S.staleGate) gate();
 </script>
 """
@@ -221,10 +255,46 @@ async def test_a_second_gate_stops_the_run_after_one_approval(page: Page) -> Non
 
 
 @pytest.mark.asyncio
-async def test_a_poster_is_not_a_finished_video(page: Page) -> None:
-    await _load(page, kind="video", posterOnly=True)
+async def test_a_pending_tile_is_not_a_finished_video_even_with_a_chat_poster(page: Page) -> None:
+    await _load(page, kind="video", posterOnly=True, optionEarly=True)
     with pytest.raises(TransportTimeoutError):
         await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=1.5)
+
+
+@pytest.mark.asyncio
+async def test_a_re_rendered_old_tile_is_not_ready_while_the_new_clip_is_pending(
+    page: Page,
+) -> None:
+    """Head changed (cdn -> /asb/) and the chat already names the new clip, but a
+    `flow-pending-tile` is still there: not ready."""
+    await _load(page, kind="video", rerenderOld=True, posterOnly=True, optionEarly=True)
+    with pytest.raises(TransportTimeoutError):
+        await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=1.5)
+
+
+@pytest.mark.asyncio
+async def test_a_re_rendered_old_tile_is_not_a_new_clip(page: Page) -> None:
+    """Head changed and nothing is pending, but no new uuid exists: nothing was made."""
+    await _load(page, kind="video", rerenderOld=True, idle=True)
+    with pytest.raises(TransportTimeoutError):
+        await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=1.5)
+
+
+@pytest.mark.asyncio
+async def test_a_finished_video_with_a_session_cdn_src(page: Page) -> None:
+    await _load(page, kind="video")
+    (media,) = await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=10)
+    assert media.uuid == "00000000-0000-4000-8000-000000000100"
+    assert media.src.startswith("https://flow-content.google/video/")
+
+
+@pytest.mark.asyncio
+async def test_a_finished_video_with_opaque_media_is_named_by_the_chat_poster(page: Page) -> None:
+    """Live 2026-09-15: a run timed out on a clip that existed — its tile had no uuid."""
+    await _load(page, kind="video", readyMedia="asb")
+    (media,) = await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=10)
+    assert media.uuid == "00000000-0000-4000-8000-000000000100"
+    assert media.src == "https://flow.google.com/asb/opaque-100"
 
 
 @pytest.mark.asyncio
@@ -256,6 +326,66 @@ async def test_signed_urls_never_reach_the_error_text(page: Page) -> None:
     with pytest.raises(FlowAgentUiError) as exc:
         await aoc.AgentOnlyComposer().generate(page, "x", kind="image", count=1, budget_s=10)
     assert "Signature" not in str(exc.value)
+
+
+# --- download: the finished tile's src, redirects only to Google video hosts ----------------
+
+
+class _Resp:
+    def __init__(self, url: str, status: int, body: bytes) -> None:
+        self.url, self.status, self._body = url, status, body
+
+    async def body(self) -> bytes:
+        return self._body
+
+
+def _page_answering(resp: _Resp) -> Any:
+    page = MagicMock()
+
+    async def get(*_: Any, **__: Any) -> _Resp:
+        return resp
+
+    page.request.get = get
+    return page
+
+
+MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 16
+
+
+@pytest.mark.asyncio
+async def test_an_asb_src_redirected_to_googlevideo_downloads(tmp_path: Any) -> None:
+    page = _page_answering(_Resp("https://rr2---sn-x.googlevideo.com/videoplayback?x=1", 200, MP4))
+    path = await aoc.download_video(page, "https://flow.google.com/asb/opaque", "u-1", tmp_path)
+    assert path.name == "u-1.mp4" and path.read_bytes() == MP4
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_off_google_is_refused(tmp_path: Any) -> None:
+    from gflow_cli.errors import WireFormatError
+
+    page = _page_answering(_Resp("https://evil.example/v.mp4", 200, MP4))
+    with pytest.raises(WireFormatError, match="evil.example"):
+        await aoc.download_video(page, "https://flow.google.com/asb/opaque", "u-1", tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_a_body_that_is_not_an_mp4_is_refused(tmp_path: Any) -> None:
+    from gflow_cli.errors import WireFormatError
+
+    page = _page_answering(_Resp("https://rr2---sn-x.googlevideo.com/v", 200, b"<html>nope"))
+    with pytest.raises(WireFormatError, match="MP4"):
+        await aoc.download_video(page, "https://flow.google.com/asb/opaque", "u-1", tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_a_non_google_src_is_never_requested(tmp_path: Any) -> None:
+    from gflow_cli.errors import WireFormatError
+
+    page = MagicMock()
+    with pytest.raises(WireFormatError):
+        await aoc.download_video(page, "https://evil.example/asb/x", "u-1", tmp_path)
+    page.request.get.assert_not_called()
 
 
 # --- Agent settings: apply, restore --------------------------------------------------------
