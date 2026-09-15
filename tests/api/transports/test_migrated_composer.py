@@ -538,7 +538,9 @@ class FakePage:
         # (url, text) or (url, text, http_status) — the status defaults to 200, so an
         # existing 2-tuple keeps working and a non-200 reply is expressible.
         self.scripted_responses: list[tuple[str, ...]] = []  # fired on submit click
-        self.scripted_request: tuple[str, str] | None = None  # (rpcid, POST body) on submit
+        self.scripted_request: tuple[str | None, str] | None = (
+            None  # (rpcid, body); None = bare URL
+        )
 
     async def goto(self, url: str, **_: Any) -> None:
         self.gotos.append(url)
@@ -564,10 +566,10 @@ class FakePage:
     def _fire_submit(self) -> None:
         if self.scripted_request is not None:
             rpcid, body = self.scripted_request
+            # None rpcid: the real nprQif shape — no rpcids query param at all.
+            url = _batch_url(rpcid) if rpcid is not None else _batch_bare_url()
             for h in list(self._handlers["request"]):
-                asyncio.get_event_loop().create_task(
-                    _maybe_await(h(FakeRequest(_batch_url(rpcid), body)))
-                )
+                asyncio.get_event_loop().create_task(_maybe_await(h(FakeRequest(url, body))))
         for scripted in self.scripted_responses:
             url, text, *rest = scripted
             self._fire_response(FakeResponse(url, text, *rest))
@@ -717,6 +719,7 @@ WF = "11111111-1111-4111-8111-111111111111"
 PROJ = "p1"
 MEDIA = "33333333-3333-4333-8333-333333333333"
 MEDIA_UP = "55555555-5555-4555-8555-555555555555"  # what `maseQ` answers for an upload
+END_UP = "77777777-7777-4777-8777-777777777777"  # what `maseQ` answers for the end frame
 PROJ_UUID = "66666666-6666-4666-8666-666666666666"  # the project id in the same reply
 VIDEO_URL = "https://flow-content.google/v/abc.mp4?Expires=1&KeyName=k&Signature=s"
 
@@ -763,6 +766,11 @@ def _batch_url(rpcid: str) -> str:
     return (
         f"https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute?rpcids={rpcid}&rt=c"
     )
+
+
+def _batch_bare_url() -> str:
+    """A batchexecute URL with no ``rpcids`` query param — the nprQif request shape."""
+    return "https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute"
 
 
 def _t2v(**kw: Any) -> GenerateVideoRequest:
@@ -1572,6 +1580,21 @@ async def test_no_submit_frame_within_budget_is_a_timeout() -> None:
         )
 
 
+async def test_submit_timeout_names_the_rpcs_it_did_see() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    # Traffic, but on an rpcid the observer does not watch: the timeout must
+    # name it instead of reporting an empty wait (issue #639 slice 2).
+    page.scripted_responses = [(_batch_url("QqWwEe"), _frame("QqWwEe", [None, 881, []]))]
+    with pytest.raises(TransportTimeoutError, match="rpcs seen: QqWwEe") as ei:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=0.3, on_started=None, project_id=PROJ
+        )
+    assert "rpcs seen: none" not in str(ei.value)
+
+
 async def test_submit_frame_without_record_is_wire_format_error() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -2102,6 +2125,18 @@ def _i2v_body(media_id: str = MEDIA_UP, key: str = "veo_3_1_i2v_lite") -> str:
     return f'f.req=[[["eb1hJf","[\\"{key}\\",\\"{media_id}\\",\\"{PROJ}\\"]",null,"generic"]]]'
 
 
+def _interp_body(
+    start_id: str = MEDIA_UP,
+    end_id: str = END_UP,
+    key: str = "veo_3_1_interpolation_lite",
+) -> str:
+    """The captured nprQif shape: rpc in f.req, interpolation key, both frame ids."""
+    return (
+        f'f.req=[[["nprQif","[\\"a prompt\\",\\"{key}\\",1,null,'
+        f'[null,\\"{start_id}\\"],[null,\\"{end_id}\\"],\\"{PROJ}\\"]",null,"generic"]]]'
+    )
+
+
 async def test_submit_accepts_eb1hjf_as_the_i2v_submit_rpc() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -2127,6 +2162,152 @@ async def test_submit_accepts_eb1hjf_as_the_i2v_submit_rpc() -> None:
     assert page.listeners("request") == [] and page.listeners("response") == []
 
 
+async def test_submit_observes_the_interpolation_rpc_from_the_request_body() -> None:
+    """Start+end submits travel on nprQif with the rpc name in f.req, not the URL
+    (captured 2026-09-16, #639): the observer routes by body, asserts the
+    interpolation key and both frame ids, then reads the standard CAE reply."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = (None, _interp_body())
+    page.scripted_responses = [
+        (_batch_url("nprQif"), _frame("nprQif", [None, 9312, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 9312, [[_record(2)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    started: list[Any] = []
+    with capture_logs() as logs:
+        rec = await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=started.append,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+            expect_end_media_id=END_UP,
+        )
+    assert rec.is_done and rec.video_url == VIDEO_URL and started[0].media_id == MEDIA
+    observed = next(e for e in logs if e["event"] == "migrated.submit_observed")
+    assert observed["rpc"] == "nprQif"
+    assert page.listeners("request") == [] and page.listeners("response") == []
+
+
+async def test_interpolation_submit_missing_the_end_frame_is_a_wire_format_error() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = (None, _interp_body(end_id=MEDIA))  # some other asset
+    page.scripted_responses = [
+        (_batch_url("nprQif"), _frame("nprQif", [None, 9312, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    with pytest.raises(WireFormatError, match="end frame") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+            expect_end_media_id=END_UP,
+        )
+    assert "nprQif" in ei.value.route
+
+
+async def test_interpolation_submit_on_a_start_only_run_is_refused() -> None:
+    """nprQif without a bound end frame is a billing mismatch, not a run to adopt."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = (None, _interp_body())
+    page.scripted_responses = [
+        (_batch_url("nprQif"), _frame("nprQif", [None, 9312, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    with pytest.raises(WireFormatError, match="no bound end frame") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+        )
+    assert "nprQif" in ei.value.route
+
+
+def test_interpolation_body_problem_names_what_is_wrong() -> None:
+    from gflow_cli.api.transports.migrated_composer import _interpolation_body_problem
+
+    ok = _interp_body()
+    assert _interpolation_body_problem(ok, "nprQif", MEDIA_UP, END_UP) is None
+    missing_end = _interpolation_body_problem(
+        _interp_body(end_id=MEDIA), "nprQif", MEDIA_UP, END_UP
+    )
+    assert missing_end is not None and "end frame" in missing_end and END_UP in missing_end
+    wrong_key = _interpolation_body_problem(
+        _interp_body(key="veo_3_1_t2v_lite"), "nprQif", MEDIA_UP, END_UP
+    )
+    assert wrong_key is not None and "veo_3_1_interpolation_lite" in wrong_key
+    no_end_bound = _interpolation_body_problem(ok, "nprQif", MEDIA_UP, None)
+    assert no_end_bound is not None and "no bound end frame" in no_end_bound
+    unreadable = _interpolation_body_problem("", "nprQif", MEDIA_UP, END_UP)
+    assert unreadable is not None and "could not be read" in unreadable
+
+
+async def test_submit_on_an_unwatched_rpc_is_adopted_by_content() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    end = "77777777-7777-4777-8777-777777777777"
+    body = (
+        f'f.req=[[["QxJxZz","[\\"veo_3_1_i2v_lite\\",\\"{MEDIA_UP}\\",'
+        f'\\"{end}\\"]",null,"generic"]]]'
+    )
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("QxJxZz", body)
+    page.scripted_responses = [
+        (_batch_url("QxJxZz"), _frame("QxJxZz", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    started: list[Any] = []
+    with capture_logs() as logs:
+        rec = await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=started.append,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+            expect_end_media_id=end,
+        )
+    assert rec.is_done and rec.media_id == MEDIA and started[0].media_id == MEDIA
+    adopted = next(e for e in logs if e["event"] == "migrated.submit_rpc_adopted")
+    assert adopted["rpc"] == "QxJxZz"
+    observed = next(e for e in logs if e["event"] == "migrated.submit_observed")
+    assert observed["rpc"] == "QxJxZz"
+    assert page.listeners("request") == [] and page.listeners("response") == []
+
+
+async def test_submit_timeout_names_request_rpcids_too() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    # A request went out on an rpcid nobody watches and nothing answered: the
+    # timeout must name the request side, not just heard replies (issue #639).
+    page.scripted_request = ("QwErTy", "unrelated-poll-body")
+    page.scripted_responses = []
+    with pytest.raises(TransportTimeoutError, match="rpcs seen: QwErTy") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=0.3,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+        )
+    assert "QwErTy" in str(ei.value)
+
+
 async def test_submit_body_without_the_bound_media_id_is_wire_format_error() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -2142,6 +2323,21 @@ async def test_submit_body_without_the_bound_media_id_is_wire_format_error() -> 
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, expect_media_id=MEDIA_UP
         )
     assert EXIT_CODE_MAP[WireFormatError] == 7 and "eb1hJf" in ei.value.route
+
+
+def test_i2v_body_problem_requires_the_bound_end_frame_when_expected() -> None:
+    from gflow_cli.api.transports.migrated_composer import _i2v_body_problem
+
+    start, end = MEDIA_UP, "77777777-7777-4777-8777-777777777777"
+
+    def body(*ids: str) -> str:
+        inner = ",".join(f'"{i}"' for i in ids)
+        return f'f.req=[[["eb1hJf","[\\"veo_3_1_i2v_lite\\",{inner}]",null,"generic"]]]'
+
+    assert _i2v_body_problem(body(start, end), "eb1hJf", start, end_media_id=end) is None
+    assert _i2v_body_problem(body(start), "eb1hJf", start) is None
+    problem = _i2v_body_problem(body(start), "eb1hJf", start, end_media_id=end)
+    assert problem is not None and "end frame" in problem and end in problem
 
 
 async def test_submit_body_that_cannot_be_read_is_named_as_such() -> None:

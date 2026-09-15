@@ -1016,8 +1016,9 @@ async def gflow_generate_video(  # NOSONAR
             as ``hero-<8 hex>.png``), so a re-run of the same file cannot bind an
             earlier upload (#792); a Flow media UUID returns the
             exit-36-equivalent envelope.
-        end_frame: Path to end frame image (optional for i2v). Not ported to
-            flow.google.com yet — exit-36-equivalent envelope on a moved account.
+        end_frame: Path to end frame image (optional for i2v). Local files are
+            driven on flow.google.com; UUID/@Name refs return the
+            exit-36-equivalent envelope on a moved account.
         reference_images: List of reference image paths (ingredients) for r2v.
         reference_entities: Saved Flow CHARACTER entity **ids** to attach
             (mirrors the CLI ``--reference-entity``). Same wire as an
@@ -1061,9 +1062,9 @@ async def gflow_generate_video(  # NOSONAR
             Google has moved to flow.google.com (``GFLOW_CLI_FLOW_HOST``, read from
             the server/daemon environment, not per call) ``project`` is required —
             omitting it returns the exit-11-equivalent envelope. There the ported
-            modes are 't2v'; 'i2v' with a local ``initial_frame`` and no
-            ``end_frame``; and 'r2v' with local ``reference_images``. A UUID
-            frame, an end frame, and r2v by ``ref_names`` or
+            modes are 't2v'; 'i2v' with a local ``initial_frame`` with or without
+            a local ``end_frame``; and 'r2v' with local ``reference_images``. A UUID
+            frame, an end frame by UUID/``@Name``, and r2v by ``ref_names`` or
             ``reference_entities`` return the exit-36-equivalent envelope.
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
             ``video t2v``/``i2v``; applies to every mode of this tool,
