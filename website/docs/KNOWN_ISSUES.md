@@ -1283,32 +1283,38 @@ continue as a seeded I2V generation — tracked as backlog.
 
 ## Mitigated
 
-### Some accounts get an agent-only composer on flow.google.com, which gflow cannot drive
+### Some accounts get an agent-only composer on flow.google.com — text-to-image and text-to-video are driven; other forms are not
 
 Some accounts on `flow.google.com` are served a composer with **no classic arm at all**:
 the only prompt box is the agent panel, there is no `agent-mode-chip` to turn off, and
 aspect / model / count are Agent-settings **defaults** rather than per-request controls.
-Every control the migrated driver reaches for is structurally absent, so `gflow video`
-and `gflow image` cannot run there at all.
 
-**Mitigation (v0.74.0):** the state is named before submit — `FlowAgentUiError`, exit 25,
-`retryable: false`, $0 spent — instead of the generic `UiSelectorDriftError` (exit 23)
-that reads as a gflow frontend bug and invites a doomed retry. The discriminator is the
-chip, because the DOM is otherwise identical to the *recoverable* agent mode of
-[#749](https://github.com/ffroliva/gflow-cli/issues/749): a hidden settings trigger **with**
-a chip is recoverable and gflow turns it back itself; a hidden trigger with **no chip
-anywhere** is this cohort.
+**Driven ([#799](https://github.com/ffroliva/gflow-cli/issues/799)):** `gflow image t2i` and
+`gflow video t2v` (and their MCP twins). gflow sets the request's aspect, count and model in
+Agent settings, saves, sends a natural-language request to the agent, and **restores those
+three defaults afterwards**. "Confirm before generating" follows
+[`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm) and is not restored.
+With a confirmation step, gflow approves exactly one that its own submit produced and stops
+without approving a second. Live-verified 2026-09-15 on a Google AI Pro account (`en`):
+t2i 3:4 × 2 (896×1200 each), t2v 4 s 9:16 (ready 69 s after submit, MP4 downloaded).
 
-**No workaround inside gflow.** No flag, `--ui-mode`, or profile change reaches it — the
-composer is a property of the Google account. Generating from the Flow web UI still works.
-A driver for the agent panel is not implemented;
-[#799](https://github.com/ffroliva/gflow-cli/issues/799) stays open for it.
+**Not driven yet on this composer** (exit 36, before anything is clicked): image-to-image,
+image-to-video, reference-to-video, character references, Agent instructions, and more than
+one video per request.
 
-**Prevalence is unmeasured.** One reporter, one account (Windows 11, ru locale), whose DOM
-capture is what made this diagnosable. No account available to the maintainers is in this
-cohort, so the **positive** case is verified against the reporter's captured markup driven
-by a real Chromium (`tests/api/transports/test_agent_only_composer.py`) and **not** against
-live Flow — that needs an account in the cohort and is the named blocker on #799.
+**Rough edges, measured:**
+- A run that dies between Save and restore can leave the account on the run's defaults; the
+  `migrated.agent_only.defaults_restore_failed` log line names the originals.
+- Editing Agent settings in the browser *during* a run is overwritten by the restore.
+- Finished grid tiles re-render to opaque `/asb/` media with no media id; the id comes from
+  the agent's reply instead, and the clip is fetched from the tile's hover player.
+- The request text is English. Whether the agent honours it on a non-English account is
+  unmeasured (the original reporter's account is `ru`).
+
+**Detection** is unchanged from v0.74.0: a hidden settings trigger with **no chip anywhere**
+is this composer; with a chip it is the recoverable agent mode of
+[#749](https://github.com/ffroliva/gflow-cli/issues/749). It is now reported after a 5 s
+early wait instead of the full 30 s readiness gate.
 
 The **negative** controls were measured live at $0 on 2026-09-13, which is what makes the
 discriminator more than a guess: a healthy migrated composer carries
