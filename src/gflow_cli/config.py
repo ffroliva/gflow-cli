@@ -559,6 +559,19 @@ class Settings(BaseSettings):
             "switch). Override via GFLOW_CLI_FLOW_HOST."
         ),
     )
+    agent_confirm: Literal["account", "always", "never"] = Field(
+        default="account",
+        description=(
+            "Agent-only composer on flow.google.com (#799): the 'Confirm before generating' "
+            "setting gflow applies before a run. 'account' (default): leave whatever the "
+            "Flow account has; gflow approves exactly one confirmation its own submit "
+            "produced and stops on a second. 'always': set Always (safest — an agent that "
+            "queues more than asked is stopped before spending). 'never': set Never (no "
+            "approval step; an over-count is detected only after credits are spent). The "
+            "chosen value is saved to the Flow account and NOT restored afterwards. "
+            "Override via GFLOW_CLI_AGENT_CONFIRM."
+        ),
+    )
     ui_mode: UiMode | None = Field(
         default=None,
         description=(
