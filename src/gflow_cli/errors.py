@@ -722,10 +722,11 @@ class FlowAgentUiError(GFlowError):
     **Two producers, and they differ on retry.** On labs.google this is the Agentic
     UI A/B cohort, which is server-assigned per page load and flaps — hence class
     membership in ``RETRYABLE_ERRORS``, and hence the default remediation's advice to
-    try another profile. On the migrated ``flow.google.com`` host it is also raised
-    for an account whose composer is **agent-only** (#799): no classic arm exists at
-    all, so that raise site passes ``retryable=False`` and its own
-    ``remediation_hint``, because no retry or profile change can reach it.
+    try another profile. On the migrated ``flow.google.com`` host an account whose
+    composer is **agent-only** (#799) is driven by ``agent_only_composer``; there this
+    error means the agent did something other than what was asked — a second credit
+    confirmation, more results than requested, or a turn that produced nothing — and
+    those raise sites pass ``retryable=False``, because a blind re-run repeats the ask.
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-agent-ui"

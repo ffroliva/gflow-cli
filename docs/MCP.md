@@ -151,9 +151,11 @@ site can override its class. Two do today — Flow's `/about` redirect raises
 preserved default: caught during a live occurrence, 5/5 consecutive attempts over ~3 minutes
 landed on `/about` again, on the account's own project with a healthy session — so a retry is
 doomed and costs ~35 s each ([#756](https://github.com/ffroliva/gflow-cli/issues/756)). The
-second is the migrated **agent-only composer**, which raises `FlowAgentUiError` with
-`retryable: false` because which composer an account gets is server-assigned and does not
-flap ([#799](https://github.com/ffroliva/gflow-cli/issues/799)). The
+second is the migrated **agent-only composer** ([#799](https://github.com/ffroliva/gflow-cli/issues/799)),
+which gflow drives through its chat agent: there `FlowAgentUiError` carries `retryable: false`
+because it means the agent did something other than what was asked — a second credit
+confirmation, more results than requested, or a turn that made nothing — and a blind re-run
+repeats the ask. The
 *cause*, and whether it ever clears, remain unmeasured.
 Read the flag off the envelope; never re-derive it from the class list.
 Everything
@@ -412,8 +414,8 @@ gflow credits user         # does the Bearer path still work for this account?
 | "Signed in to Google, but not to the Flow app" | — | **or** the account has no Flow access at all | Same sentence, second cause. The session endpoint answers 200 with an empty `user` for an abandoned sign-in *and* for an account with no Google AI Plus/Pro/Ultra (or qualifying Workspace) plan, so `auth status` cannot tell them apart. Open `https://flow.google.com` in a browser on that account: a landing on `/unavailable` means this row. A generation command says so directly — **exit 39**, `FlowAccessUnavailableError` |
 
 In every migrated row above, **generation over the migrated composer still works** — only
-the aisandbox REST reads fail. The one exception is the agent-only composer described
-below, where there is no composer for gflow to drive at all.
+the aisandbox REST reads fail. On the agent-only composer described below that holds for
+text-to-image and text-to-video only.
 
 > **A `credits` failure does not mean your cookies are stale.** Two raise sites produce it
 > — labs answering with no token, and aisandbox-pa rejecting the token labs did issue —
@@ -424,12 +426,15 @@ below, where there is no composer for gflow to drive at all.
 > believe `auth status`.** Through v0.73.2 the second site carried the class-default
 > SAPISID advice instead — see the CHANGELOG for why.
 
-The migrated composer itself also comes in more than one shape. Since v0.74.0 an account
-whose composer is **agent-only** — no classic composer at all — is named as such before
-submit: `FlowAgentUiError`, **exit-25-equivalent**, `retryable: false`, saying the settings trigger is
-present but hidden and that no `agent-mode-chip` exists to turn off. Through v0.73.2 that
-same account got a generic selector-drift envelope (exit 23), which reads as *our* bug and
-invites a retry that cannot work ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).
+The migrated composer itself also comes in more than one shape. An account whose composer
+is **agent-only** — no classic composer at all — is driven through its chat agent for
+`gflow_generate_image` (text-to-image) and `gflow_generate_video` (text-to-video): aspect,
+count and model are set in Agent settings for the run and restored afterwards, and
+"Confirm before generating" follows the server's `GFLOW_CLI_AGENT_CONFIRM`. Other forms on
+that composer (references, image-to-video, instructions, more than one video) return an
+exit-36-equivalent envelope before anything is clicked
+([#799](https://github.com/ffroliva/gflow-cli/issues/799)). Through v0.73.2 such an account got
+a generic selector-drift envelope (exit 23); v0.74.0 and v0.75.0 named it with exit 25.
 
 The distinction that matters, because the DOM is identical either way: a **pressed chip**
 means the classic arm exists and gflow turns it back on itself
