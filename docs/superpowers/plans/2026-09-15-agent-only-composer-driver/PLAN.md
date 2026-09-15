@@ -135,8 +135,9 @@ No new options. `--help` unchanged. Verify exit-code mapping only.
 - [x] `pytest -m e2e tests/e2e/test_agent_only_composer_bdd.py` with `GFLOW_CLI_E2E_RUN_VIDEO=1`,
       profile `burner`, 2026-09-15: **3 passed in 245.9 s** — CLI t2i 3:4 × 2, MCP
       `gflow_generate_image` (queued worker path), CLI t2v 4 s 9:16; each asserted restore
-- [ ] `/gflow:branch-review`
-- [ ] Ask the user before opening the PR (`Refs #799` unless every form is covered)
+- [x] `/gflow:branch-review` — GREEN after one fix (cda38492: discard the settings draft when
+      applying defaults fails); CI-mechanical gates clean; no duplication in touched files
+- [x] Asked the user before opening the PR — approved 2026-09-15: fork, push, PR with `Refs #799`
 
 ## Definition of done
 - [ ] All tasks checked · `/gflow:check` green · CHANGELOG updated
