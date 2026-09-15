@@ -128,7 +128,8 @@ function renderPane() {
     const g = +b.dataset.g;
     const all = [...p.querySelectorAll(`button[data-g="${g}"]`)];
     draft.groups[g] = all.indexOf(b);
-    all.forEach(x => x.setAttribute('aria-checked', String(x === b)));
+    // Like Angular: the attribute lands after the click handler returns, not during it.
+    setTimeout(() => all.forEach(x => x.setAttribute('aria-checked', String(x === b))), S.radioLagMs || 0);
   });
   p.querySelectorAll('input[data-c]').forEach(r => r.onchange = () => { draft.confirm = +r.dataset.c; });
   for (const k of ['image', 'video']) {
@@ -282,6 +283,23 @@ async def test_defaults_are_applied_then_restored_and_confirm_is_kept(page: Page
     assert restored["groups"] == [0, 1, 0, 0]
     assert restored["models"]["video"] == "Omni 1.1 Flash"
     assert restored["confirm"] == 1, "confirm is a standing choice, never restored"
+
+
+@pytest.mark.asyncio
+async def test_a_radio_that_updates_after_the_click_still_restores(page: Page) -> None:
+    """Live 2026-09-15: restore read `aria-checked` in the click's own tick and failed."""
+    await _load(page, radioLagMs=300)
+    composer = aoc.AgentOnlyComposer()
+    snap = await composer.apply_defaults(
+        page,
+        section="image",
+        aspect_ligature="crop_portrait",
+        count=2,
+        model=None,
+        confirm="account",
+    )
+    await composer.restore_defaults(page, snap)
+    assert (await _log(page))["saves"][-1]["groups"] == [0, 1, 0, 0]
 
 
 @pytest.mark.asyncio
