@@ -77,6 +77,8 @@ TOGGLE_GROUP = f"{PANE} mat-button-toggle-group"
 TOGGLE_RADIO = "button[role='radio']"
 CONFIRM_INPUT = f"{PANE} mat-radio-button input[type='radio']"
 SAVE_BUTTON = f"{PANE} button.settings-save-button"
+#: Closes the pane without saving (measured 2026-09-15: `button.header-action` + `arrow_back`).
+PANE_BACK = "flow-agent-panel button:has(mat-icon:text-is('arrow_back'))"
 MODEL_PICKER = {
     "image": f"{PANE} button.image-model-picker-button",
     "video": f"{PANE} button.video-model-picker-button",
@@ -296,6 +298,18 @@ class AgentOnlyComposer:
         await items.nth(hits[0]).click(timeout=4000)
         log.info("migrated.agent_only.model_selected", section=section, model=offered[hits[0]])
 
+    async def _discard_pane(self, page: Page) -> None:
+        """Leave Agent settings WITHOUT saving, through the panel's own back arrow (measured)."""
+        back = page.locator(PANE_BACK).last
+        try:
+            if await back.count():
+                await back.click(timeout=4000)
+                await page.locator(PANE).first.wait_for(
+                    state="detached", timeout=int(PANE_S * 1000)
+                )
+        except Exception as exc:  # noqa: BLE001 - cleanup must not mask the real failure
+            log.warning("migrated.agent_only.pane_discard_failed", error=str(exc)[:200])
+
     async def _save(self, page: Page) -> None:
         await page.locator(SAVE_BUTTON).first.click(timeout=4000)
         await page.locator(PANE).first.wait_for(state="detached", timeout=int(PANE_S * 1000))
@@ -319,14 +333,20 @@ class AgentOnlyComposer:
             count_index=await self._checked_index(page, base + 1),
             model_text=_picker_label(await page.locator(MODEL_PICKER[section]).first.inner_text()),
         )
-        await self._check_radio(page, base, aspect_ligature, "aspect")
-        await self._check_radio(page, base + 1, count - 1, "count")
-        if model is not None:
-            await self._choose_model(page, section, model)
-        if confirm != "account":
-            radio = page.locator(CONFIRM_INPUT).nth(_CONFIRM_INDEX[confirm])
-            if not await radio.is_checked():
-                await radio.check(timeout=4000)
+        try:
+            await self._check_radio(page, base, aspect_ligature, "aspect")
+            await self._check_radio(page, base + 1, count - 1, "count")
+            if model is not None:
+                await self._choose_model(page, section, model)
+            if confirm != "account":
+                radio = page.locator(CONFIRM_INPUT).nth(_CONFIRM_INDEX[confirm])
+                if not await radio.is_checked():
+                    await radio.check(timeout=4000)
+        except Exception:
+            # Nothing was saved, but the pane still holds this run's radios: left open, the
+            # next run in the session would snapshot them as the account's originals.
+            await self._discard_pane(page)
+            raise
         await self._save(page)
         log.info(
             "migrated.agent_only.defaults_applied",
@@ -448,7 +468,8 @@ class AgentOnlyComposer:
                     ),
                     remediation_hint=(
                         "The generation may still finish in Flow — check the project before "
-                        "re-running, because a re-run submits (and bills) again."
+                        "re-running, because a re-run submits again (a video spends credits "
+                        "again)."
                     ),
                 )
             if await page.locator(LIVE_GATE).count() > baseline_gates:
