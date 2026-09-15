@@ -144,7 +144,7 @@ function renderPane() {
     (ligs || ['x1', 'x2', 'x3', 'x4']).map((l, i) =>
       `<button role="radio" data-g="${gi}" aria-checked="${state.groups[gi] === i}">` +
       `${ligs ? `<mat-icon>${l}</mat-icon>` : l}</button>`).join('') + '</mat-button-toggle-group>');
-  p.innerHTML = `<flow-agent-panel><flow-settings-view>
+  p.innerHTML = `<flow-agent-panel><button class="header-action" id="pane-back"><mat-icon>arrow_back</mat-icon></button><flow-settings-view>
     <mat-radio-group>${[0, 1].map(i => `<mat-radio-button><input type="radio" name="c" data-c="${i}"
       ${state.confirm === i ? 'checked' : ''}></mat-radio-button>`).join('')}</mat-radio-group>
     ${groups[0]}${groups[1]}
@@ -172,6 +172,7 @@ function renderPane() {
       document.body.appendChild(menu);
     };
   }
+  p.querySelector('#pane-back').onclick = () => { p.innerHTML = ''; };  // discards the draft
   p.querySelector('.settings-save-button').onclick = () => {
     Object.assign(state, draft);
     window.log.saves.push(JSON.parse(JSON.stringify(state)));
@@ -430,6 +431,29 @@ async def test_a_radio_that_updates_after_the_click_still_restores(page: Page) -
     )
     await composer.restore_defaults(page, snap)
     assert (await _log(page))["saves"][-1]["groups"] == [0, 1, 0, 0]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_apply_discards_the_draft_instead_of_leaving_the_pane_open(
+    page: Page,
+) -> None:
+    """Review finding: an apply that fails before Save left the pane open with the run's
+    unsaved radios, so the next run in the session would snapshot them as the originals."""
+    from gflow_cli.api.transports.migrated_composer import ModelMenuMatcher
+    from gflow_cli.errors import ConfigurationError
+
+    await _load(page)
+    with pytest.raises(ConfigurationError):
+        await aoc.AgentOnlyComposer().apply_defaults(
+            page,
+            section="video",
+            aspect_ligature="crop_9_16",
+            count=3,
+            model=ModelMenuMatcher("A model Flow does not offer"),
+            confirm="account",
+        )
+    assert await page.locator("flow-settings-view").count() == 0
+    assert (await _log(page))["saves"] == []
 
 
 @pytest.mark.asyncio
