@@ -103,6 +103,8 @@ GATE_SETTLE_S = 10.0
 #: Measured: image at ~45 s after submit. Headroom for a busy queue.
 IMAGE_BUDGET_S = 240.0
 PANE_S = 8.0
+#: How long a clicked radio gets to report `aria-checked="true"`.
+RADIO_SETTLE_S = 3.0
 
 _CDN_MEDIA_RE = re.compile(
     r"^https://flow-content\.google/(image|video)/([0-9a-fA-F-]{36})(?:[?#]|$)"
@@ -210,12 +212,19 @@ class AgentOnlyComposer:
                 detail=f"agent-only composer: no {named} radio {radio!r} in Agent settings"
             )
         first = target.first
-        if await first.get_attribute("aria-checked") != "true":
-            await first.click(timeout=4000)
-        if await first.get_attribute("aria-checked") != "true":
-            raise UiSelectorDriftError(
-                detail=f"agent-only composer: {named} radio {radio!r} did not become checked"
-            )
+        if await first.get_attribute("aria-checked") == "true":
+            return
+        await first.click(timeout=4000)
+        # Angular re-renders `aria-checked` after the click, not during it — a read in the
+        # same tick saw the old value on a live restore (2026-09-15) and left the account
+        # on the run's defaults.
+        deadline = time.monotonic() + RADIO_SETTLE_S
+        while await first.get_attribute("aria-checked") != "true":
+            if time.monotonic() >= deadline:
+                raise UiSelectorDriftError(
+                    detail=f"agent-only composer: {named} radio {radio!r} did not become checked"
+                )
+            await asyncio.sleep(0.1)
 
     async def _choose_model(
         self, page: Page, section: Section, wants: ModelMenuMatcher | str
