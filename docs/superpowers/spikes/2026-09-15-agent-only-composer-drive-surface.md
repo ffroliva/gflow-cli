@@ -93,6 +93,25 @@ So the reply text is NOT a completion signal (it says "queued" before the clip e
 the poster precedes the playable `<video>`. Completion = a `flow-video-tile` whose `<video>`
 src is `/video/<uuid>` for a uuid not in the pre-submit baseline.
 
+### The wire is not the classic driver's wire (third run, image, 0 credits)
+
+`--submit-image` again, with every `batchexecute` response logged by rpcid and the classic
+driver's own decoders (`image_records`, `generation_record`) run on the rpcids it reads.
+Capture `…_185325.json`. Image appeared at t≈45 s, turn idle at t≈51 s.
+
+- **`ogiZ0b` never fired.** The classic migrated image path waits for exactly that reply
+  (`submit_images_and_observe`), so reusing it would time out on every agent-only run.
+- The only new rpcid after submit was **`WuwhI`** (t=31 s) — not in any driver constant.
+- `as29s` (a `STATUS_RPCS` member) fired twice and `generation_record` decoded a uuid each
+  time — **neither uuid appears anywhere in the page**, while the new image's uuid
+  (`flow-content.google/image/<uuid>`) is not in any decoded record. So a status record
+  cannot be trusted as *this* generation's completion either.
+
+Reading: completion stays a DOM observation — a `flow-image-tile` / `flow-video-tile` whose
+`flow-content.google/{image,video}/<uuid>` is not in the pre-submit baseline — consistent
+across all three runs. `WuwhI`'s payload was not captured; decoding it is future work,
+not a prerequisite.
+
 ## What this means for #799
 
 The labs `AgenticFlowUiDriver` design carries over; its anchors do not:
