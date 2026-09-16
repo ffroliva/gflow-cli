@@ -171,7 +171,6 @@ SUBMIT_RPCS = ("YhhmEf", "eb1hJf", "MZZa6b", "nprQif")
 #: (captured 2026-09-16, issue #639). The reply embeds the standard ``CAE`` record,
 #: so status/terminal/download are shared with the other submit rpcs.
 INTERPOLATION_SUBMIT_RPC = "nprQif"
-INTERPOLATION_MODEL_KEY = "veo_3_1_interpolation_lite"
 IMAGE_SUBMIT_RPC = "ogiZ0b"
 STATUS_RPCS = ("jwpduf", "as29s")
 UPLOAD_RPC = "maseQ"
@@ -693,14 +692,16 @@ def _interpolation_body_problem(
             "start+end interpolation request could not be confirmed before Flow "
             "acted on it"
         )
-    if INTERPOLATION_MODEL_KEY not in body:
-        key = MODEL_KEY.search(body)
-        key_text = key.group(0) if key else "no model key"
+    key = MODEL_KEY.search(body)
+    key_text = key.group(0) if key else "no model key"
+    # Interpolation keys differ per model: veo uses ``*_interpolation_*`` and
+    # omni uses ``*_i2v_*s_first_last``. Both mark a start+end submit; a plain
+    # i2v/t2v key means a frame dropped before the app submitted.
+    if "interpolation" not in key_text and "first_last" not in key_text:
         return (
             f"migrated host: the submit went out on {rpcid} with {key_text} for a "
-            "start+end (interpolation) request — expected "
-            f"{INTERPOLATION_MODEL_KEY} (one of the frames was not bound when the "
-            "app submitted)"
+            "start+end (interpolation) request — expected an interpolation "
+            "model key (one of the frames was not bound when the app submitted)"
         )
     for label, media_id in (("start", start_media_id), ("end", end_media_id)):
         if media_id not in body:
@@ -2195,7 +2196,9 @@ class MigratedComposer:
             rpcid = _rpcid(url) if "batchexecute" in url else None
             if rpcid is not None:
                 seen_submit_rpcs.add(rpcid)
-            if (
+            if "batchexecute" not in url:
+                return
+            if rpcid is not None and (
                 rpcid not in SUBMIT_RPCS
                 and rpcid not in STATUS_RPCS
                 and rpcid != submit_rpc["rpcid"]

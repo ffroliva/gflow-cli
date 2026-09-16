@@ -2248,7 +2248,11 @@ def test_interpolation_body_problem_names_what_is_wrong() -> None:
     wrong_key = _interpolation_body_problem(
         _interp_body(key="veo_3_1_t2v_lite"), "nprQif", MEDIA_UP, END_UP
     )
-    assert wrong_key is not None and "veo_3_1_interpolation_lite" in wrong_key
+    assert wrong_key is not None and "expected an interpolation" in wrong_key
+    omni = _interpolation_body_problem(
+        _interp_body(key="omni_flash_i2v_4s_first_last"), "nprQif", MEDIA_UP, END_UP
+    )
+    assert omni is None
     no_end_bound = _interpolation_body_problem(ok, "nprQif", MEDIA_UP, None)
     assert no_end_bound is not None and "no bound end frame" in no_end_bound
     unreadable = _interpolation_body_problem("", "nprQif", MEDIA_UP, END_UP)
@@ -2283,6 +2287,36 @@ async def test_submit_on_an_unwatched_rpc_is_adopted_by_content() -> None:
     assert rec.is_done and rec.media_id == MEDIA and started[0].media_id == MEDIA
     adopted = next(e for e in logs if e["event"] == "migrated.submit_rpc_adopted")
     assert adopted["rpc"] == "QxJxZz"
+    observed = next(e for e in logs if e["event"] == "migrated.submit_observed")
+    assert observed["rpc"] == "QxJxZz"
+    assert page.listeners("request") == [] and page.listeners("response") == []
+
+
+async def test_adopted_rpc_with_bare_batchexecute_response_resolves() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    end = "77777777-7777-4777-8777-777777777777"
+    body = (
+        f'f.req=[[["QxJxZz","[\\"veo_3_1_i2v_lite\\",\\"{MEDIA_UP}\\",'
+        f'\\"{end}\\"]",null,"generic"]]]'
+    )
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("QxJxZz", body)
+    page.scripted_responses = [
+        (_batch_bare_url(), _frame("QxJxZz", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    with capture_logs() as logs:
+        rec = await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+            expect_end_media_id=end,
+        )
+    assert rec.is_done and rec.media_id == MEDIA
     observed = next(e for e in logs if e["event"] == "migrated.submit_observed")
     assert observed["rpc"] == "QxJxZz"
     assert page.listeners("request") == [] and page.listeners("response") == []

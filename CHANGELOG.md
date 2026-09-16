@@ -79,6 +79,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the caller's working directory cannot answer on the venv's behalf, and a probe that could
   not run at all is never reported as breakage.
   ([#848](https://github.com/ffroliva/gflow-cli/issues/848))
+- **The migrated `--end-frame` lane rejected omni's interpolation key.** The
+  start+end submit validator pinned the model key to
+  `veo_3_1_interpolation_lite`, so `omni_flash_i2v_4s_first_last` submits were
+  refused as wire-format errors before Flow could act on them. The check is now
+  key-shape based: a submit whose model key contains `interpolation` or
+  `first_last` counts as start+end interpolation for any model, and the submit
+  observer also accepts bare `batchexecute` responses for adopted RPCs.
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639))
 
 ## [0.77.0] — 2026-09-16
 

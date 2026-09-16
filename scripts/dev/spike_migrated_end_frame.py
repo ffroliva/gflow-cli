@@ -22,7 +22,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent.parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from gflow_cli.api.client import FlowApiClient  # noqa: E402
 from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
@@ -84,13 +84,15 @@ async def capture(profile_name: str, project_id: str, out_dir: Path) -> int:
         after = await dump_chips(page, "after-frames")
         await page.screenshot(path=str(out_dir / "2_frames_mode.png"), full_page=True)
 
-        # If 2+ empty chips exist, probe the SECOND one (End candidate): does a
-        # click open the library picker (search box = PICKER_SEARCH)?
+        # Probe the LAST empty chip (End candidate): does a click open the
+        # library picker (search box = PICKER_SEARCH)? When Start is already
+        # bound only one empty chip remains — selecting the last one cannot
+        # mis-target Start, since the attach flow requires Start before End.
         end_probe: dict = {"attempted": False}
-        if after["empty_count"] >= 2:
+        if after["empty_count"]:
             end_probe["attempted"] = True
             chips = page.locator(EMPTY_CHIP)
-            await chips.nth(1).click(timeout=4000)
+            await chips.nth(after["empty_count"] - 1).click(timeout=4000)
             await page.wait_for_timeout(2000)
             search = page.locator("flow-add-menu-popover-content input[type='text']").first
             try:
