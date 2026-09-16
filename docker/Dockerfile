@@ -12,7 +12,19 @@
 # rather than an ambient version that might surprise someone. The gap is closed by
 # verifying the image's actual runtime contract below rather than by staying on an older
 # interpreter — see docker/README.md § "Verified on this image".
-FROM python:3.14-slim
+# Pinned by digest, not by tag alone: a tag is mutable, so `python:3.14-slim`
+# is a different image on different days and the build is not reproducible.
+# The tag stays in the reference because it is what tells a reader which
+# interpreter this is — the digest alone says nothing.
+#
+# This costs no bump chore: `.github/dependabot.yml` already runs the `docker`
+# ecosystem over `/docker`, so the digest is bumped for us like any other
+# dependency. Verified against the registry rather than copied from the
+# advisory: `docker buildx imagetools inspect python:3.14-slim` returns this
+# same OCI index digest. Use the INDEX digest, not the one
+# `docker manifest inspect -v` prints first — that is a single platform's
+# manifest and would pin the image to one architecture.
+FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
 
 ENV PYTHONUNBUFFERED=1 \
     GFLOW_CLI_UPDATE_CHECK=false \

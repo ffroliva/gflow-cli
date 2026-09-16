@@ -108,9 +108,18 @@ be undone by a tidy-up that moves the ARG next to `FROM`.
 
 | Input | Pinned by | Updated by |
 |---|---|---|
-| `python:3.14-slim` base | the `FROM` line | Dependabot (`docker` ecosystem, `/docker`, weekly) |
+| `python:3.14-slim` base | the `FROM` line, **by digest** | Dependabot (`docker` ecosystem, `/docker`, weekly) |
 | `gflow-cli` | `ARG GFLOW_VERSION` | a release, gated by `tests/test_dockerfile_version_pin.py` |
 | `google-chrome-stable` | not pinned | a rebuild |
+
+The base is pinned `python:3.14-slim@sha256:…`, not by tag alone. A tag is mutable, so
+without the digest `python:3.14-slim` is a different image on different days and a rebuild
+is not reproducible — which is also what Scorecard's `PinnedDependenciesID` was reporting
+against both Dockerfiles. The tag stays in the reference because it is what tells a reader
+which interpreter this is; the digest alone says nothing. Pin the **index** digest (what
+`docker buildx imagetools inspect python:3.14-slim` prints), never the first entry from
+`docker manifest inspect -v` — that is one platform's manifest and would pin the image to a
+single architecture.
 
 Chrome is the deliberate gap. Google's apt repo keeps only the current build, so a pinned
 version stops resolving within weeks — and Dependabot cannot see packages installed by a

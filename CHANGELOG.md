@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The Docker base image is pinned by digest.** `FROM python:3.14-slim` resolved to a
+  mutable tag, so the image was a different base on different days and a rebuild was not
+  reproducible — the `PinnedDependenciesID` finding Scorecard reported against both
+  `docker/Dockerfile` and `docker/Dockerfile.test`. Both now pin
+  `python:3.14-slim@sha256:cad9a2c8…`, keeping the tag in the reference because it is what
+  says which interpreter this is. No bump chore: `.github/dependabot.yml` already runs the
+  `docker` ecosystem over `/docker`, so the digest is maintained like any other dependency.
+
 ### Fixed
 
 - **The address scan in the migrated-host session probe was quadratic.** It reads a
