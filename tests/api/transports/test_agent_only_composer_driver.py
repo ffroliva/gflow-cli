@@ -32,6 +32,8 @@ from gflow_cli.errors import (
     FlowAgentUiError,
     FlowHostMigratedError,
     TransportTimeoutError,
+    UiSelectorDriftError,
+    is_retryable,
 )
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -85,10 +87,13 @@ function tile(kind, n) {
 function videoTile(n) {
   const t = document.createElement('flow-video-tile');
   t.innerHTML = '<flow-pending-tile class="queued"><div class="header-leading queued">Queued</div></flow-pending-tile>';
-  document.getElementById('grid').prepend(t);
   const opt = document.createElement('flow-a2ui-video-option');
   opt.innerHTML = S.optionEarly ? `<img src="${cdn('image', n)}">` : '<img>';
   document.getElementById('chat').appendChild(opt);
+  // optionFirst: the chat names the clip before its pending tile mounts, so for a moment
+  // nothing is pending and the newest finished tile is still the OLD one.
+  if (S.optionFirst) { setTimeout(() => document.getElementById('grid').prepend(t), S.delay); }
+  else document.getElementById('grid').prepend(t);
   setTimeout(() => { t.innerHTML = '<flow-pending-tile><div class="loading-percentage">40%</div></flow-pending-tile>'; }, S.delay);
   if (S.posterOnly) return;
   setTimeout(() => {
@@ -96,7 +101,7 @@ function videoTile(n) {
     if (S.readyMedia === 'asb') {
       const asb = `https://flow.google.com/asb/opaque-${n}`;
       t.innerHTML = `<img class="thumbnail" src="${asb}">`;
-      t.onmouseenter = () => { if (!t.querySelector('video')) t.insertAdjacentHTML('beforeend', `<video src="${asb}"></video>`); };
+      t.onmouseenter = () => { if (!S.noHoverVideo && !t.querySelector('video')) t.insertAdjacentHTML('beforeend', `<video src="${asb}"></video>`); };
     } else {
       t.innerHTML = `<video src="${cdn('video', n)}"></video>`;
     }
@@ -132,7 +137,11 @@ function submit() {
   }, S.delay);
   setSubmit(true);
   setTimeout(() => {
-    if (S.idle) { setSubmit(false); return; }
+    if (S.idle) {
+      setSubmit(false);
+      if (S.reply) document.getElementById('chat').insertAdjacentHTML('beforeend', `<flow-chat-bubble>${S.reply}</flow-chat-bubble>`);
+      return;
+    }
     if (S.gates > 0) { setSubmit(false); gate(); return; }
     produce();
   }, S.delay);
@@ -145,7 +154,7 @@ function renderPane() {
       `<button role="radio" data-g="${gi}" aria-checked="${state.groups[gi] === i}">` +
       `${ligs ? `<mat-icon>${l}</mat-icon>` : l}</button>`).join('') + '</mat-button-toggle-group>');
   p.innerHTML = `<flow-agent-panel><button class="header-action" id="pane-back"><mat-icon>arrow_back</mat-icon></button><flow-settings-view>
-    <mat-radio-group>${[0, 1].map(i => `<mat-radio-button><input type="radio" name="c" data-c="${i}"
+    <mat-radio-group>${[0, 1].map(i => `<mat-radio-button><input type="radio" name="c" data-c="${i}" value="${i + 1}"
       ${state.confirm === i ? 'checked' : ''}></mat-radio-button>`).join('')}</mat-radio-group>
     ${groups[0]}${groups[1]}
     <button class="image-model-picker-button">${state.models.image}<mat-icon>arrow_drop_down</mat-icon></button>
@@ -163,10 +172,12 @@ function renderPane() {
   for (const k of ['image', 'video']) {
     const pick = p.querySelector(`.${k}-model-picker-button`);
     pick.onclick = () => {
+      if (S.noMenu) return;
       const menu = document.createElement('div');
       menu.className = 'cdk-overlay-pane';
       menu.innerHTML = MENUS[k].map(t => `<button role="menuitem">${t}</button>`).join('');
       menu.querySelectorAll('[role=menuitem]').forEach(it => it.onclick = () => {
+        if (S.deadMenu) { menu.remove(); return; }
         draft.models[k] = it.textContent; pick.firstChild.textContent = it.textContent; menu.remove();
       });
       document.body.appendChild(menu);
@@ -182,13 +193,18 @@ function renderPane() {
 document.getElementById('tune').onclick = renderPane;
 setSubmit(false);
 if (S.preMedia) tile('image', 1);
-if (S.rerenderOld) {
+if (S.rerenderOld || S.oldVideo) {
   const old = document.createElement('flow-video-tile');
   old.id = 'old-video';
   old.innerHTML = `<video src="${cdn('video', 1)}"></video>`;
   document.getElementById('grid').prepend(old);
 }
 if (S.staleGate) gate();
+if (S.prePending) {
+  const busy = document.createElement('flow-video-tile');
+  busy.innerHTML = '<flow-pending-tile><div class="loading-percentage">70%</div></flow-pending-tile>';
+  document.getElementById('grid').prepend(busy);
+}
 </script>
 """
 
@@ -250,9 +266,10 @@ async def test_a_stale_gate_is_never_approved_and_our_own_gate_is(page: Page) ->
 @pytest.mark.asyncio
 async def test_a_second_gate_stops_the_run_after_one_approval(page: Page) -> None:
     await _load(page, kind="video", gates=2)
-    with pytest.raises(FlowAgentUiError, match="second"):
+    with pytest.raises(FlowAgentUiError, match="second") as exc:
         await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=10)
     assert (await _log(page))["approvals"] == 1
+    _assert_not_retried(exc.value)
 
 
 @pytest.mark.asyncio
@@ -310,23 +327,71 @@ async def test_duplicates_and_pre_existing_media_are_not_results(page: Page) -> 
 @pytest.mark.asyncio
 async def test_more_images_than_requested_is_a_typed_failure(page: Page) -> None:
     await _load(page, kind="image", produce=3)
-    with pytest.raises(FlowAgentUiError, match="3"):
+    with pytest.raises(FlowAgentUiError, match="3") as exc:
         await aoc.AgentOnlyComposer().generate(page, "x", kind="image", count=1, budget_s=10)
+    _assert_not_retried(exc.value)
 
 
 @pytest.mark.asyncio
 async def test_a_turn_that_makes_nothing_fails_fast(page: Page) -> None:
     await _load(page, kind="image", idle=True)
-    with pytest.raises(FlowAgentUiError, match="no image"):
+    with pytest.raises(FlowAgentUiError, match="no image") as exc:
         await aoc.AgentOnlyComposer().generate(page, "x", kind="image", count=1, budget_s=30)
+    _assert_not_retried(exc.value)
 
 
 @pytest.mark.asyncio
-async def test_signed_urls_never_reach_the_error_text(page: Page) -> None:
-    await _load(page, kind="image", produce=2)
-    with pytest.raises(FlowAgentUiError) as exc:
-        await aoc.AgentOnlyComposer().generate(page, "x", kind="image", count=1, budget_s=10)
-    assert "Signature" not in str(exc.value)
+async def test_signed_urls_in_the_agent_reply_never_reach_the_error_text(page: Page) -> None:
+    """The last reply is quoted into the error; a signed URL in it must be redacted."""
+    reply = "I could not. See https://flow-content.google/image/x?Expires=1&Signature=secret"
+    await _load(page, kind="image", idle=True, reply=reply)
+    with pytest.raises(FlowAgentUiError, match="I could not") as exc:
+        await aoc.AgentOnlyComposer().generate(page, "x", kind="image", count=1, budget_s=30)
+    assert "Signature=secret" not in str(exc.value)
+
+
+def _assert_not_retried(exc: FlowAgentUiError) -> None:
+    """After a submit a retry can bill again: never retryable, and never the default advice
+    to switch Chrome profile and re-run."""
+    assert is_retryable(exc) is False
+    assert exc.remediation_hint == aoc._AFTER_SUBMIT_HINT  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_two_clips_queued_for_one_is_a_typed_failure(page: Page) -> None:
+    """Review: one gate can cover several clips, so one approval did not bound the spend."""
+    await _load(page, kind="video", gates=1, produce=2)
+    with pytest.raises(FlowAgentUiError, match="2 videos were queued") as exc:
+        await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=10)
+    _assert_not_retried(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_a_clip_already_pending_refuses_before_submitting(page: Page) -> None:
+    """Review: after a timed-out run the old clip could finish during ours and be returned."""
+    await _load(page, kind="video", prePending=True)
+    with pytest.raises(FlowAgentUiError, match="still generating"):
+        await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=10)
+    assert (await _log(page))["submitted"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_old_newest_tile_is_not_returned_while_the_new_clip_has_not_mounted(
+    page: Page,
+) -> None:
+    """The chat names the new clip before its pending tile exists: for that moment nothing is
+    pending and the head is the pre-submit tile. Only the head-changed guard waits it out."""
+    await _load(page, kind="video", oldVideo=True, optionEarly=True, optionFirst=True, delay=400)
+    (media,) = await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=10)
+    assert media.uuid == "00000000-0000-4000-8000-000000000100"
+
+
+@pytest.mark.asyncio
+async def test_a_finished_tile_whose_video_never_mounts_keeps_polling(page: Page) -> None:
+    """A poster-only tile with nothing pending is not ready; the hover probe must not abort."""
+    await _load(page, kind="video", readyMedia="asb", noHoverVideo=True)
+    with pytest.raises(TransportTimeoutError):
+        await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=2)
 
 
 # --- download: the finished tile's src, redirects only to Google video hosts ----------------
@@ -457,6 +522,63 @@ async def test_a_failed_apply_discards_the_draft_instead_of_leaving_the_pane_ope
 
 
 @pytest.mark.asyncio
+async def test_a_failed_restore_discards_the_draft_too(page: Page) -> None:
+    """Review finding 1: a restore that failed mid-pane left it open, and the next run's
+    snapshot took this run's values for the account's originals."""
+    from gflow_cli.errors import ConfigurationError
+
+    await _load(page)
+    composer = aoc.AgentOnlyComposer()
+    snap = aoc.DefaultsSnapshot(
+        section="video", aspect_index=1, count_index=0, model_text="Gone from the menu"
+    )
+    with pytest.raises(ConfigurationError):
+        await composer.restore_defaults(page, snap)
+    assert await page.locator("flow-settings-view").count() == 0
+    assert (await _log(page))["saves"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario", [{"deadMenu": True}, {"noMenu": True}])
+async def test_a_model_choice_that_does_not_take_is_drift_not_a_silent_old_model(
+    page: Page, scenario: dict[str, Any]
+) -> None:
+    """Review: an unconfirmed menu click would generate, and bill, on the previous model."""
+    await _load(page, **scenario)
+    with pytest.raises(UiSelectorDriftError, match="model"):
+        await aoc.AgentOnlyComposer().apply_defaults(
+            page,
+            section="video",
+            aspect_ligature="crop_9_16",
+            count=1,
+            model=VIDEO_MODEL_MENU_MATCHERS[video_api.VideoModel.VEO_3_1_LITE],
+            confirm="account",
+        )
+    assert (await _log(page))["saves"] == []
+    assert await page.locator("flow-settings-view").count() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("confirm", "saved"), [("always", 0), ("never", 1)])
+async def test_confirm_is_chosen_by_the_radio_value_not_its_position(
+    page: Page, confirm: aoc.Confirm, saved: int
+) -> None:
+    """Measured 2026-09-16: Always is value 1, Never is value 2. Swap the DOM order and the
+    choice must still land on the right one."""
+    await _load(page)
+    await page.evaluate("document.getElementById('tune').click()")
+    await page.evaluate(
+        "(() => { const g = document.querySelector('mat-radio-group');"
+        " g.prepend(g.lastElementChild); })()"
+    )
+    await aoc.AgentOnlyComposer().apply_defaults(
+        page, section="image", aspect_ligature="crop_16_9", count=1, model=None, confirm=confirm
+    )
+    (applied,) = (await _log(page))["saves"]
+    assert applied["confirm"] == saved
+
+
+@pytest.mark.asyncio
 async def test_account_confirm_leaves_the_radio_alone(page: Page) -> None:
     await _load(page)
     await aoc.AgentOnlyComposer().apply_defaults(
@@ -488,6 +610,61 @@ async def test_defaults_are_restored_when_generation_fails(
     assert len(saves) == 2
     assert saves[0]["groups"][:2] == [2, 0]
     assert saves[-1]["groups"] == [0, 1, 0, 0]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_video_reports_the_clip_early_and_returns_it(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The early media id is the crash-recovery record; an async callback must be awaited."""
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_AGENT_CONFIRM", "account")
+    reset_settings()
+    await _load(page, kind="video", optionEarly=True)
+    seen: list[str] = []
+
+    async def on_started(started: video_api.VideoStarted) -> None:
+        seen.append(f"{started.project_id}:{started.media_id}")
+
+    result = await aoc.run_agent_video(
+        page,
+        video_api.GenerateVideoRequest(prompt="x"),
+        project_id="p1",
+        out_dir=None,
+        poll_timeout_s=10,
+        download=False,
+        on_started=on_started,
+    )
+    assert seen == ["p1:00000000-0000-4000-8000-000000000100"]
+    assert result.status.media_id == "00000000-0000-4000-8000-000000000100"
+    assert len((await _log(page))["saves"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failed_restore_is_logged_and_never_hides_the_result(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Credits were spent and the images exist: a restore failure is reported, not raised."""
+    from structlog.testing import capture_logs
+
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_AGENT_CONFIRM", "account")
+    reset_settings()
+
+    async def broken(*_: Any, **__: Any) -> None:
+        raise UiSelectorDriftError(detail="restore broke")
+
+    monkeypatch.setattr(aoc.AgentOnlyComposer, "restore_defaults", broken)
+    await _load(page, kind="image")
+    with capture_logs() as logs:
+        images = await aoc.run_agent_images(
+            page, image_api.GenerateImageRequest(prompt="x"), project_id="p1"
+        )
+    assert len(images) == 1
+    (failed,) = [e for e in logs if e["event"] == "migrated.agent_only.defaults_restore_failed"]
+    assert failed["section"] == "image"
 
 
 # --- routing: the migrated entry points hand an agent-only page to this driver -------------

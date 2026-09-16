@@ -129,6 +129,11 @@ AGENT_RECOVERY_S = 20.0
 #: becomes visible, is reported without paying the whole gate. A page that is neither
 #: gets the rest of the gate on a re-entry, so slow loads keep their full budget.
 AGENT_ONLY_EARLY_S = 5.0
+#: A positive agent-only verdict is re-asked after this long: the verdict rests on the chip's
+#: ABSENCE, and a slow mount can put the trigger in the DOM before the chip.
+AGENT_ONLY_SETTLE_S = 2.0
+#: The agent-only composer's own Agent-settings button — the thing its driver needs anyway.
+AGENT_ONLY_ANCHOR = "flow-creative-agent-prompt-box button:has(mat-icon:text-is('tune'))"
 #: What `ensure_editor` found: the classic migrated composer, or #799's agent-only one.
 ComposerKind = Literal["classic", "agent_only"]
 #: What :meth:`MigratedComposer._exit_agent_mode` did. `"blocked"` — the chip was there
@@ -370,10 +375,10 @@ ASPECT_LIGATURE: dict[Aspect, str] = {
     Aspect.LANDSCAPE: "crop_16_9",
     Aspect.PORTRAIT: "crop_9_16",
 }
-#: Ligature per aspect. Only the four in :data:`IMAGE_ASPECT_LIGATURE_MEASURED`
-#: were observed on the migrated host; ``crop_portrait`` is this driver's guess at
-#: what a 3:4 radio WOULD be called, kept so that adding it later is a one-line
-#: change, and deliberately not reachable until something measures it.
+#: Ligature per aspect. ``crop_portrait`` (3:4) was measured on #799's agent-only
+#: composer, whose Agent settings offer it; the classic composer's pane has no 3:4 radio,
+#: so :data:`IMAGE_ASPECT_LIGATURE_MEASURED` still leaves it out and the classic path
+#: refuses it.
 IMAGE_ASPECT_LIGATURE: dict[ImageAspect, str] = {
     ImageAspect.LANDSCAPE: "crop_16_9",
     ImageAspect.PORTRAIT: "crop_9_16",
@@ -872,12 +877,24 @@ class MigratedComposer:
         it contradicts the measured mechanism (pressed ⇒ hidden) and falls through to
         drift rather than being asserted as a cohort.
 
+        Both are absences, so the verdict also needs one presence — the agent composer's own
+        settings button — and is asked a second time after ``AGENT_ONLY_SETTLE_S``: a slow
+        mount can put the trigger in the DOM seconds before the chip, and a classic account
+        called agent-only would get account defaults written to it.
+
         Fail-closed: an unreadable page is not evidence of a cohort.
         """
         try:
-            if not await trigger.count() or await trigger.is_visible():
-                return False
-            return not await page.locator(AGENT_MODE_CHIP_ANY).first.count()
+            for attempt in range(2):
+                if attempt:
+                    await asyncio.sleep(AGENT_ONLY_SETTLE_S)
+                if not await trigger.count() or await trigger.is_visible():
+                    return False
+                if await page.locator(AGENT_MODE_CHIP_ANY).first.count():
+                    return False
+                if not await page.locator(AGENT_ONLY_ANCHOR).first.count():
+                    return False
+            return True
         except Exception as exc:  # noqa: BLE001 - an unreadable page is not an answer
             log.warning("migrated.agent_only_probe_failed", error=str(exc)[:200])
             return False

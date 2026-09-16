@@ -74,6 +74,8 @@ gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out D
 # existing --project (required — exit 11 without it): i2i accepts local --ref
 # files only, aspects 16:9/4:3/1:1/9:16. UUIDs, @Name/entity references, Imagen 4
 # (image4), --aspect 3:4, and image batch are refused there with exit 36.
+# An agent-only composer (#799) is different: t2i (3:4 included) and t2v only;
+# i2i, i2v and r2v exit 36 there.
 
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--out-dir DIR] [--aspect ...]  # --project required on the migrated flow.google.com host (#639); 10s is omni-flash-only
@@ -279,7 +281,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 3.5), `--model nano-pro` (Gem Pix 2), `--model nano2` (Narwhal) |
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
 | Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
-| `gflow video t2v`/`i2v`/`r2v` without `--project` on an account Google moved to `flow.google.com` (exit 11), or an unported UUID/entity reference or model (exit 36) | Pass `--project <id>` — migrated hosts support video t2v, local-file i2v/r2v, and image t2i/i2i (local refs) only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |
+| `gflow video t2v`/`i2v`/`r2v` without `--project` on an account Google moved to `flow.google.com` (exit 11), or an unported UUID/entity reference or model (exit 36) | Pass `--project <id>` — migrated hosts support video t2v, local-file i2v/r2v, and image t2i/i2i (local refs) only — and an agent-only composer (#799) image t2i and video t2v only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |
 | Telling a user on `flow.google.com` whose run exits **25** to retry, switch profile or pass `--ui-mode classic` | On an **agent-only** composer gflow drives `image t2i` and `video t2v` through the agent ([#799](https://github.com/ffroliva/gflow-cli/issues/799)); exit 25 there means the agent went off-script — a second credit confirmation, more results than asked, or a turn that made nothing (`retryable: false`). Read the envelope's `detail`; rephrase the prompt rather than re-running blind, and check the project first — a video may still be rendering. Other forms on that composer exit **36**. Exit 25 on `labs.google` IS the retryable A/B cohort — check the host before advising |
 | Suggesting a native `batch` subcommand under `gflow video` | It doesn't exist — that stub never worked and was removed. Loop `gflow video t2v`/`i2v` from the shell for multi-clip runs (`gflow image batch manifest.tsv\|json` is the real, working batch command, but it's image-only) |
 

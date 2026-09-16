@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`GFLOW_CLI_AGENT_CONFIRM=account|always|never`** — the agent-only composer's "Confirm before
   generating" choice, applied before a run and kept. `account` (default) leaves the account's
   setting alone. With a confirmation step gflow approves exactly one that its own submit
-  produced, and stops without approving a second.
+  produced, and stops without approving a second. A video run also refuses to start while another clip is still generating in the project, and stops if more clips are queued than were requested.
 
 ### Changed
 

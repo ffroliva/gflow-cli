@@ -743,7 +743,8 @@ def _build_video_media_inputs(
         "docs/REFERENCE_STRATEGIES.md. "
         "On accounts served from flow.google.com, use an existing project and local "
         "reference files; UUID/entity references and image4 are not ported to that "
-        "composer yet and fail before submit; retrying will not clear it. "
+        "composer yet and fail before submit; retrying will not clear it. On an agent-only "
+        "composer (#799) only text-to-image runs, so reference_images fail there too. "
         "Returns local file paths to the generated images."
     ),
 )
@@ -1064,7 +1065,9 @@ async def gflow_generate_video(  # NOSONAR
             modes are 't2v'; 'i2v' with a local ``initial_frame`` and no
             ``end_frame``; and 'r2v' with local ``reference_images``. A UUID
             frame, an end frame, and r2v by ``ref_names`` or
-            ``reference_entities`` return the exit-36-equivalent envelope.
+            ``reference_entities`` return the exit-36-equivalent envelope. On an
+            agent-only composer (#799) only 't2v' is ported; 'i2v' and 'r2v' return
+            that envelope too.
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
             ``video t2v``/``i2v``; applies to every mode of this tool,
             including 'r2v'). Video generation only has a classic driver:

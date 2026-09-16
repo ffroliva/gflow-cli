@@ -203,9 +203,33 @@ def _mcp_completed(world: dict[str, Any]) -> None:
     assert len(files) == 1 and files[0].stat().st_size > 10_000
 
 
+def _mp4_frame_size(body: bytes) -> tuple[int, int]:
+    """Largest track-header size in an MP4 (the audio track's is 0x0). A `tkhd` box ends with
+    width and height as 16.16 fixed point."""
+    at = 0  # walk top-level boxes to `moov`, so bytes inside `mdat` are never read as a box
+    while at + 8 <= len(body) and body[at + 4 : at + 8] != b"moov":
+        at += int.from_bytes(body[at : at + 4], "big") or len(body)
+    body = body[at : at + int.from_bytes(body[at : at + 4], "big")]
+    sizes: list[tuple[int, int]] = []
+    at = body.find(b"tkhd")
+    while at != -1:
+        end = at - 4 + int.from_bytes(body[at - 4 : at], "big")
+        sizes.append(
+            (
+                int.from_bytes(body[end - 8 : end - 4], "big") >> 16,
+                int.from_bytes(body[end - 4 : end], "big") >> 16,
+            )
+        )
+        at = body.find(b"tkhd", at + 4)
+    return max(sizes, default=(0, 0))
+
+
 @then("it exits 0 with one portrait MP4")
 def _one_mp4(world: dict[str, Any]) -> None:
     data = _ok(world)
     assert data["succeeded"] is True
     clip = Path(data["local_path"])
-    assert clip.read_bytes()[4:8] == b"ftyp", clip
+    body = clip.read_bytes()
+    assert body[4:8] == b"ftyp", clip
+    width, height = _mp4_frame_size(body)
+    assert width and height * 9 == width * 16, (width, height)

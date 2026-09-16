@@ -155,3 +155,26 @@ async def test_the_agent_only_composer_is_reported_without_waiting_out_the_full_
 async def test_a_healthy_composer_is_reported_classic_through_ensure_editor(page: Page) -> None:
     kind, _ = await _ensure_editor_on(page, HEALTHY, timeout_s=30.0)
     assert kind == "classic"
+
+
+@pytest.mark.asyncio
+async def test_a_chip_that_mounts_late_is_not_called_agent_only(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review: both facts are absences, so a slow classic mount (hidden trigger now, chip a
+    second later) passed as agent-only and would have had account defaults written to it."""
+    from gflow_cli.api.transports import migrated_composer as mc
+
+    monkeypatch.setattr(mc, "AGENT_ONLY_SETTLE_S", 0.6)
+    late_chip = AGENT_ONLY + (
+        "<script>setTimeout(() => document.body.insertAdjacentHTML('beforeend',"
+        ' \'<button class="agent-mode-chip" aria-pressed="true"></button>\'), 200)</script>'
+    )
+    assert await _verdict(page, late_chip) is False
+
+
+@pytest.mark.asyncio
+async def test_no_agent_settings_button_is_not_agent_only(page: Page) -> None:
+    """The verdict needs one presence: the agent composer's own settings button."""
+    without_tune = AGENT_ONLY.replace('<mat-icon class="google-symbols">tune</mat-icon>', "")
+    assert await _verdict(page, without_tune) is False

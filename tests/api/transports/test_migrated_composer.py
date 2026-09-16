@@ -591,6 +591,9 @@ class FakePage:
             # Presence alone, independent of `agent_mode` — that is the whole point of
             # the second selector: #799's cohort renders no chip in any state.
             return FakeLocator(self, "agent_chip_any", ["chip"] if dom.agent_chip_present else [])
+        if css == migrated_composer.AGENT_ONLY_ANCHOR:
+            # The agent composer's own settings button: rendered on the agent panel.
+            return FakeLocator(self, "agent_settings", ["tune"] if dom.agent_mode else [])
         if css == "flow-agent-panel button":
             buttons = [Radio("close", "Close")] if dom.agent_panel_expanded else []
             return FakeLocator(self, "agent_close", buttons)

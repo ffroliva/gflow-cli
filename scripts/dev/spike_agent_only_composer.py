@@ -190,10 +190,13 @@ async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--profile", required=True)
     ap.add_argument("--project", required=True)
-    ap.add_argument(
+    submit = ap.add_mutually_exclusive_group()
+    submit.add_argument(
         "--submit-image", action="store_true", help="spend one image (quota, 0 credits)"
     )
-    ap.add_argument("--submit-video", action="store_true", help="spend one short video (CREDITS)")
+    submit.add_argument(
+        "--submit-video", action="store_true", help="spend one short video (CREDITS)"
+    )
     ap.add_argument(
         "--approve-pending",
         action="store_true",
@@ -204,6 +207,8 @@ async def main() -> int:
     )
     ap.add_argument("--wait-s", type=float, default=180.0)
     args = ap.parse_args()
+    if args.approve_pending and not args.submit_video:
+        ap.error("--approve-pending only applies with --submit-video")
 
     findings: dict[str, Any] = {"project": args.project, "question": "#799 agent-only composer"}
     url = f"https://flow.google.com/project/{args.project}"

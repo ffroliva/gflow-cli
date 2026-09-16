@@ -42,6 +42,7 @@ import structlog
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.transports.migrated_composer import (
+    AGENT_ONLY_ANCHOR,
     ASPECT_LIGATURE,
     IMAGE_ASPECT_LIGATURE,
     IMAGE_MODEL_MENU_MATCHERS,
@@ -61,6 +62,8 @@ from gflow_cli.errors import (
 from gflow_cli.redaction import redact_sensitive_text
 
 if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Callable
+
     from playwright.async_api import Page
 
     from gflow_cli.api.image import GenerateImageRequest
@@ -72,7 +75,7 @@ Section = Literal["image", "video"]
 Confirm = Literal["account", "always", "never"]
 
 PANE = "flow-settings-view"
-SETTINGS_BUTTON = "flow-creative-agent-prompt-box button:has(mat-icon:text-is('tune'))"
+SETTINGS_BUTTON = AGENT_ONLY_ANCHOR
 TOGGLE_GROUP = f"{PANE} mat-button-toggle-group"
 TOGGLE_RADIO = "button[role='radio']"
 CONFIRM_INPUT = f"{PANE} mat-radio-button input[type='radio']"
@@ -95,8 +98,10 @@ LAST_REPLY = "flow-chat-bubble"
 
 #: Toggle groups in DOM order (measured): image aspect, image count, video aspect, video count.
 _GROUP_BASE: dict[Section, int] = {"image": 0, "video": 2}
-#: "Confirm before generating" radios in DOM order (measured): Always, Never.
-_CONFIRM_INDEX = {"always": 0, "never": 1}
+#: "Confirm before generating" radios by their input's own ``value``, not their position.
+#: Measured 2026-09-16 (``scripts/dev/spike_agent_confirm_radios.py``): Always is
+#: ``value="1"``, Never is ``value="2"``, read against their English labels.
+_CONFIRM_VALUE = {"always": "1", "never": "2"}
 
 POLL_S = 1.0
 #: An image turn that ends with no gate and no tile for this long made nothing.
@@ -108,6 +113,13 @@ IMAGE_BUDGET_S = 240.0
 PANE_S = 8.0
 #: How long a clicked radio gets to report `aria-checked="true"`.
 RADIO_SETTLE_S = 3.0
+
+#: For raises AFTER a submit: credits may already be spent, so FlowAgentUiError's default
+#: advice ("try a different Chrome profile") would send an agent to pay a second time.
+_AFTER_SUBMIT_HINT = (
+    "Check the Flow project and the agent's last reply before submitting again - the request "
+    "was already sent, and a re-run submits (and may bill) another one."
+)
 
 _CDN_MEDIA_RE = re.compile(
     r"^https://flow-content\.google/(image|video)/([0-9a-fA-F-]{36})(?:[?#]|$)"
@@ -283,7 +295,12 @@ class AgentOnlyComposer:
             return
         await picker.click(timeout=4000)
         items = page.locator(MENU_ITEM)
-        await items.first.wait_for(state="visible", timeout=5000)
+        try:
+            await items.first.wait_for(state="visible", timeout=5000)
+        except Exception as exc:
+            raise UiSelectorDriftError(
+                detail=f"agent-only composer: the {section} model menu ({MENU_ITEM}) did not open"
+            ) from exc
         offered = [t.strip() for t in await items.all_text_contents()]
         hits = [i for i, text in enumerate(offered) if hit(text)]
         if len(hits) != 1:
@@ -296,6 +313,18 @@ class AgentOnlyComposer:
                 remediation_hint="Pass a --model that names one offered entry, or omit it.",
             )
         await items.nth(hits[0]).click(timeout=4000)
+        # A click can report success and fire nothing; generating on the previous model
+        # would bill at the wrong tier with no error, so the picker must read back the hit.
+        deadline = time.monotonic() + RADIO_SETTLE_S
+        while not hit(await picker.inner_text()):
+            if time.monotonic() >= deadline:
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"agent-only composer: chose {offered[hits[0]]!r} but the {section} "
+                        "model picker did not change"
+                    )
+                )
+            await asyncio.sleep(0.1)
         log.info("migrated.agent_only.model_selected", section=section, model=offered[hits[0]])
 
     async def _discard_pane(self, page: Page) -> None:
@@ -311,8 +340,24 @@ class AgentOnlyComposer:
             log.warning("migrated.agent_only.pane_discard_failed", error=str(exc)[:200])
 
     async def _save(self, page: Page) -> None:
-        await page.locator(SAVE_BUTTON).first.click(timeout=4000)
-        await page.locator(PANE).first.wait_for(state="detached", timeout=int(PANE_S * 1000))
+        try:
+            await page.locator(SAVE_BUTTON).first.click(timeout=4000)
+            await page.locator(PANE).first.wait_for(state="detached", timeout=int(PANE_S * 1000))
+        except Exception as exc:
+            raise UiSelectorDriftError(
+                detail=f"agent-only composer: Agent settings did not close on Save ({SAVE_BUTTON})"
+            ) from exc
+
+    async def _set_confirm(self, page: Page, confirm: Confirm) -> None:
+        if confirm == "account":
+            return
+        radio = page.locator(f"{CONFIRM_INPUT}[value='{_CONFIRM_VALUE[confirm]}']")
+        if await radio.count() != 1:
+            raise UiSelectorDriftError(
+                detail=f"agent-only composer: no single {confirm!r} confirm radio in Agent settings"
+            )
+        if not await radio.is_checked():
+            await radio.check(timeout=4000)
 
     async def apply_defaults(
         self,
@@ -327,27 +372,26 @@ class AgentOnlyComposer:
         """Set this run's defaults, Save, and return what to restore."""
         await self._open_pane(page)
         base = _GROUP_BASE[section]
-        snapshot = DefaultsSnapshot(
-            section=section,
-            aspect_index=await self._checked_index(page, base),
-            count_index=await self._checked_index(page, base + 1),
-            model_text=_picker_label(await page.locator(MODEL_PICKER[section]).first.inner_text()),
-        )
         try:
+            snapshot = DefaultsSnapshot(
+                section=section,
+                aspect_index=await self._checked_index(page, base),
+                count_index=await self._checked_index(page, base + 1),
+                model_text=_picker_label(
+                    await page.locator(MODEL_PICKER[section]).first.inner_text()
+                ),
+            )
             await self._check_radio(page, base, aspect_ligature, "aspect")
             await self._check_radio(page, base + 1, count - 1, "count")
             if model is not None:
                 await self._choose_model(page, section, model)
-            if confirm != "account":
-                radio = page.locator(CONFIRM_INPUT).nth(_CONFIRM_INDEX[confirm])
-                if not await radio.is_checked():
-                    await radio.check(timeout=4000)
+            await self._set_confirm(page, confirm)
+            await self._save(page)
         except Exception:
-            # Nothing was saved, but the pane still holds this run's radios: left open, the
-            # next run in the session would snapshot them as the account's originals.
+            # Unsaved radios left in an open pane would be snapshotted by the next run in
+            # the session as the account's originals. A no-op once Save has closed it.
             await self._discard_pane(page)
             raise
-        await self._save(page)
         log.info(
             "migrated.agent_only.defaults_applied",
             section=section,
@@ -361,12 +405,18 @@ class AgentOnlyComposer:
         """Put back aspect / count / model. Confirm is deliberately left as applied."""
         await self._open_pane(page)
         base = _GROUP_BASE[snapshot.section]
-        if snapshot.aspect_index >= 0:
-            await self._check_radio(page, base, snapshot.aspect_index, "aspect")
-        if snapshot.count_index >= 0:
-            await self._check_radio(page, base + 1, snapshot.count_index, "count")
-        await self._choose_model(page, snapshot.section, snapshot.model_text)
-        await self._save(page)
+        try:
+            if snapshot.aspect_index >= 0:
+                await self._check_radio(page, base, snapshot.aspect_index, "aspect")
+            if snapshot.count_index >= 0:
+                await self._check_radio(page, base + 1, snapshot.count_index, "count")
+            await self._choose_model(page, snapshot.section, snapshot.model_text)
+            await self._save(page)
+        except Exception:
+            # The failed-apply hazard from the other end: left open, the next run would
+            # take this run's values for the originals and "restore" them for good.
+            await self._discard_pane(page)
+            raise
         log.info("migrated.agent_only.defaults_restored", section=snapshot.section)
 
     # --- generation ----------------------------------------------------------------------
@@ -385,12 +435,15 @@ class AgentOnlyComposer:
     async def _hover_video_src(self, page: Page) -> str:
         """The newest finished tile mounts its `<video>` only while hovered (measured)."""
         tile = page.locator(FINISHED_VIDEO_TILE).first
-        await tile.hover(timeout=5000)
-        video = tile.locator("video").first
-        await video.wait_for(state="attached", timeout=5000)
-        src = await video.get_attribute("src") or ""
-        await page.mouse.move(0, 0)
-        return src
+        try:
+            await tile.hover(timeout=5000)
+            video = tile.locator("video").first
+            await video.wait_for(state="attached", timeout=5000)
+            return await video.get_attribute("src") or ""
+        except Exception:  # noqa: BLE001 - a poster-only tile is not ready yet; poll again
+            return ""
+        finally:
+            await page.mouse.move(0, 0)
 
     async def _any_uuids(self, page: Page) -> set[str]:
         uuids: set[str] = set()
@@ -429,13 +482,23 @@ class AgentOnlyComposer:
         kind: Section,
         count: int,
         budget_s: float,
-        on_first_media: object = None,
+        on_first_media: Callable[[str], object] | None = None,
     ) -> list[TileMedia]:
         """Submit ``directive`` and return the ``count`` new results it produced."""
         baseline_gates = await page.locator(LIVE_GATE).count()
         baseline_head: str | None = None
         if kind == "video":
             state0 = await page.evaluate(_VIDEO_JS)
+            if state0["pending"]:
+                # A clip still generating (a timed-out earlier run, say) would finish during
+                # ours and pass every readiness check as this run's result.
+                raise FlowAgentUiError(
+                    detail=(
+                        "agent-only composer: a video is still generating in this project, so "
+                        "a new one could not be told apart from it; nothing was submitted"
+                    ),
+                    remediation_hint="Wait for the pending clip in the Flow project, then re-run.",
+                )
             baseline = set(_video_uuids(state0))
             baseline_head = _tile_key(state0["finished"][0]) if state0["finished"] else None
         else:
@@ -458,6 +521,7 @@ class AgentOnlyComposer:
         deadline = time.monotonic() + budget_s
         approvals = 0
         started = False
+        peak_pending = 0
         idle_since: float | None = None
         while True:
             if time.monotonic() >= deadline:
@@ -482,6 +546,7 @@ class AgentOnlyComposer:
                             f"{await self._last_reply(page)}"
                         ),
                         retryable=False,
+                        remediation_hint=_AFTER_SUBMIT_HINT,
                     )
                 await self._approve_gate(page, baseline_gates)
                 approvals += 1
@@ -491,7 +556,19 @@ class AgentOnlyComposer:
             if kind == "video":
                 state = await page.evaluate(_VIDEO_JS)
                 named = [u for u in _video_uuids(state) if u not in baseline]
-                if named and not started and callable(on_first_media):
+                peak_pending = max(peak_pending, state["pending"])
+                if peak_pending > count:
+                    # One gate can cover several clips (its title names the count), so the
+                    # one-approval rule alone does not stop an over-billed run.
+                    raise FlowAgentUiError(
+                        detail=(
+                            f"agent-only composer: {peak_pending} videos were queued where "
+                            f"{count} was requested. Last reply: {await self._last_reply(page)}"
+                        ),
+                        retryable=False,
+                        remediation_hint=_AFTER_SUBMIT_HINT,
+                    )
+                if named and not started and on_first_media is not None:
                     started = True
                     maybe = on_first_media(named[0])
                     if asyncio.iscoroutine(maybe):
@@ -503,6 +580,9 @@ class AgentOnlyComposer:
                 if named and head and not state["pending"] and _tile_key(head) != baseline_head:
                     uuid = _cdn_uuid(head["video"], "video") or named[-1]
                     src = head["video"] or await self._hover_video_src(page)
+                    if not src:
+                        await asyncio.sleep(POLL_S)
+                        continue
                     log.info("migrated.agent_only.video_ready", media_id=uuid)
                     return [TileMedia(uuid, src)]
                 await asyncio.sleep(POLL_S)
@@ -516,6 +596,7 @@ class AgentOnlyComposer:
                             f"{count} were requested ({', '.join(sorted(fresh))})"
                         ),
                         retryable=False,
+                        remediation_hint=_AFTER_SUBMIT_HINT,
                     )
                 return list(fresh.values())
             if kind == "image" and not approvals and not in_flight and not fresh:
@@ -527,6 +608,7 @@ class AgentOnlyComposer:
                             f"credit gate. Last reply: {await self._last_reply(page)}"
                         ),
                         retryable=False,
+                        remediation_hint=_AFTER_SUBMIT_HINT,
                     )
             else:
                 idle_since = None

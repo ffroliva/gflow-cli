@@ -167,11 +167,10 @@ The labs `AgenticFlowUiDriver` design carries over; its anchors do not:
 
 - **Which model produced the clip**, and whether a model named in the directive (e.g. Veo
   Lite) is honoured — the default read "Omni 1.1 Flash"; not asked for by name.
-- **Duration** of the downloaded clip (4 s requested) — the file was not downloaded.
-- **"Never" confirm setting** — whether it removes the gate. Not changed on this account.
+- ~~**Duration**~~ — measured afterwards: the e2e and live CLI run downloaded the 4 s request as a 4.01 s 720×1280 MP4.
+- ~~**"Never" confirm setting**~~ — measured in the sixth run below (confirm = Never, no gate). Which radio is which was measured 2026-09-16 by input `value` (Always `1`, Never `2`), `scripts/dev/spike_agent_confirm_radios.py`.
 - **i2v / r2v** (attaching a start frame or references through `Add ingredients`).
-- **Count > 1.** Only a single-image directive was sent. Whether `4 pictures` yields 4 ids — and
-  whether the x2 default ever wins — is unmeasured.
+- ~~**Count > 1**~~ — measured afterwards by the e2e: `--aspect 3:4 --count 2` returned two 896×1200 images. Count 3–4 was not sent.
 - **Content-policy refusal.** No blocked prompt was sent.
 - **Repeatability.** N=1. Cohort stability for this account over time is unknown.
 - **The labs side.** This account is served flow.google.com; no labs comparison.
