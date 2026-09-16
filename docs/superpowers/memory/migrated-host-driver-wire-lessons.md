@@ -167,8 +167,10 @@ rounds); e2e `tests/e2e/test_migrated_host_e2e.py`. Read this before re-mining t
 
 ## Image submit — the t2i / i2i slice (#639)
 
-- **`ogiZ0b` is synchronous, and that is the one place on this host where a submit
-  reply IS the terminal answer.** Video submits (`YhhmEf` / `eb1hJf` / `MZZa6b`) start a
+- **On the classic migrated composer, `ogiZ0b` is synchronous, and that is the one place
+  on this host where a submit reply IS the terminal answer.** (Cohort qualifier: on #799's
+  agent-only composer `ogiZ0b` never fires — completion is read from the DOM there; see
+  [[flow-capabilities-are-cohort-dependent]].) Video submits (`YhhmEf` / `eb1hJf` / `MZZa6b`) start a
   job and the result arrives later on `jwpduf` / `as29s`; the image submit's own reply
   already carries completed records with signed JPEG URLs and dimensions, and there is
   no polling rpc on that path at all. Note this explicitly whenever the point comes up,

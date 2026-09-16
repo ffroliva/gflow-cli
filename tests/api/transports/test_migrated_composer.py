@@ -32,7 +32,6 @@ from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     ConfigurationError,
-    FlowAgentUiError,
     FlowHostMigratedError,
     InsufficientCreditsError,
     MediaUploadRejectedError,
@@ -40,7 +39,6 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
-    is_retryable,
 )
 
 # --- a tiny DOM -------------------------------------------------------------
@@ -593,6 +591,9 @@ class FakePage:
             # Presence alone, independent of `agent_mode` — that is the whole point of
             # the second selector: #799's cohort renders no chip in any state.
             return FakeLocator(self, "agent_chip_any", ["chip"] if dom.agent_chip_present else [])
+        if css == migrated_composer.AGENT_ONLY_ANCHOR:
+            # The agent composer's own settings button: rendered on the agent panel.
+            return FakeLocator(self, "agent_settings", ["tune"] if dom.agent_mode else [])
         if css == "flow-agent-panel button":
             buttons = [Radio("close", "Close")] if dom.agent_panel_expanded else []
             return FakeLocator(self, "agent_close", buttons)
@@ -2385,15 +2386,9 @@ async def test_ensure_editor_names_the_agent_only_cohort_instead_of_drift(
 ) -> None:
     """#799: the trigger is in the DOM under a bare `hidden` and there is NO chip.
 
-    This used to be ordinary selector drift, on the reasoning that with nothing to
-    click nothing may be promised. That was right about the recovery and wrong about
-    the diagnosis: #799 supplied the ground truth this state had been missing — a
-    third cohort whose composer is agent-only, with no classic arm to return to and
-    therefore no chip to un-press. The DOM is identical to a pressed chip's (#749),
-    which is why it read as drift, and why the chip's ABSENCE is what separates them.
-
-    Exit 25, not 23, and not retryable: a driver that does not exist will not appear
-    on a re-run.
+    The DOM is identical to a pressed chip's (#749), which is why it once read as drift,
+    and why the chip's ABSENCE is what separates them. Readiness now REPORTS the
+    composer kind instead of raising, so the caller can route to the agent-only driver.
     """
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -2401,20 +2396,26 @@ async def test_ensure_editor_names_the_agent_only_cohort_instead_of_drift(
     page.dom.agent_mode = True
     page.dom.agent_chip_present = False
 
-    with pytest.raises(FlowAgentUiError) as exc:
-        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    kind = await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
 
+    assert kind == "agent_only"
     assert page.dom.agent_chip_clicks == 0
-    assert EXIT_CODE_MAP[FlowAgentUiError] == 25
-    assert is_retryable(exc.value) is False
-    assert "agent-only" in str(exc.value).casefold()
-    # The class default talks about an A/B cohort and suggests another Chrome profile;
-    # neither applies when the composer is a property of the Google account.
-    hint = exc.value.remediation_hint
-    assert "#799" in hint
-    assert "A/B" not in hint
     events = [e["event"] for e in install_log_capture.entries]
     assert "migrated.agent_only_composer" in events
+
+
+async def test_ensure_editor_reports_classic_on_a_healthy_composer() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    assert await MigratedComposer().ensure_editor(FakePage(), "p1", timeout_s=1.0) == "classic"
+
+
+async def test_ensure_editor_reports_classic_after_leaving_agent_mode() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    assert await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0) == "classic"
 
 
 async def test_ensure_editor_does_not_claim_the_cohort_from_an_unreadable_page(
