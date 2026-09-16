@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -207,6 +208,8 @@ async def main() -> int:
     )
     ap.add_argument("--wait-s", type=float, default=180.0)
     args = ap.parse_args()
+    if not (math.isfinite(args.wait_s) and args.wait_s > 0):
+        ap.error("--wait-s must be a finite number of seconds above 0")
     if args.approve_pending and not args.submit_video:
         ap.error("--approve-pending only applies with --submit-video")
 

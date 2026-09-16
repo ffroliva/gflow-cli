@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).** Accounts `flow.google.com` serves
   with no classic composer exited 25; `gflow image t2i` and `gflow video t2v` (and their MCP
   twins) now run there. gflow sets aspect, count and model in Agent settings, saves, asks the
-  agent in plain language, and restores those defaults afterwards — also when the run fails.
+  agent in plain language, and restores those defaults afterwards — also when the run fails
+  with an error. A run killed between Save and restore leaves the run's defaults in place; the
+  `migrated.agent_only.defaults_restore_failed` log names the originals (KNOWN_ISSUES).
   Completion is read from the page: images from new `flow-content.google` tiles, videos once no
   pending tile is left, with the clip id taken from the agent's reply when the grid tile has
   none. Live-verified on an AI Pro account: 3:4 × 2 images, and a 4 s 9:16 clip downloaded.

@@ -91,7 +91,9 @@ default of **16:9**.
 
 So the reply text is NOT a completion signal (it says "queued" before the clip exists), and
 the poster precedes the playable `<video>`. Completion = a `flow-video-tile` whose `<video>`
-src is `/video/<uuid>` for a uuid not in the pre-submit baseline.
+src is `/video/<uuid>` for a uuid not in the pre-submit baseline — **and** no `flow-pending-tile`
+left. The sixth run below refines this: a re-rendered grid carries opaque `/asb/` media with no
+uuid, so see § "Readiness, measured" for the rule the driver uses.
 
 ### The wire is not the classic driver's wire (third run, image, 0 credits)
 
