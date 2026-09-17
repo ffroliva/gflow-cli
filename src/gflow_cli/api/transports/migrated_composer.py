@@ -1977,7 +1977,13 @@ class MigratedComposer:
             search = picker.locator(PICKER_SEARCH).first
             await search.click(timeout=4000)
             await page.keyboard.insert_text(name)
-            options = picker.locator(PICKER_OPTION).filter(has_text=_exact(name))
+            # Containment, never `_exact` (#860): a picker tile is an icon node followed
+            # by the file name, and a locator's text is the concatenation of both --
+            # `imageshero-ab12cd34.png` for an asset named `hero-ab12cd34.png`. An anchored
+            # match can therefore never hold on this cohort. The display name is
+            # run-unique by construction (#792), so a substring is exact enough to be
+            # unable to bind a stale copy of the same file.
+            options = picker.locator(PICKER_OPTION).filter(has_text=name)
             try:
                 await options.first.wait_for(
                     state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000)

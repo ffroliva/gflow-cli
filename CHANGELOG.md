@@ -30,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Frames picker could not bind the frame it had just uploaded.** On
+  `flow.google.com`, `video i2v` matched a picker option with an *anchored* regex
+  (`^\s*<name>\s*$`), but a picker tile is a `mat-icon` ligature followed by the file
+  name and a locator reads both nodes as one string — `imageshero-ab12cd34.png` for an
+  asset named `hero-ab12cd34.png`. The anchors could never hold, so every i2v run on this
+  cohort ended in exit 32, *"the frame picker lists no asset named …"*, while the picker
+  had been listing it the whole time. The match is now containment on the display name,
+  which is run-unique by construction ([#792](https://github.com/ffroliva/gflow-cli/issues/792))
+  and therefore still cannot bind a stale copy of the same file. Covered by a new $0
+  route-intercepted e2e (`tests/features/frame_picker_binding.feature`) that renders the
+  icon node for real — a mocked picker passes against the bug.
+  ([#860](https://github.com/ffroliva/gflow-cli/issues/860))
+
 - **The migrated `--end-frame` lane rejected omni's interpolation key.** The start+end
   submit validator pinned the model key to `veo_3_1_interpolation_lite`, so
   `omni_flash_i2v_*_first_last` submits — what the second measured cohort actually sends —
