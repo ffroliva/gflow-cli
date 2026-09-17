@@ -529,16 +529,21 @@ class Settings(BaseSettings):
     default_project_id: str | None = Field(
         default=None,
         description=(
-            "Fallback --project / MCP `project` used when a generate call omits "
-            "one. Omitting --project has always meant 'create a scratch project' "
-            "via labs.google's project.createProject — which 401s unconditionally "
-            "on an account Google has migrated to flow.google.com (project "
+            "Fallback project used by the MCP gflow_generate_image / "
+            "gflow_generate_video tools when a call omits `project`. Applies "
+            "to those two MCP tools ONLY — the CLI's own --project-omission "
+            "path (cli_image.py / cli_video.py) resolves synchronously and "
+            "does not read this setting, so `gflow image t2i` without "
+            "--project is unaffected. Omitting MCP `project` has always meant "
+            "'create a scratch project' via labs.google's "
+            "project.createProject — which 401s unconditionally on an "
+            "account Google has migrated to flow.google.com (project "
             "creation isn't ported there yet, #791/#639), mislabeled by the "
             "response as an auth failure. Set this to an existing project id "
-            "(from the Flow editor URL, .../project/<id>/...) to make omitting "
-            "--project work on such an account instead of failing every time. "
-            "Still overridden by an explicit --project / `project` argument. "
-            "Override via GFLOW_CLI_DEFAULT_PROJECT_ID."
+            "(from the Flow editor URL, .../project/<id>/...) to make "
+            "omitting MCP `project` work on such an account instead of "
+            "failing every time. Still overridden by an explicit MCP "
+            "`project` argument. Override via GFLOW_CLI_DEFAULT_PROJECT_ID."
         ),
     )
 
