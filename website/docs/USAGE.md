@@ -607,10 +607,11 @@ Options:
 > `--project <id>` runs on Flow's migrated `flow.google.com` host on every account; without
 > `--project` an unmoved account falls back to the labs driver, and a moved account exits 11
 > (`--project` is required there — project creation is not ported). `i2v` with a local
-> `--initial-frame` and no `--end-frame` runs there too (see [`gflow video i2v`](#gflow-video-i2v)),
-> as does `r2v` from local `--ref` files (see [`gflow video r2v`](#gflow-video-r2v));
-> an end frame, a frame given by UUID or `@Name`, references given by `@Name` or
-> `--reference-entity`. `image t2i` and local-file `image i2i` also run on a moved
+> `--initial-frame` runs there too — **including with a local `--end-frame`**
+> (start+end interpolation, #639; see [`gflow video i2v`](#gflow-video-i2v)) — as does
+> `r2v` from local `--ref` files (see [`gflow video r2v`](#gflow-video-r2v)). An end frame
+> or start frame given by UUID or `@Name`, and references given by `@Name` or
+> `--reference-entity`, are not ported to the migrated composer yet. `image t2i` and local-file `image i2i` also run on a moved
 > account; UUID/entity/instruction/Imagen-4 image forms still exit 36. `flow.google.com` forces the migrated composer,
 > `labs.google` switches it off — see [CONFIGURATION § GFLOW_CLI_FLOW_HOST](CONFIGURATION.md#gflow_cli_flow_host).
 
@@ -644,8 +645,8 @@ the editor's frame slot via the media dialog, then Flow fires
 > to submit unless the app's own
 > submit body carries that upload's media id with an image-to-video model key (exit 7
 > otherwise: the labs #125 shape, where an unbound frame silently goes out as text-to-video).
-> `--end-frame`, a UUID or `@Name` frame exit 36 there; an unmoved account keeps the labs
-> driver for those.
+> A UUID or `@Name` frame exits 36 there; a local `--end-frame` is ported (#639). An
+> account served labs.google keeps the labs driver for the unported forms.
 >
 > What lands in the library is a **run-unique copy** — `hero.png` uploads as
 > `hero-a1b2c3d4.png` (#792). The picker is searched by display name, so identical names

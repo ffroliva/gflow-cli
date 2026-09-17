@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow video i2v --end-frame <local file>` now runs on `flow.google.com`.** Start+end
+  frame interpolation was the last i2v form the migrated composer refused: it exited 36
+  ("an end frame is not ported yet") on every account Flow has moved. Both frames are now
+  uploaded through the editor's own Upload entry and bound to the Start and End chips, and
+  the driver reads back two bound chips before it lets the app submit.
+
+  A bound end frame switches Flow to a different submit contract — rpc `nprQif`, an
+  interpolation model key, and both media ids in the body — which is why watching only the
+  classic submit rpcs made every start+end run time out *after* Flow had already accepted
+  the submit and billed it. The submit body is asserted before Flow acts on it, so a frame
+  that silently failed to bind is a refusal rather than a wrong generation you paid for.
+
+  The model key is **cohort-dependent** and matched by shape, not by literal:
+  `veo_3_1_interpolation_lite` and `omni_flash_i2v_8s_first_last` have both been captured
+  on live accounts (the second on 2026-09-17, see
+  `docs/superpowers/spikes/2026-09-17-migrated-end-frame-submit-contract.md`). Frames given
+  by media UUID or `@Name` are still not ported.
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639))
+
+### Fixed
+
+- **The migrated `--end-frame` lane rejected omni's interpolation key.** The start+end
+  submit validator pinned the model key to `veo_3_1_interpolation_lite`, so
+  `omni_flash_i2v_*_first_last` submits — what the second measured cohort actually sends —
+  were refused as wire-format errors before Flow could act on them. The check is now
+  key-shape based: a submit whose model key contains `interpolation` or `first_last`
+  counts as start+end interpolation for any model, and the submit observer accepts the
+  bare `batchexecute` reply (no `rpcids` param) that the interpolation rpc answers on.
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639))
+
 ## [0.77.1] — 2026-09-17
 
 ### Fixed
@@ -79,14 +111,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the caller's working directory cannot answer on the venv's behalf, and a probe that could
   not run at all is never reported as breakage.
   ([#848](https://github.com/ffroliva/gflow-cli/issues/848))
-- **The migrated `--end-frame` lane rejected omni's interpolation key.** The
-  start+end submit validator pinned the model key to
-  `veo_3_1_interpolation_lite`, so `omni_flash_i2v_4s_first_last` submits were
-  refused as wire-format errors before Flow could act on them. The check is now
-  key-shape based: a submit whose model key contains `interpolation` or
-  `first_last` counts as start+end interpolation for any model, and the submit
-  observer also accepts bare `batchexecute` responses for adopted RPCs.
-  ([#639](https://github.com/ffroliva/gflow-cli/issues/639))
 
 ## [0.77.0] — 2026-09-16
 

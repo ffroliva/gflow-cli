@@ -123,13 +123,24 @@ class Dom:
     # on a project with 30+ assets (denon82, 2026-09-05). 0 = listed at once.
     picker_lists_after_searches: int = 0
     picked: list[str] = field(default_factory=list)
-    chip_binds: bool = True  # the option click flips the Start chip to a bound one
-    chip_bound: bool = False
+    chip_binds: bool = True  # the option click flips the next empty chip to a bound one
+    #: How many of the two Frames chips (Start, End) are bound. The End path needs a
+    #: fake that can hold TWO, because `attach_end_frame` asserts `expect_bound_chips=2`
+    #: — a one-bool fake made that assertion unmodellable and left the End path at zero
+    #: coverage.
+    bound_chip_count: int = 0
     #: #792: a cohort whose picker does NOT commit on the option click — it stays open
     #: until its own "Add to prompt" confirm is clicked. The fake used to close the
     #: picker unconditionally on an option click, so the commit assertion tested the
     #: fake and this whole cohort was unmodellable.
     picker_needs_confirm: bool = False
+
+    @property
+    def chip_bound(self) -> bool:
+        """At least one chip bound — the Start-path predicate every existing
+        assertion was written against."""
+        return self.bound_chip_count > 0
+
     #: ...and one where the picker neither commits nor offers a confirm to click.
     picker_has_confirm: bool = True
     #: ...and one where the confirm is there, takes the click, and STILL does not commit.
@@ -382,14 +393,14 @@ class FakeLocator:
                 return  # the pick landed; the picker stays up awaiting its confirm
             dom.picker_open = False
             if dom.chip_binds:
-                dom.chip_bound = True
+                dom.bound_chip_count += 1
         elif self.kind == "picker_confirm":
             dom.confirm_clicks += 1
             if not dom.picker_confirm_commits:
                 return  # clicked, and the picker still will not go away
             dom.picker_open = False
             if dom.chip_binds:
-                dom.chip_bound = True
+                dom.bound_chip_count += 1
         elif self.kind == "dialog_close":
             dom.dialog_present = False
             dom.dialog_closed += 1
@@ -604,10 +615,10 @@ class FakePage:
             present = dom.add_menu_open and dom.upload_item_present
             return FakeLocator(self, "upload_item", ["upload"] if present else [])
         if css == "flow-prompt-box button.empty-chip":
-            chips = ["End"] if dom.chip_bound else ["Start", "End"]
+            chips = ["Start", "End"][dom.bound_chip_count :]
             return FakeLocator(self, "empty_chip", chips)
         if css == "flow-prompt-box button.chip-container:has(img)":
-            return FakeLocator(self, "bound_chip", ["Start"] if dom.chip_bound else [])
+            return FakeLocator(self, "bound_chip", ["Start", "End"][: dom.bound_chip_count])
         if css == "flow-add-menu-popover-content":
             return FakeLocator(self, "picker_marker", ["picker"])
         if css == "input[type='text']":
@@ -1735,6 +1746,50 @@ async def test_t2v_without_a_model_leaves_the_picker_alone() -> None:
     assert page.dom.model_label == "Veo 3.1 - Quality"
 
 
+async def test_attach_end_frame_binds_the_second_chip(tmp_path: Path) -> None:
+    """`attach_end_frame` had ZERO coverage: it is the PR's largest new DOM surface
+    and nothing offline exercised it. Start must be bound first; End then takes the
+    one remaining empty chip and the driver reads back TWO bound chips."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    composer = MigratedComposer()
+    start_png = _png(tmp_path)
+    end_png = tmp_path / "02-end.png"
+    end_png.write_bytes(start_png.read_bytes())
+
+    await composer.attach_start_frame(page, PROJ, start_png)
+    assert page.dom.bound_chip_count == 1
+    with capture_logs() as logs:
+        media_id = await composer.attach_end_frame(page, PROJ, end_png)
+
+    assert media_id == MEDIA_UP
+    assert page.dom.bound_chip_count == 2
+    assert not page.dom.picker_open
+    # Both frames were uploaded and picked — a fake that bound only Start would
+    # leave one entry here, which is the ablation D12 used to catch a vacuous test.
+    assert len(page.dom.picked) == 2
+    staged = page.dom.chosen_files[-1]
+    assert re.fullmatch(r"02-end-[0-9a-f]{8}\.png", staged), staged
+    events = [e["event"] for e in logs]
+    assert "migrated.frame_uploaded" in events and "migrated.frame_bound" in events
+
+
+async def test_attach_end_frame_without_a_bound_start_is_selector_drift(
+    tmp_path: Path,
+) -> None:
+    """The Start chip must already hold a frame. If it silently did not bind, End
+    would otherwise be written INTO the Start chip; the two-bound-chip readback is
+    what turns that into a named failure instead of a wrong billed generation."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    with pytest.raises(UiSelectorDriftError) as excinfo:
+        await MigratedComposer().attach_end_frame(page, PROJ, _png(tmp_path))
+    assert "End" in str(excinfo.value)
+    assert page.dom.bound_chip_count == 1  # Start took it — exactly the mis-bind
+
+
 async def test_attach_uploads_then_binds_the_frame_by_file_name(tmp_path: Path) -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -2259,19 +2314,24 @@ def test_interpolation_body_problem_names_what_is_wrong() -> None:
     assert unreadable is not None and "could not be read" in unreadable
 
 
-async def test_submit_on_an_unwatched_rpc_is_adopted_by_content() -> None:
+async def test_interpolation_reply_on_a_bare_batchexecute_url_resolves() -> None:
+    """The captured interpolation reply shape: a `batchexecute` POST with NO
+    `rpcids` query param, whose frame names `nprQif`. `parse_frames` recovers the
+    id from the frame, so the response handler must let a param-less URL through
+    instead of filtering it out. Measured 2026-09-17 (spike: end-frame submit
+    contract) — the omni key is what this cohort sends."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     end = "77777777-7777-4777-8777-777777777777"
     body = (
-        f'f.req=[[["QxJxZz","[\\"veo_3_1_i2v_lite\\",\\"{MEDIA_UP}\\",'
+        f'f.req=[[["nprQif","[\\"omni_flash_i2v_8s_first_last\\",\\"{MEDIA_UP}\\",'
         f'\\"{end}\\"]",null,"generic"]]]'
     )
     page = FakePage()
     page.dom.prompt = "a crane"
-    page.scripted_request = ("QxJxZz", body)
+    page.scripted_request = ("nprQif", body)
     page.scripted_responses = [
-        (_batch_url("QxJxZz"), _frame("QxJxZz", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_bare_url(), _frame("nprQif", [None, 881, [[MEDIA]], [[_record(6)]]])),
         (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
     ]
     started: list[Any] = []
@@ -2285,14 +2345,15 @@ async def test_submit_on_an_unwatched_rpc_is_adopted_by_content() -> None:
             expect_end_media_id=end,
         )
     assert rec.is_done and rec.media_id == MEDIA and started[0].media_id == MEDIA
-    adopted = next(e for e in logs if e["event"] == "migrated.submit_rpc_adopted")
-    assert adopted["rpc"] == "QxJxZz"
     observed = next(e for e in logs if e["event"] == "migrated.submit_observed")
-    assert observed["rpc"] == "QxJxZz"
+    assert observed["rpc"] == "nprQif"
     assert page.listeners("request") == [] and page.listeners("response") == []
 
 
-async def test_adopted_rpc_with_bare_batchexecute_response_resolves() -> None:
+async def test_submit_on_an_unwatched_rpc_is_never_adopted() -> None:
+    """Adoption-by-content was removed: an unwatched rpcid whose body merely LOOKS
+    like ours must not become our submit. It is recorded in the timeout diagnostic
+    and nothing else — a named timeout beats a hard failure on a billed run."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     end = "77777777-7777-4777-8777-777777777777"
@@ -2304,11 +2365,10 @@ async def test_adopted_rpc_with_bare_batchexecute_response_resolves() -> None:
     page.dom.prompt = "a crane"
     page.scripted_request = ("QxJxZz", body)
     page.scripted_responses = [
-        (_batch_bare_url(), _frame("QxJxZz", [None, 881, [[MEDIA]], [[_record(6)]]])),
-        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+        (_batch_url("QxJxZz"), _frame("QxJxZz", [None, 881, [[MEDIA]], [[_record(6)]]])),
     ]
-    with capture_logs() as logs:
-        rec = await MigratedComposer().submit_and_observe(
+    with pytest.raises(TransportTimeoutError) as excinfo:
+        await MigratedComposer().submit_and_observe(
             page,
             poll_timeout_s=2.0,
             on_started=None,
@@ -2316,9 +2376,7 @@ async def test_adopted_rpc_with_bare_batchexecute_response_resolves() -> None:
             expect_media_id=MEDIA_UP,
             expect_end_media_id=end,
         )
-    assert rec.is_done and rec.media_id == MEDIA
-    observed = next(e for e in logs if e["event"] == "migrated.submit_observed")
-    assert observed["rpc"] == "QxJxZz"
+    assert "QxJxZz" in str(excinfo.value)
     assert page.listeners("request") == [] and page.listeners("response") == []
 
 

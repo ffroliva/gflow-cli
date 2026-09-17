@@ -304,11 +304,19 @@ def _no_submit(world: dict[str, Any]) -> None:
 
 @then("the migrated host takes the run, not the labs driver")
 def _migrated_takes_it(world: dict[str, Any]) -> None:
-    # Routing pin (#639): local start+end frames no longer refuse with exit 36
-    # and no longer fall back to the labs driver. The shared fake page models
-    # the Start chip only, so the run stops at the End-chip bind — the lines
-    # below pin the routing, not the fake's coverage: no labs touch, no exit 36,
-    # and the migrated composer demonstrably ran (it picked the start frame).
+    # Routing pin (#639): local start+end frames no longer refuse with exit 36 and no
+    # longer fall back to the labs driver.
+    #
+    # The negatives below are NOT enough on their own. Ablation (delete the end-frame
+    # call from `run_video`, so the end frame is silently dropped) left them all green
+    # AND let the run submit — the exact "strictly worse than exit 36" failure this
+    # driver refuses elsewhere. `len(dom.picked) == 2` is the discriminator: it is the
+    # one assertion that fails when the end frame is dropped. The fake now models both
+    # Frames chips, so the scenario drives the whole path through to a submit.
+    dom = world["page"].dom
     assert not isinstance(world.get("error"), _LabsDriverTouchedError), world.get("error")
     assert not isinstance(world.get("error"), FlowHostMigratedError), world.get("error")
-    assert world["page"].dom.picked, "the migrated composer never picked the start frame"
+    assert world.get("error") is None, world["error"]
+    assert len(dom.picked) == 2, f"expected start AND end frames picked, got {dom.picked}"
+    assert dom.submit_clicked == 1, "the run never reached a submit"
+    assert world["result"].status.succeeded  # VideoResult WRAPS VideoStatus

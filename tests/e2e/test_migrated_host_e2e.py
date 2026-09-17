@@ -117,6 +117,96 @@ async def test_e2e_migrated_host_serves_this_account(
 
 @pytest.mark.asyncio
 @pytest.mark.e2e_auth
+async def test_e2e_end_frame_binds_the_second_chip_and_submits_interpolation(
+    e2e_profile_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """$0 (#639): the start+end interpolation contract, without billing a run.
+
+    This is the e2e the feature owed. Generating to verify costs a Veo credit per
+    run, so it is not re-runnable in review — instead both frames are really
+    uploaded and bound (uploads are free), the submit is intercepted with
+    ``route.abort()``, and the REQUEST BODY is asserted. Playwright hands us the
+    body before it leaves the browser, so Flow never sees the submit and nothing
+    is billed (memory: credit-free-route-abort-verification).
+
+    Measured this way on 2026-09-17 (ffroliva, flow.google.com): rpc ``nprQif``,
+    key ``omni_flash_i2v_8s_first_last``, both media ids present. The key differs
+    by cohort (the contributor's account sends ``veo_3_1_interpolation_lite``),
+    which is why the assertion is on key SHAPE, not a literal.
+    """
+    project = _project_id()
+    _set_flow_host(monkeypatch, None)
+    start = _write_reference(tmp_path / "e2e-start.png")
+    end = _write_reference(tmp_path / "e2e-end.png")
+
+    transport = UiAutomationTransport()
+    captured: list[dict[str, object]] = []
+    try:
+        await transport.setup(e2e_profile_dir)
+        page = transport._page  # noqa: SLF001 - the e2e reads the live page
+        assert page is not None
+        composer = MigratedComposer()
+        await composer.ensure_editor(page, project, timeout_s=45.0)
+
+        pane = await composer._open_pane(page)  # noqa: SLF001 - production path
+        await composer._select(page, pane, axis="mode", lig="videocam")  # noqa: SLF001
+        await composer._select(  # noqa: SLF001
+            page, pane, axis="submode", lig=migrated_composer.FRAMES_LIGATURE
+        )
+        await composer._close_pane(page, strict=True)  # noqa: SLF001
+
+        start_id = await composer.attach_start_frame(page, project, start)
+        end_id = await composer.attach_end_frame(page, project, end)
+        assert start_id and end_id and start_id != end_id
+
+        # Two bound chips is the driver's own readback — assert it on the live DOM.
+        assert await page.locator(migrated_composer.BOUND_CHIP).count() == 2
+
+        await composer.send_prompt(page, "a slow dolly between the two frames")
+
+        async def block_submit(route: object, request: object) -> None:
+            body = getattr(request, "post_data", None) or ""
+            rpcid = migrated_composer._body_rpcid(body) or migrated_composer._rpcid(  # noqa: SLF001
+                str(getattr(request, "url", ""))
+            )
+            if rpcid in migrated_composer.SUBMIT_RPCS:
+                key = migrated_composer.MODEL_KEY.search(body)
+                captured.append(
+                    {
+                        "rpcid": rpcid,
+                        "model_key": key.group(0) if key else None,
+                        "start": start_id in body,
+                        "end": end_id in body,
+                    }
+                )
+                await route.abort()  # type: ignore[attr-defined]  # never reaches Flow
+                return
+            await route.continue_()  # type: ignore[attr-defined]
+
+        await page.route("**/batchexecute*", block_submit)
+        submit = (
+            page.locator("button")
+            .filter(has=migrated_composer._ligature(page, "arrow_forward"))  # noqa: SLF001
+            .first
+        )
+        await submit.click(timeout=15_000)
+        for _ in range(40):
+            if captured:
+                break
+            await page.wait_for_timeout(250)
+    finally:
+        await transport.teardown()
+
+    assert captured, "the submit click produced no batchexecute request"
+    hit = captured[0]
+    assert hit["rpcid"] == migrated_composer.INTERPOLATION_SUBMIT_RPC, hit
+    assert hit["start"] and hit["end"], hit
+    key = str(hit["model_key"] or "")
+    assert "interpolation" in key or "first_last" in key, hit
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_auth
 async def test_e2e_agent_mode_is_left_before_the_readiness_gate(
     e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

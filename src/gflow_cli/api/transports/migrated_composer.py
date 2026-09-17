@@ -694,9 +694,14 @@ def _interpolation_body_problem(
         )
     key = MODEL_KEY.search(body)
     key_text = key.group(0) if key else "no model key"
-    # Interpolation keys differ per model: veo uses ``*_interpolation_*`` and
-    # omni uses ``*_i2v_*s_first_last``. Both mark a start+end submit; a plain
-    # i2v/t2v key means a frame dropped before the app submitted.
+    # Interpolation keys differ per model: veo uses ``*_interpolation_*`` and omni
+    # uses ``*_i2v_*s_first_last``. Both are MEASURED, not inferred —
+    # ``veo_3_1_interpolation_lite`` on the contributor's account (#831) and
+    # ``omni_flash_i2v_8s_first_last`` here on 2026-09-17 (see
+    # docs/superpowers/spikes/2026-09-17-migrated-end-frame-submit-contract.md).
+    # Matching on key SHAPE rather than a pinned literal is deliberate: the two
+    # cohorts disagree on the key, so a literal would refuse a valid run on one of
+    # them. A plain i2v/t2v key means a frame dropped before the app submitted.
     if "interpolation" not in key_text and "first_last" not in key_text:
         return (
             f"migrated host: the submit went out on {rpcid} with {key_text} for a "
@@ -2115,8 +2120,11 @@ class MigratedComposer:
             url = str(getattr(request, "url", ""))
             if "batchexecute" not in url or route_error.done():
                 return
-            # Decoded once: the interpolation submit carries its rpc name in the
-            # body (no ``rpcids`` query param), so the URL parse alone misses it.
+            # The URL `rpcids` param is the normal carrier and is tried first. The
+            # body fallback exists because the interpolation submit has been reported
+            # without that param; on the account measured 2026-09-17 it DID carry it
+            # (`nprQif` in the URL, key `omni_flash_i2v_8s_first_last`), so treat the
+            # body as a second carrier rather than the rule — cohorts differ here.
             body = _post_data(request)
             rpcid = _rpcid(url) or _body_rpcid(body)
             # Record request rpcids too: at timeout the set shows both what went
@@ -2146,26 +2154,19 @@ class MigratedComposer:
                         WireFormatError(detail=problem, route=f"batchexecute:{rpcid}")
                     )
                 return
-            if rpcid in STATUS_RPCS or submit_rpc["rpcid"] is not None:
-                return
-            # Unknown rpcid: adopt it ONLY if its body is exactly our submit.
-            # Status polls never carry model keys, so they cannot match; an
-            # adopted id only widens where the reply is read from, never what
-            # counts as our generation (issue #639).
-            if expect_media_id is None:
-                return
-            if (
-                _i2v_body_problem(
-                    body,
-                    rpcid,
-                    expect_media_id,
-                    end_media_id=expect_end_media_id,
-                )
-                is not None
-            ):
-                return
-            submit_rpc["rpcid"] = rpcid
-            log.info("migrated.submit_rpc_adopted", rpc=rpcid)
+            # An unwatched rpcid is RECORDED (`seen_submit_rpcs`, above) but never
+            # adopted as our submit. Adopting by body content was tried and removed:
+            # the predicate available here (`_i2v_body_problem`) requires `_i2v_` in
+            # the key, which `veo_3_1_interpolation_lite` does not contain — so it
+            # could never fire for the veo start+end case it was written for — while
+            # for the omni `*_i2v_*_first_last` key it matched broadly enough that any
+            # future rpc echoing composer state would be adopted, and a parse failure
+            # on an adopted id calls `submitted.set_exception` (fatal) rather than
+            # `continue`. That trades a named timeout for a hard failure on an
+            # already-billed run. Both submit rpcids we have measured — `eb1hJf`
+            # (start only) and `nprQif` (start+end, 2026-09-17) — are in SUBMIT_RPCS,
+            # so nothing needs adopting; a third one should be measured and added by
+            # name, not guessed at from a body.
 
         # ``terminal``: failed, or done WITH the signed URL. ``done_no_url``: the
         # first status-3 record that has no URL yet (a poll beats the result RPC).
@@ -2186,11 +2187,6 @@ class MigratedComposer:
         # named fact (issue #639).
         seen_submit_rpcs: set[str] = set()
 
-        # The rpcid that carried OUR submit body, once seen. Normally one of
-        # SUBMIT_RPCS; a start+end submit may go out under another id, in which
-        # case content match (above) adopts it and the reply frames follow it.
-        submit_rpc: dict[str, str | None] = {"rpcid": None}
-
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
             rpcid = _rpcid(url) if "batchexecute" in url else None
@@ -2198,18 +2194,17 @@ class MigratedComposer:
                 seen_submit_rpcs.add(rpcid)
             if "batchexecute" not in url:
                 return
-            if rpcid is not None and (
-                rpcid not in SUBMIT_RPCS
-                and rpcid not in STATUS_RPCS
-                and rpcid != submit_rpc["rpcid"]
-            ):
+            # `rpcid is None` falls through on purpose: the interpolation reply is a
+            # bare `batchexecute` with no `rpcids` param, and `parse_frames` recovers
+            # its id from the frame itself (measured 2026-09-17).
+            if rpcid is not None and rpcid not in SUBMIT_RPCS and rpcid not in STATUS_RPCS:
                 return
             try:
                 text = await response.text()
             except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
                 return
             for rid, payload in parse_frames(text):
-                if (rid in SUBMIT_RPCS or rid == submit_rpc["rpcid"]) and not submitted.done():
+                if rid in SUBMIT_RPCS and not submitted.done():
                     try:
                         rec = generation_record(rid, payload)
                     except WireFormatError as exc:
@@ -2236,11 +2231,15 @@ class MigratedComposer:
                     _settle(rec)
 
         page.on("response", on_response)
-        # Both body assertions live in `on_request`, so the listener must be armed for
-        # either. Gating it on `expect_media_id` alone left `_r2v_body_problem` unit-tested
-        # but never reached in a live run — the check the r2v path was built around.
-        if expect_media_id is not None or expect_reference_ids:
-            page.on("request", on_request)
+        # Every body assertion lives in `on_request`, so the listener must be armed for
+        # all of them. Gating it on `expect_media_id` alone left `_r2v_body_problem`
+        # unit-tested but never reached in a live run — the check the r2v path was built
+        # around. It is now ALWAYS armed, including for t2v, because the interpolation
+        # guard is a BILLING guard that only matters when nothing was asked for: a stale
+        # End chip makes the app submit `nprQif` on a run that requested no end frame,
+        # and refusing that is free while the generation is not. `on_request` returns
+        # early for a t2v submit it has nothing to assert about.
+        page.on("request", on_request)
         try:
             submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
             if not await submit.count():
@@ -2317,8 +2316,7 @@ class MigratedComposer:
             if submitted.done() and not submitted.cancelled():
                 submitted.exception()
             page.remove_listener("response", on_response)
-            if expect_media_id is not None or expect_reference_ids:
-                page.remove_listener("request", on_request)
+            page.remove_listener("request", on_request)
 
     async def submit_images_and_observe(
         self,

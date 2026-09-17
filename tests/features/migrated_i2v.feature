@@ -47,7 +47,7 @@ Feature: image-to-video on the migrated flow.google.com host
     Then the run fails with exit 27 naming route batchexecute:maseQ
     And no submit was clicked
 
-  Scenario: a moved account sends local start and end frames to the migrated host
+  Scenario: a moved account routes local start and end frames to the migrated host
     Given the editor hands the session to flow.google.com after entering the project
     When gflow video i2v runs with a local start frame and a local end frame
     Then the migrated host takes the run, not the labs driver
