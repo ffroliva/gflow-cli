@@ -799,8 +799,11 @@ async def gflow_generate_image(
             ``GFLOW_CLI_PROFILE`` env var → ``config.toml`` default →
             auto-select if exactly one profile exists.
         project: Optional existing Flow project id to generate into (mirrors the
-            CLI ``--project`` flag). When omitted, a scratch project is created
-            as before.
+            CLI ``--project`` flag). When omitted, falls back to
+            ``GFLOW_CLI_DEFAULT_PROJECT_ID`` if the operator set one, else a
+            scratch project is created — which fails on an account Google has
+            migrated to flow.google.com (project creation isn't ported there
+            yet, #791); set the default rather than retrying without one.
         project_name: Optional human-readable project title to use when creating a
             fresh Flow project.
         instructions: Optional list of custom agent instructions to add or enable
@@ -817,6 +820,8 @@ async def gflow_generate_image(
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
+    if project is None:
+        project = get_settings().default_project_id
 
     if ui_mode is not None:
         # Normalize case to mirror the CLI's click.Choice(case_sensitive=False)
@@ -1057,10 +1062,12 @@ async def gflow_generate_video(  # NOSONAR
             auto-select if exactly one profile exists.
         project: Optional existing Flow project id to generate into (mirrors the
             CLI ``--project`` flag on ``video t2v``/``i2v``/``r2v``). When
-            omitted, a scratch project is created on labs.google. On an account
-            Google has moved to flow.google.com (``GFLOW_CLI_FLOW_HOST``, read from
-            the server/daemon environment, not per call) ``project`` is required —
-            omitting it returns the exit-11-equivalent envelope. There the ported
+            omitted, falls back to ``GFLOW_CLI_DEFAULT_PROJECT_ID`` if the
+            operator set one, else a scratch project is created on labs.google.
+            On an account Google has moved to flow.google.com
+            (``GFLOW_CLI_FLOW_HOST``, read from the server/daemon environment,
+            not per call) ``project`` (explicit or defaulted) is required —
+            omitting both returns the exit-11-equivalent envelope. There the ported
             modes are 't2v'; 'i2v' with a local ``initial_frame`` and no
             ``end_frame``; and 'r2v' with local ``reference_images``. A UUID
             frame, an end frame, and r2v by ``ref_names`` or
@@ -1079,6 +1086,8 @@ async def gflow_generate_video(  # NOSONAR
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
+    if project is None:
+        project = get_settings().default_project_id
 
     if ui_mode is not None:
         # Normalize case to mirror the CLI's click.Choice(case_sensitive=False);

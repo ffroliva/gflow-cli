@@ -116,6 +116,7 @@ class TestGenerateImageWired:
                 return_value=MagicMock(
                     resolved_db_path=lambda: temp_db.path,
                     profile_subdir=lambda _: tmp_path / "profile_default",
+                    default_project_id=None,
                     timeout_seconds=30,
                 ),
             ),
@@ -138,6 +139,54 @@ class TestGenerateImageWired:
         assert result["params"]["prompt"] == "scenic mountain at sunset"
 
     @pytest.mark.asyncio
+    async def test_image_omitted_project_falls_back_to_configured_default(
+        self, temp_db: DataStore, tmp_path: Path
+    ) -> None:
+        """#791/#639 follow-up: omitting `project` must not always mean 'create
+        a scratch project' — that 401s unconditionally on an account Google
+        has migrated to flow.google.com. GFLOW_CLI_DEFAULT_PROJECT_ID lets an
+        operator make omission resolve to a known-good existing project
+        instead, mirrored between the CLI and this MCP tool.
+        """
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        fake_client = _FakeFlowApiClient()
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.worker.daemon.FlowApiClient",
+                return_value=fake_client,
+            ),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    timeout_seconds=30,
+                    default_project_id="existing-proj-1",
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                ),
+            ),
+        ):
+            result = await gflow_generate_image(prompt="scenic mountain at sunset")
+
+        assert result["status"] == "completed"
+        assert result["params"]["project"] == "existing-proj-1"
+        # The default routes into the EXISTING-project path, not scratch creation.
+        fake_client.create_project.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_image_completed_task_has_params(
         self, temp_db: DataStore, tmp_path: Path
     ) -> None:
@@ -158,6 +207,7 @@ class TestGenerateImageWired:
                 return_value=MagicMock(
                     resolved_db_path=lambda: temp_db.path,
                     profile_subdir=lambda _: tmp_path / "profile_default",
+                    default_project_id=None,
                     timeout_seconds=30,
                 ),
             ),
@@ -206,6 +256,7 @@ class TestGenerateImageWired:
                 return_value=MagicMock(
                     resolved_db_path=lambda: temp_db.path,
                     profile_subdir=lambda _: tmp_path / "profile_default",
+                    default_project_id=None,
                     timeout_seconds=30,
                 ),
             ),
@@ -274,6 +325,7 @@ class TestGenerateVideoWired:
                 return_value=MagicMock(
                     resolved_db_path=lambda: temp_db.path,
                     profile_subdir=lambda _: tmp_path / "profile_default",
+                    default_project_id=None,
                     timeout_seconds=30,
                 ),
             ),
@@ -333,6 +385,7 @@ class TestGenerateVideoWired:
                 return_value=MagicMock(
                     resolved_db_path=lambda: temp_db.path,
                     profile_subdir=lambda _: tmp_path / "profile_default",
+                    default_project_id=None,
                     timeout_seconds=30,
                 ),
             ),
@@ -453,6 +506,7 @@ class TestGenerateVideoWired:
                 return_value=MagicMock(
                     resolved_db_path=lambda: temp_db.path,
                     profile_subdir=lambda _: tmp_path / "profile_default",
+                    default_project_id=None,
                     timeout_seconds=30,
                 ),
             ),
@@ -626,6 +680,7 @@ class TestRunGenerationTask:
                 return_value=MagicMock(
                     resolved_db_path=lambda: temp_db.path,
                     profile_subdir=lambda _: tmp_path / "profile_default",
+                    default_project_id=None,
                 ),
             ),
             patch(
@@ -666,6 +721,7 @@ class TestRunGenerationTask:
                 return_value=MagicMock(
                     resolved_db_path=lambda: temp_db.path,
                     profile_subdir=lambda _: tmp_path / "profile_default",
+                    default_project_id=None,
                 ),
             ),
             patch(

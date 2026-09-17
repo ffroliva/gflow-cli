@@ -618,3 +618,39 @@ class TestRemovedGeminiKeyNotice:
         monkeypatch.setenv("GFLOW_CLI_GEMINI_API_KEY", "AIza-old")
         monkeypatch.delenv("GFLOW_CLI_LLM_API_KEY", raising=False)
         assert Settings().llm_api_key is None
+
+
+class TestDefaultProjectId:
+    """#791/#639 follow-up: omitting --project / MCP `project` has always meant
+    'create a scratch project' via labs.google, which 401s unconditionally on
+    an account Google has migrated to flow.google.com. This setting lets an
+    operator point omission at a known-good existing project instead."""
+
+    def test_defaults_to_none(self, clean_env: None) -> None:
+        assert Settings().default_project_id is None
+
+    def test_accepts_a_valid_id_from_env(
+        self, clean_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GFLOW_CLI_DEFAULT_PROJECT_ID", "08edda4d-6a2b-4c78-972d-469ecf842e77")
+        assert Settings().default_project_id == "08edda4d-6a2b-4c78-972d-469ecf842e77"
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            "../../etc/passwd",
+            "abc/def",
+            "id with spaces",
+            "id;rm -rf",
+            "a" * 129,
+        ],
+    )
+    def test_rejects_an_id_shaped_like_an_injection_attempt(
+        self, clean_env: None, monkeypatch: pytest.MonkeyPatch, bad_value: str
+    ) -> None:
+        """Same allowlist as --project (_cli_helpers._FLOW_ID_RE): this id is
+        interpolated into navigation URLs and CSS selectors before any other
+        guard runs, so a malformed value must fail closed at config load."""
+        monkeypatch.setenv("GFLOW_CLI_DEFAULT_PROJECT_ID", bad_value)
+        with pytest.raises(ValueError, match="GFLOW_CLI_DEFAULT_PROJECT_ID"):
+            Settings()

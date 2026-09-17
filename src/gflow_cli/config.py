@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import warnings
 from collections.abc import Mapping
 from enum import StrEnum
@@ -525,6 +526,33 @@ class Settings(BaseSettings):
             "Override via GFLOW_CLI_LEASE_WAIT_SECONDS."
         ),
     )
+    default_project_id: str | None = Field(
+        default=None,
+        description=(
+            "Fallback --project / MCP `project` used when a generate call omits "
+            "one. Omitting --project has always meant 'create a scratch project' "
+            "via labs.google's project.createProject — which 401s unconditionally "
+            "on an account Google has migrated to flow.google.com (project "
+            "creation isn't ported there yet, #791/#639), mislabeled by the "
+            "response as an auth failure. Set this to an existing project id "
+            "(from the Flow editor URL, .../project/<id>/...) to make omitting "
+            "--project work on such an account instead of failing every time. "
+            "Still overridden by an explicit --project / `project` argument. "
+            "Override via GFLOW_CLI_DEFAULT_PROJECT_ID."
+        ),
+    )
+
+    @field_validator("default_project_id")
+    @classmethod
+    def _validate_default_project_id(cls, value: str | None) -> str | None:
+        """Same allowlist as the --project CLI option (_cli_helpers._FLOW_ID_RE,
+        routes._PROJECT_ID_RE): this id is interpolated into navigation URLs and
+        CSS selectors before any other guard runs."""
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9\-]{1,128}", value):
+            msg = "GFLOW_CLI_DEFAULT_PROJECT_ID must be 1-128 chars of letters, digits, or hyphens."
+            raise ValueError(msg)
+        return value
+
     headless: bool = Field(
         default=False,
         description=(
