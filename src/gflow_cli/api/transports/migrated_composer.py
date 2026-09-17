@@ -2204,6 +2204,11 @@ class MigratedComposer:
             except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
                 return
             for rid, payload in parse_frames(text):
+                # Record the id the FRAME names, not just the URL's. The interpolation
+                # reply arrives on a bare `batchexecute` with no `rpcids` param, so a
+                # URL-only diagnostic reports "rpcs seen: none" for the very reply shape
+                # whose absence it is trying to explain (#639).
+                seen_submit_rpcs.add(rid)
                 if rid in SUBMIT_RPCS and not submitted.done():
                     try:
                         rec = generation_record(rid, payload)
