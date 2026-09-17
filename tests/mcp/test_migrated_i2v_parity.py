@@ -48,11 +48,13 @@ def test_a_uuid_initial_frame_from_mcp_keeps_the_labs_routing() -> None:
     assert migrated_can_serve(request, "p1") is False
 
 
-def test_an_end_frame_from_mcp_keeps_the_labs_routing(tmp_path: Path) -> None:
+def test_a_local_end_frame_from_mcp_is_served_by_the_migrated_host(tmp_path: Path) -> None:
     png = tmp_path / "hero.png"
     png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 24)
     media, err = _build_video_media_inputs(
         mode="i2v", initial_frame=str(png), end_frame=str(png), reference_images=None
     )
     assert err is None and media is not None
-    assert migrated_can_serve(build_video_request(_payload(media)), "p1") is False
+    request = build_video_request(_payload(media))
+    assert request.end_image == png.resolve() or request.end_image == png
+    assert migrated_can_serve(request, "p1") is True

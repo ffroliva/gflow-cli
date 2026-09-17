@@ -302,16 +302,13 @@ def _no_submit(world: dict[str, Any]) -> None:
     assert world["page"].dom.submit_clicked == 0
 
 
-@then("the run fails with exit 36 and the remediation names the end frame")
-def _exit_36_end_frame(world: dict[str, Any]) -> None:
-    exc = world.get("error")
-    assert isinstance(exc, FlowHostMigratedError), exc
-    assert EXIT_CODE_MAP[FlowHostMigratedError] == 36
-    assert "end frame" in str(exc)
-    assert world["page"].dom.submit_clicked == 0
-
-
-@then("the labs driver serves the request")
-def _labs_served(world: dict[str, Any]) -> None:
-    assert isinstance(world.get("error"), _LabsDriverTouchedError), world.get("error")
-    assert world["page"].dom.submit_clicked == 0
+@then("the migrated host takes the run, not the labs driver")
+def _migrated_takes_it(world: dict[str, Any]) -> None:
+    # Routing pin (#639): local start+end frames no longer refuse with exit 36
+    # and no longer fall back to the labs driver. The shared fake page models
+    # the Start chip only, so the run stops at the End-chip bind — the lines
+    # below pin the routing, not the fake's coverage: no labs touch, no exit 36,
+    # and the migrated composer demonstrably ran (it picked the start frame).
+    assert not isinstance(world.get("error"), _LabsDriverTouchedError), world.get("error")
+    assert not isinstance(world.get("error"), FlowHostMigratedError), world.get("error")
+    assert world["page"].dom.picked, "the migrated composer never picked the start frame"

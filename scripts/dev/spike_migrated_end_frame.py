@@ -59,7 +59,13 @@ async def capture(profile_name: str, project_id: str, out_dir: Path) -> int:
 
     async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
         page = await client._checkout_page()
-        url = f"https://flow.google.com/project/{project_id}"
+        try:
+            return await _capture_on_page(client, page, profile_name, project_id, out_dir)
+        finally:
+            client._checkin_page(page)
+
+
+async def _capture_on_page(client, page, profile_name: str, project_id: str, out_dir: Path) -> int:
         print(f"Goto {url} ...")
         await page.goto(url, wait_until="domcontentloaded")
         await page.wait_for_timeout(9000)

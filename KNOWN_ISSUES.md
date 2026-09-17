@@ -56,8 +56,8 @@ the clip). Two real clips were generated this way on 2026-09-05 — spike
 (`GFLOW_CLI_FLOW_HOST=auto`): flow.google.com is the **default** host for that
 command on every account — moved or not; `flow.google.com` forces it for
 everything, and `labs.google` switches the migrated composer off. Limits today: `--project` is required (project creation from the
-migrated editor is not ported), and `t2v`, `i2v` from a local `--initial-frame` (no end frame,
-no UUID/`@Name` frame — the migrated Frames picker exposes no media id in its DOM, so a frame is
+migrated editor is not ported), and `t2v`, `i2v` from local start (and end) frames (no UUID/`@Name` frame —
+the migrated Frames picker exposes no media id in its DOM, so a frame is
 found by the run-unique name gflow uploads it under, #792), and `r2v` from local `--ref` files
 (see the next paragraph), plus `image t2i` and local-file `image i2i` — unsupported
 forms still exit 36.

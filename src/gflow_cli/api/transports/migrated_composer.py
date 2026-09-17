@@ -2552,11 +2552,11 @@ async def run_video(
     """The migrated-host twin of the labs ``_generate_video_locked`` tail: same
     inputs, same ``VideoResult``, so recorder, CLI, MCP and worker are untouched.
 
-    t2v, i2v from a local start frame (uploaded through the editor and bound on the
-    Start chip by file name), and r2v from local ``--ref`` files. An end frame and a
-    frame or reference given by UUID / ``@Name`` are not ported yet; a fresh project
-    can only be created through the labs gallery, so the caller must name one
-    (``--project``).
+    t2v, i2v from local start (and end) frames (uploaded through the editor and
+    bound on the Start/End chips by file name), and r2v from local ``--ref``
+    files. A frame or reference given by UUID / ``@Name`` is not ported yet; a
+    fresh project can only be created through the labs gallery, so the caller
+    must name one (``--project``).
     """
     unported = _unported_form(request)
     if unported is not None:
