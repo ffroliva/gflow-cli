@@ -126,6 +126,27 @@ def _configure_utf8_pipes() -> None:
 _SPEND_TOOLS = ("gflow_generate_image", "gflow_generate_video")
 
 
+def _apply_mcp_lease_wait_default() -> None:
+    """Make profile contention wait instead of hard-failing (reliability).
+
+    The CLI's fail-fast default (``GFLOW_CLI_LEASE_WAIT_SECONDS=0``, see
+    ``config.py``) is correct for a one-shot terminal command: a human is
+    watching and can just retry. An MCP client has no such human in the
+    loop — two tool calls landing close together on the same profile (a
+    retry after a slow response, or two agents sharing a profile) would
+    otherwise hard-fail with ``ProfileLockedError`` instead of the caller's
+    request simply running after the one already in flight. `setdefault`
+    only takes effect for a caller who has not already set the var, and
+    `get_settings()` is process-cached (`@lru_cache`), so this MUST run
+    before anything in this process calls it — hence first line of every
+    `run_*` entry point, before `_register_surfaces()`.
+
+    180s covers a typical single image/video generation with headroom
+    without hanging an MCP client indefinitely on a genuinely stuck holder.
+    """
+    os.environ.setdefault("GFLOW_CLI_LEASE_WAIT_SECONDS", "180")
+
+
 def no_spend_active() -> bool:
     """True when no-spend mode is requested (#496).
 
@@ -304,6 +325,7 @@ async def run_stdio() -> None:
     import anyio
     from mcp.server.stdio import stdio_server
 
+    _apply_mcp_lease_wait_default()
     _configure_utf8_pipes()
 
     # Capture the REAL stdout for the JSON-RPC channel BEFORE redirecting
@@ -350,6 +372,7 @@ async def run_http(host: str = "127.0.0.1", port: int = 8000) -> None:
         host: Bind address. Defaults to localhost-only for security.
         port: Port number. Defaults to 8000.
     """
+    _apply_mcp_lease_wait_default()
     _configure_utf8_pipes()
 
     token = _daemon_token()
@@ -385,6 +408,7 @@ async def run_sse(host: str = "127.0.0.1", port: int = 8000) -> None:
         host: Bind address. Defaults to localhost-only for security.
         port: Port number. Defaults to 8000.
     """
+    _apply_mcp_lease_wait_default()
     _configure_utf8_pipes()
 
     token = _daemon_token()

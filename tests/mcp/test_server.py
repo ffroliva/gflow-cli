@@ -11,6 +11,7 @@ These tests verify that:
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 from unittest.mock import patch
 
@@ -567,6 +568,7 @@ class TestMcpServerEntryPoints:
 
         with (
             patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._apply_mcp_lease_wait_default"),
             patch("gflow_cli.mcp.server._configure_utf8_pipes"),
             patch("gflow_cli.mcp.server._redirect_stdout_to_stderr"),
             patch("gflow_cli.mcp.server.sys.stdout", MagicMock()),
@@ -600,6 +602,7 @@ class TestMcpServerEntryPoints:
 
         with (
             patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._apply_mcp_lease_wait_default"),
             patch("gflow_cli.mcp.server._configure_utf8_pipes"),
             patch("gflow_cli.mcp.server._serve", new_callable=AsyncMock) as mock_serve,
         ):
@@ -629,6 +632,7 @@ class TestMcpServerEntryPoints:
 
         with (
             patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._apply_mcp_lease_wait_default"),
             patch("gflow_cli.mcp.server._configure_utf8_pipes"),
             patch("gflow_cli.mcp.server._serve", new_callable=AsyncMock) as mock_serve,
         ):
@@ -637,6 +641,26 @@ class TestMcpServerEntryPoints:
             await run_sse(host="127.0.0.1", port=9999)
             mock_server.sse_app.assert_called_once_with(host="127.0.0.1")
             mock_serve.assert_awaited_once_with(app, host="127.0.0.1", port=9999)
+
+
+class TestMcpLeaseWaitDefault:
+    """The MCP server should wait out profile contention instead of the CLI's
+    fail-fast default — no human is watching an MCP call to just retry it."""
+
+    def test_sets_default_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from gflow_cli.mcp.server import _apply_mcp_lease_wait_default
+
+        monkeypatch.delenv("GFLOW_CLI_LEASE_WAIT_SECONDS", raising=False)
+        _apply_mcp_lease_wait_default()
+        assert os.environ["GFLOW_CLI_LEASE_WAIT_SECONDS"] == "180"
+
+    def test_never_overrides_an_explicit_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A user/operator override (including an explicit fail-fast `0`) wins."""
+        from gflow_cli.mcp.server import _apply_mcp_lease_wait_default
+
+        monkeypatch.setenv("GFLOW_CLI_LEASE_WAIT_SECONDS", "0")
+        _apply_mcp_lease_wait_default()
+        assert os.environ["GFLOW_CLI_LEASE_WAIT_SECONDS"] == "0"
 
 
 def test_mcp_retryable_matches_cli() -> None:
