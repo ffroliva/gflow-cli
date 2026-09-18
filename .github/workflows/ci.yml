@@ -227,6 +227,28 @@ jobs:
         # intentionally relies on that default smoke set.
         run: uv run python -m pytest -q --cov=gflow_cli --cov-report=xml --junitxml=pytest-report.xml
 
+      # Five files under tests/e2e/ are hermetic: every Flow origin is served by
+      # `page.route(...).fulfill(...)`, so they need no account, no profile, no
+      # network and no credits — only the Chromium installed above. They are the
+      # regression tests for #593, #773, #859 and #860, and because `-m e2e` is
+      # excluded by pyproject's addopts and no job overrode it, they ran nowhere:
+      # a regression of any of those fixes would have gone green. They are the
+      # only e2e tests that CAN run here; the other 42 need a logged-in profile.
+      - name: E2E (hermetic subset — route-intercepted, $0, no profile)
+        if: matrix.python-version == '3.13'
+        run: >
+          uv run python -m pytest -q -m e2e
+          tests/e2e/test_account_chooser_e2e.py
+          tests/e2e/test_blocking_dialog_dismissal_bdd.py
+          tests/e2e/test_click_attribution_bdd.py
+          tests/e2e/test_frame_picker_binding_bdd.py
+          tests/e2e/test_landing_state_diagnosis_bdd.py
+          --junitxml=pytest-e2e-hermetic.xml
+
+      - name: E2E-count guard (an empty e2e run is not a passing e2e run)
+        if: matrix.python-version == '3.13'
+        run: uv run python scripts/ci/check_test_count.py pytest-e2e-hermetic.xml 10
+
       - name: Test-count guard (a green build that ran nothing is not green)
         # Floor well below the real count (~2900): catches collection collapse
         # (bad marker/-k filter, broken conftest), never routine deletions.

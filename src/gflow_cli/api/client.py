@@ -1542,20 +1542,44 @@ class FlowApiClient:
         try:
             parsed = json.loads(await resp.text())
         except json.JSONDecodeError as exc:
+            # #803: a non-JSON body is an interstitial, a consent page or a
+            # redirect — not an expired credential. Re-authenticating cannot
+            # change the shape of this reply, so the class default would send
+            # the user somewhere that costs them their session for nothing.
             raise AisandboxAuthError(
                 detail="non-JSON /auth/session response",
                 status=resp.status,
                 instance=_make_instance(),
                 route="auth/session",
+                remediation_hint=(
+                    "Flow's session endpoint returned a non-JSON response — an "
+                    "interstitial or a redirect, not an expired cookie. Re-run with "
+                    "GFLOW_CLI_LOG_LEVEL=DEBUG and check which host Flow served this "
+                    "account from; re-authenticating will not change a non-JSON "
+                    "reply. See issue #803."
+                ),
             ) from exc
         data = cast("JsonObject", parsed) if isinstance(parsed, dict) else {}
         token = data.get("access_token")
         if not token:
+            # #803/#795: labs answering 200 with no token is the migrated-account
+            # shape, not an expired session. aisandbox-pa has not been contacted
+            # yet, so nothing has rejected anything — and SAPISID is what made
+            # this probe answer at all. Mirrors the wording live-verified for
+            # `gflow credits` in api/credits.py.
             raise AisandboxAuthError(
-                detail="no access_token in /fx/api/auth/session (session expired?)",
+                detail="no access_token in /fx/api/auth/session",
                 status=resp.status,
                 instance=_make_instance(),
                 route="auth/session",
+                remediation_hint=(
+                    "Flow's labs.google session carries no API token for this account. "
+                    "On accounts Google serves from flow.google.com this is expected "
+                    "and re-authenticating will not help — it can also roll this "
+                    "profile's Chrome-strategy marker back and start the #791 "
+                    "re-login loop. Generation still works; the routes that need this "
+                    "token do not. See issue #803."
+                ),
             )
         return str(token), _parse_iso_to_epoch(data.get("expires"))
 
@@ -1630,11 +1654,23 @@ class FlowApiClient:
             await self._ensure_access_token()
             resp = await self._run_with_retry(attempt, route=route)
             if resp.status == 401:
+                # #803: the token was minted and then refused, so the Google
+                # sign-in is the one thing here that demonstrably works. Name
+                # the route — it is what tells the user which capability is
+                # refused rather than implying the whole session is broken.
                 raise AisandboxAuthError(
                     detail="aisandbox-pa returned 401 after token refresh",
                     status=401,
                     instance=_make_instance(),
                     route=route,
+                    remediation_hint=(
+                        "Flow's labs.google session issued an API token and "
+                        f"aisandbox-pa rejected it on route {route}. Your Google "
+                        "sign-in is not the problem — minting that token is what "
+                        "proves it works. Most commonly Flow now serves this account "
+                        "from flow.google.com, where these read routes have not "
+                        "answered for us. See issue #803."
+                    ),
                 )
         return resp
 

@@ -1694,6 +1694,11 @@ use. When set:
   `dimensions`, `fife_url`, `is_signed_url`) plus the on-disk `local_path`;
   `ref_count` is included on `i2i`. Single-prompt only — `--json` rejects
   multi-prompt batches with a Click usage error.
+  **`model_name_type` is `null` when Flow served the account from
+  `flow.google.com`** — that host's reply carries no model field, and gflow
+  reports what it observed rather than echoing your `--model` back (#789). It is
+  also `null` in the `model` column of `gflow data` for those assets. On
+  `labs.google` it is Flow's own value, e.g. `"NARWHAL"`.
 - `video t2v/i2v/r2v` emits the `VideoResult` (`status`, `command`, `media_id`,
   `generation_status`, `succeeded`, `local_path`, `failure_reasons`,
   `error_message`) plus the request echo (`model`, `mode`, `aspect`,

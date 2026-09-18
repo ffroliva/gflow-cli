@@ -2874,6 +2874,30 @@ async def test_image_submit_decodes_the_ogiz0b_reply() -> None:
     assert page.dom.submit_clicked == 1
 
 
+async def test_the_migrated_reply_reports_no_model_because_it_carries_none() -> None:
+    """#789: the `ogiZ0b` reply has no model field, so gflow must report none.
+
+    Echoing `request.model` back made the catalogue assert an attribution nobody
+    observed — and `recorder.py` persists it as `AssetRecord.model`, so `gflow
+    data` reads the echo back as though Flow had confirmed it. That is the same
+    class of claim #788 is about: a hidden picker can leave a *different* model
+    selected, in which case the echo is not merely unverified but wrong, and it
+    is the field a user would check to find out.
+    """
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_responses = [(_batch_url("ogiZ0b"), _image_frame())]
+
+    images = await MigratedComposer().submit_images_and_observe(
+        page, GenerateImageRequest(prompt="a blue cup")
+    )
+
+    assert images[0].model_name_type is None
+
+
 async def test_an_image_submit_missing_its_reference_is_refused_not_reported_as_i2i() -> None:
     """The route-error listener is the only thing between a dropped upload and a
     plausible T2I result handed back as image-to-image. Flow answers 200 either way.

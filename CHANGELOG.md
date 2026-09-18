@@ -18,6 +18,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the signed URL Flow reports for it, verifies the bytes against the size Flow records,
   writes the file and updates `local_files`. Costs no credits. Mirrored as the
   `gflow_download_media` MCP tool.
+
+### Fixed
+
+- **Auth errors on aisandbox routes no longer blame a cookie they never read
+  (#803).** `AisandboxAuthError`'s default remediation said *"SAPISID cookie
+  missing, expired, or unreadable — re-run `gflow auth login`"*. v0.74.0 corrected
+  the two `gflow credits` sites, but the other three raise sites inherited that
+  default, so every route through `_run_with_aisandbox_retry` — `createScene`,
+  `commitWorkflow`, `createEntity`, `projectInitialData`, `upsampleImage` and the
+  rest — still said it. None of them reads SAPISID: the credential is a Bearer
+  token minted by labs' session endpoint, and SAPISID's only role is getting that
+  endpoint to answer at all. The advice was therefore wrong in every word, and
+  costly: on a profile with no browser-strategy marker a failed re-login rolls the
+  marker back and starts the #791 loop. Each site now states what was actually
+  rejected — a non-JSON reply is named as an interstitial, a token-less session is
+  named as the flow.google.com shape, and a 401 after refresh names the route that
+  refused it.
+- **The migrated host no longer reports a model it never observed (#789).**
+  `model_name_type` echoed the requested `--model` back on `flow.google.com`, where
+  the `ogiZ0b` reply carries no model field at all. `recorder.py` persists that
+  value as `AssetRecord.model`, so the echo was read back by `gflow data` as though
+  Flow had confirmed it — and with a hidden model picker (#788) the model actually
+  selected can differ from the one requested, making the echo wrong on the single
+  field a user would check to find out. It is now `null` on that host, and typed
+  `str | None`. On `labs.google` it is unchanged: Flow's own value, from Flow's own
+  reply.
   ([#865](https://github.com/ffroliva/gflow-cli/issues/865),
   [#871](https://github.com/ffroliva/gflow-cli/issues/871))
 

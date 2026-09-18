@@ -212,19 +212,29 @@ class AuthExpiredError(FlowApiError):
 
 
 class AisandboxAuthError(AuthExpiredError):
-    """aisandbox-pa REST returned 401 even after a fresh SAPISIDHASH.
+    """The aisandbox-pa access token could not be obtained, or was refused.
 
     Distinct from the generic AuthExpiredError so callers (and the scene
     feature) can catch the aisandbox-specific auth failure, while still
     mapping to exit code 3 via the EXIT_CODE_MAP isinstance walk (no own
     entry needed — it inherits AuthExpiredError's code).
+
+    #803: this used to be documented and remediated as a SAPISID failure. No
+    route that raises it reads SAPISID — the credential is a Bearer token
+    minted by labs' `/fx/api/auth/session`, and SAPISID's only role is getting
+    that session to answer at all. So a SAPISID remediation names a credential
+    that is, by the time we are here, demonstrably working. Prefer an explicit
+    ``remediation_hint`` at each raise site; the default below has to stay true
+    on every route that can reach it.
     """
 
     problem_type = "https://gflow-cli.dev/errors/aisandbox-auth"
     title = "aisandbox-pa authentication failed"
     _default_remediation = (
-        "SAPISID cookie missing, expired, or unreadable. "
-        "Re-run `gflow auth login --profile <name>` and retry."
+        "Flow's session did not yield an API token that aisandbox-pa accepted. "
+        "If Flow serves this account from flow.google.com, re-authenticating will "
+        "not help — that host mints no such token. Otherwise re-run `gflow auth "
+        "login --profile <name>` and retry. See issue #803."
     )
 
 

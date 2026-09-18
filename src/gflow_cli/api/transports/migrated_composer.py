@@ -2386,7 +2386,13 @@ class MigratedComposer:
                         workflow_id=record.workflow_id,
                         seed=record.seed,
                         prompt=record.prompt,
-                        model_name_type=request.model.value,
+                        # #789: the ogiZ0b reply carries no model field. Echoing
+                        # the request back would report an attribution this host
+                        # never confirmed — and with a hidden model picker (#788)
+                        # the selected model can differ from the requested one,
+                        # making the echo actively wrong on the single field a
+                        # user would check to find out.
+                        model_name_type=None,
                         aspect_ratio=request.aspect.value,
                         fife_url=record.image_url,
                         dimensions=record.dimensions,

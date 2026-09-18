@@ -19,7 +19,10 @@ def test_aisandbox_auth_error_is_distinct_but_inherits_exit_code_3():
     assert issubclass(AisandboxAuthError, AuthExpiredError)
     # Inherits AuthExpiredError's exit code (3) via the isinstance walk
     assert _exit_code_for(err) == 3
-    # Has its own remediation, not the generic one
-    assert "SAPISID" in err.remediation_hint
+    # Has its own remediation, not the generic one. #803: it must NOT name
+    # SAPISID — no route that raises this class reads that cookie, and sending
+    # the user to re-authenticate can roll a working profile's marker back.
+    assert "SAPISID" not in err.remediation_hint
+    assert "token" in err.remediation_hint.lower()
     # No standalone EXIT_CODE_MAP entry needed (inherits parent's)
     assert AisandboxAuthError not in EXIT_CODE_MAP

@@ -834,6 +834,13 @@ aisandbox-pa had either not been contacted or had answered, and SAPISID was pres
 On a profile with no browser-strategy marker that advice is worse than useless, since a failed
 *first* login rolls the marker back ([#791](https://github.com/ffroliva/gflow-cli/issues/791)).
 
+v0.74.0 corrected the two `gflow credits` sites; the same wording survived on **every other
+aisandbox route** — `createScene`, `commitWorkflow`, `createEntity`, `projectInitialData`,
+`upsampleImage` and the rest — because they inherited the class default instead of passing a
+hint. Fixed in v0.79.0 ([#803](https://github.com/ffroliva/gflow-cli/issues/803)): each of the
+three remaining raise sites now states what was actually rejected, the 401 site names the route
+that refused, and the class default no longer asserts a SAPISID failure at all.
+
 Reading a balance on the migrated host is **not** implemented
 ([#795](https://github.com/ffroliva/gflow-cli/issues/795), open). Generation is unaffected.
 
