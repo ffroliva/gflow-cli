@@ -68,6 +68,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.errors import (
     ConfigurationError,
+    ContentPolicyError,
     FlowAgentUiError,
     FlowHostMigratedError,
     InsufficientCreditsError,
@@ -311,6 +312,42 @@ SUBMIT_ENABLE_POLL_S = 0.1
 #: URLs (``as29s``) followed 2–5 s later in every measured run. Wait that long
 #: for it before settling for the URL-less record.
 RESULT_URL_GRACE_S = 20.0
+#: Phrases the migrated host's refusal card is measured to carry (2026-09-17,
+#: incident 0b80d7ea: "Failed / We noticed some unusual activity… / You have
+#: not been charged for this generation"). The refusal renders as a media-grid
+#: card, NOT as a batchexecute record — the generation record either arrives as
+#: a bare status-4 or never parses — so the card's DOM text is the only carrier
+#: of the reason. Read at failure time only; the scrape never blocks a result.
+REFUSAL_CARD_MARKERS: tuple[str, ...] = (
+    "unusual activity",
+    "not been charged",
+    "violates",
+    "content policy",
+    "safety policy",
+    "can't generate",
+    "cannot generate",
+    "unable to generate",
+)
+#: Bounded so a hung evaluate cannot extend an already-failed run.
+REFUSAL_CARD_SCRAPE_S = 3.0
+#: innerText of the SMALLEST elements carrying a marker — the card body, not a
+#: page-level ancestor that would drag the whole grid's text along.
+_REFUSAL_CARD_JS = """(markers) => {
+  const out = [];
+  for (const el of document.querySelectorAll('body *')) {
+    const t = (el.innerText || '').trim();
+    if (!t || t.length > 600) continue;
+    const low = t.toLowerCase();
+    if (!markers.some(m => low.includes(m))) continue;
+    let childHas = false;
+    for (const c of el.children) {
+      const ct = (c.innerText || '').toLowerCase();
+      if (markers.some(m => ct.includes(m))) { childHas = true; break; }
+    }
+    if (!childHas) out.push(t.slice(0, 400));
+  }
+  return out;
+}"""
 IMAGE_REPLY_BUDGET_S = 180.0
 
 #: Product names read back verbatim from the live migrated menu (v0.62.1's refusal
@@ -2098,6 +2135,39 @@ class MigratedComposer:
         await page.keyboard.insert_text(prompt)
         log.info("migrated.prompt_typed", chars=len(prompt))
 
+    async def _refusal_card_texts(self, page: Page) -> list[str]:
+        """innerText of every refusal card currently in the media grid.
+
+        Best-effort by contract: a dead page, a hung evaluate, or a non-list
+        result all read as "no card" — the caller's own error is always the
+        more useful one to keep.
+        """
+        try:
+            texts = await asyncio.wait_for(
+                page.evaluate(_REFUSAL_CARD_JS, REFUSAL_CARD_MARKERS),
+                timeout=REFUSAL_CARD_SCRAPE_S,
+            )
+        except Exception:  # noqa: BLE001 — scrape failure must not mask the real one
+            return []
+        if not isinstance(texts, list):
+            return []
+        return [t for t in texts if isinstance(t, str) and t.strip()]
+
+    async def _raise_if_refused(self, page: Page, baseline: list[str]) -> None:
+        """Raise :class:`ContentPolicyError` when a NEW refusal card appeared.
+
+        ``baseline`` is the card set captured before the submit click: the grid
+        keeps old failures forever, so only a card that was not there before
+        this submit can be attributed to it.
+        """
+        new = [t for t in await self._refusal_card_texts(page) if t not in baseline]
+        if new:
+            raise ContentPolicyError(
+                detail=f"migrated host refused the generation: {new[0]}",
+                route="batchexecute:submit",
+            )
+
+
     async def submit_and_observe(
         self,
         page: Page,
@@ -2280,6 +2350,9 @@ class MigratedComposer:
                         ),
                     )
                 await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
+            # Refusal cards already in the grid belong to earlier generations;
+            # only a card that appears AFTER this click can be attributed to it.
+            refusal_baseline = await self._refusal_card_texts(page)
             deadline = time.monotonic() + poll_timeout_s
             # The credit-spending click: a bare timeout here leaves "did it submit?"
             # unanswerable, which is the worst place in this driver to lose attribution.
@@ -2294,6 +2367,10 @@ class MigratedComposer:
                 # named as such and not as whatever the reply then says.
                 raise route_error.result()
             if not submitted.done():
+                # A refusal renders as a media-grid card, not a batchexecute
+                # record — the submit reply never parses, so this timeout is
+                # the refusal's disguise. Check the DOM before naming it one.
+                await self._raise_if_refused(page, refusal_baseline)
                 seen = ", ".join(sorted(seen_submit_rpcs)) or "none"
                 raise TransportTimeoutError(
                     detail=(
@@ -2311,9 +2388,19 @@ class MigratedComposer:
                 maybe = on_started(started)
                 if asyncio.iscoroutine(maybe):
                     await maybe
-            final = await self._await_terminal(
-                terminal, done_no_url, deadline=deadline, workflow_id=first.workflow_id
-            )
+            try:
+                final = await self._await_terminal(
+                    terminal, done_no_url, deadline=deadline, workflow_id=first.workflow_id
+                )
+            except TransportTimeoutError:
+                # Same disguise one stage later: the card can land while the
+                # status poll is still waiting for a terminal record.
+                await self._raise_if_refused(page, refusal_baseline)
+                raise
+            if final.is_failed:
+                # A parsed-but-failed record (status 4) carries no reason; the
+                # refusal card is the only place the reason exists.
+                await self._raise_if_refused(page, refusal_baseline)
             log.info(
                 "migrated.result",
                 status=final.status,
