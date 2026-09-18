@@ -1415,6 +1415,41 @@ async def test_a_failed_record_without_a_card_keeps_status_4() -> None:
     assert rec.is_failed and rec.status == 4
 
 
+async def test_a_refusal_card_on_an_empty_submit_reply_is_content_policy() -> None:
+    """A refusal can also arrive as a parsed-but-empty submit reply — the frame
+    comes back with no generation record, so without the DOM read this surfaces
+    as WireFormatError and the caller files a frontend bug for a refusal."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.dom.refusal_after_submit = [
+        "Failed\nWe noticed some unusual activity. You have not been charged."
+    ]
+    page.scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", [])),
+    ]
+    with pytest.raises(ContentPolicyError, match="unusual activity"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
+async def test_an_empty_submit_reply_without_a_card_stays_wire_format() -> None:
+    """No card → no refusal claim: an empty reply is a real envelope drift."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", [])),
+    ]
+    with pytest.raises(WireFormatError, match="no generation record"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
 async def test_a_submit_that_never_enables_also_checks_the_wallet_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

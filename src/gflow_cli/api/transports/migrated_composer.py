@@ -2365,6 +2365,14 @@ class MigratedComposer:
                 # The request is inspected before its reply lands, so a wrong body is
                 # named as such and not as whatever the reply then says.
                 raise route_error.result()
+            if submitted.done():
+                exc = submitted.exception()
+                if isinstance(exc, WireFormatError):
+                    # A refusal can also arrive as a parsed-but-empty submit reply
+                    # ("no generation record in the reply, payload []") — the card
+                    # is in the DOM even though a frame came back.
+                    await self._raise_if_refused(page, refusal_baseline)
+                    raise exc
             if not submitted.done():
                 # A refusal renders as a media-grid card, not a batchexecute
                 # record — the submit reply never parses, so this timeout is
@@ -2502,6 +2510,9 @@ class MigratedComposer:
                         detail="migrated host: image submit stayed disabled (host=migrated)"
                     )
                 await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
+            # Refusal cards already in the grid belong to earlier generations;
+            # only a card that appears AFTER this click can be attributed to it.
+            refusal_baseline = await self._refusal_card_texts(page)
             await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             done, _ = await asyncio.wait(
                 {result, route_error},
@@ -2510,7 +2521,13 @@ class MigratedComposer:
             )
             if route_error.done():
                 raise route_error.result()
+            if result.done():
+                exc = result.exception()
+                if isinstance(exc, WireFormatError):
+                    await self._raise_if_refused(page, refusal_baseline)
+                    raise exc
             if result not in done:
+                await self._raise_if_refused(page, refusal_baseline)
                 raise TransportTimeoutError(
                     detail=(
                         f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "
