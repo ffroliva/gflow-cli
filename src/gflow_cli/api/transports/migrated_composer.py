@@ -2182,7 +2182,7 @@ class MigratedComposer:
                 if has_tiles:
                     break
             except Exception:  # noqa: BLE001
-                break
+                pass
             await asyncio.sleep(0.1)
 
     async def _capture_refusal_baseline(self, page: Page) -> list[str]:
