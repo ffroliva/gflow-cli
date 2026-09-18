@@ -2151,7 +2151,7 @@ class MigratedComposer:
             return []
         if not isinstance(texts, list):
             return []
-        return [t for t in texts if isinstance(t, str) and t.strip()]
+        return [t for t in cast(list[object], texts) if isinstance(t, str) and t.strip()]
 
     async def _raise_if_refused(self, page: Page, baseline: list[str]) -> None:
         """Raise :class:`ContentPolicyError` when a NEW refusal card appeared.
