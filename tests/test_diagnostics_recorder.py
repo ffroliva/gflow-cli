@@ -82,6 +82,7 @@ class TestShouldCapture:
             UiSelectorDriftError("x"),
             TransportTimeoutError("x"),
             WireFormatError("x"),
+            ContentPolicyError("policy"),
             WafRejectionError("x"),
             NetworkError("x"),
             ProfileLockedError("x"),
@@ -89,7 +90,6 @@ class TestShouldCapture:
         ):
             assert rec.should_capture(exc), type(exc).__name__
         for exc in (
-            ContentPolicyError("expected"),
             AuthExpiredError("expected"),
             ConfigurationError("usage"),
             # Same policy class as AuthExpiredError: deterministic operator
@@ -184,6 +184,19 @@ class TestCaptureFailure:
         assert ref is not None and ref.path is not None
         assert not (ref.path / "sensitive").exists()
         assert not any(c.startswith("screenshot") for c in page.calls)
+
+    async def test_wire_format_and_content_policy_stage_screenshots(self, tmp_path: Path) -> None:
+        """WireFormatError and ContentPolicyError must capture screenshots so operators
+        have visual ground truth of the page on refusals and envelope drift."""
+        from gflow_cli.errors import ContentPolicyError, WireFormatError
+
+        for exc in (WireFormatError("bad envelope"), ContentPolicyError("refusal")):
+            rec = _recorder(tmp_path)
+            page = FakePage()
+            ref = await rec.capture_failure(exc, page=page, phase="generate")
+            assert ref is not None and ref.path is not None
+            assert (ref.path / "sensitive" / "screenshot.png").exists(), type(exc).__name__
+            assert any(c.startswith("screenshot") for c in page.calls)
 
     async def test_structural_result_rejects_non_allowlisted_fields(self, tmp_path: Path) -> None:
         """S12: hostile DOM payload fields never reach ui.json."""
@@ -322,7 +335,7 @@ class TestCaptureFailure:
 
     async def test_expected_failures_create_no_bundle(self, tmp_path: Path) -> None:
         rec = _recorder(tmp_path)
-        for exc in (ContentPolicyError("x"), AuthExpiredError("x")):
+        for exc in (AuthExpiredError("x"),):
             assert await rec.capture_failure(exc, page=FakePage(), phase="p") is None
         assert _bundles(tmp_path) == []
 

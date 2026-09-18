@@ -571,8 +571,8 @@ class FakePage:
         self._handlers[event].append(handler)
 
     async def evaluate(self, js: str, arg: Any = None) -> Any:
-        # The only page.evaluate the composer runs is the refusal-card scrape;
-        # model it as "the grid's current card texts".
+        if "cdk-virtual-scroll-viewport" in js:
+            return True
         return list(self.dom.refusal_texts)
 
     def remove_listener(self, event: str, handler: Any) -> None:
@@ -1393,6 +1393,28 @@ async def test_a_stale_refusal_card_is_not_attributed_to_this_run(
     page.dom.prompt = "a crane"
     page.dom.refusal_texts = ["Failed\nWe noticed some unusual activity."]
     with pytest.raises(TransportTimeoutError):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
+async def test_a_second_identical_refusal_card_is_detected_via_counter_difference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the grid already has one refusal card from a prior run, and the current
+    submit produces another refusal with the IDENTICAL text, Counter diffing must
+    attribute the increment to this run rather than discarding it as stale."""
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "SUBMIT_REPLY_BUDGET_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    stale_text = "Failed\nWe noticed some unusual activity. You have not been charged."
+    page.dom.refusal_texts = [stale_text]
+    # Another identical card appears after submit:
+    page.dom.refusal_after_submit = [stale_text]
+    with pytest.raises(ContentPolicyError, match="unusual activity"):
         await MigratedComposer().submit_and_observe(
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
         )
