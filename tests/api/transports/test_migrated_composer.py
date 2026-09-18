@@ -202,6 +202,7 @@ class Dom:
     #: pre-submit baseline and never attributed.
     refusal_after_submit: list[str] = field(default_factory=list)
 
+
 def _default_dom() -> Dom:
     return Dom(
         groups={
@@ -1412,6 +1413,7 @@ async def test_a_failed_record_without_a_card_keeps_status_4() -> None:
         page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
     )
     assert rec.is_failed and rec.status == 4
+
 
 async def test_a_submit_that_never_enables_also_checks_the_wallet_first(
     monkeypatch: pytest.MonkeyPatch,

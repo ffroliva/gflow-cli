@@ -2167,7 +2167,6 @@ class MigratedComposer:
                 route="batchexecute:submit",
             )
 
-
     async def submit_and_observe(
         self,
         page: Page,
