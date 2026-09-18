@@ -32,6 +32,7 @@ from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     ConfigurationError,
+    ContentPolicyError,
     FlowAgentUiError,
     FlowHostMigratedError,
     InsufficientCreditsError,
@@ -191,6 +192,15 @@ class Dom:
     agent_chip_probes: int = 0
     agent_chip_click_raises: bool = False
     agent_panel_expanded: bool = False
+    #: innerText of refusal cards in the media grid, as `_REFUSAL_CARD_JS` would
+    #: return them. The refusal is a DOM card, not a batchexecute record — this
+    #: is the only place the fake can express it.
+    refusal_texts: list[str] = field(default_factory=list)
+
+    #: Cards that appear only once the submit click lands — the real refusal
+    #: renders in reaction to THIS run, so a static list would be read as the
+    #: pre-submit baseline and never attributed.
+    refusal_after_submit: list[str] = field(default_factory=list)
 
 
 def _default_dom() -> Dom:
@@ -560,6 +570,11 @@ class FakePage:
     def on(self, event: str, handler: Any) -> None:
         self._handlers[event].append(handler)
 
+    async def evaluate(self, js: str, arg: Any = None) -> Any:
+        if "cdk-virtual-scroll-viewport" in js:
+            return True
+        return list(self.dom.refusal_texts)
+
     def remove_listener(self, event: str, handler: Any) -> None:
         self._handlers[event] = [h for h in self._handlers[event] if h is not handler]
 
@@ -575,6 +590,8 @@ class FakePage:
             asyncio.get_event_loop().create_task(_maybe_await(h(response)))
 
     def _fire_submit(self) -> None:
+        self.dom.refusal_texts.extend(self.dom.refusal_after_submit)
+
         if self.scripted_request is not None:
             rpcid, body = self.scripted_request
             # None rpcid: the real nprQif shape — no rpcids query param at all.
@@ -1316,6 +1333,140 @@ async def test_a_missing_submit_with_no_credits_warning_is_still_drift() -> None
     page.dom.credits_warning_present = False  # anchor gone, wallet fine
 
     with pytest.raises(UiSelectorDriftError, match="is missing"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
+async def test_a_refusal_card_on_submit_timeout_is_content_policy_not_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal renders as a media-grid card, not a batchexecute record — the
+    submit reply never parses, so without the DOM read this surfaces as a
+    retryable TransportTimeoutError and the caller retries a refusal."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "SUBMIT_REPLY_BUDGET_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.dom.refusal_after_submit = [
+        "Failed\nWe noticed some unusual activity. Please visit the Help Center "
+        "for more information.\nYou have not been charged for this generation."
+    ]
+    # No scripted_responses: the submit reply never arrives.
+    with pytest.raises(ContentPolicyError, match="unusual activity"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+    assert page.dom.submit_clicked == 1
+
+
+async def test_a_refusal_card_on_a_failed_record_is_content_policy_not_status_4() -> None:
+    """A parsed-but-failed record (status 4) carries no reason; the card is the
+    only place the reason exists."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.dom.refusal_after_submit = [
+        "Failed\nWe noticed some unusual activity. You have not been charged."
+    ]
+    page.scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(4))),
+    ]
+    with pytest.raises(ContentPolicyError, match="unusual activity"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
+async def test_a_stale_refusal_card_is_not_attributed_to_this_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The grid keeps old failures forever; a card present BEFORE the click is
+    not this run's refusal, so the timeout stays a timeout."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "SUBMIT_REPLY_BUDGET_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.dom.refusal_texts = ["Failed\nWe noticed some unusual activity."]
+    with pytest.raises(TransportTimeoutError):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
+async def test_a_second_identical_refusal_card_is_detected_via_counter_difference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the grid already has one refusal card from a prior run, and the current
+    submit produces another refusal with the IDENTICAL text, Counter diffing must
+    attribute the increment to this run rather than discarding it as stale."""
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "SUBMIT_REPLY_BUDGET_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    stale_text = "Failed\nWe noticed some unusual activity. You have not been charged."
+    page.dom.refusal_texts = [stale_text]
+    # Another identical card appears after submit:
+    page.dom.refusal_after_submit = [stale_text]
+    with pytest.raises(ContentPolicyError, match="unusual activity"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
+async def test_a_failed_record_without_a_card_keeps_status_4() -> None:
+    """No card → no refusal claim: a bare status-4 stays a failed record, so the
+    caller sees 'migrated host reported status 4', not a guessed policy."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(4))),
+    ]
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_failed and rec.status == 4
+
+
+async def test_a_refusal_card_on_an_empty_submit_reply_is_content_policy() -> None:
+    """A refusal can also arrive as a parsed-but-empty submit reply — the frame
+    comes back with no generation record, so without the DOM read this surfaces
+    as WireFormatError and the caller files a frontend bug for a refusal."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.dom.refusal_after_submit = [
+        "Failed\nWe noticed some unusual activity. You have not been charged."
+    ]
+    page.scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", [])),
+    ]
+    with pytest.raises(ContentPolicyError, match="unusual activity"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
+async def test_an_empty_submit_reply_without_a_card_stays_wire_format() -> None:
+    """No card → no refusal claim: an empty reply is a real envelope drift."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", [])),
+    ]
+    with pytest.raises(WireFormatError, match="no generation record"):
         await MigratedComposer().submit_and_observe(
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
         )

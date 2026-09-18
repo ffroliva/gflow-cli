@@ -1018,7 +1018,6 @@ class IncidentRecorder:
     def should_capture(self, exc: BaseException) -> bool:
         from gflow_cli.errors import (
             AuthExpiredError,
-            ContentPolicyError,
             FlowAccountChooserError,
             GFlowError,
             ProfileLockedError,
@@ -1028,11 +1027,9 @@ class IncidentRecorder:
             return False
         if not isinstance(exc, Exception):
             return False  # cancellation/KeyboardInterrupt/SystemExit are not incidents
-        if isinstance(exc, (ContentPolicyError, AuthExpiredError, FlowAccountChooserError)):
-            # Deterministic operator remediation; DOM adds nothing. The chooser error
-            # additionally fires ONLY while the page is on accounts.google.com, so a
-            # bundle would carry a DOM dump and a full-page screenshot of a Google auth
-            # surface into the artifact users are prompted to attach to GitHub issues.
+        if isinstance(exc, (AuthExpiredError, FlowAccountChooserError)):
+            # Auth surface errors fire on accounts.google.com — a bundle would carry
+            # credentials and Google auth DOM into the artifact. Never capture them.
             return False
         if isinstance(exc, ProfileLockedError):
             return True  # metadata-only incident
@@ -1852,6 +1849,7 @@ def _validate_overlay(raw: dict[str, object]) -> dict[str, object]:
 def _capture_triggers() -> tuple[type[BaseException], ...]:
     from gflow_cli.errors import (
         BrowserSessionClosedError,
+        ContentPolicyError,
         FlowAgentUiError,
         FlowAppError,
         FlowHostMigratedError,
@@ -1877,17 +1875,20 @@ def _capture_triggers() -> tuple[type[BaseException], ...]:
         WireFormatError,
         WafRejectionError,
         NetworkError,
+        ContentPolicyError,
     )
 
 
 def _screenshot_triggers() -> tuple[type[BaseException], ...]:
     from gflow_cli.errors import (
+        ContentPolicyError,
         FlowAgentUiError,
         FlowAppError,
         FlowHostMigratedError,
         TransportTimeoutError,
         UiModeUnavailableError,
         UiSelectorDriftError,
+        WireFormatError,
     )
 
     return (
@@ -1897,4 +1898,6 @@ def _screenshot_triggers() -> tuple[type[BaseException], ...]:
         UiModeUnavailableError,
         UiSelectorDriftError,
         TransportTimeoutError,
+        WireFormatError,
+        ContentPolicyError,
     )
