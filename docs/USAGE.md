@@ -1329,8 +1329,13 @@ Options:
 
 ## `gflow data download`
 
-Fetch an already-generated asset from Flow by its media ID, for the case where the
+Fetch an already-generated **video** from Flow by its media ID, for the case where the
 generation succeeded but its download did not.
+
+> **Video only.** The signed URL this needs comes from a record Flow emits when a clip's
+> own route loads, and an image's route does not carry one. An image media ID is refused
+> immediately with exit 11 and a message saying so — it does not open a browser or wait.
+> Tracked in [#877](https://github.com/ffroliva/gflow-cli/issues/877).
 
 That case is real and costs money: on `flow.google.com` a generation whose signed media
 URL is not observed within the grace window exits 7 (`WireFormatError`) **after the

@@ -16,7 +16,7 @@ import pytest
 
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataStoreError
+from gflow_cli.errors import ConfigurationError, DataStoreError
 from gflow_cli.services.media_recovery import (
     DownloadedMedia,
     download_media,
@@ -135,6 +135,71 @@ class TestDownloadMedia:
 
         with pytest.raises(DataStoreError, match="no project id"):
             await download_media(media_id="vid-media-alice-0", profile="alice", out_dir=None)
+
+    @pytest.mark.asyncio
+    async def test_refuses_an_image_before_launching_a_browser(
+        self, catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#877: recovery is video-only, and the refusal has to be immediate.
+
+        The signed URL comes from the ``as29s`` record a clip route emits; an image's
+        route never emits one, so the old code accepted the id, opened Chrome, waited
+        45 s and then blamed the project, the trash and the user's prompt — three
+        guesses, all false, for a condition the catalog row states outright.
+        """
+
+        def _boom(*_a: Any, **_k: Any) -> None:  # pragma: no cover - must not run
+            raise AssertionError("a browser was launched for an image media id")
+
+        monkeypatch.setattr("gflow_cli._cli_helpers._make_provider_dir", _boom)
+
+        with pytest.raises(ConfigurationError, match="video") as excinfo:
+            await download_media(media_id="img-media-alice-0-0", profile="alice", out_dir=None)
+
+        detail = str(excinfo.value)
+        assert "877" in detail, detail
+        # Never repeat the old guesses: the row says it is an image.
+        assert "trash" not in detail.lower(), detail
+
+        # The REMEDIATION, not just the detail. A live run caught this: the first
+        # version of the fix left ConfigurationError's class default in place, so the
+        # message said "check that the transport name is registered via
+        # make_transport()" — one misleading hint swapped for another, with every
+        # test still green because they only read the detail.
+        hint = excinfo.value.remediation_hint
+        assert "make_transport" not in hint, hint
+        assert "transport" not in hint.lower(), hint
+        assert "image" in hint.lower(), hint
+
+    @pytest.mark.asyncio
+    async def test_the_mcp_twin_refuses_an_image_too(
+        self, catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The MCP tool is a separate surface, so it gets its own assertion.
+
+        It shares the service, and the service was never the risk — the adapter is.
+        Here the adapter deliberately does NOT re-raise: `_guarded` funnels a
+        `GFlowError` into a problem-details envelope. So the thing to pin is that the
+        reason survives that conversion — an agent that got a generic failure would
+        retry a media id that can never work.
+        """
+        from gflow_cli.mcp import tools as mcp_tools
+
+        def _boom(*_a: Any, **_k: Any) -> None:  # pragma: no cover - must not run
+            raise AssertionError("the MCP twin launched a browser for an image")
+
+        monkeypatch.setattr("gflow_cli._cli_helpers._make_provider_dir", _boom)
+
+        result = await mcp_tools.gflow_download_media(
+            media_id="img-media-alice-0-0", profile="alice"
+        )
+
+        assert result["status"] == "error", result
+        blob = str(result)
+        assert "video only" in blob, blob
+        assert "877" in blob, blob
+        # Not the masked generic envelope — that would lose the reason entirely.
+        assert "unexpected" not in blob.lower(), blob
 
     @pytest.mark.asyncio
     async def test_reports_the_written_file_and_records_it(

@@ -1436,11 +1436,13 @@ async def gflow_character_show(
 @server.tool(
     name="gflow_download_media",
     description=(
-        "Fetch an already-generated asset from Flow by its media ID and write it to "
+        "Fetch an already-generated VIDEO from Flow by its media ID and write it to "
         "disk. For a generation that finished and was billed but whose download failed "
-        "— the asset is in the Flow project and the local catalog shows no file for it. "
+        "— the clip is in the Flow project and the local catalog shows no file for it. "
         "Spends no credits: the generation was already paid for. The bytes are verified "
-        "against the size Flow reports before the file is written."
+        "against the size Flow reports before the file is written. Video only: an image "
+        "media ID is refused immediately (exit 11) because the signed URL this needs "
+        "comes from a record only a clip's route emits. See issue #877."
     ),
 )
 @_guarded

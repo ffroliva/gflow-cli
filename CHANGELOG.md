@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`gflow data download` refuses an image immediately instead of blaming the project,
+  the trash and your prompt (#877).** Recovery is video-only: the signed URL comes from
+  the `as29s` record Flow emits when a clip's own route loads, and an image's route does
+  not carry one. The command accepted an image media id anyway, launched Chrome, waited
+  45 s, and then produced three guesses — wrong project, clip in trash, *"retry with a
+  simpler prompt text"* — for a condition the catalog row states outright, on a command
+  that has no prompt. It now checks `kind` before anything else and exits 11 saying
+  recovery is video-only. The CLI help, the `gflow_download_media` MCP description and
+  `docs/USAGE.md` all said "asset"; they now say video. The timeout message that remains
+  for a genuine video miss drops the inherited generation-payload remediation and
+  describes what to actually check.
+
 ### Added
 
 - **`gflow data download <media_id>` — recover a billed asset whose download failed.**

@@ -18,10 +18,10 @@ from pathlib import Path
 import structlog
 
 from gflow_cli.config import get_settings
-from gflow_cli.data.models import AssetLookup, LocalFileRecord
+from gflow_cli.data.models import AssetKind, AssetLookup, LocalFileRecord
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataStoreError
+from gflow_cli.errors import ConfigurationError, DataStoreError
 
 log = structlog.get_logger(__name__)
 
@@ -115,6 +115,26 @@ async def download_media(
     from gflow_cli.api.transports.migrated_recover import recover_clip  # noqa: PLC0415
 
     asset = resolve_asset(media_id, profile=profile, route=_ROUTE)
+    if asset.kind is not AssetKind.VIDEO:
+        # #877: the signed URL comes from the `as29s` record a clip route emits, which
+        # is a video mechanism — an image's route never emits one. Accepting the id
+        # anyway cost 45 s in a browser and then produced three guesses (wrong project,
+        # trashed clip, "retry with a simpler prompt") for a condition this row states
+        # outright. Refuse here, on what the catalog already knows.
+        raise ConfigurationError(
+            detail=(
+                f"Media {media_id!r} is {asset.kind.value}, and `gflow data download` "
+                "recovers video only. The signed URL it needs comes from the record "
+                "Flow emits when a clip's own route loads, and an image's route does "
+                "not carry one. Tracking the image path in issue #877."
+            ),
+            remediation_hint=(
+                "Nothing to retry — this is a capability gap, not a fault. Open the "
+                "image in Flow and save it from there, or pass a video media id. "
+                "`gflow data list images` shows which rows are images."
+            ),
+            route=_ROUTE,
+        )
     if not asset.flow_project_id:
         raise DataStoreError(
             detail=(

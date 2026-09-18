@@ -348,7 +348,7 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit a JSON summary instead of text.")
 def download(media_id: str, out_dir: Path | None, profile: str | None, as_json: bool) -> None:
-    """Fetch an already-generated asset from Flow by its media ID.
+    """Fetch an already-generated video from Flow by its media ID.
 
     For a generation that finished and was billed but whose download failed — the
     migrated host's 20s URL grace expiring leaves exactly this state, with the clip in
@@ -358,6 +358,10 @@ def download(media_id: str, out_dir: Path | None, profile: str | None, as_json: 
     Opens the clip's own route, takes the signed URL Flow reports for it, and verifies
     the bytes against the size Flow records before writing. Also writes the
     `local_files` row, so `gflow data list videos` stops showing `copy_count: 0`.
+
+    Video only. The signed URL comes from a record Flow emits when a clip's own route
+    loads; an image's route does not carry one, so an image media ID is refused
+    immediately with exit 11 rather than opening a browser. See issue #877.
     """
     run_with_handlers(
         lambda: _run_download(media_id=media_id, out_dir=out_dir, profile=profile, as_json=as_json),

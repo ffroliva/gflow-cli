@@ -104,11 +104,22 @@ async def _await_signed_record(
         page.remove_listener("response", on_response)
 
     if not found:
+        # #877: the class-default remediation on WireFormatError is written for
+        # generation payloads — "check request payload parameters or retry with a
+        # simpler prompt text" — and this command has neither a payload nor a prompt.
+        # An image id no longer reaches here (the service refuses on the catalog row),
+        # so the remaining causes really are about the clip.
         raise WireFormatError(
             detail=(
                 f"migrated host: no signed media URL for {media_id} within "
-                f"{wait_s:.0f}s of opening its clip route. The media id may belong to "
-                "another project, or the clip may have been moved to trash in Flow."
+                f"{wait_s:.0f}s of opening its clip route."
+            ),
+            remediation_hint=(
+                "Flow did not report a media URL for this clip. Open the project in "
+                "Flow and check the clip is still there — a clip moved to trash, or a "
+                "media id belonging to a different project, both look like this. If it "
+                "is visible and playable, re-run once: the record is fetched as the "
+                "route loads and a slow load can miss the window."
             ),
             route=_ROUTE,
         )
