@@ -77,6 +77,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/superpowers/spikes/2026-09-17-migrated-end-frame-submit-contract.md`). Frames given
   by media UUID or `@Name` are still not ported.
   ([#639](https://github.com/ffroliva/gflow-cli/issues/639))
+- Migrated image submits prove the composer before any network observer arms:
+  cookie-bar dismissal, blocking-overlay refusal, and submit pointer hit-test,
+  each raising typed `UiSelectorDriftError` with bounded redacted diagnostics
+  instead of bare Playwright timeouts.
 
 ### Fixed
 
@@ -140,6 +144,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GFLOW_CLI_LEASE_WAIT_SECONDS` you set yourself, in the environment or a `.env`, still
   wins. The CLI keeps failing fast. Thanks to @iceblue03 (#862).
   ([#864](https://github.com/ffroliva/gflow-cli/issues/864))
+- Image requests that the migrated composer serves, with a named project,
+  from a pre-navigation page prefer the migrated host on `auto`, so the
+  page-owned recaptcha path wins the post-goto handoff race instead of a
+  doomed pre-navigation mint (#692). Labs editors, unported forms, and
+  project-less runs keep the served host (and their pre-minted token); the
+  `labs.google` kill-switch behavior is unchanged.
 
 ## [0.77.1] — 2026-09-17
 

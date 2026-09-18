@@ -278,6 +278,16 @@ def test_page_owned_recaptcha_is_only_selected_for_the_migrated_route(
     page = MagicMock()
     transport._page = page  # noqa: SLF001
 
+    # Pre-navigation bootstrap page: assume migrated so the page-owned mint
+    # wins the post-goto handoff race instead of minting on a script-less
+    # gallery page (the #692 race). `_drive_images_generation` re-checks
+    # servability before skipping the mint, so the assumption cannot strand
+    # a labs run.
+    page.url = "https://labs.google/fx/tools/flow?hl=en"
+    assert transport.uses_page_owned_image_recaptcha()
+    # Already inside a labs editor: follow the served host. A labs editor
+    # needs its pre-minted token; assuming migrated here would skip the mint
+    # and strand it in a terminal auth failure (#780 review).
     page.url = f"https://labs.google/fx/en/tools/flow/project/{PROJECT}"
     assert not transport.uses_page_owned_image_recaptcha()
     page.url = f"https://flow.google.com/project/{PROJECT}"
@@ -331,6 +341,10 @@ def test_a_never_migrated_transport_does_not_latch_into_the_page_owned_path(
     page = MagicMock()
     transport._page = page  # noqa: SLF001
 
+    # Under labs.google kill-switch the capability must stay False so a labs
+    # account keeps minting the token it genuinely needs.
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "labs.google")
+    reset_settings()
     for url in ("about:blank", f"https://labs.google/fx/en/tools/flow/project/{PROJECT}"):
         page.url = url
         assert not transport.uses_page_owned_image_recaptcha(), url
