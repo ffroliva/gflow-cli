@@ -312,7 +312,7 @@ class RateLimitError(FlowApiError):
 class ContentPolicyError(FlowApiError):
     """Flow rejected the request under its content policy.
 
-    Two known raise sites:
+    Three known raise sites:
 
     1. **HTTP 200 with empty ``media[]``** — the classic content-safety path
        (``_common.py``). ``status`` is omitted from ``to_problem_details()``
@@ -327,6 +327,10 @@ class ContentPolicyError(FlowApiError):
        but stripped from ``to_problem_details()`` per the same RFC 9457
        contract.
 
+    3. **Refusal card on the migrated host** — ``_raise_if_refused`` in
+       ``migrated_composer.py``. On ``flow.google.com``, a prompt refusal
+       renders as a media-grid failure card or alert region while the
+       submit reply never parses or reports a bare status 4.
     Enforcement is at the class level (overrides ``to_problem_details``) —
     relying on callers to omit ``status=`` would silently break the RFC 9457
     contract the first time someone added it for symmetry with other error

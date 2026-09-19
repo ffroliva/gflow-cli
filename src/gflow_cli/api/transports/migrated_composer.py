@@ -319,35 +319,33 @@ RESULT_URL_GRACE_S = 20.0
 #: card, NOT as a batchexecute record — the generation record either arrives as
 #: a bare status-4 or never parses — so the card's DOM text is the only carrier
 #: of the reason. Read at failure time only; the scrape never blocks a result.
-REFUSAL_CARD_MARKERS: tuple[str, ...] = (
-    "unusual activity",
-    "not been charged",
-    "violates",
-    "content policy",
-    "safety policy",
-    "can't generate",
-    "cannot generate",
-    "unable to generate",
-)
 #: Bounded so a hung evaluate cannot extend an already-failed run.
 REFUSAL_CARD_SCRAPE_S = 3.0
-#: How long to wait for Angular CDK virtual scroll to mount media tiles before baseline scrape.
-MEDIA_GRID_STABILIZATION_S = 3.0
-#: innerText of the SMALLEST elements carrying a marker — the card body, not a
-#: page-level ancestor that would drag the whole grid's text along.
-_REFUSAL_CARD_JS = """(markers) => {
+#: Structural selector script for policy refusal / failure announcements and failed media tiles.
+#: Follows the house rule: detection structural, detail textual (§ AGENTS.md Locale Invariance).
+#: Scopes only to:
+#: 1. ARIA alert/dialog regions (toasts, inline banners, modal dialogs).
+#: 2. Media-grid tiles carrying a warning/error Material Symbol ligature.
+_REFUSAL_CARD_JS = """() => {
   const out = [];
-  for (const el of document.querySelectorAll('body *')) {
+  const alerts = document.querySelectorAll(
+    '[role="alert"], [aria-live="assertive"], [role="dialog"]'
+  );
+  for (const el of alerts) {
     const t = (el.innerText || '').trim();
-    if (!t || t.length > 600) continue;
-    const low = t.toLowerCase();
-    if (!markers.some(m => low.includes(m))) continue;
-    let childHas = false;
-    for (const c of el.children) {
-      const ct = (c.innerText || '').toLowerCase();
-      if (markers.some(m => ct.includes(m))) { childHas = true; break; }
+    if (t && t.length < 600) out.push(t.slice(0, 400));
+  }
+  const tiles = document.querySelectorAll(
+    'flow-grid-tile-container, flow-tile-container, flow-video-tile, flow-image-tile'
+  );
+  for (const tile of tiles) {
+    const icon = tile.querySelector('mat-icon');
+    if (!icon) continue;
+    const name = (icon.innerText || icon.textContent || '').trim().toLowerCase();
+    if (name === 'warning' || name === 'error') {
+      const t = (tile.innerText || '').trim();
+      if (t && t.length < 600) out.push(t.slice(0, 400));
     }
-    if (!childHas) out.push(t.slice(0, 400));
   }
   return out;
 }"""
@@ -2147,7 +2145,7 @@ class MigratedComposer:
         """
         try:
             texts = await asyncio.wait_for(
-                page.evaluate(_REFUSAL_CARD_JS, REFUSAL_CARD_MARKERS),
+                page.evaluate(_REFUSAL_CARD_JS),
                 timeout=REFUSAL_CARD_SCRAPE_S,
             )
         except Exception:  # noqa: BLE001 — scrape failure must not mask the real one
@@ -2155,40 +2153,6 @@ class MigratedComposer:
         if not isinstance(texts, list):
             return []
         return [t for t in cast(list[object], texts) if isinstance(t, str) and t.strip()]
-
-    async def _wait_for_media_grid_stable(
-        self, page: Page, timeout_s: float = MEDIA_GRID_STABILIZATION_S
-    ) -> None:
-        """Wait until Angular CDK virtual scroll attaches the project's media tiles.
-
-        On flow.google.com, tiles render inside an Angular CDK virtual-scroll viewport
-        (``cdk-virtual-scroll-viewport.tiles-container``). For ~1.5-2.5 seconds after
-        domcontentloaded, tile count is 0. Scraping before the virtual scroll has
-        mounted tiles returns [], causing pre-existing failure cards in project history
-        to be misattributed as a new refusal of the current submit.
-        """
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            try:
-                has_tiles = await page.evaluate("""() => {
-                    const vp = document.querySelector('cdk-virtual-scroll-viewport');
-                    if (!vp) return false;
-                    const tiles = document.querySelectorAll(
-                        'flow-grid-tile-container, flow-tile-container, ' +
-                        'flow-video-tile, flow-image-tile'
-                    );
-                    return tiles.length > 0;
-                }""")
-                if has_tiles:
-                    break
-            except Exception:  # noqa: BLE001
-                pass
-            await asyncio.sleep(0.1)
-
-    async def _capture_refusal_baseline(self, page: Page) -> list[str]:
-        """Capture failure cards present before submit, waiting for the grid to stabilize."""
-        await self._wait_for_media_grid_stable(page)
-        return await self._refusal_card_texts(page)
 
     async def _raise_if_refused(self, page: Page, baseline: list[str]) -> None:
         """Raise :class:`ContentPolicyError` when a NEW refusal card appeared.
@@ -2202,8 +2166,9 @@ class MigratedComposer:
         new_counts = Counter(current) - Counter(baseline)
         new = list(new_counts.elements())
         if new:
+            detail = redact_sensitive_text(f"migrated host refused the generation: {new[0]}")
             raise ContentPolicyError(
-                detail=f"migrated host refused the generation: {new[0]}",
+                detail=detail,
                 route="batchexecute:submit",
             )
 
@@ -2391,7 +2356,7 @@ class MigratedComposer:
                 await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
             # Refusal cards already in the grid belong to earlier generations;
             # only a card that appears AFTER this click can be attributed to it.
-            refusal_baseline = await self._capture_refusal_baseline(page)
+            refusal_baseline = await self._refusal_card_texts(page)
             deadline = time.monotonic() + poll_timeout_s
             # The credit-spending click: a bare timeout here leaves "did it submit?"
             # unanswerable, which is the worst place in this driver to lose attribution.
@@ -2552,7 +2517,7 @@ class MigratedComposer:
                 await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
             # Refusal cards already in the grid belong to earlier generations;
             # only a card that appears AFTER this click can be attributed to it.
-            refusal_baseline = await self._capture_refusal_baseline(page)
+            refusal_baseline = await self._refusal_card_texts(page)
             await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             done, _ = await asyncio.wait(
                 {result, route_error},
@@ -2563,7 +2528,7 @@ class MigratedComposer:
                 raise route_error.result()
             if result.done():
                 exc = result.exception()
-                if isinstance(exc, WireFormatError):
+                if exc is not None:
                     await self._raise_if_refused(page, refusal_baseline)
                     raise exc
             if result not in done:

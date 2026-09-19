@@ -1457,6 +1457,24 @@ async def test_a_refusal_card_on_an_empty_submit_reply_is_content_policy() -> No
         )
 
 
+async def test_refusal_card_detail_is_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sensitive text (such as email addresses or tokens) in refusal card text must be
+    redacted before reaching detail."""
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "SUBMIT_REPLY_BUDGET_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.dom.refusal_after_submit = ["Failed: account user.name@gmail.com triggered review"]
+    with pytest.raises(ContentPolicyError) as info:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+    assert "user.name@gmail.com" not in str(info.value)
+    assert "<redacted:email>" in str(info.value)
+
+
 async def test_an_empty_submit_reply_without_a_card_stays_wire_format() -> None:
     """No card → no refusal claim: an empty reply is a real envelope drift."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
@@ -3073,6 +3091,44 @@ async def test_an_image_reply_that_never_arrives_is_a_timeout_not_a_hang(
     page.scripted_responses = []  # Flow answers nothing
 
     with pytest.raises(TransportTimeoutError, match="ogiZ0b"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+
+
+async def test_image_submit_with_refusal_card_raises_content_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An image submit that times out with a refusal card in the DOM must raise
+    ContentPolicyError, not TransportTimeoutError."""
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "IMAGE_REPLY_BUDGET_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.dom.refusal_after_submit = ["Failed\nThis prompt violates policy."]
+    page.scripted_responses = []  # times out
+
+    with pytest.raises(ContentPolicyError, match="violates policy"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+
+
+async def test_image_submit_decode_failure_with_refusal_card_raises_content_policy() -> None:
+    """When the image submit reply is malformed/empty but a refusal card is in the DOM,
+    raise ContentPolicyError rather than WireFormatError."""
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.dom.refusal_after_submit = ["Failed\nThis prompt violates policy."]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), _frame("ogiZ0b", []))]
+
+    with pytest.raises(ContentPolicyError, match="violates policy"):
         await MigratedComposer().submit_images_and_observe(
             page, GenerateImageRequest(prompt="a blue cup")
         )

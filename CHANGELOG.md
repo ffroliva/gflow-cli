@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Read prompt refusal cards on `flow.google.com`.** On the migrated host, prompt refusals
+  render as media-grid failure cards or alert regions rather than batchexecute records,
+  causing submit timeouts (exit 9) or bare status-4 records that hid the reason.
+  `MigratedComposer` now structurally detects refusal cards and raises `ContentPolicyError`
+  (exit 5) with redacted card detail. ([#873](https://github.com/ffroliva/gflow-cli/pull/873))
+
 ## [0.78.0] — 2026-09-17
 
 ### Added
