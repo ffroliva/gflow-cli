@@ -24,8 +24,11 @@ from gflow_cli.api.video_extend import (
     ExtendVideoRequest,
     account_credits,
     account_service_tier,
+    clip_duration_seconds,
+    extend_frame_window,
     extract_video_models,
     resolve_extend_model,
+    to_batchexecute_wire,
     workflow_id_for_media,
 )
 from gflow_cli.errors import ExtendUnavailableError
@@ -287,3 +290,127 @@ def test_resolver_returns_the_cost_it_already_found(listing: dict) -> None:
     )
     assert key == "veo_3_1_extension_lite"
     assert cost == 10
+
+
+# ------------------------------------------------------- batchexecute (migrated)
+
+
+def _listing_with_model_key(key: str | None) -> dict:
+    """A minimal listing carrying one workflow with a generation model key —
+    the shape ``_synthesize_workflows`` emits on the migrated host."""
+    return {
+        "result": {
+            "data": {
+                "json": {
+                    "projectContents": {
+                        "workflows": [
+                            {
+                                "name": "91637ac2-5037-4a0f-b91a-3be1311d948a",
+                                "metadata": {
+                                    "primaryMediaId": "b9458021-fc2d-4d95-ab53-cf844c6f1079",
+                                    "modelKey": key,
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+
+
+def test_clip_duration_reads_the_generation_key() -> None:
+    """``abra_t2v_8s`` generated the clip → 8 s. The duration belongs to the
+    SOURCE clip's key, never to the extend model key (which carries none)."""
+    listing = _listing_with_model_key("abra_t2v_8s")
+    assert clip_duration_seconds(listing, "b9458021-fc2d-4d95-ab53-cf844c6f1079") == 8.0
+
+
+def test_clip_duration_reads_embedded_segment() -> None:
+    listing = _listing_with_model_key("veo_3_1_t2v_lite_4s_low_priority")
+    assert clip_duration_seconds(listing, "b9458021-fc2d-4d95-ab53-cf844c6f1079") == 4.0
+
+
+def test_clip_duration_fails_closed_without_a_segment() -> None:
+    """Extend-family keys carry no duration — and an extension's own output
+    length is fixed, so a missing segment must not be guessed."""
+    listing = _listing_with_model_key("veo_3_1_extension_lite")
+    assert clip_duration_seconds(listing, "b9458021-fc2d-4d95-ab53-cf844c6f1079") is None
+    assert clip_duration_seconds(_listing_with_model_key(None), "b9458021-fc2d-4d95-ab53-cf844c6f1079") is None
+    assert clip_duration_seconds(listing, "00000000-0000-0000-0000-000000000000") is None
+    assert clip_duration_seconds({}, "b9458021-fc2d-4d95-ab53-cf844c6f1079") is None
+
+
+def test_frame_window_is_the_last_second() -> None:
+    """Captured live 2026-09-18: a 4 s clip @ 24 fps seeds from frames 73–96 —
+    the LAST second, not the fixed 1..24 the REST body sends."""
+    assert extend_frame_window(4.0) == (73, 96)
+    assert extend_frame_window(8.0) == (169, 192)
+
+
+def test_frame_window_rejects_zero_duration() -> None:
+    with pytest.raises(ValueError, match="no frames"):
+        extend_frame_window(0.0)
+
+
+def test_batchexecute_wire_reproduces_the_captured_payload() -> None:
+    """Byte-shape parity with the ``fZytfe`` payload the migrated SPA sent —
+    flat positional arrays, 22 = PINHOLE tool enum, 1 = portrait aspect."""
+    req = ExtendVideoRequest(
+        media_id="11111111-1111-1111-1111-111111111111",
+        project_id="22222222-2222-2222-2222-222222222222",
+        scene_id="33333333-3333-3333-3333-333333333333",
+        position=1,
+        prompt="the wave recedes",
+        model_key="veo_3_1_extension_lite",
+        aspect="9:16",
+    )
+    payload = json.loads(
+        to_batchexecute_wire(
+            req,
+            start_frame=73,
+            end_frame=96,
+            token="TOK",
+            uuid1="UUID1",
+            uuid2="UUID2",
+            uuid3="UUID3",
+            source_workflow_id="44444444-4444-4444-4444-444444444444",
+        )
+    )
+
+    assert payload == [
+        [
+            [
+                [None, "44444444-4444-4444-4444-444444444444", 73, 96],
+                [None, None, [[["the wave recedes"]]]],
+                "veo_3_1_extension_lite",
+                1,
+                None,
+                ["33333333-3333-3333-3333-333333333333", None, None, None, "UUID1", "UUID2"],
+            ],
+        ],
+        [
+            None, 22, None, None, None, "22222222-2222-2222-2222-222222222222",
+            None, None, None, None, ["TOK", 1],
+        ],
+        ["UUID3", 2, None, ["33333333-3333-3333-3333-333333333333", 2]],
+    ]
+
+
+def test_batchexecute_wire_landscape_aspect_index() -> None:
+    req = ExtendVideoRequest(
+        media_id="11111111-1111-1111-1111-111111111111",
+        project_id="22222222-2222-2222-2222-222222222222",
+        scene_id="33333333-3333-3333-3333-333333333333",
+        position=0,
+        prompt="p",
+        model_key="k",
+        aspect="16:9",
+    )
+    payload = json.loads(
+        to_batchexecute_wire(
+            req, start_frame=1, end_frame=24, token="T", uuid1="U1", uuid2="U2", uuid3="U3",
+            source_workflow_id="W",
+        )
+    )
+    assert payload[0][0][3] == 2

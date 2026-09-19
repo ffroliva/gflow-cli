@@ -26,6 +26,7 @@ all, so a label is never a key.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any, cast
@@ -39,8 +40,11 @@ __all__ = [
     "ExtendStarted",
     "account_credits",
     "account_service_tier",
+    "clip_duration_seconds",
+    "extend_frame_window",
     "extract_video_models",
     "resolve_extend_model",
+    "to_batchexecute_wire",
     "workflow_id_for_media",
 ]
 
@@ -80,6 +84,107 @@ _ASPECT_CAPABILITY = {
 # there, and per the MCP schema-symmetry rule into a tool schema as well.
 FRAME_WINDOW_START = 1
 FRAME_WINDOW_END = 24
+
+#: Duration segment inside a model key — the ``_8s`` of ``abra_t2v_8s`` or the
+#: ``_4s_`` of ``veo_3_1_t2v_lite_4s_low_priority``. Extend-family keys carry no
+#: segment (the extension's own length is fixed), which is exactly why the
+#: SOURCE clip's key — not the extend model key — must be read for the window.
+_DURATION_IN_MODEL_KEY = re.compile(r"_(\d+)s(?:_|$)")
+
+#: Flow renders generated clips at 24 fps — the captured extend payload used a
+#: 73–96 window on a 4 s clip (96 frames total = 4 s × 24).
+_CLIP_FPS = 24
+
+
+def clip_duration_seconds(listing: object, media_id: str) -> float | None:
+    """The source clip's duration in seconds, from its generation model key.
+
+    Reads ``projectContents.workflows[].metadata.modelKey`` — the key of the
+    model that GENERATED the clip (``abra_t2v_8s`` → 8 s), carried through the
+    same free listing fetch. Returns ``None`` when the workflow or the
+    duration segment is absent — callers must fail closed rather than guess a
+    frame window on a billed submit.
+    """
+    contents = _inner(listing).get("projectContents")
+    if not isinstance(contents, dict):
+        return None
+    workflows = cast("dict[str, Any]", contents).get("workflows")
+    if not isinstance(workflows, list):
+        return None
+    for raw in cast("list[Any]", workflows):
+        if not isinstance(raw, dict):
+            continue
+        meta = cast("dict[str, Any]", raw).get("metadata")
+        if not isinstance(meta, dict):
+            continue
+        if cast("dict[str, Any]", meta).get("primaryMediaId") != media_id:
+            continue
+        key = meta.get("modelKey")
+        if not isinstance(key, str):
+            return None
+        m = _DURATION_IN_MODEL_KEY.search(key)
+        return float(m.group(1)) if m else None
+    return None
+
+
+def extend_frame_window(duration_s: float) -> tuple[int, int]:
+    """The ``(startFrame, endFrame)`` window an extend is seeded from.
+
+    The migrated SPA seeds from the LAST second of the source clip — the
+    captured ``fZytfe`` payload sent ``[73, 96]`` on a 4 s clip. This is NOT
+    the fixed ``1..24`` the aisandbox REST body uses.
+    """
+    total = int(round(duration_s * _CLIP_FPS))
+    if total <= 0:
+        msg = f"clip duration {duration_s!r}s yields no frames"
+        raise ValueError(msg)
+    return max(1, total - _CLIP_FPS + 1), total
+
+
+def to_batchexecute_wire(
+    req: "ExtendVideoRequest",
+    *,
+    start_frame: int,
+    end_frame: int,
+    token: str,
+    uuid1: str,
+    uuid2: str,
+    uuid3: str,
+    source_workflow_id: str,
+) -> str:
+    """Serialize one extend submission as the ``fZytfe`` positional payload.
+
+    Shape captured live 2026-09-19 on the migrated host (scene editor →
+    timeline + → "Extend (Veo 3.1 - Lite)" → submit). Flat positional arrays —
+    no named fields. ``22`` in clientContext is the PINHOLE tool enum;
+    ``aspect_idx`` is 1=portrait, 2=landscape. The first slot of the media ref
+    carries the source clip's **workflow id** — not its media id: a media id
+    there is accepted, echoed back as a generation record, and never scheduled.
+    The third top-level element is the operation envelope: a fresh
+    client-generated uuid (echoed back in the record's details), operation
+    type ``2``, and ``[scene_id, 2]``.
+    """
+    aspect_idx = 1 if req.aspect.lower() in ("9:16", "portrait") else 2
+    return json.dumps(
+        [
+            [
+                [
+                    [None, source_workflow_id, start_frame, end_frame],
+                    [None, None, [[[req.prompt]]]],
+                    req.model_key,
+                    aspect_idx,
+                    None,
+                    [req.scene_id, None, None, None, uuid1, uuid2],
+                ],
+            ],
+            [
+                None, 22, None, None, None, req.project_id,
+                None, None, None, None, [token, 1],
+            ],
+            [uuid3, 2, None, [req.scene_id, 2]],
+        ],
+        separators=(",", ":"),
+    )
 
 
 @dataclass(frozen=True, slots=True)

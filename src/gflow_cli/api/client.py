@@ -2211,10 +2211,22 @@ class FlowApiClient:
         The model catalogue and the account's tier cannot change mid-run, so a
         chained extend must not re-fetch per segment: at N=15 that is 15 extra
         requests to a WAF-scored host for a constant.
+
+        On the migrated host (``flow.google.com``) the tRPC route is dead, so
+        the listing is assembled from ``data/batchexecute`` RPCs instead —
+        same shape, different transport.
         """
         cached = self._extend_listing_cache.get(project_id)
         if cached is None:
-            cached = await self.fetch_project_listing(project_id)
+            page = await self._checkout_page()
+            try:
+                host = flow_host_kind(getattr(page, "url", ""))
+            finally:
+                self._checkin_page(page)
+            if host == "migrated":
+                cached = await self.fetch_project_listing_batchexecute(project_id)
+            else:
+                cached = await self.fetch_project_listing(project_id)
             self._extend_listing_cache[project_id] = cached
         return cached
 
@@ -2265,7 +2277,37 @@ class FlowApiClient:
             aspect=aspect,
             seed=seed,
         )
+        page = await self._checkout_page()
+        try:
+            host = flow_host_kind(getattr(page, "url", ""))
+            if host == "migrated":
+                # The pooled page is the flow.google.com ROOT GRID, which carries
+                # no recaptcha/enterprise.js — minting there bails at
+                # `mint_recaptcha_token`. `/project/<id>` does carry the script
+                # (spike_migrated_recaptcha_mint.py, 2026-09-06), so land on the
+                # editor BEFORE minting; the mint guard keys on "/project/" in
+                # the URL. The same page then signs the batchexecute POST.
+                from gflow_cli.api.transports.migrated_composer import (
+                    MigratedComposer,
+                )
+
+                await MigratedComposer().ensure_editor(page, project_id)
+                token = await self._mint_recaptcha_token(
+                    recaptcha_action, page=page
+                )
+                return await self._extend_video_batchexecute(
+                    req,
+                    page=page,
+                    token=token,
+                    model_key=model_key,
+                    unit_cost=unit_cost,
+                    listing=listing,
+                )
+        finally:
+            self._checkin_page(page)
+
         token = await self._mint_recaptcha_token(recaptcha_action)
+
         body = req.to_wire(
             session_id=f";{int(time.time() * 1000)}",
             token=token,
@@ -2286,41 +2328,132 @@ class FlowApiClient:
             unit_cost=unit_cost,
         )
 
+    async def _extend_video_batchexecute(
+        self,
+        req: video_extend.ExtendVideoRequest,
+        *,
+        page: Page,
+        token: str,
+        model_key: str,
+        unit_cost: int,
+        listing: JsonObject,
+    ) -> ExtendStarted:
+        """Submit an extend via ``data/batchexecute`` on the migrated host.
+
+        The migrated SPA sends ``fZytfe`` instead of the aisandbox REST
+        ``batchAsyncGenerateVideoExtendVideo``. The payload is a flat
+        positional array — no named fields — captured live 2026-09-18.
+
+        ``page`` is the caller-held Page already parked on ``/project/<id>``
+        (``extend_video`` navigates before minting): the WIZ params and the
+        POST both sign against that page's session.
+        """
+        # The SPA seeds the extension from the LAST second of the source clip
+        # (captured: [73, 96] on a 4 s clip @ 24 fps). The clip's duration is
+        # read from the model key that generated it — guessing a window on a
+        # billed submit is worse than refusing.
+        duration_s = video_extend.clip_duration_seconds(listing, req.media_id)
+        if duration_s is None:
+            raise WireFormatError(
+                detail=(
+                    f"migrated host: cannot derive the source clip's duration "
+                    f"for media {req.media_id} — the listing carries no model "
+                    f"key with a duration segment for it"
+                ),
+                instance=_make_instance(),
+                route="batchexecute:fZytfe",
+            )
+        start_frame, end_frame = video_extend.extend_frame_window(duration_s)
+
+        # The media ref's first slot is the source clip's WORKFLOW id — the
+        # captured SPA payload carries it, and a media id there is accepted
+        # but never scheduled (echo-record, no job, credits still burned).
+        source_workflow_id = video_extend.workflow_id_for_media(listing, req.media_id)
+        if source_workflow_id is None:
+            raise WireFormatError(
+                detail=(
+                    f"migrated host: cannot resolve the workflow owning media "
+                    f"{req.media_id} — the listing carries no primaryMediaId "
+                    f"mapping for it"
+                ),
+                instance=_make_instance(),
+                route="batchexecute:fZytfe",
+            )
+
+        wiz = await self._extract_wiz_params(page)
+        payload = video_extend.to_batchexecute_wire(
+            req,
+            start_frame=start_frame,
+            end_frame=end_frame,
+            token=token,
+            uuid1=str(uuid.uuid4()).upper(),
+            uuid2=str(uuid.uuid4()).upper(),
+            uuid3=str(uuid.uuid4()).upper(),
+            source_workflow_id=source_workflow_id,
+        )
+        frames = await self._batchexecute_post(
+            page, "fZytfe", payload,
+            project_id=req.project_id, wiz=wiz,
+            source_path=f"/project/{req.project_id}/scene/{req.scene_id}",
+        )
+
+        # Parse the generation record from the response
+        from gflow_cli.api.transports.batchexecute import generation_record
+        for rpcid, payload_data in frames:
+            if rpcid == "fZytfe" and payload_data is not None:
+                rec = generation_record(rpcid, payload_data)
+                return ExtendStarted(
+                    media_id=rec.media_id,
+                    workflow_id=rec.workflow_id,
+                    model_key=model_key,
+                    unit_cost=unit_cost,
+                )
+
+        raise WireFormatError(
+            detail="batchexecute fZytfe: no generation record in the reply",
+            instance=_make_instance(),
+            route="batchexecute:fZytfe",
+        )
+
     async def poll_video_status(
         self,
         media_id: str,
         *,
         project_id: str,
+        workflow_id: str | None = None,
         initial_delay_s: float = 90.0,
         poll_interval: float = 10.0,
         timeout_s: float = 900.0,
     ) -> VideoStatus:
-        """Poll ``batchCheckAsyncVideoGenerationStatus`` until *media_id* is terminal.
+        """Poll until the submitted video is terminal.
 
-        The **only** outbound video poller in the codebase. Production T2V/I2V
-        does not poll: ``ui_automation_video`` passively scans Flow's own captured
-        status traffic, which works because the SPA is on-screen polling for its
-        own generation. A direct-wire submit (the extend route) gives Flow's UI no
-        reason to poll our media id, so that mechanism sees nothing and would sit
-        until its deadline. Hence this.
+        Two transports, picked by host:
 
-        Shaped after :meth:`_poll_concat_until_done`: every poll is its own
-        ``_post_json``, so the Page is checked back in before each sleep. Holding
-        a checked-out Page across a sleep self-deadlocks at the default
-        ``concurrency=1``.
+        * **aisandbox** (old host): ``batchCheckAsyncVideoGenerationStatus``
+          REST, keyed on ``media_id``.
+        * **migrated** (``flow.google.com``): the REST route is dead (401), so
+          poll ``as29s`` on ``data/batchexecute`` keyed on ``workflow_id``.
+          ``as29s`` returns a bare ``"<wf>"`` string while pending and the full
+          generation record once done — the record's ``media_info[0][8]``
+          carries the signed ``flow-content.google/video/`` URL.
 
-        ``initial_delay_s`` exists because the cheapest extend model takes ~110s;
-        polling immediately spends requests against a WAF-scored host on a job
-        that cannot possibly be done. ``poll_interval`` is floored at 5s for the
-        same reason — at 2s a 15-segment run would fire ~825 status requests
-        instead of ~75.
+        ``workflow_id`` is required on the migrated host; ``extend_chain``
+        passes ``started.workflow_id``. When absent the REST path is used.
 
         Returns the terminal :class:`VideoStatus` on success. Raises
-        :class:`ContentPolicyError` when the failure is a safety rejection,
-        :class:`FlowApiError` on any other terminal failure, and
-        :class:`TransportTimeoutError` on deadline breach. A failed segment has
-        still been billed, so it is never returned as a success-shaped object.
+        :class:`ContentPolicyError` on a safety rejection, :class:`FlowApiError`
+        on any other terminal failure, :class:`TransportTimeoutError` on
+        deadline breach.
         """
+        if workflow_id is not None:
+            return await self._poll_video_status_batchexecute(
+                workflow_id,
+                project_id=project_id,
+                initial_delay_s=initial_delay_s,
+                poll_interval=poll_interval,
+                timeout_s=timeout_s,
+            )
+
         interval = max(poll_interval, _MIN_VIDEO_POLL_INTERVAL_S)
         deadline = time.monotonic() + timeout_s
         if initial_delay_s > 0:
@@ -2356,6 +2489,73 @@ class FlowApiClient:
                     f"(last status: {status.status})"
                 )
             await asyncio.sleep(interval)
+
+    async def _poll_video_status_batchexecute(
+        self,
+        workflow_id: str,
+        *,
+        project_id: str,
+        initial_delay_s: float,
+        poll_interval: float,
+        timeout_s: float,
+    ) -> VideoStatus:
+        """Poll ``as29s`` on ``data/batchexecute`` until the workflow is done.
+
+        ``as29s`` answers ``"<wf>"`` (a bare string) while the job is pending
+        and the full generation record once terminal. The record's
+        ``details[8]`` is ``[3]`` on success; ``media_info[0][8]`` carries the
+        signed video URL. A non-``[3]`` terminal is a failure.
+
+        The Page is held across the sleep: ``_batchexecute_post`` takes the
+        page directly, so no nested checkout deadlocks at ``concurrency=1``.
+        """
+        interval = max(poll_interval, _MIN_VIDEO_POLL_INTERVAL_S)
+        deadline = time.monotonic() + timeout_s
+        if initial_delay_s > 0:
+            await asyncio.sleep(initial_delay_s)
+
+        page = await self._checkout_page()
+        try:
+            from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+            await MigratedComposer().ensure_editor(page, project_id)
+            wiz = await self._extract_wiz_params(page)
+            while True:
+                frames = await self._batchexecute_post(
+                    page, "as29s", json.dumps([workflow_id]),
+                    project_id=project_id, wiz=wiz,
+                )
+                record = None
+                for rpcid, data in frames:
+                    if rpcid == "as29s":
+                        record = data
+                        break
+                if isinstance(record, list):
+                    # Terminal: record arrived. details[8] = [3] on success.
+                    details = record[5] if len(record) > 5 else []
+                    status_code = (
+                        details[8][0]
+                        if isinstance(details, list) and len(details) > 8
+                        and isinstance(details[8], list) and details[8]
+                        else None
+                    )
+                    if status_code == 3:
+                        return VideoStatus(
+                            media_id=record[2] if len(record) > 2 else workflow_id,
+                            status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                        )
+                    raise FlowApiError(
+                        f"video generation failed: terminal status {status_code}",
+                        route="batchexecute:as29s",
+                    )
+                if time.monotonic() >= deadline:
+                    raise TransportTimeoutError(
+                        f"video workflow {workflow_id} did not finish within "
+                        f"{timeout_s:.0f}s"
+                    )
+                await asyncio.sleep(interval)
+        finally:
+            self._checkin_page(page)
 
     async def _poll_concat_until_done(
         self,
@@ -2616,7 +2816,7 @@ class FlowApiClient:
         await write_asset_async(target, image_bytes)
         return target
 
-    async def _mint_recaptcha_token(self, action: str) -> str:
+    async def _mint_recaptcha_token(self, action: str, *, page: Page | None = None) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
 
         Flow's `batchGenerateImages` (and `batchAsyncGenerateVideoText`) endpoints
@@ -2627,8 +2827,15 @@ class FlowApiClient:
         the mint without standing up a real Playwright Page + reCAPTCHA
         Enterprise script (which requires loading `enterprise.js` from Google).
         Production code path is unchanged.
+
+        ``page`` lets a caller that already holds a Page mint on THAT page —
+        required on the migrated host, where only ``/project/<id>`` carries
+        enterprise.js and the caller navigated there first. A passed-in page is
+        never checked back in; ownership stays with the caller.
         """
-        page = await self._checkout_page()
+        owned = page is None
+        if page is None:
+            page = await self._checkout_page()
         try:
             # #673: this runs BEFORE the UI transport, so none of its migration
             # guards can fire first. On a moved account the pool page is the
@@ -2648,7 +2855,14 @@ class FlowApiClient:
             # host guard for the narrow race where a labs page hands off while a
             # caller is already minting; the project page owns the token and the
             # migrated composer submits ``ogiZ0b`` itself.
-            raise_if_migrated(page, at="mint_recaptcha_token")
+            # #673: the root grid has no enterprise.js, but /project/<id> does —
+            # measured 2026-09-06 (spike_migrated_recaptcha_mint.py) and verified
+            # again 2026-09-18 for the extend lane. The guard fires only when the
+            # page is NOT on a project path, where minting is impossible.
+            if flow_host_kind(getattr(page, "url", "")) == "migrated" and "/project/" not in str(
+                getattr(page, "url", "")
+            ):
+                raise_if_migrated(page, at="mint_recaptcha_token")
             # Patchright evaluates in an isolated world by default, where the
             # page's main-world ``grecaptcha`` global is undefined; the resolver
             # supplies ``isolated_context=False`` for patchright ({} for playwright).
@@ -2716,7 +2930,8 @@ class FlowApiClient:
                     )
                 raise
         finally:
-            self._checkin_page(page)
+            if owned:
+                self._checkin_page(page)
 
     async def _drive_images_generation(
         self,
@@ -3132,6 +3347,169 @@ class FlowApiClient:
                 route=route,
             )
         return cast("JsonObject", parsed)
+    # --- batchexecute lane (migrated host) ---------------------------------
+
+    async def _extract_wiz_params(self, page: Page) -> dict[str, str]:
+        """Pull the batchexecute session params out of ``window.WIZ_global_data``.
+
+        The migrated SPA signs every ``data/batchexecute`` POST with three
+        page-level constants: ``FdrFJe`` (session id, sent as ``f.sid``),
+        ``cfb2h`` (build label, sent as ``bl``), and ``SNlM0e`` (CSRF token,
+        sent as ``at``). They rotate per page load, so they are read fresh
+        each call rather than cached.
+        """
+        wiz = await page.evaluate("() => window.WIZ_global_data || {}")
+        if not isinstance(wiz, dict):
+            raise WireFormatError(
+                detail="WIZ_global_data is not an object — page may not be the Flow SPA",
+                instance=_make_instance(),
+                route="batchexecute:wiz",
+            )
+        f_sid = wiz.get("FdrFJe")
+        bl = wiz.get("cfb2h")
+        at = wiz.get("SNlM0e")
+        if not all(isinstance(v, str) and v for v in (f_sid, bl, at)):
+            raise WireFormatError(
+                detail=(
+                    f"WIZ_global_data missing batchexecute params: "
+                    f"FdrFJe={type(f_sid).__name__}, cfb2h={type(bl).__name__}, "
+                    f"SNlM0e={type(at).__name__}"
+                ),
+                instance=_make_instance(),
+                route="batchexecute:wiz",
+            )
+        return {"f_sid": f_sid, "bl": bl, "at": at}
+
+    async def _batchexecute_post(
+        self,
+        page: Page,
+        rpcid: str,
+        payload_json: str,
+        *,
+        project_id: str,
+        wiz: dict[str, str],
+        source_path: str | None = None,
+    ) -> list[tuple[str, Any]]:
+        """POST one ``data/batchexecute`` RPC and return its ``wrb.fr`` frames.
+
+        The request is form-encoded (``f.req=<url-encoded JSON>&at=<CSRF>``)
+        exactly as the SPA sends it — the ``rpcids`` query param names the
+        RPC, the body carries the payload. The response is the ``)]}'``
+        XSSI envelope; :func:`parse_frames` decodes it into ``(rpcid,
+        decoded_payload)`` pairs.
+
+        ``source_path`` overrides the ``source-path`` query param: the SPA
+        signs scene-scoped RPCs (``fZytfe``) with the full
+        ``/project/<id>/scene/<id>`` path, and a project-only path there is
+        accepted but never scheduled.
+        """
+        from urllib.parse import quote_plus
+
+        f_req = json.dumps([[[rpcid, payload_json, None, "generic"]]], separators=(",", ":"))
+        body = f"f.req={quote_plus(f_req)}&at={quote_plus(wiz['at'])}"
+        path = source_path or f"/project/{project_id}"
+        url = (
+            f"https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute"
+            f"?rpcids={rpcid}&source-path={quote_plus(path)}"
+            f"&bl={wiz['bl']}&f.sid={wiz['f_sid']}&hl=en&rt=c&_reqid=1"
+        )
+        async def attempt() -> Any:
+            return await page.request.post(
+                url,
+                data=body,
+                headers={
+                    "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+                    "x-same-domain": "1",
+                    # The SPA's fetch carries the page URL as Referer; the API
+                    # context sends none, and a missing/mismatched Referer is
+                    "referer": f"https://flow.google.com{path}",
+                    "origin": "https://flow.google.com",
+                },
+            )
+
+        resp = await self._run_with_retry(attempt, route=f"batchexecute:{rpcid}")
+        text = await resp.text()
+        _raise_for_non_retryable(resp, text, route=f"batchexecute:{rpcid}")
+        from gflow_cli.api.transports.batchexecute import parse_frames
+
+        return parse_frames(text)
+
+    async def _dom_service_tier(self, page: Page) -> str:
+        """Read the account's service tier from the DOM tier chip.
+
+        The migrated SPA renders the plan badge as ``.tier-chip`` (e.g.
+        ``ULTRA``). Mapped to the ``SERVICE_TIER_*`` names the tRPC
+        ``creditMapping`` uses: ULTRA→ADVANCED, PRO→INTERMEDIATE,
+        anything else→ENTRY. Returns ``""`` when the chip is absent so
+        the caller can decide whether to fail or default.
+        """
+        tier_text = await page.evaluate(
+            "() => { const c = document.querySelector('.tier-chip');"
+            " return c ? c.textContent.trim().toUpperCase() : ''; }"
+        )
+        if not isinstance(tier_text, str):
+            return ""
+        return {
+            "ULTRA": "SERVICE_TIER_ADVANCED",
+            "PRO": "SERVICE_TIER_INTERMEDIATE",
+        }.get(tier_text, "SERVICE_TIER_ENTRY" if tier_text else "")
+
+    async def fetch_project_listing_batchexecute(self, project_id: str) -> JsonObject:
+        """Fetch the project listing via ``data/batchexecute`` (migrated host).
+
+        Replaces :meth:`fetch_project_listing` on ``flow.google.com`` where
+        the tRPC ``flow.projectInitialData`` route is dead (404). Three
+        batchexecute RPCs carry the same data:
+
+        - ``HTrJv`` — model catalogue (families, usages, tier-indexed costs)
+        - ``Zzl0ze`` — project contents (media entries, generation records)
+        - ``nzlxg`` — credit balance
+
+        The response is synthesized into the tRPC envelope shape
+        (``result.data.json.{modelConfig,projectContents,userData}``) so
+        :mod:`gflow_cli.api.video_extend` resolvers consume it unchanged.
+        """
+        if not is_media_uuid(project_id):
+            msg = f"Invalid project_id: {project_id!r}"
+            raise ValueError(msg)
+        page = await self._checkout_page()
+        try:
+            wiz = await self._extract_wiz_params(page)
+
+            # HTrJv — model catalogue (empty payload)
+            htrjv_frames = await self._batchexecute_post(
+                page, "HTrJv", "[]", project_id=project_id, wiz=wiz
+            )
+            # Zzl0ze — project contents
+            zzl0ze_payload = json.dumps(
+                [f"projects/{project_id}", None, None, None, [1]]
+            )
+            zzl0ze_frames = await self._batchexecute_post(
+                page, "Zzl0ze", zzl0ze_payload, project_id=project_id, wiz=wiz
+            )
+            # nzlxg — credit balance (empty payload)
+            nzlxg_frames = await self._batchexecute_post(
+                page, "nzlxg", "[]", project_id=project_id, wiz=wiz
+            )
+
+            # Extract payloads
+            htrjv_data = next(
+                (p for r, p in htrjv_frames if r == "HTrJv" and p), None
+            )
+            zzl0ze_data = next(
+                (p for r, p in zzl0ze_frames if r == "Zzl0ze" and p), None
+            )
+            nzlxg_data = next(
+                (p for r, p in nzlxg_frames if r == "nzlxg" and p), None
+            )
+
+            # Synthesize the tRPC envelope
+            return _synthesize_listing(
+                htrjv_data, zzl0ze_data, nzlxg_data,
+                service_tier=await self._dom_service_tier(page),
+            )
+        finally:
+            self._checkin_page(page)
 
     async def get_character(
         self,
@@ -3833,3 +4211,225 @@ def _redact_in_client_context(client_context: Any) -> None:
         recaptcha_dict = cast("JsonObject", recaptcha)
         if "token" in recaptcha_dict:
             recaptcha_dict["token"] = "<redacted>"
+
+
+# --- batchexecute → tRPC synthesis ------------------------------------------
+
+# Positional tier index → SERVICE_TIER_* name. Measured on the migrated host
+# 2026-09-18: HTrJv section [2] maps index→codename, and the fixture's
+# creditMapping keys align as 1=INTERMEDIATE, 2=ENTRY, 3=ADVANCED.
+_TIER_INDEX_TO_NAME: dict[int, str] = {
+    1: "SERVICE_TIER_INTERMEDIATE",
+    2: "SERVICE_TIER_ENTRY",
+    3: "SERVICE_TIER_ADVANCED",
+}
+
+# Aspect index → capability string. Measured: [[1]]=PORTRAIT, [[2]]=LANDSCAPE.
+_ASPECT_INDEX_TO_CAPABILITY: dict[int, str] = {
+    1: "PORTRAIT",
+    2: "LANDSCAPE",
+}
+
+# Requirement id → wire name. Measured: 14=VIDEO_REQUIREMENT_EXTENSION.
+_REQUIREMENT_ID_TO_NAME: dict[int, str] = {
+    14: "VIDEO_REQUIREMENT_EXTENSION",
+}
+
+
+def _synthesize_listing(
+    htrjv_data: Any,
+    zzl0ze_data: Any,
+    nzlxg_data: Any,
+    *,
+    service_tier: str,
+) -> JsonObject:
+    """Build the tRPC-shaped listing dict from batchexecute payloads.
+
+    The shape mirrors ``flow.projectInitialData``'s ``result.data.json`` so
+    :mod:`gflow_cli.api.video_extend` resolvers consume it unchanged:
+
+    - ``modelConfig.videoModelFamilies[].usages[]`` — from ``HTrJv`` section [4]
+    - ``projectContents.workflows[]`` — from ``Zzl0ze`` section [2]
+    - ``userData.serviceTier`` — from the DOM tier chip
+    - ``userData.credits`` — from ``nzlxg`` (first element)
+    """
+    families = _synthesize_model_families(htrjv_data)
+    workflows = _synthesize_workflows(zzl0ze_data)
+    credits = _synthesize_credits(nzlxg_data)
+
+    return cast(
+        "JsonObject",
+        {
+            "result": {
+                "data": {
+                    "json": {
+                        "modelConfig": {"videoModelFamilies": families},
+                        "projectContents": {"workflows": workflows},
+                        "userData": {
+                            "serviceTier": service_tier,
+                            "credits": credits,
+                        },
+                    }
+                }
+            }
+        },
+    )
+
+
+def _synthesize_model_families(htrjv_data: Any) -> list[JsonObject]:
+    """Convert ``HTrJv`` section [4] (family groups) into tRPC usages.
+
+    Each family is ``[displayName, [model_entry, ...]]``. Each model entry is
+    ``[key, None, None, None, [[tierIdx, [[None, cost]]]...], None, None,
+    [[[[reqIds]]]], None, None, True, None, [[aspectIdx]], ...]``.
+    """
+    if not isinstance(htrjv_data, list) or len(htrjv_data) == 0:
+        return []
+    data = htrjv_data[0] if isinstance(htrjv_data[0], list) else htrjv_data
+    if not isinstance(data, list) or len(data) < 5:
+        return []
+    families_raw = data[4]
+    if not isinstance(families_raw, list):
+        return []
+
+    families: list[JsonObject] = []
+    for fam in families_raw:
+        if not isinstance(fam, list) or len(fam) < 2:
+            continue
+        display_name = fam[0] if isinstance(fam[0], str) else ""
+        models_raw = fam[1] if isinstance(fam[1], list) else []
+        usages: list[JsonObject] = []
+        for m in models_raw:
+            if not isinstance(m, list) or len(m) == 0:
+                continue
+            key = m[0] if isinstance(m[0], str) else ""
+            if not key:
+                continue
+            # Tier costs at index 4: [[tierIdx, [[None, cost]]]...]
+            credit_mapping: dict[str, JsonObject] = {}
+            tiers_raw = m[4] if len(m) > 4 and isinstance(m[4], list) else []
+            for t in tiers_raw:
+                if not isinstance(t, list) or len(t) < 2:
+                    continue
+                tier_idx = t[0] if isinstance(t[0], int) else None
+                tier_name = _TIER_INDEX_TO_NAME.get(tier_idx) if tier_idx else None
+                if not tier_name:
+                    continue
+                cost_entry = t[1] if isinstance(t[1], list) else []
+                cost = None
+                if cost_entry and isinstance(cost_entry[0], list) and len(cost_entry[0]) > 1:
+                    cost = cost_entry[0][1]
+                credit_mapping[tier_name] = cast(
+                    "JsonObject",
+                    {"cost": cost if isinstance(cost, int) else "UNAVAILABLE"},
+                )
+            # Requirements at index 7: nested lists of ints — flatten to ids.
+            requirements: list[list[str]] = []
+            reqs_raw = m[7] if len(m) > 7 and isinstance(m[7], list) else []
+            req_ids = _flatten_ints(reqs_raw)
+            req_names = [
+                name for rid in req_ids
+                if (name := _REQUIREMENT_ID_TO_NAME.get(rid))
+            ]
+            if req_names:
+                requirements.append(req_names)
+            # Aspect at index 12: nested lists of ints — flatten to ids.
+            aspects: list[str] = []
+            aspect_raw = m[12] if len(m) > 12 and isinstance(m[12], list) else []
+            for aid in _flatten_ints(aspect_raw):
+                cap = _ASPECT_INDEX_TO_CAPABILITY.get(aid)
+                if cap:
+                    aspects.append(cap)
+            usages.append(
+                cast(
+                    "JsonObject",
+                    {
+                        "key": key,
+                        "creditMapping": credit_mapping,
+                        "requirements": requirements,
+                        "supportedAspectRatios": aspects,
+                    },
+                )
+            )
+        families.append(
+            cast(
+                "JsonObject",
+                {"displayName": display_name, "usages": usages},
+            )
+        )
+    return families
+
+
+def _synthesize_workflows(zzl0ze_data: Any) -> list[JsonObject]:
+    """Convert ``Zzl0ze`` section [2] (generation records) into tRPC workflows.
+
+    Each record is ``[workflow_id, project_id, media_id, "CAE", …]``.
+    The tRPC shape expects ``workflows[].metadata.primaryMediaId`` and
+    ``workflows[].name``. ``metadata.modelKey`` is carried from
+    ``MEDIA_INFO[0][12]`` — extend needs it to derive the source clip's
+    duration for the frame window.
+    """
+    if not isinstance(zzl0ze_data, list) or len(zzl0ze_data) < 3:
+        return []
+    records = zzl0ze_data[2]
+    if not isinstance(records, list):
+        return []
+
+    workflows: list[JsonObject] = []
+    for r in records:
+        if not isinstance(r, list) or len(r) < 3:
+            continue
+        wf_id = r[0] if isinstance(r[0], str) else None
+        media_id = r[2] if isinstance(r[2], str) else None
+        if not wf_id or not media_id:
+            continue
+        # MEDIA_INFO[0][12] — the model key, e.g. "abra_t2v_8s" (duration
+        # embedded). Absent on records that carry no media info yet.
+        model_key: Any = None
+        media_info = r[7] if len(r) > 7 else None
+        if isinstance(media_info, list) and media_info:
+            first = media_info[0]
+            if isinstance(first, list) and len(first) > 12:
+                model_key = first[12]
+        workflows.append(
+            cast(
+                "JsonObject",
+                {
+                    "name": wf_id,
+                    "metadata": {
+                        "primaryMediaId": media_id,
+                        "modelKey": model_key if isinstance(model_key, str) else None,
+                    },
+                },
+            )
+        )
+    return workflows
+
+
+def _synthesize_credits(nzlxg_data: Any) -> int | None:
+    """Extract the credit balance from ``nzlxg``.
+
+    The payload is ``[balance, ?, ?, ?, ?, balance]`` — the first element
+    is the current balance. Returns ``None`` when the shape is unexpected.
+    """
+    if not isinstance(nzlxg_data, list) or len(nzlxg_data) == 0:
+        return None
+    balance = nzlxg_data[0]
+    return balance if isinstance(balance, int) and not isinstance(balance, bool) else None
+
+
+def _flatten_ints(node: Any) -> list[int]:
+    """Flatten nested lists into a flat list of ints.
+
+    ``batchexecute`` encodes enums as deeply nested lists — e.g.
+    ``[[[[1, 14]]]]`` for requirements, ``[[2]]`` for aspect. The ints
+    are the payload; the nesting is wire noise.
+    """
+    if isinstance(node, int) and not isinstance(node, bool):
+        return [node]
+    if isinstance(node, list):
+        out: list[int] = []
+        for item in node:
+            out.extend(_flatten_ints(item))
+        return out
+    return []

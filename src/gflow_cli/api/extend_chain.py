@@ -179,7 +179,11 @@ async def run_extend_chain(  # noqa: PLR0913
         )
 
         try:
-            await client.poll_video_status(started.media_id, project_id=project_id)
+            await client.poll_video_status(
+                started.media_id,
+                project_id=project_id,
+                workflow_id=started.workflow_id or None,
+            )
         except (GFlowError, ValueError) as exc:
             logger.warning(
                 "extend_chain_aborted",

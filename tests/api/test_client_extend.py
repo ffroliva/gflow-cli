@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from structlog.testing import capture_logs
@@ -51,6 +51,9 @@ def _client(
     post_side_effect: Any = None,
 ) -> FlowApiClient:
     c = FlowApiClient(profile_dir=tmp_path / "prof")
+    # extend_video checks out a Page to classify the host before posting; a
+    # MagicMock url classifies as None (labs), so the REST path runs.
+    c._page = MagicMock()  # type: ignore[attr-defined]
     c.fetch_project_listing = AsyncMock(  # type: ignore[method-assign]
         return_value=listing if listing is not None else _listing()
     )
