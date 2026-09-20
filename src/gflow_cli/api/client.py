@@ -2292,9 +2292,7 @@ class FlowApiClient:
                 )
 
                 await MigratedComposer().ensure_editor(page, project_id)
-                token = await self._mint_recaptcha_token(
-                    recaptcha_action, page=page
-                )
+                token = await self._mint_recaptcha_token(recaptcha_action, page=page)
                 return await self._extend_video_batchexecute(
                     req,
                     page=page,
@@ -2392,13 +2390,17 @@ class FlowApiClient:
             source_workflow_id=source_workflow_id,
         )
         frames = await self._batchexecute_post(
-            page, "fZytfe", payload,
-            project_id=req.project_id, wiz=wiz,
+            page,
+            "fZytfe",
+            payload,
+            project_id=req.project_id,
+            wiz=wiz,
             source_path=f"/project/{req.project_id}/scene/{req.scene_id}",
         )
 
         # Parse the generation record from the response
         from gflow_cli.api.transports.batchexecute import generation_record
+
         for rpcid, payload_data in frames:
             if rpcid == "fZytfe" and payload_data is not None:
                 rec = generation_record(rpcid, payload_data)
@@ -2522,8 +2524,11 @@ class FlowApiClient:
             wiz = await self._extract_wiz_params(page)
             while True:
                 frames = await self._batchexecute_post(
-                    page, "as29s", json.dumps([workflow_id]),
-                    project_id=project_id, wiz=wiz,
+                    page,
+                    "as29s",
+                    json.dumps([workflow_id]),
+                    project_id=project_id,
+                    wiz=wiz,
                 )
                 record = None
                 for rpcid, data in frames:
@@ -2532,16 +2537,24 @@ class FlowApiClient:
                         break
                 if isinstance(record, list):
                     # Terminal: record arrived. details[8] = [3] on success.
-                    details = record[5] if len(record) > 5 else []
+                    rec_list = cast("list[object]", record)
+                    details_elem = rec_list[5] if len(rec_list) > 5 else None
+                    details = (
+                        cast("list[object]", details_elem) if isinstance(details_elem, list) else []
+                    )
+                    status_elem = details[8] if len(details) > 8 else None
+                    status_cell = (
+                        cast("list[object]", status_elem) if isinstance(status_elem, list) else []
+                    )
                     status_code = (
-                        details[8][0]
-                        if isinstance(details, list) and len(details) > 8
-                        and isinstance(details[8], list) and details[8]
-                        else None
+                        status_cell[0] if status_cell and isinstance(status_cell[0], int) else None
                     )
                     if status_code == 3:
+                        media_id_val = (
+                            str(rec_list[2]) if len(rec_list) > 2 and rec_list[2] else workflow_id
+                        )
                         return VideoStatus(
-                            media_id=record[2] if len(record) > 2 else workflow_id,
+                            media_id=media_id_val,
                             status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
                         )
                     raise FlowApiError(
@@ -2550,8 +2563,7 @@ class FlowApiClient:
                     )
                 if time.monotonic() >= deadline:
                     raise TransportTimeoutError(
-                        f"video workflow {workflow_id} did not finish within "
-                        f"{timeout_s:.0f}s"
+                        f"video workflow {workflow_id} did not finish within {timeout_s:.0f}s"
                     )
                 await asyncio.sleep(interval)
         finally:
@@ -3347,6 +3359,7 @@ class FlowApiClient:
                 route=route,
             )
         return cast("JsonObject", parsed)
+
     # --- batchexecute lane (migrated host) ---------------------------------
 
     async def _extract_wiz_params(self, page: Page) -> dict[str, str]:
@@ -3365,10 +3378,18 @@ class FlowApiClient:
                 instance=_make_instance(),
                 route="batchexecute:wiz",
             )
-        f_sid = wiz.get("FdrFJe")
-        bl = wiz.get("cfb2h")
-        at = wiz.get("SNlM0e")
-        if not all(isinstance(v, str) and v for v in (f_sid, bl, at)):
+        wiz_dict = cast("dict[str, object]", wiz)
+        f_sid = wiz_dict.get("FdrFJe")
+        bl = wiz_dict.get("cfb2h")
+        at = wiz_dict.get("SNlM0e")
+        if (
+            not isinstance(f_sid, str)
+            or not f_sid
+            or not isinstance(bl, str)
+            or not bl
+            or not isinstance(at, str)
+            or not at
+        ):
             raise WireFormatError(
                 detail=(
                     f"WIZ_global_data missing batchexecute params: "
@@ -3413,6 +3434,7 @@ class FlowApiClient:
             f"?rpcids={rpcid}&source-path={quote_plus(path)}"
             f"&bl={wiz['bl']}&f.sid={wiz['f_sid']}&hl=en&rt=c&_reqid=1"
         )
+
         async def attempt() -> Any:
             return await page.request.post(
                 url,
@@ -3481,9 +3503,7 @@ class FlowApiClient:
                 page, "HTrJv", "[]", project_id=project_id, wiz=wiz
             )
             # Zzl0ze — project contents
-            zzl0ze_payload = json.dumps(
-                [f"projects/{project_id}", None, None, None, [1]]
-            )
+            zzl0ze_payload = json.dumps([f"projects/{project_id}", None, None, None, [1]])
             zzl0ze_frames = await self._batchexecute_post(
                 page, "Zzl0ze", zzl0ze_payload, project_id=project_id, wiz=wiz
             )
@@ -3493,19 +3513,15 @@ class FlowApiClient:
             )
 
             # Extract payloads
-            htrjv_data = next(
-                (p for r, p in htrjv_frames if r == "HTrJv" and p), None
-            )
-            zzl0ze_data = next(
-                (p for r, p in zzl0ze_frames if r == "Zzl0ze" and p), None
-            )
-            nzlxg_data = next(
-                (p for r, p in nzlxg_frames if r == "nzlxg" and p), None
-            )
+            htrjv_data = next((p for r, p in htrjv_frames if r == "HTrJv" and p), None)
+            zzl0ze_data = next((p for r, p in zzl0ze_frames if r == "Zzl0ze" and p), None)
+            nzlxg_data = next((p for r, p in nzlxg_frames if r == "nzlxg" and p), None)
 
             # Synthesize the tRPC envelope
             return _synthesize_listing(
-                htrjv_data, zzl0ze_data, nzlxg_data,
+                htrjv_data,
+                zzl0ze_data,
+                nzlxg_data,
                 service_tier=await self._dom_service_tier(page),
             )
         finally:
@@ -4276,66 +4292,65 @@ def _synthesize_listing(
     )
 
 
-def _synthesize_model_families(htrjv_data: Any) -> list[JsonObject]:
-    """Convert ``HTrJv`` section [4] (family groups) into tRPC usages.
-
-    Each family is ``[displayName, [model_entry, ...]]``. Each model entry is
-    ``[key, None, None, None, [[tierIdx, [[None, cost]]]...], None, None,
-    [[[[reqIds]]]], None, None, True, None, [[aspectIdx]], ...]``.
-    """
-    if not isinstance(htrjv_data, list) or len(htrjv_data) == 0:
+def _synthesize_model_families(htrjv_data: object) -> list[JsonObject]:
+    """Convert ``HTrJv`` section [4] (family groups) into tRPC usages."""
+    data_list = cast("list[object]", htrjv_data) if isinstance(htrjv_data, list) else []
+    if not data_list:
         return []
-    data = htrjv_data[0] if isinstance(htrjv_data[0], list) else htrjv_data
-    if not isinstance(data, list) or len(data) < 5:
+    first_elem = data_list[0]
+    data = cast("list[object]", first_elem) if isinstance(first_elem, list) else data_list
+    if len(data) < 5:
         return []
-    families_raw = data[4]
-    if not isinstance(families_raw, list):
-        return []
+    families_elem = data[4]
+    families_raw = cast("list[object]", families_elem) if isinstance(families_elem, list) else []
 
     families: list[JsonObject] = []
     for fam in families_raw:
-        if not isinstance(fam, list) or len(fam) < 2:
+        fam_list = cast("list[object]", fam) if isinstance(fam, list) else []
+        if len(fam_list) < 2:
             continue
-        display_name = fam[0] if isinstance(fam[0], str) else ""
-        models_raw = fam[1] if isinstance(fam[1], list) else []
+        display_name = fam_list[0] if isinstance(fam_list[0], str) else ""
+        models_raw = cast("list[object]", fam_list[1]) if isinstance(fam_list[1], list) else []
         usages: list[JsonObject] = []
         for m in models_raw:
-            if not isinstance(m, list) or len(m) == 0:
+            m_list = cast("list[object]", m) if isinstance(m, list) else []
+            if not m_list:
                 continue
-            key = m[0] if isinstance(m[0], str) else ""
+            key = m_list[0] if isinstance(m_list[0], str) else ""
             if not key:
                 continue
-            # Tier costs at index 4: [[tierIdx, [[None, cost]]]...]
             credit_mapping: dict[str, JsonObject] = {}
-            tiers_raw = m[4] if len(m) > 4 and isinstance(m[4], list) else []
+            tiers_elem = m_list[4] if len(m_list) > 4 else None
+            tiers_raw = cast("list[object]", tiers_elem) if isinstance(tiers_elem, list) else []
             for t in tiers_raw:
-                if not isinstance(t, list) or len(t) < 2:
+                t_list = cast("list[object]", t) if isinstance(t, list) else []
+                if len(t_list) < 2:
                     continue
-                tier_idx = t[0] if isinstance(t[0], int) else None
+                tier_idx = t_list[0] if isinstance(t_list[0], int) else None
                 tier_name = _TIER_INDEX_TO_NAME.get(tier_idx) if tier_idx else None
                 if not tier_name:
                     continue
-                cost_entry = t[1] if isinstance(t[1], list) else []
+                cost_elem = t_list[1]
+                cost_entry = cast("list[object]", cost_elem) if isinstance(cost_elem, list) else []
                 cost = None
-                if cost_entry and isinstance(cost_entry[0], list) and len(cost_entry[0]) > 1:
-                    cost = cost_entry[0][1]
+                if cost_entry and isinstance(cost_entry[0], list):
+                    first_cost = cast("list[object]", cost_entry[0])
+                    if len(first_cost) > 1:
+                        cost = first_cost[1]
                 credit_mapping[tier_name] = cast(
                     "JsonObject",
                     {"cost": cost if isinstance(cost, int) else "UNAVAILABLE"},
                 )
-            # Requirements at index 7: nested lists of ints — flatten to ids.
             requirements: list[list[str]] = []
-            reqs_raw = m[7] if len(m) > 7 and isinstance(m[7], list) else []
+            reqs_elem = m_list[7] if len(m_list) > 7 else None
+            reqs_raw = cast("list[object]", reqs_elem) if isinstance(reqs_elem, list) else []
             req_ids = _flatten_ints(reqs_raw)
-            req_names = [
-                name for rid in req_ids
-                if (name := _REQUIREMENT_ID_TO_NAME.get(rid))
-            ]
+            req_names = [name for rid in req_ids if (name := _REQUIREMENT_ID_TO_NAME.get(rid))]
             if req_names:
                 requirements.append(req_names)
-            # Aspect at index 12: nested lists of ints — flatten to ids.
             aspects: list[str] = []
-            aspect_raw = m[12] if len(m) > 12 and isinstance(m[12], list) else []
+            aspect_elem = m_list[12] if len(m_list) > 12 else None
+            aspect_raw = cast("list[object]", aspect_elem) if isinstance(aspect_elem, list) else []
             for aid in _flatten_ints(aspect_raw):
                 cap = _ASPECT_INDEX_TO_CAPABILITY.get(aid)
                 if cap:
@@ -4360,36 +4375,31 @@ def _synthesize_model_families(htrjv_data: Any) -> list[JsonObject]:
     return families
 
 
-def _synthesize_workflows(zzl0ze_data: Any) -> list[JsonObject]:
-    """Convert ``Zzl0ze`` section [2] (generation records) into tRPC workflows.
-
-    Each record is ``[workflow_id, project_id, media_id, "CAE", …]``.
-    The tRPC shape expects ``workflows[].metadata.primaryMediaId`` and
-    ``workflows[].name``. ``metadata.modelKey`` is carried from
-    ``MEDIA_INFO[0][12]`` — extend needs it to derive the source clip's
-    duration for the frame window.
-    """
-    if not isinstance(zzl0ze_data, list) or len(zzl0ze_data) < 3:
+def _synthesize_workflows(zzl0ze_data: object) -> list[JsonObject]:
+    """Convert ``Zzl0ze`` section [2] (generation records) into tRPC workflows."""
+    data_list = cast("list[object]", zzl0ze_data) if isinstance(zzl0ze_data, list) else []
+    if len(data_list) < 3:
         return []
-    records = zzl0ze_data[2]
-    if not isinstance(records, list):
-        return []
+    records_elem = data_list[2]
+    records = cast("list[object]", records_elem) if isinstance(records_elem, list) else []
 
     workflows: list[JsonObject] = []
     for r in records:
-        if not isinstance(r, list) or len(r) < 3:
+        r_list = cast("list[object]", r) if isinstance(r, list) else []
+        if len(r_list) < 3:
             continue
-        wf_id = r[0] if isinstance(r[0], str) else None
-        media_id = r[2] if isinstance(r[2], str) else None
+        wf_id = r_list[0] if isinstance(r_list[0], str) else None
+        media_id = r_list[2] if isinstance(r_list[2], str) else None
         if not wf_id or not media_id:
             continue
-        # MEDIA_INFO[0][12] — the model key, e.g. "abra_t2v_8s" (duration
-        # embedded). Absent on records that carry no media info yet.
         model_key: Any = None
-        media_info = r[7] if len(r) > 7 else None
-        if isinstance(media_info, list) and media_info:
-            first = media_info[0]
-            if isinstance(first, list) and len(first) > 12:
+        media_info_elem = r_list[7] if len(r_list) > 7 else None
+        media_info = (
+            cast("list[object]", media_info_elem) if isinstance(media_info_elem, list) else []
+        )
+        if media_info:
+            first = cast("list[object]", media_info[0]) if isinstance(media_info[0], list) else []
+            if len(first) > 12:
                 model_key = first[12]
         workflows.append(
             cast(
@@ -4406,30 +4416,20 @@ def _synthesize_workflows(zzl0ze_data: Any) -> list[JsonObject]:
     return workflows
 
 
-def _synthesize_credits(nzlxg_data: Any) -> int | None:
-    """Extract the credit balance from ``nzlxg``.
-
-    The payload is ``[balance, ?, ?, ?, ?, balance]`` — the first element
-    is the current balance. Returns ``None`` when the shape is unexpected.
-    """
-    if not isinstance(nzlxg_data, list) or len(nzlxg_data) == 0:
+def _synthesize_credits(nzlxg_data: object) -> int | None:
+    items = cast("list[object]", nzlxg_data) if isinstance(nzlxg_data, list) else []
+    if not items:
         return None
-    balance = nzlxg_data[0]
+    balance = items[0]
     return balance if isinstance(balance, int) and not isinstance(balance, bool) else None
 
 
-def _flatten_ints(node: Any) -> list[int]:
-    """Flatten nested lists into a flat list of ints.
-
-    ``batchexecute`` encodes enums as deeply nested lists — e.g.
-    ``[[[[1, 14]]]]`` for requirements, ``[[2]]`` for aspect. The ints
-    are the payload; the nesting is wire noise.
-    """
+def _flatten_ints(node: object) -> list[int]:
     if isinstance(node, int) and not isinstance(node, bool):
         return [node]
     if isinstance(node, list):
         out: list[int] = []
-        for item in node:
+        for item in cast("list[object]", node):
             out.extend(_flatten_ints(item))
         return out
     return []

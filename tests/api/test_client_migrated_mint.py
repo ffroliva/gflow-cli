@@ -56,12 +56,11 @@ async def test_mint_on_migrated_project_page_mints(
     carries enterprise.js (spike_migrated_recaptcha_mint.py, 2026-09-06). The
     guard must let it through; only the root grid bails."""
     mint = AsyncMock(return_value="tok")
-    monkeypatch.setattr(
-        client_mod, "TokenMinter", lambda *a, **k: SimpleNamespace(mint=mint)
-    )
+    monkeypatch.setattr(client_mod, "TokenMinter", lambda *a, **k: SimpleNamespace(mint=mint))
     c = _client_on("https://flow.google.com/project/abc-123?pli=1")
     assert await c._mint_recaptcha_token("VIDEO_GENERATION") == "tok"
     mint.assert_awaited_once_with("VIDEO_GENERATION")
+
 
 @pytest.mark.asyncio
 async def test_mint_on_labs_host_still_mints(monkeypatch: pytest.MonkeyPatch) -> None:

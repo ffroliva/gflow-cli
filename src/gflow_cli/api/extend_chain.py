@@ -60,7 +60,9 @@ class _ExtendCapable(Protocol):
         seed: int | None = ...,
     ) -> ExtendStarted: ...
 
-    async def poll_video_status(self, media_id: str, *, project_id: str) -> Any: ...
+    async def poll_video_status(
+        self, media_id: str, *, project_id: str, workflow_id: str | None = None
+    ) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)

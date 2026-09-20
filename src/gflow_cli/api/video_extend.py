@@ -111,15 +111,14 @@ def clip_duration_seconds(listing: object, media_id: str) -> float | None:
     workflows = cast("dict[str, Any]", contents).get("workflows")
     if not isinstance(workflows, list):
         return None
-    for raw in cast("list[Any]", workflows):
-        if not isinstance(raw, dict):
-            continue
-        meta = cast("dict[str, Any]", raw).get("metadata")
+    for raw in cast("list[dict[str, object]]", workflows):
+        meta = raw.get("metadata")
         if not isinstance(meta, dict):
             continue
-        if cast("dict[str, Any]", meta).get("primaryMediaId") != media_id:
+        typed_meta = cast("dict[str, object]", meta)
+        if typed_meta.get("primaryMediaId") != media_id:
             continue
-        key = meta.get("modelKey")
+        key = typed_meta.get("modelKey")
         if not isinstance(key, str):
             return None
         m = _DURATION_IN_MODEL_KEY.search(key)
@@ -142,7 +141,7 @@ def extend_frame_window(duration_s: float) -> tuple[int, int]:
 
 
 def to_batchexecute_wire(
-    req: "ExtendVideoRequest",
+    req: ExtendVideoRequest,
     *,
     start_frame: int,
     end_frame: int,
@@ -178,8 +177,17 @@ def to_batchexecute_wire(
                 ],
             ],
             [
-                None, 22, None, None, None, req.project_id,
-                None, None, None, None, [token, 1],
+                None,
+                22,
+                None,
+                None,
+                None,
+                req.project_id,
+                None,
+                None,
+                None,
+                None,
+                [token, 1],
             ],
             [uuid3, 2, None, [req.scene_id, 2]],
         ],

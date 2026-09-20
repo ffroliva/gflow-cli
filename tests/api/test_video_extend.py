@@ -336,7 +336,10 @@ def test_clip_duration_fails_closed_without_a_segment() -> None:
     length is fixed, so a missing segment must not be guessed."""
     listing = _listing_with_model_key("veo_3_1_extension_lite")
     assert clip_duration_seconds(listing, "b9458021-fc2d-4d95-ab53-cf844c6f1079") is None
-    assert clip_duration_seconds(_listing_with_model_key(None), "b9458021-fc2d-4d95-ab53-cf844c6f1079") is None
+    assert (
+        clip_duration_seconds(_listing_with_model_key(None), "b9458021-fc2d-4d95-ab53-cf844c6f1079")
+        is None
+    )
     assert clip_duration_seconds(listing, "00000000-0000-0000-0000-000000000000") is None
     assert clip_duration_seconds({}, "b9458021-fc2d-4d95-ab53-cf844c6f1079") is None
 
@@ -390,8 +393,17 @@ def test_batchexecute_wire_reproduces_the_captured_payload() -> None:
             ],
         ],
         [
-            None, 22, None, None, None, "22222222-2222-2222-2222-222222222222",
-            None, None, None, None, ["TOK", 1],
+            None,
+            22,
+            None,
+            None,
+            None,
+            "22222222-2222-2222-2222-222222222222",
+            None,
+            None,
+            None,
+            None,
+            ["TOK", 1],
         ],
         ["UUID3", 2, None, ["33333333-3333-3333-3333-333333333333", 2]],
     ]
@@ -409,7 +421,13 @@ def test_batchexecute_wire_landscape_aspect_index() -> None:
     )
     payload = json.loads(
         to_batchexecute_wire(
-            req, start_frame=1, end_frame=24, token="T", uuid1="U1", uuid2="U2", uuid3="U3",
+            req,
+            start_frame=1,
+            end_frame=24,
+            token="T",
+            uuid1="U1",
+            uuid2="U2",
+            uuid3="U3",
             source_workflow_id="W",
         )
     )

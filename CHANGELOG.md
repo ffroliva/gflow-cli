@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow video extend` on the migrated host (`flow.google.com`).** Video extensions now
+  run against the migrated origin via batchexecute RPC `fZytfe`, deriving the 24fps frame
+  window from the source clip's duration (`[duration*24-24+1, duration*24]`), binding the
+  source clip's workflow id into the media ref, and polling `as29s` for the signed video URL.
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639))
+
 ## [0.79.0] — 2026-09-18
 
 ### Added

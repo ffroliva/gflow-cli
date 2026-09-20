@@ -1992,6 +1992,35 @@ async def _extend_session(  # noqa: PLR0913
             "profile": profile_name,
         }
         if as_json:
+            # Emit the video_result wire shape so downstream parsers (the reels
+            # provider client) read extend exactly like t2v/i2v: status +
+            # succeeded + media_id + local_path + request.mode. Extend-specific
+            # fields ride alongside.
+            last_media = result.completed_media_ids[-1] if result.completed_media_ids else None
+            payload.update(
+                {
+                    "status": "ok" if not result.aborted and result.error is None else "fail",
+                    "command": "video extend",
+                    "media_id": last_media,
+                    "generation_status": (
+                        "MEDIA_GENERATION_STATUS_COMPLETED"
+                        if not result.aborted and result.error is None
+                        else "MEDIA_GENERATION_STATUS_FAILED"
+                    ),
+                    "succeeded": not result.aborted and result.error is None,
+                    "local_path": rendered,
+                    "failure_reasons": [],
+                    "error_message": str(result.error) if result.error is not None else None,
+                    "request": {
+                        "model": model_key,
+                        "mode": "extend",
+                        "aspect": aspect,
+                        "duration": segments * _EXTEND_CONTENT_SECONDS,
+                        "count": segments,
+                        "seed": seed,
+                    },
+                }
+            )
             json_output.emit(payload)
         else:
             state = (
@@ -2132,8 +2161,10 @@ def extend(  # noqa: PLR0913
         raise click.BadParameter(msg)
     count = segments if segments is not None else len(prompts)
     # The cost gate runs before a client exists, so --dry-run cannot spend and
-    # cannot even open a browser.
-    _print_extend_plan(media_id=media_id, prompt=prompts[0], aspect=aspect, segments=count)
+    # cannot even open a browser. Machine-readable output must not carry the
+    # human plan preamble — it would corrupt the JSON document on stdout.
+    if not as_json:
+        _print_extend_plan(media_id=media_id, prompt=prompts[0], aspect=aspect, segments=count)
     if dry_run:
         return
     if not yes:
