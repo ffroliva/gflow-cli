@@ -181,3 +181,57 @@ def skip_on_migrated_host(
             pytest.skip("labs-only affordance; this profile is on the migrated host")
 
     return wrapper
+
+
+# --- /about landing: a missing precondition, not a failure (#888) --------------------
+
+#: The phrase `api/transports/_common.py::raise_if_known_landing` puts in the
+#: `FlowAppError` it raises when Flow answers its public landing page. It is OUR
+#: wording, not Flow's, so it is stable under our own control — and
+#: `tests/e2e/test_about_landing_guard.py` fails loudly if the raise site ever
+#: stops producing it, rather than letting this guard silently stop guarding.
+ABOUT_LANDING_MARKER = "public landing page"
+
+_ABOUT_SKIP_REASON = (
+    "Flow served its /about landing for this account — a missing precondition, not a "
+    "product failure. MEASURED 2026-09-20: `gflow project create` succeeded on two other "
+    "profiles in the same minute and failed only on this one, and the 2026-09-11 spike "
+    "found the redirect stable per account (5/5). See #888; recovery is attempted in #881."
+)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):  # type: ignore[no-untyped-def]
+    """Report an /about-landing failure as a SKIP, so the canary stops crying wolf.
+
+    Nine of the thirteen standing failures in #559 were this one condition: the
+    canary's account is in the `/about` state, so every browser-driving e2e fails
+    before it can exercise anything. Three consecutive nightly runs reported the
+    same red, which is how a canary trains the red-blindness its own footer warns
+    about — and it hid a real finding (`test_project_create_e2e.py` shipped in
+    v0.78.0 and had never passed a single night).
+
+    A hook rather than per-test decorators, because the nine fail in three
+    different shapes — a subprocess exit code, an in-process raise, and an MCP
+    result dict — and `skip_on_migrated_host`'s decorator can only catch the
+    second. One rule, stated once, covering tests not yet written.
+
+    **This narrows to a skip, it does not lower the bar.** The marker only appears
+    when OUR OWN landing check raised, which is precisely the precondition; the
+    same tests still fail normally on any profile that can reach Flow, and
+    `ffroliva` and `ci-probe` both can.
+
+    **It covers the `public` landing kind only, and deliberately not `signin`.**
+    Measured 2026-09-20: two of the nine (`..._agent_mode_recovered_before_mode_switch`,
+    `..._agent_chat_panel_recovered_before_mode_switch`) survive this guard and fail on
+    `AuthExpiredError` — Flow served `accounts.google.com/v3/signin/confirmidentifier`.
+    `/about` appears in their logs only from an earlier step. Widening to catch
+    `AuthExpiredError` would silence exactly the signal an e2e exists to raise, so those
+    two stay red until somebody measures them. A canary that goes green by relabelling an
+    unexplained failure is worth less than one that stays red for two.
+    """
+    report = yield
+    if report.when == "call" and report.failed and ABOUT_LANDING_MARKER in str(report.longrepr):
+        report.outcome = "skipped"
+        report.longrepr = (str(item.path), 0, f"Skipped: {_ABOUT_SKIP_REASON}")
+    return report

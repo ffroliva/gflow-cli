@@ -406,6 +406,31 @@ tests/
     └── test_data_layer_e2e.py            # [e2e, e2e_{image,video,data}]
 ```
 
+### When an account cannot reach Flow at all (`/about`)
+
+`tests/e2e/conftest.py` carries a `pytest_runtest_makereport` hook that reports an
+e2e failure as a **SKIP** when it was caused by Flow serving its public `/about`
+landing. That is a missing precondition — the account cannot reach Flow, so no
+browser-driving test can exercise anything — and it is *account-scoped*, not a
+product failure. Measured 2026-09-20: `gflow project create` succeeded on two
+profiles and failed only on the canary's in the same minute (#888).
+
+It is a hook rather than a decorator because the affected tests fail in three
+different shapes — a subprocess exit code, an in-process raise, and an MCP result
+dict — and `skip_on_migrated_host` can only catch the second.
+
+Two constraints keep it from becoming a way to hide regressions:
+
+- **It matches a marker we emit ourselves**, from `raise_if_known_landing`, never
+  anything Flow says. `tests/test_about_landing_guard.py` asserts that marker
+  against the real raise site and lives *outside* `tests/e2e/` on purpose — the
+  root conftest auto-marks that directory `e2e`, so a tripwire placed beside the
+  guard would be deselected in ordinary CI, which is exactly when it must fire.
+- **It covers the `public` landing kind only.** It deliberately does not catch
+  `AuthExpiredError` from the `signin` kind: two transports tests fail that way and
+  are left red, because silencing them would suppress the signal an e2e exists to
+  raise.
+
 ### Diagnosing a surface Flow has retired
 
 `test_retired_labs_route_diagnosis_e2e.py` (marker `e2e_auth`, **0 credits**,
