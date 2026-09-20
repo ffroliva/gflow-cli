@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from structlog.testing import capture_logs
@@ -51,6 +51,9 @@ def _client(
     post_side_effect: Any = None,
 ) -> FlowApiClient:
     c = FlowApiClient(profile_dir=tmp_path / "prof")
+    # extend_video checks out a Page to classify the host before posting; a
+    # MagicMock url classifies as None (labs), so the REST path runs.
+    c._page = MagicMock()  # type: ignore[attr-defined]
     c.fetch_project_listing = AsyncMock(  # type: ignore[method-assign]
         return_value=listing if listing is not None else _listing()
     )
@@ -198,3 +201,99 @@ async def test_reports_the_unit_cost(tmp_path: Path) -> None:
         media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, position=1, prompt="p"
     )
     assert started.unit_cost == 10
+
+
+@pytest.mark.asyncio
+async def test_create_scene_migrated_host_batchexecute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_composer.MigratedComposer.ensure_editor",
+        AsyncMock(),
+    )
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    page = MagicMock()
+    page.url = "https://flow.google.com/project/proj-1"
+    c._checkout_page = AsyncMock(return_value=page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+    c._extract_wiz_params = AsyncMock(return_value={"f_sid": "1", "bl": "2"})  # type: ignore[method-assign]
+    c._batchexecute_post = AsyncMock(  # type: ignore[method-assign]
+        return_value=[("rqZuUc", json.dumps([["scene-uuid-123", "Untitled Scene", None, [1, 2]]]))]
+    )
+    scene = await c.create_scene(project_id="proj-1", workflow_ids=["wf-1"])
+    assert scene.scene_id == "scene-uuid-123"
+    assert scene.project_id == "proj-1"
+    c._batchexecute_post.assert_awaited_once()
+    assert c._batchexecute_post.call_args[0][1] == "rqZuUc"
+
+
+@pytest.mark.asyncio
+async def test_create_scene_labs_host_rest(tmp_path: Path) -> None:
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    page = MagicMock()
+    page.url = "https://labs.google/fx/tools/flow"
+    c._checkout_page = AsyncMock(return_value=page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+    c._post_json = AsyncMock(  # type: ignore[method-assign]
+        return_value={"scene": {"sceneId": "scene-legacy-456"}, "sceneWorkflows": []}
+    )
+    scene = await c.create_scene(project_id="proj-1", workflow_ids=["wf-1"])
+    assert scene.scene_id == "scene-legacy-456"
+    assert scene.project_id == "proj-1"
+    c._post_json.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_scene_for_extend_migrated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_composer.MigratedComposer.ensure_editor",
+        AsyncMock(),
+    )
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    page = MagicMock()
+    page.url = "https://flow.google.com/project/proj-1"
+    c._checkout_page = AsyncMock(return_value=page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+    c._extract_wiz_params = AsyncMock(return_value={"f_sid": "1", "bl": "2"})  # type: ignore[method-assign]
+    c._batchexecute_post = AsyncMock(  # type: ignore[method-assign]
+        return_value=[("rqZuUc", json.dumps([["scene-ext-789", "Scene Title", None, [1, 2]]]))]
+    )
+    scene = await c.create_scene_for_extend(project_id="proj-1", media_id="media-abc", listing={})
+    assert scene.scene_id == "scene-ext-789"
+    c._batchexecute_post.assert_awaited_once()
+    # Verifies media_id was passed directly to rqZuUc
+    payload_arg = json.loads(c._batchexecute_post.call_args[0][2])
+    assert payload_arg[1] == ["media-abc"]
+
+
+@pytest.mark.asyncio
+async def test_create_scene_for_extend_labs(tmp_path: Path) -> None:
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    page = MagicMock()
+    page.url = "https://labs.google/fx/tools/flow"
+    c._checkout_page = AsyncMock(return_value=page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+    c._post_json = AsyncMock(  # type: ignore[method-assign]
+        return_value={"scene": {"sceneId": "scene-labs-123"}, "sceneWorkflows": []}
+    )
+    listing = {
+        "result": {
+            "data": {
+                "json": {
+                    "projectContents": {
+                        "workflows": [
+                            {"name": "wf-resolved", "metadata": {"primaryMediaId": "media-xyz"}}
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    scene = await c.create_scene_for_extend(
+        project_id="proj-1", media_id="media-xyz", listing=listing
+    )
+    assert scene.scene_id == "scene-labs-123"
+    c._post_json.assert_awaited_once()
+    assert c._post_json.call_args[0][1] == {"workflowIds": ["wf-resolved"]}

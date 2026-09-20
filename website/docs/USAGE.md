@@ -853,6 +853,9 @@ reach for it before spending anything.
 > (`/project/<project-id>`). `--project` is required here, unlike on the other generate
 > commands, because extend has to find the workflow that owns `MEDIA_ID` before it can
 > create the scene to extend into.
+> **Runs on both Flow hosts.** On migrated accounts (`flow.google.com`), `extend` routes
+> through batchexecute RPC `fZytfe` and derives the 24fps frame window from the source clip's
+> model key automatically.
 
 Continue an existing clip by another 8 seconds, then optionally render the whole
 thing to one file.
@@ -2016,7 +2019,7 @@ The CLI is a thin shell over `gflow_cli.api.client.FlowApiClient`. All public me
 Two module paths resolve to the same error classes. Use whichever feels natural for your codebase:
 
 ```python
-from gflow_cli.errors import GFlowError, AuthExpiredError   # canonical
+from gflow_cli.errors import GFlowError, AuthExpiredError  # canonical
 from gflow_cli.exceptions import GFlowError, AuthExpiredError  # standard alias
 ```
 
@@ -2031,6 +2034,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest, Model, Aspect
 from gflow_cli.config import get_settings
 
+
 async def main() -> None:
     settings = get_settings()
     profile_dir = settings.profile_subdir("default")
@@ -2040,6 +2044,7 @@ async def main() -> None:
         image = await client.generate_image(req=req)
         saved = await client.download_image(image, Path("lake.png"))
         print(saved)
+
 
 asyncio.run(main())
 ```

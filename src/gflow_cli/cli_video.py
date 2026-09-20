@@ -1897,16 +1897,10 @@ async def _extend_session(  # noqa: PLR0913
                         f"continuing from {source_media}"
                     )
         if not target_scene:
-            workflow_id = video_extend.workflow_id_for_media(listing, media_id)
-            if not workflow_id:
-                msg = (
-                    f"media {media_id} is not in project {project_id} "
-                    "(no workflow owns it) — check --project"
-                )
-                raise ConfigurationError(msg)
-            scene = await client.create_scene(project_id=project_id, workflow_ids=[workflow_id])
+            scene = await client.create_scene_for_extend(
+                project_id=project_id, media_id=media_id, listing=listing
+            )
             target_scene = scene.scene_id
-
         # Publish the resume handle BEFORE the first submit, so an interrupt at
         # any point has something to report rather than only on a clean failure.
         set_interrupt_context(credits_spent=0, resume_id=target_scene, segments_done=0)
@@ -1966,18 +1960,21 @@ async def _extend_session(  # noqa: PLR0913
         # Render even a partial chain: those segments are generated and billed,
         # and discarding them because the run did not finish wastes real money.
         if output_file is not None and result.completed_media_ids:
-            scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
-            # Scene.to_concat_inputs owns the end_time>0 fallback (an omitted
-            # endTime parses to 0s and would render a zero-length clip) and
-            # raises on a missing media_id instead of silently dropping a paid
-            # segment. cli_scene.py uses it for the identical job.
-            inputs = list(scene_state.to_concat_inputs())
-            if not as_json:
-                console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
-            await client.concatenate_scene(inputs, out_path=output_file)
-            rendered = str(output_file)
+            if len(result.completed_media_ids) == 1:
+                # Single segment extension: download the generated segment directly
+                # into output_file. Bypasses remote concatenation queue and 401 on
+                # migrated hosts where aisandbox concatenate_scene is dead.
+                await client.download_video(result.completed_media_ids[0], output_file)
+                rendered = str(output_file)
+            else:
+                scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
+                inputs = list(scene_state.to_concat_inputs())
+                if not as_json:
+                    console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
+                await client.concatenate_scene(inputs, out_path=output_file)
+                rendered = str(output_file)
 
-        payload = {
+        payload: dict[str, Any] = {
             "scene_id": target_scene,
             "project_id": project_id,
             "model": model_key,
@@ -1992,6 +1989,35 @@ async def _extend_session(  # noqa: PLR0913
             "profile": profile_name,
         }
         if as_json:
+            # Emit the video_result wire shape so downstream parsers (the reels
+            # provider client) read extend exactly like t2v/i2v: status +
+            # succeeded + media_id + local_path + request.mode. Extend-specific
+            # fields ride alongside.
+            last_media = result.completed_media_ids[-1] if result.completed_media_ids else None
+            payload.update(
+                {
+                    "status": "ok" if not result.aborted and result.error is None else "fail",
+                    "command": "video extend",
+                    "media_id": last_media,
+                    "generation_status": (
+                        "MEDIA_GENERATION_STATUS_COMPLETED"
+                        if not result.aborted and result.error is None
+                        else "MEDIA_GENERATION_STATUS_FAILED"
+                    ),
+                    "succeeded": not result.aborted and result.error is None,
+                    "local_path": rendered,
+                    "failure_reasons": [],
+                    "error_message": str(result.error) if result.error is not None else None,
+                    "request": {
+                        "model": model_key,
+                        "mode": "extend",
+                        "aspect": aspect,
+                        "duration": segments * _EXTEND_CONTENT_SECONDS,
+                        "count": segments,
+                        "seed": seed,
+                    },
+                }
+            )
             json_output.emit(payload)
         else:
             state = (
@@ -2132,8 +2158,10 @@ def extend(  # noqa: PLR0913
         raise click.BadParameter(msg)
     count = segments if segments is not None else len(prompts)
     # The cost gate runs before a client exists, so --dry-run cannot spend and
-    # cannot even open a browser.
-    _print_extend_plan(media_id=media_id, prompt=prompts[0], aspect=aspect, segments=count)
+    # cannot even open a browser. Machine-readable output must not carry the
+    # human plan preamble — it would corrupt the JSON document on stdout.
+    if not as_json:
+        _print_extend_plan(media_id=media_id, prompt=prompts[0], aspect=aspect, segments=count)
     if dry_run:
         return
     if not yes:

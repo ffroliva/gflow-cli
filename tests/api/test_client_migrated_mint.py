@@ -34,18 +34,11 @@ class _NeverMint:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    # `/project/<id>` DOES serve enterprise.js, so bailing there is the conservative
-    # choice, not a necessity: no minting path is ported to the migrated host today.
-    # This case is the tripwire for the day one is.
-    "url",
-    ["https://flow.google.com/", "https://flow.google.com/project/abc-123?pli=1"],
-)
 async def test_mint_on_migrated_host_exits_36_before_touching_recaptcha(
-    monkeypatch: pytest.MonkeyPatch, url: str
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(client_mod, "TokenMinter", _NeverMint)
-    c = _client_on(url)
+    c = _client_on("https://flow.google.com/")
     # The bail raises inside the checkout/checkin bracket; the pool page must not leak.
     returned: list[Any] = []
     monkeypatch.setattr(c, "_checkin_page", returned.append)
@@ -53,6 +46,20 @@ async def test_mint_on_migrated_host_exits_36_before_touching_recaptcha(
         await c._mint_recaptcha_token("IMAGE_GENERATION")
     assert "flow.google.com" in info.value.detail
     assert returned == [c._page]
+
+
+@pytest.mark.asyncio
+async def test_mint_on_migrated_project_page_mints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The extend lane mints on ``/project/<id>`` — the only migrated page that
+    carries enterprise.js (spike_migrated_recaptcha_mint.py, 2026-09-06). The
+    guard must let it through; only the root grid bails."""
+    mint = AsyncMock(return_value="tok")
+    monkeypatch.setattr(client_mod, "TokenMinter", lambda *a, **k: SimpleNamespace(mint=mint))
+    c = _client_on("https://flow.google.com/project/abc-123?pli=1")
+    assert await c._mint_recaptcha_token("VIDEO_GENERATION") == "tok"
+    mint.assert_awaited_once_with("VIDEO_GENERATION")
 
 
 @pytest.mark.asyncio
