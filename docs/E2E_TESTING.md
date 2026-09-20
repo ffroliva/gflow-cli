@@ -402,8 +402,34 @@ tests/
     ├── test_image_batch_e2e.py           # [e2e, e2e_batch]
     ├── test_video_t2v_e2e.py             # [e2e, e2e_video]
     ├── test_incident_quality_e2e.py      # [e2e, e2e_auth] incident-bundle quality benchmark — 0 credits
+    ├── test_retired_labs_route_diagnosis_e2e.py  # [e2e, e2e_auth] #875 — 0 credits, no project fixture
     └── test_data_layer_e2e.py            # [e2e, e2e_{image,video,data}]
 ```
+
+### Diagnosing a surface Flow has retired
+
+`test_retired_labs_route_diagnosis_e2e.py` (marker `e2e_auth`, **0 credits**,
+one read-only GET) guards what gflow *says* when a labs tRPC route answers
+`404 "Flow RPCs have been deprecated and disabled"` — that it names the retired
+route instead of telling the user to check a payload that is fine, simplify a
+prompt that does not exist, or file a bug for a condition Flow documents in the
+body being classified (#875).
+
+It is the rare case where the offline test genuinely cannot substitute. The unit
+tests in `tests/api/test_client_errors.py` feed the classifier a *captured* body;
+they stay green if Flow changes the wording, un-retires the route, or switches to
+401, while the user-facing diagnosis silently goes wrong again.
+
+Two deliberate choices make it runnable on any profile in the nightly canary:
+
+- **No project fixture.** The route is retired before any project lookup, so the
+  diagnosis is project-independent and a syntactically valid id suffices.
+- **It skips rather than passes** when the account is still served the labs tRPC
+  API, because a silent green would let a cohort change retire the test without
+  anyone noticing — the `skip_on_migrated_host` failure mode in reverse.
+
+Verified by falsification on 2026-09-20: with detection disabled it fails with
+the pre-fix message verbatim, so it is a guard rather than a test that can only pass.
 
 ### Incident-bundle quality benchmark
 
