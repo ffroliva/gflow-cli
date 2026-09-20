@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it to hop to the Google Account Chooser, auto-selects the recorded account, and enters the
   project without failing.
 
+- **Parse Google batchexecute RPC error envelopes into typed exceptions.** When batchexecute
+  returns an RPC error frame (e.g. status 13 `INTERNAL`, status 16 `UNAUTHENTICATED`), `parse_frames`
+  previously discarded the frame because payload was null, leading to a misleading `WireFormatError`.
+  It now parses the gRPC status block and raises typed errors (`AuthExpiredError`, `FlowAppError`,
+  `InsufficientCreditsError`, etc.) with the exact upstream status.
+
 ## [0.79.0] — 2026-09-18
 
 ### Added

@@ -29,7 +29,14 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from gflow_cli.data.redaction import redact_error_detail
-from gflow_cli.errors import WireFormatError
+from gflow_cli.errors import (
+    AuthExpiredError,
+    ConfigurationError,
+    FlowAccessUnavailableError,
+    FlowAppError,
+    InsufficientCreditsError,
+    WireFormatError,
+)
 
 _XSSI_PREFIX = ")]}'"
 _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
@@ -90,6 +97,55 @@ def _as_list(node: object) -> list[Any] | None:
     return cast("list[Any]", node) if isinstance(node, list) else None
 
 
+def raise_if_rpc_error(rpcid: str, error_block: Any) -> None:
+    """Raise a typed exception when batchexecute returns an RPC error envelope.
+
+    Google batchexecute encodes gRPC status at slot [5]: e.g. [13], [16], [7].
+    Failing to inspect this causes callers to mistake server-side rejections
+    for envelope drift (WireFormatError).
+    """
+    block = cast("list[object]", error_block) if isinstance(error_block, list) else []
+    if not block:
+        return
+    code = block[0] if isinstance(block[0], int) else None
+    if code is None:
+        return
+    msg = block[1] if len(block) > 1 and isinstance(block[1], str) else None
+    detail_suffix = f": {msg}" if msg else ""
+
+    if code == 16:
+        raise AuthExpiredError(
+            detail=(
+                f"Google Flow RPC {rpcid} reported UNAUTHENTICATED (16){detail_suffix} — "
+                f"session is not signed in"
+            )
+        )
+    if code == 7:
+        raise FlowAccessUnavailableError(
+            detail=(
+                f"Google Flow RPC {rpcid} reported PERMISSION_DENIED (7){detail_suffix} — "
+                f"account lacks access"
+            )
+        )
+    if code == 8:
+        raise InsufficientCreditsError(
+            detail=f"Google Flow RPC {rpcid} reported RESOURCE_EXHAUSTED (8){detail_suffix}"
+        )
+    if code == 3:
+        raise ConfigurationError(
+            detail=(
+                f"Google Flow RPC {rpcid} rejected arguments (INVALID_ARGUMENT, 3){detail_suffix}"
+            )
+        )
+    if code == 13:
+        raise FlowAppError(
+            detail=f"Google Flow RPC {rpcid} failed with status 13 (INTERNAL){detail_suffix}"
+        )
+    raise FlowAppError(
+        detail=f"Google Flow RPC {rpcid} failed with gRPC status {code}{detail_suffix}"
+    )
+
+
 def parse_frames(text: str) -> list[tuple[str, Any]]:
     """Every ``wrb.fr`` frame in a batchexecute body as ``(rpcid, decoded payload)``.
 
@@ -118,18 +174,27 @@ def parse_frames(text: str) -> list[tuple[str, Any]]:
             continue
         for raw_item in chunk:
             item = _as_list(raw_item)
-            if (
-                item is not None
-                and len(item) >= 3
-                and item[0] == "wrb.fr"
-                and isinstance(item[1], str)
-                and isinstance(item[2], str)
-            ):
-                try:
-                    payload: Any = json.loads(item[2])
-                except ValueError:
-                    payload = None
-                frames.append((item[1], payload))
+            if item is None:
+                continue
+            if len(item) >= 3 and item[0] == "wrb.fr" and isinstance(item[1], str):
+                rpcid = item[1]
+                payload: Any = None
+                if isinstance(item[2], str):
+                    try:
+                        payload = json.loads(item[2])
+                    except ValueError:
+                        payload = None
+                error_raw: list[object] | None = (
+                    cast("list[object]", item[5])
+                    if len(item) > 5 and isinstance(item[5], list)
+                    else None
+                )
+                if error_raw is not None:
+                    raise_if_rpc_error(rpcid, error_raw)
+                frames.append((rpcid, payload))
+            elif len(item) >= 3 and item[0] == "er" and isinstance(item[1], str):
+                rpcid = item[1]
+                raise_if_rpc_error(rpcid, item[2] if isinstance(item[2], list) else [item[2]])
     return frames
 
 
