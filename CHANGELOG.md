@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The nightly canary stops crying wolf about an account that cannot reach Flow.**
+  An e2e failure caused by Flow serving its public `/about` landing is now reported as a
+  SKIP carrying the measurement, because it is a missing precondition rather than a
+  product failure — measured 2026-09-20, `gflow project create` succeeded on two profiles
+  and failed only on the canary's in the same minute. Seven of the thirteen standing
+  failures in [#559](https://github.com/ffroliva/gflow-cli/issues/559) were this one
+  condition, unchanged across three nightly runs, and the noise hid a real finding:
+  `test_project_create_e2e.py` shipped in v0.78.0 and had never passed once.
+  Test-only ([#888](https://github.com/ffroliva/gflow-cli/issues/888)).
+
+  It narrows deliberately. The guard matches a marker **gflow itself** emits from
+  `raise_if_known_landing`, never anything Flow says; a tripwire outside `tests/e2e/`
+  asserts that marker against the real raise site so a reword cannot silently disable it;
+  and it covers the `public` landing kind **only**. Two transports tests that fail on the
+  `signin` kind are left red on purpose — catching `AuthExpiredError` would silence the
+  signal an e2e exists to raise.
+
 ### Added
 
 - **E2E coverage for the retired-route diagnosis** (`tests/e2e/test_retired_labs_route_diagnosis_e2e.py`,
