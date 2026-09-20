@@ -1897,16 +1897,10 @@ async def _extend_session(  # noqa: PLR0913
                         f"continuing from {source_media}"
                     )
         if not target_scene:
-            workflow_id = video_extend.workflow_id_for_media(listing, media_id)
-            if not workflow_id:
-                msg = (
-                    f"media {media_id} is not in project {project_id} "
-                    "(no workflow owns it) — check --project"
-                )
-                raise ConfigurationError(msg)
-            scene = await client.create_scene(project_id=project_id, workflow_ids=[workflow_id])
+            scene = await client.create_scene_for_extend(
+                project_id=project_id, media_id=media_id, listing=listing
+            )
             target_scene = scene.scene_id
-
         # Publish the resume handle BEFORE the first submit, so an interrupt at
         # any point has something to report rather than only on a clean failure.
         set_interrupt_context(credits_spent=0, resume_id=target_scene, segments_done=0)

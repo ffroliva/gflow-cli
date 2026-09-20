@@ -28,6 +28,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import structlog
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api import routes, video_extend
@@ -926,11 +927,24 @@ class FlowApiClient:
         """
         assert self._page is not None
         cached = read_account_locale(self.profile_dir)
-        await self._page.goto(
-            routes.EDITOR_BOOTSTRAP_URL,
-            wait_until="domcontentloaded",
-            timeout=60_000,
-        )
+        try:
+            await self._page.goto(
+                routes.EDITOR_BOOTSTRAP_URL,
+                wait_until="domcontentloaded",
+                timeout=30_000,
+            )
+        except (PlaywrightError, PlaywrightTimeoutError) as exc:
+            if "net::ERR_" in str(exc) or isinstance(exc, PlaywrightTimeoutError):
+                logger.warning(
+                    "client.bootstrap_labs_failed_falling_back_to_migrated", error=str(exc)
+                )
+                await self._page.goto(
+                    "https://flow.google.com/",
+                    wait_until="domcontentloaded",
+                    timeout=45_000,
+                )
+            else:
+                raise
         # #639: NOT_REDIRECTED means "there is no redirect to wait for". It must not
         # ALSO mean "do not read the locale" — which is what returning here made it
         # mean, and that made the state ABSORBING: `_resolve_account_locale` is the
@@ -2239,6 +2253,39 @@ class FlowApiClient:
             route_name="createScene",
         )
         return Scene.from_create_response(data, project_id=project_id)
+
+    async def create_scene_for_extend(
+        self,
+        *,
+        project_id: str,
+        media_id: str,
+        listing: JsonObject,
+    ) -> Scene:
+        """Compose or create a scene to anchor an extend submission.
+
+        On flow.google.com (migrated host), batchexecute rqZuUc creates the scene
+        directly from the source media_id.
+        On labs.google (legacy host), the source workflow_id is resolved from the
+        listing and committed via REST.
+        """
+        page = await self._checkout_page()
+        try:
+            host = flow_host_kind(getattr(page, "url", ""))
+            if host == "migrated":
+                return await self._create_scene_batchexecute(
+                    page=page, project_id=project_id, workflow_ids=[media_id]
+                )
+        finally:
+            self._checkin_page(page)
+
+        workflow_id = video_extend.workflow_id_for_media(listing, media_id)
+        if not workflow_id:
+            msg = (
+                f"media {media_id} is not in project {project_id} "
+                "(no workflow owns it) — check --project"
+            )
+            raise ConfigurationError(msg)
+        return await self.create_scene(project_id=project_id, workflow_ids=[workflow_id])
 
     async def update_scene_workflows(
         self, *, scene_id: str, project_id: str, workflows: list[SceneWorkflow]

@@ -241,3 +241,59 @@ async def test_create_scene_labs_host_rest(tmp_path: Path) -> None:
     assert scene.scene_id == "scene-legacy-456"
     assert scene.project_id == "proj-1"
     c._post_json.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_scene_for_extend_migrated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_composer.MigratedComposer.ensure_editor",
+        AsyncMock(),
+    )
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    page = MagicMock()
+    page.url = "https://flow.google.com/project/proj-1"
+    c._checkout_page = AsyncMock(return_value=page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+    c._extract_wiz_params = AsyncMock(return_value={"f_sid": "1", "bl": "2"})  # type: ignore[method-assign]
+    c._batchexecute_post = AsyncMock(  # type: ignore[method-assign]
+        return_value=[("rqZuUc", json.dumps([["scene-ext-789", "Scene Title", None, [1, 2]]]))]
+    )
+    scene = await c.create_scene_for_extend(project_id="proj-1", media_id="media-abc", listing={})
+    assert scene.scene_id == "scene-ext-789"
+    c._batchexecute_post.assert_awaited_once()
+    # Verifies media_id was passed directly to rqZuUc
+    payload_arg = json.loads(c._batchexecute_post.call_args[0][2])
+    assert payload_arg[1] == ["media-abc"]
+
+
+@pytest.mark.asyncio
+async def test_create_scene_for_extend_labs(tmp_path: Path) -> None:
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    page = MagicMock()
+    page.url = "https://labs.google/fx/tools/flow"
+    c._checkout_page = AsyncMock(return_value=page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+    c._post_json = AsyncMock(  # type: ignore[method-assign]
+        return_value={"scene": {"sceneId": "scene-labs-123"}, "sceneWorkflows": []}
+    )
+    listing = {
+        "result": {
+            "data": {
+                "json": {
+                    "projectContents": {
+                        "workflows": [
+                            {"name": "wf-resolved", "metadata": {"primaryMediaId": "media-xyz"}}
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    scene = await c.create_scene_for_extend(
+        project_id="proj-1", media_id="media-xyz", listing=listing
+    )
+    assert scene.scene_id == "scene-labs-123"
+    c._post_json.assert_awaited_once()
+    assert c._post_json.call_args[0][1] == {"workflowIds": ["wf-resolved"]}
