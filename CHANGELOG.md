@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A retired labs route no longer tells you to simplify a prompt you never wrote.**
+  Every labs tRPC route except project-create now answers HTTP 404 with Flow's own
+  explanation — *"Flow RPCs have been deprecated and disabled. Flow has migrated to
+  https://flow.google.com."* — and gflow surfaced it as a bare `WireFormatError` (exit 7)
+  carrying the class-default advice: check the payload, retry with a simpler prompt, file
+  a bug. All three were wrong. The payload is fine, `gflow character list` is a read with
+  no prompt at all, and Flow documents the condition in the very body being classified.
+  The refusal is now recognised **by that message** — never by which host an account is
+  served, and never by a route allowlist, so a route we have not observed yet is covered
+  the day Flow retires it — and carries a remediation that names the retired route and
+  points at [#639](https://github.com/ffroliva/gflow-cli/issues/639). It deliberately
+  suggests **no** setting: `GFLOW_CLI_FLOW_HOST=flow.google.com` was measured not to help
+  (2026-09-20, `character list`), because the read has no migrated arm to route to, and
+  naming it would repeat the mistake being fixed. The error class and exit code are
+  unchanged ([#875](https://github.com/ffroliva/gflow-cli/issues/875)).
+
+- **`KNOWN_ISSUES.md` no longer claims `gflow character list` works on the migrated host.**
+  Measured twice on 2026-09-20 — with and without `GFLOW_CLI_FLOW_HOST=flow.google.com` —
+  it exits 7 on the retired labs `projectInitialData` route both times. `list_characters`
+  reads that route unconditionally and has no migrated path
+  ([#875](https://github.com/ffroliva/gflow-cli/issues/875)).
+
 ## [0.79.0] — 2026-09-18
 
 ### Added
