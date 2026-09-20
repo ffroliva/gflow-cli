@@ -310,3 +310,82 @@ async def test_chooser_with_no_recorded_account_raises_and_redacts(tmp_path: Pat
     assert "https://accounts.google.com/v3/signin/accountchooser" in detail
     for secret in ("client_id", "state=", "PKOA6qjxDh"):
         assert secret not in detail, f"{secret!r} leaked into a user-pasteable message"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_about_landing_clicks_create_and_autoselects_account(
+    tmp_path: Path,
+) -> None:
+    """When bootstrap or project hop lands on flow.google.com/about, it clicks
+    'Create with Google Flow' to reach the account chooser, then auto-selects."""
+    from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.profile_store import ACCOUNT_FILE
+
+    profile = tmp_path / "profile_p1"
+    profile.mkdir()
+    (profile / ACCOUNT_FILE).write_text("user@example.com\n", encoding="utf-8")
+
+    client = FlowApiClient(profile_dir=profile)
+    page = MagicMock()
+    page.url = "https://flow.google.com/about"
+
+    create_btn = AsyncMock()
+    create_btn.count = AsyncMock(return_value=1)
+    create_btn.first = create_btn
+
+    account_row = AsyncMock()
+    account_row.count = AsyncMock(return_value=1)
+    account_row.first = account_row
+
+    def _locator_for(selector: str) -> AsyncMock:
+        if "Create with Google Flow" in selector or "variant-primary" in selector:
+            return create_btn
+        return account_row
+
+    page.locator = MagicMock(side_effect=_locator_for)
+
+    async def _click_hops_to_chooser(*_args: object, **_kwargs: object) -> None:
+        page.url = (
+            "https://accounts.google.com/v3/signin/accountchooser?continue=https://flow.google.com/"
+        )
+
+    create_btn.click = AsyncMock(side_effect=_click_hops_to_chooser)
+    page.wait_for_url = AsyncMock(return_value=None)
+
+    res = await client._handle_account_chooser(page)
+    assert res is True
+    create_btn.click.assert_awaited_once()
+    account_row.first.click.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_raise_if_known_landing_clicks_create_on_about_and_raises_chooser() -> None:
+    """When raise_if_known_landing encounters /about, it clicks Create and raises
+    FlowAccountChooserError when the chooser is reached."""
+    from gflow_cli.api.transports._common import raise_if_known_landing
+
+    page = MagicMock()
+    page.url = "https://flow.google.com/about"
+    create_btn = AsyncMock()
+    create_btn.count = AsyncMock(return_value=1)
+    create_btn.first = create_btn
+    unavailable = AsyncMock()
+    unavailable.count = AsyncMock(return_value=0)
+
+    def _locator_for(selector: str) -> AsyncMock:
+        if "Create with Google Flow" in selector or "variant-primary" in selector:
+            return create_btn
+        return unavailable
+
+    async def _click_hops_to_chooser(*_args: object, **_kwargs: object) -> None:
+        page.url = "https://accounts.google.com/v3/signin/accountchooser"
+
+    create_btn.click = AsyncMock(side_effect=_click_hops_to_chooser)
+    page.locator = MagicMock(side_effect=_locator_for)
+    page.wait_for_url = AsyncMock(return_value=None)
+
+    with pytest.raises(FlowAccountChooserError) as exc_info:
+        await raise_if_known_landing(page, requested="the Flow editor", at="test")
+
+    assert "account chooser is displayed" in str(exc_info.value).lower()
+    create_btn.click.assert_awaited_once()

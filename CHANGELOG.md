@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Recover from `flow.google.com/about` landing via "Create with Google Flow".** When a session
+  lacks active `flow.google.com` session cookies, Flow redirects to `/about` showing a "Create with
+  Google Flow" button. `gflow-cli` previously stalled for 30s and raised a fatal `FlowAppError`
+  claiming the account had no access to the project. `FlowApiClient` now detects the button, clicks
+  it to hop to the Google Account Chooser, auto-selects the recorded account, and enters the
+  project without failing.
+
 ## [0.79.0] — 2026-09-18
 
 ### Added
