@@ -2173,11 +2173,66 @@ class FlowApiClient:
             routes.flow_workflow_url(workflow_id), body, route_name="commitWorkflow"
         )
 
+    async def _create_scene_batchexecute(
+        self,
+        *,
+        page: Page,
+        project_id: str,
+        workflow_ids: list[str],
+    ) -> Scene:
+        """Create a scene via data/batchexecute rqZuUc on the migrated host."""
+        from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+        await MigratedComposer().ensure_editor(page, project_id)
+        wiz = await self._extract_wiz_params(page)
+        payload = json.dumps(
+            [f"projects/{project_id}", list(workflow_ids), None, None, 1],
+            separators=(",", ":"),
+        )
+        frames = await self._batchexecute_post(
+            page,
+            "rqZuUc",
+            payload,
+            project_id=project_id,
+            wiz=wiz,
+            source_path=f"/project/{project_id}",
+        )
+        for rpcid, payload_data in frames:
+            if rpcid == "rqZuUc" and payload_data is not None:
+                parsed = json.loads(payload_data) if isinstance(payload_data, str) else payload_data
+                if (
+                    isinstance(parsed, list)
+                    and parsed
+                    and isinstance(parsed[0], list)
+                    and parsed[0]
+                    and isinstance(parsed[0][0], str)
+                ):
+                    return Scene(
+                        scene_id=parsed[0][0],
+                        project_id=project_id,
+                        workflows=(),
+                    )
+        raise WireFormatError(
+            detail="batchexecute rqZuUc: no scene record in the reply",
+            instance=_make_instance(),
+            route="batchexecute:rqZuUc",
+        )
+
     async def create_scene(self, *, project_id: str, workflow_ids: list[str]) -> Scene:
         """Compose a scene from an ordered list of source workflowIds.
-
-        POST /v1/flow/projects/{pid}/scenes. Repeat an id to clone a clip.
+        POST /v1/flow/projects/{pid}/scenes on labs.google, or
+        batchexecute rqZuUc on flow.google.com.
         """
+        page = await self._checkout_page()
+        try:
+            host = flow_host_kind(getattr(page, "url", ""))
+            if host == "migrated":
+                return await self._create_scene_batchexecute(
+                    page=page, project_id=project_id, workflow_ids=workflow_ids
+                )
+        finally:
+            self._checkin_page(page)
+
         data = await self._post_json(
             routes.scenes_url(project_id),
             {"workflowIds": list(workflow_ids)},

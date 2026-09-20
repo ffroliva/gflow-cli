@@ -201,3 +201,43 @@ async def test_reports_the_unit_cost(tmp_path: Path) -> None:
         media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, position=1, prompt="p"
     )
     assert started.unit_cost == 10
+
+
+@pytest.mark.asyncio
+async def test_create_scene_migrated_host_batchexecute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_composer.MigratedComposer.ensure_editor",
+        AsyncMock(),
+    )
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    page = MagicMock()
+    page.url = "https://flow.google.com/project/proj-1"
+    c._checkout_page = AsyncMock(return_value=page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+    c._extract_wiz_params = AsyncMock(return_value={"f_sid": "1", "bl": "2"})  # type: ignore[method-assign]
+    c._batchexecute_post = AsyncMock(  # type: ignore[method-assign]
+        return_value=[("rqZuUc", json.dumps([["scene-uuid-123", "Untitled Scene", None, [1, 2]]]))]
+    )
+    scene = await c.create_scene(project_id="proj-1", workflow_ids=["wf-1"])
+    assert scene.scene_id == "scene-uuid-123"
+    assert scene.project_id == "proj-1"
+    c._batchexecute_post.assert_awaited_once()
+    assert c._batchexecute_post.call_args[0][1] == "rqZuUc"
+
+
+@pytest.mark.asyncio
+async def test_create_scene_labs_host_rest(tmp_path: Path) -> None:
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    page = MagicMock()
+    page.url = "https://labs.google/fx/tools/flow"
+    c._checkout_page = AsyncMock(return_value=page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+    c._post_json = AsyncMock(  # type: ignore[method-assign]
+        return_value={"scene": {"sceneId": "scene-legacy-456"}, "sceneWorkflows": []}
+    )
+    scene = await c.create_scene(project_id="proj-1", workflow_ids=["wf-1"])
+    assert scene.scene_id == "scene-legacy-456"
+    assert scene.project_id == "proj-1"
+    c._post_json.assert_awaited_once()

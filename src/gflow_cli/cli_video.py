@@ -1966,18 +1966,21 @@ async def _extend_session(  # noqa: PLR0913
         # Render even a partial chain: those segments are generated and billed,
         # and discarding them because the run did not finish wastes real money.
         if output_file is not None and result.completed_media_ids:
-            scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
-            # Scene.to_concat_inputs owns the end_time>0 fallback (an omitted
-            # endTime parses to 0s and would render a zero-length clip) and
-            # raises on a missing media_id instead of silently dropping a paid
-            # segment. cli_scene.py uses it for the identical job.
-            inputs = list(scene_state.to_concat_inputs())
-            if not as_json:
-                console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
-            await client.concatenate_scene(inputs, out_path=output_file)
-            rendered = str(output_file)
+            if len(result.completed_media_ids) == 1:
+                # Single segment extension: download the generated segment directly
+                # into output_file. Bypasses remote concatenation queue and 401 on
+                # migrated hosts where aisandbox concatenate_scene is dead.
+                await client.download_video(result.completed_media_ids[0], output_file)
+                rendered = str(output_file)
+            else:
+                scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
+                inputs = list(scene_state.to_concat_inputs())
+                if not as_json:
+                    console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
+                await client.concatenate_scene(inputs, out_path=output_file)
+                rendered = str(output_file)
 
-        payload = {
+        payload: dict[str, Any] = {
             "scene_id": target_scene,
             "project_id": project_id,
             "model": model_key,
