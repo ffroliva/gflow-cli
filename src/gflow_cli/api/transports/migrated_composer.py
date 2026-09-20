@@ -31,6 +31,7 @@ matched with a Python-side ``filter(has_text=re.compile(...))`` instead.
 from __future__ import annotations
 
 import asyncio
+import json
 import mimetypes
 import re
 import time
@@ -82,7 +83,7 @@ from gflow_cli.redaction import redact_sensitive_text
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from playwright.async_api import Page
+    from playwright.async_api import Locator, Page
 
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoStartedCallback
@@ -103,6 +104,9 @@ RADIOGROUP = "[role='radiogroup']"
 RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
 COMPOSER = "[contenteditable='true']"
+#: Named contract for the migrated Angular settings surface. Diagnostics include this
+#: value so a future Flow DOM variant gets a new contract instead of a fuzzy fallback.
+MIGRATED_SETTINGS_CONTRACT = "migrated-angular-settings-v1"
 #: Flow's agent-mode chip. Pressed, `.settings-trigger-button` stays in the DOM but gains
 #: a bare `hidden` (display:none, 0x0, not hit-testable) — which is why every gate on it
 #: waits for VISIBILITY and never `count()` (#749).
@@ -528,6 +532,45 @@ def _unported_image_form(request: GenerateImageRequest) -> str | None:
     return None
 
 
+def migrated_images_prefer(
+    request: GenerateImageRequest, *, page_url: str | None = None, project_id: str | None = None
+) -> bool:
+    """Whether an image request should prefer the migrated composer on ``auto``.
+
+    Three independently necessary answers, so a miss in any one of them keeps
+    the labs driver instead of stranding the run on the wrong host:
+
+    - the migrated composer serves this request at all
+      (:func:`_unported_image_form` names anything it does not);
+    - a project is named or the page already sits in one — the labs driver
+      auto-creates a project, the migrated composer needs ``--project``;
+    - the page is not already inside an editor — there the served host rules,
+      and assuming migrated would skip the mint a labs editor needs
+      (the #673 mirror: a wrong skip is a terminal auth failure, a redundant
+      mint on a migrated run is free because the page mints its own).
+
+    Pure predicate over the request and the URL: no browser, no spend. Both
+    the router and the mint decision call it so the two cannot disagree.
+    """
+    if _unported_image_form(request) is not None:
+        return False
+    editor_pid: str | None = None
+    if isinstance(page_url, str):
+        editor_pid = extract_project_id(page_url)
+        if editor_pid is not None:
+            # Already inside an editor: the served host rules.
+            return False
+    elif page_url is not None:
+        # Test doubles and malformed URLs take the served host: preferring
+        # migrated on an unreadable URL would route mocked labs-driver tests
+        # (and any real page we failed to read) at the migrated composer.
+        # Same totality discipline as :func:`flow_host_kind`.
+        return False
+    if project_id is None and editor_pid is None:
+        return False
+    return True
+
+
 def _exact(label: str) -> re.Pattern[str]:
     return re.compile(r"^\s*" + re.escape(label) + r"\s*$")
 
@@ -783,8 +826,131 @@ def _image_body_problem(
     return None
 
 
+def _redacted_page_url(page: Any) -> str:
+    """Return a diagnostic URL without query parameters or fragments."""
+    try:
+        parsed = urlsplit(str(getattr(page, "url", "") or ""))
+    except (TypeError, ValueError):
+        return "<unavailable>"
+    if not parsed.scheme or not parsed.netloc:
+        return "<unavailable>"
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+
 class MigratedComposer:
     """Settings → prompt → submit → observe, against the migrated editor."""
+
+    def __init__(self, *, out_dir: Path | None = None) -> None:
+        self._out_dir = out_dir
+
+    async def _capture_ui_failure(
+        self,
+        page: Page,
+        *,
+        phase: str,
+        selector: str,
+        error: BaseException | str,
+    ) -> tuple[Path, ...]:
+        """Persist a bounded screenshot + structural DOM snapshot for UI failures.
+
+        The snapshot deliberately excludes page text and prompt contents. The viewport
+        screenshot can still contain the authenticated account indicator, so it follows
+        the existing debug-screenshot PII warning policy. Capture is best-effort and can
+        never replace the typed selector error that triggered it.
+        """
+        if self._out_dir is None:
+            return ()
+        safe_phase = re.sub(r"[^A-Za-z0-9_.-]+", "_", phase).strip("_") or "ui"
+        stem = f"{time.time_ns()}-{safe_phase}"
+        diagnostics_dir = self._out_dir / "ui-failures"
+        screenshot_path = diagnostics_dir / f"{stem}.png"
+        snapshot_path = diagnostics_dir / f"{stem}.json"
+        try:
+            diagnostics_dir.mkdir(parents=True, exist_ok=True)
+            snapshot = await page.evaluate(
+                """() => {
+                    const visible = (selector) => Array.from(document.querySelectorAll(selector))
+                        .filter((el) => {
+                            const rect = el.getBoundingClientRect();
+                            const style = getComputedStyle(el);
+                            return rect.width > 0 && rect.height > 0 &&
+                                style.display !== "none" && style.visibility !== "hidden";
+                        })
+                        .slice(0, 20)
+                        .map((el) => ({
+                            tag: el.tagName,
+                            id: el.id || null,
+                            role: el.getAttribute("role"),
+                            className: String(el.className || "").slice(0, 160),
+                        }));
+                    return {
+                        title: String(document.title || "").slice(0, 120),
+                        activeElement: document.activeElement?.tagName || null,
+                        cookieBars: visible(
+                            "#glue-cookie-notification-bar-1, .glue-cookie-notification-bar"
+                        ),
+                        overlays: visible(".cdk-overlay-pane"),
+                        radiogroups: visible("[role='radiogroup']"),
+                        menuitems: visible("[role='menuitem']"),
+                        composers: visible("[contenteditable='true']"),
+                    };
+                }"""
+            )
+            snapshot_path.write_text(
+                json.dumps(
+                    {
+                        "contract": MIGRATED_SETTINGS_CONTRACT,
+                        "phase": phase,
+                        "selector": selector,
+                        "error": str(error)[:500],
+                        "url": _redacted_page_url(page),
+                        "snapshot": snapshot,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            await page.screenshot(path=str(screenshot_path), full_page=False)
+        except Exception as capture_error:  # noqa: BLE001 - diagnostics are non-authoritative
+            log.warning(
+                "migrated.ui_failure_artifacts_unavailable",
+                phase=phase,
+                error=str(capture_error)[:200],
+            )
+            for partial in (snapshot_path, screenshot_path):
+                try:
+                    partial.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return ()
+        log.warning(
+            "migrated.ui_failure_artifacts",
+            phase=phase,
+            screenshot=str(screenshot_path),
+            snapshot=str(snapshot_path),
+        )
+        return screenshot_path, snapshot_path
+
+    async def _ui_failure_detail(
+        self,
+        page: Page,
+        *,
+        phase: str,
+        selector: str,
+        detail: str,
+        error: BaseException | str,
+    ) -> str:
+        artifacts = await self._capture_ui_failure(
+            page,
+            phase=phase,
+            selector=selector,
+            error=error,
+        )
+        suffix = f" [contract={MIGRATED_SETTINGS_CONTRACT}"
+        if artifacts:
+            suffix += "; diagnostics=" + ",".join(str(path) for path in artifacts)
+        return detail + suffix + "]"
 
     # --- readiness ------------------------------------------------------------
 
@@ -797,6 +963,9 @@ class MigratedComposer:
             log.info("migrated.navigate", url=target)
             await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
         await self._dismiss_dialog(page)
+        # The glue cookie banner intercepts pointer events over the composer
+        # (2026-09-09 incident 8dc6c020); clear it before anything clicks.
+        await self._dismiss_cookie_bar(page)
         trigger = page.locator(READY_ANCHOR).first
         try:
             await trigger.wait_for(state="visible", timeout=int(timeout_s * 1000))
@@ -1248,6 +1417,7 @@ class MigratedComposer:
         log.info("migrated.cookie_bar_dismissed")
 
     async def _open_pane(self, page: Page) -> Any:
+
         await self._dismiss_cookie_bar(page)
         # And again here, not only in `ensure_editor` (#859). That probe runs one frame
         # after `domcontentloaded`, before Angular has rendered anything, so the promo
@@ -1270,12 +1440,17 @@ class MigratedComposer:
                 if await self._agent_chip_pressed(page)
                 else ""
             )
-            raise UiSelectorDriftError(
+            detail = await self._ui_failure_detail(
+                page,
+                phase="wait_settings_trigger",
+                selector=READY_ANCHOR,
                 detail=(
                     f"migrated host: the settings trigger ({READY_ANCHOR}) is not visible"
                     f"{why} (host=migrated)"
                 ),
-            ) from e
+                error=e,
+            )
+            raise UiSelectorDriftError(detail=detail) from e
         # The other half of #752 finding #7: the guard above became a visibility wait,
         # this click stayed bare, and the comment above describes what it went on doing.
         await self._click(page, trigger, named=READY_ANCHOR, timeout=5000)
@@ -1287,12 +1462,17 @@ class MigratedComposer:
         try:
             await pane.locator(RADIOGROUP).first.wait_for(state="visible", timeout=8000)
         except Exception as e:
-            raise UiSelectorDriftError(
+            detail = await self._ui_failure_detail(
+                page,
+                phase="discover_settings_pane",
+                selector=f"{OVERLAY} -> {RADIOGROUP}",
                 detail=(
                     "migrated host: the settings pane opened but rendered no option "
                     "groups ([role='radiogroup']) (host=migrated)"
                 ),
-            ) from e
+                error=e,
+            )
+            raise UiSelectorDriftError(detail=detail) from e
         return pane
 
     def _blocking_overlays(self, page: Page) -> Any:
@@ -1353,13 +1533,18 @@ class MigratedComposer:
         log.warning("migrated.pane_still_open", visible_overlays=remaining, strict=strict)
         if not strict:
             return
-        raise UiSelectorDriftError(
+        detail = await self._ui_failure_detail(
+            page,
+            phase="close_settings_pane",
+            selector=VISIBLE_OVERLAY,
             detail=(
                 f"migrated host: {remaining} overlay(s) still visible after "
                 f"{PANE_CLOSE_ESCAPES} Escape presses — the settings pane would cover the "
                 f"composer and the prompt could not be typed (host=migrated)"
             ),
+            error=f"{remaining} visible overlay(s)",
         )
+        raise UiSelectorDriftError(detail=detail)
 
     async def _pin_r2v_duration(self, page: Page, pane: Any) -> None:
         """Bind the base duration for a references run, when this pane offers durations.
@@ -2331,6 +2516,115 @@ class MigratedComposer:
             page.remove_listener("response", on_response)
             page.remove_listener("request", on_request)
 
+    async def _verify_submit_target(self, page: Page, submit: Locator) -> None:
+        """Prove the submit button is visible and receives pointer events."""
+        try:
+            if not await submit.is_visible():
+                raise RuntimeError("image submit button is not visible")
+            # The JS hit-test reads viewport coordinates; a below-the-fold submit
+            # would fail it even though Playwright's click auto-scrolls. Bring the
+            # button into the viewport the gate is about to measure.
+            await submit.scroll_into_view_if_needed()
+            box = await submit.bounding_box()
+            if not isinstance(box, dict) or not all(
+                isinstance(box.get(key), (int, float)) for key in ("x", "y", "width", "height")
+            ):
+                raise RuntimeError("image submit button has no usable bounding box")
+            state: Any = await page.evaluate(
+                """
+                ({x, y}) => {
+                    const describe = (element) => element ? {
+                        tag: element.tagName,
+                        id: element.id || null,
+                        role: element.getAttribute('role'),
+                        className: String(element.className || '').slice(0, 160),
+                    } : null;
+                    const submit = [...document.querySelectorAll('button')].find((button) =>
+                        [...button.querySelectorAll('mat-icon')].some((icon) =>
+                            (icon.textContent || '').trim() === 'arrow_forward'));
+                    const top = document.elementFromPoint(x, y);
+                    const topButton = top?.closest?.('button');
+                    const target = Boolean(
+                        submit &&
+                        (top === submit || submit.contains(top) || topButton === submit)
+                    );
+                    return {
+                        target,
+                        top: describe(top),
+                    };
+                }
+                """,
+                {
+                    "x": float(box["x"]) + float(box["width"]) / 2,
+                    "y": float(box["y"]) + float(box["height"]) / 2,
+                },
+            )
+        except UiSelectorDriftError:
+            raise
+        except Exception as error:
+            detail = await self._ui_failure_detail(
+                page,
+                phase="pre_submit_button_gate",
+                selector="button -> arrow_forward",
+                detail=(
+                    "migrated host: image submit button failed the visibility or pointer "
+                    "target check (host=migrated)"
+                ),
+                error=error,
+            )
+            raise UiSelectorDriftError(detail=detail) from error
+        state_dict: dict[str, Any] = cast(dict[str, Any], state) if isinstance(state, dict) else {}
+        if not state_dict.get("target"):
+            blocker = state_dict.get("top")
+            detail = await self._ui_failure_detail(
+                page,
+                phase="pre_submit_button_gate",
+                selector="button -> arrow_forward",
+                detail=(
+                    "migrated host: an unexpected element receives pointer events at the "
+                    f"image submit target (blocker={blocker!r}) (host=migrated)"
+                ),
+                error="submit target is covered",
+            )
+            raise UiSelectorDriftError(detail=detail)
+
+    async def _pre_submit_gate(self, page: Page) -> Any:
+        """Prove the composer is clear and submit is present and hit-testable.
+
+        Runs before any network observer arms. Enablement is waited on
+
+        downstream by the submit path itself (with the out-of-credits
+        interrogation); this gate refuses missing/covered targets first.
+        """
+        await self._dismiss_cookie_bar(page)
+        blockers = self._blocking_overlays(page)
+        remaining = await blockers.count()
+        if remaining:
+            detail = await self._ui_failure_detail(
+                page,
+                phase="pre_submit_overlay_gate",
+                selector=VISIBLE_OVERLAY,
+                detail=(
+                    f"migrated host: {remaining} blocking overlay(s) remain before image "
+                    "Generate (host=migrated)"
+                ),
+                error=f"{remaining} blocking overlay(s)",
+            )
+            raise UiSelectorDriftError(detail=detail)
+        submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
+        if not await submit.count():
+            await _raise_if_out_of_credits(page)
+            detail = await self._ui_failure_detail(
+                page,
+                phase="pre_submit_button_gate",
+                selector="button -> arrow_forward",
+                detail="migrated host: image submit button is missing (host=migrated)",
+                error="submit button missing",
+            )
+            raise UiSelectorDriftError(detail=detail)
+        await self._verify_submit_target(page, submit)
+        return submit
+
     async def submit_images_and_observe(
         self,
         page: Page,
@@ -2339,6 +2633,10 @@ class MigratedComposer:
         reference_ids: tuple[str, ...] = (),
     ) -> list[GeneratedImage]:
         """Submit Image mode and decode the completed ``ogiZ0b`` reply."""
+        # Complete all UI gates before registering network observers or clicking
+        # Generate. A deterministic DOM failure therefore cannot spend a request or
+        # enter the transport retry loop.
+        submit = await self._pre_submit_gate(page)
         loop = asyncio.get_running_loop()
         result: asyncio.Future[list[GeneratedImage]] = loop.create_future()
         route_error: asyncio.Future[WireFormatError] = loop.create_future()
@@ -2408,12 +2706,6 @@ class MigratedComposer:
         page.on("request", on_request)
         page.on("response", on_response)
         try:
-            submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
-            if not await submit.count():
-                await _raise_if_out_of_credits(page)
-                raise UiSelectorDriftError(
-                    detail="migrated host: image submit button is missing (host=migrated)"
-                )
             enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
             while not await submit.is_enabled():
                 if time.monotonic() >= enable_deadline:
@@ -2665,6 +2957,7 @@ async def run_images(
     request: GenerateImageRequest,
     *,
     project_id: str | None,
+    out_dir: Path | None = None,
 ) -> list[GeneratedImage]:
     """Drive supported image requests through the migrated project composer."""
     unported = _unported_image_form(request)
@@ -2682,7 +2975,7 @@ async def run_images(
                 "image generation on flow.google.com needs an existing project; pass --project <id>"
             )
         )
-    composer = MigratedComposer()
+    composer = MigratedComposer(out_dir=out_dir)
     await composer.ensure_editor(page, pid)
     await composer.apply_image_settings(page, request)
     reference_ids: tuple[str, ...] = ()
