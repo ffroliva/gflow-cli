@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **E2E coverage for the retired-route diagnosis** (`tests/e2e/test_retired_labs_route_diagnosis_e2e.py`,
+  `e2e_auth`, 0 credits, one read-only GET). The unit tests for
+  [#875](https://github.com/ffroliva/gflow-cli/issues/875) feed the classifier a *captured*
+  body, so they stay green if Flow changes the wording, un-retires the route or switches to
+  401 — while the user-facing diagnosis silently goes wrong again. This one asks Flow. It
+  needs no project fixture (the route is retired before any project lookup) and **skips
+  rather than passes** on an account still served the labs tRPC API, so a cohort change
+  cannot retire it unnoticed. Verified by falsification: with detection disabled it fails
+  with the pre-fix message verbatim.
+
 ### Fixed
 
 - **A retired labs route no longer tells you to simplify a prompt you never wrote.**
