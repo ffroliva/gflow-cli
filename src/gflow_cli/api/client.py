@@ -432,6 +432,8 @@ class FlowApiClient:
         self._preread_flow_cookies: dict[str, str] = {}
         # projectInitialData per project — see capability_listing.
         self._extend_listing_cache: dict[str, JsonObject] = {}
+        # Signed CDN video download URLs cached from as29s status poll.
+        self._download_url_cache: dict[str, str] = {}
 
     # --- lifecycle --------------------------------------------------------
 
@@ -2036,8 +2038,11 @@ class FlowApiClient:
         Google's CDN on signed URLs is rare-to-impossible in practice but the
         retry predicate handles it uniformly if it ever happens.
         """
+        cached_url = self._download_url_cache.get(name_or_url)
         url = (
-            name_or_url
+            cached_url
+            if cached_url
+            else name_or_url
             if name_or_url.startswith("http")
             else routes.media_download_url(name_or_url)
         )
@@ -2655,6 +2660,26 @@ class FlowApiClient:
                         media_id_val = (
                             str(rec_list[2]) if len(rec_list) > 2 and rec_list[2] else workflow_id
                         )
+
+                        def _find_video_url(obj: object) -> str | None:
+                            if isinstance(obj, str) and "flow-content.google/video/" in obj:
+                                return obj
+                            if isinstance(obj, list):
+                                for item in cast("list[object]", obj):
+                                    found = _find_video_url(item)
+                                    if found:
+                                        return found
+                            elif isinstance(obj, dict):
+                                for val in cast("dict[str, object]", obj).values():
+                                    found = _find_video_url(val)
+                                    if found:
+                                        return found
+                            return None
+
+                        signed_url = _find_video_url(rec_list)
+                        if signed_url:
+                            self._download_url_cache[media_id_val] = signed_url
+                            self._download_url_cache[workflow_id] = signed_url
                         return VideoStatus(
                             media_id=media_id_val,
                             status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
