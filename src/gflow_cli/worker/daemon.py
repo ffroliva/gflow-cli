@@ -512,6 +512,14 @@ class FlowWorker:
                 task.task_id,
                 status="failed",
                 error=error_payload,
+                # #895: a generation can finish, and bill, and then lose its download.
+                # The media id is the only handle an agent has on that clip, and the
+                # success branch already records it (see `status="completed"` above) --
+                # omitting it here left the failed row's `flow_media_id` NULL, so the
+                # agent's only copy was a UUID buried in English inside
+                # `remediation_hint`. `update_task_status` COALESCEs, so a task that
+                # failed before any media id existed still writes NULL, as before.
+                flow_media_id=started_media_ids[0] if started_media_ids else None,
             )
 
     def _build_image_request(self, payload: dict[str, Any]) -> GenerateImageRequest:

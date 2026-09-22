@@ -876,6 +876,11 @@ class TestDownloadVideo:
         fake_page = MagicMock()
         fake_resp = AsyncMock()
         fake_resp.status = 200
+        # Where the 302 chain landed. An AsyncMock invents this attribute as a coroutine
+        # if it is not set, which is not what Playwright's `APIResponse.url` is — a plain
+        # str property. Left unset, the fake silently fails to model the one field the
+        # landing-host check reads (#895).
+        fake_resp.url = "https://flow-content.google/video/abc.mp4?Expires=1&Signature=x"
         fake_resp.body = AsyncMock(return_value=b"fake-mp4-content")
         fake_page.request.get = AsyncMock(return_value=fake_resp)
 
@@ -887,6 +892,30 @@ class TestDownloadVideo:
         call_url = fake_page.request.get.call_args[0][0]
         assert "test-uuid-123" in call_url
         assert "getMediaUrlRedirect" in call_url
+
+    @pytest.mark.asyncio
+    async def test_download_video_refuses_bytes_from_an_unexpected_host(
+        self, tmp_path: Path
+    ) -> None:
+        """This route is a 302 by design and follows up to 5 hops, so unlike the migrated
+        download it cannot use ``max_redirects=0`` to keep the chain honest. It checks
+        where the chain landed instead: an open redirect on Flow's side must not get its
+        bytes written to disk (#895)."""
+        from gflow_cli.errors import WireFormatError
+
+        transport = UiAutomationTransport()
+
+        fake_page = MagicMock()
+        fake_resp = AsyncMock()
+        fake_resp.status = 200
+        fake_resp.url = "https://evil.example.com/video/abc.mp4"
+        fake_resp.body = AsyncMock(return_value=b"not-our-bytes")
+        fake_page.request.get = AsyncMock(return_value=fake_resp)
+
+        with pytest.raises(WireFormatError, match="not an allowed Google host"):
+            await transport._download_video("test-uuid-789", tmp_path, fake_page)
+
+        assert not (tmp_path / "test-uuid-789.mp4").exists()
 
     @pytest.mark.asyncio
     async def test_download_video_raises_on_http_error(self, tmp_path: Path) -> None:

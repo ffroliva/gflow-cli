@@ -38,6 +38,7 @@ from urllib.parse import urlsplit
 
 import structlog
 
+from gflow_cli.api.transports._common import get_signed_media, retry_the_recovery_hint
 from gflow_cli.api.transports.batchexecute import generation_record, parse_frames
 from gflow_cli.exceptions import WireFormatError
 
@@ -162,12 +163,25 @@ async def _fetch_verified(page: Page, *, url: str, expected: int | None, media_i
         )
     # No redirects: an open redirect on the CDN must not rebound the request
     # elsewhere — same posture as every other download in this codebase.
-    resp = await page.request.get(url, timeout=180_000, max_redirects=0)
+    resp = await get_signed_media(
+        page,
+        url,
+        media_id=media_id,
+        route="flow-content.google",
+        max_redirects=0,
+        # Not the recover-it-with-`data download` hint: this IS `data download`.
+        remediation=retry_the_recovery_hint(media_id),
+    )
     if resp.status >= 300:
         raise WireFormatError(
             detail=f"migrated host: signed media URL returned HTTP {resp.status}",
             status=resp.status,
             route="flow-content.google",
+            remediation_hint=(
+                "Flow's signed link for this clip may have expired — they are short-lived. "
+                "Re-run this command: it opens the clip's own route, so Flow issues a fresh "
+                "link. No credits are spent."
+            ),
         )
     body = await resp.body()
     _verify(body, expected=expected, media_id=media_id)

@@ -1345,6 +1345,13 @@ was to run the generation again and pay a second time.
 
 Recovering costs **nothing**. The asset was already billed.
 
+The transfer **retries a dropped connection by itself** — three attempts, sub-second
+backoff, all inside the same timeout rather than multiplying it. A reset that survives
+all three exits **6** (`NetworkError`, retryable) and says what to do, instead of the
+bare `Unexpected error` it used to raise
+([#895](https://github.com/ffroliva/gflow-cli/issues/895)). Re-running is safe and still
+costs nothing: each attempt asks Flow for a fresh signed link.
+
 ```text
 gflow data download MEDIA_ID [--out DIR] [--profile NAME] [--json]
 
@@ -1925,7 +1932,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `3`  | `AuthExpiredError`    | Session cookies rejected by Flow (401/403), or Flow served one of its OAuth/sign-in routes instead of the page gflow asked for ([#756](https://github.com/ffroliva/gflow-cli/issues/756)) | `gflow auth login --profile <name>` — **but read the error's own `remediation_hint` first.** `AisandboxAuthError` shares this code, and when `gflow credits` fails on an account migrated to `flow.google.com` re-logging in cannot help and can roll the profile's browser-strategy marker back ([#795](https://github.com/ffroliva/gflow-cli/issues/795), [#791](https://github.com/ffroliva/gflow-cli/issues/791)) |
 | `4`  | `RateLimitError`      | Quota / rate limit hit, exhausted retries        | Wait + reduce `GFLOW_CLI_CONCURRENCY`                      |
 | `5`  | `ContentPolicyError`  | Flow rejected the prompt (200 + empty `media[]`) | Soften prompt wording                                      |
-| `6`  | `NetworkError`        | Network failure persisted across 3 attempts      | Check connectivity                                         |
+| `6`  | `NetworkError`        | Network failure persisted across 3 attempts — including a signed-media download whose connection dropped on every attempt ([#895](https://github.com/ffroliva/gflow-cli/issues/895)) | Check connectivity — **but read the error's own `remediation_hint` first.** When a *generation* download fails this way the clip was already produced and billed: the hint names it, and `gflow data download <media_id>` recovers it for free. Re-generating pays twice |
 | `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed     | File a bug (do NOT include captured tokens or signed URLs) |
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
 | `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287; or a wedged submission stage — the error names the stage and your Playwright version) | Retry; raise the relevant timeout — for a frame-UUID miss verify the UUID belongs to the `--project` passed; for a `stage_stalled` abort check your Playwright is in range (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
