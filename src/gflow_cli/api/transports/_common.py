@@ -328,24 +328,57 @@ async def raise_if_known_landing(page: object, *, requested: str, at: str) -> No
                 f"none of the controls gflow drives are on the page. Not selector drift."
             )
         )
-    # Deliberately says WHAT arrived and stops. #756 measured the redirect and did not
-    # measure its cause — `gflow auth status` reports the session verified while this
-    # happens — so naming one here would just be a second confident wrong diagnosis.
-    raise FlowAppError(
-        detail=(
-            f"Flow redirected to its public landing page ({safe}) instead of "
-            f"{requested}. gflow cannot tell from here why it declined — this account "
-            f"may not have access to that project on this host. It is not selector "
-            f"drift, and no gflow-cli release changes it."
-        ),
-        # MEASURED, as of 2026-09-11: 5/5 consecutive attempts over ~3 minutes on a
-        # live occurrence all landed here, on the account's own project, with a healthy
-        # session. A retry is doomed for an account in this state and costs ~35 s each.
-        # (This was a PRESERVED default until that run — the 2026-09-10 spike got 0/5
-        # because the redirect had stopped reproducing. See
-        # docs/superpowers/spikes/2026-09-11-about-redirect-is-stable-for-an-account.md.)
-        retryable=False,
-    )
+    if kind == "public":
+        # The /about landing is served when a session lacks an active flow.google.com
+        # session cookie. Clicking "Create with Google Flow" hops to accounts.google.com
+        # (accountchooser or signin) where the session can authenticate.
+        try:
+            p: Any = page
+            if hasattr(p, "locator"):
+                create_btn = p.locator(
+                    "button.flow-button.variant-primary, button.cta-button, "
+                    "button:has-text('Create with Google Flow')"
+                ).first
+                if await create_btn.count() > 0:
+                    log.info("ui_driver.about_landing_clicking_create", at=at, url=safe)
+                    await create_btn.click()
+                    if hasattr(p, "wait_for_url"):
+
+                        def _about_nav_predicate(u: Any) -> bool:
+                            s = str(u)
+                            return "accounts.google.com" in s or flow_host_kind(s) is not None
+
+                        await p.wait_for_url(_about_nav_predicate, timeout=15_000)
+                    new_url = str(getattr(page, "url", "") or "")
+                    new_kind = flow_landing_kind(new_url)
+                    if new_kind == "chooser":
+                        raise FlowAccountChooserError(
+                            detail=(
+                                f"Google's account chooser is displayed ({safe_page_url(new_url)}) "
+                                f"after clicking Create on Flow's landing page."
+                            )
+                        )
+                    if new_kind == "signin":
+                        raise AuthExpiredError(
+                            detail=(
+                                f"Google sign-in is displayed ({safe_page_url(new_url)}) "
+                                f"after clicking Create on Flow's landing page. "
+                                f"Run 'gflow auth login' to authenticate."
+                            ),
+                        )
+        except (FlowAccountChooserError, AuthExpiredError):
+            raise
+        except Exception as click_err:  # noqa: BLE001
+            log.debug("ui_driver.about_landing_create_click_failed", error=str(click_err))
+
+        raise FlowAppError(
+            detail=(
+                f"Flow redirected to its public landing page ({safe}) instead of "
+                f"{requested}. This session is not authenticated on this host — "
+                f"run 'gflow auth login' to authenticate. Not selector drift."
+            ),
+            retryable=False,
+        )
 
 
 def migrated_route(url: object, flow_host: str, *, prefer_migrated: bool = False) -> str:

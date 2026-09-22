@@ -108,6 +108,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot retire it unnoticed. Verified by falsification: with detection disabled it fails
   with the pre-fix message verbatim.
 
+### Fixed
+
+- **Recover from `flow.google.com/about` landing via "Create with Google Flow".** When a session
+  lacks active `flow.google.com` session cookies, Flow redirects to `/about` showing a "Create with
+  Google Flow" button. `gflow-cli` previously stalled for 30s and raised a fatal `FlowAppError`
+  claiming the account had no access to the project. `FlowApiClient` now detects the button, clicks
+  it to hop to the Google Account Chooser, auto-selects the recorded account, and enters the
+  project without failing.
+
+- **Parse Google batchexecute RPC error envelopes into typed exceptions.** When batchexecute
+  returns an RPC error frame (e.g. status 13 `INTERNAL`, status 16 `UNAUTHENTICATED`), `parse_frames`
+  previously discarded the frame because payload was null, leading to a misleading `WireFormatError`.
+  It now parses the gRPC status block and raises typed errors (`AuthExpiredError`, `FlowAppError`,
+  `InsufficientCreditsError`, etc.) with the exact upstream status.
+
 ## [0.79.0] — 2026-09-18
 
 ### Added

@@ -188,3 +188,36 @@ def test_record_matches_by_shape_not_position() -> None:
 
     rec = generation_record("YhhmEf", [[[[_record(2)]]]])
     assert rec.workflow_id == WF and rec.is_running
+
+
+def test_parse_frames_raises_flow_app_error_on_status_13() -> None:
+    """When batchexecute returns an error frame with status 13 (INTERNAL), raise FlowAppError."""
+    from gflow_cli.api.transports.batchexecute import parse_frames
+    from gflow_cli.errors import FlowAppError
+
+    raw = ')]}\'\n\n110\n[["wrb.fr","fZytfe",null,null,null,[13],"generic"]]\n'
+    with pytest.raises(FlowAppError) as exc_info:
+        parse_frames(raw)
+    assert "fZytfe" in str(exc_info.value)
+    assert "status 13" in str(exc_info.value)
+
+
+def test_parse_frames_raises_auth_expired_on_status_16() -> None:
+    """When batchexecute returns status 16 (UNAUTHENTICATED), raise AuthExpiredError."""
+    from gflow_cli.api.transports.batchexecute import parse_frames
+    from gflow_cli.errors import AuthExpiredError
+
+    raw = ')]}\'\n\n110\n[["wrb.fr","fZytfe",null,null,null,[16],"generic"]]\n'
+    with pytest.raises(AuthExpiredError) as exc_info:
+        parse_frames(raw)
+    assert "UNAUTHENTICATED" in str(exc_info.value)
+
+
+def test_parse_frames_raises_on_er_frame() -> None:
+    """An explicit ['er', rpcid, code] frame raises the mapped typed error."""
+    from gflow_cli.api.transports.batchexecute import parse_frames
+    from gflow_cli.errors import InsufficientCreditsError
+
+    raw = ')]}\'\n\n50\n[["er","fZytfe",[8]]]\n'
+    with pytest.raises(InsufficientCreditsError):
+        parse_frames(raw)

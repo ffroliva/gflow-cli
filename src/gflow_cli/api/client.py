@@ -819,6 +819,38 @@ class FlowApiClient:
             host = (parts.hostname or "").lower()
         except ValueError:
             return False
+        # /about landing on flow.google.com: when an unauthenticated session loads Flow,
+        # Google redirects to flow.google.com/about where the "Create with Google Flow"
+        # button leads directly to accounts.google.com/v3/signin/accountchooser.
+        is_about_page = (
+            parts.scheme == "https"
+            and host == "flow.google.com"
+            and parts.path.rstrip("/") == "/about"
+        )
+        if is_about_page:
+            create_btn = page.locator(
+                "button.flow-button.variant-primary, button.cta-button, "
+                "button:has-text('Create with Google Flow'), a:has-text('Create with Google Flow')"
+            ).first
+            if await create_btn.count() > 0:
+                logger.info("auth.about_landing_clicking_create", url=safe_page_url(url))
+                await create_btn.click()
+                try:
+                    await page.wait_for_url(
+                        lambda u: "accounts.google.com" in u or flow_host_kind(u) is not None,
+                        timeout=15_000,
+                    )
+                except Exception:
+                    pass
+                url = getattr(page, "url", "") or ""
+                try:
+                    parts = urlsplit(url)
+                    host = (parts.hostname or "").lower()
+                except ValueError:
+                    return False
+                if host == "flow.google.com" and parts.path.rstrip("/") != "/about":
+                    return True
+
         is_accounts_host = parts.scheme == "https" and host == "accounts.google.com"
         if not is_accounts_host or GOOGLE_REJECTED_BROWSER_ROUTE in url:
             return False
