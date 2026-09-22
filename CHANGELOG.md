@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A finished, billed clip is no longer thrown away when its download hits a connection
+  reset (#895).** The signed-media GET was issued once, with no retry: a single
+  `ECONNRESET` mid-transfer failed the whole command *after* Veo had produced the clip and
+  charged for it — reported at 2 failures in 6 consecutive runs. The transfer now survives
+  a dropped connection using Playwright's own `max_retries`, which retries on the driver's
+  `ECONNRESET` and never on an HTTP status, and whose backoff is charged to the same
+  timeout rather than multiplying it: three attempts stay inside one ~180 s budget instead
+  of stretching to nine minutes on a lock shared with every other generation. Measured
+  with an A/B control, not read from the docs —
+  [spike](docs/superpowers/spikes/2026-09-22-playwright-max-retries-econnreset.md).
+  Fixed at **all three** download sites, not just the one the traceback named: the
+  migrated composer, `gflow data download`'s own recovery GET (so the escape hatch cannot
+  be stranded by the fault it exists to rescue), and the labs `media.getMediaUrlRedirect`
+  path.
+- **A lost transfer now says the clip survived, instead of `Unexpected error` (#895).**
+  `playwright.async_api.Error` is not a gflow error class, so it escaped the typed-error
+  contract entirely and rendered as *"Unexpected error … exit code 1, retryable: False"* —
+  of which the last two are wrong and the first is useless. It is now `NetworkError`
+  (exit 6, correctly retryable) carrying the media id and `gflow data download <id>`, so a
+  user is not left re-generating a clip they already own. The exception message is
+  deliberately **not** forwarded into `detail`: Playwright concatenates its server-side
+  call log into it, and `detail` reaches stderr and `--json` stdout without passing
+  through redaction, so a signed URL would leak. Both MCP twins gain this for free — until
+  now `gflow_download_media` returned *"Unexpected Error; details were logged
+  server-side"* with no remediation field at all, and the queued `gflow_generate_video`
+  path returned `detail: "sha256:<hash>"` with neither `remediation_hint` nor `retryable`.
+- **An expired signed link stops blaming your prompt (#895).** A late GET answers 4xx, and
+  every one of those branches fell through to `WireFormatError`'s class default — *"retry
+  with a simpler prompt text"* — on paths that carry no prompt and no payload. The same
+  wrong-advice class removed in #875. Each now names the short link lifetime and the
+  credit-free re-mint.
+- **The labs video download verifies where its redirect landed (#895).** That route is a
+  302 by design, so it follows up to 5 hops, and nothing checked the final host — the
+  posture the migrated arm gets from refusing redirects outright. The bytes are now
+  refused unless the landing host is an allowed Google host.
+
 ### Changed
 
 - **The nightly canary stops crying wolf about an account that cannot reach Flow.**

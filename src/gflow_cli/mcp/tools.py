@@ -1442,7 +1442,11 @@ async def gflow_character_show(
         "Spends no credits: the generation was already paid for. The bytes are verified "
         "against the size Flow reports before the file is written. Video only: an image "
         "media ID is refused immediately (exit 11) because the signed URL this needs "
-        "comes from a record only a clip's route emits. See issue #877."
+        "comes from a record only a clip's route emits. See issue #877. "
+        "The transfer already retries a dropped connection internally, so a failure "
+        "marked retryable means wait a moment and call again — never immediately, and "
+        "never in a tight loop: each call opens a browser under a per-profile lease, and "
+        "a second concurrent call fails on that lease instead (exit 11)."
     ),
 )
 @_guarded

@@ -48,8 +48,11 @@ from gflow_cli.api.dto import GeneratedImage, ProjectInfo
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.transports._common import (
+    expired_link_hint,
     extract_project_id,
+    get_signed_media,
     raise_if_known_landing,
+    recoverable_clip_hint,
     safe_page_url,
 )
 from gflow_cli.api.transports.batchexecute import (
@@ -2795,12 +2798,20 @@ class MigratedComposer:
                 )
             # No redirects: an open redirect on the CDN must not rebound the
             # request elsewhere (same posture as the labs image download).
-            resp = await page.request.get(url, timeout=180_000, max_redirects=0)
+            resp = await get_signed_media(
+                page,
+                url,
+                media_id=record.media_id,
+                route="flow-content.google",
+                max_redirects=0,
+                remediation=recoverable_clip_hint(record.media_id),
+            )
             if resp.status >= 300:
                 raise WireFormatError(
                     detail=f"migrated host: signed media URL returned HTTP {resp.status}",
                     status=resp.status,
                     route="flow-content.google",
+                    remediation_hint=expired_link_hint(record.media_id),
                 )
             body = await resp.body()
             if body[4:8] == b"ftyp":

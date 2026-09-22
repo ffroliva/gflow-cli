@@ -30,13 +30,16 @@ from gflow_cli.api._retry import parse_retry_after
 from gflow_cli.api.transports._common import (
     close_menu,
     count_visible,
+    expired_link_hint,
     extract_project_id,
     flow_host_kind,
     generation_error,
+    get_signed_media,
     migrated_route,
     offered_menu_labels,
     raise_if_known_landing,
     raise_if_migrated,
+    recoverable_clip_hint,
 )
 from gflow_cli.api.transports.drivers.factory import AGENTIC_INDICATOR_SELECTORS
 from gflow_cli.api.video import (
@@ -1251,8 +1254,26 @@ class VideoGenerationMixin:
         When the transport's ``_storage_uri`` is set the video is uploaded to
         the configured cloud backend; otherwise it is written to ``out_dir``.
         """
+        from urllib.parse import urlsplit  # noqa: PLC0415 - local to the raise path
+
+        from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415 - cycle
+            _is_allowed_download_host,  # pyright: ignore[reportPrivateUsage]
+        )
+
         url = routes.media_download_url(media_id)
-        resp = await page.request.get(url, max_redirects=5, timeout=180_000)
+        # Redirects are followed here, unlike the migrated download's `max_redirects=0`:
+        # this route IS a redirect (`getMediaUrlRedirect` 302s to signed GCS). The posture
+        # the migrated arm gets from refusing redirects is recovered below by checking
+        # where the chain actually landed, since the hop target is Flow's to choose and
+        # ours to verify.
+        resp = await get_signed_media(
+            page,
+            url,
+            media_id=media_id,
+            route="media.getMediaUrlRedirect",
+            max_redirects=5,
+            remediation=recoverable_clip_hint(media_id),
+        )
         if resp.status >= 400:
             raise WireFormatError(
                 detail=(
@@ -1260,6 +1281,15 @@ class VideoGenerationMixin:
                     f"via media.getMediaUrlRedirect"
                 ),
                 status=resp.status,
+                route="media.getMediaUrlRedirect",
+                remediation_hint=expired_link_hint(media_id),
+            )
+        if not _is_allowed_download_host(resp.url):
+            raise WireFormatError(
+                detail=(
+                    "video download: refusing bytes from "
+                    f"{urlsplit(resp.url).hostname!r} (not an allowed Google host)"
+                ),
                 route="media.getMediaUrlRedirect",
             )
         body = await resp.body()
