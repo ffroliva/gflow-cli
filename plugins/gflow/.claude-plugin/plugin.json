@@ -1,7 +1,7 @@
 {
   "name": "gflow",
   "displayName": "gflow-cli",
-  "version": "0.79.0",
+  "version": "0.79.1",
   "description": "Drive Google Flow from your agent: Veo text-to-video, image-to-video and clip extension, Imagen images, reusable Characters and scene composition.",
   "author": {
     "name": "Flavio Oliva",
