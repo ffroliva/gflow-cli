@@ -4,6 +4,53 @@
 
 ## Current release
 
+**v0.79.1 — alpha.** A finished, billed clip is no longer thrown away when its download
+hits a transient connection reset — and when the transfer truly cannot complete, you are
+told the clip exists and how to get it, instead of `Unexpected error`.
+
+**The signed-media download survives a dropped connection (#895).** The transfer was issued
+once, with no retry: a single `ECONNRESET` mid-stream failed the whole command *after* Veo
+had produced the clip and charged for it — reported at 2 failures in 6 consecutive runs. It
+now retries using Playwright's own `max_retries`, which matches on the driver's
+`ECONNRESET` and never on an HTTP status, and whose backoff is charged to the same timeout
+rather than multiplying it. That last property is what makes it safe here: three attempts
+stay inside one ~180 s budget instead of stretching to nine minutes on a lock shared with
+every other generation on the client. Measured with an A/B control, not read from the docs.
+Fixed at **all three** download sites, not just the one the traceback named — including
+`gflow data download`'s own transfer, so the recovery path cannot be stranded by the fault
+it exists to rescue.
+
+**A lost transfer now says the clip survived.** `playwright.async_api.Error` is not a gflow
+error class, so it escaped the typed-error contract and rendered as *"Unexpected error …
+exit code 1, retryable: False"* — of which the last two are wrong and the first is useless.
+It is now `NetworkError` (exit 6, correctly retryable) naming the media id and the free
+recovery command, so nobody re-generates a clip they already own. The Playwright message is
+deliberately **not** forwarded into `detail`: it embeds the driver's call log including the
+request URL, and `detail` reaches stderr and `--json` stdout without passing through
+redaction.
+
+**Both MCP doors get the same repair.** `gflow_download_media` returned *"Unexpected Error;
+details were logged server-side"* with no remediation field at all, and the queued
+`gflow_generate_video` path returned `detail: "sha256:<hash>"` with neither
+`remediation_hint` nor `retryable`. Typing the error fixes both. The failed queue row also
+keeps its `flow_media_id` now — without it an agent's only copy of the id was a UUID buried
+in an English sentence suggesting a shell command an MCP client cannot run.
+
+**An expired signed link stops blaming your prompt.** A late GET answers 4xx, and every one
+of those branches fell through to `WireFormatError`'s class default — *"retry with a simpler
+prompt text"* — on paths carrying no prompt and no payload. Same wrong-advice class removed
+in #875.
+
+**Not verified here:** the composer download's own call site needs a **billed** generation to
+reach, and `gflow credits` returns 401 on this account (the #795 condition), so the balance
+is unreadable and none was spent. The shared helper it calls *is* live-verified through
+`gflow data download` at zero credits, and the retry itself is measured against a real TCP
+RST with a control. The reporter's fault was **not** reproduced locally — 20/20 clean here
+against their 2-in-6, so it looks environment-specific. Recorded as blockers, not passes.
+Full ledger: [LIVE_VERIFICATION_v0.79.1](LIVE_VERIFICATION_v0.79.1.md).
+
+<details><summary>v0.79.0 — recovering a billed clip whose download failed</summary>
+
 **v0.79.0 — alpha.** Two error paths stop asserting things nothing measured, and a billed
 asset that never downloaded can be fetched back for free.
 
@@ -49,6 +96,8 @@ live needs Flow to answer an aisandbox route with a non-JSON body or a token-les
 and no profile available reaches that state — the labs tRPC route now refuses first with a
 404 (which is its own misleading-error bug, #875). Recorded as a blocker, not a pass. Full
 ledger: [LIVE_VERIFICATION_v0.79.0](LIVE_VERIFICATION_v0.79.0.md).
+
+</details>
 
 <details><summary>v0.78.0 — generating without a project on flow.google.com</summary>
 
@@ -212,6 +261,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| A finished, billed clip is no longer discarded when its download hits a transient connection reset, at all three download sites including the recovery command's own; and the failure that survives is typed rather than `Unexpected error` — naming the clip and the free way to fetch it, on the CLI and through both MCP doors (#895) | ✅ done (v0.79.1) |
 | A billed generation whose download failed can be fetched back for free instead of paid for twice — `gflow data download`, video only (#865/#871, image gap #877); and two error paths stop asserting what nothing measured: aisandbox auth failures stop blaming a SAPISID cookie no such route reads (#803), and the migrated host stops echoing the requested model back as though Flow had confirmed it (#789). CI runs e2e tests for the first time — five hermetic, route-intercepted files that had been excluded from every run | ✅ done (v0.79.0) |
 | A clean Windows install can run at all — `colorama` declared, so `ConsoleRenderer` stops aborting every interactive command before any subcommand body (#846); the sign-in window closes itself on a migrated account and a completed login stops being discarded unread as exit 12 (#849); `gflow update` detects a half-replaced install (#848); the migrated-host address scan goes linear (#852) | ✅ done (v0.77.1) |
 | An account with no Flow access is told so instead of being shown a selector-drift error and asked to file a bug — exit 39, read from the rendered unavailable screen rather than a URL or a status code (#833); the containerised sign-in works on Windows and pins its own version (#830); an MCP agent's `project_name` is finally consumed, found by a new AST gate on the MCP→worker payload keys (#628); the Official MCP Registry publishes itself on release via OIDC (#829) | ✅ done (v0.76.0) |

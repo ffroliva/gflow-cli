@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import structlog
@@ -40,6 +40,9 @@ from gflow_cli.errors import (
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+if TYPE_CHECKING:
+    from playwright.async_api import APIResponse
 
 log = structlog.get_logger(__name__)
 
@@ -606,6 +609,114 @@ def generation_error(*, status: int, route: str, body: object) -> FlowApiError:
         detail=f"generation route returned HTTP {status}",
         status=status,
         route=route,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Signed-media download (#895)
+# ---------------------------------------------------------------------------
+
+#: Attempts the driver makes at a signed-media GET. Playwright takes the number of
+#: *retries*, so it is passed ``_DOWNLOAD_ATTEMPTS - 1``. Matches ``_retry.py``'s
+#: ``MAX_ATTEMPTS = 3``, so the two retry layers in this codebase agree without tuning.
+_DOWNLOAD_ATTEMPTS = 3
+
+#: Per-GET budget. Unchanged from before the retry landed, because the driver charges its
+#: backoff to this same budget rather than restarting it per attempt — measured, see
+#: ``docs/superpowers/spikes/2026-09-22-playwright-max-retries-econnreset.md``.
+_DOWNLOAD_TIMEOUT_MS = 180_000
+
+
+async def get_signed_media(
+    page: Any,
+    url: str,
+    *,
+    media_id: str,
+    route: str,
+    max_redirects: int,
+    remediation: str,
+) -> APIResponse:
+    """GET a signed media URL, surviving a transient connection reset (#895).
+
+    Every caller reaches here **after** Flow has already reported the generation done, so
+    a failure at this point discards an artifact the user has already been billed for. Two
+    things follow, and both are the point of this helper existing rather than three
+    hand-rolled copies:
+
+    * **The transfer is retried.** ``max_retries`` is Playwright's own — it matches on the
+      driver's ``e.code === "ECONNRESET"`` and never on an HTTP status, and its backoff is
+      charged to this call's timeout so three attempts stay inside one budget rather than
+      tripling it. Measured, with an A/B control, in the spike above.
+    * **A reset that outlives the retries is typed.** Unhandled, ``playwright`` raises a
+      class that is not a :class:`GFlowError`, which renders as *"Unexpected error … exit 1,
+      retryable: False"* — three statements, of which the last two are wrong and the first
+      is useless. :class:`NetworkError` is retryable, exits 6, and carries *remediation*,
+      which is where the caller says how to get the clip back.
+
+    ``detail`` deliberately carries the exception's **class name only**. Playwright
+    concatenates its server-side call log — including the request URL — into the message,
+    and a signed URL is a credential: ``detail`` reaches stderr and ``--json`` stdout
+    without passing through redaction.
+
+    The status check stays with the caller. Retrying is for a connection that died; a
+    response that arrived is an answer, and re-asking will not change it.
+    """
+    from gflow_cli.api._engine import retryable_engine_errors  # noqa: PLC0415 - import cycle
+
+    try:
+        return await page.request.get(
+            url,
+            timeout=_DOWNLOAD_TIMEOUT_MS,
+            max_redirects=max_redirects,
+            max_retries=_DOWNLOAD_ATTEMPTS - 1,
+        )
+    except retryable_engine_errors() as exc:
+        log.warning(
+            "media.download_transport_failed",
+            media_id=media_id,
+            attempts=_DOWNLOAD_ATTEMPTS,
+            error_class=type(exc).__name__,
+            route=route,
+        )
+        raise NetworkError(
+            detail=(
+                f"the signed media URL for {media_id} dropped the connection on all "
+                f"{_DOWNLOAD_ATTEMPTS} attempts ({type(exc).__name__})"
+            ),
+            remediation_hint=remediation,
+            route=route,
+        ) from exc
+
+
+def recoverable_clip_hint(media_id: str) -> str:
+    """What to tell someone whose *generation* finished but whose download did not."""
+    return (
+        f"The clip was generated and is safe in Flow — only the transfer failed, and the "
+        f"credits are already spent. Recover it for free with `gflow data download "
+        f"{media_id}`. Do not re-generate: that bills again for a clip you already own."
+    )
+
+
+def retry_the_recovery_hint(media_id: str) -> str:
+    """What to tell someone whose ``gflow data download`` transfer died.
+
+    "Run `gflow data download`" would be circular here — they just did. So it says what a
+    re-run actually changes, and names the cause that fits the reports.
+    """
+    return (
+        f"Nothing was lost and nothing was billed — {media_id} is still in Flow. Re-run "
+        "this command: each attempt restarts the transfer, and a reset that survived "
+        "every attempt usually clears on a fresh run. If it keeps failing, a VPN, "
+        "corporate proxy or antivirus interrupting large transfers is the usual cause."
+    )
+
+
+def expired_link_hint(media_id: str) -> str:
+    """Flow's signed links are short-lived; a late GET answers 4xx, not a reset."""
+    return (
+        f"Flow's signed link for this clip may have expired — they are short-lived. Run "
+        f"`gflow data download {media_id}`, which opens the clip's own route so Flow "
+        "issues a fresh link. No credits are spent."
     )
 
 

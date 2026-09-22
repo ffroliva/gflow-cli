@@ -6,6 +6,107 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.79.1] — 2026-09-22
+
+### Fixed
+
+- **A finished, billed clip is no longer thrown away when its download hits a connection
+  reset (#895).** The signed-media GET was issued once, with no retry: a single
+  `ECONNRESET` mid-transfer failed the whole command *after* Veo had produced the clip and
+  charged for it — reported at 2 failures in 6 consecutive runs. The transfer now survives
+  a dropped connection using Playwright's own `max_retries`, which retries on the driver's
+  `ECONNRESET` and never on an HTTP status, and whose backoff is charged to the same
+  timeout rather than multiplying it: three attempts stay inside one ~180 s budget instead
+  of stretching to nine minutes on a lock shared with every other generation. Measured
+  with an A/B control, not read from the docs —
+  [spike](docs/superpowers/spikes/2026-09-22-playwright-max-retries-econnreset.md).
+  Fixed at **all three** download sites, not just the one the traceback named: the
+  migrated composer, `gflow data download`'s own recovery GET (so the escape hatch cannot
+  be stranded by the fault it exists to rescue), and the labs `media.getMediaUrlRedirect`
+  path.
+- **A lost transfer now says the clip survived, instead of `Unexpected error` (#895).**
+  `playwright.async_api.Error` is not a gflow error class, so it escaped the typed-error
+  contract entirely and rendered as *"Unexpected error … exit code 1, retryable: False"* —
+  of which the last two are wrong and the first is useless. It is now `NetworkError`
+  (exit 6, correctly retryable) carrying the media id and `gflow data download <id>`, so a
+  user is not left re-generating a clip they already own. The exception message is
+  deliberately **not** forwarded into `detail`: Playwright concatenates its server-side
+  call log into it, and `detail` reaches stderr and `--json` stdout without passing
+  through redaction, so a signed URL would leak. Both MCP twins gain this for free — until
+  now `gflow_download_media` returned *"Unexpected Error; details were logged
+  server-side"* with no remediation field at all, and the queued `gflow_generate_video`
+  path returned `detail: "sha256:<hash>"` with neither `remediation_hint` nor `retryable`.
+- **A failed generation now keeps its media id on the queue row, so an MCP agent can
+  actually recover the clip (#895).** The remediation added above names the media id and
+  tells the user to recover it — but over MCP that advice was unusable. The worker's
+  success branch recorded `flow_media_id` on the queue row; the failure branch did not,
+  so the row stayed `NULL` and `gflow_generate_video`'s failed envelope carried no id at
+  all. The agent's only copy was a UUID buried in an English sentence, suggesting a
+  *shell command* an MCP client cannot run, when its actual tool takes `media_id=`.
+  `update_task_status` already COALESCEs, so a task that failed before Flow named
+  anything still records nothing.
+
+- **An expired signed link stops blaming your prompt (#895).** A late GET answers 4xx, and
+  every one of those branches fell through to `WireFormatError`'s class default — *"retry
+  with a simpler prompt text"* — on paths that carry no prompt and no payload. The same
+  wrong-advice class removed in #875. Each now names the short link lifetime and the
+  credit-free re-mint.
+- **The labs video download verifies where its redirect landed (#895).** That route is a
+  302 by design, so it follows up to 5 hops, and nothing checked the final host — the
+  posture the migrated arm gets from refusing redirects outright. The bytes are now
+  refused unless the landing host is an allowed Google host.
+- **A retired labs route no longer tells you to simplify a prompt you never wrote.**
+  Every labs tRPC route except project-create now answers HTTP 404 with Flow's own
+  explanation — *"Flow RPCs have been deprecated and disabled. Flow has migrated to
+  https://flow.google.com."* — and gflow surfaced it as a bare `WireFormatError` (exit 7)
+  carrying the class-default advice: check the payload, retry with a simpler prompt, file
+  a bug. All three were wrong. The payload is fine, `gflow character list` is a read with
+  no prompt at all, and Flow documents the condition in the very body being classified.
+  The refusal is now recognised **by that message** — never by which host an account is
+  served, and never by a route allowlist, so a route we have not observed yet is covered
+  the day Flow retires it — and carries a remediation that names the retired route and
+  points at [#639](https://github.com/ffroliva/gflow-cli/issues/639). It deliberately
+  suggests **no** setting: `GFLOW_CLI_FLOW_HOST=flow.google.com` was measured not to help
+  (2026-09-20, `character list`), because the read has no migrated arm to route to, and
+  naming it would repeat the mistake being fixed. The error class and exit code are
+  unchanged ([#875](https://github.com/ffroliva/gflow-cli/issues/875)).
+
+- **`KNOWN_ISSUES.md` no longer claims `gflow character list` works on the migrated host.**
+  Measured twice on 2026-09-20 — with and without `GFLOW_CLI_FLOW_HOST=flow.google.com` —
+  it exits 7 on the retired labs `projectInitialData` route both times. `list_characters`
+  reads that route unconditionally and has no migrated path
+  ([#875](https://github.com/ffroliva/gflow-cli/issues/875)).
+
+### Changed
+
+- **The nightly canary stops crying wolf about an account that cannot reach Flow.**
+  An e2e failure caused by Flow serving its public `/about` landing is now reported as a
+  SKIP carrying the measurement, because it is a missing precondition rather than a
+  product failure — measured 2026-09-20, `gflow project create` succeeded on two profiles
+  and failed only on the canary's in the same minute. Seven of the thirteen standing
+  failures in [#559](https://github.com/ffroliva/gflow-cli/issues/559) were this one
+  condition, unchanged across three nightly runs, and the noise hid a real finding:
+  `test_project_create_e2e.py` shipped in v0.78.0 and had never passed once.
+  Test-only ([#888](https://github.com/ffroliva/gflow-cli/issues/888)).
+
+  It narrows deliberately. The guard matches a marker **gflow itself** emits from
+  `raise_if_known_landing`, never anything Flow says; a tripwire outside `tests/e2e/`
+  asserts that marker against the real raise site so a reword cannot silently disable it;
+  and it covers the `public` landing kind **only**. Two transports tests that fail on the
+  `signin` kind are left red on purpose — catching `AuthExpiredError` would silence the
+  signal an e2e exists to raise.
+
+### Added
+
+- **E2E coverage for the retired-route diagnosis** (`tests/e2e/test_retired_labs_route_diagnosis_e2e.py`,
+  `e2e_auth`, 0 credits, one read-only GET). The unit tests for
+  [#875](https://github.com/ffroliva/gflow-cli/issues/875) feed the classifier a *captured*
+  body, so they stay green if Flow changes the wording, un-retires the route or switches to
+  401 — while the user-facing diagnosis silently goes wrong again. This one asks Flow. It
+  needs no project fixture (the route is retired before any project lookup) and **skips
+  rather than passes** on an account still served the labs tRPC API, so a cohort change
+  cannot retire it unnoticed. Verified by falsification: with detection disabled it fails
+  with the pre-fix message verbatim.
 
 ## [0.79.0] — 2026-09-18
 
@@ -121,6 +222,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/superpowers/spikes/2026-09-17-migrated-end-frame-submit-contract.md`). Frames given
   by media UUID or `@Name` are still not ported.
   ([#639](https://github.com/ffroliva/gflow-cli/issues/639))
+- Migrated image submits prove the composer before any network observer arms:
+  cookie-bar dismissal, blocking-overlay refusal, and submit pointer hit-test,
+  each raising typed `UiSelectorDriftError` with bounded redacted diagnostics
+  instead of bare Playwright timeouts.
 
 ### Fixed
 
@@ -184,6 +289,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GFLOW_CLI_LEASE_WAIT_SECONDS` you set yourself, in the environment or a `.env`, still
   wins. The CLI keeps failing fast. Thanks to @iceblue03 (#862).
   ([#864](https://github.com/ffroliva/gflow-cli/issues/864))
+- Image requests that the migrated composer serves, with a named project,
+  from a pre-navigation page prefer the migrated host on `auto`, so the
+  page-owned recaptcha path wins the post-goto handoff race instead of a
+  doomed pre-navigation mint (#692). Labs editors, unported forms, and
+  project-less runs keep the served host (and their pre-minted token); the
+  `labs.google` kill-switch behavior is unchanged.
 
 ## [0.77.1] — 2026-09-17
 
@@ -5527,7 +5638,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.79.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.79.1...HEAD
+[0.79.1]: https://github.com/ffroliva/gflow-cli/compare/v0.79.0...v0.79.1
 [0.79.0]: https://github.com/ffroliva/gflow-cli/compare/v0.78.0...v0.79.0
 [0.78.0]: https://github.com/ffroliva/gflow-cli/compare/v0.77.1...v0.78.0
 [0.77.1]: https://github.com/ffroliva/gflow-cli/compare/v0.77.0...v0.77.1

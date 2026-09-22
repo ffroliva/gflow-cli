@@ -111,3 +111,56 @@ def test_raise_for_non_retryable_wire_format() -> None:
     err = exc_info.value
     assert err.status == 422
     assert err.detail == "Invalid field value"
+
+
+# --- #875: a retired labs tRPC route must not blame the payload or the prompt ---
+
+#: The body Flow actually returned, captured 2026-09-20 on `gflow character list`
+#: (profile denon82, healthy session) — HTTP 404 on `projectInitialData`, exit 7.
+_RETIRED_BODY = (
+    '{"error": {"json": {"message": "Flow RPCs have been deprecated and disabled. '
+    'Flow has migrated to https://flow.google.com.", "code": -32004, '
+    '"data": {"code": "NOT_FOUND", "httpStatus": 404, "path": "flow.projectInitialData"}}}}'
+)
+
+
+def test_retired_labs_rpc_does_not_tell_the_user_to_simplify_a_prompt() -> None:
+    resp = MagicMock(status=404)
+
+    with pytest.raises(WireFormatError) as exc_info:
+        _raise_for_non_retryable(resp, _RETIRED_BODY, route="projectInitialData")
+
+    hint = exc_info.value.remediation_hint
+    # The three claims the class default makes, none of which this response supports:
+    # the payload is fine, `character list` has no prompt, and Flow documents this
+    # condition in the body we just classified.
+    assert "simpler prompt" not in hint
+    assert "Check request payload parameters" not in hint
+    assert "File a bug" not in hint
+    assert "projectInitialData" in hint
+    assert "flow.google.com" in hint
+    # MEASURED 2026-09-20 (denon82, `character list`): pinning the host returns the
+    # SAME 404, because this read has no migrated arm. Suggesting it would repeat the
+    # very mistake this hint fixes, so the hint must never name the setting.
+    assert "GFLOW_CLI_FLOW_HOST" not in hint
+
+
+def test_retired_labs_rpc_is_detected_by_body_not_by_route_or_host() -> None:
+    """A route we have never observed is covered the day Flow retires it."""
+    resp = MagicMock(status=404)
+
+    with pytest.raises(WireFormatError) as exc_info:
+        _raise_for_non_retryable(resp, _RETIRED_BODY, route="someRouteWeHaveNeverSeen")
+
+    assert "someRouteWeHaveNeverSeen" in exc_info.value.remediation_hint
+
+
+def test_an_ordinary_4xx_keeps_the_class_default_remediation() -> None:
+    """The hint is additive: nothing else changes shape."""
+    resp = MagicMock(status=422)
+    body = '{"error": {"message": "unprocessable"}}'
+
+    with pytest.raises(WireFormatError) as exc_info:
+        _raise_for_non_retryable(resp, body, route="commitWorkflow")
+
+    assert "File a bug" in exc_info.value.remediation_hint

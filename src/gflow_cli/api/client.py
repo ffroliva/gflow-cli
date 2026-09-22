@@ -2745,7 +2745,19 @@ class FlowApiClient:
                 msg,
             )
         page_owned = getattr(self.transport, "uses_page_owned_image_recaptcha", None)
+        serve_migrated = False
         if callable(page_owned) and page_owned():
+            from gflow_cli.api.transports.migrated_composer import (  # noqa: PLC0415
+                migrated_images_prefer,
+            )
+
+            # The capability answers from the page URL alone and cannot see the
+            # request: re-check servability here so entity/instruction runs and
+            # project-less runs keep their pre-minted token. A redundant mint on
+            # a migrated run is harmless (the page mints its own); a missing mint
+            # on a labs run is a terminal auth failure.
+            serve_migrated = migrated_images_prefer(req, project_id=project_id)
+        if serve_migrated:
             # The migrated Angular page mints and submits its own token on ogiZ0b.
             # Minting here first is not only redundant: the pooled bootstrap page is
             # flow.google.com/ (no enterprise.js), while /project/<id> is the page that
@@ -3703,6 +3715,41 @@ def _extract_provider_error_message(body_text: str) -> str | None:
     return None
 
 
+#: Flow's own words when a labs tRPC route is retired. Measured 2026-09-20 on
+#: ``projectInitialData`` (profile denon82, healthy session, 57 context cookies):
+#: HTTP 404, body ``{"error":{"json":{"message":"Flow RPCs have been deprecated and
+#: disabled. Flow has migrated to https://flow.google.com.","code":-32004,...``
+#: Keyed on THAT MESSAGE — never on which host an account is served, and never on a
+#: route allowlist, so a route we have not observed yet is covered the day Flow
+#: retires it (#875, AGENTS.md "Host-Membership Discipline").
+_LABS_RPC_RETIRED_MARKER = "flow rpcs have been deprecated"
+
+
+def _labs_rpc_retired_hint(body_text: str, *, route: str) -> str | None:
+    """Remediation for a labs tRPC route Flow has retired, or ``None``.
+
+    ``WireFormatError``'s class default tells the user to check the payload, retry
+    with a simpler prompt and file a bug. On this response all three are wrong in
+    the same way #803 and #789 were wrong — gflow asserting something nothing
+    measured. The route is gone, ``gflow character list`` has no prompt to simplify,
+    and Flow documents the condition in the very body we are classifying.
+    """
+    if _LABS_RPC_RETIRED_MARKER not in body_text.lower():
+        return None
+    # Deliberately suggests no setting. GFLOW_CLI_FLOW_HOST=flow.google.com was
+    # MEASURED not to help (2026-09-20, denon82, `character list`): the same 404
+    # comes back, because this read has no migrated arm to route to. Naming it
+    # here would repeat the mistake this hint exists to fix — advice nothing
+    # measured, on the field a user checks to find out what to do next.
+    return (
+        f"Flow has retired this labs route ({route}) — the request payload is fine, "
+        f"there is no prompt to simplify, and there is no bug to file. Flow has moved "
+        f"to flow.google.com, and gflow has not ported this read to that frontend yet, "
+        f"so the command has no working path today. Track "
+        f"https://github.com/ffroliva/gflow-cli/issues/639 for the port."
+    )
+
+
 def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
     """Classify a response that survived the retry loop.
 
@@ -3774,6 +3821,8 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
             status=resp.status,
             instance=instance,
             route=route,
+            # None keeps the class default for every other 4xx (#875).
+            remediation_hint=_labs_rpc_retired_hint(body_text, route=route),
             discovery=_build_wire_format_discovery(resp, body_text, route),
         )
 
