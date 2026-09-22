@@ -4,7 +4,7 @@
 `playwright.async_api.Error` that currently escapes with a typed `NetworkError`.
 
 **Upstream:** `/gflow:issue-assessment 895` (CONFIRMED-BUG 9/10) → `/gflow:predict`
-(**CAUTION 5/10**, `tmp/predict_895_retry_design.md`) → this.
+(**CAUTION 5/10**, [PREDICT.md](PREDICT.md)) → this.
 
 **Scope note — Track A only.** The predict and the data-layer trace found a larger root
 cause (a generated clip is not recorded until it is downloaded) and a missing status oracle.

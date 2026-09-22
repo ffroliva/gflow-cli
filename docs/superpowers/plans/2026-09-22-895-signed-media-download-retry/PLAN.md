@@ -15,7 +15,7 @@ existing `api/_retry.py::post_with_retry` is the only fallback considered. The r
 (exit 6) at each of the three download sites. `max_redirects`, the status guards and the
 `ftyp` check are untouched and stay **outside** the retried block.
 
-**Predict verdict:** **CAUTION — 5/10** (`tmp/predict_895_retry_design.md`). The CAUTION is
+**Predict verdict:** **CAUTION — 5/10** ([PREDICT.md](PREDICT.md)). The CAUTION is
 on the mechanism originally proposed, not on the fix; this plan implements the corrected
 shape the council converged on.
 
@@ -29,10 +29,16 @@ shape the council converged on.
   `VideoRow` has no status, `upsert_asset` conflict-target mismatch).
 
 **ADR check:** `PLAN.md` § 5 ADR #9 (*"No event sourcing … YAGNI for a local CLI"*) and
-ADR #2 (DDD/CQRS deferred) — neither is contradicted by this plan. Both constrain **Track
-B**, where the chosen design (a second callback on the existing `VideoStartedCallback` seam)
-is compatible and a true event store would be an ADR reversal. Recorded here so Track B's
-predict starts from it.
+ADR #2 (DDD/CQRS deferred) — neither is contradicted by **this** plan.
+
+> **Corrected 2026-09-22, after Track B's own predict.** This paragraph originally said
+> Track B's second-callback design was "compatible" with both ADRs and that only a true
+> event store would be a reversal. That was wrong on the second ADR. ADR #9 *is* satisfied
+> — SQLite stays the system of record — but `ARCHITECTURE.md:66` / **ADR #2** forbids
+> *"command/query buses, or any DDD/CQRS scaffolding"*, and a domain-event DTO + callback
+> type + Protocol member with one producer and one consumer is exactly that. Track B's
+> predict returned **STOP** on that shape and #896 is closed as absorbed into #898. Cite
+> ADR #2, not ADR #9, when weighing a new lifecycle event.
 
 ## Risk register
 
