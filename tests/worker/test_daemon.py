@@ -962,3 +962,68 @@ async def test_the_typed_failure_reaches_an_mcp_caller_as_problem_details(
     assert "cdk-overlay-backdrop" in error["detail"]
     # A flag is a claim: retyping must not have made this retryable by side effect.
     assert error["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_download_still_records_the_media_id_on_the_queue_row(
+    temp_db: DataStore,
+) -> None:
+    """#895: the clip is generated and billed, only the transfer died.
+
+    The success branch records `flow_media_id` on the queue row; the failure branch did
+    not, so the row stayed NULL and an MCP agent's only copy of the id was a UUID buried
+    in English inside `remediation_hint`. That is unusable: the agent's recovery tool
+    takes `media_id=`, and it cannot run the shell command the prose suggests.
+
+    The generation is what costs money, and it succeeded — so the id has to survive the
+    failure that comes after it.
+    """
+    from gflow_cli.api.video import VideoStarted
+    from gflow_cli.errors import NetworkError
+
+    media_id = "9ad33c78-5762-4cbc-bcbe-07a4c3b061c7"
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-895-download-lost",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "a clip whose bytes never arrived"},
+    )
+
+    async def generate_then_lose_the_download(*_args: object, **kwargs: object) -> object:
+        # Flow reported the media id before the download was attempted -- the whole
+        # reason the id is recoverable at all.
+        on_started = kwargs.get("on_started")
+        if callable(on_started):
+            on_started(VideoStarted(media_id=media_id, project_id="proj-1"))
+        raise NetworkError(
+            detail=f"the signed media URL for {media_id} dropped the connection",
+            route="flow-content.google",
+        )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.generate_video.side_effect = generate_then_lose_the_download
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+    updated = repo.get_task("task-895-download-lost")
+    worker.close()
+
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.flow_media_id == media_id, (
+        "the failed queue row lost the media id, so an agent cannot call "
+        "gflow_download_media to recover a clip it already paid for"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_failure_before_any_media_id_still_records_none(temp_db: DataStore) -> None:
+    """The control. `update_task_status` COALESCEs, so passing None must not resurrect a
+    stale id, and a task that died before Flow named anything still reports nothing."""
+    error = await _fail_t2v_with(temp_db, TimeoutError("Timeout 5000ms exceeded"), "task-895-early")
+    assert error["exit_code"] == 1
+    repo = QueueRepository(temp_db)
+    row = repo.get_task("task-895-early")
+    assert row is not None
+    assert row.flow_media_id is None

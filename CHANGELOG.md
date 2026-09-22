@@ -35,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now `gflow_download_media` returned *"Unexpected Error; details were logged
   server-side"* with no remediation field at all, and the queued `gflow_generate_video`
   path returned `detail: "sha256:<hash>"` with neither `remediation_hint` nor `retryable`.
+- **A failed generation now keeps its media id on the queue row, so an MCP agent can
+  actually recover the clip (#895).** The remediation added above names the media id and
+  tells the user to recover it — but over MCP that advice was unusable. The worker's
+  success branch recorded `flow_media_id` on the queue row; the failure branch did not,
+  so the row stayed `NULL` and `gflow_generate_video`'s failed envelope carried no id at
+  all. The agent's only copy was a UUID buried in an English sentence, suggesting a
+  *shell command* an MCP client cannot run, when its actual tool takes `media_id=`.
+  `update_task_status` already COALESCEs, so a task that failed before Flow named
+  anything still records nothing.
+
 - **An expired signed link stops blaming your prompt (#895).** A late GET answers 4xx, and
   every one of those branches fell through to `WireFormatError`'s class default — *"retry
   with a simpler prompt text"* — on paths that carry no prompt and no payload. The same
