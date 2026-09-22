@@ -35,6 +35,7 @@ import json
 import mimetypes
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -72,6 +73,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.errors import (
     ConfigurationError,
+    ContentPolicyError,
     FlowAgentUiError,
     FlowHostMigratedError,
     InsufficientCreditsError,
@@ -318,6 +320,42 @@ SUBMIT_ENABLE_POLL_S = 0.1
 #: URLs (``as29s``) followed 2–5 s later in every measured run. Wait that long
 #: for it before settling for the URL-less record.
 RESULT_URL_GRACE_S = 20.0
+#: Phrases the migrated host's refusal card is measured to carry (2026-09-17,
+#: incident 0b80d7ea: "Failed / We noticed some unusual activity… / You have
+#: not been charged for this generation"). The refusal renders as a media-grid
+#: card, NOT as a batchexecute record — the generation record either arrives as
+#: a bare status-4 or never parses — so the card's DOM text is the only carrier
+#: of the reason. Read at failure time only; the scrape never blocks a result.
+#: Bounded so a hung evaluate cannot extend an already-failed run.
+REFUSAL_CARD_SCRAPE_S = 3.0
+#: Structural selector script for policy refusal / failure announcements and failed media tiles.
+#: Follows the house rule: detection structural, detail textual (§ AGENTS.md Locale Invariance).
+#: Scopes only to:
+#: 1. ARIA alert/dialog regions (toasts, inline banners, modal dialogs).
+#: 2. Media-grid tiles carrying a warning/error Material Symbol ligature.
+_REFUSAL_CARD_JS = """() => {
+  const out = [];
+  const alerts = document.querySelectorAll(
+    '[role="alert"], [aria-live="assertive"], [role="dialog"]'
+  );
+  for (const el of alerts) {
+    const t = (el.innerText || '').trim();
+    if (t && t.length < 600) out.push(t.slice(0, 400));
+  }
+  const tiles = document.querySelectorAll(
+    'flow-grid-tile-container, flow-tile-container, flow-video-tile, flow-image-tile'
+  );
+  for (const tile of tiles) {
+    const icon = tile.querySelector('mat-icon');
+    if (!icon) continue;
+    const name = (icon.innerText || icon.textContent || '').trim().toLowerCase();
+    if (name === 'warning' || name === 'error') {
+      const t = (tile.innerText || '').trim();
+      if (t && t.length < 600) out.push(t.slice(0, 400));
+    }
+  }
+  return out;
+}"""
 IMAGE_REPLY_BUDGET_S = 180.0
 
 #: Product names read back verbatim from the live migrated menu (v0.62.1's refusal
@@ -2286,6 +2324,42 @@ class MigratedComposer:
         await page.keyboard.insert_text(prompt)
         log.info("migrated.prompt_typed", chars=len(prompt))
 
+    async def _refusal_card_texts(self, page: Page) -> list[str]:
+        """innerText of every refusal card currently in the media grid.
+
+        Best-effort by contract: a dead page, a hung evaluate, or a non-list
+        result all read as "no card" — the caller's own error is always the
+        more useful one to keep.
+        """
+        try:
+            texts = await asyncio.wait_for(
+                page.evaluate(_REFUSAL_CARD_JS),
+                timeout=REFUSAL_CARD_SCRAPE_S,
+            )
+        except Exception:  # noqa: BLE001 — scrape failure must not mask the real one
+            return []
+        if not isinstance(texts, list):
+            return []
+        return [t for t in cast(list[object], texts) if isinstance(t, str) and t.strip()]
+
+    async def _raise_if_refused(self, page: Page, baseline: list[str]) -> None:
+        """Raise :class:`ContentPolicyError` when a NEW refusal card appeared.
+
+        ``baseline`` is the card set captured before the submit click: the grid
+        keeps old failures forever, so only a card that was not there before
+        this submit can be attributed to it. Uses Counter difference so identical
+        consecutive failures are still detected without false-positiving on old ones.
+        """
+        current = await self._refusal_card_texts(page)
+        new_counts = Counter(current) - Counter(baseline)
+        new = list(new_counts.elements())
+        if new:
+            detail = redact_sensitive_text(f"migrated host refused the generation: {new[0]}")
+            raise ContentPolicyError(
+                detail=detail,
+                route="batchexecute:submit",
+            )
+
     async def submit_and_observe(
         self,
         page: Page,
@@ -2468,6 +2542,9 @@ class MigratedComposer:
                         ),
                     )
                 await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
+            # Refusal cards already in the grid belong to earlier generations;
+            # only a card that appears AFTER this click can be attributed to it.
+            refusal_baseline = await self._refusal_card_texts(page)
             deadline = time.monotonic() + poll_timeout_s
             # The credit-spending click: a bare timeout here leaves "did it submit?"
             # unanswerable, which is the worst place in this driver to lose attribution.
@@ -2481,7 +2558,19 @@ class MigratedComposer:
                 # The request is inspected before its reply lands, so a wrong body is
                 # named as such and not as whatever the reply then says.
                 raise route_error.result()
+            if submitted.done():
+                exc = submitted.exception()
+                if isinstance(exc, WireFormatError):
+                    # A refusal can also arrive as a parsed-but-empty submit reply
+                    # ("no generation record in the reply, payload []") — the card
+                    # is in the DOM even though a frame came back.
+                    await self._raise_if_refused(page, refusal_baseline)
+                    raise exc
             if not submitted.done():
+                # A refusal renders as a media-grid card, not a batchexecute
+                # record — the submit reply never parses, so this timeout is
+                # the refusal's disguise. Check the DOM before naming it one.
+                await self._raise_if_refused(page, refusal_baseline)
                 seen = ", ".join(sorted(seen_submit_rpcs)) or "none"
                 raise TransportTimeoutError(
                     detail=(
@@ -2499,9 +2588,19 @@ class MigratedComposer:
                 maybe = on_started(started)
                 if asyncio.iscoroutine(maybe):
                     await maybe
-            final = await self._await_terminal(
-                terminal, done_no_url, deadline=deadline, workflow_id=first.workflow_id
-            )
+            try:
+                final = await self._await_terminal(
+                    terminal, done_no_url, deadline=deadline, workflow_id=first.workflow_id
+                )
+            except TransportTimeoutError:
+                # Same disguise one stage later: the card can land while the
+                # status poll is still waiting for a terminal record.
+                await self._raise_if_refused(page, refusal_baseline)
+                raise
+            if final.is_failed:
+                # A parsed-but-failed record (status 4) carries no reason; the
+                # refusal card is the only place the reason exists.
+                await self._raise_if_refused(page, refusal_baseline)
             log.info(
                 "migrated.result",
                 status=final.status,
@@ -2717,6 +2816,9 @@ class MigratedComposer:
                         detail="migrated host: image submit stayed disabled (host=migrated)"
                     )
                 await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
+            # Refusal cards already in the grid belong to earlier generations;
+            # only a card that appears AFTER this click can be attributed to it.
+            refusal_baseline = await self._refusal_card_texts(page)
             await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             done, _ = await asyncio.wait(
                 {result, route_error},
@@ -2725,7 +2827,13 @@ class MigratedComposer:
             )
             if route_error.done():
                 raise route_error.result()
+            if result.done():
+                exc = result.exception()
+                if exc is not None:
+                    await self._raise_if_refused(page, refusal_baseline)
+                    raise exc
             if result not in done:
+                await self._raise_if_refused(page, refusal_baseline)
                 raise TransportTimeoutError(
                     detail=(
                         f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "
