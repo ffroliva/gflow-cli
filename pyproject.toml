@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.79.0"
+version = "0.79.1"
 description = "CLI and MCP server for Google Flow — drive Veo text-to-video, image-to-video and Imagen image generation from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
