@@ -17,8 +17,9 @@ one gflow drives):
    is recorded for the reader only; nothing anchors on it.
 3. Click the first visible match of the PR's STRUCTURAL arms (`button.flow-button.
    variant-primary`, `button.cta-button`). The text arm is counted, never clicked.
-4. Record the main-frame navigation chain and every request host+path (no queries).
+4. Record the main-frame navigation chain and every request host (no paths, no queries).
    If it lands on the chooser, hand it to production `client._handle_account_chooser`.
+   A chooser hop during BOOTSTRAP is already resolved by the client before step 1.
 5. Persistence: navigate `https://flow.google.com/` again and record where it settles.
 
 Cookie NAMES (never values) for `flow.google.com` are recorded before and after, which
@@ -37,6 +38,12 @@ created, nothing is submitted: **zero credits, zero quota.**
 | click -> anywhere, step 5 on `/about` again | **DOES NOT RECOVER** — not a fix |
 | click -> Google password / sign-in form | needs a human; not an automatic recovery |
 | no structural arm matches | evidence about the SELECTOR; read the inventory |
+
+*Amended after the first runs (council on #903), table left as registered.* The rows
+overlap: the observed runs fit both "step 5 on `/about` again" and "click -> sign-in
+form", and the first version graded only step 5, so it printed DOES NOT RECOVER.
+`_verdict` now checks the click landing first (sign-in -> NEEDS A HUMAN), and grades
+RECOVERS only when step 5 renders `aisandbox-root`. Anything else is INCONCLUSIVE.
 
 Scope: one profile is one account. This answers "does the click recover THIS account,
 now" — nothing about a cohort.
@@ -63,6 +70,7 @@ from _spike_common import (  # noqa: E402, isort: skip
     resolve_profile_dir,
     step,
 )
+from gflow_cli.api.transports._common import safe_page_url  # noqa: E402
 
 FLOW_ROOT = "https://flow.google.com/"
 STRUCTURAL_ARMS = ("button.flow-button.variant-primary", "button.cta-button")
@@ -90,14 +98,6 @@ _INVENTORY_JS = """
 """
 
 
-def _path_only(url: str) -> str:
-    try:
-        p = urlsplit(url)
-    except ValueError:
-        return ""
-    return f"{p.scheme}://{p.netloc}{p.path}"
-
-
 async def _cookie_names(page: Any) -> list[str]:
     cookies = await page.context.cookies(FLOW_ROOT)
     return sorted({c["name"] for c in cookies})
@@ -111,19 +111,24 @@ async def _settle(page: Any, timeout_s: float) -> dict[str, Any]:
         flow_landing_kind,
     )
 
-    deadline = time.monotonic() + timeout_s
-    last, stable_since = "", time.monotonic()
+    started = time.monotonic()
+    deadline = started + timeout_s
+    last, stable_since, settled = "", started, False
     while time.monotonic() < deadline:
         url = page.url
         if url != last:
             last, stable_since = url, time.monotonic()
-        # 4 s without a URL change is "settled"; the /about hop lands within ~2 s of goto.
+        # ponytail: 4 s without a URL change is "settled" — the /about hop lands within
+        # ~2 s of goto; a navigation committing later than 4 s would be missed.
         if time.monotonic() - stable_since >= 4.0:
+            settled = True
             break
         await asyncio.sleep(0.5)
     url = page.url
     return {
-        "url": _path_only(url),
+        "url": safe_page_url(url),
+        "settled": settled,
+        "elapsed_s": round(time.monotonic() - started, 2),
         "host_kind": flow_host_kind(url),
         "landing_kind": flow_landing_kind(url),
         "app_root": await page.locator("aisandbox-root").count(),
@@ -145,94 +150,114 @@ async def _run(profile: str, timeout_s: float, follow_chooser: bool) -> int:
     out = default_out_path("about_cta_recovery")
     shots = out.with_suffix("")
     shots.mkdir(parents=True, exist_ok=True)
-    record: dict[str, Any] = {"profile": profile, "started": time.time()}
+    record: dict[str, Any] = {"profile": profile, "verdict": "INCOMPLETE — see `error`"}
+    nav: list[dict[str, Any]] = []
+    reqs: list[str] = []
 
-    async with build_client(profile_dir) as client:
-        page = client._page  # noqa: SLF001 — dev instrument
-        nav: list[dict[str, Any]] = []
-        reqs: list[str] = []
-        t0 = time.monotonic()
-        page.on(
-            "framenavigated",
-            lambda f: (
-                nav.append({"t": round(time.monotonic() - t0, 2), "url": _path_only(f.url)})
-                if f == page.main_frame
-                else None
-            ),
-        )
-        page.on("request", lambda r: reqs.append(_path_only(r.url)))
-
-        record["after_bootstrap"] = _path_only(page.url)
-        record["control"] = [
-            await _visit_root(page, f"control_{i}", shots, timeout_s) for i in (1, 2)
-        ]
-        if not all(c["landing_kind"] == "public" for c in record["control"]):
-            record["verdict"] = (
-                "DOES NOT REPRODUCE today — control did not land on /about both times. "
-                "Settles NOTHING about the click."
-            )
-        else:
-            record["cookies_before"] = await _cookie_names(page)
-            record["inventory"] = await page.evaluate(_INVENTORY_JS)
-            record["arm_counts"] = {
-                sel: await page.locator(sel).count() for sel in (*STRUCTURAL_ARMS, TEXT_ARM)
-            }
-            step("arms", json.dumps(record["arm_counts"]))
-
-            target = None
-            for sel in STRUCTURAL_ARMS:
-                loc = page.locator(sel)
-                for i in range(await loc.count()):
-                    if await loc.nth(i).is_visible():
-                        target = (sel, i)
-                        break
-                if target:
-                    break
-
-            if target is None:
-                record["verdict"] = (
-                    "NO STRUCTURAL ARM MATCHED a visible element — evidence about the "
-                    "selector, not the feature. Read `inventory`."
-                )
-            else:
-                record["clicked"] = {"selector": target[0], "index": target[1]}
-                nav_mark, req_mark = len(nav), len(reqs)
-                await page.locator(target[0]).nth(target[1]).click()
-                record["after_click"] = await _settle(page, timeout_s)
-                await page.screenshot(path=str(shots / "after_click.png"))
-                step("after_click", json.dumps(record["after_click"]))
-
-                if record["after_click"]["landing_kind"] == "chooser" and follow_chooser:
-                    picked = await client._handle_account_chooser(page)  # noqa: SLF001
-                    record["chooser_picked"] = picked
-                    record["after_chooser"] = await _settle(page, timeout_s)
-                    await page.screenshot(path=str(shots / "after_chooser.png"))
-                    step("after_chooser", json.dumps(record["after_chooser"]))
-
-                record["click_nav_chain"] = nav[nav_mark:]
-                record["click_request_hosts"] = sorted(
-                    {urlsplit(u).netloc for u in reqs[req_mark:]}
-                )
-                record["cookies_after"] = await _cookie_names(page)
-                record["persistence"] = await _visit_root(page, "persistence", shots, timeout_s)
-
-                if record["persistence"]["landing_kind"] == "public":
-                    record["verdict"] = "DOES NOT RECOVER — /about again on the follow-up visit."
-                elif record["persistence"]["landing_kind"] in ("signin", "chooser"):
-                    record["verdict"] = (
-                        "NOT AUTOMATIC — follow-up visit is on a Google sign-in surface."
-                    )
-                else:
-                    via = " via chooser" if record.get("chooser_picked") else ""
-                    record["verdict"] = f"RECOVERS{via} — follow-up visit is not /about."
-
+    # Written in `finally`: an exception mid-run (a goto timeout, the chooser handler
+    # raising) must not throw away the controls and inventory already gathered.
+    try:
+        async with build_client(profile_dir) as client:
+            await _measure(client, record, nav, reqs, shots, timeout_s, follow_chooser)
+    except Exception as exc:  # noqa: BLE001 — the failure is part of the evidence
+        record["error"] = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
         record["nav_chain"] = nav
         record["request_hosts"] = sorted({urlsplit(u).netloc for u in reqs})
-
-    step("verdict", record["verdict"])
-    out.write_text(json.dumps(record, indent=2), encoding="utf-8")
-    step("out", str(out))
+        out.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        step("verdict", record["verdict"])
+        step("out", str(out))
     return 0
+
+
+async def _measure(
+    client: Any,
+    record: dict[str, Any],
+    nav: list[dict[str, Any]],
+    reqs: list[str],
+    shots: Path,
+    timeout_s: float,
+    follow_chooser: bool,
+) -> None:
+    page = client._page  # noqa: SLF001 — dev instrument
+    t0 = time.monotonic()
+
+    def _on_nav(frame: Any) -> None:
+        if frame == page.main_frame:
+            nav.append({"t": round(time.monotonic() - t0, 2), "url": safe_page_url(frame.url)})
+
+    page.on("framenavigated", _on_nav)
+    page.on("request", lambda r: reqs.append(safe_page_url(r.url)))
+
+    record["after_bootstrap"] = safe_page_url(page.url)
+    record["control"] = [await _visit_root(page, f"control_{i}", shots, timeout_s) for i in (1, 2)]
+    if not all(c["landing_kind"] == "public" for c in record["control"]):
+        record["verdict"] = (
+            "DOES NOT REPRODUCE today — control did not land on /about both times. "
+            "Settles NOTHING about the click."
+        )
+        return
+
+    record["cookies_before"] = await _cookie_names(page)
+    inventory = await page.evaluate(_INVENTORY_JS)
+    for item in inventory:  # hrefs can carry ?continue= / authuser — keep the path only
+        item["href"] = safe_page_url(item["href"]) if item["href"] else None
+    record["inventory"] = inventory
+    record["arm_counts"] = {
+        sel: await page.locator(sel).count() for sel in (*STRUCTURAL_ARMS, TEXT_ARM)
+    }
+    step("arms", json.dumps(record["arm_counts"]))
+
+    target = None
+    for sel in STRUCTURAL_ARMS:
+        loc = page.locator(sel)
+        for i in range(await loc.count()):
+            if await loc.nth(i).is_visible():
+                target = (sel, i)
+                break
+        if target:
+            break
+    if target is None:
+        record["verdict"] = (
+            "NO STRUCTURAL ARM MATCHED a visible element — evidence about the "
+            "selector, not the feature. Read `inventory`."
+        )
+        return
+
+    record["clicked"] = {"selector": target[0], "index": target[1]}
+    nav_mark = len(nav)
+    await page.locator(target[0]).nth(target[1]).click()
+    record["after_click"] = await _settle(page, timeout_s)
+    await page.screenshot(path=str(shots / "after_click.png"))
+    step("after_click", json.dumps(record["after_click"]))
+
+    if record["after_click"]["landing_kind"] == "chooser" and follow_chooser:
+        record["chooser_picked"] = await client._handle_account_chooser(page)  # noqa: SLF001
+        record["after_chooser"] = await _settle(page, timeout_s)
+        await page.screenshot(path=str(shots / "after_chooser.png"))
+        step("after_chooser", json.dumps(record["after_chooser"]))
+
+    record["click_nav_chain"] = nav[nav_mark:]
+    record["cookies_after"] = await _cookie_names(page)
+    record["persistence"] = await _visit_root(page, "persistence", shots, timeout_s)
+    record["verdict"] = _verdict(record)
+
+
+def _verdict(record: dict[str, Any]) -> str:
+    """Map the measurements onto the docstring's pre-registered rows, in table order."""
+    click_kind = record["after_click"]["landing_kind"]
+    after = record["persistence"]
+    if click_kind == "signin":
+        return "NEEDS A HUMAN — the click landed on a Google sign-in surface."
+    if after["landing_kind"] == "public":
+        return "DOES NOT RECOVER — /about again on the follow-up visit."
+    # `flow_landing_kind` None means "nothing recognised", never "this is the app"
+    # (_common.py) — so recovery needs the app root actually rendered.
+    if after["landing_kind"] is None and after["app_root"] > 0:
+        via = " via chooser" if record.get("chooser_picked") else ""
+        return f"RECOVERS{via} — follow-up visit renders the app."
+    return "INCONCLUSIVE — follow-up visit is neither /about nor the app; read the screenshot."
 
 
 def main() -> int:
