@@ -124,23 +124,23 @@ def test_unported_image_forms_are_named_and_refused_pre_submit() -> None:
     assert _unported_image_form(_request(model=Model.IMAGEN_3_5)) is not None
 
 
-def test_only_the_measured_aspects_are_offered_and_three_four_is_refused() -> None:
-    """3:4 has no radio in the enumerated aspect row, so it must be refused as an
-    unported form (exit 36) — never left to miss its selector and surface as
-    UiSelectorDriftError (exit 23), which tells the user to file a frontend bug
-    about a frontend that is behaving correctly.
+def test_every_image_aspect_flow_renders_is_offered() -> None:
+    """All five of gflow's image aspects are served on flow.google.com.
+
+    The 2026-09-08 enumeration found four radios and 3:4 was refused (exit 36). The
+    2026-09-17 re-enumeration (scripts/dev/spike_migrated_aspect_radios.py) found five:
+    ``crop_16_9, crop_landscape, crop_square, crop_portrait, crop_9_16``.
     """
     from gflow_cli.api.transports.migrated_composer import (
+        IMAGE_ASPECT_LIGATURE,
         IMAGE_ASPECT_LIGATURE_MEASURED,
         _unported_image_form,
     )
 
-    for aspect in IMAGE_ASPECT_LIGATURE_MEASURED:
+    assert set(Aspect) == IMAGE_ASPECT_LIGATURE_MEASURED
+    assert IMAGE_ASPECT_LIGATURE[Aspect.PORTRAIT_THREE_FOUR] == "crop_portrait"
+    for aspect in Aspect:
         assert _unported_image_form(_request(aspect=aspect)) is None, aspect
-    assert Aspect.PORTRAIT_THREE_FOUR not in IMAGE_ASPECT_LIGATURE_MEASURED
-    refusal = _unported_image_form(_request(aspect=Aspect.PORTRAIT_THREE_FOUR))
-    assert refusal is not None
-    assert "aspect" in refusal
 
 
 def test_image_submit_body_requires_every_uploaded_reference() -> None:
@@ -283,6 +283,16 @@ def test_page_owned_recaptcha_is_only_selected_for_the_migrated_route(
     page = MagicMock()
     transport._page = page  # noqa: SLF001
 
+    # Pre-navigation bootstrap page: assume migrated so the page-owned mint
+    # wins the post-goto handoff race instead of minting on a script-less
+    # gallery page (the #692 race). `_drive_images_generation` re-checks
+    # servability before skipping the mint, so the assumption cannot strand
+    # a labs run.
+    page.url = "https://labs.google/fx/tools/flow?hl=en"
+    assert transport.uses_page_owned_image_recaptcha()
+    # Already inside a labs editor: follow the served host. A labs editor
+    # needs its pre-minted token; assuming migrated here would skip the mint
+    # and strand it in a terminal auth failure (#780 review).
     page.url = f"https://labs.google/fx/en/tools/flow/project/{PROJECT}"
     assert not transport.uses_page_owned_image_recaptcha()
     page.url = f"https://flow.google.com/project/{PROJECT}"
@@ -336,6 +346,10 @@ def test_a_never_migrated_transport_does_not_latch_into_the_page_owned_path(
     page = MagicMock()
     transport._page = page  # noqa: SLF001
 
+    # Under labs.google kill-switch the capability must stay False so a labs
+    # account keeps minting the token it genuinely needs.
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "labs.google")
+    reset_settings()
     for url in ("about:blank", f"https://labs.google/fx/en/tools/flow/project/{PROJECT}"):
         page.url = url
         assert not transport.uses_page_owned_image_recaptcha(), url
@@ -364,3 +378,76 @@ async def test_image_batch_is_refused_on_the_migrated_host_before_any_submit(
 
     with pytest.raises(FlowHostMigratedError):
         await transport.generate_images_batch(prompts=[_request()], jitter_range=(0.0, 0.0))
+
+
+async def test_a_failed_migrated_image_run_defers_its_park_for_the_incident_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#792, image half: the park sat in a bare ``finally``, so a failed image run
+    navigated to about:blank before ``FlowApiClient._capture_incident`` read the
+    page and the bundle shipped an empty DOM. The park is deferred to the client's
+    failure boundary; the routing/latch invariant above is unchanged."""
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
+    reset_settings()
+    transport = UiAutomationTransport()
+    page = MagicMock()
+    page.url = f"https://flow.google.com/project/{PROJECT}"
+
+    async def goto(url: str, **_: Any) -> None:
+        page.url = url
+
+    page.goto = goto
+    transport._page = page  # noqa: SLF001
+    transport._setup_done = True  # noqa: SLF001
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_composer.run_images",
+        AsyncMock(side_effect=WireFormatError(detail="maseQ answered 200 without a media id")),
+    )
+
+    with pytest.raises(WireFormatError):
+        await transport.generate_images(project_id=PROJECT, request=_request())
+
+    assert page.url != "about:blank", "evidence destroyed before the bundle was staged"
+    assert transport._deferred_park_pending is True  # noqa: SLF001
+
+    await transport.park_deferred_page()
+    assert page.url == "about:blank"
+    assert transport._deferred_park_pending is False  # noqa: SLF001
+
+
+async def test_a_cancelled_migrated_image_run_still_parks_inline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#792: the BaseException arm is the only one still parking inline — nothing
+    stages a bundle for a cancel, so nothing is waiting on the page. It latches too,
+    because a re-delivered cancel can pre-empt the park at its own `await`."""
+    import asyncio
+
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
+    reset_settings()
+    transport = UiAutomationTransport()
+    page = MagicMock()
+    page.url = f"https://flow.google.com/project/{PROJECT}"
+
+    async def goto(url: str, **_: Any) -> None:
+        page.url = url
+
+    page.goto = goto
+    transport._page = page  # noqa: SLF001
+    transport._setup_done = True  # noqa: SLF001
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_composer.run_images",
+        AsyncMock(side_effect=asyncio.CancelledError),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await transport.generate_images(project_id=PROJECT, request=_request())
+
+    assert page.url == "about:blank"
+    assert transport._deferred_park_pending is True  # noqa: SLF001

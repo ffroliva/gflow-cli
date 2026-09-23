@@ -192,7 +192,7 @@ class TestReferenceCap:
     def test_cap_values(self) -> None:
         assert reference_cap_for(Model.NARWHAL) == 10
         assert reference_cap_for(Model.GEM_PIX_2) == 10
-        assert reference_cap_for(Model.HARBOR_SEAL) == 10
+        assert reference_cap_for(Model.HARBOR_SEAL) == 3
         assert reference_cap_for(Model.IMAGEN_3_5) == 3
 
     def test_at_cap_is_allowed(self) -> None:

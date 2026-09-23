@@ -8,6 +8,7 @@ config file, with a backup of any pre-existing file.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -17,6 +18,18 @@ from click.testing import CliRunner
 from gflow_cli.cli import main
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.mcp import setup as setup_mod
+
+_ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    """Strip ANSI and collapse Rich's line wrapping so substring asserts hold.
+
+    Same helper as ``tests/cli/test_cli_video_chain.py`` — a ``FORCE_COLOR``
+    environment leaks SGR codes into otherwise plain text (memory
+    ``force-color-breaks-cli-tests``), and Rich soft-wraps at the console width.
+    """
+    return " ".join(_ANSI_SGR.sub("", output).split())
 
 
 class TestConfigPathFor:
@@ -204,3 +217,35 @@ class TestApplyAndCli:
         assert result.exit_code == 11
         assert target_file.read_text(encoding="utf-8") == "{broken"
         assert "Traceback" not in result.output
+
+    def test_unreadable_config_exits_11_naming_the_os_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """An OSError (locked/read-only config, permissions, disk) exits 11.
+
+        `ConfigurationError` covers "the file parsed wrong"; this arm covers
+        "the OS would not let us touch it at all", and it is the only one that
+        prints the exception class — that class name is the whole diagnosis for
+        a user staring at a config they cannot write.
+
+        A directory standing where the config file should be is a real OSError
+        from the real code path (IsADirectoryError on POSIX, PermissionError on
+        Windows) — no stubbing, and it works identically on both. The directory
+        is named with a lowercase-bracketed run because Rich silently drops
+        ``[...]`` it reads as an unparseable style tag: unescaped, the user is
+        told to go fix ``claude_desktop_config.json`` when the file on disk is
+        ``claude_desktop_config[locked].json``.
+        """
+        monkeypatch.setenv("COLUMNS", "300")  # no soft wrap inside the path
+        target_file = tmp_path / "claude_desktop_config[locked].json"
+        target_file.mkdir()  # a directory, not a file
+        monkeypatch.setattr(setup_mod, "config_path_for", lambda t: target_file)
+
+        result = CliRunner().invoke(main, ["mcp", "setup"])
+
+        assert result.exit_code == 11, result.output
+        plain = _plain(result.output)
+        assert "Could not write the client config" in plain
+        assert "Error:" in plain  # the OSError class name, e.g. PermissionError
+        assert "claude_desktop_config[locked].json" in plain
+        assert "Traceback" not in plain

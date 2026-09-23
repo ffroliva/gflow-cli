@@ -1542,20 +1542,44 @@ class FlowApiClient:
         try:
             parsed = json.loads(await resp.text())
         except json.JSONDecodeError as exc:
+            # #803: a non-JSON body is an interstitial, a consent page or a
+            # redirect — not an expired credential. Re-authenticating cannot
+            # change the shape of this reply, so the class default would send
+            # the user somewhere that costs them their session for nothing.
             raise AisandboxAuthError(
                 detail="non-JSON /auth/session response",
                 status=resp.status,
                 instance=_make_instance(),
                 route="auth/session",
+                remediation_hint=(
+                    "Flow's session endpoint returned a non-JSON response — an "
+                    "interstitial or a redirect, not an expired cookie. Re-run with "
+                    "GFLOW_CLI_LOG_LEVEL=DEBUG and check which host Flow served this "
+                    "account from; re-authenticating will not change a non-JSON "
+                    "reply. See issue #803."
+                ),
             ) from exc
         data = cast("JsonObject", parsed) if isinstance(parsed, dict) else {}
         token = data.get("access_token")
         if not token:
+            # #803/#795: labs answering 200 with no token is the migrated-account
+            # shape, not an expired session. aisandbox-pa has not been contacted
+            # yet, so nothing has rejected anything — and SAPISID is what made
+            # this probe answer at all. Mirrors the wording live-verified for
+            # `gflow credits` in api/credits.py.
             raise AisandboxAuthError(
-                detail="no access_token in /fx/api/auth/session (session expired?)",
+                detail="no access_token in /fx/api/auth/session",
                 status=resp.status,
                 instance=_make_instance(),
                 route="auth/session",
+                remediation_hint=(
+                    "Flow's labs.google session carries no API token for this account. "
+                    "On accounts Google serves from flow.google.com this is expected "
+                    "and re-authenticating will not help — it can also roll this "
+                    "profile's Chrome-strategy marker back and start the #791 "
+                    "re-login loop. Generation still works; the routes that need this "
+                    "token do not. See issue #803."
+                ),
             )
         return str(token), _parse_iso_to_epoch(data.get("expires"))
 
@@ -1630,11 +1654,23 @@ class FlowApiClient:
             await self._ensure_access_token()
             resp = await self._run_with_retry(attempt, route=route)
             if resp.status == 401:
+                # #803: the token was minted and then refused, so the Google
+                # sign-in is the one thing here that demonstrably works. Name
+                # the route — it is what tells the user which capability is
+                # refused rather than implying the whole session is broken.
                 raise AisandboxAuthError(
                     detail="aisandbox-pa returned 401 after token refresh",
                     status=401,
                     instance=_make_instance(),
                     route=route,
+                    remediation_hint=(
+                        "Flow's labs.google session issued an API token and "
+                        f"aisandbox-pa rejected it on route {route}. Your Google "
+                        "sign-in is not the problem — minting that token is what "
+                        "proves it works. Most commonly Flow now serves this account "
+                        "from flow.google.com, where these read routes have not "
+                        "answered for us. See issue #803."
+                    ),
                 )
         return resp
 
@@ -1804,12 +1840,42 @@ class FlowApiClient:
     async def create_project(self, title: str | None = None) -> ProjectInfo:
         """Bootstrap a fresh Flow project. Title defaults to a timestamp.
 
-        Maps to `POST .../trpc/project.createProject`.
+        Maps to `POST .../trpc/project.createProject`, and to flow.google.com's projects
+        page when that route refuses (#864, see :meth:`_labs_project_route_refused`).
         """
         title = title or _default_project_title()
-        body = {"json": {"projectTitle": title, "toolName": "PINHOLE"}}
-        data = await self._post_json(routes.CREATE_PROJECT, body, content_type=_APPLICATION_JSON)
-        return ProjectInfo.from_create_response(data)
+        if self.settings.flow_host != "flow.google.com":
+            body = {"json": {"projectTitle": title, "toolName": "PINHOLE"}}
+            try:
+                data = await self._post_json(
+                    routes.CREATE_PROJECT, body, content_type=_APPLICATION_JSON
+                )
+                return ProjectInfo.from_create_response(data)
+            except (AuthExpiredError, WireFormatError) as exc:
+                if not self._labs_project_route_refused(exc):
+                    raise
+        from gflow_cli.api.transports import migrated_composer  # noqa: PLC0415
+
+        page = await self._checkout_page()
+        try:
+            return await migrated_composer.create_project(page, title)
+        finally:
+            self._checkin_page(page)
+
+    def _labs_project_route_refused(self, exc: AuthExpiredError | WireFormatError) -> bool:
+        """Is this the labs project route's measured refusal, worth trying flow.google.com?
+
+        Measured 2026-09-17 on four profiles, 12/12: 404 "Flow RPCs have been deprecated
+        and disabled" for a session holding a labs token, 401 for one without. Keyed on
+        that observed answer, never on which host an account is served — and only under
+        ``flow_host=auto``, so an operator who pinned labs.google keeps the labs error.
+        A 401 from a genuinely signed-out profile goes on to fail on flow.google.com too,
+        where the landing diagnosis names what the browser actually saw.
+        """
+        refused = self.settings.flow_host == "auto" and exc.status in (401, 404)
+        if refused:
+            logger.info("project.labs_route_refused", status=exc.status, issue_ref="#864")
+        return refused
 
     async def get_credits(self) -> CreditsInfo:
         """Return the authenticated profile's current Flow credit balance."""
@@ -1833,10 +1899,26 @@ class FlowApiClient:
     async def rename_project(self, project_id: str, new_title: str) -> JsonObject:
         """Rename an existing Flow project.
 
-        Maps to `POST .../trpc/project.renameProject`.
+        Maps to `POST .../trpc/project.renameProject`, and to the project's header title
+        on flow.google.com when that route refuses (#864). Returns ``{}`` there.
         """
-        body = {"json": {"projectId": project_id, "projectTitle": new_title}}
-        return await self._post_json(routes.RENAME_PROJECT, body, content_type=_APPLICATION_JSON)
+        if self.settings.flow_host != "flow.google.com":
+            body = {"json": {"projectId": project_id, "projectTitle": new_title}}
+            try:
+                return await self._post_json(
+                    routes.RENAME_PROJECT, body, content_type=_APPLICATION_JSON
+                )
+            except (AuthExpiredError, WireFormatError) as exc:
+                if not self._labs_project_route_refused(exc):
+                    raise
+        from gflow_cli.api.transports import migrated_composer  # noqa: PLC0415
+
+        page = await self._checkout_page()
+        try:
+            await migrated_composer.rename_project(page, project_id, new_title)
+        finally:
+            self._checkin_page(page)
+        return {}
 
     async def patch_agent_info(
         self,
@@ -2663,7 +2745,19 @@ class FlowApiClient:
                 msg,
             )
         page_owned = getattr(self.transport, "uses_page_owned_image_recaptcha", None)
+        serve_migrated = False
         if callable(page_owned) and page_owned():
+            from gflow_cli.api.transports.migrated_composer import (  # noqa: PLC0415
+                migrated_images_prefer,
+            )
+
+            # The capability answers from the page URL alone and cannot see the
+            # request: re-check servability here so entity/instruction runs and
+            # project-less runs keep their pre-minted token. A redundant mint on
+            # a migrated run is harmless (the page mints its own); a missing mint
+            # on a labs run is a terminal auth failure.
+            serve_migrated = migrated_images_prefer(req, project_id=project_id)
+        if serve_migrated:
             # The migrated Angular page mints and submits its own token on ogiZ0b.
             # Minting here first is not only redundant: the pooled bootstrap page is
             # flow.google.com/ (no enterprise.js), while /project/<id> is the page that
@@ -2877,6 +2971,15 @@ class FlowApiClient:
             raise RuntimeError(
                 msg,
             )
+
+        if project_id is None:
+            # #864: as generate_image does. Leaving it to the transport meant the labs
+            # gallery's "new project" click, which cannot reach flow.google.com's
+            # projects page; create_project reaches both hosts.
+            try:
+                project_id = (await self.create_project()).project_id
+            except Exception as e:
+                await self._raise_with_incident(e, phase="video_generation")
 
         wrapped_on_started = on_started
         if on_checkpoint is not None:
@@ -3612,6 +3715,41 @@ def _extract_provider_error_message(body_text: str) -> str | None:
     return None
 
 
+#: Flow's own words when a labs tRPC route is retired. Measured 2026-09-20 on
+#: ``projectInitialData`` (profile denon82, healthy session, 57 context cookies):
+#: HTTP 404, body ``{"error":{"json":{"message":"Flow RPCs have been deprecated and
+#: disabled. Flow has migrated to https://flow.google.com.","code":-32004,...``
+#: Keyed on THAT MESSAGE — never on which host an account is served, and never on a
+#: route allowlist, so a route we have not observed yet is covered the day Flow
+#: retires it (#875, AGENTS.md "Host-Membership Discipline").
+_LABS_RPC_RETIRED_MARKER = "flow rpcs have been deprecated"
+
+
+def _labs_rpc_retired_hint(body_text: str, *, route: str) -> str | None:
+    """Remediation for a labs tRPC route Flow has retired, or ``None``.
+
+    ``WireFormatError``'s class default tells the user to check the payload, retry
+    with a simpler prompt and file a bug. On this response all three are wrong in
+    the same way #803 and #789 were wrong — gflow asserting something nothing
+    measured. The route is gone, ``gflow character list`` has no prompt to simplify,
+    and Flow documents the condition in the very body we are classifying.
+    """
+    if _LABS_RPC_RETIRED_MARKER not in body_text.lower():
+        return None
+    # Deliberately suggests no setting. GFLOW_CLI_FLOW_HOST=flow.google.com was
+    # MEASURED not to help (2026-09-20, denon82, `character list`): the same 404
+    # comes back, because this read has no migrated arm to route to. Naming it
+    # here would repeat the mistake this hint exists to fix — advice nothing
+    # measured, on the field a user checks to find out what to do next.
+    return (
+        f"Flow has retired this labs route ({route}) — the request payload is fine, "
+        f"there is no prompt to simplify, and there is no bug to file. Flow has moved "
+        f"to flow.google.com, and gflow has not ported this read to that frontend yet, "
+        f"so the command has no working path today. Track "
+        f"https://github.com/ffroliva/gflow-cli/issues/639 for the port."
+    )
+
+
 def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
     """Classify a response that survived the retry loop.
 
@@ -3683,6 +3821,8 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
             status=resp.status,
             instance=instance,
             route=route,
+            # None keeps the class default for every other 4xx (#875).
+            remediation_hint=_labs_rpc_retired_hint(body_text, route=route),
             discovery=_build_wire_format_discovery(resp, body_text, route),
         )
 

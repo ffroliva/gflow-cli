@@ -24,6 +24,13 @@ from mcp.client.streamable_http import streamable_http_client
 
 from gflow_cli.mcp.server import HTTP_PATH
 
+#: Env vars the subprocess must NOT inherit from the developer or CI runner.
+#: Both token aliases are the ``validation_alias`` of ``Settings.daemon_token``
+#: (``config.py``), and ``gflow serve`` now enforces that token on every
+#: request — so either one exported in the ambient shell turns this smoke into
+#: a confusing 401 on a path that is meant to be tokenless.
+_ISOLATED_ENV = frozenset({"GFLOW_MCP_NO_SPEND", "GFLOW_CLI_DAEMON_TOKEN", "GFLOW_DAEMON_TOKEN"})
+
 
 def _free_port() -> int:
     with socket.socket() as s:
@@ -44,8 +51,11 @@ async def test_serve_speaks_streamable_http(tmp_path) -> None:
             k: v
             for k, v in {**os.environ, "GFLOW_CLI_HOME": str(tmp_path), "PYTHONUTF8": "1"}.items()
             # An ambient no-spend export would strip the generate tools this
-            # smoke asserts present — isolate BOTH env knobs, not just HOME.
-            if k != "GFLOW_MCP_NO_SPEND"
+            # smoke asserts present, and an ambient daemon token now makes
+            # every request 401 — this test IS the no-token compatibility
+            # guarantee for existing local clients, so isolate all of them, not
+            # just HOME.
+            if k not in _ISOLATED_ENV
         },
         text=True,
     )

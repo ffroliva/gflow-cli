@@ -559,6 +559,54 @@ class TestPlaywrightAutoClose:
 
     @pytest.mark.asyncio
     async def test_timeout_with_window_open_raises(self, tmp_path: Path) -> None:
+        """The disk agrees with the detector, so the timeout's own wording stands.
+
+        This test used to pin the opposite of what it pins now — it patched
+        `verify_flow_profile` with `AssertionError("verification must not run on
+        timeout")`. That contract was written to describe the control flow, not
+        because anything required it, and #849 is what it cost: the detector's
+        only oracle is an endpoint that never answers for an account Google
+        serves from flow.google.com, so a completed sign-in reached this branch
+        and was thrown away unread. The detector is not the authority. It is
+        allowed to be wrong, and the disk is asked before its verdict stands.
+        """
+        gflow_home, profile_dir = self._home(tmp_path)
+        ap, _pw, ctx = _build_fake_playwright(session_body="{}")
+        verify = AsyncMock(
+            return_value=FlowSessionStatus(
+                outcome=FlowSessionOutcome.NO_SESSION, user_email=None, source="chrome"
+            )
+        )
+
+        with (
+            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
+                return_value=True,
+            ),
+            patch("gflow_cli.auth.strategies.async_playwright", ap),
+            patch("gflow_cli.auth.real_chrome.verify_flow_profile", verify),
+        ):
+            mock_settings.return_value.home = gflow_home
+            with pytest.raises(AuthLoginTimeoutError) as excinfo:
+                await RealChromeStrategy(timeout_seconds=0).login(profile_dir, headless=False)
+
+        # The timeout, not the verifier's "No sign-in detected": it is the one
+        # that explains the ten minutes the user just sat through.
+        assert "not detected within 0s" in str(excinfo.value)
+        assert "GFLOW_CLI_AUTH_LOGIN_TIMEOUT" in (excinfo.value.remediation_hint or "")
+        verify.assert_awaited_once()
+        ctx.close.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_timeout_does_not_discard_a_sign_in_the_detector_missed(
+        self, tmp_path: Path
+    ) -> None:
+        """#849: the banner promises "gflow verifies what's on disk either way".
+
+        Until this, that was false on exactly one path — the one an account
+        served flow.google.com takes every time.
+        """
         gflow_home, profile_dir = self._home(tmp_path)
         ap, _pw, ctx = _build_fake_playwright(session_body="{}")
 
@@ -571,15 +619,13 @@ class TestPlaywrightAutoClose:
             patch("gflow_cli.auth.strategies.async_playwright", ap),
             patch(
                 "gflow_cli.auth.real_chrome.verify_flow_profile",
-                AsyncMock(side_effect=AssertionError("verification must not run on timeout")),
+                AsyncMock(return_value=_authenticated_status()),
             ),
         ):
             mock_settings.return_value.home = gflow_home
-            with pytest.raises(AuthLoginTimeoutError) as excinfo:
-                await RealChromeStrategy(timeout_seconds=0).login(profile_dir, headless=False)
+            await RealChromeStrategy(timeout_seconds=0).login(profile_dir, headless=False)
 
-        assert "not detected within 0s" in str(excinfo.value)
-        assert "GFLOW_CLI_AUTH_LOGIN_TIMEOUT" in (excinfo.value.remediation_hint or "")
+        assert (profile_dir / ".gflow_account").read_text(encoding="utf-8") == "test@example.com"
         ctx.close.assert_awaited()
 
     @pytest.mark.asyncio

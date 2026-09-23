@@ -47,8 +47,8 @@ It PASSes only when all four hold (else it prints which stage failed):
 
 Run it directly without the harness, too:
 
-```powershell
-$env:GFLOW_CLI_FORCE_AGENT_UI="1"
+```bash
+export GFLOW_CLI_FORCE_AGENT_UI=1     # Windows PowerShell: $env:GFLOW_CLI_FORCE_AGENT_UI = "1"
 uv run gflow image t2i "a ripe banana on a white plate" --profile denon82 --json
 ```
 

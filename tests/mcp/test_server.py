@@ -567,6 +567,7 @@ class TestMcpServerEntryPoints:
 
         with (
             patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._apply_mcp_lease_wait_default"),
             patch("gflow_cli.mcp.server._configure_utf8_pipes"),
             patch("gflow_cli.mcp.server._redirect_stdout_to_stderr"),
             patch("gflow_cli.mcp.server.sys.stdout", MagicMock()),
@@ -587,44 +588,58 @@ class TestMcpServerEntryPoints:
         ``stateless_http`` must NOT be forced on: gflow's value is a warm daemon
         holding one Chromium profile behind a ProfileLease, so the SDK default
         (False) is the deliberate choice.
+
+        The app is built through ``build_app`` and handed to uvicorn by
+        ``_serve`` rather than through the SDK's ``run_streamable_http_async``
+        one-shot, because request auth has to be wrapped around it — see
+        ``tests/mcp/test_serve_auth.py``. ``host`` must still reach the SDK: it
+        is what decides the DNS-rebinding allow-list.
         """
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from gflow_cli.mcp.server import HTTP_PATH, run_http
 
         with (
             patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._apply_mcp_lease_wait_default"),
             patch("gflow_cli.mcp.server._configure_utf8_pipes"),
+            patch("gflow_cli.mcp.server._serve", new_callable=AsyncMock) as mock_serve,
         ):
-            mock_server.run_streamable_http_async = AsyncMock()
+            app = MagicMock()
+            mock_server.streamable_http_app.return_value = app
             await run_http(host="127.0.0.1", port=9999)
 
-            mock_server.run_streamable_http_async.assert_called_once_with(
-                host="127.0.0.1",
-                port=9999,
+            mock_server.streamable_http_app.assert_called_once_with(
                 streamable_http_path=HTTP_PATH,
+                host="127.0.0.1",
             )
-            kwargs = mock_server.run_streamable_http_async.call_args.kwargs
+            kwargs = mock_server.streamable_http_app.call_args.kwargs
             assert "stateless_http" not in kwargs
+            mock_serve.assert_awaited_once_with(app, host="127.0.0.1", port=9999)
 
     @pytest.mark.asyncio
     async def test_run_sse_configures_and_starts(self) -> None:
-        """run_sse must pass host/port through to the deprecated SSE runner.
+        """run_sse must pass host/port through to the deprecated SSE transport.
 
-        mcp>=2 takes host/port as explicit kwargs; the old ``server.settings``
-        mutation is gone.
+        mcp>=2 takes host as an explicit kwarg; the old ``server.settings``
+        mutation is gone. Like ``run_http`` this now builds the app and serves
+        it itself so request auth can wrap it.
         """
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from gflow_cli.mcp.server import run_sse
 
         with (
             patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._apply_mcp_lease_wait_default"),
             patch("gflow_cli.mcp.server._configure_utf8_pipes"),
+            patch("gflow_cli.mcp.server._serve", new_callable=AsyncMock) as mock_serve,
         ):
-            mock_server.run_sse_async = AsyncMock()
+            app = MagicMock()
+            mock_server.sse_app.return_value = app
             await run_sse(host="127.0.0.1", port=9999)
-            mock_server.run_sse_async.assert_called_once_with(host="127.0.0.1", port=9999)
+            mock_server.sse_app.assert_called_once_with(host="127.0.0.1")
+            mock_serve.assert_awaited_once_with(app, host="127.0.0.1", port=9999)
 
 
 def test_mcp_retryable_matches_cli() -> None:

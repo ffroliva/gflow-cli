@@ -16,6 +16,8 @@ jobs:
     permissions:
       contents: write # for creating GitHub Releases
       id-token: write # for PyPI Trusted Publishing (OIDC)
+    outputs:
+      prerelease: ${{ steps.tag_kind.outputs.prerelease }}
     environment:
       name: pypi
       url: https://pypi.org/p/gflow-cli
@@ -29,7 +31,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           # This is the one workflow that publishes artefacts (PyPI + GitHub
           # Release), so it must not restore a cache any other workflow can
@@ -64,6 +66,25 @@ jobs:
             exit 1
           fi
 
+      - name: Classify the tag
+        # Single source of truth for prerelease-ness. It gates BOTH the GitHub Release
+        # flag and whether the MCP Registry publish runs at all; as two copies of the
+        # same four-clause expression those would eventually disagree.
+        #   - semver suffixes:  v1.2.3-alpha1, v1.2.3-rc1, v1.2.3-beta1  (any '-')
+        #   - PEP 440 suffixes: v1.2.3a1, v1.2.3b1, v1.2.3rc1            (any a / b / rc)
+        # Stable tags like v1.2.3 contain none of these.
+        id: tag_kind
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "${TAG}" in
+            *-*|*a*|*b*|*rc*) prerelease=true ;;
+            *)                prerelease=false ;;
+          esac
+          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
+          echo "${TAG} -> prerelease=${prerelease}"
+
       - name: Build
         run: uv build
 
@@ -77,8 +98,24 @@ jobs:
         with:
           generate_release_notes: true
           files: dist/*
-          # Pre-release detection covers both conventions:
-          #   - semver suffixes:  v1.2.3-alpha1, v1.2.3-rc1, v1.2.3-beta1   (any '-' qualifies)
-          #   - PEP 440 suffixes: v1.2.3a1, v1.2.3b1, v1.2.3rc1             (any 'a' / 'b' / 'rc')
-          # Stable tags like v1.2.3 contain none of these substrings.
-          prerelease: ${{ contains(github.ref_name, '-') || contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
+          prerelease: ${{ steps.tag_kind.outputs.prerelease == 'true' }}
+
+  mcp-registry:
+    # The registry listing is part of the release, not a follow-up, so it is CALLED here
+    # rather than triggered by the Release above. `on: release: published` never fired
+    # once: the Release is created with the default GITHUB_TOKEN, and GitHub starts no
+    # workflow runs from GITHUB_TOKEN-created events (#841). A user PAT would fix that
+    # and add a 366-day expiry to a path that runs a few times a year; a call adds none.
+    #
+    # `needs:` is also what guarantees the ordering mcp-publisher requires — it reads the
+    # `mcp-name:` token from the PUBLISHED PyPI README, so the wheel must be up first.
+    # And the call runs against this TAG, so server.json is the released one.
+    needs: build-and-publish
+    # A pre-release must never become the registry's ACTIVE listing.
+    if: needs.build-and-publish.outputs.prerelease != 'true'
+    permissions:
+      contents: read
+      id-token: write # OIDC exchange with registry.modelcontextprotocol.io
+    uses: ./.github/workflows/mcp-registry.yml
+    with:
+      version: ${{ github.ref_name }}

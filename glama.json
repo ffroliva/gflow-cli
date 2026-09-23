@@ -1,0 +1,17 @@
+{
+  "baseImage": "debian:trixie-slim",
+  "nodeVersion": "24",
+  "pythonVersion": "3.14",
+  "buildSteps": [
+    "uv sync"
+  ],
+  "cmdArguments": [
+    "mcp-proxy",
+    "--",
+    "/app/.venv/bin/gflow",
+    "mcp",
+    "run"
+  ],
+  "placeholderArguments": {},
+  "pinnedCommit": null
+}

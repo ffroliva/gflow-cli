@@ -1,0 +1,17 @@
+{
+  "name": "gflow-cli",
+  "owner": {
+    "name": "Flavio Oliva",
+    "url": "https://github.com/ffroliva"
+  },
+  "description": "Drive Google Flow (Veo video, Imagen images) from Claude Code.",
+  "plugins": [
+    {
+      "name": "gflow",
+      "source": "./plugins/gflow",
+      "category": "Developer Tools",
+      "tags": ["video", "image", "google-flow", "veo", "imagen", "mcp"],
+      "defaultEnabled": false
+    }
+  ]
+}

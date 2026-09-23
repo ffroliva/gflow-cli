@@ -25,19 +25,26 @@ def test_plugin_manifest_packages_canonical_skills_under_gflow_namespace() -> No
 
     assert manifest["name"] == "gflow"
     assert manifest["version"] == project["version"]
-    assert manifest["skills"] == "./skills/"
+    # Was `./skills/`, which shipped all eighteen skills — `release`, `check`,
+    # `pr-council-review`, `sonar`, `doc-review` included — to every Codex user. Those drive
+    # *this* repo's development lifecycle; an agent that reads `release/SKILL.md` will try to
+    # cut a release of whatever project it is pointed at. The manifest now points at the
+    # curated two-skill payload, generated from `skills/` and drift-gated in CI.
+    assert manifest["skills"] == "./plugins/gflow/skills/"
     assert manifest["interface"]["displayName"] == "gflow-cli"
 
 
-def test_repo_marketplace_exposes_root_plugin() -> None:
+def test_repo_marketplace_exposes_the_curated_plugin() -> None:
     marketplace = _load_json(ROOT / ".agents" / "plugins" / "marketplace.json")
 
     assert marketplace["name"] == "gflow-cli"
     assert marketplace["interface"]["displayName"] == "gflow-cli"
+    # `path: "./"` published the entire repository tree as the plugin body, with the same
+    # maintainer-only-skill consequence as the Codex manifest above.
     assert marketplace["plugins"] == [
         {
             "name": "gflow",
-            "source": {"source": "local", "path": "./"},
+            "source": {"source": "local", "path": "./plugins/gflow"},
             "policy": {
                 "installation": "AVAILABLE",
                 "authentication": "ON_INSTALL",

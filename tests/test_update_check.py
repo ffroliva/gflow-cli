@@ -331,6 +331,8 @@ def uv_install(index_install: Path, monkeypatch: pytest.MonkeyPatch) -> list[tup
     # The venv after the manager ran: gflow-cli moved to 999.0.0, Playwright stable.
     versions = {"gflow-cli": "999.0.0", "playwright": "1.59.0"}
     monkeypatch.setattr(uc, "_version_in_venv", lambda dist: versions[dist])
+    # Healthy by default, and stubbed so no test spawns the real probe interpreter.
+    monkeypatch.setattr(uc, "_import_failure", lambda: None)
     return calls
 
 
@@ -412,6 +414,39 @@ class TestRunUpdate:
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
         monkeypatch.setattr(uc, "_version_in_venv", lambda dist: __version__)
         with pytest.raises(ConfigurationError, match=f"still {__version__}"):
+            uc.run_update(check=False)
+
+    def test_broken_environment_is_reported_even_when_the_version_moved(
+        self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#848: metadata says 999.0.0, imports say otherwise. The version moved,
+        so every existing branch would have called this a successful upgrade."""
+        from gflow_cli.errors import ConfigurationError
+
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(
+            uc,
+            "_import_failure",
+            lambda: "AttributeError: module 'greenlet' has no attribute 'greenlet'",
+        )
+        with pytest.raises(ConfigurationError, match="unusable") as excinfo:
+            uc.run_update(check=False)
+        assert "greenlet" in str(excinfo.value)
+        # The repair command, not the `upgrade` that cannot fix a half-replaced venv.
+        assert "--force --reinstall" in (excinfo.value.remediation_hint or "")
+
+    def test_broken_environment_outranks_the_unchanged_version_message(
+        self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The #848 shape exactly: manager failed, version unchanged, venv dead.
+        "still <version>" plus "run the upgrade yourself" was the wrong advice."""
+        from gflow_cli.errors import ConfigurationError
+
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", lambda cmd: 2)
+        monkeypatch.setattr(uc, "_version_in_venv", lambda dist: __version__)
+        monkeypatch.setattr(uc, "_import_failure", lambda: "ImportError: DLL load failed")
+        with pytest.raises(ConfigurationError, match="unusable"):
             uc.run_update(check=False)
 
     def test_manager_failure_after_install_is_upgraded_with_note(
@@ -520,3 +555,49 @@ class TestPipWithoutPipModule:
         monkeypatch.setattr(uc, "_version_in_venv", lambda dist: None)
         with pytest.raises(ConfigurationError, match="could not be re-read"):
             uc.run_update(check=False)
+
+
+class TestImportFailure:
+    """The probe itself — a real subprocess, because a stubbed one proves nothing
+    about whether `-I` can still see the venv it is asked about."""
+
+    def test_healthy_environment_probes_clean(self) -> None:
+        assert uc._import_failure() is None
+
+    def test_broken_import_returns_the_last_stderr_line(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(uc, "_IMPORT_PROBE", "import gflow_cli_definitely_not_installed")
+        reason = uc._import_failure()
+        assert reason is not None
+        assert "ModuleNotFoundError" in reason
+
+    def test_unrunnable_probe_is_not_a_broken_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An environment we could not ask about is never reported as broken."""
+
+        def _boom(*args: object, **kwargs: object) -> object:
+            raise OSError("no fork for you")
+
+        monkeypatch.setattr(uc.subprocess, "run", _boom)
+        assert uc._import_failure() is None
+
+
+class TestReinstallHint:
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("uv", 'uv tool install "gflow-cli==9.9.9" --force --reinstall'),
+            ("pipx", "pipx install --force gflow-cli==9.9.9"),
+            ("pip", "-m pip install --force-reinstall gflow-cli==9.9.9"),
+        ],
+    )
+    def test_repair_command_per_installer(self, name: str, expected: str) -> None:
+        hint = uc._reinstall_hint(uc.Installer(name, ("x",)), "9.9.9")
+        assert expected in hint
+        assert "Close every running gflow process" in hint
+
+    def test_unknown_version_falls_back_to_unpinned(self) -> None:
+        hint = uc._reinstall_hint(uc.Installer("uv", ("x",)), None)
+        assert '"gflow-cli" --force --reinstall' in hint

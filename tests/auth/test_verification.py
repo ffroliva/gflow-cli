@@ -333,7 +333,13 @@ class TestVerifyFlowSession:
             mock_settings.return_value.home = gflow_home
             status = await verify_flow_profile(profile)
 
-        assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
+        # #796: the gate itself is unchanged (Playwright is never launched), but a
+        # missing marker is local profile state, not a network fault. Reporting it
+        # as VERIFICATION_ERROR told the user to "check network connectivity" for a
+        # file on their own disk — and that is precisely the state a failed first
+        # login leaves behind, since it rolls the marker back (real_chrome.py:433).
+        assert status.outcome is FlowSessionOutcome.PROFILE_MARKER_MISSING
+        assert not status.authenticated
         fake_async_playwright.assert_not_called()
 
     @pytest.mark.asyncio
@@ -352,6 +358,12 @@ class TestVerifyFlowSession:
         fake_bc3.chrome.side_effect = BrowserCookieError("Unable to get key for cookie decryption")
 
         fake_httpx = MagicMock()
+        # The marker must EXIST here, or the run stops at the marker gate and is
+        # classified PROFILE_MARKER_MISSING (#796) — which the sibling test above
+        # already covers. This test is about the decryption path itself: the
+        # fallback is entered and then fails, which is a genuine VERIFICATION_ERROR.
+        (profile / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
+        fake_async_playwright = MagicMock(side_effect=RuntimeError("no browser here"))
 
         with (
             patch("gflow_cli.auth.verification.get_settings") as mock_settings,
@@ -360,6 +372,7 @@ class TestVerifyFlowSession:
                 return_value=Path("/fake/Cookies"),
             ),
             patch.dict(sys.modules, {"browser_cookie3": fake_bc3, "httpx": fake_httpx}),
+            patch("gflow_cli.auth.strategies.async_playwright", fake_async_playwright),
         ):
             mock_settings.return_value.home = gflow_home
             status = await verify_flow_profile(profile)
@@ -647,3 +660,233 @@ class TestVerifyFlowSessionEngineDowngrade:
         assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
         mock_ap.return_value.__aenter__.assert_not_awaited()
         mock_ctx.cookies.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _verify_migrated_host_fallback — the migrated-host session oracle (#791)
+# ---------------------------------------------------------------------------
+
+
+def _migrated_mock(
+    *,
+    cookies: list[dict] | None = None,
+    final_url: str = "https://myaccount.google.com/?hl=en",
+    body: str = "<div>someone@gmail.com</div>",
+    get_side_effect: object = None,
+) -> MagicMock:
+    """A persistent context whose `request.get` reports BOTH a body and a final URL.
+
+    The URL is the part that matters: it is the server-attested half of the oracle.
+    `_build_verify_mock` predates that and sets no `.url`, so this cannot reuse it.
+    """
+    if cookies is None:
+        cookies = [
+            {"name": "SAPISID", "domain": ".google.com"},
+            {"name": "__Secure-OSID", "domain": ".flow.google.com"},
+        ]
+    resp = MagicMock(name="resp")
+    resp.status = 200
+    resp.url = final_url
+    resp.text = AsyncMock(return_value=body)
+
+    request = MagicMock(name="request")
+    request.get = (
+        AsyncMock(side_effect=get_side_effect)
+        if get_side_effect is not None
+        else AsyncMock(return_value=resp)
+    )
+
+    ctx = MagicMock(name="ctx")
+    ctx.cookies = AsyncMock(return_value=cookies)
+    ctx.request = request
+    ctx.close = AsyncMock()
+
+    pw = MagicMock(name="pw")
+    pw.chromium.launch_persistent_context = AsyncMock(return_value=ctx)
+    cm = MagicMock(name="cm")
+    cm.__aenter__ = AsyncMock(return_value=pw)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return MagicMock(name="async_playwright", return_value=cm)
+
+
+class TestMigratedHostFallback:
+    """#791: labs never mints a session for some migrated accounts.
+
+    The whole point of this probe is to upgrade a usable workspace out of
+    GOOGLE_SESSION_ONLY. Every case below is about NOT upgrading something that
+    should not be — an oracle that says yes too easily is worse than none.
+    """
+
+    @staticmethod
+    def _patch(monkeypatch: pytest.MonkeyPatch, mock_ap: MagicMock) -> None:
+        monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+
+    @pytest.mark.asyncio
+    async def test_a_workspace_address_authenticates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The regression that shipped: an `@gmail.com`-only pattern declined these.
+
+        Measured against the old expression — `dev@axelate.io`, `user@mycompany.com`
+        and even `user@googlemail.com` all failed to match, so #791 stayed open for
+        every Google Workspace account with no signal that the fallback had refused.
+        """
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        self._patch(monkeypatch, _migrated_mock(body="<b>dev@axelate.io</b>"))
+        result = await _verify_migrated_host_fallback(tmp_path, "t")
+        assert result is not None, "a Workspace account must not be declined"
+        assert result.user_email == "dev@axelate.io"
+
+    @pytest.mark.asyncio
+    async def test_the_accounts_own_address_wins_over_a_stray_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Most frequent, not first — the label must not be decided by page order.
+
+        Measured on a live myaccount response: 9 matches, all 9 the account's own
+        address, 0 competing candidates. First-match was therefore right by luck. A
+        single support or noreply address rendered ABOVE the account's would have
+        relabelled the user, and the user would have no way to tell.
+        """
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        body = (
+            "<a>noreply@google.com</a>"  # rendered first, appears once
+            "<b>dev@axelate.io</b><i>dev@axelate.io</i><u>dev@axelate.io</u>"
+        )
+        self._patch(monkeypatch, _migrated_mock(body=body))
+        result = await _verify_migrated_host_fallback(tmp_path, "t")
+        assert result is not None
+        assert result.user_email == "dev@axelate.io", "a stray address won the label"
+
+    @pytest.mark.asyncio
+    async def test_a_redirect_off_myaccount_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A revoked session is redirected to sign-in — and cookies outlive revocation.
+
+        This is the case the cookie check alone cannot catch: the jar on disk survives a
+        password change or a "sign out of all devices", so cookie presence is a gate,
+        never a proof. The landing URL is what the server actually attests.
+        """
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        self._patch(
+            monkeypatch,
+            _migrated_mock(
+                final_url="https://accounts.google.com/v3/signin/identifier?continue=...",
+                # The sign-in page carries addresses too; body content must not save it.
+                body="<a>support@google.com</a>",
+            ),
+        )
+        assert await _verify_migrated_host_fallback(tmp_path, "t") is None
+
+    @pytest.mark.asyncio
+    async def test_a_missing_address_still_authenticates_without_a_label(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The URL proves the session; the address is only a display label.
+
+        If Google reshapes the page, the user must not lose their login over a cosmetic
+        field — which is exactly what making the address the decision would cost them.
+        """
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        self._patch(monkeypatch, _migrated_mock(body="<div>no address here</div>"))
+        result = await _verify_migrated_host_fallback(tmp_path, "t")
+        assert result is not None
+        assert result.user_email is None
+
+    @pytest.mark.asyncio
+    async def test_no_flow_cookie_refuses_before_any_request(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Four of five local profiles reproducing #791 look exactly like this."""
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        mock_ap = _migrated_mock(cookies=[{"name": "SAPISID", "domain": ".google.com"}])
+        self._patch(monkeypatch, mock_ap)
+        assert await _verify_migrated_host_fallback(tmp_path, "t") is None
+
+    @pytest.mark.asyncio
+    async def test_a_probe_that_cannot_run_never_upgrades(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fail-closed. A 15 s budget really did time out under browser contention."""
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        self._patch(monkeypatch, _migrated_mock(get_side_effect=TimeoutError("slow")))
+        assert await _verify_migrated_host_fallback(tmp_path, "t") is None
+
+
+class TestFindEmails:
+    """#852 — the address scan must stay linear.
+
+    It reads a 1.28 MB `myaccount` response synchronously inside an `async def`,
+    so a stall there blocks the event loop and `CancelledError` cannot land until
+    it returns.
+    """
+
+    @pytest.mark.parametrize(
+        ("body", "expected"),
+        [
+            ("hello dev@axelate.io world", ["dev@axelate.io"]),
+            # Workspace and custom domains — the #791 regression this must not undo.
+            ("user@mycompany.com", ["user@mycompany.com"]),
+            ("user@googlemail.com", ["user@googlemail.com"]),
+            ("first.last+tag@sub.example.co.uk", ["first.last+tag@sub.example.co.uk"]),
+            # Document order preserved, duplicates kept: `Counter.most_common`
+            # upstream depends on both.
+            (
+                "<a>noreply@google.com</a> me@corp.io and me@corp.io",
+                ["noreply@google.com", "me@corp.io", "me@corp.io"],
+            ),
+            (
+                "edge@x.io,other_one@y-z.com;third@a.b.cd",
+                ["edge@x.io", "other_one@y-z.com", "third@a.b.cd"],
+            ),
+            ("no addresses here at all", []),
+            # Matches never overlap: the local part of the second address may
+            # not reach back into the first. Found by fuzzing this against the
+            # pattern it replaces — 2 differences in 4 000 random bodies, all of
+            # this shape, two `@` within the 64-character window.
+            ("a@b.co7-x+y@d.com", ["a@b.co", "7-x+y@d.com"]),
+            # An `@` with nothing usable on either side yields nothing, not a crash.
+            ("@", []),
+            ("@example.com", []),
+            ("trailing@", []),
+        ],
+    )
+    def test_matches_what_the_single_pattern_matched(self, body: str, expected: list[str]) -> None:
+        from gflow_cli.auth.verification import find_emails
+
+        assert find_emails(body) == expected
+
+    def test_a_long_unbroken_run_does_not_stall(self) -> None:
+        r"""The exact shape that made the old pattern quadratic.
+
+        `[\w.+-]` accepts every character of the URL-safe base64 alphabet, so a
+        Google page's blobs are precisely this. Measured on the old pattern:
+        5k->0.12s, 10k->0.48s, 20k->2.0s, 40k->12.1s — clean 4x per doubling, so
+        200k would be minutes. The bound below is ~300x the linear cost and still
+        orders of magnitude under the old curve; it fails loudly on a regression
+        without being a stopwatch race.
+        """
+        import time
+
+        from gflow_cli.auth.verification import find_emails
+
+        blob = "abcDEF012_-" * 20_000  # 220 000 chars, no `@` anywhere
+        started = time.perf_counter()
+        assert find_emails(blob) == []
+        assert time.perf_counter() - started < 1.0
+
+    def test_a_local_part_is_read_over_a_bounded_window(self) -> None:
+        """What keeps it linear: the scan left of each `@` is capped, so one `@`
+        costs the same whatever precedes it. RFC 5321 caps a local part at 64,
+        so no real address is truncated by this."""
+        from gflow_cli.auth.verification import _MAX_LOCAL_PART, find_emails
+
+        local = "x" * (_MAX_LOCAL_PART + 10)
+        assert find_emails(f"{local}@example.com") == ["x" * _MAX_LOCAL_PART + "@example.com"]

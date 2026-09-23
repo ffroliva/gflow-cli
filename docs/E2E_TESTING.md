@@ -402,8 +402,59 @@ tests/
     ├── test_image_batch_e2e.py           # [e2e, e2e_batch]
     ├── test_video_t2v_e2e.py             # [e2e, e2e_video]
     ├── test_incident_quality_e2e.py      # [e2e, e2e_auth] incident-bundle quality benchmark — 0 credits
+    ├── test_retired_labs_route_diagnosis_e2e.py  # [e2e, e2e_auth] #875 — 0 credits, no project fixture
     └── test_data_layer_e2e.py            # [e2e, e2e_{image,video,data}]
 ```
+
+### When an account cannot reach Flow at all (`/about`)
+
+`tests/e2e/conftest.py` carries a `pytest_runtest_makereport` hook that reports an
+e2e failure as a **SKIP** when it was caused by Flow serving its public `/about`
+landing. That is a missing precondition — the account cannot reach Flow, so no
+browser-driving test can exercise anything — and it is *account-scoped*, not a
+product failure. Measured 2026-09-20: `gflow project create` succeeded on two
+profiles and failed only on the canary's in the same minute (#888).
+
+It is a hook rather than a decorator because the affected tests fail in three
+different shapes — a subprocess exit code, an in-process raise, and an MCP result
+dict — and `skip_on_migrated_host` can only catch the second.
+
+Two constraints keep it from becoming a way to hide regressions:
+
+- **It matches a marker we emit ourselves**, from `raise_if_known_landing`, never
+  anything Flow says. `tests/test_about_landing_guard.py` asserts that marker
+  against the real raise site and lives *outside* `tests/e2e/` on purpose — the
+  root conftest auto-marks that directory `e2e`, so a tripwire placed beside the
+  guard would be deselected in ordinary CI, which is exactly when it must fire.
+- **It covers the `public` landing kind only.** It deliberately does not catch
+  `AuthExpiredError` from the `signin` kind: two transports tests fail that way and
+  are left red, because silencing them would suppress the signal an e2e exists to
+  raise.
+
+### Diagnosing a surface Flow has retired
+
+`test_retired_labs_route_diagnosis_e2e.py` (marker `e2e_auth`, **0 credits**,
+one read-only GET) guards what gflow *says* when a labs tRPC route answers
+`404 "Flow RPCs have been deprecated and disabled"` — that it names the retired
+route instead of telling the user to check a payload that is fine, simplify a
+prompt that does not exist, or file a bug for a condition Flow documents in the
+body being classified (#875).
+
+It is the rare case where the offline test genuinely cannot substitute. The unit
+tests in `tests/api/test_client_errors.py` feed the classifier a *captured* body;
+they stay green if Flow changes the wording, un-retires the route, or switches to
+401, while the user-facing diagnosis silently goes wrong again.
+
+Two deliberate choices make it runnable on any profile in the nightly canary:
+
+- **No project fixture.** The route is retired before any project lookup, so the
+  diagnosis is project-independent and a syntactically valid id suffices.
+- **It skips rather than passes** when the account is still served the labs tRPC
+  API, because a silent green would let a cohort change retire the test without
+  anyone noticing — the `skip_on_migrated_host` failure mode in reverse.
+
+Verified by falsification on 2026-09-20: with detection disabled it fails with
+the pre-fix message verbatim, so it is a guard rather than a test that can only pass.
 
 ### Incident-bundle quality benchmark
 

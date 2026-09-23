@@ -44,10 +44,10 @@ by construction, so Codex / Cursor / Aider / `agy` read exactly what Claude Code
 
 ## Project at a glance
 
-- Unofficial Python CLI for [Google Flow](https://labs.google/fx/tools/flow) — drives Veo (image-to-video, text-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at `aisandbox-pa.googleapis.com` — and, for accounts Google has moved to `flow.google.com`, that frontend's `batchexecute` wire (text-to-video, image-to-video from a local `--initial-frame`, reference-to-video from local `--ref` files, and text-to-image/local-file image-to-image, today; `GFLOW_CLI_FLOW_HOST`).
+- Python CLI and MCP server for [Google Flow](https://labs.google/fx/tools/flow) — drives Veo (image-to-video, text-to-video) and Imagen (text-to-image) generations from the terminal by reverse-engineering Flow's private REST API at `aisandbox-pa.googleapis.com` — and, for accounts Google has moved to `flow.google.com`, that frontend's `batchexecute` wire (text-to-video, image-to-video from a local `--initial-frame`, reference-to-video from local `--ref` files, and text-to-image/local-file image-to-image, today; `GFLOW_CLI_FLOW_HOST`).
 - Python 3.11+ · `uv`-managed · `hatchling` builds · Playwright Chromium transport · `pyright` strict · `ruff` · `pytest`.
 - Single-package modular monolith. Top-level modules under `src/gflow_cli/`: `api/`, `auth/`, `data/`, `mcp/`, `services/`, `tools/`, `ui/`, `worker/`, `browser_manager.py`, `cli.py`, `_cli_helpers.py`, `diagnostics.py`, `json_output.py`, `media.py`, `profile_lease.py`, `redaction.py`, `storage.py`, `winsec.py`, `cli_project.py`, `cli_character.py`, `cli_credits.py`, `cli_data.py`, `cli_image.py`, `cli_instructions.py`, `cli_models.py`, `cli_movie.py`, `cli_run.py`, `cli_scene.py`, `cli_tools.py`, `cli_video.py`, `chain.py`, `chain_manifest.py`, `cli_doctor.py`, `cli_update.py`, `composition.py`, `config.py`, `errors.py`, `file_integrity.py`, `flow_selectors/`, `update_check.py`, `exceptions.py`, `image_batch.py`, `movie_manifest.py`, `observability.py`, `paths.py`, `profile_store.py`.
-- Command surface: `gflow auth`, `gflow credits` (user/list — read-only Veo balance), `gflow image` (t2i/i2i/batch/upload/upscale), `gflow video` (t2v/i2v/r2v/chain/extend — `extend` continues an existing clip past Flow's 8s ceiling, server-seeded from the source so the join is continuous; no `batch` subcommand; the nonfunctional stub was removed, loop `gflow video t2v`/`i2v` from the shell for multi-clip runs), `gflow character` (create/list/show/rm/voices — reusable project-scoped Flow Character entities), `gflow scene` (create/show — Add Clip / Scenes, with `create --output` for credit-free server-side extended video), `gflow instructions` (persistent Agent-Mode brief cards — add/list/enable/disable/rm/apply/toggle-mode, credits-free, `--project` required), `gflow movie` (run/template — multi-scene manifest pipeline), `gflow tools` (list/show/run — prompt-rewriting tools, also `--tool` on generation commands), `gflow data` (catalog queries), `gflow doctor` (read-only pre-flight diagnostic, exit 33 = findings present), `gflow update` (self-update through the installer that put it here — uv tool / pipx / pip; `--check` only reports; source installs refused, exit 11; deliberately no MCP twin), `gflow project`, `gflow models`, `gflow run`, `gflow mcp` (run/setup — stdio MCP server), and `gflow serve` (Streamable HTTP at `/mcp`; `--transport sse` is deprecated).
+- Command surface: `gflow auth`, `gflow credits` (user/list — read-only Veo balance), `gflow image` (t2i/i2i/batch/upload/upscale), `gflow video` (t2v/i2v/r2v/chain/extend — `extend` continues an existing clip past Flow's 8s ceiling, server-seeded from the source so the join is continuous; no `batch` subcommand; the nonfunctional stub was removed, loop `gflow video t2v`/`i2v` from the shell for multi-clip runs), `gflow character` (create/list/show/rm/voices — reusable project-scoped Flow Character entities), `gflow scene` (create/show — Add Clip / Scenes, with `create --output` for credit-free server-side extended video), `gflow instructions` (persistent Agent-Mode brief cards — add/list/enable/disable/rm/apply/toggle-mode, credits-free, `--project` required), `gflow movie` (run/template — multi-scene manifest pipeline), `gflow tools` (list/show/run — prompt-rewriting tools, also `--tool` on generation commands), `gflow data` (catalog queries), `gflow docs` (browse the bundled documentation — bare lists every topic, `gflow docs <topic>` prints one as Markdown, `gflow docs --search TERM` searches all of them; there are **no** `list`/`print`/`search` subcommands — read-only, offline, deliberately no MCP twin), `gflow doctor` (read-only pre-flight diagnostic, exit 33 = findings present), `gflow update` (self-update through the installer that put it here — uv tool / pipx / pip; `--check` only reports; source installs refused, exit 11; deliberately no MCP twin), `gflow project`, `gflow models`, `gflow run`, `gflow mcp` (run/setup — stdio MCP server), and `gflow serve` (Streamable HTTP at `/mcp`; `--transport sse` is deprecated).
 - Works with any Google account that has Flow access. All generations bill against the user's own Google account.
 
 ## Headed-browser dependency (architectural reality)
@@ -74,8 +74,8 @@ If you can help unblock a pure HTTP transport (especially for video generation, 
 
 Run these gates in order before every commit:
 
-```powershell
-$env:PYTHONUTF8=1
+```bash
+export PYTHONUTF8=1          # Windows PowerShell: $env:PYTHONUTF8 = "1"
 uv run python scripts/ci/check_repo_hygiene.py
 uv run python scripts/ci/check_doc_links.py
 uv run python scripts/ci/check_website_docs_pii.py
@@ -108,7 +108,7 @@ the five other mirror axes), which no command here can check and no CI gate can 
 
 - Type hints everywhere; `pyright` strict on `src/gflow_cli`.
 - Structured logging only (`structlog`) — **never** raw `print()` or `import logging` in `src/`.
-- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–38, e.g. 11 is `ConfigurationError` — including `ProfileLockedError` for same-profile lease contention, 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`, 22 `UpscaleUnavailableError`, 25 `FlowAgentUiError`, 28 `UiModeUnavailableError`, 29 `MentionIndexUnavailableError`, 30 `QueueSchemaError`, 37 `InsufficientCreditsError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping. Exit 33 is reserved outside that map: `gflow doctor` findings-present — a successful diagnosis, not an error class.
+- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–39, e.g. 11 is `ConfigurationError` — including `ProfileLockedError` for same-profile lease contention, 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`, 22 `UpscaleUnavailableError`, 25 `FlowAgentUiError`, 28 `UiModeUnavailableError`, 29 `MentionIndexUnavailableError`, 30 `QueueSchemaError`, 37 `InsufficientCreditsError`, 39 `FlowAccessUnavailableError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping. Exit 33 is reserved outside that map: `gflow doctor` findings-present — a successful diagnosis, not an error class.
 - 100-char line length, `ruff` configured. Imports sorted by `ruff` (isort rules).
 - **YAGNI / least-code**: prefer the smallest change that works. No speculative abstractions (interface/factory with one implementation), no config or flags nobody sets, no dead constants/helpers, no reinventing the stdlib. Review carries this as its own lens — the **D14 over-engineering** dimension of [`pr-council-review`](skills/pr-council-review/SKILL.md) (baseline, always runs). Its rubric is portable; the `ponytail` plugin (see CONTRIBUTING) is an optional accelerant, not a dependency.
 - **MCP & CLI Schema Symmetry**: Any updates or additions to user-facing CLI command parameters (e.g., `gflow image t2i`, `gflow video`) must be mirrored in the corresponding MCP tool definitions. Never add option/argument fields to Click commands without updating the MCP server implementation. This symmetry is enforced programmatically in CI via `tests/mcp/test_cli_parity.py` (every CLI leaf command needs a mapped MCP tool or an explicit, reasoned exemption) plus the schema checks in `tests/mcp/test_server.py`.
@@ -134,6 +134,43 @@ the five other mirror axes), which no command here can check and no CI gate can 
   step 1b. Every other skill cites them. Do not copy the table around — a duplicated checklist
   drifts, which is the exact failure this row exists to prevent.
 - **Locale-Invariance Discipline for UI Automation**: **Never** write text-label string selectors (`has-text(...)` or multi-locale text lists) for DOM elements, overlays, announcements, menus, tabs, or buttons. All DOM selectors in `src/gflow_cli/api/transports/` must be 100% language-agnostic, anchoring exclusively on structural properties: **Tier 1 Anchors** — e.g. hyperlinks (`a[href*='changelog']`), icon ligatures (`button:has(i.google-symbols:text('close'))`), ARIA roles (`[role='banner']`, `button[data-dismiss]`), and hierarchical DOM relationships (`[role='dialog']:has(a[href*='changelog']) button`). Relying on translated display labels or maintaining multi-locale text cascades is strictly forbidden as an anti-pattern hack.
+
+- **Host-Membership Discipline**: say which host Flow **served**; never use host
+  membership to assert a **capability**. "This account is migrated, therefore X is
+  unavailable" is an inference the evidence does not support, and **"X is labs-only" is
+  not merely unproven — it is unfalsifiable here.** A 2026-09-14 survey (3 accounts x 2
+  entry points x 2 runs, [spike](docs/superpowers/spikes/2026-09-14-two-domain-protocol-survey.md))
+  found `labs.google/fx/tools/flow` answering **HTTP 308 Permanent Redirect** to
+  flow.google.com on all three profiles here that still hold a live Flow session (6/6
+  visits) — so none of those can reach labs to test such a claim, while those same three
+  differ in which capabilities work. Host membership is uniform where capability is not;
+  it does not predict capability. An account served labs *has* been driven before
+  (v0.67.0, a pt-locale profile), so this is about what we can test today, not about labs
+  being gone.
+
+  The same survey found the graduated app's Angular root is **`aisandbox-root`** — the
+  same name as `aisandbox-pa.googleapis.com`. One product lineage, two frontends. So a
+  feature gflow cannot drive on flow.google.com is **not ported yet** (a fact about our
+  selectors) rather than "labs-only" (a claim about Flow's service).
+
+  | Do not write | Write |
+  |---|---|
+  | "X is labs-only" | "X is not ported to the migrated composer yet" |
+  | "on a migrated account, X fails" | "on an account served flow.google.com, gflow cannot drive X yet" |
+  | "moved / unmoved account" | "the host Flow served" — and if you have not observed the labs arm, say so |
+  | "the migrated cohort cannot X" | name the surface and the observation that showed it |
+
+  Naming the host is fine — `flow.google.com` really is where Google moved the app.
+  Identifiers stay put: `FlowHostMigratedError`, `GFLOW_CLI_FLOW_HOST` and
+  `migrated_composer.py` are public contracts, and renaming them is churn, not accuracy.
+
+  **This governs CLAIMS, not routing.** `migrated_route()` and `migrated_can_serve()`
+  branch on the host Flow actually **served**, which is an observation, not a membership —
+  keep them. "Host membership predicts nothing" is about what you may *assert* to a user or
+  write into a doc, never a licence to delete a branch. In particular the labs arm of
+  `migrated_route()` has never been observed taken on our accounts, and it stays: we hold
+  no account that could disprove it, which is a reason to keep code and never a reason to
+  make a claim.
 
 ## PR instructions
 
@@ -302,7 +339,7 @@ content in a vendor directory.
 **Codex CLI / desktop app:** install the repo's skills-only plugin from the repository root,
 then start a new session:
 
-```powershell
+```bash
 codex plugin marketplace add .
 codex plugin add gflow@gflow-cli
 ```

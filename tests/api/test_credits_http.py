@@ -192,3 +192,47 @@ async def test_http_fast_path_rejects_profile_outside_home_before_cookie_access(
         await credits_api.fetch_credits_http(Path("/outside-gflow-home"))
 
     cookie_snapshot.assert_not_awaited()
+
+
+async def test_a_tokenless_labs_session_does_not_blame_sapisid(
+    monkeypatch: pytest.MonkeyPatch, profile_dir: Path
+) -> None:
+    """#795: labs answering 200 with no access_token is not an aisandbox-pa auth
+    failure — aisandbox-pa has not been contacted, and SAPISID is present and fine
+    (it is what made the probe report a Google session at all). The class default
+    remediation sent the user to re-authenticate something that is not broken; on a
+    migrated account that loop can never terminate."""
+    _install_http(monkeypatch, session_responses=[(200, {"user": {}})])
+
+    with pytest.raises(AisandboxAuthError) as caught:
+        await credits_api.fetch_credits_http(profile_dir)
+
+    hint = caught.value.remediation_hint
+    assert "SAPISID" not in hint
+    assert "flow.google.com" in hint
+    assert "no access token" in caught.value.detail
+
+
+async def test_an_aisandbox_rejection_does_not_blame_sapisid(
+    monkeypatch: pytest.MonkeyPatch, profile_dir: Path
+) -> None:
+    """#795: labs minted a token and aisandbox-pa rejected it. SAPISID is not the
+    cause — it is what let labs mint that token in the first place — so the class
+    default remediation sends the user to re-authenticate something that is working.
+    On an account Google has moved to flow.google.com it is worse than useless:
+    re-running `gflow auth login` can roll the profile's browser-strategy marker
+    back and start the #791 spiral. This is the raise the maintainer account
+    actually hits; the tokenless one above is a different stage of the same move."""
+    _install_http(
+        monkeypatch,
+        session_responses=[(200, {"access_token": "ya29.test"})],
+        credits_response=(401, {}),
+    )
+
+    with pytest.raises(AisandboxAuthError) as caught:
+        await credits_api.fetch_credits_http(profile_dir)
+
+    hint = caught.value.remediation_hint
+    assert "SAPISID" not in hint
+    assert "flow.google.com" in hint
+    assert "auth login" not in hint

@@ -8,8 +8,11 @@ are exercised at the Click layer in isolation.
 
 from __future__ import annotations
 
+import importlib
 import json
 import re
+import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,8 +20,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import structlog
 from click.testing import CliRunner
+from packaging.requirements import Requirement
 
 from gflow_cli.cli_video import video
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)
@@ -593,3 +599,239 @@ def test_chain_dry_run_rejects_a_per_link_omni_flash_override(tmp_path: Path) ->
     assert "omni" in result.output.lower()
     mock_run.assert_not_awaited()
     mock_client_init.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# #813 — `gflow video chain` on a clean `gflow-cli[chain]` install
+# ---------------------------------------------------------------------------
+#
+# The extra installs `av` but not Pillow, while `media.py` imports `PIL` at
+# module level — so the very first statement of `_run_chain`
+# (`from gflow_cli import chain as chain_mod`) raises a bare ImportError.
+# `run_with_handlers` cannot classify it, so a clean install fails
+# `chain --dry-run` with exit 1 and a generic "Unexpected error ... file a bug",
+# after the user installed the documented extra. Reproduced against the released
+# 0.74.0 wheel.
+#
+# The contract pinned below: `pillow` joins `av` in the `chain` extra, `av` moves
+# to module level in media.py so both dependencies fail at the SAME point, and
+# that point is wrapped in try/except ImportError -> FrameExtractionError (exit
+# 20) whose remediation names the extra and both packages. The guard sits ahead
+# of the manifest read, the --dry-run short-circuit and the confirm prompt, so a
+# caller gets a typed, stable failure before anything is read, prompted, or
+# launched. There is no one-link exemption: `video chain` requires `[chain]`.
+
+_ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    """Strip ANSI and collapse Rich's line wrapping so substring asserts hold.
+
+    Two independent sources of false negatives here: a ``FORCE_COLOR``
+    environment leaks SGR codes into otherwise plain text (memory
+    ``force-color-breaks-cli-tests``), and Rich wraps the remediation line at the
+    console width, which can drop a newline between the words asserted on.
+    """
+    return " ".join(_ANSI_SGR.sub("", output).split())
+
+
+def _break_chain_dependency(monkeypatch: pytest.MonkeyPatch, dep: str) -> None:
+    """Make ``import <dep>`` fail for a RE-EXECUTED ``gflow_cli.chain``/``media``.
+
+    Blocking the dependency alone is not enough, and it fails silently. The
+    import under test is function-local, so by the time a test runs both modules
+    are already in ``sys.modules`` and the statement is a cache hit that never
+    re-executes: ``sys.modules["PIL"] = None`` on its own passes with OR without
+    the fix. Evicting ``sys.modules`` is also not enough on its own, because
+    ``from gflow_cli import chain`` is satisfied by the attribute still bound on
+    the package object and never reaches the finder. Measured on this tree before
+    these tests were written: naive -> PASSED (false green), evict-only ->
+    PASSED (false green), evict + delattr -> ImportError (correct red).
+
+    ``gflow_cli.cli_video`` is deliberately NOT evicted: it holds no reference to
+    either module (the import is inside ``_run_chain``), and evicting it would
+    swap out the very ``video`` group and patch targets the test drives.
+
+    Everything goes through ``monkeypatch`` so ``sys.modules`` and the package
+    attributes are restored at teardown — a leaked entry here would poison every
+    later test in the session. Call it INSIDE the ``patch(...)`` block: entering a
+    string-target patch may import its module, and importing one under a blocked
+    dependency would fail the test for the wrong reason.
+    """
+    import gflow_cli
+
+    for name in ("gflow_cli.chain", "gflow_cli.media"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    for attr in ("chain", "media"):
+        monkeypatch.delattr(gflow_cli, attr, raising=False)
+    monkeypatch.setitem(sys.modules, dep, None)
+
+
+def _assert_names_the_chain_extra(text: str) -> None:
+    """The remediation must name the extra AND both packages it has to install."""
+    flat = _plain(text)
+    assert "gflow-cli[chain]" in flat, f"remediation must name the extra: {flat!r}"
+    assert re.search(r"\bav\b", flat, re.IGNORECASE), f"remediation must name av: {flat!r}"
+    assert "pillow" in flat.lower(), f"remediation must name pillow: {flat!r}"
+
+
+@pytest.mark.parametrize("dep", ["av", "PIL"])
+def test_chain_dry_run_without_chain_extra_exits_20_and_launches_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dep: str
+) -> None:
+    """A missing ``[chain]`` dependency is a typed exit 20, not a generic exit 1.
+
+    Parametrized over both packages because the whole point of moving ``import
+    av`` to module level is that ``av`` and ``PIL`` fail at the SAME place; a fix
+    that guards only one of them leaves the other on the "file a bug" path.
+    """
+    runner = CliRunner()
+    manifest = _manifest(tmp_path, 2)
+    p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
+
+    with (
+        p_resolve,
+        p_provider,
+        p_rec,
+        patch("gflow_cli.cli_video.FlowApiClient") as mock_client,
+    ):
+        _break_chain_dependency(monkeypatch, dep)
+        result = runner.invoke(video, ["chain", str(manifest), "--dry-run"])
+
+    assert result.exit_code == 20, result.output
+    assert "Last-frame extraction failed" in _plain(result.output)
+    assert "Unexpected error" not in _plain(result.output)
+    _assert_names_the_chain_extra(result.output)
+    mock_client.assert_not_called()
+
+
+@pytest.mark.parametrize("dep", ["av", "PIL"])
+def test_chain_without_chain_extra_aborts_before_the_confirmation_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dep: str
+) -> None:
+    """The guard runs ahead of the cost gate, so nothing is ever put to the user.
+
+    Exit 20 alone would not prove this: a guard placed after the prompt would
+    reach it, print the plan, and still exit 20 once the user said yes. So assert
+    on the prompt itself — ``click.confirm`` never called, no plan rendered. The
+    ``av`` parameter is the discriminating one: today a missing ``av`` sails past
+    this gate entirely, so a late guard would show up here as a rendered plan.
+    """
+    runner = CliRunner()
+    manifest = _manifest(tmp_path, 2)
+    p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
+
+    with (
+        p_resolve,
+        p_provider,
+        p_rec,
+        patch("gflow_cli.cli_video.click.confirm") as mock_confirm,
+        patch("gflow_cli.cli_video.FlowApiClient") as mock_client,
+    ):
+        _break_chain_dependency(monkeypatch, dep)
+        result = runner.invoke(video, ["chain", str(manifest)], input="y\n")
+
+    assert result.exit_code == 20, result.output
+    mock_confirm.assert_not_called()
+    plain = _plain(result.output)
+    assert "[y/N]" not in plain
+    assert "Chain plan" not in plain
+    assert "pending video operation" not in plain
+    mock_client.assert_not_called()
+
+
+@pytest.mark.parametrize("dep", ["av", "PIL"])
+def test_chain_dependency_guard_runs_before_the_manifest_is_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dep: str
+) -> None:
+    """A manifest that does not exist must still report the MISSING DEPENDENCY.
+
+    The sharpest placement test in the set. ``parse_chain_manifest`` is the second
+    statement of ``_run_chain``, so a guard installed anywhere after it answers a
+    nonexistent manifest with ``ChainManifestError`` (exit 11) and leaves the
+    dependency problem invisible, while the real fix — an import guard on the
+    FIRST statement — answers 20 regardless of what the manifest path points at.
+    """
+    runner = CliRunner()
+    missing = tmp_path / "does-not-exist.jsonl"
+    p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
+
+    with (
+        p_resolve,
+        p_provider,
+        p_rec,
+        patch("gflow_cli.cli_video.FlowApiClient") as mock_client,
+    ):
+        _break_chain_dependency(monkeypatch, dep)
+        result = runner.invoke(video, ["chain", str(missing), "--dry-run"])
+
+    assert result.exit_code == 20, result.output
+    mock_client.assert_not_called()
+
+
+def test_chain_dependency_failure_json_is_typed_and_not_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--json`` must carry the stable FrameExtractionError identity.
+
+    A generic ``UnexpectedError`` payload (what ships today) gives an agent
+    nothing to branch on: same exit 1 and same opaque type as a crash.
+    """
+    runner = CliRunner()
+    manifest = _manifest(tmp_path, 2)
+    p_resolve, p_provider, p_rec, _ = _patches(tmp_path)
+
+    with (
+        p_resolve,
+        p_provider,
+        p_rec,
+        patch("gflow_cli.cli_video.FlowApiClient"),
+    ):
+        _break_chain_dependency(monkeypatch, "PIL")
+        result = runner.invoke(video, ["chain", str(manifest), "--dry-run", "--json"])
+
+    assert result.exit_code == 20, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "fail"
+    error = payload["error"]
+    assert error["type"] == "https://gflow-cli.dev/errors/frame-extraction"
+    assert error["class"] == "FrameExtractionError"
+    assert error["exit_code"] == 20
+    assert error["retryable"] is False
+    _assert_names_the_chain_extra(error["remediation_hint"])
+
+
+def test_media_imports_av_at_module_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``av`` must fail where ``PIL`` fails — at ``import gflow_cli.media``.
+
+    While ``import av`` sits inside ``_decode_frame``, a missing ``av`` survives
+    every pre-flight gate and only surfaces between links — that is, after the
+    user has already PAID for link 0. Module level makes the two optional
+    dependencies of one extra fail at one point, which is what lets a single CLI
+    guard cover both.
+    """
+    _break_chain_dependency(monkeypatch, "av")
+    with pytest.raises(ImportError):
+        importlib.import_module("gflow_cli.media")
+
+
+def test_chain_extra_declares_pillow_alongside_av() -> None:
+    """``gflow-cli[chain]`` must install everything ``media.py`` imports.
+
+    The extra shipped ``av`` alone while media.py imported ``PIL``
+    unconditionally, so the documented install command produced a CLI that could
+    not run ``video chain`` at all.
+    """
+    data: Any = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    extra: list[str] = data["project"]["optional-dependencies"]["chain"]
+    requirements = {Requirement(raw).name.lower(): Requirement(raw) for raw in extra}
+
+    assert "av" in requirements, f"the chain extra must keep av: {extra}"
+    assert "pillow" in requirements, (
+        "media.py imports PIL at module level, so `gflow-cli[chain]` must install "
+        f"pillow; the extra declares only {sorted(requirements)} (#813)"
+    )
+    operators = {spec.operator for spec in requirements["pillow"].specifier}
+    assert operators & {">=", "==", "~="}, (
+        f"pillow needs a lower bound in the chain extra (got {str(requirements['pillow'])!r})"
+    )

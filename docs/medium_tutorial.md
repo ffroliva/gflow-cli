@@ -2,7 +2,7 @@
 
 Google Flow provides access to Google's video model, Veo, and its image model, Imagen. Google exposes these models through a web interface. gflow-cli brings them to your terminal.
 
-gflow-cli is an unofficial Python command-line interface. It uses a reverse-engineered private REST API to drive image and video generations. You can script, batch, and pipe your creative workflows.
+gflow-cli is an independent Python command-line interface. It uses a reverse-engineered private REST API to drive image and video generations. You can script, batch, and pipe your creative workflows.
 
 ## Prerequisites
 

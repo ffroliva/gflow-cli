@@ -41,6 +41,9 @@ _UNVERIFIED_MESSAGE: dict[FlowSessionOutcome, str] = {
     FlowSessionOutcome.VERIFICATION_ERROR: (
         "Could not verify the Flow session — this is often a network problem."
     ),
+    FlowSessionOutcome.PROFILE_MARKER_MISSING: (
+        "This profile is missing its Chrome-strategy marker, so its cookies cannot be read."
+    ),
 }
 _UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
     FlowSessionOutcome.GOOGLE_SESSION_ONLY: (
@@ -51,6 +54,9 @@ _UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
         "Re-run `gflow auth login`, sign in to Google, and continue until the Flow editor loads."
     ),
     FlowSessionOutcome.VERIFICATION_ERROR: ("Check your connection and re-run `gflow auth login`."),
+    FlowSessionOutcome.PROFILE_MARKER_MISSING: (
+        "Re-run `gflow auth login --browser chrome` to rewrite the profile marker."
+    ),
 }
 
 
@@ -268,7 +274,25 @@ class RealChromeStrategy(AuthStrategy):
         if headless or not is_playwright_chrome_channel_available():
             fallback_reason = "headless" if headless else "channel_unavailable"
         else:
-            fallback_reason = await self._login_owned_browser(profile_dir, headless)
+            try:
+                fallback_reason = await self._login_owned_browser(profile_dir, headless)
+            except AuthLoginTimeoutError as timeout:
+                # Our detector gave up. It is not the authority — the disk is,
+                # and the banner says so out loud: "gflow verifies what's on
+                # disk either way". Before #849 this exception went straight
+                # past `_verify_and_record` below, so a sign-in that had in
+                # fact completed was discarded unread: that is how an account
+                # served flow.google.com could do everything right and still
+                # exit 12. Chrome is already gone — the context closed and the
+                # lease released as this unwound.
+                logger.info("auth_login_timeout_checking_disk", strategy=self.name)
+                try:
+                    await self._verify_and_record(profile_dir)
+                except AuthMissingError:
+                    # Detector and disk agree. Keep the timeout's wording: it
+                    # explains the wait the user actually sat through.
+                    raise timeout from None
+                return
         if fallback_reason is not None:
             logger.info(
                 "auth_login_subprocess_fallback",
@@ -339,6 +363,11 @@ class RealChromeStrategy(AuthStrategy):
         ``verify_flow_profile`` is the authority in both cases, and three
         releases of docs told users to close the window themselves. Only a
         genuine timeout (window still open, still signed out) raises.
+
+        "Success" has two shapes, because the labs oracle cannot speak for every
+        account: a labs session, or the migrated-host stop signal, which ends the
+        wait without claiming to have authenticated anything. Both close the
+        window and hand the decision to ``verify_flow_profile``.
         """
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         await page.goto(GEMINI_URL, wait_until="domcontentloaded", timeout=60_000)
@@ -346,9 +375,12 @@ class RealChromeStrategy(AuthStrategy):
 
         started = asyncio.get_running_loop().time()
         try:
-            # NEVER a cookie-name match: the cookie can be present while the
-            # endpoint still rejects. The session endpoint is the oracle.
-            email = await poll_session_until_authenticated(
+            # NEVER a cookie-name match *for the authentication decision*: the
+            # cookie can be present while the endpoint still rejects, so the
+            # session endpoint is the oracle — and on the way out
+            # `verify_flow_profile` asks a server again. When the poll may stop
+            # is a different question; see its docstring.
+            session = await poll_session_until_authenticated(
                 ctx,
                 page,
                 self._timeout_seconds,
@@ -357,11 +389,12 @@ class RealChromeStrategy(AuthStrategy):
             )
         except AuthLoginTimeoutError:
             raise _login_timeout_error(self._timeout_seconds) from None
-        if email is None:
+        if session is None:
             return
         logger.info(
             "auth_login_session_detected",
             strategy=self.name,
+            outcome=session.outcome.value,
             elapsed_s=round(asyncio.get_running_loop().time() - started, 1),
         )
         _console.print("\n[bold green]Signed in.[/bold green] Closing Chrome...")

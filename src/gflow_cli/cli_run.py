@@ -21,6 +21,7 @@ from typing import Any, cast
 
 import click
 from rich.console import Console
+from rich.markup import escape
 
 from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile
 from gflow_cli.api.client import FlowApiClient
@@ -252,7 +253,7 @@ def run(
         cfg = BatchConfig.from_json_path(config_path)
         _check_transport_gated(cfg.transport)
     except ConfigurationError as e:
-        console.print(f"[red]Config error:[/red] {e}")
+        console.print(f"[red]Config error:[/red] {escape(str(e))}")
         sys.exit(resolve_exit_code(e))
 
     profile_name = _resolve_profile(profile or cfg.profile)

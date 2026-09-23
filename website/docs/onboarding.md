@@ -3,7 +3,7 @@
 From install to your first AI-generated image in about 5 minutes — or hand the whole thing to your AI assistant.
 
 !!! warning "Before you begin"
-    gflow-cli is **unofficial, alpha, and reverse-engineered**. It drives a headed browser on *your own* Google Flow session — treat it as your own account risk. It works with any Google account that has Flow access with Flow access, and every generation bills your account. **Not affiliated with Google.**
+    gflow-cli is **alpha and reverse-engineered — not affiliated with Google**. It drives a headed browser on *your own* Google Flow session — treat it as your own account risk. It works with any Google account that has Flow access, and every generation bills your account.
 
 ## Prerequisites
 

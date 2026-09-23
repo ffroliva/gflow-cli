@@ -10,15 +10,22 @@ to always target stderr.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import io
 import os
 import sys
+from typing import Literal
 
 import structlog
 from mcp.server import MCPServer
 from mcp.server.caching import CacheableMethod, CacheHint
+from starlette.applications import Starlette
+from starlette.datastructures import Headers
+from starlette.responses import PlainTextResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from gflow_cli import __version__
+from gflow_cli.config import get_settings, reset_settings
 from gflow_cli.mcp.tasks_extension import TasksExtension
 
 log = structlog.get_logger()
@@ -119,6 +126,28 @@ def _configure_utf8_pipes() -> None:
 _SPEND_TOOLS = ("gflow_generate_image", "gflow_generate_video")
 
 
+#: How long a tool call waits for a profile another process holds (#862). A human at the
+#: CLI can retry a fail-fast `ProfileLockedError`; an MCP client has nobody to do that.
+MCP_LEASE_WAIT_SECONDS = "180"
+
+
+def _apply_mcp_lease_wait_default() -> None:
+    """Wait out cross-process profile contention unless the operator chose otherwise.
+
+    Must reset the settings cache: `gflow`'s root command has already loaded settings
+    before `mcp run` / `serve` reach here, so an environment default alone is read too
+    late (#862 shipped exactly that). A value from the environment OR a `.env` file is
+    the operator's choice and wins — including an explicit fail-fast `0`.
+
+    Same-process contention never waits (see `profile_lease`); calls inside this server
+    are serialized per profile in `mcp.tools` instead.
+    """
+    if "lease_wait_seconds" in get_settings().model_fields_set:
+        return
+    os.environ["GFLOW_CLI_LEASE_WAIT_SECONDS"] = MCP_LEASE_WAIT_SECONDS
+    reset_settings()
+
+
 def no_spend_active() -> bool:
     """True when no-spend mode is requested (#496).
 
@@ -172,6 +201,117 @@ def _register_surfaces() -> None:
     _apply_no_spend_policy()
 
 
+# ---------------------------------------------------------------------------
+# HTTP transports — app construction + request auth
+# ---------------------------------------------------------------------------
+
+
+class _BearerAuthMiddleware:
+    """Require ``Authorization: Bearer <token>`` on every HTTP request.
+
+    ``Settings.daemon_token`` was checked only at startup (``cli.py`` refuses a
+    non-loopback bind without one) and never handed to the transport, so the
+    token gated *binding* and not a single request. This is the enforcement.
+
+    Pure ASGI rather than ``BaseHTTPMiddleware``: the streamable-HTTP and SSE
+    endpoints are long-lived streams, and ``BaseHTTPMiddleware`` buffers them.
+    """
+
+    def __init__(self, app: ASGIApp, token: str) -> None:
+        self._app = app
+        self._expected = token.encode("utf-8")
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # ``lifespan`` (and any future websocket scope) is not a request and
+        # carries no headers — passing it through is what keeps the session
+        # manager's startup/shutdown running.
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+        scheme, _, presented = Headers(scope=scope).get("authorization", "").partition(" ")
+        # RFC 9110: the auth scheme is case-insensitive. ``compare_digest`` is
+        # reached through the module so the comparison stays constant-time and
+        # the call site stays observable.
+        if scheme.lower() != "bearer" or not hmac.compare_digest(
+            presented.encode("utf-8"), self._expected
+        ):
+            response = PlainTextResponse(
+                "Unauthorized",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Bearer realm="gflow"'},
+            )
+            await response(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
+
+
+def build_app(
+    *,
+    transport: Literal["http", "sse"],
+    host: str = "127.0.0.1",
+    token: str | None = None,
+) -> Starlette:
+    """Build the ASGI app both HTTP entry points serve.
+
+    Never cache the result: ``streamable_http_app()`` mints a fresh
+    ``StreamableHTTPSessionManager`` whose ``.run()`` may be entered once, so a
+    second serve of a memoised app raises at lifespan.
+
+    ``host`` is forwarded rather than defaulted away — the SDK auto-enables
+    DNS-rebinding protection only when it sees a loopback host, so dropping it
+    would hand a ``--host 0.0.0.0`` deployment a loopback allow-list and reject
+    every legitimate remote client. ``transport_security`` is deliberately left
+    at ``None`` for the SDK to fill in.
+
+    Args:
+        transport: ``"http"`` for Streamable HTTP at :data:`HTTP_PATH`, ``"sse"``
+            for the deprecated HTTP+SSE surface.
+        host: Bind address, forwarded to the SDK's rebinding heuristic.
+        token: Daemon token. ``None`` adds no auth layer at all — the local
+            no-token posture stays exactly as open as it was.
+    """
+    app = (
+        server.streamable_http_app(streamable_http_path=HTTP_PATH, host=host)
+        if transport == "http"
+        else server.sse_app(host=host)
+    )
+    if token is not None:
+        # Added LAST on purpose: ``add_middleware`` inserts at index 0, so the
+        # last layer added is the outermost one. Auth must answer before the
+        # transport's rebinding guard, or an unauthenticated caller learns the
+        # Host allow-list from a 421.
+        app.add_middleware(_BearerAuthMiddleware, token=token)
+    return app
+
+
+def _daemon_token() -> str | None:
+    """The configured daemon token, unwrapped from its ``SecretStr``."""
+    token = get_settings().daemon_token
+    return token.get_secret_value() if token else None
+
+
+def _log_auth_posture(host: str, token: str | None) -> None:
+    if token:
+        log.info("mcp.server.auth_enforced", host=host, scheme="bearer")
+    else:
+        log.warning(
+            "mcp.server.auth_disabled",
+            host=host,
+            detail=(
+                "requests are unauthenticated; set GFLOW_CLI_DAEMON_TOKEN to require "
+                "an Authorization: Bearer header on every request"
+            ),
+        )
+
+
+async def _serve(app: Starlette, *, host: str, port: int) -> None:
+    """Serve ``app`` with uvicorn, mirroring the SDK's own ``run_*_async``."""
+    import uvicorn
+
+    config = uvicorn.Config(app, host=host, port=port, log_level=server.settings.log_level.lower())
+    await uvicorn.Server(config).serve()
+
+
 async def run_stdio() -> None:
     """Run the MCP server over stdio transport (Claude Desktop, Cursor, etc.).
 
@@ -186,6 +326,7 @@ async def run_stdio() -> None:
     import anyio
     from mcp.server.stdio import stdio_server
 
+    _apply_mcp_lease_wait_default()
     _configure_utf8_pipes()
 
     # Capture the REAL stdout for the JSON-RPC channel BEFORE redirecting
@@ -232,7 +373,10 @@ async def run_http(host: str = "127.0.0.1", port: int = 8000) -> None:
         host: Bind address. Defaults to localhost-only for security.
         port: Port number. Defaults to 8000.
     """
+    _apply_mcp_lease_wait_default()
     _configure_utf8_pipes()
+
+    token = _daemon_token()
 
     log.info(
         "mcp.server.starting",
@@ -242,13 +386,14 @@ async def run_http(host: str = "127.0.0.1", port: int = 8000) -> None:
         path=HTTP_PATH,
         name=_SERVER_NAME,
     )
+    _log_auth_posture(host, token)
 
     _register_surfaces()
 
-    await server.run_streamable_http_async(
+    await _serve(
+        build_app(transport="http", host=host, token=token),
         host=host,
         port=port,
-        streamable_http_path=HTTP_PATH,
     )
 
 
@@ -264,7 +409,10 @@ async def run_sse(host: str = "127.0.0.1", port: int = 8000) -> None:
         host: Bind address. Defaults to localhost-only for security.
         port: Port number. Defaults to 8000.
     """
+    _apply_mcp_lease_wait_default()
     _configure_utf8_pipes()
+
+    token = _daemon_token()
 
     log.warning(
         "mcp.server.starting",
@@ -277,10 +425,15 @@ async def run_sse(host: str = "127.0.0.1", port: int = 8000) -> None:
             "migrate to --transport http (Streamable HTTP at /mcp)."
         ),
     )
+    _log_auth_posture(host, token)
 
     _register_surfaces()
 
-    await server.run_sse_async(host=host, port=port)
+    await _serve(
+        build_app(transport="sse", host=host, token=token),
+        host=host,
+        port=port,
+    )
 
 
 def main_stdio() -> None:

@@ -7,10 +7,17 @@ Fails (exit 1) if:
      planning / review / session artefact at the repo root).
   3. Any Python file in src/, tests/, or scripts/ contains hardcoded Windows absolute paths
      or writes output to test_assets/ instead of tmp/.
-  4. The three declared versions disagree: pyproject.toml [project].version,
-     src/gflow_cli/__init__.py __version__, and .codex-plugin/plugin.json
-     "version" must be identical (a release bumping one but not the others
-     ships a self-contradictory artefact).
+  4. The declared versions disagree. `_check_version_agreement` is the authority on
+     which files those are and is the ONLY list that should be trusted — do not restate
+     it here. It previously said "three" while the function checked five files and six
+     occurrences, and `skills/release/SKILL.md` named a different set again; a release
+     engineer then met each missing site as a gate failure at the point of highest
+     pressure (#839). Two lists that disagree means the shorter one is silently wrong.
+
+     Note this gate is not the whole story either: `plugins/gflow/.claude-plugin/
+     plugin.json` is pinned by tests/test_plugin_manifests.py and `docker/Dockerfile`'s
+     ARG by tests/test_dockerfile_version_pin.py. skills/release/SKILL.md step 6 carries
+     the one list that spans all three gates.
 
 Run manually:
     uv run python scripts/ci/check_repo_hygiene.py
@@ -94,6 +101,11 @@ ROOT_DOC_ALLOWLIST: frozenset[str] = frozenset(
         "RELEASE.md",
         "ROADMAP.md",
         "conftest.py",  # root pytest conftest (basetemp + directory-based marker tagging)
+        # hatchling resolves a build hook's `path` from the project root and defaults to
+        # this exact name, so it cannot live under scripts/ without the config pointing
+        # back out to the root anyway. Same category as conftest.py: a root Python file
+        # the tooling requires there, not a stray artefact (#861).
+        "hatch_build.py",
     }
 )
 
@@ -209,7 +221,12 @@ def _check_branch_name(branch: str | None) -> list[str]:
 
 
 def _check_version_agreement() -> list[str]:
-    """pyproject == __init__ == plugin.json == uv.lock — one version, four declarations.
+    """pyproject == __init__ == plugin.json == uv.lock == server.json — one version.
+
+    server.json is the MCP Registry's copy of our metadata. It carries the version twice
+    (top level and inside the PyPI package entry), and the registry never runs the command
+    it describes — so a bump that forgets it publishes a listing pointing at a version that
+    is no longer current, and nothing downstream notices.
 
     pyproject and uv.lock are read with the same anchored-regex style the
     release gate (check_release_artifacts.py) uses — deliberately NOT tomllib,
@@ -246,11 +263,20 @@ def _check_version_agreement() -> list[str]:
         if lock_match is None:
             return ['uv.lock: no [[package]] block for "gflow-cli" found']
         versions["uv.lock"] = lock_match.group(1)
+        # Optional: a fork that does not publish to the MCP Registry has no server.json.
+        # When it is present it declares the version twice, and both must agree.
+        server_path = ROOT / "server.json"
+        if server_path.is_file():
+            server = json.loads(server_path.read_text(encoding="utf-8"))
+            versions["server.json"] = str(server["version"])
+            for i, package in enumerate(server.get("packages", [])):
+                if "version" in package:
+                    versions[f"server.json packages[{i}]"] = str(package["version"])
     except (OSError, KeyError, ValueError) as exc:
         return [f"version-agreement check could not read a source: {exc}"]
     if len(set(versions.values())) > 1:
         listing = ", ".join(f"{src}={ver}" for src, ver in versions.items())
-        return [f"version disagreement — {listing} (bump all four together)"]
+        return [f"version disagreement — {listing} (bump them together)"]
     return []
 
 

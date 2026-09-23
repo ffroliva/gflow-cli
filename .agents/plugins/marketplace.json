@@ -8,7 +8,7 @@
       "name": "gflow",
       "source": {
         "source": "local",
-        "path": "./"
+        "path": "./plugins/gflow"
       },
       "policy": {
         "installation": "AVAILABLE",

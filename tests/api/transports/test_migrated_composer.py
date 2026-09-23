@@ -18,9 +18,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from playwright.async_api import TimeoutError as RealPlaywrightTimeoutError
 from structlog.testing import capture_logs
 
 from gflow_cli.api.image import Aspect as ImageAspect
@@ -31,6 +32,7 @@ from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     ConfigurationError,
+    FlowAgentUiError,
     FlowHostMigratedError,
     InsufficientCreditsError,
     MediaUploadRejectedError,
@@ -38,6 +40,7 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
+    is_retryable,
 )
 
 # --- a tiny DOM -------------------------------------------------------------
@@ -120,8 +123,34 @@ class Dom:
     # on a project with 30+ assets (denon82, 2026-09-05). 0 = listed at once.
     picker_lists_after_searches: int = 0
     picked: list[str] = field(default_factory=list)
-    chip_binds: bool = True  # the option click flips the Start chip to a bound one
-    chip_bound: bool = False
+    chip_binds: bool = True  # the option click flips the next empty chip to a bound one
+    #: How many of the two Frames chips (Start, End) are bound. The End path needs a
+    #: fake that can hold TWO, because `attach_end_frame` asserts `expect_bound_chips=2`
+    #: — a one-bool fake made that assertion unmodellable and left the End path at zero
+    #: coverage.
+    bound_chip_count: int = 0
+    #: #792: a cohort whose picker does NOT commit on the option click — it stays open
+    #: until its own "Add to prompt" confirm is clicked. The fake used to close the
+    #: picker unconditionally on an option click, so the commit assertion tested the
+    #: fake and this whole cohort was unmodellable.
+    picker_needs_confirm: bool = False
+
+    @property
+    def chip_bound(self) -> bool:
+        """At least one chip bound — the Start-path predicate every existing
+        assertion was written against."""
+        return self.bound_chip_count > 0
+
+    #: ...and one where the picker neither commits nor offers a confirm to click.
+    picker_has_confirm: bool = True
+    #: ...and one where the confirm is there, takes the click, and STILL does not commit.
+    #: That third branch produces the detail string docs/MCP.md 6.2 tells operators to
+    #: triage on, so it has to be reachable here or nothing has ever produced it.
+    picker_confirm_commits: bool = True
+    confirm_clicks: int = 0
+    chosen_payloads: list[dict[str, Any]] = field(default_factory=list)
+    #: False = Flow accepted the upload but the library never lists it.
+    picker_lists_upload: bool = True
     dialog_present: bool = False  # a `[role=dialog]` (the changelog modal) on load
     #: #719: the one-time upload-terms modal. It appears only once the file has been
     #: handed over, and Flow sends NOTHING until a human accepts it — so this both
@@ -139,8 +168,10 @@ class Dom:
     # to tell apart; `migrated_composer.AGENT_MODE_CHIP` carries the selector rationale
     # and points at the spike that measured all of this.
     agent_mode: bool = False
-    #: The mode is on but the chip is not in the DOM — nothing to click, so the driver
-    #: must fall back to the ordinary drift message rather than promise a recovery.
+    #: The chip is not in the DOM at all. With the trigger still present-but-hidden this
+    #: is #799's agent-only cohort — no classic arm to return to, so nothing to click and
+    #: nothing to promise; the driver names the cohort (exit 25) instead of calling it
+    #: drift. With the trigger GONE too it stays ordinary drift, a renamed selector.
     agent_chip_present: bool = True
     # A chip that will not toggle off. NOT observed on either of our accounts — kept
     # because the reporter's might pin the mode, and a fix that cannot say "I tried and
@@ -252,7 +283,7 @@ class FakeLocator:
     async def count(self) -> int:
         if self.kind == "dialog" and self.page.dom.dialog_probe_raises:
             raise PlaywrightTimeoutError("count: Target page, context or browser has been closed")
-        if self.kind == "agent_chip":
+        if self.kind in {"agent_chip", "agent_chip_any"}:
             dom = self.page.dom
             index, dom.agent_chip_probes = dom.agent_chip_probes, dom.agent_chip_probes + 1
             if dom.agent_chip_probe_raises_from is not None and (
@@ -265,6 +296,14 @@ class FakeLocator:
 
     async def is_visible(self) -> bool:
         return bool(self.items) and self._visible_now
+
+    async def scroll_into_view_if_needed(self, **_: Any) -> None:
+        await asyncio.sleep(0)
+
+    async def bounding_box(self) -> dict[str, float] | None:
+        if not self.items:
+            return None
+        return {"x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0}
 
     async def is_enabled(self) -> bool:
         if self.kind == "submit":
@@ -293,7 +332,11 @@ class FakeLocator:
         present = bool(self.items) and self._visible_now
         if (state == "hidden") == present:
             msg = f"waiting for {self.kind} to be {state}"
-            raise PlaywrightTimeoutError(msg)
+            # The REAL Playwright class, deliberately — see `PlaywrightTimeoutError`
+            # below. Production narrows `except` to it where a timeout means something
+            # different from a dead page (#792's grace wait does exactly that), and the
+            # stand-in would sail straight past those handlers, testing nothing.
+            raise RealPlaywrightTimeoutError(msg)
 
     # --- actions ------------------------------------------------------------
     async def click(self, **_: Any) -> None:
@@ -354,9 +397,18 @@ class FakeLocator:
             dom.events.append("picker_search_focused")
         elif self.kind == "picker_option":
             dom.picked.append(str(target))
+            if dom.picker_needs_confirm:
+                return  # the pick landed; the picker stays up awaiting its confirm
             dom.picker_open = False
             if dom.chip_binds:
-                dom.chip_bound = True
+                dom.bound_chip_count += 1
+        elif self.kind == "picker_confirm":
+            dom.confirm_clicks += 1
+            if not dom.picker_confirm_commits:
+                return  # clicked, and the picker still will not go away
+            dom.picker_open = False
+            if dom.chip_binds:
+                dom.bound_chip_count += 1
         elif self.kind == "dialog_close":
             dom.dialog_present = False
             dom.dialog_closed += 1
@@ -386,7 +438,14 @@ class FakeFileChooser:
 
     async def set_files(self, files: Any) -> None:
         dom = self.page.dom
-        dom.chosen_files.append(str(files))
+        # Since #792 the driver hands over a FilePayload — {name, mimeType, buffer} —
+        # because the DISPLAY NAME is what both attach paths look the upload up by, and
+        # choosing it needs no copy on disk. Record the name Flow would list it under.
+        if isinstance(files, dict):
+            dom.chosen_files.append(str(files["name"]))
+            dom.chosen_payloads.append(dict(files))
+        else:
+            dom.chosen_files.append(str(files))
         if dom.consent_dialog_on_upload:
             dom.dialog_present = True
             return  # ...and no upload request is ever made
@@ -398,6 +457,12 @@ class FakeFileChooser:
             return
         # Everything past here means the upload actually left the page.
         self.page._fire_request(_batch_url("maseQ"))
+        # Flow lists the upload in the library under the DISPLAY NAME it was given,
+        # newest first — and only once it really was uploaded. Listing it above, before
+        # the consent / dead-page / no-reply branches, would be the same fake-vs-Flow
+        # divergence this whole PR exists to remove.
+        if dom.picker_lists_upload:
+            dom.picker_options.insert(0, dom.chosen_files[-1])
         if reply == "sent_no_reply":
             return
         payloads: dict[str, list[Any]] = {
@@ -492,7 +557,9 @@ class FakePage:
         # (url, text) or (url, text, http_status) — the status defaults to 200, so an
         # existing 2-tuple keeps working and a non-200 reply is expressible.
         self.scripted_responses: list[tuple[str, ...]] = []  # fired on submit click
-        self.scripted_request: tuple[str, str] | None = None  # (rpcid, POST body) on submit
+        self.scripted_request: tuple[str | None, str] | None = (
+            None  # (rpcid, body); None = bare URL
+        )
 
     async def goto(self, url: str, **_: Any) -> None:
         self.gotos.append(url)
@@ -518,16 +585,21 @@ class FakePage:
     def _fire_submit(self) -> None:
         if self.scripted_request is not None:
             rpcid, body = self.scripted_request
+            # None rpcid: the real nprQif shape — no rpcids query param at all.
+            url = _batch_url(rpcid) if rpcid is not None else _batch_bare_url()
             for h in list(self._handlers["request"]):
-                asyncio.get_event_loop().create_task(
-                    _maybe_await(h(FakeRequest(_batch_url(rpcid), body)))
-                )
+                asyncio.get_event_loop().create_task(_maybe_await(h(FakeRequest(url, body))))
         for scripted in self.scripted_responses:
             url, text, *rest = scripted
             self._fire_response(FakeResponse(url, text, *rest))
 
     def expect_file_chooser(self, **_: Any) -> FakeChooserContext:
         return FakeChooserContext(self)
+
+    async def evaluate(self, expression: str, argument: Any = None) -> Any:
+        if "elementFromPoint" in expression:
+            return {"target": True, "top": None}
+        return {}
 
     def locator(self, css: str, *, scope: FakeLocator | None = None) -> FakeLocator:
         dom = self.dom
@@ -543,6 +615,10 @@ class FakePage:
         if css == migrated_composer.AGENT_MODE_CHIP:
             pressed = dom.agent_mode and dom.agent_chip_present
             return FakeLocator(self, "agent_chip", ["chip"] if pressed else [])
+        if css == migrated_composer.AGENT_MODE_CHIP_ANY:
+            # Presence alone, independent of `agent_mode` — that is the whole point of
+            # the second selector: #799's cohort renders no chip in any state.
+            return FakeLocator(self, "agent_chip_any", ["chip"] if dom.agent_chip_present else [])
         if css == "flow-agent-panel button":
             buttons = [Radio("close", "Close")] if dom.agent_panel_expanded else []
             return FakeLocator(self, "agent_close", buttons)
@@ -552,10 +628,10 @@ class FakePage:
             present = dom.add_menu_open and dom.upload_item_present
             return FakeLocator(self, "upload_item", ["upload"] if present else [])
         if css == "flow-prompt-box button.empty-chip":
-            chips = ["End"] if dom.chip_bound else ["Start", "End"]
+            chips = ["Start", "End"][dom.bound_chip_count :]
             return FakeLocator(self, "empty_chip", chips)
         if css == "flow-prompt-box button.chip-container:has(img)":
-            return FakeLocator(self, "bound_chip", ["Start"] if dom.chip_bound else [])
+            return FakeLocator(self, "bound_chip", ["Start", "End"][: dom.bound_chip_count])
         if css == "flow-add-menu-popover-content":
             return FakeLocator(self, "picker_marker", ["picker"])
         if css == "input[type='text']":
@@ -567,6 +643,9 @@ class FakePage:
             indexed = dom.picker_searches > dom.picker_lists_after_searches
             opts = [o for o in dom.picker_options if q in o.casefold()] if inside else []
             return FakeLocator(self, "picker_option", opts if indexed else [])
+        if css == "button.detail-add-to-prompt-btn":
+            live = dom.picker_open and dom.picker_has_confirm
+            return FakeLocator(self, "picker_confirm", ["confirm"] if live else [])
         if css == "[role='dialog']":
             return FakeLocator(self, "dialog", ["dialog"] if dom.dialog_present else [])
         if css == "[role='dialog'] button:has(mat-icon:text-is('close'))":
@@ -631,8 +710,6 @@ class FakePage:
             return FakeLocator(self, "cookie_bar", ["bar"], visible=lambda: dom.cookie_bar_visible)
         if css == migrated_composer.COOKIE_BAR_REJECT:
             return FakeLocator(self, "cookie_reject", ["reject"] if dom.cookie_bar_visible else [])
-        if css == migrated_composer.COOKIE_BAR_ACCEPT:
-            return FakeLocator(self, "cookie_accept", ["accept"] if dom.cookie_bar_visible else [])
         raise AssertionError(f"composer used an unmodelled selector: {css!r}")
 
 
@@ -666,6 +743,7 @@ WF = "11111111-1111-4111-8111-111111111111"
 PROJ = "p1"
 MEDIA = "33333333-3333-4333-8333-333333333333"
 MEDIA_UP = "55555555-5555-4555-8555-555555555555"  # what `maseQ` answers for an upload
+END_UP = "77777777-7777-4777-8777-777777777777"  # what `maseQ` answers for the end frame
 PROJ_UUID = "66666666-6666-4666-8666-666666666666"  # the project id in the same reply
 VIDEO_URL = "https://flow-content.google/v/abc.mp4?Expires=1&KeyName=k&Signature=s"
 
@@ -712,6 +790,11 @@ def _batch_url(rpcid: str) -> str:
     return (
         f"https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute?rpcids={rpcid}&rt=c"
     )
+
+
+def _batch_bare_url() -> str:
+    """A batchexecute URL with no ``rpcids`` query param — the nprQif request shape."""
+    return "https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute"
 
 
 def _t2v(**kw: Any) -> GenerateVideoRequest:
@@ -1513,7 +1596,7 @@ def test_migrated_can_serve_decides_what_the_new_host_takes() -> None:
 
     assert migrated_can_serve(_t2v(), "p1")
     assert migrated_can_serve(_t2v(model=VideoModel.VEO_3_1_FAST), "p1")
-    assert not migrated_can_serve(_t2v(), None)  # project creation not ported
+    assert not migrated_can_serve(_t2v(), None)  # the client creates it first (#864)
     assert not migrated_can_serve(_t2v(model=VideoModel.VEO_3_1_LITE_LOWER_PRIORITY), "p1")
     assert not migrated_can_serve(
         GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image_ref_name="a"), "p1"
@@ -1545,6 +1628,21 @@ async def test_no_submit_frame_within_budget_is_a_timeout() -> None:
         await MigratedComposer().submit_and_observe(
             page, poll_timeout_s=0.3, on_started=None, project_id=PROJ
         )
+
+
+async def test_submit_timeout_names_the_rpcs_it_did_see() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    # Traffic, but on an rpcid the observer does not watch: the timeout must
+    # name it instead of reporting an empty wait (issue #639 slice 2).
+    page.scripted_responses = [(_batch_url("QqWwEe"), _frame("QqWwEe", [None, 881, []]))]
+    with pytest.raises(TransportTimeoutError, match="rpcs seen: QqWwEe") as ei:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=0.3, on_started=None, project_id=PROJ
+        )
+    assert "rpcs seen: none" not in str(ei.value)
 
 
 async def test_submit_frame_without_record_is_wire_format_error() -> None:
@@ -1687,6 +1785,50 @@ async def test_t2v_without_a_model_leaves_the_picker_alone() -> None:
     assert page.dom.model_label == "Veo 3.1 - Quality"
 
 
+async def test_attach_end_frame_binds_the_second_chip(tmp_path: Path) -> None:
+    """`attach_end_frame` had ZERO coverage: it is the PR's largest new DOM surface
+    and nothing offline exercised it. Start must be bound first; End then takes the
+    one remaining empty chip and the driver reads back TWO bound chips."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    composer = MigratedComposer()
+    start_png = _png(tmp_path)
+    end_png = tmp_path / "02-end.png"
+    end_png.write_bytes(start_png.read_bytes())
+
+    await composer.attach_start_frame(page, PROJ, start_png)
+    assert page.dom.bound_chip_count == 1
+    with capture_logs() as logs:
+        media_id = await composer.attach_end_frame(page, PROJ, end_png)
+
+    assert media_id == MEDIA_UP
+    assert page.dom.bound_chip_count == 2
+    assert not page.dom.picker_open
+    # Both frames were uploaded and picked — a fake that bound only Start would
+    # leave one entry here, which is the ablation D12 used to catch a vacuous test.
+    assert len(page.dom.picked) == 2
+    staged = page.dom.chosen_files[-1]
+    assert re.fullmatch(r"02-end-[0-9a-f]{8}\.png", staged), staged
+    events = [e["event"] for e in logs]
+    assert "migrated.frame_uploaded" in events and "migrated.frame_bound" in events
+
+
+async def test_attach_end_frame_without_a_bound_start_is_selector_drift(
+    tmp_path: Path,
+) -> None:
+    """The Start chip must already hold a frame. If it silently did not bind, End
+    would otherwise be written INTO the Start chip; the two-bound-chip readback is
+    what turns that into a named failure instead of a wrong billed generation."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    with pytest.raises(UiSelectorDriftError) as excinfo:
+        await MigratedComposer().attach_end_frame(page, PROJ, _png(tmp_path))
+    assert "End" in str(excinfo.value)
+    assert page.dom.bound_chip_count == 1  # Start took it — exactly the mis-bind
+
+
 async def test_attach_uploads_then_binds_the_frame_by_file_name(tmp_path: Path) -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -1695,10 +1837,19 @@ async def test_attach_uploads_then_binds_the_frame_by_file_name(tmp_path: Path) 
     with capture_logs() as logs:
         media_id = await MigratedComposer().attach_start_frame(page, PROJ, path)
     assert media_id == MEDIA_UP
-    assert page.dom.chosen_files == [str(path)]
-    assert page.dom.picker_query == path.name
-    assert page.dom.picked == [path.name]
+    # #792: what is uploaded is a run-unique COPY — same stem, same suffix, plus a
+    # random tag — so the picker search has exactly one match by construction and the
+    # driver never has to trust the library's sort order.
+    staged = page.dom.chosen_files[0]
+    assert re.fullmatch(r"01-pre-submit-[0-9a-f]{8}\.png", staged), staged
+    assert str(path) not in page.dom.chosen_files  # the source path is never sent
+    # A FilePayload carrying the bytes, so no copy is made on disk at all.
+    assert page.dom.chosen_payloads[0]["buffer"] == path.read_bytes()
+    assert page.dom.chosen_payloads[0]["mimeType"] == "image/png"
+    assert page.dom.picker_query == staged
+    assert page.dom.picked == [staged]
     assert page.dom.chip_bound and not page.dom.picker_open
+    assert page.dom.confirm_clicks == 0  # this cohort commits on the option click
     events = [e["event"] for e in logs]
     assert "migrated.frame_uploaded" in events and "migrated.frame_bound" in events
     uploaded = next(e for e in logs if e["event"] == "migrated.frame_uploaded")
@@ -1896,9 +2047,10 @@ async def test_attach_is_reference_not_found_when_the_picker_lists_no_such_name(
 
     monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.1)
     page = FakePage()
-    page.dom.picker_options = ["Blue sphere on table"]  # the upload never listed
+    page.dom.picker_options = ["Blue sphere on table"]
+    page.dom.picker_lists_upload = False  # Flow took the upload and never listed it
     path = _png(tmp_path)
-    with pytest.raises(ReferenceNotFoundError, match=re.escape(path.name)):
+    with pytest.raises(ReferenceNotFoundError, match=re.escape(path.stem)):
         await MigratedComposer().attach_start_frame(page, PROJ, path)
     assert EXIT_CODE_MAP[ReferenceNotFoundError] == 32
     assert page.dom.picked == [] and not page.dom.chip_bound
@@ -1915,7 +2067,8 @@ async def test_attach_is_selector_drift_when_the_chip_stays_empty_after_the_pick
     page.dom.chip_binds = False
     with pytest.raises(UiSelectorDriftError, match="chip"):
         await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
-    assert page.dom.picked == ["01-pre-submit.png"]  # the pick happened; the bind did not
+    # The exact name is free here, and a stale look-alike must still be a failure.
+    assert page.dom.picked == [page.dom.chosen_files[0]]  # the pick happened; not the bind
 
 
 async def test_attach_searches_again_when_the_upload_is_not_indexed_yet(
@@ -1950,18 +2103,132 @@ async def test_attach_gives_up_after_the_search_attempts(
     assert page.dom.picker_searches == migrated_composer.FRAME_SEARCH_ATTEMPTS
 
 
-async def test_attach_picks_the_first_option_when_names_repeat(tmp_path: Path) -> None:
+async def test_attach_is_unambiguous_even_when_the_library_holds_the_same_file(
+    tmp_path: Path,
+) -> None:
+    """#792: a re-run of the same keyframe used to leave N identical library entries and
+    the name search bound a stale one — the submit-body check then fired with `eb1hJf
+    does not carry the uploaded start frame`. The upload is now run-unique, so prior
+    copies of the very same file name cannot be matched at all."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = FakePage()
     name = "01-pre-submit.png"
-    page.dom.picker_options = [name, name, "Blue sphere on table"]  # two uploads of one file
+    page.dom.picker_options = [name, name, "Blue sphere on table"]  # two earlier runs
     media_id = await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path, name))
-    assert media_id == MEDIA_UP and page.dom.picked == [name]
+    staged = page.dom.chosen_files[0]
+    assert media_id == MEDIA_UP
+    assert page.dom.picked == [staged] and staged != name
+    assert name not in page.dom.picked  # never one of the two stale look-alikes
+
+
+def test_unique_display_name_keeps_the_stem_and_never_repeats(tmp_path: Path) -> None:
+    """The one function both attach paths route their naming through (#792)."""
+    from gflow_cli.api.transports.migrated_composer import _unique_display_name
+
+    src = _png(tmp_path, "hero shot.png")
+    seen = {_unique_display_name(src) for _ in range(3)}
+    assert len(seen) == 3, seen
+    for name in seen:
+        assert re.fullmatch(r"hero shot-[0-9a-f]{8}\.png", name), name
+
+
+async def test_r2v_references_upload_run_unique_names_and_mention_those(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#792's sibling: r2v finds its references by the SAME display-name lookup, and
+    reference images are re-used across runs by design — so the duplicate-name hazard is
+    if anything worse there. Fixed once in `_staged_upload`, not twice."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    mentioned: list[str] = []
+
+    async def _fake_mention(self: Any, page: Any, name: str, *, expect_chips: int) -> None:
+        mentioned.append(name)
+
+    monkeypatch.setattr(MigratedComposer, "_mention_by_name", _fake_mention)
+    monkeypatch.setattr(MigratedComposer, "clear_composer", AsyncMock())
+    page = FakePage()
+    refs = (_png(tmp_path, "a.png"), _png(tmp_path, "b.png"))
+    await MigratedComposer().attach_references(page, PROJ, refs)
+
+    uploaded = list(page.dom.chosen_files)
+    assert [Path(u).stem.rsplit("-", 1)[0] for u in uploaded] == ["a", "b"]
+    assert uploaded == mentioned  # mentioned by what was UPLOADED, not by the source name
+    assert "a.png" not in uploaded and "b.png" not in uploaded
+
+
+async def test_attach_clicks_the_pickers_confirm_when_the_pick_does_not_commit(
+    tmp_path: Path,
+) -> None:
+    """#792, the reporter's cohort: the option click no longer closes the picker — it
+    waits for its own "Add to prompt". gflow used to sit out FRAME_COMMIT_HIDDEN_S and
+    raise selector drift with the asset already picked."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.picker_needs_confirm = True
+    with capture_logs() as logs:
+        media_id = await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert media_id == MEDIA_UP
+    assert page.dom.confirm_clicks == 1
+    assert page.dom.chip_bound and not page.dom.picker_open
+    assert "migrated.frame_confirm_clicked" in [e["event"] for e in logs]
+
+
+async def test_attach_says_so_when_the_confirm_was_clicked_and_the_picker_stayed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The third outcome, and the one docs/MCP.md 6.2 tells operators to triage on: the
+    confirm existed, took the click, and the picker still would not commit. Nothing had
+    ever produced that string before this test — the fake closed the picker
+    unconditionally on a confirm click, which is the same shortcut, one button over."""
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_COMMIT_GRACE_S", 0.05)
+    monkeypatch.setattr(migrated_composer, "FRAME_COMMIT_HIDDEN_S", 0.05)
+    page = FakePage()
+    page.dom.picker_needs_confirm = True
+    page.dom.picker_confirm_commits = False
+    with pytest.raises(UiSelectorDriftError, match="even after its confirm was clicked"):
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert page.dom.confirm_clicks == 1  # it WAS clicked; the picker simply ignored it
+
+
+async def test_attach_says_so_when_the_picker_neither_commits_nor_offers_a_confirm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The confirm is a cohort observation, not a contract. When it is absent AND the
+    pick does not commit, the error must say which of the two it was — otherwise the
+    next cohort drift reads as the one we already fixed."""
+    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "FRAME_COMMIT_GRACE_S", 0.05)
+    monkeypatch.setattr(migrated_composer, "FRAME_COMMIT_HIDDEN_S", 0.05)
+    page = FakePage()
+    page.dom.picker_needs_confirm = True
+    page.dom.picker_has_confirm = False
+    with pytest.raises(UiSelectorDriftError, match="carries no confirm"):
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert page.dom.confirm_clicks == 0
 
 
 def _i2v_body(media_id: str = MEDIA_UP, key: str = "veo_3_1_i2v_lite") -> str:
     return f'f.req=[[["eb1hJf","[\\"{key}\\",\\"{media_id}\\",\\"{PROJ}\\"]",null,"generic"]]]'
+
+
+def _interp_body(
+    start_id: str = MEDIA_UP,
+    end_id: str = END_UP,
+    key: str = "veo_3_1_interpolation_lite",
+) -> str:
+    """The captured nprQif shape: rpc in f.req, interpolation key, both frame ids."""
+    return (
+        f'f.req=[[["nprQif","[\\"a prompt\\",\\"{key}\\",1,null,'
+        f'[null,\\"{start_id}\\"],[null,\\"{end_id}\\"],\\"{PROJ}\\"]",null,"generic"]]]'
+    )
 
 
 async def test_submit_accepts_eb1hjf_as_the_i2v_submit_rpc() -> None:
@@ -1989,6 +2256,189 @@ async def test_submit_accepts_eb1hjf_as_the_i2v_submit_rpc() -> None:
     assert page.listeners("request") == [] and page.listeners("response") == []
 
 
+async def test_submit_observes_the_interpolation_rpc_from_the_request_body() -> None:
+    """Start+end submits travel on nprQif with the rpc name in f.req, not the URL
+    (captured 2026-09-16, #639): the observer routes by body, asserts the
+    interpolation key and both frame ids, then reads the standard CAE reply."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = (None, _interp_body())
+    page.scripted_responses = [
+        (_batch_url("nprQif"), _frame("nprQif", [None, 9312, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 9312, [[_record(2)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    started: list[Any] = []
+    with capture_logs() as logs:
+        rec = await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=started.append,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+            expect_end_media_id=END_UP,
+        )
+    assert rec.is_done and rec.video_url == VIDEO_URL and started[0].media_id == MEDIA
+    observed = next(e for e in logs if e["event"] == "migrated.submit_observed")
+    assert observed["rpc"] == "nprQif"
+    assert page.listeners("request") == [] and page.listeners("response") == []
+
+
+async def test_interpolation_submit_missing_the_end_frame_is_a_wire_format_error() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = (None, _interp_body(end_id=MEDIA))  # some other asset
+    page.scripted_responses = [
+        (_batch_url("nprQif"), _frame("nprQif", [None, 9312, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    with pytest.raises(WireFormatError, match="end frame") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+            expect_end_media_id=END_UP,
+        )
+    assert "nprQif" in ei.value.route
+
+
+async def test_interpolation_submit_on_a_start_only_run_is_refused() -> None:
+    """nprQif without a bound end frame is a billing mismatch, not a run to adopt."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = (None, _interp_body())
+    page.scripted_responses = [
+        (_batch_url("nprQif"), _frame("nprQif", [None, 9312, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    with pytest.raises(WireFormatError, match="no bound end frame") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+        )
+    assert "nprQif" in ei.value.route
+
+
+def test_interpolation_body_problem_names_what_is_wrong() -> None:
+    from gflow_cli.api.transports.migrated_composer import _interpolation_body_problem
+
+    ok = _interp_body()
+    assert _interpolation_body_problem(ok, "nprQif", MEDIA_UP, END_UP) is None
+    missing_end = _interpolation_body_problem(
+        _interp_body(end_id=MEDIA), "nprQif", MEDIA_UP, END_UP
+    )
+    assert missing_end is not None and "end frame" in missing_end and END_UP in missing_end
+    wrong_key = _interpolation_body_problem(
+        _interp_body(key="veo_3_1_t2v_lite"), "nprQif", MEDIA_UP, END_UP
+    )
+    assert wrong_key is not None and "expected an interpolation" in wrong_key
+    omni = _interpolation_body_problem(
+        _interp_body(key="omni_flash_i2v_4s_first_last"), "nprQif", MEDIA_UP, END_UP
+    )
+    assert omni is None
+    no_end_bound = _interpolation_body_problem(ok, "nprQif", MEDIA_UP, None)
+    assert no_end_bound is not None and "no bound end frame" in no_end_bound
+    unreadable = _interpolation_body_problem("", "nprQif", MEDIA_UP, END_UP)
+    assert unreadable is not None and "could not be read" in unreadable
+
+
+async def test_interpolation_reply_on_a_bare_batchexecute_url_resolves() -> None:
+    """The captured interpolation reply shape: a `batchexecute` POST with NO
+    `rpcids` query param, whose frame names `nprQif`. `parse_frames` recovers the
+    id from the frame, so the response handler must let a param-less URL through
+    instead of filtering it out. Measured 2026-09-17 (spike: end-frame submit
+    contract) — the omni key is what this cohort sends."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    end = "77777777-7777-4777-8777-777777777777"
+    body = (
+        f'f.req=[[["nprQif","[\\"omni_flash_i2v_8s_first_last\\",\\"{MEDIA_UP}\\",'
+        f'\\"{end}\\"]",null,"generic"]]]'
+    )
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("nprQif", body)
+    page.scripted_responses = [
+        (_batch_bare_url(), _frame("nprQif", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    started: list[Any] = []
+    with capture_logs() as logs:
+        rec = await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=started.append,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+            expect_end_media_id=end,
+        )
+    assert rec.is_done and rec.media_id == MEDIA and started[0].media_id == MEDIA
+    observed = next(e for e in logs if e["event"] == "migrated.submit_observed")
+    assert observed["rpc"] == "nprQif"
+    assert page.listeners("request") == [] and page.listeners("response") == []
+
+
+async def test_submit_on_an_unwatched_rpc_is_never_adopted() -> None:
+    """Adoption-by-content was removed: an unwatched rpcid whose body merely LOOKS
+    like ours must not become our submit. It is recorded in the timeout diagnostic
+    and nothing else — a named timeout beats a hard failure on a billed run."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    end = "77777777-7777-4777-8777-777777777777"
+    body = (
+        f'f.req=[[["QxJxZz","[\\"veo_3_1_i2v_lite\\",\\"{MEDIA_UP}\\",'
+        f'\\"{end}\\"]",null,"generic"]]]'
+    )
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("QxJxZz", body)
+    page.scripted_responses = [
+        (_batch_url("QxJxZz"), _frame("QxJxZz", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+    with pytest.raises(TransportTimeoutError) as excinfo:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+            expect_end_media_id=end,
+        )
+    assert "QxJxZz" in str(excinfo.value)
+    assert page.listeners("request") == [] and page.listeners("response") == []
+
+
+async def test_submit_timeout_names_request_rpcids_too() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    # A request went out on an rpcid nobody watches and nothing answered: the
+    # timeout must name the request side, not just heard replies (issue #639).
+    page.scripted_request = ("QwErTy", "unrelated-poll-body")
+    page.scripted_responses = []
+    with pytest.raises(TransportTimeoutError, match="rpcs seen: QwErTy") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=0.3,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+        )
+    assert "QwErTy" in str(ei.value)
+
+
 async def test_submit_body_without_the_bound_media_id_is_wire_format_error() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -2004,6 +2454,21 @@ async def test_submit_body_without_the_bound_media_id_is_wire_format_error() -> 
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, expect_media_id=MEDIA_UP
         )
     assert EXIT_CODE_MAP[WireFormatError] == 7 and "eb1hJf" in ei.value.route
+
+
+def test_i2v_body_problem_requires_the_bound_end_frame_when_expected() -> None:
+    from gflow_cli.api.transports.migrated_composer import _i2v_body_problem
+
+    start, end = MEDIA_UP, "77777777-7777-4777-8777-777777777777"
+
+    def body(*ids: str) -> str:
+        inner = ",".join(f'"{i}"' for i in ids)
+        return f'f.req=[[["eb1hJf","[\\"veo_3_1_i2v_lite\\",{inner}]",null,"generic"]]]'
+
+    assert _i2v_body_problem(body(start, end), "eb1hJf", start, end_media_id=end) is None
+    assert _i2v_body_problem(body(start), "eb1hJf", start) is None
+    problem = _i2v_body_problem(body(start), "eb1hJf", start, end_media_id=end)
+    assert problem is not None and "end frame" in problem and end in problem
 
 
 async def test_submit_body_that_cannot_be_read_is_named_as_such() -> None:
@@ -2242,19 +2707,88 @@ async def test_ensure_editor_still_names_agent_mode_when_the_chip_click_fails() 
     assert "migrated.agent_mode_exit_failed" in [e["event"] for e in logs]
 
 
-async def test_ensure_editor_falls_back_to_drift_when_agent_mode_renders_no_chip() -> None:
-    """Mode on, chip absent — a cohort that hides it, or a renamed class. There is
-    nothing to click, so nothing may be promised: the ordinary drift message is the
-    honest one, and the `agent_chip_present` knob exists for exactly this state."""
+async def test_ensure_editor_names_the_agent_only_cohort_instead_of_drift(
+    install_log_capture,
+) -> None:
+    """#799: the trigger is in the DOM under a bare `hidden` and there is NO chip.
+
+    This used to be ordinary selector drift, on the reasoning that with nothing to
+    click nothing may be promised. That was right about the recovery and wrong about
+    the diagnosis: #799 supplied the ground truth this state had been missing — a
+    third cohort whose composer is agent-only, with no classic arm to return to and
+    therefore no chip to un-press. The DOM is identical to a pressed chip's (#749),
+    which is why it read as drift, and why the chip's ABSENCE is what separates them.
+
+    Exit 25, not 23, and not retryable: a driver that does not exist will not appear
+    on a re-run.
+    """
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = FakePage()
     page.dom.agent_mode = True
     page.dom.agent_chip_present = False
+
+    with pytest.raises(FlowAgentUiError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+
+    assert page.dom.agent_chip_clicks == 0
+    assert EXIT_CODE_MAP[FlowAgentUiError] == 25
+    assert is_retryable(exc.value) is False
+    assert "agent-only" in str(exc.value).casefold()
+    # The class default talks about an A/B cohort and suggests another Chrome profile;
+    # neither applies when the composer is a property of the Google account.
+    hint = exc.value.remediation_hint
+    assert "#799" in hint
+    assert "A/B" not in hint
+    events = [e["event"] for e in install_log_capture.entries]
+    assert "migrated.agent_only_composer" in events
+
+
+async def test_ensure_editor_does_not_claim_the_cohort_from_an_unreadable_page(
+    install_log_capture,
+) -> None:
+    """The fail-closed half of the discriminator (council D4 — it was uncovered).
+
+    `_agent_chip_pressed` already returns None on an unreadable page, which reaches
+    the same `"absent"` branch as a genuinely chip-less one. So the cohort probe has
+    to fail closed too, or a closed/detached page would be reported as somebody
+    else's composer. Here the pressed-probe answers and the any-state probe goes
+    dark: the run must come out as ordinary drift, not exit 25.
+    """
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_chip_present = False
+    page.dom.agent_chip_probe_raises_from = 1  # answers the pressed read, dark for ANY
+
     with pytest.raises(UiSelectorDriftError) as exc:
         await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+
+    assert "agent-only" not in str(exc.value).casefold()
     assert page.dom.agent_chip_clicks == 0
-    assert "agent mode" not in str(exc.value).casefold()
+    events = [e["event"] for e in install_log_capture.entries]
+    assert "migrated.agent_only_probe_failed" in events
+    assert "migrated.agent_only_composer" not in events
+
+
+async def test_ensure_editor_still_reports_drift_when_the_trigger_is_gone_entirely() -> None:
+    """The discriminator is present-but-hidden, not merely "not visible".
+
+    A trigger that has left the DOM is a renamed or restructured selector — our bug,
+    filed against us — and must not be dressed up as somebody else's cohort.
+    """
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_chip_present = False
+    page.dom.trigger_present = False
+
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    assert "agent-only" not in str(exc.value).casefold()
+    assert page.dom.agent_chip_clicks == 0
 
 
 async def test_ensure_editor_reports_drift_once_agent_mode_is_actually_off() -> None:
@@ -2379,6 +2913,30 @@ async def test_image_submit_decodes_the_ogiz0b_reply() -> None:
     assert page.dom.submit_clicked == 1
 
 
+async def test_the_migrated_reply_reports_no_model_because_it_carries_none() -> None:
+    """#789: the `ogiZ0b` reply has no model field, so gflow must report none.
+
+    Echoing `request.model` back made the catalogue assert an attribution nobody
+    observed — and `recorder.py` persists it as `AssetRecord.model`, so `gflow
+    data` reads the echo back as though Flow had confirmed it. That is the same
+    class of claim #788 is about: a hidden picker can leave a *different* model
+    selected, in which case the echo is not merely unverified but wrong, and it
+    is the field a user would check to find out.
+    """
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_responses = [(_batch_url("ogiZ0b"), _image_frame())]
+
+    images = await MigratedComposer().submit_images_and_observe(
+        page, GenerateImageRequest(prompt="a blue cup")
+    )
+
+    assert images[0].model_name_type is None
+
+
 async def test_an_image_submit_missing_its_reference_is_refused_not_reported_as_i2i() -> None:
     """The route-error listener is the only thing between a dropped upload and a
     plausible T2I result handed back as image-to-image. Flow answers 200 either way.
@@ -2487,8 +3045,8 @@ async def test_run_images_refuses_an_unported_form_before_touching_the_page() ->
 
 
 async def test_run_images_without_a_project_is_a_configuration_error() -> None:
-    """A fresh project can only be made through the labs gallery, so the caller must
-    name one. Exit 11, not a mid-run failure after the editor is already mounted.
+    """The client creates the project before this runs (#864); reaching it without one
+    is a caller bug. Exit 11, not a mid-run failure after the editor is already mounted.
     """
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.transports.migrated_composer import run_images
@@ -2581,3 +3139,20 @@ async def test_an_image_submit_that_stays_disabled_is_drift_not_a_hang(
             page, GenerateImageRequest(prompt="a blue cup")
         )
     assert page.dom.submit_clicked == 0
+
+
+async def test_pre_submit_gate_refuses_blocking_overlay_before_network_observers() -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _image_page()
+    page.dom.pane_open = True
+
+    with pytest.raises(UiSelectorDriftError, match="blocking overlay"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+
+    assert page.dom.submit_clicked == 0
+    assert page.listeners("request") == []
+    assert page.listeners("response") == []

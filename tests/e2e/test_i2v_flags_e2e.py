@@ -14,7 +14,7 @@ These tests hit the **real Google Flow API** and therefore:
 
 Criteria covered:
   I2V-FLAG-1 — ``gflow video i2v --initial-frame <img> "<prompt>"`` (canonical
-               form) produces a downloaded mp4 and the ``frame_attached``
+               form) produces a downloaded mp4 and a frame-bound
                structlog event fires at least once, confirming the initial frame
                was bound through the editor's media dialog (not silently dropped).
   I2V-FLAG-2 — Positional back-compat form (``gflow video i2v <img> "<prompt>"``)
@@ -58,6 +58,18 @@ from gflow_cli.cli_video import video
 # ---------------------------------------------------------------------------
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_video]
+
+#: The two drivers name the same event differently: the labs path logs
+#: ``ui_automation_video.frame_attached`` and the migrated composer logs
+#: ``migrated.frame_bound``. Both maintainer accounts are served flow.google.com, so
+#: asserting only the labs name made these tests spend a Veo credit and THEN fail on
+#: the name. Assert the behaviour (a frame bound), not one driver's spelling.
+_FRAME_BOUND_EVENTS = ("ui_automation_video.frame_attached", "migrated.frame_bound")
+
+
+def _frames_bound(capture: structlog.testing.LogCapture) -> int:
+    return len([e for e in capture.entries if e.get("event") in _FRAME_BOUND_EVENTS])
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -123,7 +135,7 @@ def test_e2e_i2v_initial_frame_flag(
     """I2V-FLAG-1: ``--initial-frame`` (canonical) routes to I2V and downloads an mp4.
 
     Confirms that the flag rename does not silently fall back to T2V: the
-    ``ui_automation_video.frame_attached`` event must fire at least once
+    A frame-bound event (either driver's spelling) must fire at least once
     (analogous to the assertion in ``test_e2e_i2v_start_end_frame_attach``).
 
     This test uses CliRunner to verify the Click-layer "swap logic" in a real
@@ -162,13 +174,8 @@ def test_e2e_i2v_initial_frame_flag(
     mp4_files = list(out_dir.glob("*.mp4"))
     assert mp4_files, "expected at least one mp4 in out_dir"
 
-    frame_attached_events = [
-        e
-        for e in install_log_capture.entries
-        if e.get("event") == "ui_automation_video.frame_attached"
-    ]
-    assert frame_attached_events, (
-        "frame_attached event never fired — initial frame may have been silently dropped "
+    assert _frames_bound(install_log_capture), (
+        "no frame-bound event fired — the initial frame may have been silently dropped "
         "(check for T2V mis-routing, issue #125)"
     )
 
@@ -226,8 +233,8 @@ def test_e2e_i2v_start_end_frame_flags(
     """I2V-FLAG-3: both ``--initial-frame`` and ``--end-frame`` together.
 
     Verifies the full interpolation CLI path: ``gflow video i2v --initial-frame <a>
-    --end-frame <b> "prompt"``. The ``ui_automation_video.frame_attached`` event
-    must fire TWICE (one per slot).
+    --end-frame <b> "prompt"``. A frame-bound event must fire TWICE (one per
+    slot) — on whichever driver served the account.
     """
     start = _make_png(tmp_path / "start.png")
     end = _make_png(tmp_path / "end.png")
@@ -263,15 +270,9 @@ def test_e2e_i2v_start_end_frame_flags(
     mp4_files = list(out_dir.glob("*.mp4"))
     assert mp4_files, "expected a downloaded mp4 for start+end interpolation"
 
-    frame_attached_events = [
-        e
-        for e in install_log_capture.entries
-        if e.get("event") == "ui_automation_video.frame_attached"
-    ]
-    # One for start, one for end.
-    assert len(frame_attached_events) >= 2, (
-        f"expected at least 2 frame_attached events, got {len(frame_attached_events)}"
-    )
+    # One for start, one for end — on whichever driver served the account.
+    bound = _frames_bound(install_log_capture)
+    assert bound >= 2, f"expected at least 2 frame-bound events, got {bound}"
 
 
 def test_e2e_i2v_omni_flash_end_frame_max_duration(

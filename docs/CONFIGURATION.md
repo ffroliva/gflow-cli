@@ -207,8 +207,8 @@ gflow tools run creative-director "cat in space" --json   # check "was_expanded"
 
 ### `GFLOW_CLI_DAEMON_TOKEN` (alias: `GFLOW_DAEMON_TOKEN`)
 
-**What:** API token required before `gflow serve` will bind to a non-localhost address (`--host` other than `127.0.0.1`). Without it, non-local binds abort with exit 11.
-**Default:** unset.
+**What:** API token for `gflow serve`. When set, **every** HTTP request to the daemon must carry `Authorization: Bearer <token>` — missing, wrong, or non-`Bearer` credentials are answered `401` with a `WWW-Authenticate: Bearer` header, on both `--transport http` (`/mcp`) and the deprecated `--transport sse` (`/sse` and `/messages/`). It is also required *before* `gflow serve` will bind to a non-localhost address (`--host` other than `127.0.0.1`); without it, non-local binds abort with exit 11.
+**Default:** unset — a loopback bind then serves unauthenticated requests (the local single-user posture), and startup logs `mcp.server.auth_disabled` saying so.
 **Security:** stored as a Pydantic `SecretStr` (since v0.55.0), so a `repr()`/`str()`/`model_dump_json()` of the settings object masks it by construction — on top of the existing logging-boundary redaction. Treat it like any credential: set it via `.env`/environment, never commit it.
 
 ### `GFLOW_MCP_NO_SPEND`
@@ -284,9 +284,9 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 
 **What:** How long a command waits for another gflow process to release the profile lease before giving up with `ProfileLockedError` (exit 11). The default `0` keeps the historical fail-fast behavior. With a positive value, the waiter polls the kernel lock (0.5 s cadence) and simply takes over when the current holder — a CLI command or a `gflow serve` daemon task, both of which release at their natural end — finishes. Holders are never interrupted or asked to release early.
 **Values:** `0`–`3600` seconds (fractions allowed)
-**Default:** `0` (fail fast)
+**Default:** `0` (fail fast) for CLI commands; `180` under `gflow mcp run` / `gflow serve`, where no human is there to retry — unless you set it yourself, in the environment or a `.env` file.
 **Note:** Same-process contention always fails fast regardless of this setting — the holder is the same process, so waiting would deadlock. See [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel).
-**Shipped in:** #478.
+**Shipped in:** #478; MCP default #864.
 
 ### `GFLOW_CLI_DB_PATH`
 
@@ -359,13 +359,13 @@ GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 
 ### `GFLOW_CLI_FLOW_HOST`
 
-**What:** Which Flow frontend gflow drives. Google is moving accounts from `labs.google/fx/tools/flow` onto `flow.google.com` one at a time ([#639](https://github.com/ffroliva/gflow-cli/issues/639)); the two are the same product on different widget toolkits and different wire protocols, so each has its own driver.
+**What:** Which Flow frontend gflow drives. Google has moved Flow from `labs.google/fx/tools/flow` onto `flow.google.com` ([#639](https://github.com/ffroliva/gflow-cli/issues/639)) — measured 2026-09-14, the old labs URL answers **HTTP 308 Permanent Redirect** on every account we tested. The two are the same product (the new frontend's own root element is `aisandbox-root`) on different widget toolkits and different wire protocols, so each has its own driver. Which host you are served does **not** tell you which capabilities work — see [the survey](../docs/superpowers/spikes/2026-09-14-two-domain-protocol-survey.md).
 **Values:**
-- `auto` (default) — **`flow.google.com` is the default host for every video request it can serve today** (`video t2v`, local-file `video i2v` and `video r2v`, all with `--project`) on moved and unmoved accounts. Image requests stay on labs for an unmoved account, while a moved account uses the migrated composer for `image t2i` and local-file `image i2i`. A request the new host cannot serve keeps the labs driver on an unmoved account; a moved account has no labs fallback and unsupported forms exit 36/11 before submit.
+- `auto` (default) — **`flow.google.com` is the default host for every video request it can serve today** (`video t2v`, local-file `video i2v` and `video r2v`; with no `--project`, one is created first, #864). Image requests use the migrated composer for `image t2i` and local-file `image i2i` where `flow.google.com` is what Flow serves, and stay on labs where labs is. A request the new host cannot serve keeps the labs driver where labs is what Flow serves; where flow.google.com is, there is no labs fallback and unsupported forms exit 36/11 before submit.
 - `flow.google.com` — force the migrated composer for everything, including what it cannot serve yet (those requests then exit 36/11 instead of falling back).
-- `labs.google` — never use the migrated composer; a moved account fails with exit 36 (kill switch).
+- `labs.google` — never use the migrated composer; where Flow serves `flow.google.com`, requests fail with exit 36 (kill switch).
 **Default:** `auto`
-**Scope today:** the migrated composer covers `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i`. Images support Nano Banana 2 / Pro, the four aspect ratios enumerated on that host (16:9, 4:3, 1:1, 9:16 — `3:4` was not present and is refused before submit) and count 1–4; the page owns the `ogiZ0b` reCAPTCHA + submit and the response already contains completed signed image URLs. An end frame, UUID/name references, character entities, Agent instructions, Imagen 4, scenes, extend, instructions and tools are not ported yet and fail before submit on a moved account. MCP uses the same image service and queue payload, and inherits this setting from the server/daemon environment rather than per call.
+**Scope today:** the migrated composer covers `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i`. Images support Nano Banana 2 / Pro, all five aspect ratios (16:9, 4:3, 1:1, 3:4, 9:16 — `3:4` was added to that host's radiogroup by 2026-09-17, #864) and count 1–4; the page owns the `ogiZ0b` reCAPTCHA + submit and the response already contains completed signed image URLs. Local-file start+end frames (`--initial-frame` + `--end-frame`) are ported (#639). Frames or references given by UUID/`@Name`, character entities, Agent instructions, Imagen 4, scenes, extend, instructions and tools are not ported yet and fail before submit where Flow serves flow.google.com. MCP uses the same image service and queue payload, and inherits this setting from the server/daemon environment rather than per call.
 
 ### `GFLOW_CLI_PREFER_CLASSIC` *(deprecated — use `GFLOW_CLI_UI_MODE=classic`)*
 
@@ -476,8 +476,8 @@ each link in turn, so total wallclock is the sum of all link waits).
 | `--profile NAME` | default profile | Per-subcommand profile override. |
 | `--json` | off | Emit a machine-readable JSON result. |
 
-The last-frame extractor needs the **`chain` optional extra** (PyAV — no system
-ffmpeg required):
+The last-frame extractor needs the **`chain` optional extra** (PyAV for decoding —
+no system ffmpeg required — plus Pillow to write the seed JPEG):
 
 ```bash
 pip install 'gflow-cli[chain]'

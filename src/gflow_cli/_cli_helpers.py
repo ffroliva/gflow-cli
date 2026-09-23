@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import click
 import structlog
 from rich.console import Console
+from rich.markup import escape
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import json_output, profile_store
@@ -301,9 +302,14 @@ def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     return exit code.
     """
     emit_error_event(_logger, exc, cli_command=cli_command)
-    _console.print(f"[red]{exc.title}:[/red] {exc.detail or ''}")
+    # `detail` and `remediation_hint` are arbitrary text, so they must be escaped
+    # before being interpolated into a markup string: Rich reads `[...]` as a
+    # style tag and SILENTLY DROPS it when it is not one. That turned every
+    # "install gflow-cli[chain]" hint into "install gflow-cli" — advice that
+    # reinstalls what the user already has (#813). Colour tags stay outside.
+    _console.print(f"[red]{escape(exc.title)}:[/red] {escape(exc.detail or '')}")
     if exc.remediation_hint:
-        _console.print(f"[yellow]-> {exc.remediation_hint}[/yellow]")
+        _console.print(f"[yellow]-> {escape(exc.remediation_hint)}[/yellow]")
     _print_incident_ref(exc.incident_ref)
     return _exit_code_for(exc)
 
@@ -451,10 +457,10 @@ def _resolve_profile(profile: str | None) -> str:
     try:
         return profile_store.resolve_profile(None)
     except profile_store.NoProfilesError as exc:
-        _console.print(f"[yellow]{exc}[/yellow]")
+        _console.print(f"[yellow]{escape(str(exc))}[/yellow]")
         sys.exit(2)
     except profile_store.NoDefaultProfileError as exc:
-        _console.print(f"[yellow]{exc}[/yellow]")
+        _console.print(f"[yellow]{escape(str(exc))}[/yellow]")
         sys.exit(2)
 
 

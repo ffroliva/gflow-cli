@@ -216,6 +216,24 @@ watches for the completed Flow sign-in and closes the window itself, then prints
 verified account. If you close the window yourself it still works: gflow verifies the
 profile exactly the same way and does not treat a manual close as an error.
 
+**What "watches for the sign-in" means, and why it has two signals.** The primary one is the
+Flow session endpoint on `labs.google` — the cookie jar is never the authentication
+decision, because a cookie can be present while the endpoint still rejects. But for an
+account Google serves from `flow.google.com`, labs hands off without ever minting a session,
+so that endpoint is an oracle that cannot answer: through v0.77.0 those logins held the
+window open for the full timeout while this page promised the opposite
+([#849](https://github.com/ffroliva/gflow-cli/issues/849)). gflow now also stops waiting when
+the jar carries both halves of a migrated session — the `.google.com` SSO cookie *and* the
+`flow.google.com` app-session cookie. That second signal ends a wait; it does not decide
+anything. Verification still runs afterwards, against a server, on what actually landed on
+disk, and it is still the only thing that can call a login successful.
+
+**A timeout is not a verdict either.** If neither signal fires, gflow closes the window and
+*still* reads the profile before failing — "gflow verifies what's on disk either way" is the
+promise the sign-in banner makes, and it now holds on every path. A sign-in that completed
+while the detector was blind is reported as the success it is; one that really did not
+happen keeps the timeout's own wording, which is the message that explains the wait.
+
 **Automatic fallback, with nothing to choose.** If Playwright can't resolve a Chrome channel
 on this machine (a Chromium-only Linux box, for instance), or Google rejects the browser
 anyway, `gflow auth login` falls back to the earlier **Passive Capture** flow: Chrome
@@ -242,7 +260,7 @@ Probing Flow session (may take up to ~45s on a slow network)...
 Flow session verified as you@example.com.
 ```
 
-> Note: `cookies_present: True` only confirms the file exists. The final verdict line is the live probe result: a dead session prints a `gflow auth login` remediation hint and exits 1; a probe that cannot reach the endpoint (offline, 5xx) also exits 1 but suggests checking connectivity instead of re-logging in.
+> Note: `cookies_present: True` only confirms the file exists. The final verdict line is the live probe result, and it has three failing shapes — all exit 1, each with a different hint. A **dead session** prints a `gflow auth login` remediation hint. A probe that **cannot reach the endpoint** (offline, 5xx) suggests checking connectivity instead of re-logging in. And a profile **missing its `.gflow_browser_strategy` marker** — the state a failed *first* login leaves behind, since that rolls the marker back — says so and points at `gflow auth login --browser chrome --profile <name>`; it is local profile state, not a network fault, and "check connectivity" would send you to the wrong place ([#796](https://github.com/ffroliva/gflow-cli/issues/796), 0.73.2). The MCP twin `gflow_auth_status` reports the same three as HTTP 401, 503 (`retryable: true`) and 409 (`retryable: false`) — see [MCP.md](MCP.md).
 
 ### `gflow auth list`
 

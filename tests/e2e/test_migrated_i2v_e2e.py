@@ -131,6 +131,9 @@ async def test_e2e_start_frame_uploads_and_binds_on_the_migrated_host(
 
     # #125 live: no model was requested, so the composer must have bound the i2v
     # default and driven the picker to it (or read it back as already selected).
+    # The cohort that auto-closes must never have needed the #792 confirm — otherwise
+    # "the $0 e2e passed" would be hiding a grace-wait race rather than proving it absent.
+    assert not _events(install_log_capture, "migrated.frame_confirm_clicked")
     assert _events(install_log_capture, "migrated.i2v_model_defaulted")
     selected = _events(install_log_capture, "migrated.model_selected") or _events(
         install_log_capture, "migrated.model_already_selected"
@@ -199,3 +202,58 @@ async def test_e2e_i2v_from_a_local_start_frame_runs_on_flow_google_com(
     body = result.local_path.read_bytes()
     assert body[4:8] == b"ftyp", body[:12]
     assert len(body) > 100_000, len(body)
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_auth
+async def test_e2e_the_pickers_confirm_is_clickable_on_the_real_frames_picker(
+    e2e_profile_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """$0: drive #792's confirm branch against REAL Flow on a cohort that does not need it.
+
+    The stuck picker itself is a cohort Google has not put us in — that half stays a named
+    blocker. But *"does the confirm gflow would click actually resolve, take a click, and
+    leave the chip bound"* is answerable here, and answering it needs one constant: with
+    the grace wait driven to expiry, every run enters the branch. Without this the branch
+    would ship having never executed against the live DOM at all, which is the difference
+    between a named blocker and an unrun claim.
+    """
+    from gflow_cli.api.transports import migrated_composer
+
+    project = _project_id()
+    _set_flow_host(monkeypatch, None)
+    # Expire the grace before Flow can possibly auto-close: forces the confirm branch.
+    monkeypatch.setattr(migrated_composer, "FRAME_COMMIT_GRACE_S", 0.001)
+    frame = _probe_png(tmp_path, f"gflow-e2e-confirm-{os.getpid()}.png")
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(e2e_profile_dir)
+        page = transport._page  # noqa: SLF001 - the e2e reads the live page
+        assert page is not None
+        composer = MigratedComposer()
+        await composer.ensure_editor(page, project, timeout_s=45.0)
+        await composer.apply_video_settings(
+            page,
+            GenerateVideoRequest(
+                prompt=_PROMPT, mode=Mode.I2V, aspect=Aspect.LANDSCAPE, start_image=frame
+            ),
+        )
+        media_id = await composer.attach_start_frame(page, project, frame)
+        assert _UUID.match(media_id), media_id
+        assert await page.locator(BOUND_CHIP).count() >= 1
+    finally:
+        await transport.teardown()
+
+    _dump_events(install_log_capture, tmp_path)
+    # The branch was entered — that is the whole point of the monkeypatch. Either the
+    # confirm was there and took the click, or the picker had already closed and it was
+    # correctly skipped; both are passes, and BOTH are now observed rather than argued.
+    clicked = _events(install_log_capture, "migrated.frame_confirm_clicked")
+    missed = _events(install_log_capture, "migrated.frame_confirm_click_missed")
+    assert not missed, "the confirm resolved but would not take the click"
+    assert _events(install_log_capture, "migrated.frame_bound"), "the chip did not bind"
+    # Record which arm ran, so the ledger says what was actually measured.
+    print(f"confirm_clicked={bool(clicked)}")

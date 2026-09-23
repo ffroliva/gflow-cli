@@ -780,6 +780,30 @@ class TestGenerateVideoGuards:
 
 class TestGenerateVideoOrchestration:
     @pytest.mark.asyncio
+    async def test_labs_route_refuses_resolution_before_submit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#787: the labs driver has no resolution step, so the flag must not be dropped.
+
+        Dropping it would bill Flow's default for a user who asked for 720p. The refusal
+        sits AFTER routing: the same entry point serves flow.google.com, which does
+        drive the radio (a guard at the entry blocked it, measured live).
+        """
+        from gflow_cli.errors import ConfigurationError
+
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        send = AsyncMock()
+        monkeypatch.setattr(transport, "_send_prompt", send)
+        _stub_video_helpers(monkeypatch, generate_resp={"status": 200, "body": {}})
+        req = GenerateVideoRequest(prompt="x", resolution="720p")
+        with pytest.raises(ConfigurationError, match="resolution 720p"):
+            await transport.generate_video(request=req, download=False)
+        send.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_t2v_happy_path_returns_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
         transport = UiAutomationTransport()
         transport._page = _mock_async_page()
@@ -876,6 +900,11 @@ class TestDownloadVideo:
         fake_page = MagicMock()
         fake_resp = AsyncMock()
         fake_resp.status = 200
+        # Where the 302 chain landed. An AsyncMock invents this attribute as a coroutine
+        # if it is not set, which is not what Playwright's `APIResponse.url` is — a plain
+        # str property. Left unset, the fake silently fails to model the one field the
+        # landing-host check reads (#895).
+        fake_resp.url = "https://flow-content.google/video/abc.mp4?Expires=1&Signature=x"
         fake_resp.body = AsyncMock(return_value=b"fake-mp4-content")
         fake_page.request.get = AsyncMock(return_value=fake_resp)
 
@@ -887,6 +916,30 @@ class TestDownloadVideo:
         call_url = fake_page.request.get.call_args[0][0]
         assert "test-uuid-123" in call_url
         assert "getMediaUrlRedirect" in call_url
+
+    @pytest.mark.asyncio
+    async def test_download_video_refuses_bytes_from_an_unexpected_host(
+        self, tmp_path: Path
+    ) -> None:
+        """This route is a 302 by design and follows up to 5 hops, so unlike the migrated
+        download it cannot use ``max_redirects=0`` to keep the chain honest. It checks
+        where the chain landed instead: an open redirect on Flow's side must not get its
+        bytes written to disk (#895)."""
+        from gflow_cli.errors import WireFormatError
+
+        transport = UiAutomationTransport()
+
+        fake_page = MagicMock()
+        fake_resp = AsyncMock()
+        fake_resp.status = 200
+        fake_resp.url = "https://evil.example.com/video/abc.mp4"
+        fake_resp.body = AsyncMock(return_value=b"not-our-bytes")
+        fake_page.request.get = AsyncMock(return_value=fake_resp)
+
+        with pytest.raises(WireFormatError, match="not an allowed Google host"):
+            await transport._download_video("test-uuid-789", tmp_path, fake_page)
+
+        assert not (tmp_path / "test-uuid-789.mp4").exists()
 
     @pytest.mark.asyncio
     async def test_download_video_raises_on_http_error(self, tmp_path: Path) -> None:

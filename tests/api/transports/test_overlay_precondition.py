@@ -28,8 +28,6 @@ from gflow_cli.api.transports.ui_automation import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import AsyncIterator
-
     from playwright.async_api import Page
 
 _FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "changelog_modal_page.html"
@@ -53,27 +51,6 @@ _HEALTHY_COMPOSER = """
 
 async def _body_pointer_events(page: Page) -> str:
     return await page.evaluate("() => getComputedStyle(document.body).pointerEvents")
-
-
-@pytest.fixture
-async def page() -> AsyncIterator[Page]:
-    """A real headless Chromium page, or skip if the browser isn't installed."""
-    playwright_api = pytest.importorskip("playwright.async_api")
-    try:
-        async with playwright_api.async_playwright() as pw:
-            try:
-                browser = await pw.chromium.launch()
-            except Exception as exc:  # pragma: no cover — environment-dependent
-                pytest.skip(f"chromium unavailable: {type(exc).__name__}: {exc}")
-            ctx = await browser.new_context()
-            new_page = await ctx.new_page()
-            try:
-                yield new_page
-            finally:
-                await ctx.close()
-                await browser.close()
-    except NotImplementedError as exc:  # pragma: no cover — no subprocess loop
-        pytest.skip(f"playwright cannot start here: {exc}")
 
 
 @pytest.mark.asyncio

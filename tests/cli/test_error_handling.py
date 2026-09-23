@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,18 @@ from gflow_cli.errors import (
     SecurityError,
     WireFormatError,
 )
+
+_ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    """Strip ANSI and collapse Rich's line wrapping so substring asserts hold.
+
+    Same helper as ``tests/cli/test_cli_video_chain.py`` — a ``FORCE_COLOR``
+    environment leaks SGR codes into otherwise plain text (memory
+    ``force-color-breaks-cli-tests``), and Rich soft-wraps at the console width.
+    """
+    return " ".join(_ANSI_SGR.sub("", output).split())
 
 
 @pytest.fixture(autouse=True)
@@ -475,8 +488,13 @@ class TestAuthLoginErrors:
     exit code to distinguish success (0) from failure (non-zero).
     """
 
-    def _invoke_auth_login(self, error: GFlowError) -> Any:
-        """Invoke `gflow auth login` with asyncio.run mocked to raise *error*."""
+    def _invoke_auth_login(self, error: BaseException) -> Any:
+        """Invoke `gflow auth login` with asyncio.run mocked to raise *error*.
+
+        Typed ``BaseException`` rather than ``GFlowError`` so the broad
+        ``except Exception`` arm below the typed handlers can be reached too —
+        that arm exists precisely for errors this class hierarchy does not name.
+        """
         from unittest.mock import patch
 
         def _raise_and_close(awaitable: object) -> None:
@@ -548,3 +566,28 @@ class TestAuthLoginErrors:
         assert "--browser chrome" not in result.output
         assert "GFLOW_CLI_AUTH_BROWSER=chrome" not in result.output
         assert "Session saved" not in result.output
+
+    def test_untyped_exception_exits_1_and_keeps_bracketed_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An error outside the GFlowError hierarchy still exits 1 with its text.
+
+        This is the last-resort arm: whatever Playwright, asyncio or a third
+        party throws lands here, so the message is the only thing the user gets.
+        Rich reads a lowercase ``[...]`` run as a style tag and drops it without
+        a word when the style will not parse — unescaped, an
+        "install gflow-cli[chain]" hint arrives as "install gflow-cli" and sends
+        the user to install nothing. ``escape()`` (#813) is what stops that;
+        reverting it at cli.py's broad-catch print turns this assert red.
+        """
+        monkeypatch.setenv("COLUMNS", "300")  # no soft wrap inside the token
+
+        result = self._invoke_auth_login(
+            RuntimeError("chromium is missing: pip install gflow-cli[chain]")
+        )
+
+        assert result.exit_code == 1, result.output
+        plain = _plain(result.output)
+        assert "Unexpected error during login" in plain
+        assert "gflow-cli[chain]" in plain
+        assert "Session saved" not in plain

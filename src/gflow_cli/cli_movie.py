@@ -31,6 +31,7 @@ from typing import Any
 import click
 import structlog
 from rich.console import Console
+from rich.markup import escape
 
 from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
 from gflow_cli.api.character import CharacterImageRequest
@@ -225,7 +226,7 @@ def run(
     try:
         manifest = MovieManifest.from_toml_path(manifest_path)
     except ConfigurationError as exc:
-        console.print(f"[red]Manifest error:[/red] {exc}")
+        console.print(f"[red]Manifest error:[/red] {escape(str(exc))}")
         sys.exit(11)
 
     settings = get_settings()
@@ -545,7 +546,7 @@ async def _run_one_scene(
         )
         state.save(state_path)
         if continue_on_error:
-            console.print(f"    [red]Scene failed:[/red] {exc}")
+            console.print(f"    [red]Scene failed:[/red] {escape(str(exc))}")
             return None
         raise
 

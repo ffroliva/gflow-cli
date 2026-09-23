@@ -98,6 +98,8 @@ app = FastAPI(title="gflow-daemon", lifespan=lifespan)
 # singular /mcp/message alias below are both SSE-shaped. That is a behavioural
 # change to a separate, currently unwired surface (`ui.server.run_server` has no
 # caller), not a mechanical port.
+# Unauthenticated by construction: see the auth note at the `app.mount("/mcp")`
+# call below before reviving this surface.
 mcp_sse_app = server.sse_app()
 
 
@@ -202,5 +204,13 @@ async def post_mcp_message_advertised(request: Request) -> Response:
     return await _dispatch_to_sse_app(request, "/messages/")
 
 
-# Mount Starlette SSE application after defining more specific routes
+# Mount Starlette SSE application after defining more specific routes.
+#
+# NOTE: `mcp_sse_app` comes straight from `server.sse_app()`, so it carries NO
+# request auth — it bypasses `mcp.server.build_app`, which is the seam where the
+# daemon token is enforced. Harmless today only because nothing calls
+# `ui.server.run_server` (see the note above `mcp_sse_app`). If this surface is ever
+# revived, build it through `build_app(transport="sse", host=..., token=...)`
+# instead of mounting `sse_app()` directly, or reviving it silently reopens an
+# unauthenticated tool surface.
 app.mount("/mcp", mcp_sse_app)

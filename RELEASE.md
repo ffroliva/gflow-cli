@@ -24,6 +24,40 @@ When a tag matching `v*.*.*` is pushed, GitHub Actions:
 4. Creates a GitHub Release and attaches the built artifacts.
 5. Marks tags containing PEP 440 alpha, beta, or release-candidate markers as
    GitHub prereleases.
+6. Publishes `server.json` to the Official MCP Registry — `release.yml` **calls**
+   `mcp-registry.yml` with `needs: build-and-publish`. Full releases only; the call is
+   skipped for prereleases so an `rc` never becomes the registry's active listing.
+
+### Why the registry publish is called, not triggered
+
+Worth knowing before anyone "tidies" it into an event trigger. It used to hang off
+`on: release: published`, and it **never fired once**, on any release, with nothing going
+red ([#841](https://github.com/ffroliva/gflow-cli/issues/841)): GitHub starts no workflow
+runs from events created with the default `GITHUB_TOKEN`, which is what creates the Release
+in step 4.
+
+A user PAT on that step would also fix it, and was rejected: fine-grained tokens expire
+after at most 366 days, so it puts a scheduled failure on a path that runs a handful of
+times a year. **There is no secret to rotate in the current design.** `needs:` additionally
+enforces the ordering `mcp-publisher` requires — it reads the `mcp-name:` token out of the
+*published* PyPI README, so the wheel has to be up first — and the call runs against the
+release tag, so `server.json` is always the released one.
+
+### If the release job fails after PyPI
+
+The PyPI upload is step 3 and the Release is step 4, so a failure in between leaves the wheel
+**already published**. `pypa/gh-action-pypi-publish` runs without `skip-existing`, so re-running
+the workflow fails on the duplicate filename, and re-tagging is not permitted. Recover by hand:
+
+```bash
+gh release create vX.Y.Z --generate-notes dist/*
+gh workflow run mcp-registry.yml --ref vX.Y.Z -f version=X.Y.Z
+```
+
+The registry publish needs its own dispatch because it hangs off the release job via
+`needs:`, so a failed release job means it never ran. Dispatch it against the **tag** — a
+branch publishes whatever `server.json` that branch carries, which is how v0.76.0
+republished 0.75.0.
 
 ## Prerelease Versus Full Release
 
@@ -90,6 +124,8 @@ python -m pip install --pre gflow-cli
 6. Update the version in:
    - `pyproject.toml`
    - `.codex-plugin/plugin.json`
+   - `plugins/gflow/.claude-plugin/plugin.json` (the Claude Code plugin a user installs;
+     `tests/test_plugin_manifests.py::test_plugin_version_tracks_pyproject` fails if it lags)
    - `src/gflow_cli/__init__.py`
    - `uv.lock` (run `uv lock` — the editable package version is pinned there)
    - any tests that assert the package version
@@ -97,7 +133,7 @@ python -m pip install --pre gflow-cli
    release section.
 8. Commit the release prep:
    ```bash
-   git add pyproject.toml .codex-plugin/plugin.json src/gflow_cli/__init__.py uv.lock CHANGELOG.md tests docs
+   git add pyproject.toml .codex-plugin/plugin.json plugins/gflow/.claude-plugin/plugin.json src/gflow_cli/__init__.py uv.lock CHANGELOG.md tests docs
    git commit -m "chore(release): vX.Y.Z"
    ```
 9. Tag and push. **Must be a signed annotated tag** (`-s`) — `.github/workflows/release.yml` rejects unsigned or lightweight tags. Requires a GPG or SSH signing key registered with your GitHub account.

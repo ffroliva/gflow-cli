@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 import structlog
 from rich.console import Console
+from rich.markup import escape
 
 from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
 from gflow_cli.api.client import FlowApiClient
@@ -211,7 +212,9 @@ async def _run_create(
                     error=str(exc),
                     scene_id=scene_obj.scene_id,
                 )
-                console.print(f"[yellow]Scene created but not recorded locally:[/yellow] {exc}")
+                console.print(
+                    f"[yellow]Scene created but not recorded locally:[/yellow] {escape(str(exc))}"
+                )
             if output is not None:
                 # Server-side concat into ONE extended .mp4 (credit-free, no ffmpeg).
                 # If this raises, the compose above is already persisted.

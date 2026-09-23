@@ -201,3 +201,135 @@ def test_release_does_not_restore_a_shared_uv_cache() -> None:
                 "release.yml: setup-uv must set 'enable-cache: false' — the publishing "
                 "workflow must not restore a cache another workflow can write"
             )
+
+
+# --- The MCP Registry publish wiring (#841) -------------------------------------
+#
+# These lock the shape of a bug that ran for every release that shipped with the
+# automation and was caught by nobody: mcp-registry.yml triggered on
+# `release: published`, release.yml created the Release with the default
+# GITHUB_TOKEN, and GitHub starts no workflow runs from GITHUB_TOKEN-created
+# events. Zero runs, ever, every check green throughout.
+#
+# The fix is to CALL the workflow from release.yml rather than trigger it. Each
+# assertion below was verified to fail against the pre-fix file — the module's
+# charter is that a guard never seen red is not a guard.
+
+_REGISTRY_WORKFLOW = "mcp-registry.yml"
+
+
+def _registry_doc() -> dict[str, Any]:
+    return _load(WORKFLOWS / _REGISTRY_WORKFLOW)
+
+
+def _triggers(doc: dict[str, Any]) -> dict[str, Any]:
+    """A workflow's ``on:`` block. PyYAML parses bare ``on:`` as the boolean True."""
+    return doc.get(True) if True in doc else doc.get("on")
+
+
+def test_the_registry_publish_is_called_by_the_release_workflow() -> None:
+    """release.yml must CALL the registry publish, after the PyPI upload.
+
+    Triggering it by event is what failed for a year. ``needs:`` is also the only
+    thing enforcing the ordering mcp-publisher requires: it reads the ``mcp-name:``
+    token from the PUBLISHED PyPI README, so the wheel has to be up first.
+    """
+    jobs = _load(WORKFLOWS / "release.yml").get("jobs") or {}
+    callers = {
+        name: job
+        for name, job in jobs.items()
+        if str(job.get("uses", "")).endswith(_REGISTRY_WORKFLOW)
+    }
+    assert callers, (
+        "release.yml does not call mcp-registry.yml. An event trigger cannot replace "
+        "this: a Release created with the default GITHUB_TOKEN starts no workflow runs, "
+        "which is why the registry publish never fired once (#841)"
+    )
+    for name, job in callers.items():
+        needs = job.get("needs")
+        needs = [needs] if isinstance(needs, str) else list(needs or [])
+        assert "build-and-publish" in needs, (
+            f"release.yml: job {name!r} calls the registry publish without "
+            "`needs: build-and-publish`, so it can run before the wheel is on PyPI — "
+            "mcp-publisher reads its ownership token from the published PyPI README"
+        )
+
+
+def test_the_registry_publish_is_not_wired_to_the_dead_release_trigger() -> None:
+    """``on: release:`` here is the bug, not a belt-and-braces extra.
+
+    Restoring it would double-publish on every release (once via the call, once via
+    the event) the moment anyone made the Release with a user token.
+    """
+    triggers = _triggers(_registry_doc()) or {}
+    assert "release" not in triggers, (
+        "mcp-registry.yml declares an `on: release:` trigger. It never fired under the "
+        "default GITHUB_TOKEN (#841), and if it ever did it would double-publish "
+        "alongside the call from release.yml"
+    )
+
+
+def test_the_registry_publish_takes_a_required_version_on_every_trigger() -> None:
+    """A run publishes whatever ``server.json`` the REF carries.
+
+    Dispatching ``develop`` before the release back-merge landed republished the
+    PREVIOUS version to the registry, green, on v0.76.0.
+    """
+    triggers = _triggers(_registry_doc()) or {}
+    assert set(triggers) == {"workflow_call", "workflow_dispatch"}, (
+        f"mcp-registry.yml triggers are {sorted(triggers)} — expected exactly "
+        "workflow_call (the release path) and workflow_dispatch (manual re-run)"
+    )
+    for trigger, spec in triggers.items():
+        version = ((spec or {}).get("inputs") or {}).get("version")
+        assert version is not None, (
+            f"mcp-registry.yml: {trigger} declares no `version` input — the run would "
+            "publish whatever server.json the ref happens to carry (#841)"
+        )
+        assert version.get("required") is True, (
+            f"mcp-registry.yml: {trigger}'s `version` input must be required; an "
+            "optional one is an empty string on every hand-run dispatch (#841)"
+        )
+
+
+def test_the_release_skips_the_registry_for_a_prerelease() -> None:
+    """An ``rc`` must never become the registry's ACTIVE listing.
+
+    That listing is what PulseMCP and GitHub's MCP gallery ingest. The repo has
+    shipped ten prerelease tags (v0.2.0a1 ... v0.6.0a6), and release.yml fires on
+    every one of them.
+    """
+    jobs = _load(WORKFLOWS / "release.yml").get("jobs") or {}
+    callers = [
+        job for job in jobs.values() if str(job.get("uses", "")).endswith(_REGISTRY_WORKFLOW)
+    ]
+    assert callers, "release.yml does not call mcp-registry.yml"
+    for job in callers:
+        assert "prerelease" in str(job.get("if", "")), (
+            "release.yml calls the registry publish with no prerelease guard, so a "
+            "v1.2.3rc1 would be published as the registry's active listing"
+        )
+
+
+def test_the_prerelease_classification_has_exactly_one_definition() -> None:
+    """The GitHub Release flag and the registry gate must not drift apart.
+
+    As two copies of the same four-clause expression they eventually would, and the
+    two consumers disagreeing is silent: a prerelease marked correctly on the Release
+    but published to the registry anyway.
+    """
+    doc = _load(WORKFLOWS / "release.yml")
+    build = (doc.get("jobs") or {})["build-and-publish"]
+    assert "prerelease" in (build.get("outputs") or {}), (
+        "release.yml: build-and-publish exposes no `prerelease` output, so the registry "
+        "gate cannot share the classification the Release flag uses"
+    )
+    inline = [
+        step
+        for step in build.get("steps") or []
+        if "contains(github.ref_name" in str(step.get("with", {}).get("prerelease", ""))
+    ]
+    assert not inline, (
+        "release.yml: the prerelease expression is inlined on a step as well as being a "
+        "job output — one definition, or the two copies will drift"
+    )

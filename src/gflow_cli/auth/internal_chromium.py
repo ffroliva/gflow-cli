@@ -12,10 +12,17 @@ from gflow_cli.errors import AuthBrowserRejectedError, AuthLoginTimeoutError, Se
 from gflow_cli.profile_lease import ProfileLease
 
 from .base import AuthStrategy
-from .verification import SESSION_API_URL, FlowSessionOutcome, evaluate_session_response
+from .verification import (
+    SESSION_API_URL,
+    FlowSessionOutcome,
+    evaluate_session_response,
+    has_migrated_app_session,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from .verification import FlowSessionStatus
 
 logger = structlog.get_logger(__name__)
 _console = Console()
@@ -77,22 +84,31 @@ async def poll_session_until_authenticated(
     strategy_name: str,
     *,
     raise_on_close: bool = True,
-) -> str | None:
+) -> FlowSessionStatus | None:
     """Poll the Flow NextAuth session endpoint until the sign-in completes.
 
-    Returns the verified user email, or None if it could not be extracted.
+    Returns the status that ended the wait, or None when the browser closed
+    first. The STATUS, not the email: a session can be proven without a label
+    (the migrated-host stop signal below has no email to report), and returning
+    a bare ``str | None`` made those two cases indistinguishable — the caller
+    read "no email" as "window closed" and skipped both the "Signed in" notice
+    and the cookie-flush wait for a login that had in fact just succeeded.
+
     Raises ``AuthBrowserRejectedError`` if Google rejects the browser.
     Raises ``AuthLoginTimeoutError`` if the timeout elapses, and — when
     ``raise_on_close`` — also when the browser closes before authentication is
-    verified. Callers that own a *fallback* oracle (``RealChromeStrategy``
-    re-checks the on-disk store with ``verify_flow_profile``) pass
-    ``raise_on_close=False`` and get ``None`` instead: three releases told users
-    to close the window themselves, so doing so must not turn a successful
-    login red.
+    verified.
+
+    ``raise_on_close=False`` means "I own a fallback oracle": ``RealChromeStrategy``
+    re-checks the on-disk store with ``verify_flow_profile``. Three releases told
+    users to close the window themselves, so doing so must not turn a successful
+    login red — and, for the same reason, that caller (and only that caller) may
+    stop on the migrated-host signal below, which ends a wait without claiming
+    to have authenticated anything.
     """
     timeout_at = asyncio.get_running_loop().time() + timeout_seconds
     success = False
-    _email: str | None = None
+    _status: FlowSessionStatus | None = None
 
     while asyncio.get_running_loop().time() < timeout_at:
         try:
@@ -148,7 +164,36 @@ async def poll_session_until_authenticated(
                     probe="in_context",
                 )
                 success = True
-                _email = status.user_email
+                _status = status
+                break
+            # The labs endpoint is the oracle, and for an account Google serves
+            # from flow.google.com it is an oracle that never answers: labs
+            # hands off without minting a session, so this arm is reached on
+            # every iteration until the deadline while the banner promises an
+            # auto-close (#849). The cookie pair is NOT a second authentication
+            # decision — `verify_flow_profile` still makes that, against a
+            # server, on what actually landed on disk. It only ends a wait that
+            # has no other way to end. Gated on `raise_on_close` because that
+            # flag already means "the caller owns that fallback oracle": a
+            # caller without one would be left holding a profile nothing had
+            # verified.
+            #
+            # Reached only past `_is_safe_to_probe_session` above, so the page
+            # is on a Flow host and off NextAuth's own routes — a user still on
+            # Google's password screen never gets here, and their window is
+            # never closed out from under them.
+            if (
+                not raise_on_close
+                and status.outcome is FlowSessionOutcome.GOOGLE_SESSION_ONLY
+                and has_migrated_app_session(cookies)
+            ):
+                logger.info(
+                    "auth_login_migrated_session_detected",
+                    strategy=strategy_name,
+                    probe="migrated_cookies",
+                )
+                success = True
+                _status = status
                 break
         except asyncio.CancelledError:
             raise
@@ -203,7 +248,7 @@ async def poll_session_until_authenticated(
             ),
         )
 
-    return _email
+    return _status
 
 
 def _is_google_rejected_browser_page(page: object) -> bool:
@@ -303,12 +348,16 @@ class InternalChromiumStrategy(AuthStrategy):
                     )
 
                 # Poll until the Flow app sign-in completes; raises on timeout/rejection.
-                user_email = await poll_session_until_authenticated(
+                # `raise_on_close` defaults True here: this strategy has no
+                # on-disk fallback oracle, so a close or a stop-without-proof
+                # must stay an error rather than a quietly unverified profile.
+                session = await poll_session_until_authenticated(
                     ctx,
                     page,
                     self._timeout_seconds,
                     self.name,
                 )
+                user_email = session.user_email if session is not None else None
                 # Small delay to ensure state is flushed to disk
                 await asyncio.sleep(1)
 

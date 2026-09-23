@@ -47,7 +47,8 @@ def test_migrated_can_serve_takes_r2v_from_local_files_only() -> None:
     # Character entities are a different attach surface (a chip with an entity_id, in a
     # different wire slot) and stay on labs.
     assert not migrated_can_serve(_r2v(reference_entities=("abc",)), "p1")
-    # A fresh project is still labs-only, so the gate keeps requiring one here.
+    # Creating a fresh project is not ported to that composer, so the gate keeps
+    # requiring an existing one here.
     assert not migrated_can_serve(_r2v(reference_images=(Path("a.png"),)), None)
 
 

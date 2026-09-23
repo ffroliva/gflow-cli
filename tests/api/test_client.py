@@ -660,7 +660,9 @@ async def test_generate_video_delegates_to_transport(
     request = GenerateVideoRequest(prompt="sunset over mountains", mode=Mode.T2V)
 
     async with FlowApiClient(profile_dir=tmp_path, transport=fake) as client:
-        result = await client.generate_video(req=request, out_dir=tmp_path, download=True)
+        result = await client.generate_video(
+            req=request, project_id="p1", out_dir=tmp_path, download=True
+        )
 
     assert result.status.media_id == "media-1"
 

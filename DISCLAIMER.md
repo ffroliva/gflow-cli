@@ -2,7 +2,7 @@
 
 ## Not affiliated with Google
 
-`gflow-cli` is an **independent, unofficial** project. It is **not affiliated with, endorsed by, sponsored by, or otherwise connected to Google LLC, Alphabet Inc., DeepMind, or any of their subsidiaries.** All trademarks (Google, Flow, Veo, Gemini, Imagen, AI Ultra, AI Pro) are the property of their respective owners. The use of these names here is purely descriptive — to identify the service this tool integrates with — and does not imply endorsement.
+`gflow-cli` is an **independent** project. It is **not affiliated with, endorsed by, sponsored by, or otherwise connected to Google LLC, Alphabet Inc., DeepMind, or any of their subsidiaries.** All trademarks (Google, Flow, Veo, Gemini, Imagen, AI Ultra, AI Pro) are the property of their respective owners. The use of these names here is purely descriptive — to identify the service this tool integrates with — and does not imply endorsement.
 
 ## Reverse-engineered surface
 

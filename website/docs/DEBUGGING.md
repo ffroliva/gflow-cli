@@ -54,10 +54,18 @@ trigger not found — a structural DOM signature; this probe writes no
 screenshot) and `debug_no_image_tab.png` (Image tab missing inside the open
 dropdown).
 
-Pipe `--verbose` output through `Select-String` (PowerShell) or `grep` to
+Pipe `--verbose` output through `grep` (POSIX) or `Select-String` (PowerShell) to
 filter:
 
+```bash
+export PYTHONUTF8=1
+uv run gflow --verbose image t2i "prompt" --profile <name> --out tmp/debug 2>&1 |
+  tee tmp/debug/run.log |
+  grep -E 'batch_response|aspect_ratio|prompt_submitted|error_unhandled'
+```
+
 ```powershell
+# PowerShell
 $env:PYTHONUTF8 = "1"
 uv run gflow --verbose image t2i "prompt" --profile <name> --out tmp\debug 2>&1 |
   Tee-Object tmp\debug\run.log |
@@ -116,7 +124,15 @@ also shows the recorded lock owner's PID/start-time evidence — advisory
 only, the kernel lock stays authoritative and nothing is ever reclaimed).
 
 Never captured: expected `ContentPolicyError`, ordinary `AuthExpiredError`,
-usage/config validation, cancellation (Ctrl-C). **That `AuthExpiredError` exclusion
+`FlowAccessUnavailableError` (39), usage/config validation, cancellation (Ctrl-C).
+`FlowAccessUnavailableError` is excluded **by falling through** rather than by a named
+exclusion: it is a direct `GFlowError` subclass and is not in `_capture_triggers()`, so
+`should_capture()` returns `False` on its generic-`GFlowError` arm. That is the wanted
+answer — the account has no Flow entitlement, the remediation is a subscription, and a
+DOM dump of Flow's unavailable screen tells nobody anything. If Flow ever renames
+`<flow-pinhole-unavailable-screen>` the class stops firing entirely and the failure
+reverts to `UiSelectorDriftError` (23), which *is* captured — so the evidence path for
+the case where we need evidence is already open. **That `AuthExpiredError` exclusion
 now covers one more path than it used to:** since
 [#756](https://github.com/ffroliva/gflow-cli/issues/756), landing on one of Flow's
 OAuth/sign-in routes raises `AuthExpiredError` where it previously raised
@@ -151,13 +167,20 @@ with a hard privacy gate (any leaked identifier → grade F). Reusable on a
 bundle a user emails you:
 
 ```bash
-.venv/Scripts/python.exe scripts/dev/incident_bundle_quality.py <bundle-dir> [known-secret ...]
+uv run python scripts/dev/incident_bundle_quality.py <bundle-dir> [known-secret ...]
 ```
 
 It prints a scorecard (grade, per-question YES/NO/N/A, privacy verdict). The
 live e2e benchmark (`tests/e2e/test_incident_quality_e2e.py`, credit-free)
 enforces quality floors on real bundles so a regression that hollows out the
-evidence fails CI even though the artifacts still exist.
+evidence is caught even though the artifacts still exist.
+
+**It is an opt-in gate, not a CI one** — it needs `-m e2e` and
+`GFLOW_CLI_E2E_PROFILE`, so nothing runs it on a pull request. And until #792 it
+graded only bundles captured deliberately on a *healthy* page, which is how a bug
+that hollowed out every **failure** bundle on the migrated host survived it. The
+file now also drives a real failed generation and asserts the DOM capture is not
+blank; run it before shipping anything that touches capture or page lifecycle.
 
 ### Worker / daemon correlation
 
@@ -245,16 +268,19 @@ For health probes from a worker process, use
 See [`LIVE_VERIFICATION_v0.7.0.md`](LIVE_VERIFICATION_v0.7.0.md) for the
 canonical example. Short form:
 
-```powershell
-$env:PYTHONUTF8 = "1"
-mkdir -p tmp\debug
+```bash
+export PYTHONUTF8=1          # Windows PowerShell: $env:PYTHONUTF8 = "1"
+mkdir -p tmp/debug
 
-uv run gflow --verbose image t2i "<prompt>" `
-  --profile <your-profile-name> `
-  --count 1 `
-  --aspect <9:16|16:9|1:1|4:3|3:4> `
-  --out tmp\debug
+uv run gflow --verbose image t2i "<prompt>" \
+  --profile <your-profile-name> \
+  --count 1 \
+  --aspect <9:16|16:9|1:1|4:3|3:4> \
+  --out tmp/debug
 ```
+
+On PowerShell the flags are the same; only the line-continuation character differs
+(a backtick instead of `\`), and `tmp\debug` may be spelled with backslashes.
 
 ## Test suite memory
 

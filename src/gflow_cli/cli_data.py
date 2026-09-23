@@ -22,7 +22,6 @@ from gflow_cli import json_output, profile_store
 from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
 from gflow_cli.api import routes
 from gflow_cli.config import get_settings
-from gflow_cli.data.models import AssetLookup
 from gflow_cli.data.queries import (
     ImageRow,
     OperationErrorRow,
@@ -44,6 +43,7 @@ from gflow_cli.observability import resolves_to_json
 # run_sync is bound in THIS module's namespace so tests can monkeypatch
 # ``gflow_cli.cli_data.run_sync`` (same pattern as ``cli_doctor.run_all``).
 from gflow_cli.services.catalog_sync import ensure_prompts_stored, run_sync
+from gflow_cli.services.media_recovery import download_media, resolve_asset
 
 console = Console()
 
@@ -313,37 +313,9 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:
     """
     import asyncio
 
-    def _sync_query() -> AssetLookup:
-        settings = get_settings()
-        with DataStore.open(settings.resolved_db_path()) as store:
-            repo = DataRepository(store)
-            if profile is not None:
-                scoped = repo.get_asset_by_flow_media_id(profile, media_id)
-                if scoped is None:
-                    raise DataStoreError(
-                        detail=f"No local media record found: {media_id} (profile={profile!r})",
-                        route=_ROUTE_DATA_MEDIA,
-                    )
-                return scoped
-
-            matches = repo.find_assets_by_flow_media_id(media_id)
-            if not matches:
-                raise DataStoreError(
-                    detail=f"No local media record found: {media_id}",
-                    route=_ROUTE_DATA_MEDIA,
-                )
-            if len(matches) > 1:
-                candidates = sorted({f"{m.profile_name} ({m.kind.value})" for m in matches})
-                raise DataStoreError(
-                    detail=(
-                        f"Media {media_id!r} exists under multiple profiles: "
-                        f"{candidates}. Pass --profile NAME to disambiguate."
-                    ),
-                    route=_ROUTE_DATA_MEDIA,
-                )
-            return matches[0]
-
-    asset = await asyncio.to_thread(_sync_query)
+    asset = await asyncio.to_thread(
+        resolve_asset, media_id, profile=profile, route=_ROUTE_DATA_MEDIA
+    )
 
     table = Table(title="gflow data media")
     table.add_column("field")
@@ -357,6 +329,73 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:
             table.add_row(f"local_path_{idx}", safe_path_text(local_file.path))
         else:
             table.add_row(f"cloud_uri_{idx}", local_file.cloud_uri or "")
+    console.print(table)
+
+
+@data.command("download")
+@click.argument("media_id")
+@click.option(
+    "--out",
+    "out_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Directory to write the file into. Default: $GFLOW_CLI_OUTPUT_DIR.",
+)
+@click.option(
+    "--profile",
+    default=None,
+    help="Scope the lookup to a specific profile. Default: search all profiles.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit a JSON summary instead of text.")
+def download(media_id: str, out_dir: Path | None, profile: str | None, as_json: bool) -> None:
+    """Fetch an already-generated video from Flow by its media ID.
+
+    For a generation that finished and was billed but whose download failed — the
+    migrated host's 20s URL grace expiring leaves exactly this state, with the clip in
+    the project and `local_path: null` in the catalog. Recovering it costs nothing; the
+    generation was already paid for.
+
+    Opens the clip's own route, takes the signed URL Flow reports for it, and verifies
+    the bytes against the size Flow records before writing. Also writes the
+    `local_files` row, so `gflow data list videos` stops showing `copy_count: 0`.
+
+    Video only. The signed URL comes from a record Flow emits when a clip's own route
+    loads; an image's route does not carry one, so an image media ID is refused
+    immediately with exit 11 rather than opening a browser. See issue #877.
+    """
+    run_with_handlers(
+        lambda: _run_download(media_id=media_id, out_dir=out_dir, profile=profile, as_json=as_json),
+        cli_command="data download",
+        as_json=as_json,
+    )
+
+
+async def _run_download(
+    *, media_id: str, out_dir: Path | None, profile: str | None, as_json: bool
+) -> None:
+    result = await download_media(media_id=media_id, profile=profile, out_dir=out_dir)
+    if as_json:
+        click.echo(
+            json.dumps(
+                {
+                    "media_id": result.media_id,
+                    "workflow_id": result.workflow_id,
+                    "profile": result.profile_name,
+                    "project_id": result.project_id,
+                    "path": str(result.path),
+                    "bytes": result.bytes,
+                }
+            )
+        )
+        return
+    table = Table(title="gflow data download")
+    table.add_column("field")
+    table.add_column("value", overflow="fold")
+    table.add_row("media_id", result.media_id)
+    table.add_row("profile", result.profile_name)
+    table.add_row("project_id", result.project_id)
+    table.add_row("path", safe_path_text(result.path))
+    table.add_row("bytes", str(result.bytes))
     console.print(table)
 
 

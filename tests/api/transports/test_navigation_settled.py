@@ -26,9 +26,30 @@ _TRANSPORTS = Path(__file__).resolve().parents[3] / "src" / "gflow_cli" / "api"
 #: the network to go quiet, which a redirect cannot do without being observed; the
 #: bearer site additionally sleeps 5 s. Listed explicitly so the exemption is a
 #: decision on the record rather than an oversight.
+#:
+#: #836 proposed removing both, reading them as contradicting the "do NOT use
+#: networkidle" comment further down `ui_automation.py`. They do not: that comment
+#: governs the GALLERY navigation, which is followed by `_settle_if_redirecting`.
+#: The bootstrap cannot use that settle — it is gated on `self._account_locale`, and
+#: the bootstrap navigation is the call that RESOLVES the locale, so it is None at
+#: that moment and the settle is a no-op. Removing the argument turns this test red.
+#:
+#: The cost is real and measured — 3422 ms vs 1022 ms mean, 5 navigations per arm,
+#: never reaching the 45 s ceiling (so it does not hang, contrary to #836's stated
+#: mechanism): docs/superpowers/spikes/2026-09-16-networkidle-costs-3x-it-does-not-
+#: hang.md. A cheaper correct settle may exist; it needs a labs-served account to
+#: measure, which is why this stands.
 _ABSORBED_BY_EXISTING_WAIT = {
     ("ui_automation.py", "networkidle"),
     ("bearer.py", "networkidle"),
+    # `about:blank` is not a Flow navigation, so the redirect this ratchet exists
+    # to catch cannot happen: `_settle_if_redirecting` matches neither the
+    # localised-URL short-circuit nor the migrated-host one, and falls through to
+    # `wait_for_url` waiting for a pattern a blank page can never take — burning
+    # the full URL_SETTLE_TIMEOUT_MS (4 s) to return None, on every parked run of
+    # a locale-resolved account. The only `wait_until="commit"` goto in this file
+    # is that park (#792). On the record, per this module's own rule.
+    ("ui_automation.py", "commit"),
 }
 
 

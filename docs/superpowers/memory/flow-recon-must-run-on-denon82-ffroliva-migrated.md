@@ -45,9 +45,10 @@ having a migrated driver at all, and read as "the new host cannot be driven"):
   slice landed. A migrated user reading a stale line concludes a working feature is
   impossible, so re-derive it from the guards rather than from this bullet:
   `_unported_form` and `_unported_image_form` in `migrated_composer.py` ARE the
-  matrix. As of #639's image slice the ported set is t2v; i2v/r2v from local files;
-  `character create`/`list`; and image t2i/i2i from local files — each with
-  `--project`. Unported: end frames, frames/references by UUID or `@Name`, character
+  matrix. As of #639's end-frame slice the ported set is t2v; i2v from a local start
+  frame AND from a local start+end pair (interpolation, 2026-09-17); r2v from local
+  files; `character create`/`list`; and image t2i/i2i from local files — each with
+  `--project`. Unported: frames/references by UUID or `@Name`, character
   entities on a generation, Agent instructions, Imagen 4, `image batch`, the 3:4
   image aspect, scenes, extend and tools. Of those only i2v-by-UUID rests on a
   positive observation of absence; the rest are *unported by gflow*, never proven

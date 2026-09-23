@@ -14,7 +14,791 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Enables explicit selection of `360p` or `720p` on models providing resolution controls
   (such as `omni-flash`), preventing unintended defaults.
 - **Support for Nano Banana 2 Lite (`--model nano2-lite`).** Added `nano2-lite` alias mapped
-  to Google's internal `HARBOR_SEAL` wire model for `gflow image t2i`, `i2i`, and `batch`.
+  to Google's internal `HARBOR_SEAL` wire model for `gflow image t2i`, `i2i`, and `batch`. Its I2I reference
+  cap starts at 3 because it has not been measured yet, and its daily quota is
+  unmeasured too ([spike](docs/superpowers/spikes/2026-09-11-nano2-lite-capability.md)).
+
+## [0.79.1] — 2026-09-22
+
+### Fixed
+
+- **A finished, billed clip is no longer thrown away when its download hits a connection
+  reset (#895).** The signed-media GET was issued once, with no retry: a single
+  `ECONNRESET` mid-transfer failed the whole command *after* Veo had produced the clip and
+  charged for it — reported at 2 failures in 6 consecutive runs. The transfer now survives
+  a dropped connection using Playwright's own `max_retries`, which retries on the driver's
+  `ECONNRESET` and never on an HTTP status, and whose backoff is charged to the same
+  timeout rather than multiplying it: three attempts stay inside one ~180 s budget instead
+  of stretching to nine minutes on a lock shared with every other generation. Measured
+  with an A/B control, not read from the docs —
+  [spike](docs/superpowers/spikes/2026-09-22-playwright-max-retries-econnreset.md).
+  Fixed at **all three** download sites, not just the one the traceback named: the
+  migrated composer, `gflow data download`'s own recovery GET (so the escape hatch cannot
+  be stranded by the fault it exists to rescue), and the labs `media.getMediaUrlRedirect`
+  path.
+- **A lost transfer now says the clip survived, instead of `Unexpected error` (#895).**
+  `playwright.async_api.Error` is not a gflow error class, so it escaped the typed-error
+  contract entirely and rendered as *"Unexpected error … exit code 1, retryable: False"* —
+  of which the last two are wrong and the first is useless. It is now `NetworkError`
+  (exit 6, correctly retryable) carrying the media id and `gflow data download <id>`, so a
+  user is not left re-generating a clip they already own. The exception message is
+  deliberately **not** forwarded into `detail`: Playwright concatenates its server-side
+  call log into it, and `detail` reaches stderr and `--json` stdout without passing
+  through redaction, so a signed URL would leak. Both MCP twins gain this for free — until
+  now `gflow_download_media` returned *"Unexpected Error; details were logged
+  server-side"* with no remediation field at all, and the queued `gflow_generate_video`
+  path returned `detail: "sha256:<hash>"` with neither `remediation_hint` nor `retryable`.
+- **A failed generation now keeps its media id on the queue row, so an MCP agent can
+  actually recover the clip (#895).** The remediation added above names the media id and
+  tells the user to recover it — but over MCP that advice was unusable. The worker's
+  success branch recorded `flow_media_id` on the queue row; the failure branch did not,
+  so the row stayed `NULL` and `gflow_generate_video`'s failed envelope carried no id at
+  all. The agent's only copy was a UUID buried in an English sentence, suggesting a
+  *shell command* an MCP client cannot run, when its actual tool takes `media_id=`.
+  `update_task_status` already COALESCEs, so a task that failed before Flow named
+  anything still records nothing.
+
+- **An expired signed link stops blaming your prompt (#895).** A late GET answers 4xx, and
+  every one of those branches fell through to `WireFormatError`'s class default — *"retry
+  with a simpler prompt text"* — on paths that carry no prompt and no payload. The same
+  wrong-advice class removed in #875. Each now names the short link lifetime and the
+  credit-free re-mint.
+- **The labs video download verifies where its redirect landed (#895).** That route is a
+  302 by design, so it follows up to 5 hops, and nothing checked the final host — the
+  posture the migrated arm gets from refusing redirects outright. The bytes are now
+  refused unless the landing host is an allowed Google host.
+- **A retired labs route no longer tells you to simplify a prompt you never wrote.**
+  Every labs tRPC route except project-create now answers HTTP 404 with Flow's own
+  explanation — *"Flow RPCs have been deprecated and disabled. Flow has migrated to
+  https://flow.google.com."* — and gflow surfaced it as a bare `WireFormatError` (exit 7)
+  carrying the class-default advice: check the payload, retry with a simpler prompt, file
+  a bug. All three were wrong. The payload is fine, `gflow character list` is a read with
+  no prompt at all, and Flow documents the condition in the very body being classified.
+  The refusal is now recognised **by that message** — never by which host an account is
+  served, and never by a route allowlist, so a route we have not observed yet is covered
+  the day Flow retires it — and carries a remediation that names the retired route and
+  points at [#639](https://github.com/ffroliva/gflow-cli/issues/639). It deliberately
+  suggests **no** setting: `GFLOW_CLI_FLOW_HOST=flow.google.com` was measured not to help
+  (2026-09-20, `character list`), because the read has no migrated arm to route to, and
+  naming it would repeat the mistake being fixed. The error class and exit code are
+  unchanged ([#875](https://github.com/ffroliva/gflow-cli/issues/875)).
+
+- **`KNOWN_ISSUES.md` no longer claims `gflow character list` works on the migrated host.**
+  Measured twice on 2026-09-20 — with and without `GFLOW_CLI_FLOW_HOST=flow.google.com` —
+  it exits 7 on the retired labs `projectInitialData` route both times. `list_characters`
+  reads that route unconditionally and has no migrated path
+  ([#875](https://github.com/ffroliva/gflow-cli/issues/875)).
+
+### Changed
+
+- **The nightly canary stops crying wolf about an account that cannot reach Flow.**
+  An e2e failure caused by Flow serving its public `/about` landing is now reported as a
+  SKIP carrying the measurement, because it is a missing precondition rather than a
+  product failure — measured 2026-09-20, `gflow project create` succeeded on two profiles
+  and failed only on the canary's in the same minute. Seven of the thirteen standing
+  failures in [#559](https://github.com/ffroliva/gflow-cli/issues/559) were this one
+  condition, unchanged across three nightly runs, and the noise hid a real finding:
+  `test_project_create_e2e.py` shipped in v0.78.0 and had never passed once.
+  Test-only ([#888](https://github.com/ffroliva/gflow-cli/issues/888)).
+
+  It narrows deliberately. The guard matches a marker **gflow itself** emits from
+  `raise_if_known_landing`, never anything Flow says; a tripwire outside `tests/e2e/`
+  asserts that marker against the real raise site so a reword cannot silently disable it;
+  and it covers the `public` landing kind **only**. Two transports tests that fail on the
+  `signin` kind are left red on purpose — catching `AuthExpiredError` would silence the
+  signal an e2e exists to raise.
+
+### Added
+
+- **E2E coverage for the retired-route diagnosis** (`tests/e2e/test_retired_labs_route_diagnosis_e2e.py`,
+  `e2e_auth`, 0 credits, one read-only GET). The unit tests for
+  [#875](https://github.com/ffroliva/gflow-cli/issues/875) feed the classifier a *captured*
+  body, so they stay green if Flow changes the wording, un-retires the route or switches to
+  401 — while the user-facing diagnosis silently goes wrong again. This one asks Flow. It
+  needs no project fixture (the route is retired before any project lookup) and **skips
+  rather than passes** on an account still served the labs tRPC API, so a cohort change
+  cannot retire it unnoticed. Verified by falsification: with detection disabled it fails
+  with the pre-fix message verbatim.
+
+## [0.79.0] — 2026-09-18
+
+### Added
+
+- **`gflow data download <media_id>` — recover a billed asset whose download failed.**
+  A generation that finishes but whose signed media URL is never observed exits 7 with
+  the credit already spent: the clip sits in the Flow project, the catalog row says
+  `local_path: null`, and no command could fetch it. The only recovery the CLI offered
+  was to generate it again and pay twice — and because the failure is a timing window,
+  the retry could strand another copy. The new command opens the clip's own route, takes
+  the signed URL Flow reports for it, verifies the bytes against the size Flow records,
+  writes the file and updates `local_files`. Costs no credits. Mirrored as the
+  `gflow_download_media` MCP tool.
+  **Video only**, and it says so: the signed URL comes from the `as29s` record Flow emits
+  when a clip's own route loads, which an image's route does not carry. An image media id
+  is refused immediately with exit 11 rather than opening a browser
+  ([#877](https://github.com/ffroliva/gflow-cli/issues/877)).
+
+### Fixed
+
+- **Auth errors on aisandbox routes no longer blame a cookie they never read
+  (#803).** `AisandboxAuthError`'s default remediation said *"SAPISID cookie
+  missing, expired, or unreadable — re-run `gflow auth login`"*. v0.74.0 corrected
+  the two `gflow credits` sites, but the other three raise sites inherited that
+  default, so every route through `_run_with_aisandbox_retry` — `createScene`,
+  `commitWorkflow`, `createEntity`, `projectInitialData`, `upsampleImage` and the
+  rest — still said it. None of them reads SAPISID: the credential is a Bearer
+  token minted by labs' session endpoint, and SAPISID's only role is getting that
+  endpoint to answer at all. The advice was therefore wrong in every word, and
+  costly: on a profile with no browser-strategy marker a failed re-login rolls the
+  marker back and starts the #791 loop. Each site now states what was actually
+  rejected — a non-JSON reply is named as an interstitial, a token-less session is
+  named as the flow.google.com shape, and a 401 after refresh names the route that
+  refused it.
+- **The migrated host no longer reports a model it never observed (#789).**
+  `model_name_type` echoed the requested `--model` back on `flow.google.com`, where
+  the `ogiZ0b` reply carries no model field at all. `recorder.py` persists that
+  value as `AssetRecord.model`, so the echo was read back by `gflow data` as though
+  Flow had confirmed it — and with a hidden model picker (#788) the model actually
+  selected can differ from the one requested, making the echo wrong on the single
+  field a user would check to find out. It is now `null` on that host, and typed
+  `str | None`. On `labs.google` it is unchanged: Flow's own value, from Flow's own
+  reply.
+  ([#865](https://github.com/ffroliva/gflow-cli/issues/865),
+  [#871](https://github.com/ffroliva/gflow-cli/issues/871))
+
+- **`gflow data download` refuses an image immediately instead of blaming the project,
+  the trash and your prompt (#877).** Recovery is video-only: the signed URL comes from
+  the `as29s` record Flow emits when a clip's own route loads, and an image's route does
+  not carry one. The command accepted an image media id anyway, launched Chrome, waited
+  45 s, and then produced three guesses — wrong project, clip in trash, *"retry with a
+  simpler prompt text"* — for a condition the catalog row states outright, on a command
+  that has no prompt. It now checks `kind` before anything else and exits 11 saying
+  recovery is video-only. The CLI help, the `gflow_download_media` MCP description and
+  `docs/USAGE.md` all said "asset"; they now say video. The timeout message that remains
+  for a genuine video miss drops the inherited generation-payload remediation and
+  describes what to actually check.
+
+## [0.78.0] — 2026-09-17
+
+### Added
+
+- **`--aspect 3:4` images now run on `flow.google.com`.** Flow's image settings there
+  render a fifth aspect radio (`3:4`) that the 2026-09-08 enumeration did not see, so gflow
+  refused it with exit 36. All five image aspects are now driven on both hosts.
+  ([#864](https://github.com/ffroliva/gflow-cli/issues/864))
+
+- **`gflow docs` — the documentation, reachable from the terminal.** 126 pages in `docs/`
+  and nothing in the CLI pointed at any of them, so at the moment of use the knowledge was
+  unreachable and the reader guessed. `gflow docs` lists the topics, `gflow docs <topic>`
+  prints one as raw Markdown (it pipes), and `gflow docs --search <term>` returns the
+  matching lines with `docs/FILE.md:LINE` beside each one. Read-only and offline — no
+  network, no account, no credits.
+
+  **The pages now ship inside the wheel** (`gflow_cli/_docs`; 1.3 MB of Markdown, **+0.58 MB
+  compressed** — the wheel goes 0.74 MB → 1.32 MB), because the user this was filed for
+  installed from PyPI and has no checkout; a command that could only print GitHub links
+  would not solve it. A build hook globs `docs/*.md`, so the topic list cannot drift and
+  `assets/`/`superpowers/` stay out — measured, after `force-include` + `exclude` silently
+  shipped 148 files it was told to exclude. The hook **refuses to build** when it finds no
+  pages: `Path.glob` on a missing directory returns empty, and `release.yml` is `uv build`
+  then publish, with nothing in between that would notice a wheel whose `gflow docs` is
+  empty for every user.
+
+  Search returns a **line, windowed**, not a file name: the rule that prompted this issue
+  lives inside a 4 000-character bullet in `MCP.md`, and answering "it is in MCP.md" leaves
+  the reader where they started. Curated `INDEX.md` § Topic shortcuts rank above raw body
+  text, all query terms must appear on the line, and a vague query reports how many hits it
+  held back instead of quietly truncating. A topic resolves from its slug, its file name,
+  either case or an unambiguous prefix — and never by building a path from what was typed,
+  so `gflow docs ../../etc/passwd` is an ordinary unknown-topic refusal.
+
+  No MCP twin, deliberately (`gflow update` is the precedent); the reasoning is recorded in
+  `cli_docs.py` rather than left implicit.
+  ([#861](https://github.com/ffroliva/gflow-cli/issues/861))
+
+- **`gflow video i2v --end-frame <local file>` now runs on `flow.google.com`.** Start+end
+  frame interpolation was the last i2v form the migrated composer refused: it exited 36
+  ("an end frame is not ported yet") on every account Flow has moved. Both frames are now
+  uploaded through the editor's own Upload entry and bound to the Start and End chips, and
+  the driver reads back two bound chips before it lets the app submit.
+
+  A bound end frame switches Flow to a different submit contract — rpc `nprQif`, an
+  interpolation model key, and both media ids in the body — which is why watching only the
+  classic submit rpcs made every start+end run time out *after* Flow had already accepted
+  the submit and billed it. The submit body is asserted before Flow acts on it, so a frame
+  that silently failed to bind is a refusal rather than a wrong generation you paid for.
+
+  The model key is **cohort-dependent** and matched by shape, not by literal:
+  `veo_3_1_interpolation_lite` and `omni_flash_i2v_8s_first_last` have both been captured
+  on live accounts (the second on 2026-09-17, see
+  `docs/superpowers/spikes/2026-09-17-migrated-end-frame-submit-contract.md`). Frames given
+  by media UUID or `@Name` are still not ported.
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639))
+- Migrated image submits prove the composer before any network observer arms:
+  cookie-bar dismissal, blocking-overlay refusal, and submit pointer hit-test,
+  each raising typed `UiSelectorDriftError` with bounded redacted diagnostics
+  instead of bare Playwright timeouts.
+
+### Fixed
+
+- **The Frames picker could not bind the frame it had just uploaded.** On
+  `flow.google.com`, `video i2v` matched a picker option with an *anchored* regex
+  (`^\s*<name>\s*$`), but a picker tile is a `mat-icon` ligature followed by the file
+  name and a locator reads both nodes as one string — `imageshero-ab12cd34.png` for an
+  asset named `hero-ab12cd34.png`. The anchors could never hold, so every i2v run on this
+  cohort ended in exit 32, *"the frame picker lists no asset named …"*, while the picker
+  had been listing it the whole time. The match is now containment on the display name,
+  which is run-unique by construction ([#792](https://github.com/ffroliva/gflow-cli/issues/792))
+  and therefore still cannot bind a stale copy of the same file. Covered by a new $0
+  route-intercepted e2e (`tests/features/frame_picker_binding.feature`) that renders the
+  icon node for real — a mocked picker passes against the bug.
+  ([#860](https://github.com/ffroliva/gflow-cli/issues/860))
+
+- **Flow's promo modal blocked the first click on a freshly loaded editor.** On
+  `flow.google.com` a `role="dialog"` panel over a new editor made `image t2i` fail as
+  exit 23 — *".settings-trigger-button did not accept a click within 5000 ms — it is
+  covered by div.cdk-overlay-backdrop"* — telling the user to file a selector-drift bug
+  when one click on the page fixes it permanently.
+
+  `_dismiss_dialog` already existed and its selector already matched. It was called at
+  the one moment it could not see anything: one frame after `domcontentloaded`, before
+  Angular has rendered the modal. That is why a blocked run logged **neither**
+  `migrated.dialog_dismissed` nor `migrated.dialog_not_dismissed` — the silence in the
+  incident's event stream was the evidence, not the absence of it. The dismissal now
+  also runs in `_open_pane`, where the image and video paths take their first click, the
+  same place the `glue` consent bar is already cleared. It stays best-effort: a modal
+  that refuses to go still falls through to the click post-mortem, which names the
+  backdrop, rather than becoming a second competing error path.
+  ([#859](https://github.com/ffroliva/gflow-cli/issues/859))
+
+- **The migrated `--end-frame` lane rejected omni's interpolation key.** The start+end
+  submit validator pinned the model key to `veo_3_1_interpolation_lite`, so
+  `omni_flash_i2v_*_first_last` submits — what the second measured cohort actually sends —
+  were refused as wire-format errors before Flow could act on them. The check is now
+  key-shape based: a submit whose model key contains `interpolation` or `first_last`
+  counts as start+end interpolation for any model, and the submit observer accepts the
+  bare `batchexecute` reply (no `rpcids` param) that the interpolation rpc answers on.
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639))
+- **Generating without a project works again on accounts Flow serves from
+  `flow.google.com`, and it no longer tells you to log in.** Every run without `--project`
+  (CLI) or `project` (MCP) starts by creating a project through labs.google's
+  `project.createProject`. Google has retired that route: it answers *"Flow RPCs have been
+  deprecated and disabled"* (404), or 401 for a session holding no labs token — measured
+  12/12 on four profiles. gflow reported the 401 as *"Authentication expired — run `gflow
+  auth login`"*, which no login could fix. When that route refuses, gflow now creates the
+  project on flow.google.com's projects page and reads the new id and title from Flow's own
+  reply; `gflow project create` and `gflow project rename` work there the same way.
+  `GFLOW_CLI_FLOW_HOST=labs.google` keeps the labs route and its error. Video runs without a
+  project now get it created up front, like images, so they route exactly as if you had
+  passed `--project`; MCP `gflow_generate_video` also honours `project_name`, which it
+  accepted and then ignored. Thanks to @iceblue03 (#863) and @ChandraLiuswanto (#561) for
+  the reports. ([#864](https://github.com/ffroliva/gflow-cli/issues/864),
+  [#561](https://github.com/ffroliva/gflow-cli/issues/561))
+- **An MCP server no longer fails a call because another call holds the profile.** Two
+  calls on one profile inside one server — a client retry, two agents sharing a server —
+  now run one after the other instead of the second failing with `ProfileLockedError`, and
+  a profile held by another process (a CLI run) is waited out for up to 180 s. A
+  `GFLOW_CLI_LEASE_WAIT_SECONDS` you set yourself, in the environment or a `.env`, still
+  wins. The CLI keeps failing fast. Thanks to @iceblue03 (#862).
+  ([#864](https://github.com/ffroliva/gflow-cli/issues/864))
+- Image requests that the migrated composer serves, with a named project,
+  from a pre-navigation page prefer the migrated host on `auto`, so the
+  page-owned recaptcha path wins the post-goto handoff race instead of a
+  doomed pre-navigation mint (#692). Labs editors, unported forms, and
+  project-less runs keep the served host (and their pre-minted token); the
+  `labs.google` kill-switch behavior is unchanged.
+
+## [0.77.1] — 2026-09-17
+
+### Fixed
+
+- **A clean Windows install could not run a single command.** `configure_logging`
+  renders TEXT logs with `structlog.dev.ConsoleRenderer(colors=True)`, and structlog's
+  Windows `_init_terminal` raises `SystemError` outright when `colorama` is missing —
+  but `colorama` was never declared, and nothing in the runtime closure supplies it
+  (structlog keeps it an optional extra; rich ships its own Windows console handling).
+  Because the call sits in the Click *group* callback it runs before any subcommand
+  body, so every interactive command on a fresh Windows install aborted with a
+  traceback that named structlog and never gflow — the failure read as a broken
+  install rather than an incomplete one, and it made the README's Windows quick-start
+  fail as written. Piping stderr happened to escape it, since `AUTO` then resolves to
+  the JSON renderer, which is why non-interactive use and CI never saw it.
+
+  The only `colorama` edge in `uv.lock` came from **pytest**, a dev dependency — so
+  every developer machine had it transitively and no gate could see the gap.
+  `colorama` is now a declared `sys_platform == "win32"` runtime dependency, and
+  `tests/test_observability.py` fails if it is dropped again. Reproduced and verified
+  on a clean Python 3.13 venv: the same `gflow doctor` invocation that raised
+  `SystemError` before now runs to completion, on both the CLI and the MCP stdio
+  server. ([#846](https://github.com/ffroliva/gflow-cli/issues/846))
+- **The address scan in the migrated-host session probe was quadratic.** It reads a
+  1.28 MB `myaccount.google.com` response, and `[\w.+-]+@…` retries from every start
+  position and rescans its run before failing to find an `@` — so an unbroken run of
+  characters that class accepts cost O(n²). Measured: 5 000 chars 0.12 s, 10 000 0.48 s,
+  20 000 2.00 s, **40 000 12.07 s**. The class covers the entire URL-safe base64 alphabet,
+  which a Google page is full of, and the scan runs synchronously inside an `async def`,
+  so a stall blocks the event loop and cancellation cannot land until it returns.
+
+  Anchoring on the literal `@` (which lets CPython's `re` use its literal-prefix fast
+  search) and reading the local part backwards over a bounded 64-character window — the
+  RFC 5321 cap — makes the work proportional to the number of `@` in the document. Same
+  output for every address shape, including the Workspace and custom domains that #791
+  turned on: 40 000 chars now scan in under a millisecond, and 440 000 base64-shaped ones
+  in 0.2 ms. ([#852](https://github.com/ffroliva/gflow-cli/issues/852))
+- **The sign-in window never closed for an account Google serves from `flow.google.com`.**
+  `gflow auth login --browser chrome` watches the `labs.google` session endpoint to know
+  when to close Chrome — and for a migrated account labs hands off without ever minting a
+  session, so the one oracle the detector had could not answer. The window stayed open for
+  the full 600 s while the banner promised gflow would close it, and the timeout then
+  propagated *past* verification, so a sign-in that had completed perfectly was discarded
+  unread and the user got exit 12 for a login that worked. It is the first thing a new user
+  on a migrated account meets. v0.77.0 fixed the *verification* for these accounts, which
+  made the outcome correct only for users who closed the window themselves.
+
+  Two changes, and neither of them moves the authentication decision into a cookie. gflow
+  now also stops waiting when the jar carries both halves of a migrated session (the
+  `.google.com` SSO cookie **and** the `flow.google.com` app-session cookie) — that ends a
+  wait which had no other way to end; `verify_flow_profile` still asks a server about what
+  landed on disk, and is still the only thing that can call a login successful. And a
+  timeout no longer discards the profile unread: gflow reads it before failing, reports a
+  sign-in the detector missed as the success it is, and otherwise keeps the timeout's own
+  wording. A caller with no on-disk oracle to fall back on (`--browser internal`) keeps
+  waiting exactly as before. ([#849](https://github.com/ffroliva/gflow-cli/issues/849))
+- **`gflow update` could report a version for an install that no longer starts.** A package
+  manager replaces files in place, so an interrupted upgrade leaves a venv whose *metadata*
+  reads perfectly and whose *imports* are dead. `gflow update` only ever re-read the version,
+  so it called that state *"still 0.69.0"* and sent the user to a plain `uv tool upgrade` —
+  which cannot repair it, because it reads the same intact metadata, finds it current and
+  changes nothing. Measured on Windows: an aborted native-dependency swap left every command
+  dying on `AttributeError: module 'greenlet' has no attribute 'greenlet'`, and only
+  `uv tool install "gflow-cli==<version>" --force --reinstall` completed.
+
+  After the manager runs, `gflow update` now imports gflow-cli in a fresh isolated
+  interpreter *before* it looks at any version, and a failed import is reported as an
+  unusable install (exit 11) quoting that interpreter's own last line, with the forced
+  reinstall as the remediation. The probe is isolated (`-I`) so a `gflow_cli` directory in
+  the caller's working directory cannot answer on the venv's behalf, and a probe that could
+  not run at all is never reported as breakage.
+  ([#848](https://github.com/ffroliva/gflow-cli/issues/848))
+
+## [0.77.0] — 2026-09-16
+
+### Fixed
+
+- **Accounts Flow moved to `flow.google.com` could not sign in at all.** Verification used
+  exactly one oracle — `labs.google/fx/api/auth/session` — which answers `200 {}` forever for
+  a migrated account, so a perfectly usable Flow workspace reported *"Signed in to Google, but
+  not to the Flow app"* and gflow refused every command. A total lockout, not a degraded
+  feature. When labs declines **and** the profile carries a `flow.google.com` app-session
+  cookie, gflow now confirms the session against the host that actually serves the app.
+
+  The cookie only **gates** that check; it never decides one. A cookie on disk outlives a
+  password change or a "sign out of all devices", so the decision is where the request lands:
+  a revoked session is redirected off `myaccount.google.com`, which is server-attested in a
+  way page content is not. The account's address is a display label only, so a page reshape
+  cannot cost a user their login.
+
+  **Google Workspace accounts are covered.** An earlier revision gated authentication on an
+  `@gmail.com`-only pattern, which silently declined every custom domain — `dev@axelate.io`,
+  `user@mycompany.com`, even `user@googlemail.com` — leaving this bug open for them while
+  appearing fixed. `docs/AUTHENTICATION.md` documents Workspace SSO as supported.
+  Live-verified on a Workspace account: `AUTHENTICATED`, correct address, 2/2.
+
+  **This also prevents a profile downgrade.** A failed verification rolled the Chrome marker
+  back, flipping `channel_for_profile` from `chrome` to `None` and silently demoting
+  generation to bundled Chromium on a profile created with `--browser chrome`. The rollback is
+  gated on `not verified`, so a verification that now succeeds never triggers it. Measured
+  before and after on the same profile, same cookies: exit 8 / marker gone -> exit 0 / marker
+  intact. ([#791](https://github.com/ffroliva/gflow-cli/issues/791),
+  [#796](https://github.com/ffroliva/gflow-cli/issues/796))
+- **Three lists of "the release version sites" disagreed, and one lived inside the gate that
+  catches the disagreement.** `check_repo_hygiene.py`'s docstring said three files, its own
+  `_check_version_agreement` checked five (six occurrences), and `skills/release/SKILL.md`
+  named a fourth set omitting `server.json` and `uv.lock` — so a release engineer met each
+  omission as a gate failure at the point of highest pressure. There are in fact **seven
+  sites across three separate gates**, and no list knew them all; coverage was complete, but
+  discoverability was not. The skill now carries the one canonical table, its staging step
+  stages all seven, and `tests/test_release_version_sites.py` **parses** that table rather
+  than restating it — a constant would have been the fourth disagreeing copy.
+  ([#839](https://github.com/ffroliva/gflow-cli/issues/839))
+
+### Changed
+
+- **`wait_until="networkidle"` on the `ui_automation` bootstrap is documented, not removed.**
+  [#836](https://github.com/ffroliva/gflow-cli/issues/836) proposed dropping it, on the theory
+  that a held-open connection made it burn the full 45 s ceiling. Measured on a live profile,
+  5 navigations per arm: it fires every time and reached the ceiling **0/5**, so there is no
+  hang — but it costs **3422 ms mean against 1022 ms** for the prescribed pattern, with 4x the
+  spread. Removing it turned the #580/#584 navigation ratchet red: both call sites are in that
+  test's exemption set by name, because `goto(domcontentloaded)` returns 591–797 ms *before*
+  Flow's locale redirect lands and `networkidle` is what absorbs it. The issue read two call
+  sites with different constraints as one contradiction. The measurement and the probe ship so
+  the next reader finds them instead of re-deriving this.
+
+- **The MCP Registry publish never ran — not once, on any release that shipped with it.**
+  `mcp-registry.yml` triggered on `release: published`, but `release.yml` creates the Release
+  with the default `GITHUB_TOKEN`, and GitHub starts no workflow runs from
+  `GITHUB_TOKEN`-created events. Measured on v0.76.0: a real Release published
+  (`draft=false`, `prerelease=false`), the workflow file on the default branch, and
+  `gh run list --workflow=mcp-registry.yml` returning **zero runs, ever**. The trigger was
+  structurally dead rather than mistimed, so it would not have begun working at the next
+  release. `release.yml` now **calls** the workflow (`uses:` + `needs: build-and-publish`)
+  instead of relying on an event, so there is nothing for the token rule to block. A
+  user-owned PAT on the Release step was the alternative and was rejected on maintenance
+  grounds: fine-grained tokens expire after at most 366 days, which puts a scheduled failure
+  on a path that runs a handful of times a year. `needs:` also enforces the ordering
+  `mcp-publisher` requires — it reads the `mcp-name:` token from the *published* PyPI README —
+  which previously rested on two files agreeing about step order. Registry authentication is
+  unchanged: GitHub Actions OIDC, with no token stored for or handed to the registry.
+  ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+- **A manual registry dispatch could publish a superseded version, green, with nothing
+  noticing.** A dispatch publishes whatever `server.json` says *on the dispatched ref*.
+  Dispatching `develop` after the v0.76.0 tag but before the back-merge landed republished
+  `0.75.0` to the registry, and the run succeeded. Both triggers now take a required `version`
+  input, asserted against every version field in `server.json`, and fail the run on a
+  mismatch instead of publishing. ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+- **A pre-release would have become the MCP Registry's *active* listing.** `release.yml` fires
+  on every `v*.*.*` tag, including `v1.2.3rc1`, and that listing is what PulseMCP and GitHub's
+  MCP gallery ingest. While the publish was dead this was latent; repairing it would have
+  armed it. The call is now skipped for pre-releases, and the workflow refuses a pre-release
+  version outright if one reaches it by hand. The prerelease classification has a single
+  definition shared by the GitHub Release flag and the registry gate, rather than two copies
+  of the same expression that would drift. Found by council review, not in production.
+  ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+
+## [0.76.0] — 2026-09-16
+
+### Fixed
+
+- **The containerised sign-in now works on Windows, and no longer points at a service that
+  does not exist.** `docker/docker-compose.yml` hard-coded the X11 socket at
+  `/tmp/.X11-unix` and told non-Linux users to "use the VNC service below instead" — there
+  is no VNC service; the file defines `login`, `gflow` and `serve`. On Windows 11 + WSL2 the
+  display is real but lives elsewhere: WSLg publishes a live `X0` socket at
+  `/mnt/wslg/.X11-unix` with `DISPLAY=:0`, while `/tmp/.X11-unix` inside that distro is an
+  empty directory, so the default mounted nothing and Chrome exited against a display that
+  was not there. The mount is now `${X11_SOCKET:-/tmp/.X11-unix}`, unchanged for Linux, and
+  `docker/README.md` documents the WSL invocation plus the two prerequisites that actually
+  bite (run it from inside WSL, and enable Docker's WSL integration for that distro).
+- **The container image no longer silently installs a stale gflow.** `docker/Dockerfile`
+  hardcoded `pip install gflow-cli==0.75.0` with nothing tying it to `pyproject.toml`, so
+  the next release would have left the image on the old version while
+  `docker/README.md`'s verification table went on quoting the new one. The version is now
+  an `ARG` gated by `tests/test_dockerfile_version_pin.py`. That gate also asserts the
+  ARG's **position**: declared above the Chrome layer it would invalidate ~1.6 GB of apt
+  cache on every version bump, so the ordering is a cache contract, not style. The base
+  image is now tracked by Dependabot (`docker` ecosystem); Chrome stays unpinned, with the
+  reason and the refresh command written down rather than left implicit.
+- **An account with no Flow access was told gflow's selectors had drifted, and asked to
+  file a frontend bug.** Google Flow needs an age-verified account in a supported region
+  on a Google AI Plus, Pro or Ultra plan (or a qualifying Workspace plan). An account
+  without one is served Flow's own "you don't have access" screen instead of the app, and
+  gflow had no route for that state, so the editor sweep reported the only thing it could
+  see: the settings trigger never appeared. Measured on a newly created free Google
+  account, 2026-09-15, as an **A/B through the same command** — the probe neutered, then
+  restored, on live Flow:
+
+  | | exit | class | what the user is told |
+  |---|---|---|---|
+  | before | 23 | `UiSelectorDriftError` | *"Google may have updated their frontend … file a bug at github.com/ffroliva/gflow-cli/issues"* — on `https://flow.google.com/unavailable`, after a 30 s wait, **with an incident bundle containing a screenshot of the account's own page** for the user to attach |
+  | after | 39 | `FlowAccessUnavailableError` | *"This Google account cannot reach Flow"*, naming the subscription and linking Google's eligibility page |
+
+  The guard goes in `raise_if_known_landing()`, already the single chokepoint for "we
+  landed somewhere unexpected" and shared by all three raise sites (the labs gallery
+  sweep, the labs prompt-box sweep, and the migrated composer's `ensure_editor`), so every
+  command that drives the Flow editor is covered by the one change. It now probes the DOM
+  before it reads the URL. Verified live at $0 on that account: `ui_driver.known_landing
+  kind=unavailable at=migrated.ensure_editor`, exit 39, nothing submitted.
+
+  Detection is by Angular component, not by path or status code, because the spike
+  ([`2026-09-15-unentitled-account-signal`](docs/superpowers/spikes/2026-09-15-unentitled-account-signal.md))
+  pre-registered four candidate signals and refuted all four. There is no entitlement field
+  on the session wire; `flow.google.com/` answers **HTTP 200** and performs the hop
+  client-side, so there is no 3xx to key on; and the path is not stable — `/unavailable`
+  and `/u/8/unavailable` were both observed, the second carrying Google's account-index
+  segment, which gflow does not parse anywhere. What is stable is Flow's own
+  `<flow-pinhole-unavailable-screen>`, rendered inside `aisandbox-root`, and unlike the
+  screen's prose it is locale-invariant by construction (AGENTS.md Tier 1). The probe is
+  total: a page that cannot be queried, or a locator that raises, reports "not seen" rather
+  than displacing the caller's own diagnosis.
+
+  **What this does not fix, and why — measured, not assumed.** The same account run
+  *without* `--project` never reaches the editor at all: it takes the labs REST arm and
+  dies at `labs.google/fx/api/trpc/project.createProject` with **HTTP 401**, which is still
+  reported as `AuthExpiredError` (exit 3) telling the user to log in again. `gflow auth
+  login` (exit 8) and `gflow auth status` (exit 1) are wrong in the same way. All three read
+  an oracle that cannot answer the question: `labs.google/fx/api/auth/session` returns 200
+  with an empty `user` for an abandoned sign-in *and* for an account with no entitlement,
+  and a REST 401 looks identical to an expired session. The discriminator exists only in
+  the DOM, and on the login path Chrome has already closed by the time the verdict runs, so
+  there is no page left to ask. Routing those means a browser probe on the auth path — a
+  separate change, on a surface `AGENTS.md` gates behind its own spike. (`gflow credits
+  user` exit 3 on that account is [#795](https://github.com/ffroliva/gflow-cli/issues/795),
+  a different real bug. `gflow project list` returning `{"projects": [], "total": 0}` was
+  never wrong — it lists the local SQLite catalog and never contacts Flow.)
+
+- **An MCP agent's `project_name` is finally used.** `gflow_generate_image` and
+  `gflow_generate_video` accept a `project_name` and document it as the title for a freshly
+  created Flow project, but the worker read a different key (`project_title`) that nothing in
+  the repository has ever written. Every supplied name was silently dropped and each new
+  project was created as the hardcoded fallback `gflow-cli images` instead. Dead since the
+  parameter shipped on 2026-07-26 — the daemon's read predated it by four days, and the
+  feature wired up a new key rather than the one already being read. The CLI was unaffected.
+
+### Added
+
+- **The Official MCP Registry listing now publishes itself.** A new `MCP Registry` workflow runs
+  on `release: published` — after `release.yml` has uploaded the wheel, which matters because
+  `mcp-publisher` proves namespace ownership by reading the `mcp-name:` token out of the
+  *published* PyPI README. It authenticates with **GitHub Actions OIDC**, so no personal access
+  token is created, stored or handed to the registry, and the `mcp-publisher` download is pinned
+  by version *and* sha256 since that job holds `id-token: write`. `workflow_dispatch` is there
+  for a re-run when a release's PyPI upload succeeded but the registry publish did not. Registry
+  listings feed the downstream directories: PulseMCP ingests it and GitHub's MCP gallery is built
+  on it.
+- **A gate for the MCP→worker payload-key round trip (#628).** `tests/mcp/test_cli_parity.py`
+  checks parity at the command and option level; neither can see the queue payload, where a
+  key written under one name and read under another type-checks, lints, passes every test and
+  does nothing at runtime. The new `tests/mcp/test_payload_key_round_trip.py` extracts the keys
+  `mcp/tools.py` writes and the keys anything under `worker/` reads, and fails on any written
+  key the worker never reads. It found the `project_name` defect above on its first run. The
+  extractors carry their own tests against synthetic sources, so the gate is proven able to go
+  red rather than merely observed green (precedent: a dead `output` param the queue never read,
+  found by hand in a v0.48.0 pre-release audit, #495).
+
+## [0.75.0] — 2026-09-15
+
+### Added
+
+- **Installable as a Claude Code plugin.** `/plugin marketplace add ffroliva/gflow-cli` then
+  `/plugin install gflow@gflow-cli` installs the `gflow-cli` and `video-production` skills and
+  registers the MCP server in one step. The plugin ships **disabled**: Claude Code starts a
+  plugin's MCP servers automatically on enable with no prompt of its own, and this one drives your
+  own Google account where video generation bills your credits, so enabling it is a deliberate act.
+  For a hard guarantee, register the server yourself with `gflow mcp run --no-spend`.
+- **`docs/DISTRIBUTION.md`** — an operational catalog of every channel people install or discover
+  gflow-cli through: audience, how to submit, requirements, status and a last-verified date per
+  row. Every row was checked live. It also records the channels that listed us without being asked
+  (MCP Market, skills.sh with 21 installs, two auto-generated catalogs) and the ones we are not
+  eligible for, with the reason.
+- **Listed on [cursor.directory](https://cursor.directory/plugins/gflow-cli)**, and submitted to
+  seven more channels: Glama, mcpservers.org, and PRs or issues on `punkpeye/awesome-mcp-servers`,
+  `ComposioHQ/awesome-claude-skills`, `hesreallyhim/awesome-claude-code`,
+  `travisvn/awesome-claude-skills` and `Arnon-hs/open-source`. `DISTRIBUTION.md` carries the
+  status and reference for each, and — equally deliberately — why four channels are closed to a
+  local-stdio server that spends the user's own credits, including a section on why there is no
+  hosted "connector" and what one would actually cost.
+- **`server.json`** — metadata for the official MCP Registry, with `tests/test_server_json.py`
+  pinning version lockstep, the schema's 100-character description cap, the name pattern, the
+  `mcp-name:` ownership token in the README, and that the command it advertises really exists.
+- **A `gflow-cli` console script.** `uvx gflow-cli mcp run` previously failed with uv's own
+  *"Use `uvx --from gflow-cli <EXECUTABLE-NAME>` instead"*, because the console scripts were named
+  `gflow` and `flow`. The MCP Registry builds exactly that `uvx <identifier>` command from the
+  PyPI identifier and has no field for a differing executable name, so a listing would have been
+  broken on arrival.
+
+### Changed
+
+- **PyPI metadata.** The summary described only image-to-video and never mentioned MCP; it now
+  says what the package is. Added `Documentation`, `Repository` and `Changelog` sidebar links,
+  ten trove classifiers (all checked against the official list) and MCP-related keywords.
+- **Dropped "unofficial" as a label** from the PyPI summary, `README.md`, `index.html`, the docs
+  site, `llms.txt`, `ROADMAP.md`, `DISCLAIMER.md`, `AGENTS.md`, `CLAUDE.md`,
+  `skills/gflow-cli/SKILL.md` and `src/gflow_cli/__init__.py`. The substance is unchanged and
+  still prominent: the README warning block reads "alpha and reverse-engineered — not affiliated
+  with Google", and `DISCLAIMER.md` still opens "not affiliated with, endorsed by, sponsored by,
+  or otherwise connected to Google LLC" — only the word "unofficial" left its first sentence.
+  It was leading with a negative in the one line PyPI shows in search results.
+
+### Fixed
+
+- **The Codex and ChatGPT-desktop plugin manifests shipped every skill in `skills/`**, including
+  maintainer-only ones (`release`, `check`, `pr-council-review`, `sonar`, `doc-review`). All three
+  channels now point at the same curated two-skill payload under `plugins/gflow/`, generated from
+  `skills/` by `scripts/ci/generate_plugin_skills.py` with a `--check` drift gate in CI.
+
+- **Remediation hints naming an extra rendered without the extra.** Rich reads `[chain]` in an
+  interpolated value as a style tag and silently drops it, so `pip install 'gflow-cli[chain]'`
+  printed as `pip install 'gflow-cli'` — advice that reinstalls what you already have. The same
+  applied to `gflow-cli[patchright]`. Only brackets whose first character is `[a-z#/@]` are
+  affected, which is exactly the shape of a package extra. Every site that renders error text
+  through Rich now escapes it, and `tests/test_rich_markup_safety.py` fails the build if a new one
+  appears. `--json` was never affected.
+
+- **`gflow video chain` was unusable on a clean `gflow-cli[chain]` install (#813).** The extra
+  installed `av` but not Pillow, while `media.py` imports `PIL` at module level — so
+  `uvx --from 'gflow-cli[chain]==0.74.0' gflow video chain one.jsonl --dry-run` died on
+  `No module named 'PIL'`, surfaced as a generic exit `1` *"Unexpected error… file a bug"*,
+  immediately after the user installed the documented extra. `pillow>=12.3.0` now ships in the
+  `chain` extra alongside `av`.
+- **A missing `av` used to fail only AFTER a paid clip.** `import av` sat inside
+  `media._decode_frame`, which runs between links — so the missing extra surfaced once link 0
+  had already been generated and billed. It is now a module-level import beside `PIL`, and the
+  import block at the top of `video chain` is guarded: either missing package is a typed
+  `FrameExtractionError` (exit `20`) raised *before* the manifest is read, before `--dry-run`
+  prints a plan, and before the cost prompt. Nothing is submitted and no browser is launched.
+  `FrameExtractionError`'s remediation now names the extra **and both** packages (`av`,
+  `pillow`); it previously said only "PyAV", which left a missing Pillow undiagnosable.
+- **Error text containing `[...]` was silently truncated on the console.** `detail` and
+  `remediation_hint` were interpolated into Rich markup unescaped, so Rich read `[chain]` as an
+  unknown style tag and dropped it — turning every `install gflow-cli[chain]` hint into
+  `install gflow-cli`, advice that reinstalls what the user already has. Both error render
+  paths now escape. `--json` was never affected.
+### Security
+
+- **`gflow serve` now requires the configured daemon token on every HTTP request.**
+  `GFLOW_CLI_DAEMON_TOKEN` / `GFLOW_DAEMON_TOKEN` previously gated startup only. It is now verified
+  on every request, on both the Streamable HTTP and the deprecated SSE transport, with a
+  constant-time comparison; a missing, malformed or wrong token gets `401` plus a
+  `WWW-Authenticate: Bearer` header and never reaches a tool. Set a token and upgrade if you run
+  `gflow serve` on anything other than the default loopback bind.
+
+## [0.74.0] — 2026-09-14
+
+### Added
+
+- **Sponsorship: a Support section, a sponsor hall of fame, and a Funding link on PyPI.** The
+  README gains one-click sponsor links; [docs/SPONSORS.md](docs/SPONSORS.md) lists the tiers and
+  what each one gets. `.github/workflows/sponsors.yml` refreshes the hall of fame daily from GitHub
+  Sponsors, plus a Gold row at the top of both pages, and only ever lists sponsors who chose to
+  sponsor publicly. No CLI or MCP behaviour
+  changes.
+
+### Changed
+
+- **On `flow.google.com`, an agent-only composer now exits `25` (`FlowAgentUiError`) where
+  it previously exited `23` (`UiSelectorDriftError`)** — and reports `retryable: false`
+  rather than inheriting that class's retryable default. Scripts branching on `23` for
+  this failure must add `25`. Nothing else moved: a trigger missing from the DOM is still
+  exit 23. See the `### Fixed` entry below for why
+  ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).
+
+### Fixed
+
+- **Migrated-host i2v: the Frames picker is confirmed when it does not commit on the
+  pick (#792).** On some cohorts Flow's Frames picker no longer closes when an asset is
+  clicked — it waits for its own "Add to prompt" confirm. gflow sat out
+  `FRAME_COMMIT_HIDDEN_S` waiting for an auto-close that never came and raised
+  `UiSelectorDriftError` with the asset already picked, so i2v dispatch failed before
+  submit (no credits spent). The picker is now given a short grace period and, if it is
+  still up, its confirm is clicked. Anchored on `button.detail-add-to-prompt-btn`, a
+  class measured on this exact surface — never on the translated label. Where the pick
+  already commits, nothing changes: a closing picker no longer carries the button.
+- **A re-run of the same start frame no longer binds a stale look-alike (#792).** The
+  Frames picker is searched by display name and an upload is listed under its file name,
+  so attaching the same keyframe twice left two identical library entries; the search
+  could bind the older one and the submit-body check then failed with `eb1hJf does not
+  carry the uploaded start frame`. What is uploaded is now a run-unique copy
+  (`<stem>-<8 hex>.<ext>`), so the search has exactly one match by construction and the
+  library's sort order is no longer trusted. **This applies to every local file this
+  driver uploads on the migrated host** — `video i2v --initial-frame`, `video r2v --ref`
+  and `image i2i --ref` alike, since all three find their upload again by display name.
+  Expect the tagged names when you browse the project's library on flow.google.com.
+
+  Reported, root-caused and verified end-to-end on the affected cohort by **@ai4U23**.
+
+- **`gflow credits` stopped sending migrated accounts to re-login, on the raise site they
+  actually hit (#795).** v0.73.2 fixed the message for a labs session that mints no token.
+  It did not help the cohort that gets a token and has aisandbox-pa reject it, and it could
+  not: the service caught its own accurate verdict and re-derived it through a browser,
+  which fails inside the shared, route-blind aisandbox retry helper and so reported
+  *"aisandbox-pa returned 401 after token refresh — SAPISID cookie missing, expired, or
+  unreadable. Re-run `gflow auth login`"*. Every word of that is wrong here: aisandbox-pa
+  answered, SAPISID is what let labs mint the token, and on a migrated account re-login can
+  roll the profile's strategy marker back and start #791.
+
+  The browser is no longer consulted once aisandbox-pa has **answered**: it asks the same
+  endpoint for the same Bearer and gets the same refusal. The other raise site — labs
+  answering with no token — keeps its browser rescue, because that one is not proven
+  unreachable: httpx sends labs.google cookies only, while the browser carries the full jar
+  and bootstraps a real navigation, which can renew a session httpx cannot. If that rescue
+  fails too, the fast path's diagnosis is what survives, not the route-blind default.
+
+  `gflow credits list` also reports the remediation per profile now. It rendered only the
+  class title, so the multi-profile surface — and `gflow_get_credits(all_profiles=true)`
+  with it — was the one place that still could not say why, or that re-login would not help.
+
+  Measured on a migrated profile: `gflow credits user` went from ~7 s to ~2 s with no
+  browser launch, and across 9 saved profiles `credits list` dropped from 9 Chrome launches
+  to 6 — the 3 on the aisandbox-401 cohort skip it, the rest keep their rescue. Applies to
+  the MCP twin `gflow_get_credits` identically: both doors share the service and the
+  envelope.
+
+  `credits` itself is still unavailable on migrated accounts; the balance surface for that
+  cohort has not been located. #795 stays open for it.
+
+- **The migrated agent-only composer is named before submit instead of reported as
+  selector drift (#799).** Google has put some accounts on a `flow.google.com` composer
+  that has **no classic arm at all** — the prompt box is the agent panel, and aspect,
+  model and count live in Agent settings as defaults rather than per-request controls.
+  gflow waited 30 s for a control that is structurally absent and raised
+  `UiSelectorDriftError` (exit 23), which reads as *our* frontend bug and invites a retry
+  that cannot work.
+
+  It now raises `FlowAgentUiError` — **exit 25, `retryable: false`** — naming the cohort
+  and saying plainly that no flag or profile change helps. The discriminator is the chip:
+  the DOM is identical to #749's recoverable agent mode (settings trigger present under a
+  bare `hidden`), and what separates them is that a recoverable account still has a
+  `button.agent-mode-chip` to turn off while this one has none. A trigger that has left
+  the DOM entirely is unchanged — that is a renamed selector, our bug, and still drift.
+
+  `retryable` moved from `FlowAppError` to the error base to make that possible — its own
+  comment set the condition, *"move it up if, and only if, a second class needs it"*, and
+  this is the second. No existing error's retryability changed.
+
+  Reported with the DOM evidence that made it diagnosable by **@Cstanish127**. gflow-cli
+  still has no driver for that composer; #799 stays open for it.
+## [0.73.2] — 2026-09-12
+
+### Fixed
+
+- **A missing browser-strategy marker no longer reports as a network problem (#796).**
+  The Playwright cookie reader refuses a profile whose `.gflow_browser_strategy` marker
+  is absent, and that `SecurityError` was flattened into `VERIFICATION_ERROR` — whose
+  guidance is "check network connectivity", for a file on the user's own disk. It is
+  also precisely the state a failed first login leaves behind, since that rolls the
+  marker back. A new `PROFILE_MARKER_MISSING` outcome carries its own message and the
+  remediation that actually works (`gflow auth login --browser chrome`), on the CLI and
+  on the MCP twin (HTTP 409, `retryable: false` — it is neither a network blip nor an
+  expired session).
+- **`gflow credits` no longer blames SAPISID for a host it never contacted (#795).** When
+  labs.google answers 200 with no `access_token` — the normal shape for an account Google
+  has migrated to `flow.google.com` — the failure was raised as "aisandbox-pa
+  authentication failed" with the remediation "SAPISID cookie missing, expired, or
+  unreadable". aisandbox-pa had not been contacted, and SAPISID was present and fine, so
+  the advice sent users into a re-login loop that cannot terminate on that cohort. The
+  remediation now names the real cause. `credits` itself remains labs-only on migrated
+  accounts — tracked in #795.
+- **Incident bundles from a `flow.google.com` failure are no longer blank (#792).** The
+  migrated composer parked its pooled page on `about:blank` in a bare `finally`, so on
+  the FAILURE path it navigated away *before* `FlowApiClient._capture_incident` read the
+  page — whose own contract is to stage the bundle "while the page is still alive".
+  Every migrated video and image failure therefore shipped `tag_counts.div = 0`, a white
+  screenshot and `host_category = "other"` beside a network journal that proved the app
+  was alive, which reads exactly like a lost browser tab and is unusable as evidence.
+  The park is deferred past the capture and drained at the **top of the next run**, before
+  the route decision reads `page.url` — which is where the invariant it protects (a stale
+  project URL must not route the next request) is actually consumed, and the only place
+  that also covers the `post_with_retry` path, where a retryable 5xx re-enters the
+  transport without passing the client's failure boundary at all. Cancellation still
+  attempts the park inline and latches, since no bundle is staged for it.
+  Note a failure bundle's `sensitive/screenshot.png` is now a real capture of the
+  logged-in page rather than a blank frame — the review-before-sharing posture in
+  SECURITY.md applies to it as it already did to every other screenshot.
+
+- **The `/about` landing's `retryable=False` is now a measurement, not a preserved
+  default.** A live occurrence was caught on a second account and the #756 stability
+  probe re-run unmodified: **5/5** attempts landed on `/about` over ~3 minutes, on the
+  account's own project, with a healthy session — so a retry is doomed and costs ~35 s
+  each. Four places that said the measurement *could not* be made are corrected — two
+  code comments, the exit-31 row in [USAGE](docs/USAGE.md) and the `retryable` note in
+  [MCP](docs/MCP.md); behaviour is unchanged. Still unmeasured: the cause, and whether
+  it ever clears.
+- **An auth-status test no longer depends on how wide the terminal is.** Several steps
+  assert a substring of Rich's output, which hard-wraps — so a temp path landing near
+  the wrap column split `experiments` into `profile_e` + `xperiments` and failed on
+  formatting rather than behaviour. Pinned at the shared `CliRunner` fixture, which is
+  the one chokepoint for every invoke in that file.
 
 ## [0.73.1] — 2026-09-11
 
@@ -1102,7 +1886,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-
 - **v0.66.1's migrated-origin fast-fail never fired on a real run
   ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** The guard read `page.url` once,
   at `get_ui_driver` entry — but `routes.project_editor_url` only ever builds a `labs.google`
@@ -1416,7 +2199,6 @@ completed exit 0, proving no regression. See
   `recaptchaToken` but not `sessionId`, which the extend request carries. Not a
   credential, but account-correlatable, and it would otherwise reach any logged
   request body or diagnostics bundle verbatim.
-
 
 - **The offline test suite could `git checkout develop` in the developer's own
   clone ([#605](https://github.com/ffroliva/gflow-cli/issues/605)).** git's
@@ -2057,7 +2839,6 @@ completed exit 0, proving no regression. See
 - **Remaining in-workflow package installs pinned (Scorecard Pinned-Dependencies).** The Pages build now installs MkDocs Material with `pip install --require-hashes` from a compiled `website/requirements.txt`; the PR-triage sandbox image (`Dockerfile.triage`) pins its Node base by digest and installs the Claude Code CLI via `npm ci` from a committed lockfile instead of a floating `npm install -g`; the CI dependency audit pins its `pip-audit` tool version (the non-gating weekly `deps-watch` job deliberately keeps a floating pip-audit — fresh advisory tooling is its purpose). New dependabot entries (uv / npm / docker) keep all three sets of pins fresh. The remaining deliberate won't-fix Scorecard alerts (SAST, Fuzzing, CII Best Practices) are dismissed on the repo with recorded reasons.
 - **OpenSSF Scorecard self-run.** A new SHA-pinned `scorecard.yml` workflow (weekly + on push to `develop`) runs the OpenSSF Scorecard supply-chain checks with `publish_results: true`, feeding the public API/badge and the repo Security tab — enabled deliberately after the permissions/pinning hardening so the first published score reflects the hardened state. The score surfaces as a badge in the README and on the website index page, with a docs/SECURITY.md section explaining what it measures; `release.yml`/`pages.yml` write scopes moved from workflow level to the jobs that need them.
 
-
 ## [0.56.0] — 2026-08-13
 
 ### Added
@@ -2150,10 +2931,6 @@ completed exit 0, proving no regression. See
 ### Fixed
 
 - **Fix video duration selector drift (#451).** Expanded duration control selector cascade to match modern Flow editor UI elements (`button`, `role='button'`, `role='option'`, `role='menuitem'`, `role='tab'`) while preserving fail-closed behavior on missing duration controls.
-
-
-
-
 
 ## [0.51.0] — 2026-08-05
 
@@ -3186,7 +3963,6 @@ completed exit 0, proving no regression. See
     daemon's cached settings instead of re-reading `.env` files live per task, so a
     mid-run edit to the home `.env` can no longer produce a task whose client config
     disagrees with the parameters the task derived from `get_settings()`.
-
 
 ## [0.24.0] — 2026-07-01
 
@@ -4446,8 +5222,6 @@ completed exit 0, proving no regression. See
 - `gflow auth login` now prints the launch strategy announcement before opening
   any browser window.
 
-
-
 > **Shell-friendly multi-prompt `t2i` + performance hardening.** This release 
 > promotes `gflow image t2i` to a variadic command that can consume multiple 
 > prompts from positional arguments, a line-delimited text file, or standard 
@@ -4876,7 +5650,16 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.79.1...HEAD
+[0.79.1]: https://github.com/ffroliva/gflow-cli/compare/v0.79.0...v0.79.1
+[0.79.0]: https://github.com/ffroliva/gflow-cli/compare/v0.78.0...v0.79.0
+[0.78.0]: https://github.com/ffroliva/gflow-cli/compare/v0.77.1...v0.78.0
+[0.77.1]: https://github.com/ffroliva/gflow-cli/compare/v0.77.0...v0.77.1
+[0.77.0]: https://github.com/ffroliva/gflow-cli/compare/v0.76.0...v0.77.0
+[0.76.0]: https://github.com/ffroliva/gflow-cli/compare/v0.75.0...v0.76.0
+[0.75.0]: https://github.com/ffroliva/gflow-cli/compare/v0.74.0...v0.75.0
+[0.74.0]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...v0.74.0
+[0.73.2]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...v0.73.2
 [0.73.1]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...v0.73.1
 [0.73.0]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/ffroliva/gflow-cli/compare/v0.71.1...v0.72.0

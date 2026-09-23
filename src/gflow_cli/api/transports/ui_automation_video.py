@@ -30,12 +30,16 @@ from gflow_cli.api._retry import parse_retry_after
 from gflow_cli.api.transports._common import (
     close_menu,
     count_visible,
+    expired_link_hint,
     extract_project_id,
     flow_host_kind,
     generation_error,
+    get_signed_media,
     migrated_route,
     offered_menu_labels,
+    raise_if_known_landing,
     raise_if_migrated,
+    recoverable_clip_hint,
 )
 from gflow_cli.api.transports.drivers.factory import AGENTIC_INDICATOR_SELECTORS
 from gflow_cli.api.video import (
@@ -54,6 +58,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.errors import (
     AuthExpiredError,
+    ConfigurationError,
     FlowAgentUiError,
     FlowAppError,
     FlowHostMigratedError,
@@ -908,8 +913,12 @@ class VideoGenerationMixin:
     _setup_done: bool
     _generate_lock: asyncio.Lock
     _out_dir: Path | None
+    _deferred_park_pending: bool
 
     if TYPE_CHECKING:
+
+        async def _park_composer_page(self, page: Any, *, event: str) -> None: ...
+        async def park_deferred_page(self) -> None: ...
 
         async def _enter_editor(
             self,
@@ -1246,8 +1255,26 @@ class VideoGenerationMixin:
         When the transport's ``_storage_uri`` is set the video is uploaded to
         the configured cloud backend; otherwise it is written to ``out_dir``.
         """
+        from urllib.parse import urlsplit  # noqa: PLC0415 - local to the raise path
+
+        from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415 - cycle
+            _is_allowed_download_host,  # pyright: ignore[reportPrivateUsage]
+        )
+
         url = routes.media_download_url(media_id)
-        resp = await page.request.get(url, max_redirects=5, timeout=180_000)
+        # Redirects are followed here, unlike the migrated download's `max_redirects=0`:
+        # this route IS a redirect (`getMediaUrlRedirect` 302s to signed GCS). The posture
+        # the migrated arm gets from refusing redirects is recovered below by checking
+        # where the chain actually landed, since the hop target is Flow's to choose and
+        # ours to verify.
+        resp = await get_signed_media(
+            page,
+            url,
+            media_id=media_id,
+            route="media.getMediaUrlRedirect",
+            max_redirects=5,
+            remediation=recoverable_clip_hint(media_id),
+        )
         if resp.status >= 400:
             raise WireFormatError(
                 detail=(
@@ -1255,6 +1282,15 @@ class VideoGenerationMixin:
                     f"via media.getMediaUrlRedirect"
                 ),
                 status=resp.status,
+                route="media.getMediaUrlRedirect",
+                remediation_hint=expired_link_hint(media_id),
+            )
+        if not _is_allowed_download_host(resp.url):
+            raise WireFormatError(
+                detail=(
+                    "video download: refusing bytes from "
+                    f"{urlsplit(resp.url).hostname!r} (not an allowed Google host)"
+                ),
                 route="media.getMediaUrlRedirect",
             )
         body = await resp.body()
@@ -1582,6 +1618,12 @@ class VideoGenerationMixin:
             MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
+            # Same gap as the image path: on the labs arm with --project, `_enter_editor`
+            # returned before any readiness gate, so this is the first place that can ask
+            # whether the account can reach Flow at all.
+            await raise_if_known_landing(
+                page, requested="the Flow editor", at="labs.switch_to_video_mode"
+            )
             raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="video")
         await trigger.click()
         await page.wait_for_timeout(800)
@@ -3965,6 +4007,14 @@ class VideoGenerationMixin:
         )
         from gflow_cli.config import get_settings  # noqa: PLC0415
 
+        # #792: a FAILED migrated run leaves this page on the project URL on
+        # purpose, so the incident bundle is captured from a live page instead of
+        # about:blank. Drain that deferred park HERE — before the route decision
+        # reads page.url, and before anything re-enters a still-mounted composer.
+        # This is also the retry path: generate_images runs inside
+        # post_with_retry, so a retryable 5xx never reaches the client's failure
+        # boundary and attempt 2 would otherwise resume on a dirty composer.
+        await self.park_deferred_page()
         flow_host = get_settings().flow_host
         prefer = migrated_can_serve(request, project_id)
         route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
@@ -3979,7 +4029,7 @@ class VideoGenerationMixin:
             raise_if_migrated(page, at="flow_host_kill_switch")
         if route == "migrated":
             try:
-                return await run_video(
+                result = await run_video(
                     page,
                     request,
                     project_id=project_id,
@@ -3988,15 +4038,41 @@ class VideoGenerationMixin:
                     download=download,
                     on_started=on_started,
                 )
-            finally:
-                # The pooled page would otherwise stay on flow.google.com/project/<id>,
-                # and the NEXT request on this client would be routed by that URL
-                # instead of by its own shape (an unmoved account's i2v → exit 36,
-                # or a silently reused project). Park it; the next run navigates.
-                try:
-                    await page.goto("about:blank", wait_until="commit", timeout=5_000)
-                except Exception as exc:  # noqa: BLE001 - parking is best-effort
-                    log.warning("migrated.page_park_failed", error=str(exc)[:120])
+            except Exception:
+                # #792: do NOT park here. The bundle is staged from THIS page by
+                # FlowApiClient._capture_incident ("while the page is still
+                # alive"); parking first handed the triager an about:blank DOM and
+                # a white screenshot. Deferred to park_deferred_page().
+                self._deferred_park_pending = True
+                raise
+            except BaseException:
+                # Cancellation/KeyboardInterrupt: no bundle is staged for these, so
+                # nothing is waiting on the page. Attempt the park inline -- but a
+                # re-delivered cancel can pre-empt it at the `goto` await, and
+                # `except Exception` cannot catch that. The next run's drain is the
+                # guarantee; this is the courtesy.
+                self._deferred_park_pending = True
+                await self._park_composer_page(page, event="migrated.page_park_failed")
+                raise
+            # The pooled page would otherwise stay on flow.google.com/project/<id>,
+            # and the NEXT request on this client would be routed by that URL
+            # instead of by its own shape (an unmoved account's i2v → exit 36,
+            # or a silently reused project). Park it; the next run navigates.
+            await self._park_composer_page(page, event="migrated.page_park_failed")
+            return result
+
+        if request.resolution is not None:
+            # #787 drives the resolution radio on flow.google.com only. This driver has no
+            # resolution step, so honouring the flag here would mean silently billing
+            # Flow's default for a user who asked for something else. Refused here, on the
+            # labs route only (the migrated one returned above), before any submit.
+            raise ConfigurationError(
+                detail=(
+                    f"--resolution {request.resolution} is not driven on the labs Flow "
+                    "editor yet; only the flow.google.com composer selects a resolution."
+                ),
+                remediation_hint="Drop --resolution to accept Flow's default on this account.",
+            )
 
         # #299: the video path binds through the mode policy like images do —
         # get_ui_driver switches to the required arm, VERIFIES via a DOM

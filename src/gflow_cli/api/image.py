@@ -175,7 +175,11 @@ _IMAGE_REFERENCE_CAP: Mapping[Model, int] = MappingProxyType(
     {
         Model.NARWHAL: 10,
         Model.GEM_PIX_2: 10,
-        Model.HARBOR_SEAL: 10,
+        # ponytail: NOT observed. Lite's cap has never been measured (#787 checked t2i
+        # only), so it starts at the lowest cap any Flow image model is known to have.
+        # A too-low cap refuses up front; a too-high one silently drops billed refs.
+        # Raise it to what a live i2i with 4+ references actually keeps.
+        Model.HARBOR_SEAL: 3,
         Model.IMAGEN_3_5: 3,
     },
 )

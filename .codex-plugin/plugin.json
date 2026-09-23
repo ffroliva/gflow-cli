@@ -1,6 +1,6 @@
 {
   "name": "gflow",
-  "version": "0.73.1",
+  "version": "0.79.1",
   "description": "Reusable development and operations workflows for gflow-cli",
   "author": {
     "name": "Flavio Oliva",
@@ -14,7 +14,7 @@
     "codex",
     "google-flow"
   ],
-  "skills": "./skills/",
+  "skills": "./plugins/gflow/skills/",
   "interface": {
     "displayName": "gflow-cli",
     "shortDescription": "Develop, validate, review, and operate gflow-cli.",

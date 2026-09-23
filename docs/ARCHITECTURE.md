@@ -113,14 +113,15 @@ When the project converges on the hexagonal target above, modules graduate to la
 > **Note: this document describes the TARGET architecture, not the current
 > package layout.** The current shape (per [PLAN.md § 2](../PLAN.md#2-architecture-steady-state)
 > and [ADR #2](../PLAN.md#5-decision-log-adrs-in-miniature)) is the simpler
-> `src/gflow_cli/{api/, auth/, data/, mcp/, services/, tools/, ui/, worker/}`
-> packages plus flat modules — the `cli*.py` adapters, `browser_manager.py`,
-> `chain*.py`, `composition.py`, `config.py`, `diagnostics.py`, `errors.py`,
-> `image_batch.py`, `json_output.py`, `media.py`, `movie_manifest.py`,
-> `observability.py`, `paths.py`, `profile_lease.py`, `profile_store.py`,
-> `storage.py`, `update_check.py` (the once-a-day notice and `gflow update`'s
-> `run_update`; its Click surface is `cli_update.py`), and `winsec.py` (inventory refreshed for
-> v0.56.0, #507 — it had drifted a dozen modules behind).
+> `src/gflow_cli/{api/, auth/, data/, flow_selectors/, mcp/, services/, tools/, ui/,
+> worker/}` packages plus flat modules — the `cli*.py` adapters, `_cli_helpers.py`,
+> `browser_manager.py`, `chain*.py`, `composition.py`, `config.py`, `diagnostics.py`,
+> `errors.py`, `exceptions.py`, `file_integrity.py`, `image_batch.py`, `json_output.py`,
+> `media.py`, `movie_manifest.py`, `observability.py`, `paths.py`, `profile_lease.py`,
+> `profile_store.py`, `redaction.py`, `storage.py`, `update_check.py` (the once-a-day
+> notice and `gflow update`'s `run_update`; its Click surface is `cli_update.py`), and
+> `winsec.py` (inventory refreshed for v0.73.2 — it had drifted again since the v0.56.0
+> refresh in #507; `AGENTS.md` carries the same list and is the one to diff against).
 > The DDD layout below was deferred indefinitely; converge toward it incrementally
 > if/when a second `Provider` justifies the split (`gflow serve` shipped as a
 > thin adapter over the same core rather than forcing it).
@@ -436,7 +437,7 @@ We attempted three pure-HTTP transport strategies before settling on `ui_automat
 
 All three now live as standalone modules under `src/gflow_cli/api/transports/experimental/` (`evaluate_fetch.py` / `bearer.py` / `sapisidhash.py`), preserved for reference and future iteration. None survives Google's anti-bot stack for mutation/generation endpoints, so the production path is `ui_automation`.
 
-**The migrated `flow.google.com` host (#639, v0.67.0).** Google is moving accounts off `labs.google` onto `flow.google.com`, a rewritten frontend with a different widget toolkit and a `batchexecute` wire instead of `aisandbox-pa` REST. `src/gflow_cli/api/transports/migrated_composer.py` drives that editor for text-to-video, local-file image-to-video/reference-to-video, text-to-image, and local-file image-to-image — still through the same real-Chrome Playwright session — by operating the composer UI and then *observing* the app's own replies. Video uses `YhhmEf`/`eb1hJf`/`MZZa6b` submit plus `jwpduf`/`as29s` status/result; image uses synchronous `ogiZ0b` replies carrying signed JPEG URLs. Local files go through the editor's own `maseQ` upload and the resulting media ids are asserted in the outgoing submit body before the run is trusted (`WireFormatError` otherwise). The migrated page owns image reCAPTCHA minting; the client skips the labs token path so moved accounts no longer fail with `RecaptchaError` on the root grid. `GFLOW_CLI_FLOW_HOST` routes between the two (`auto` keeps migrated images on moved accounts and uses labs for them on unmoved accounts; `--project` is required on the migrated path); unsupported UUID/entity/instruction/Imagen-4 image forms still fail before submit. Recon: `docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md`.
+**The migrated `flow.google.com` host (#639, v0.67.0).** Google is moving accounts off `labs.google` onto `flow.google.com`, a rewritten frontend with a different widget toolkit and a `batchexecute` wire instead of `aisandbox-pa` REST. `src/gflow_cli/api/transports/migrated_composer.py` drives that editor for text-to-video, local-file image-to-video/reference-to-video, text-to-image, and local-file image-to-image — still through the same real-Chrome Playwright session — by operating the composer UI and then *observing* the app's own replies. Video uses `YhhmEf`/`eb1hJf`/`MZZa6b` submit plus `jwpduf`/`as29s` status/result; image uses synchronous `ogiZ0b` replies carrying signed JPEG URLs. **Both mechanisms are measured, and neither is a push channel**: `ogiZ0b` is one response held open ~19.7 s, while `jwpduf` is a fixed 5.00 s timer owned by *Flow's page* — gflow observes it and adds no traffic, so the interval is a floor we read rather than a latency knob we hold, and "subscribe instead of polling" is refuted on both paths (`docs/superpowers/spikes/2026-09-14-generation-wire-no-push-channel.md`, `docs/superpowers/spikes/2026-09-14-video-poll-is-a-fixed-client-timer.md`). Local files go through the editor's own `maseQ` upload and the resulting media ids are asserted in the outgoing submit body before the run is trusted (`WireFormatError` otherwise). The migrated page owns image reCAPTCHA minting; the client skips the labs token path so moved accounts no longer fail with `RecaptchaError` on the root grid. `GFLOW_CLI_FLOW_HOST` routes between the two (`auto` keeps migrated images on moved accounts and uses labs for them on unmoved accounts; `--project` is required on the migrated path); unsupported UUID/entity/instruction/Imagen-4 image forms still fail before submit. Recon: `docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md`.
 
 **Standalone-only transports.** `bearer` and `sapisidhash` discard any caller-supplied Playwright page and launch their own browser under a fresh `ProfileLease`, so they are **standalone-only** — they cannot run inside a `FlowApiClient` that already holds the profile lease (the second acquire would self-lock with `ProfileLockedError`). Selecting either via `GFLOW_CLI_TRANSPORT` (or the Python API) while the client owns the profile now fails fast with a clear `ConfigurationError` naming the transport, rather than the opaque lock error. `evaluate_fetch` is exempt: it reuses the client's shared page and takes no second lease. The standalone-only set lives in `STANDALONE_ONLY_TRANSPORTS` (`api/transports/__init__.py`); to drive `bearer`/`sapisidhash`, run them outside an owning client.
 

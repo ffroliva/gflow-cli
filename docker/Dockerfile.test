@@ -1,0 +1,17 @@
+# Runs gflow's OWN offline suite inside the container, on the image's interpreter.
+# This is what turns "CI does not test 3.14" from a caveat into a measurement.
+FROM python:3.14-slim
+ENV PYTHONUNBUFFERED=1 PYTHONUTF8=1 GFLOW_CLI_UPDATE_CHECK=false UV_LINK_MODE=copy
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      xvfb xauth ca-certificates curl gnupg git \
+ && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+      | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+      > /etc/apt/sources.list.d/google-chrome.list \
+ && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
+ && rm -rf /var/lib/apt/lists/*
+RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
+WORKDIR /app
+COPY . /app
+RUN uv sync --frozen 2>/dev/null || uv sync
+CMD ["uv","run","python","-m","pytest","-q","--no-cov","-p","no:cacheprovider"]

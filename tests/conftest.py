@@ -139,6 +139,12 @@ def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     # without CI set would spawn a real PyPI request. tests/test_update_check.py
     # re-enables it explicitly.
     monkeypatch.setenv("GFLOW_CLI_UPDATE_CHECK", "0")
+    # #864: the MCP entry points write a lease-wait default straight into os.environ
+    # (production wants it process-wide). Recording the variable here makes teardown
+    # remove it, so a test that runs `run_http` unpatched cannot turn every later
+    # lease-contention test into a 180 s wait.
+    monkeypatch.setenv("GFLOW_CLI_LEASE_WAIT_SECONDS", "0")
+    monkeypatch.delenv("GFLOW_CLI_LEASE_WAIT_SECONDS")
     reset_settings()
     yield
     reset_settings()

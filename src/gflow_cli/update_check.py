@@ -244,6 +244,58 @@ def _version_in_venv(dist: str) -> str | None:
     return result.stdout.strip() or None
 
 
+_IMPORT_PROBE = "import gflow_cli.cli"
+
+
+def _import_failure() -> str | None:
+    """Why a fresh interpreter can no longer import gflow-cli, or None if it can.
+
+    ``_version_in_venv`` cannot see a half-replaced environment: it reads
+    ``*.dist-info`` and never touches the modules the next command imports.
+    #848 measured exactly that gap — an interrupted native-dependency
+    replacement left every command dying on ``AttributeError: module
+    'greenlet' has no attribute 'greenlet'`` while the reported version stayed
+    perfectly readable, so `gflow update` called it "still 0.69.0" and sent the
+    user to a plain `uv tool upgrade` that could not repair it.
+
+    ``-I`` so a ``gflow_cli`` directory in the user's CWD — or on PYTHONPATH —
+    cannot answer on the venv's behalf. A probe that could not run at all
+    returns None: an environment we failed to ask about must never be reported
+    as a broken one.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603 — fixed argv
+            [sys.executable, "-I", "-c", _IMPORT_PROBE],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode == 0:
+        return None
+    lines = [line for line in result.stderr.strip().splitlines() if line.strip()]
+    return lines[-1] if lines else f"exit code {result.returncode}"
+
+
+def _reinstall_hint(inst: Installer, version: str | None) -> str:
+    """The command that repairs a half-replaced environment.
+
+    A plain ``upgrade`` does not: it reads the metadata, finds it current and
+    exits 0 having changed nothing — measured in #848, where only a forced
+    reinstall completed."""
+    pin = f"gflow-cli=={version}" if version else "gflow-cli"
+    repair = {
+        "uv": f'uv tool install "{pin}" --force --reinstall',
+        "pipx": f"pipx install --force {pin}",
+    }.get(inst.name, f"{sys.executable} -m pip install --force-reinstall {pin}")
+    return (
+        "Close every running gflow process (including any `gflow serve` / MCP server), "
+        f"then run `{repair}`."
+    )
+
+
 def run_update(*, check: bool) -> UpdateReport:
     """Upgrade gflow-cli in place, or with ``check`` only report.
 
@@ -305,6 +357,20 @@ def run_update(*, check: bool) -> UpdateReport:
     # stale launcher keeps working: it only points at the venv's python.
     after = _version_in_venv("gflow-cli")
     log.info("update.command_finished", installer=inst.name, returncode=returncode, after=after)
+    # Before any version arithmetic: is the environment still usable at all?
+    # The manager replaces files in place, so an interrupted run leaves a venv
+    # whose metadata reads fine and whose imports do not (#848). That state is
+    # worse than not upgrading, and the version-based branches below cannot
+    # see it — they would report "still <version>" for an install that no
+    # longer starts, and recommend a command that cannot repair it.
+    broken = _import_failure()
+    if broken is not None:
+        log.warning("update.environment_broken", installer=inst.name, returncode=returncode)
+        raise ConfigurationError(
+            f"`{shown}` left this gflow-cli install unusable: a fresh interpreter can no "
+            f"longer import it ({broken})",
+            remediation_hint=_reinstall_hint(inst, latest or after),
+        )
     if after is None:
         raise ConfigurationError(
             f"`{shown}` exited {returncode}, and the installed version could not be re-read "

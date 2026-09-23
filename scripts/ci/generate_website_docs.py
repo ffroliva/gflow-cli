@@ -28,7 +28,10 @@ _WEB = _REPO / "website" / "docs"
 
 # Pages authored directly for the site (nav landing/onboarding) — NOT mirrors of
 # canonical, so never regenerated or diffed. `index.md` has a canonical namesake
-# (`docs/index.md`, the routing index) but the site's is a distinct intro page.
+# (`docs/INDEX.md`, the routing index -- note the casing; there is no lowercase
+# `docs/index.md`, and this set short-circuits before any filesystem lookup, so the
+# difference never mattered on a case-insensitive dev box) but the site's is a
+# distinct intro page.
 WEBSITE_ONLY = {
     "index.md",
     "agents.md",

@@ -1,7 +1,7 @@
 # Live verification — `gflow image batch` jitter matrix
 
 **Status:** Skeleton — sessions not yet recorded.
-**Spec:** [`docs/superpowers/specs/2026-05-21-multi-image-prompt-design.md`](superpowers/specs/2026-05-21-multi-image-prompt-design.md) §8
+**Spec:** `docs/superpowers/specs/2026-05-21-multi-image-prompt-design.md` §8
 **Profile (planned):** `ui_automation` (Chrome strategy, mandatory per project memory)
 
 ---
@@ -79,7 +79,7 @@ Consequences for this matrix:
 
 ### What is actually decided (separate from the matrix)
 
-The design intent the user articulated mid-session — that jitter exists for submission-cadence (anti-bot) rather than completion-wait — does stand on its own merits and is preserved in the project-memory record [`batch-submission-cadence`](file:///C:/Users/ffrol/.claude/projects/C--development-github-gflow-cli/memory/batch-submission-cadence.md). That rationale is being applied to the *next* branch scope, not as a verdict on this matrix.
+The design intent the user articulated mid-session — that jitter exists for submission-cadence (anti-bot) rather than completion-wait — does stand on its own merits and is preserved in the project-memory record `batch-submission-cadence`. That rationale is being applied to the *next* branch scope, not as a verdict on this matrix.
 
 ### What this matrix did NOT verify
 

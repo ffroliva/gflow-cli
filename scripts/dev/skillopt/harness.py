@@ -73,7 +73,7 @@ class RolloutError(RuntimeError):
     """One task's rollout could not be completed. The suite records it and goes on."""
 
 SYSTEM_TEMPLATE = """\
-You are an agent assistant helping users operate gflow-cli, the unofficial terminal CLI for Google Flow (Veo video generation and Imagen image generation).
+You are an agent assistant helping users operate gflow-cli, the terminal CLI for Google Flow (Veo video generation and Imagen image generation).
 
 Your job is to answer the user's question with the exact CLI command(s) or code they should run.
 - Output only the command(s) / code snippet — no markdown fences unless showing multi-line code.

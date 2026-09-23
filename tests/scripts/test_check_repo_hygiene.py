@@ -175,6 +175,30 @@ def test_version_agreement_flags_uv_lock_without_own_package_block(tmp_path, mon
     assert "uv.lock" in errors[0]
 
 
+def test_version_agreement_includes_server_json_when_present(tmp_path, monkeypatch) -> None:
+    """server.json declares the version twice, and the MCP Registry never runs the command.
+
+    A bump that forgets it publishes a listing pointing at a version that is no longer
+    current, and nothing downstream notices. It is optional -- a fork that does not publish
+    to the registry has no server.json -- so absence is silence, not an error.
+    """
+    import json as _json
+
+    root = _version_tree(tmp_path, "1.2.3", "1.2.3", "1.2.3")
+    monkeypatch.setattr(hygiene, "ROOT", root)
+    assert hygiene._check_version_agreement() == [], "absent server.json must not fail the gate"
+
+    server = {"version": "1.2.3", "packages": [{"version": "1.2.3"}]}
+    (root / "server.json").write_text(_json.dumps(server), encoding="utf-8")
+    assert hygiene._check_version_agreement() == []
+
+    server["packages"][0]["version"] = "1.2.2"  # the half everyone forgets
+    (root / "server.json").write_text(_json.dumps(server), encoding="utf-8")
+    errors = hygiene._check_version_agreement()
+    assert len(errors) == 1
+    assert "server.json packages[0]=1.2.2" in errors[0]
+
+
 def test_version_agreement_reports_missing_source_gracefully(tmp_path, monkeypatch) -> None:
     """A missing file is a readable one-line error, never a traceback."""
     monkeypatch.setattr(hygiene, "ROOT", tmp_path)  # empty tree

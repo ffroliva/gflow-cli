@@ -21,6 +21,7 @@ from gflow_cli import auth as auth_mod
 from gflow_cli.cli_character import character as _character_group
 from gflow_cli.cli_credits import credits as _credits_group
 from gflow_cli.cli_data import data as _data_group
+from gflow_cli.cli_docs import docs as _docs_command
 from gflow_cli.cli_doctor import doctor as _doctor_command
 from gflow_cli.cli_image import image as _image_group
 from gflow_cli.cli_instructions import instructions as _instructions_group
@@ -313,16 +314,18 @@ def auth_login(profile: str | None, browser: str | None, account: str | None = N
                     )
                 )
     except GFlowError as e:
-        console.print(f"[red]{e}[/red]")
+        # Escape: Rich silently drops an unrecognised `[...]` tag, which would
+        # eat the extra out of any "install gflow-cli[extra]" hint (#813).
+        console.print(f"[red]{escape(str(e))}[/red]")
         if e.remediation_hint:
-            console.print(f"[dim]{e.remediation_hint}[/dim]")
+            console.print(f"[dim]{escape(e.remediation_hint)}[/dim]")
         exit_code = next(
             (code for cls, code in EXIT_CODE_MAP.items() if isinstance(e, cls)),
             1,
         )
         sys.exit(exit_code)
     except Exception as e:
-        console.print(f"[red]Unexpected error during login: {e}[/red]")
+        console.print(f"[red]Unexpected error during login: {escape(str(e))}[/red]")
         sys.exit(1)
     console.print(f"[green]Session saved.[/green] Profile dir: {pdir}")
 
@@ -366,8 +369,6 @@ def auth_status(profile: str | None) -> None:
 
     # Files on disk say nothing about whether the session still works — prove
     # it (issue #471). Fail-closed: only a verified session exits 0.
-    from rich.markup import escape
-
     from gflow_cli.auth import verification
 
     console.print("[dim]Probing Flow session (may take up to ~45s on a slow network)...[/dim]")
@@ -375,17 +376,26 @@ def auth_status(profile: str | None) -> None:
         verification.verify_flow_profile(auth_mod.profile_dir(name), source="status")
     )
     if not status_result.authenticated:
-        if status_result.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
+        if status_result.outcome is verification.FlowSessionOutcome.PROFILE_MARKER_MISSING:
+            # #796: local profile state, not the network. Sending this user to
+            # "check connectivity" is the wrong place to look — and it is exactly
+            # the state a failed first login leaves behind (real_chrome.py:433).
+            console.print(
+                f"[yellow]{escape(str(status_result.detail))}[/yellow] "
+                f"Re-run [bold]gflow auth login --browser chrome --profile {name}[/bold] "
+                "to rewrite it.",
+            )
+        elif status_result.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
             # Re-login cannot fix an unreachable endpoint — don't send the
             # user into an interactive browser flow for a network problem.
             console.print(
-                f"[yellow]{status_result.detail}[/yellow] "
+                f"[yellow]{escape(str(status_result.detail))}[/yellow] "
                 "Check network connectivity and retry; re-login is only needed "
                 "if the session is actually dead.",
             )
         else:
             console.print(
-                f"[yellow]{status_result.detail}[/yellow] "
+                f"[yellow]{escape(str(status_result.detail))}[/yellow] "
                 f"Run [bold]gflow auth login --profile {name}[/bold] to refresh the session.",
             )
         sys.exit(1)
@@ -427,7 +437,7 @@ def auth_use(name: str) -> None:
     try:
         cfg = profile_store.set_default_profile(name)
     except FileNotFoundError as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{escape(str(e))}[/red]")
         sys.exit(2)
     console.print(
         f"[green]Default profile set to[/green] [bold]{name}[/bold]\n[dim]Persisted in {cfg}[/dim]",
@@ -448,7 +458,7 @@ def auth_logout(profile: str | None, yes: bool) -> None:
     try:
         deleted = profile_store.delete_profile(name)
     except FileNotFoundError as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{escape(str(e))}[/red]")
         sys.exit(2)
     console.print(f"[yellow]Profile '{name}' removed.[/yellow]\n[dim]Deleted dir: {deleted}[/dim]")
 
@@ -458,10 +468,10 @@ def _resolve_or_exit() -> str:
     try:
         return profile_store.resolve_profile(None)
     except profile_store.NoProfilesError as e:
-        console.print(f"[yellow]{e}[/yellow]")
+        console.print(f"[yellow]{escape(str(e))}[/yellow]")
         sys.exit(2)
     except profile_store.NoDefaultProfileError as e:
-        console.print(f"[yellow]{e}[/yellow]")
+        console.print(f"[yellow]{escape(str(e))}[/yellow]")
         sys.exit(2)
 
 
@@ -482,6 +492,7 @@ main.add_command(_character_group)
 main.add_command(_credits_group)
 main.add_command(_data_group)
 main.add_command(_doctor_command)
+main.add_command(_docs_command)
 main.add_command(_update_command)
 main.add_command(_movie_group)
 main.add_command(_project_group)
@@ -588,7 +599,7 @@ def mcp_setup(target: str) -> None:
     try:
         path, changed = setup_mod.apply(target)
     except ConfigurationError as exc:
-        console.print(f"[red]{ConfigurationError.title}:[/red] {exc.detail or exc}")
+        console.print(f"[red]{ConfigurationError.title}:[/red] {escape(str(exc.detail or exc))}")
         console.print(
             "[dim]Fix (or move away) the existing config file and re-run "
             "gflow mcp setup — it never overwrites a file it cannot parse.[/dim]"
@@ -596,7 +607,10 @@ def mcp_setup(target: str) -> None:
         sys.exit(11)
     except OSError as exc:
         # Read-only/locked config file, permission problems, disk errors.
-        console.print(f"[red]Could not write the client config:[/red] {type(exc).__name__}: {exc}")
+        console.print(
+            f"[red]Could not write the client config:[/red] "
+            f"{type(exc).__name__}: {escape(str(exc))}"
+        )
         sys.exit(11)
     if changed:
         console.print(f"[green]gflow MCP server configured for {target}.[/green]")
@@ -618,7 +632,10 @@ def mcp_setup(target: str) -> None:
     "--host",
     default="127.0.0.1",
     show_default=True,
-    help="Host to bind. Use 0.0.0.0 with caution (requires GFLOW_DAEMON_TOKEN).",
+    help=(
+        "Host to bind. Use 0.0.0.0 with caution (requires GFLOW_DAEMON_TOKEN, "
+        "which every request must then present as 'Authorization: Bearer <token>')."
+    ),
 )
 @click.option("--profile", default=None, help="Profile for the background worker.")
 @click.option(
@@ -638,6 +655,12 @@ def serve(port: int, host: str, profile: str | None, transport: str, no_spend: b
       • MCP-SSE at /sse — DEPRECATED (--transport sse), one cycle only
       • REST /api/v1/* — CRUD + generation queue (planned)
       • Background FlowWorker — sequential generation (planned)
+
+    \b
+    Auth: when GFLOW_DAEMON_TOKEN (or GFLOW_CLI_DAEMON_TOKEN) is set, EVERY
+    request must carry 'Authorization: Bearer <token>' or it is answered 401.
+    A non-loopback --host requires the token and is refused without one; a
+    loopback bind with no token serves unauthenticated requests, as before.
 
     \b
     Example:

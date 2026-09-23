@@ -1,20 +1,36 @@
 Feature: image-to-video on the migrated flow.google.com host
   On the new host a start frame is an in-project asset. gflow uploads the local file
   through the editor's own Upload entry, observes the app's maseQ reply for the media id,
-  binds it through the Start-frame picker by file name, and asserts the eb1hJf submit
+  binds it through the Start-frame picker by that name, and asserts the eb1hJf submit
   body carries that id before treating the run as an i2v generation.
+
+  What is uploaded is a RUN-UNIQUE COPY of the local file (#792): the picker is searched
+  by display name, so two runs of one file would otherwise leave two identical entries
+  and the search could bind the stale one.
 
   Scenario: a moved account generates from a local start frame
     Given the editor hands the session to flow.google.com after entering the project
+    And the library already lists an older "hero.png"
     And a local start frame "hero.png"
     When gflow video i2v runs with an 8 s request
     Then the composer uploads the file and the maseQ reply names a media id
-    And the Start chip binds the asset listed under "hero.png"
+    And the Start chip binds the asset uploaded from "hero.png"
     And the eb1hJf submit body carries that media id and an i2v model key
     And the result reports success with the workflow id
 
+  Scenario: the picker waits for its own confirm before committing the pick
+    Given the picker does not commit on the option click
+    When gflow video i2v runs with an 8 s request
+    Then the picker's confirm is clicked and the Start chip binds
+
+  Scenario: the picker neither commits nor offers a confirm
+    Given the picker does not commit on the option click
+    And the picker offers no confirm
+    When gflow video i2v runs with an 8 s request
+    Then the run fails with exit 23 naming the missing confirm
+
   Scenario: the frame did not bind, so nothing is submitted
-    Given the picker lists no asset named "hero.png"
+    Given the library never lists the upload
     When gflow video i2v runs with an 8 s request
     Then the run fails with exit 32 before any submit
     And the detail names the file and the picker
@@ -31,12 +47,12 @@ Feature: image-to-video on the migrated flow.google.com host
     Then the run fails with exit 27 naming route batchexecute:maseQ
     And no submit was clicked
 
-  Scenario: an end frame is not ported yet on a moved account
+  Scenario: a moved account routes local start and end frames to the migrated host
     Given the editor hands the session to flow.google.com after entering the project
     When gflow video i2v runs with a local start frame and a local end frame
-    Then the run fails with exit 36 and the remediation names the end frame
+    Then the migrated host takes the run, not the labs driver
 
-  Scenario: an unmoved account with an end frame keeps the labs driver
+  Scenario: an unmoved account with local start and end frames reaches the migrated host
     Given the account has not been moved and a project is given
     When gflow video i2v runs with a local start frame and a local end frame
-    Then the labs driver serves the request
+    Then the migrated host takes the run, not the labs driver

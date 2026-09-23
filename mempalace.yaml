@@ -1,0 +1,110 @@
+wing: gflow-cli
+
+rooms:
+  - name: architecture
+    description: Structure, boundaries, data flow, module design
+    keywords: [architecture, boundary, subsystem, topology, dataflow, hexagonal, modulith,
+               arquitetura, arquitectura, camadas, acoplamento]
+  - name: decisions
+    description: Design decisions with alternatives and rationale
+    keywords: [decision, rationale, trade-off, tradeoff, alternative, superseded,
+               decisao, decisão, decisoes, decisões, justificativa, optamos, escolhemos]
+  - name: devops
+    description: CI/CD, deploy, containers, infrastructure, runbooks
+    keywords: [workflows, .github, deploy, docker, dockerfile, docker-compose, kubernetes,
+               terraform, runbook, rollback, nginx, systemd, pipelines, ansible, airflow,
+               implantacao, implantação, conteiner, contêiner]
+  - name: security
+    description: Auth, secrets, threat model, vulnerabilities
+    keywords: [security, oauth, threat model, vulnerability, encryption, credential, secret, rbac,
+               seguranca, segurança, autenticacao, autenticação, credencial, vulnerabilidade, criptografia]
+  - name: practices
+    description: Code conventions, review standards, lint and style rules
+    keywords: [practices, convention, contributing, eslint, prettier, styleguide, "code review",
+               naming, standards, onboarding,
+               convencao, convenção, convencoes, convenções, diretrizes, padronizacao, padronização]
+  - name: compliance
+    description: ISO, audit, regulatory and legal obligations
+    keywords: [gdpr, compliance, audit trail, regulatory, certification, retention, soc2,
+               conformidade, auditoria, regulamenta, legislacao, legislação, lgpd]
+  - name: business
+    description: Pricing, customers, strategy, commercial constraints
+    keywords: [pricing, revenue, billing, subscription, churn, margin, stakeholder, procurement,
+               faturamento, receita, assinatura, orcamento, orçamento]
+  - name: marketing
+    description: Positioning, content, launch, channels
+    keywords: [positioning, campaign, "landing page", funnel, newsletter,
+               divulgacao, divulgação, campanha, posicionamento]
+  - name: problems
+    description: Anything broken — open known issues, incidents, root causes, fixes
+    keywords: [problems, issues, "known issue", known_issues, troubleshoot, incident, postmortem,
+               "root cause", regression, workaround, hotfix, outage, gotcha,
+               problema, problemas, falha, falhas, incidente, correcao, correção]
+  - name: reference
+    description: Bare facts — endpoints, versions, paths, credential locations
+    keywords: [changelog, glossary, openapi, swagger, "release notes", cheatsheet,
+               referencia, referência, glossario, glossário]
+  # diary is AGENT-AUTHORED ONLY and must never win a mined file.
+  # Intentionally no keywords: log/notes/session hijacked USAGE.md (180 drawers).
+  - name: diary
+    description: Chronological session log — written by agents, never mined
+    keywords: []
+
+# Source code and machine data are deliberately NOT mined.
+#   * Code is already in the repo at full fidelity and greppable; chunking it
+#     yields function bodies severed from their call sites. gflow-cli: .py alone
+#     was 12,797 of 19,951 drawers (64%).
+#   * Generated data is not knowledge. In a second repo mined with this tool,
+#     .json was 20,296 drawers (40%), of which ONE embeddings cache accounted for
+#     15,552; in a third, build logs were 29,599 drawers across 462 .txt files
+#     (a single output.txt = 6,159).
+#   * Worktrees (_wt, *-wt) are the same code checked out twice — duplicate mass.
+# Memory holds what is NOT recoverable from the repo: decisions, root causes,
+# architecture rationale, conventions. Prose and CI config only.
+#
+# Five of these are INERT today -- .scss, .ipynb, .lock, .log and *output*.log are
+# not in the miner's readable-extension set, so they cannot match anything. They stay
+# on purpose: they are defensive against the miner widening that set, and the failure
+# they guard is the one measured above (build logs alone produced 29,599 drawers in
+# another repo). Dead config that prevents a known swamp is cheaper than rediscovering
+# the swamp. Noted here so the next reviewer does not re-derive it.
+exclude_patterns:
+  - "**/node_modules/**"
+  - "**/.venv/**"
+  - "**/venv/**"
+  - "**/dist/**"
+  - "**/build/**"
+  - "**/target/**"
+  - "**/.git/**"
+  - "**/__pycache__/**"
+  - "**/.pytest_cache/**"
+  - "**/coverage/**"
+  - "**/htmlcov/**"
+  - "**/_backups/**"
+  - "**/_archive/**"
+  - "**/*.py"
+  - "**/*.js"
+  - "**/*.ts"
+  - "**/*.tsx"
+  - "**/*.jsx"
+  - "**/*.java"
+  - "**/*.go"
+  - "**/*.rs"
+  - "**/*.css"
+  - "**/*.scss"
+  - "**/*.html"
+  - "**/*.sql"
+  - "**/*.sh"
+  - "**/*.ipynb"
+  - "**/*.json"
+  - "**/*.toml"
+  - "**/*.csv"
+  - "**/*.lock"
+  - "**/_wt/**"
+  - "**/*-wt/**"
+  - "**/*.log"
+  - "**/*output*.txt"
+  - "**/*output*.log"
+  - "**/*errors*.txt"
+  - "**/*test-output*"
+  - "**/*.min.*"

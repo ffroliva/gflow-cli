@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tomllib
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 import structlog
+from packaging.requirements import Requirement
 
 from gflow_cli.config import LogFormat
 from gflow_cli.errors import AuthExpiredError, ContentPolicyError, WireFormatError
@@ -17,6 +20,8 @@ from gflow_cli.observability import (
     emit_error_event,
     emit_unhandled_event,
 )
+
+_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(autouse=True)
@@ -182,3 +187,33 @@ def test_correlation_id_bound_at_boundary_appears_in_events():
     log.info("any_event")
     assert cap.entries[0]["correlation_id"] == "zzz-111"
     assert cap.entries[0]["cli_version"] == "0.4.0a1"
+
+
+def test_colorama_is_a_declared_windows_runtime_dependency() -> None:
+    """`ConsoleRenderer(colors=True)` makes colorama mandatory on Windows (#846).
+
+    `configure_logging` builds `structlog.dev.ConsoleRenderer(colors=True)` for
+    every TEXT render, and structlog's Windows `_init_terminal` raises
+    `SystemError` outright when colorama is absent. Because that call lives in
+    the Click *group* callback it runs before any subcommand body, so a clean
+    Windows install with no colorama aborts every interactive command — the
+    install looks broken rather than incomplete, and the error names structlog,
+    never gflow.
+
+    Nothing in the runtime closure supplies it: structlog treats colorama as an
+    optional extra and rich implements its own Windows console handling. The
+    only edge to colorama in `uv.lock` comes from **pytest**, a dev dependency,
+    which is exactly why this survived every developer machine and shipped to
+    users in 0.76.0.
+    """
+    data = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    deps: list[str] = data["project"]["dependencies"]
+    colorama = next((Requirement(raw) for raw in deps if Requirement(raw).name == "colorama"), None)
+    assert colorama is not None, (
+        "colorama is not declared in [project.dependencies]; a clean Windows "
+        "install then dies with SystemError before any subcommand runs (#846)"
+    )
+    assert colorama.marker is not None and colorama.marker.evaluate({"sys_platform": "win32"}), (
+        f"colorama's marker {str(colorama.marker)!r} excludes win32, which is "
+        "the only platform that needs it"
+    )

@@ -24,11 +24,12 @@ import structlog
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.transports import migrated_composer
 from gflow_cli.api.transports._common import flow_host_kind
 from gflow_cli.api.transports.migrated_composer import MigratedComposer
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoResult
+from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoResult
 from gflow_cli.config import reset_settings
 from gflow_cli.errors import FlowHostMigratedError, UiSelectorDriftError
 from gflow_cli.mcp import tools as mcp_tools
@@ -113,6 +114,96 @@ async def test_e2e_migrated_host_serves_this_account(
         assert await page.locator(".settings-trigger-button").first.count() == 1
     finally:
         await transport.teardown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_auth
+async def test_e2e_end_frame_binds_the_second_chip_and_submits_interpolation(
+    e2e_profile_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """$0 (#639): the start+end interpolation contract, without billing a run.
+
+    This is the e2e the feature owed. Generating to verify costs a Veo credit per
+    run, so it is not re-runnable in review — instead both frames are really
+    uploaded and bound (uploads are free), the submit is intercepted with
+    ``route.abort()``, and the REQUEST BODY is asserted. Playwright hands us the
+    body before it leaves the browser, so Flow never sees the submit and nothing
+    is billed (memory: credit-free-route-abort-verification).
+
+    Measured this way on 2026-09-17 (ffroliva, flow.google.com): rpc ``nprQif``,
+    key ``omni_flash_i2v_8s_first_last``, both media ids present. The key differs
+    by cohort (the contributor's account sends ``veo_3_1_interpolation_lite``),
+    which is why the assertion is on key SHAPE, not a literal.
+    """
+    project = _project_id()
+    _set_flow_host(monkeypatch, None)
+    start = _write_reference(tmp_path / "e2e-start.png")
+    end = _write_reference(tmp_path / "e2e-end.png")
+
+    transport = UiAutomationTransport()
+    captured: list[dict[str, object]] = []
+    try:
+        await transport.setup(e2e_profile_dir)
+        page = transport._page  # noqa: SLF001 - the e2e reads the live page
+        assert page is not None
+        composer = MigratedComposer()
+        await composer.ensure_editor(page, project, timeout_s=45.0)
+
+        pane = await composer._open_pane(page)  # noqa: SLF001 - production path
+        await composer._select(page, pane, axis="mode", lig="videocam")  # noqa: SLF001
+        await composer._select(  # noqa: SLF001
+            page, pane, axis="submode", lig=migrated_composer.FRAMES_LIGATURE
+        )
+        await composer._close_pane(page, strict=True)  # noqa: SLF001
+
+        start_id = await composer.attach_start_frame(page, project, start)
+        end_id = await composer.attach_end_frame(page, project, end)
+        assert start_id and end_id and start_id != end_id
+
+        # Two bound chips is the driver's own readback — assert it on the live DOM.
+        assert await page.locator(migrated_composer.BOUND_CHIP).count() == 2
+
+        await composer.send_prompt(page, "a slow dolly between the two frames")
+
+        async def block_submit(route: object, request: object) -> None:
+            body = getattr(request, "post_data", None) or ""
+            rpcid = migrated_composer._body_rpcid(body) or migrated_composer._rpcid(  # noqa: SLF001
+                str(getattr(request, "url", ""))
+            )
+            if rpcid in migrated_composer.SUBMIT_RPCS:
+                key = migrated_composer.MODEL_KEY.search(body)
+                captured.append(
+                    {
+                        "rpcid": rpcid,
+                        "model_key": key.group(0) if key else None,
+                        "start": start_id in body,
+                        "end": end_id in body,
+                    }
+                )
+                await route.abort()  # type: ignore[attr-defined]  # never reaches Flow
+                return
+            await route.continue_()  # type: ignore[attr-defined]
+
+        await page.route("**/batchexecute*", block_submit)
+        submit = (
+            page.locator("button")
+            .filter(has=migrated_composer._ligature(page, "arrow_forward"))  # noqa: SLF001
+            .first
+        )
+        await submit.click(timeout=15_000)
+        for _ in range(40):
+            if captured:
+                break
+            await page.wait_for_timeout(250)
+    finally:
+        await transport.teardown()
+
+    assert captured, "the submit click produced no batchexecute request"
+    hit = captured[0]
+    assert hit["rpcid"] == migrated_composer.INTERPOLATION_SUBMIT_RPC, hit
+    assert hit["start"] and hit["end"], hit
+    key = str(hit["model_key"] or "")
+    assert "interpolation" in key or "first_last" in key, hit
 
 
 @pytest.mark.asyncio
@@ -377,3 +468,136 @@ async def test_e2e_mcp_i2i_runs_on_the_migrated_host(
     assert result["params"]["reference_images"] == [str(reference)]
     files = [Path(path) for path in result["files"]]
     assert files and all(path.exists() and path.stat().st_size > 10_000 for path in files)
+
+
+def _selected(capture: structlog.testing.LogCapture, *events: str) -> list[dict[str, object]]:
+    return [dict(e) for e in capture.entries if str(e.get("event")) in events]
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_image
+async def test_e2e_t2i_binds_nano2_lite_on_the_migrated_host(
+    e2e_profile_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """#787: `--model nano2-lite` reaches the picker and picks the Lite row, not "Nano
+    Banana 2" (the matcher excludes Lite from NARWHAL, so the two must not collide).
+    The picker label is the only surface that names the tier; the generated image
+    itself carries no model attribution (2026-09-11 nano2-lite spike)."""
+    project = _project_id()
+    _set_flow_host(monkeypatch, None)
+    req = GenerateImageRequest(
+        prompt="a teal origami crane on a wooden table",
+        aspect=ImageAspect.LANDSCAPE,
+        model=ImageModel.HARBOR_SEAL,
+    )
+    async with FlowApiClient(profile_dir=e2e_profile_dir, out_dir=tmp_path) as client:
+        page = client._page  # noqa: SLF001 - the e2e reads the live page
+        assert page is not None
+        if flow_host_kind(page.url) != "migrated":
+            pytest.skip("profile is not on the migrated host")
+        image = await client.generate_image(project_id=project, req=req)
+
+    assert image.media_name and image.fife_url.startswith("https://flow-content.google/image/")
+    picks = _selected(
+        install_log_capture,
+        "migrated.image_model_selected",
+        "migrated.image_model_already_selected",
+    )
+    assert picks, "no model-picker event: the picker step never ran"
+    assert picks[-1]["requested"] == "HARBOR_SEAL", picks
+    assert "Lite" in str(picks[-1]["model"]), picks
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_image
+async def test_e2e_mcp_t2i_accepts_the_nano2_lite_alias(
+    e2e_profile_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """The MCP twin: the `nano2-lite` alias survives the queue payload and the worker."""
+    del e2e_profile_dir
+    project = _project_id()
+    _set_flow_host(monkeypatch, None)
+    result = await mcp_tools.gflow_generate_image(
+        prompt="a teal origami crane on a wooden table",
+        model="nano2-lite",
+        aspect="16:9",
+        profile=os.environ["GFLOW_CLI_E2E_PROFILE"].strip(),
+        project=project,
+        wait=True,
+    )
+    assert result["status"] == "completed", result
+    picks = _selected(
+        install_log_capture,
+        "migrated.image_model_selected",
+        "migrated.image_model_already_selected",
+    )
+    assert picks and picks[-1]["requested"] == "HARBOR_SEAL", picks
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_video
+async def test_e2e_t2v_selects_a_resolution_on_omni_flash(
+    e2e_profile_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """Bills one clip. #787: `--resolution 720p` on omni_flash turns the radio
+    aria-checked before submit and the clip still lands."""
+    project = _project_id()
+    _set_flow_host(monkeypatch, os.environ.get("GFLOW_CLI_E2E_FLOW_HOST") or None)
+    req = GenerateVideoRequest(
+        prompt=_PROMPT,
+        mode=Mode.T2V,
+        aspect=Aspect.LANDSCAPE,
+        model=VideoModel.OMNI_FLASH,
+        resolution="720p",
+    )
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(e2e_profile_dir)
+        result: VideoResult = await transport.generate_video(
+            request=req, project_id=project, out_dir=tmp_path, poll_timeout_s=_POLL_TIMEOUT_S
+        )
+    finally:
+        await transport.teardown()
+
+    picks = _selected(
+        install_log_capture, "migrated.resolution_selected", "migrated.resolution_already_selected"
+    )
+    assert picks and picks[-1]["resolution"] == "720p", picks
+    assert result.status.succeeded, result.status
+    assert result.local_path is not None and result.local_path.read_bytes()[4:8] == b"ftyp"
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_video
+async def test_e2e_mcp_t2v_carries_resolution_through_the_queue(
+    e2e_profile_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """Bills one clip. The MCP twin: `resolution` survives payload -> codec -> composer."""
+    del e2e_profile_dir
+    project = _project_id()
+    _set_flow_host(monkeypatch, os.environ.get("GFLOW_CLI_E2E_FLOW_HOST") or None)
+    result = await mcp_tools.gflow_generate_video(
+        prompt=_PROMPT,
+        mode="t2v",
+        aspect="16:9",
+        model="omni_flash",
+        resolution="360p",
+        profile=os.environ["GFLOW_CLI_E2E_PROFILE"].strip(),
+        project=project,
+        wait=True,
+    )
+    assert result["status"] == "completed", result
+    picks = _selected(
+        install_log_capture, "migrated.resolution_selected", "migrated.resolution_already_selected"
+    )
+    assert picks and picks[-1]["resolution"] == "360p", picks

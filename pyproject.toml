@@ -1,21 +1,55 @@
 [project]
 name = "gflow-cli"
-version = "0.73.1"
-description = "Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal."
+version = "0.79.1"
+description = "CLI and MCP server for Google Flow — drive Veo text-to-video, image-to-video and Imagen image generation from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 authors = [{ name = "Flavio Oliva", email = "ffroliva@gmail.com" }]
-keywords = ["google", "flow", "veo", "video", "ai", "cli"]
+# PyPI search matches on these, and every downstream catalog copies the summary
+# above verbatim. Both previously described only image-to-video and never
+# mentioned MCP, which is half of what this package is.
+keywords = [
+    "google-flow",
+    "flow",
+    "veo",
+    "imagen",
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "text-to-video",
+    "image-to-video",
+    "video-generation",
+    "ai-video",
+    "generative-ai",
+    "ai",
+    "cli",
+    "google",
+    "video",
+    "playwright",
+]
+# Every entry is checked against the official trove list; an invented classifier
+# fails the upload outright. Keep "Development Status :: 3 - Alpha" in step with
+# how the README describes the project.
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
+    "Framework :: AsyncIO",
+    "Framework :: Pydantic :: 2",
     "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
     "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Utilities",
+    "Typing :: Typed",
 ]
 
 dependencies = [
@@ -43,6 +77,18 @@ dependencies = [
     "pydantic-settings>=2.5.0",
     "platformdirs>=4.0.0",
     "structlog>=24.0.0",
+    # Windows-only, and NOT optional there: observability.py renders TEXT logs
+    # with `structlog.dev.ConsoleRenderer(colors=True)`, whose Windows
+    # `_init_terminal` raises SystemError outright when colorama is missing.
+    # That runs in the Click group callback, so a clean Windows install aborted
+    # EVERY interactive command before any subcommand body (#846, 0.76.0) with
+    # a traceback that named structlog and never gflow. Nothing in the runtime
+    # closure supplies it — structlog keeps colorama an optional extra and rich
+    # ships its own Windows console handling — and the only colorama edge in
+    # uv.lock comes from pytest, a DEV dependency, which is why every developer
+    # machine hid this. Dropping this line re-breaks Windows out of the box;
+    # tests/test_observability.py guards it.
+    'colorama>=0.4.6; sys_platform == "win32"',
     "tenacity>=8.2",
     "browser-cookie3>=0.20.1",
     # MCP server + daemon layer (gflow serve / gflow mcp).
@@ -62,7 +108,7 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-    "ruff==0.16.6",
+    "ruff==0.16.8",
     "pyright>=1.1.0",
     # video-chain: the last-frame extractor (media.py) decodes with PyAV, and its
     # tests build synthetic mp4 fixtures with numpy. Declared here so the dev/CI
@@ -82,9 +128,14 @@ s3 = [
     "universal_pathlib>=0.2.5",
     "s3fs>=2024.2.0",
 ]
-# Video-chain extra — PyAV for the last-frame extractor (no system ffmpeg needed).
+# Video-chain extra — everything `gflow video chain` imports. PyAV decodes the
+# previous clip (no system ffmpeg needed) and Pillow writes the seed JPEG; both
+# are imported at module level by media.py, so both belong here. Shipping `av`
+# alone made the documented install command produce a CLI that could not run
+# `video chain` at all (#813).
 chain = [
     "av>=12",
+    "pillow>=12.3.0",
 ]
 # Patchright engine extra — opt-in, drop-in patched Playwright (Chromium) that
 # avoids the Runtime.enable CDP leak on the headed path. Selected via
@@ -99,10 +150,22 @@ patchright = [
 [project.scripts]
 gflow = "gflow_cli.cli:main"
 flow = "gflow_cli.cli:main"
+# Third alias, and it earns its keep: `uvx <name>` runs the console script whose
+# name matches the *package*, so without this `uvx gflow-cli mcp run` fails with
+# uv's own "Use `uvx --from gflow-cli <EXECUTABLE-NAME>` instead" (verified against
+# 0.74.0). The MCP registry's server.json builds exactly that `uvx <identifier>`
+# command from the PyPI identifier and has no field for a differing executable
+# name, so a listing without this alias would be broken on arrival. It is also
+# what a user types first, the package being what they just installed.
+gflow-cli = "gflow_cli.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/ffroliva/gflow-cli"
+Documentation = "https://ffroliva.github.io/gflow-cli/"
+Repository = "https://github.com/ffroliva/gflow-cli"
+Changelog = "https://github.com/ffroliva/gflow-cli/blob/main/CHANGELOG.md"
 Issues = "https://github.com/ffroliva/gflow-cli/issues"
+Funding = "https://github.com/sponsors/ffroliva"
 
 [build-system]
 requires = ["hatchling"]
@@ -110,6 +173,13 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gflow_cli"]
+
+# `gflow docs` reads the pages at runtime, so they have to be IN the wheel (#861).
+# `force-include` + `exclude` does NOT work here -- hatchling ignores exclude patterns for
+# forced inclusions, measured 2026-09-17 at 145 leaked `superpowers/` files. The hook globs
+# `docs/*.md` instead, which ships exactly the pages and cannot drift.
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
 
 [tool.ruff]
 line-length = 100
@@ -175,7 +245,7 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-bdd>=8.1.0",
     "pytest-cov>=7.1.0",
-    "ruff==0.16.6",
+    "ruff==0.16.8",
 ]
 # Container-based integration tests — requires Docker daemon.
 # Install: uv sync --group containers

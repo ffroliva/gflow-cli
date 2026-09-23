@@ -1,0 +1,70 @@
+# gflow-cli in a container, with authentication held in an external volume.
+#
+# The container is disposable; the volume is not. Everything that identifies you —
+# the Chrome profile, gflow's home, the SQLite catalog — lives in `gflow-auth` so the
+# image can be rebuilt or upgraded without signing in again.
+#
+# NOTE: the profile must be created INSIDE the container (see `login` below). A Chrome
+# profile copied from a Windows host is not expected to work: Chrome seals its cookie
+# store with DPAPI, bound to the Windows user account. That is a portability limit, not
+# an anti-automation one — different problem, different fix.
+
+services:
+  # One-time interactive sign-in. Needs a display you can actually see, so this is the
+  # arm that a headless CI box cannot run.
+  #
+  #   Linux          : xhost +local: && docker compose run --rm login
+  #   Windows (WSLg) : run it FROM INSIDE WSL, with
+  #                    X11_SOCKET=/mnt/wslg/.X11-unix docker compose run --rm login
+  #   macOS          : needs XQuartz; not verified here.
+  #
+  # `X11_SOCKET` exists because the socket is not always at /tmp/.X11-unix. Measured on
+  # Windows 11 + WSL2 (Ubuntu) on 2026-09-15: WSLg publishes a live `X0` socket at
+  # /mnt/wslg/.X11-unix, while /tmp/.X11-unix inside that same distro is an EMPTY
+  # directory. Mounting the default there yields a container with no reachable display
+  # and a Chrome that exits immediately — so the override is the difference between
+  # working and a confusing failure, not a convenience.
+  #
+  # Docker Desktop users: this must run from a WSL distro that has Docker's WSL
+  # integration switched on (Settings → Resources → WSL Integration). Without it the
+  # docker CLI inside WSL cannot reach the daemon at all.
+  login:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gflow-cli:local
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+    volumes:
+      - gflow-auth:/data
+      - ${X11_SOCKET:-/tmp/.X11-unix}:/tmp/.X11-unix:ro
+    command: ["gflow", "auth", "login", "--browser", "chrome"]
+
+  # Everything after login. Runs headed under Xvfb — a real X server with no monitor,
+  # which is not the same thing as Chrome's --headless mode.
+  gflow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gflow-cli:local
+    volumes:
+      - gflow-auth:/data
+    command: ["gflow", "auth", "status"]
+
+  # The MCP server, for an agent on the host to connect to.
+  serve:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gflow-cli:local
+    volumes:
+      - gflow-auth:/data
+    environment:
+      # Required: gflow serve verifies this on EVERY request as of v0.75.0.
+      GFLOW_CLI_DAEMON_TOKEN: ${GFLOW_CLI_DAEMON_TOKEN:?set a token before exposing this}
+    command: ["gflow", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"   # loopback only; do not bind 0.0.0.0 on the host
+
+volumes:
+  gflow-auth:

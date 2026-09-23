@@ -1,0 +1,132 @@
+name: MCP Registry
+
+# Publishes server.json to the Official MCP Registry — the listing that feeds the
+# downstream directories (PulseMCP ingests it; GitHub's MCP gallery is built on it).
+#
+# This is CALLED by release.yml (`uses:` + `needs: build-and-publish`), never triggered
+# by an event. Two reasons, both learned the hard way:
+#
+#  1. `on: release: published` does not work here. release.yml creates the Release with
+#     the default GITHUB_TOKEN, and GitHub starts no workflow runs from
+#     GITHUB_TOKEN-created events — so it never fired once, on any release, with nothing
+#     going red (#841). Creating the Release with a user PAT would fix that, at the price
+#     of a credential that expires every 366 days on a path that runs a handful of times
+#     a year. A call has no such fuse.
+#  2. Ordering. `mcp-publisher` proves namespace ownership by reading the `mcp-name:`
+#     token out of the PUBLISHED PyPI README, and PyPI metadata is frozen per release, so
+#     the wheel must be up first. `needs: build-and-publish` enforces that structurally,
+#     rather than by two files happening to agree about step order.
+#
+# Being called also pins the publish to the release TAG, so server.json is the released
+# one — the wrong-ref hazard that republished 0.75.0 over 0.76.0 (#841) cannot arise on
+# this path at all. It still can on a hand dispatch, which is what the guard below is for.
+#
+# Registry auth is GitHub Actions OIDC: the runner exchanges its own short-lived identity
+# token for registry credentials, which is why this needs `id-token: write` and nothing
+# else. No token of any kind is stored for, or handed to, the registry.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version being published, with or without a leading `v`. Must match server.json on the checked-out ref."
+        required: true
+        type: string
+  # Manual re-run, e.g. a release whose registry publish failed after PyPI succeeded.
+  # `version` is REQUIRED because a dispatch publishes whatever the REF carries:
+  # dispatching `develop` before the release back-merge lands republishes the PREVIOUS
+  # version, green, with nothing downstream noticing. That happened on v0.76.0 (#841).
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 0.76.0. Must match server.json on the dispatched ref."
+        required: true
+        type: string
+
+# Write scopes live at JOB level (Scorecard Token-Permissions: a workflow-level
+# write grant reaches every job, current and future).
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC exchange with registry.modelcontextprotocol.io
+    env:
+      # Pinned by version AND digest: this step runs in a job holding id-token
+      # write and publishes publicly under io.github.ffroliva, so a moved tag
+      # must not silently change the binary that does it.
+      MCP_PUBLISHER_VERSION: "1.8.1"
+      MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: server.json must carry the version being published
+        # The repo-side agreement (pyproject == __init__ == plugin.json == uv.lock ==
+        # server.json) is already a merge gate in check_repo_hygiene.py, so the only way
+        # these disagree is publishing from the WRONG REF — which is exactly what
+        # happened on v0.76.0 (#841) and what this catches.
+        #
+        # `inputs` is documented for exactly the two triggers this workflow declares.
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          expected="${EXPECTED_VERSION#v}"
+          if [ -z "${expected}" ]; then
+            echo "::error::No version to check against (neither a dispatch input nor a release tag). Refusing to publish."
+            exit 1
+          fi
+          # Checked explicitly: a missing file would otherwise abort on jq's own error
+          # and lose the diagnostic below, which is the part an operator needs.
+          if [ ! -f server.json ]; then
+            echo "::error::server.json is absent on this ref — nothing to publish."
+            exit 1
+          fi
+          # A pre-release must never become the registry's ACTIVE listing — that is what
+          # PulseMCP and GitHub's MCP gallery ingest. release.yml skips the call for one,
+          # so reaching here means a hand dispatch asked for it explicitly. Refuse anyway.
+          case "${expected}" in
+            *-*|*a*|*b*|*rc*)
+              echo "::error::${expected} is a pre-release. Publishing it would make it the registry's active listing."
+              exit 1
+              ;;
+          esac
+          declared=$(jq -r '.version' server.json)
+          packaged=$(jq -r '[.packages[]?.version] | join(", ")' server.json)
+          if ! jq -e --arg v "${expected}" '.version == $v and all(.packages[]?.version; . == $v)' server.json >/dev/null; then
+            echo "::error::Publishing ${expected}, but server.json on this ref declares ${declared} (packages: ${packaged})."
+            echo "::error::A dispatch publishes whatever the REF carries. Dispatch the release tag, or wait for the back-merge to land on develop (#841)."
+            exit 1
+          fi
+          echo "server.json declares ${declared} on every version site — matches the version being published."
+
+      - name: Install mcp-publisher
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/mcp-publisher_linux_amd64.tar.gz"
+          gh release download "v${MCP_PUBLISHER_VERSION}" \
+            --repo modelcontextprotocol/registry \
+            --pattern 'mcp-publisher_linux_amd64.tar.gz' \
+            --output "${archive}" --clobber
+          echo "${MCP_PUBLISHER_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}" mcp-publisher
+          "${RUNNER_TEMP}/mcp-publisher" --version
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Validate server.json
+        # Never `init` here: it only writes a TEMPLATE server.json, refuses when a
+        # real one exists, and exits 1 — which would abort the run before login.
+        run: mcp-publisher validate
+
+      - name: Authenticate with the registry (GitHub Actions OIDC)
+        run: mcp-publisher login github-oidc
+
+      - name: Publish
+        run: mcp-publisher publish

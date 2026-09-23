@@ -5,16 +5,23 @@ an mp4 and writes it as a JPEG. It is the seed image for the next link in a
 sequential video chain (the Task-7 orchestrator calls it between links, wrapped
 in ``asyncio.to_thread`` since decoding is blocking).
 
-PyAV (``av``) is an OPTIONAL dependency shipped via the ``gflow-cli[chain]``
-extra — it bundles ffmpeg, so no system ffmpeg is required. The import is
-deferred to call time and guarded so a missing extra surfaces as a typed
+PyAV (``av``) and Pillow are OPTIONAL dependencies shipped together via the
+``gflow-cli[chain]`` extra — PyAV bundles ffmpeg, so no system ffmpeg is
+required. BOTH are imported at module level so a missing extra fails at the same
+single point: ``import gflow_cli.media``. That is what lets one guard in
+``cli_video._run_chain`` map either one to a typed
 :class:`~gflow_cli.errors.FrameExtractionError` (exit code 20) with an install
-hint, never a bare ``ModuleNotFoundError``.
+hint, ahead of the manifest read and the cost prompt.
 
-PyAV ships no type stubs, so its surface is confined to :func:`_decode_frame`
-where ``av`` is imported as an explicitly ``Any``-typed module. The frame is
-converted to a typed ``PIL.Image.Image`` at that boundary, keeping the rest of
-the module strictly typed.
+``import av`` used to be deferred into :func:`_decode_frame`, which runs only
+between links — so a missing PyAV surfaced *after* link 0 had been generated and
+paid for, while a missing Pillow crashed with a generic "file a bug" exit 1
+(#813).
+
+PyAV ships no type stubs, so its untyped surface is confined to the
+``Any``-annotated :data:`_av` alias below; frames are converted to a typed
+``PIL.Image.Image`` at that boundary, keeping the rest of the module strictly
+typed.
 """
 
 from __future__ import annotations
@@ -23,9 +30,12 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+import av  # type: ignore[import]  # optional [chain] extra, ships no stubs
 from PIL import Image
 
 from gflow_cli.errors import FrameExtractionError
+
+_av: Any = av  # confine the untyped PyAV surface to this alias
 
 
 def extract_last_frame(src: Path, dst: Path, *, offset_ms: int = 0) -> Path:
@@ -43,18 +53,15 @@ def extract_last_frame(src: Path, dst: Path, *, offset_ms: int = 0) -> Path:
         ``dst`` (the path that was written).
 
     Raises:
-        FrameExtractionError: If the ``av`` package is unavailable (the
-            ``gflow-cli[chain]`` extra was not installed) or ``src`` is
-            undecodable / contains no video frames.
+        FrameExtractionError: If ``src`` is undecodable / contains no video
+            frames. A missing ``gflow-cli[chain]`` extra never reaches here — it
+            fails earlier, at ``import gflow_cli.media`` (see the module
+            docstring).
     """
     try:
         image = _decode_frame(src, offset_ms=offset_ms)
     except FrameExtractionError:
         raise
-    except ImportError as exc:  # missing optional [chain] extra
-        raise FrameExtractionError(
-            detail="the optional `av` package (PyAV) is not installed",
-        ) from exc
     except Exception as exc:  # undecodable / corrupt / non-mp4 input
         raise FrameExtractionError(
             detail=f"could not decode {src.name!r}: {exc}",
@@ -73,15 +80,11 @@ def _decode_frame(src: Path, *, offset_ms: int) -> Image.Image:
     to ``end - offset_ms``. Decoding happens over a short window near EOF, so we
     never walk the whole stream.
 
-    ``av`` is untyped (no stubs); it is imported as an ``Any`` module here so the
-    untyped surface stays confined to this function. The returned PIL image is
-    fully typed for callers.
+    ``av`` is untyped (no stubs); it is reached through the module-level ``Any``
+    alias :data:`_av` so the untyped surface stays confined there. The returned
+    PIL image is fully typed for callers.
     """
-    import av  # type: ignore[import]  # optional [chain] extra, ships no stubs
-
-    av_mod: Any = av  # confine the untyped PyAV surface to this local
-
-    with av_mod.open(str(src)) as container:
+    with _av.open(str(src)) as container:
         if not container.streams.video:
             raise FrameExtractionError(detail=f"{src.name!r} has no video stream")
         stream = container.streams.video[0]

@@ -1,12 +1,16 @@
+import io
+import re
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+from rich.console import Console
 
 from gflow_cli import cli_scene
 from gflow_cli.api.scene import Scene, SceneWorkflow, SceneWorkflowMetadata
 from gflow_cli.cli import main
 from gflow_cli.cli_scene import ClipRef, _parse_clip_ref, _validate_trim
+from gflow_cli.config import get_settings
 
 
 def _one_clip_scene(scene_id="s1", project_id="proj-1"):
@@ -95,6 +99,56 @@ async def test_run_create_without_output_skips_concat(tmp_path, monkeypatch):
     assert calls["record_scene"] is True
     assert "concat_inputs" not in calls  # no render without --output
     assert "record_output" not in calls
+
+
+def test_create_exits_0_and_warns_when_only_the_local_recording_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The compose already happened on Flow's side — a local catalog failure is
+    a warning, never a failure.
+
+    `record_scene` runs AFTER `create_scene` returned a real scene, so raising
+    here must not propagate: a non-zero exit would tell a caller the compose did
+    not happen and invite a pointless retry against a scene that already exists.
+    Driven through the CLI because `run_with_handlers` — whose job is to turn
+    exceptions into non-zero exits — sits between `_run_create` and the exit
+    code an agent or script actually reads.
+
+    The recorder's exception text goes through `escape()` because Rich silently
+    drops a lowercase `[...]` run it cannot parse as a style — unescaped, "pip
+    install gflow-cli[data]" reaches the user as "pip install gflow-cli" and
+    names nothing to install.
+
+    The console is redirected into a buffer rather than read off `res.output`:
+    `scene.persist_failed_after_success` logs the same exception text to stdout,
+    so an assertion on the combined stream passes on the log line alone and
+    would stay green with the escape reverted. Measured — it did.
+    """
+    calls: dict = {}
+    _patch_run_create(monkeypatch, calls)
+
+    class _FailingRecorder(_FakeRecorder):
+        def record_scene(self, **_kw: object) -> str:
+            self._calls["record_attempted"] = True
+            raise RuntimeError("catalog is locked: pip install gflow-cli[data]")
+
+    monkeypatch.setattr(
+        cli_scene.OperationRecorder, "open", classmethod(lambda cls, _s: _FailingRecorder(calls))
+    )
+    buf = io.StringIO()
+    monkeypatch.setattr(cli_scene, "console", Console(file=buf, width=300, highlight=False))
+    get_settings().profile_subdir("p").mkdir(parents=True, exist_ok=True)
+
+    res = CliRunner().invoke(
+        main, ["scene", "create", "--project", "proj-1", "wf-1", "--profile", "p"]
+    )
+
+    assert res.exit_code == 0, res.output
+    plain = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue()).split())
+    assert calls["record_attempted"] is True
+    assert "Scene created but not recorded locally" in plain
+    assert "gflow-cli[data]" in plain
+    assert calls["closed"] is True  # recorder still released
 
 
 def test_parse_clip_ref_no_trim():

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gflow": {
+      "command": "gflow",
+      "args": ["mcp", "run"]
+    }
+  }
+}

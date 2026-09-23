@@ -87,7 +87,11 @@ _resolution_option = click.option(
     "--resolution",
     default=None,
     type=click.Choice(["360p", "720p"], case_sensitive=False),
-    help=("Video resolution ('360p' or '720p', supported on omni-flash). Omit for Flow's default."),
+    help=(
+        "Video resolution ('360p' or '720p'). Omit for Flow's default. Only models whose "
+        "settings show a resolution row offer it (omni-flash); on any other model, or on "
+        "the labs editor, the run stops before submit (exit 11), with no credits spent."
+    ),
 )
 
 
@@ -951,12 +955,24 @@ async def _run_chain(
     """
     from pathlib import Path as _Path
 
-    from gflow_cli import chain as chain_mod
-    from gflow_cli.api.video import Aspect
-    from gflow_cli.chain import reject_unusable_links
-    from gflow_cli.chain_manifest import parse_chain_manifest
-    from gflow_cli.data.chain_repo import ChainLinkRecorder
-    from gflow_cli.errors import ChainManifestError
+    from gflow_cli.errors import ChainManifestError, FrameExtractionError
+
+    # `gflow_cli.chain` pulls in `gflow_cli.media`, which imports BOTH optional
+    # `[chain]` dependencies (av, pillow) at module level. Guarding here — the
+    # first statement of the command, ahead of the manifest read, the --dry-run
+    # short-circuit and the cost prompt — turns a missing extra into a typed
+    # exit 20 with an install hint instead of the generic "file a bug" exit 1
+    # that `gflow-cli[chain]==0.74.0` shipped (#813).
+    try:
+        from gflow_cli import chain as chain_mod
+        from gflow_cli.api.video import Aspect
+        from gflow_cli.chain import reject_unusable_links
+        from gflow_cli.chain_manifest import parse_chain_manifest
+        from gflow_cli.data.chain_repo import ChainLinkRecorder
+    except ImportError as exc:
+        raise FrameExtractionError(
+            detail=f"`gflow video chain` needs the optional [chain] dependencies: {exc}",
+        ) from exc
 
     resolved_model = _resolve_chain_model(model)
     aspect_enum = Aspect.from_cli(aspect)

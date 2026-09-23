@@ -6,9 +6,10 @@ These tests are written against the Task-5 contract:
 
     - Decodes the LAST frame of ``src`` (an mp4), writes a JPEG to ``dst``,
       and returns ``dst``.
-    - Raises ``FrameExtractionError`` when the ``av`` package is unavailable
-      (install hint -> ``pip install 'gflow-cli[chain]'``) OR when ``src`` is
-      undecodable.
+    - Raises ``FrameExtractionError`` when ``src`` is undecodable.
+    - A missing ``gflow-cli[chain]`` extra is NOT a call-time failure (#813): both
+      ``av`` and Pillow are module-level imports, so it fails at ``import
+      gflow_cli.media`` and the CLI guard turns that into exit 20 up front.
     - ``offset_ms`` seeds a frame BEFORE the end (e.g. to avoid a black/fade
       final frame, scenario #11).
 
@@ -121,38 +122,31 @@ def test_extract_last_frame_raises_on_undecodable_input(tmp_path: Path) -> None:
         extract_last_frame(bogus, dst)
 
 
-def test_extract_last_frame_raises_when_av_unavailable(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """When the optional ``av`` package is not importable, the extractor must
-    raise ``FrameExtractionError`` with an install hint — NOT a bare
-    ``ModuleNotFoundError`` — so the CLI maps it to exit code 20.
+def test_media_import_fails_when_av_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing ``av`` must fail at ``import gflow_cli.media``, not at call time.
 
-    We simulate the missing extra by poisoning ``sys.modules['av']`` to None
-    (which makes ``import av`` raise ImportError) and re-importing the module so
-    a deferred (function-level) import re-evaluates.
+    REPLACES ``test_extract_last_frame_raises_when_av_unavailable``, whose premise
+    #813 invalidated. That test asserted ``extract_last_frame`` converted a missing
+    ``av`` into ``FrameExtractionError`` at CALL time, and it passed — but the
+    behaviour it blessed was the bug: ``_decode_frame`` runs only BETWEEN links, so
+    a user without the extra paid for link 0 before being told the extra was
+    missing, while a missing Pillow (module-level, same extra) never reached that
+    guard at all and crashed with a generic exit 1. ``av`` now sits beside ``PIL``
+    at module level, so both fail at one point and the single import guard in
+    ``cli_video._run_chain`` maps either to exit 20 before anything is submitted —
+    which is what ``tests/cli/test_cli_video_chain.py`` now pins.
+
+    The old assertion is therefore not merely relocated: it asserted a call-time
+    failure that must no longer be reachable.
     """
-    # Poison the import: ``import av`` -> ImportError while this is set.
+    import gflow_cli
+
+    # `import av` -> ImportError while sys.modules["av"] is None. media must be
+    # evicted from BOTH sys.modules and the package namespace, or the import is a
+    # cache hit that never re-executes. monkeypatch restores both at teardown.
     monkeypatch.setitem(sys.modules, "av", None)
+    monkeypatch.delitem(sys.modules, "gflow_cli.media", raising=False)
+    monkeypatch.delattr(gflow_cli, "media", raising=False)
 
-    # Re-import media so any module-level ``import av`` is re-evaluated under the
-    # poisoned state. If media imports av lazily (inside the function), this is a
-    # harmless no-op and the function-level guard still fires below.
-    import gflow_cli.media as media_module
-
-    media_module = importlib.reload(media_module)
-
-    src = tmp_path / "clip.mp4"
-    src.write_bytes(b"\x00\x00\x00\x18ftypmp42")  # plausible header; never decoded
-    dst = tmp_path / "frame.jpg"
-
-    with pytest.raises(FrameExtractionError) as excinfo:
-        media_module.extract_last_frame(src, dst)
-
-    # Remediation must point users at the optional extra.
-    hint = excinfo.value.remediation_hint
-    assert "chain" in hint.lower(), "FrameExtractionError must hint at gflow-cli[chain]"
-
-    # Restore a clean module import for the rest of the session.
-    monkeypatch.undo()
-    importlib.reload(media_module)
+    with pytest.raises(ImportError):
+        importlib.import_module("gflow_cli.media")

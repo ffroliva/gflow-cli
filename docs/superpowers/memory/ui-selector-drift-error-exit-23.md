@@ -55,3 +55,49 @@ evidence that corrects a wrong absence claim, and never as a bounded wait after
 page is the page you asked for. Three prior special cases (#721 credits, #749 agent
 mode, `FlowAppError`'s crash page) were the same question answered one surface at a
 time.
+
+## Carve-out 5 — an account with no Flow access is not drift (2026-09-15, exit 39)
+
+The same question as carve-out 4, asked one layer deeper. A Google account with no
+Google AI Plus/Pro/Ultra (or qualifying Workspace) plan is served Flow's own
+`<flow-pinhole-unavailable-screen>` instead of the app — so the URL half returns
+`None` (the screen sits on a Flow origin, on an ordinary path) and the caller's drift
+report stood. Measured as an **A/B through the same command** on a real unentitled
+account: probe neutered → exit **23**, *"Google may have updated their frontend …
+file a bug"*, incident bundle written including `sensitive/screenshot.png` of the
+user's own signed-in page; probe restored → exit **39**, naming the subscription.
+gflow blamed its own selectors for a missing subscription and asked the user to
+report it.
+
+`raise_if_known_landing` now probes the DOM **before** it reads the URL and raises
+`FlowAccessUnavailableError` (39, `retryable=False`). Three things make this carve-out
+different from 1–4:
+
+- **The anchor is a component, not a URL.** The spike
+  (`docs/superpowers/spikes/2026-09-15-unentitled-account-signal.md`) pre-registered
+  four signals and refuted all four: no entitlement field on the wire, HTTP **200**
+  with the hop done client-side (no 3xx), and an unstable path — `/unavailable` and
+  `/u/8/unavailable` both observed. A path matcher would have passed the spike's own
+  arm and missed the other.
+- **The guard was not where the failure was.** `ui_automation._enter_editor` returns
+  early when `--project` is supplied, with no readiness gate, so the guard in its
+  gallery arm never ran and the labs drift surfaced from `_switch_to_{image,video}_mode`
+  instead. Found by the council, not by the tests — and then A/B'd like the first arm:
+  with that second guard removed, the offline labs scenario fails with
+  `UiSelectorDriftError('probe=mode_switch_trigger: ... the editor may be a new Flow UI
+  layout this gflow-cli version does not recognize yet (issue #493)')`. **One chokepoint
+  is a claim about control flow — grep every raise site of the class you are converting,
+  not just the ones that already call the helper.** The labs arm cannot be run live here
+  (every profile we hold is served flow.google.com), so the offline scenario plus its
+  neutered control is the whole proof, and that is why it exists.
+- **Deliberately not incident-captured.** A direct `GFlowError` outside
+  `_capture_triggers()`, so `should_capture()` returns False: the remediation is a
+  subscription and a DOM dump tells nobody anything. If Flow renames the component the
+  class stops firing and the failure reverts to exit 23, which *is* captured — the
+  evidence path for the case that needs evidence stays open.
+
+Unfixed siblings, recorded rather than implied: `auth login` (8), `auth status` (1)
+and the labs REST 401 at `project.createProject` (3) are wrong on such an account too.
+They read an oracle that cannot discriminate — the session endpoint answers 200 with
+an empty `user` for an abandoned sign-in *and* for no entitlement — and on the login
+path Chrome has already closed by the time the verdict runs.

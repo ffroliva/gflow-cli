@@ -1,0 +1,85 @@
+name: Sponsors hall of fame
+
+# ── Why this exists ──────────────────────────────────────────────────────────
+# The sponsor tiers promise a place in the hall of fame (README.md and docs/SPONSORS.md). A list
+# kept by hand drifts the day someone sponsors, stops, or goes private — and "goes private" is the
+# one that must never lag. This regenerates the block daily from GitHub Sponsors.
+#
+# Commits straight to develop instead of opening a PR: this repository does not let Actions create
+# pull requests, and loosening that setting for a generated list is the wrong trade. The guard
+# below refuses to commit if anything other than the generated pages changed.
+#
+# Needs a SPONSORS_READ_TOKEN secret: a classic PAT with only the `read:user` scope (the default
+# GITHUB_TOKEN cannot read sponsorships). Without it the job skips with a notice.
+
+on:
+  schedule:
+    # Daily 06:30 UTC — clear of the 05:00 selector probe and the 06:00 star-history watch.
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sponsors-hall-of-fame
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh the sponsor hall of fame
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.repository == 'ffroliva/gflow-cli'
+    permissions:
+      contents: write
+    env:
+      HAS_TOKEN: ${{ secrets.SPONSORS_READ_TOKEN != '' }}
+    steps:
+      - name: Skip without a sponsors token
+        if: env.HAS_TOKEN != 'true'
+        run: echo "::notice::SPONSORS_READ_TOKEN is not set; the hall of fame was not refreshed."
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: env.HAS_TOKEN == 'true'
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Regenerate the hall of fame
+        if: env.HAS_TOKEN == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SPONSORS_READ_TOKEN }}
+        run: python3 scripts/ci/update_sponsors.py
+
+      - name: Regenerate the website mirror
+        # Its own step so the sponsors token never reaches a script that does not need it.
+        if: env.HAS_TOKEN == 'true'
+        run: python3 scripts/ci/generate_website_docs.py
+
+      - name: Commit when the list changed
+        if: env.HAS_TOKEN == 'true'
+        env:
+          # Scoped to this step: checkout keeps no credentials (persist-credentials: false).
+          PUSH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          changed=$(git status --porcelain | awk '{print $2}')
+          if [ -z "$changed" ]; then
+            echo "Hall of fame unchanged."
+            exit 0
+          fi
+          allowed='^(README\.md|docs/SPONSORS\.md|website/docs/SPONSORS\.md)$'
+          # Not `grep -q`: an early exit could SIGPIPE printf and, under pipefail, skip the guard.
+          if printf '%s\n' "$changed" | grep -vE "$allowed" >/dev/null; then
+            echo "::error::Refusing to commit: files outside the hall of fame changed:"
+            printf '%s\n' "$changed" | grep -vE "$allowed"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "docs(sponsors): refresh hall of fame"
+          auth=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          header="http.https://github.com/.extraheader=AUTHORIZATION: basic $auth"
+          git -c "$header" push origin HEAD:develop

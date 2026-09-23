@@ -748,9 +748,10 @@ class TestSessionPollStaysOffTheOAuthHandshake:
         ctx.cookies = AsyncMock(return_value=[{"name": "SAPISID", "value": "x"}])
 
         with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()):
-            email = await poll_session_until_authenticated(ctx, page, 5, "chrome")
+            session = await poll_session_until_authenticated(ctx, page, 5, "chrome")
 
-        assert email == "test@example.com"
+        assert session is not None
+        assert session.user_email == "test@example.com"
         page.request.get.assert_awaited()
 
     @pytest.mark.parametrize(
@@ -845,7 +846,109 @@ class TestSessionPollStaysOffTheOAuthHandshake:
         ctx.cookies = AsyncMock(return_value=[{"name": "SAPISID", "value": "x"}])
 
         with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()):
-            email = await poll_session_until_authenticated(ctx, page, 5, "chrome")
+            session = await poll_session_until_authenticated(ctx, page, 5, "chrome")
 
-        assert email == "test@example.com"
+        assert session is not None
+        assert session.user_email == "test@example.com"
         page.request.get.assert_awaited()
+
+
+class TestMigratedHostStopSignal:
+    """#849 — the labs oracle never answers for an account served flow.google.com,
+    so without a second stop signal the login window is held open to the deadline
+    while the banner promises gflow will close it.
+
+    The signal is deliberately NOT an authentication decision: it ends a wait, and
+    `verify_flow_profile` still asks a server about what landed on disk. Which is
+    exactly why it is gated on `raise_on_close=False` — the flag that already means
+    "this caller owns that fallback oracle".
+    """
+
+    @staticmethod
+    def _page(url: str = "https://flow.google.com/project/abc123") -> MagicMock:
+        page = MagicMock(name="page")
+        page.url = url
+        page.is_closed = MagicMock(return_value=False)
+        # `200 {}` with a Google session: the migrated account's forever-answer.
+        resp = MagicMock(name="resp")
+        resp.status = 200
+        resp.text = AsyncMock(return_value="{}")
+        page.request.get = AsyncMock(return_value=resp)
+        return page
+
+    #: Both halves of a migrated session, as Chrome reports them.
+    MIGRATED_JAR = [
+        {"name": "SAPISID", "value": "x", "domain": ".google.com"},
+        {"name": "__Secure-OSID", "value": "y", "domain": ".flow.google.com"},
+    ]
+
+    @pytest.mark.asyncio
+    async def test_stops_waiting_when_the_migrated_pair_is_present(self) -> None:
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+        from gflow_cli.auth.verification import FlowSessionOutcome
+
+        page = self._page()
+        ctx = MagicMock(name="ctx")
+        ctx.cookies = AsyncMock(return_value=self.MIGRATED_JAR)
+
+        with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()):
+            session = await poll_session_until_authenticated(
+                ctx, page, 600, "chrome", raise_on_close=False
+            )
+
+        # Returned, not timed out — and honest about what it saw: the labs oracle
+        # still says GOOGLE_SESSION_ONLY. Nothing here claims authentication.
+        assert session is not None
+        assert session.outcome is FlowSessionOutcome.GOOGLE_SESSION_ONLY
+
+    @pytest.mark.asyncio
+    async def test_google_sso_cookie_alone_is_not_the_signal(self) -> None:
+        """Signed in to Google is not signed in to Flow — it is the state the poll
+        exists to wait through, and the one every non-migrated login passes through."""
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        page = self._page()
+        ctx = MagicMock(name="ctx")
+        ctx.cookies = AsyncMock(return_value=[{"name": "SAPISID", "domain": ".google.com"}])
+
+        with (
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()),
+            pytest.raises(AuthLoginTimeoutError),
+        ):
+            await poll_session_until_authenticated(ctx, page, 1, "chrome", raise_on_close=False)
+
+    @pytest.mark.asyncio
+    async def test_a_caller_without_a_fallback_oracle_keeps_waiting(self) -> None:
+        """`InternalChromiumStrategy` never runs `verify_flow_profile`, so stopping
+        on a signal that proves nothing would hand it an unverified profile and call
+        the login a success."""
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        page = self._page()
+        ctx = MagicMock(name="ctx")
+        ctx.cookies = AsyncMock(return_value=self.MIGRATED_JAR)
+
+        with (
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()),
+            pytest.raises(AuthLoginTimeoutError),
+        ):
+            await poll_session_until_authenticated(ctx, page, 1, "internal")
+
+    @pytest.mark.asyncio
+    async def test_a_signed_out_window_is_never_closed_out_from_under_the_user(self) -> None:
+        """The cookie pair can be stale — a previous session's — while the user is
+        typing their password on accounts.google.com. `_is_safe_to_probe_session`
+        short-circuits the loop there, so the signal is never even reached."""
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        page = self._page(url="https://accounts.google.com/v3/signin/identifier")
+        ctx = MagicMock(name="ctx")
+        ctx.cookies = AsyncMock(return_value=self.MIGRATED_JAR)
+
+        with (
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()),
+            pytest.raises(AuthLoginTimeoutError),
+        ):
+            await poll_session_until_authenticated(ctx, page, 1, "chrome", raise_on_close=False)
+
+        ctx.cookies.assert_not_awaited()

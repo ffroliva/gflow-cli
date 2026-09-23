@@ -5,8 +5,8 @@
 **Account / profile:** `denon82` (active default per `gflow auth list`)
 **Spend:** 1 Imagen credit (t2i) + 1 Veo credit (omni-flash, 4s, count=1, landscape)
 **Driver:** `tests/e2e/test_data_layer_e2e.py`
-**Spec:** [`docs/superpowers/specs/2026-05-24-data-layer-design.md`](superpowers/specs/2026-05-24-data-layer-design.md)
-**Plan:** [`docs/superpowers/plans/2026-05-24-data-layer.md`](superpowers/plans/2026-05-24-data-layer.md)
+**Spec:** `docs/superpowers/specs/2026-05-24-data-layer-design.md`
+**Plan:** `docs/superpowers/plans/2026-05-24-data-layer.md`
 **Doc:** [`docs/DATA_LAYER.md`](DATA_LAYER.md)
 
 This document is the credit-spending evidence ledger for PR #58. Mirrors the project's existing pattern (see [LIVE_VERIFICATION_v0.8.1](LIVE_VERIFICATION_v0.8.1.md), [LIVE_VERIFICATION_video_download](LIVE_VERIFICATION_video_download.md)). Per [[verification-ledger-5-layer]] every credit-spending feature must have file-cardinality + magic-bytes + Pillow-dimensions + structlog-invariants + user-gallery confirmation — for the data layer we add a 6th layer: **persisted-row verification**.

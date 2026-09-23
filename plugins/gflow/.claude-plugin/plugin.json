@@ -1,0 +1,30 @@
+{
+  "name": "gflow",
+  "displayName": "gflow-cli",
+  "version": "0.79.1",
+  "description": "Drive Google Flow from your agent: Veo text-to-video, image-to-video and clip extension, Imagen images, reusable Characters and scene composition.",
+  "author": {
+    "name": "Flavio Oliva",
+    "url": "https://github.com/ffroliva"
+  },
+  "homepage": "https://ffroliva.github.io/gflow-cli/",
+  "repository": "https://github.com/ffroliva/gflow-cli",
+  "license": "MIT",
+  "keywords": [
+    "google-flow",
+    "veo",
+    "imagen",
+    "video-generation",
+    "mcp"
+  ],
+  "defaultEnabled": false,
+  "userConfig": {
+    "acknowledgeBilling": {
+      "type": "boolean",
+      "title": "I understand this plugin can spend my Google account's Veo credits",
+      "description": "gflow's MCP server drives a real Chrome session signed in to your own Google account. Video generation bills against that account's Flow credit allowance. Images and composition are free; only Veo video spends. Enabling this plugin starts the MCP server automatically.",
+      "required": true,
+      "default": false
+    }
+  }
+}

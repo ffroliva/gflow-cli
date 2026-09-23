@@ -200,7 +200,11 @@ class GeneratedImage:
     workflow_id: str
     seed: int
     prompt: str
-    model_name_type: str  # e.g. "NARWHAL"
+    # e.g. "NARWHAL". None when the host's reply carries no model at all (#789):
+    # labs' `batchGenerateImages` returns `modelNameType`, the migrated host's
+    # `ogiZ0b` does not, and echoing the request back would assert an attribution
+    # nobody observed — one `recorder.py` then persists as `AssetRecord.model`.
+    model_name_type: str | None
     aspect_ratio: str  # e.g. "IMAGE_ASPECT_RATIO_PORTRAIT"
     fife_url: str  # CDN URL — usually expires after ~6 hours
     dimensions: tuple[int, int]  # (width, height)

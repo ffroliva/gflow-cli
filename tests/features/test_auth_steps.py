@@ -34,7 +34,16 @@ scenarios("auth.feature")
 
 @pytest.fixture
 def runner() -> CliRunner:
-    return CliRunner()
+    # Pin the console width. Rich hard-wraps its output to the terminal, and several
+    # `then` steps below assert a SUBSTRING of it — so a profile path that happens to
+    # land near the wrap column splits the word and the assertion fails on formatting,
+    # not on behaviour. Reproduced 2026-09-11: `--basetemp=…/t9` printed
+    # "profile_e\nxperiments" and failed `"experiments" in result.output`, while
+    # `--basetemp=…/t10b` passed — same code, same assertion, one character of path.
+    # Pinned at the fixture because it is the single chokepoint for every invoke here;
+    # normalising newlines at each assertion would fix the symptom ten times and let
+    # the eleventh one in.
+    return CliRunner(env={"COLUMNS": "200"})
 
 
 @pytest.fixture

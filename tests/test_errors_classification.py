@@ -159,14 +159,18 @@ def test_classify_content_safety_handles_multiple_details() -> None:
 
 
 class TestPerInstanceRetryability:
-    """`FlowAppError.retryable` overrides the class answer for one raise site.
+    """`GFlowError.retryable` overrides the class answer at a raise site.
 
-    It exists because `FlowAppError` (exit 31) now covers two shapes with different
-    retry semantics: Flow's client-side crash page, where a retry genuinely works,
-    and its `/about` redirect (#756), where retryability is UNMEASURED — the redirect
-    stopped reproducing on `ci-probe` between 2026-09-08 and 2026-09-10
-    (docs/superpowers/spikes/2026-09-10-about-redirect-stability.md). One flag for
-    both would have made the class answer an assertion nobody checked.
+    It began on `FlowAppError` (exit 31), which covers two shapes with different retry
+    semantics: Flow's client-side crash page, where a retry genuinely works, and its
+    `/about` redirect (#756), where retryability is UNMEASURED — the redirect stopped
+    reproducing on `ci-probe` between 2026-09-08 and 2026-09-10
+    (docs/superpowers/spikes/2026-09-10-about-redirect-stability.md). One flag for both
+    would have made the class answer an assertion nobody checked.
+
+    It now lives on the base, under the condition its own comment set: *"move it up if,
+    and only if, a second class needs it."* #799 is that second class — see
+    `test_the_override_moved_up_because_a_second_class_needed_it`.
     """
 
     def test_class_answer_is_unchanged_when_no_override(self) -> None:
@@ -179,21 +183,63 @@ class TestPerInstanceRetryability:
 
         assert is_retryable(FlowAppError(detail="/about", retryable=False)) is False
 
-    def test_only_flow_app_error_carries_the_override(self) -> None:
-        """Scoped to the one class that needs it (council D14).
+    def test_the_override_moved_up_because_a_second_class_needed_it(self) -> None:
+        """This test used to assert the opposite, and that is the point.
 
-        A base-class field would sit on every error in the project to serve one
-        raise site. `is_retryable` reads it by `getattr`, so narrowing costs nothing
-        — and this test is what makes the narrowing visible if someone widens it back
-        without a second producer to justify it.
+        It pinned the override to `FlowAppError` alone, and said it should fail if
+        anyone widened it back "without a second producer to justify it". #799 is the
+        second producer: a migrated account whose composer is agent-only raises
+        `FlowAgentUiError`, which is in `RETRYABLE_ERRORS` because the labs A/B cohort
+        flaps — while which composer a migrated account gets is server-assigned and
+        does not. So the flag moved to the base, exactly as `FlowAppError`'s own
+        comment specified, and the guard is rewritten rather than deleted.
         """
-        from gflow_cli.errors import UiSelectorDriftError, is_retryable
+        from gflow_cli.errors import FlowAgentUiError, UiSelectorDriftError, is_retryable
 
+        # The class answer still rules when no raise site overrode it.
         assert is_retryable(UiSelectorDriftError(detail="drift")) is False
-        with pytest.raises(TypeError):
-            UiSelectorDriftError(detail="drift", retryable=True)  # type: ignore[call-arg]
+        assert is_retryable(FlowAgentUiError(detail="labs A/B cohort")) is True
 
-    def test_the_signin_landing_raises_auth_expired(self) -> None:
+        # Producer two: the #799 raise site turns its class answer off.
+        assert is_retryable(FlowAgentUiError(detail="agent-only", retryable=False)) is False
+
+        # Available to any error now, not a TypeError as it was before.
+        assert is_retryable(UiSelectorDriftError(detail="drift", retryable=True)) is True
+
+    def test_which_subclasses_accept_the_override_is_pinned_not_assumed(self) -> None:
+        """The override is NOT universal, and the split must fail loudly (CodeRabbit, D1, D4).
+
+        Subclasses that declare their own `__init__` do not forward `retryable`. Rather
+        than thread it through six constructors no raise site passes it to, the contract
+        is narrowed — but then the narrowing has to be pinned, or the base's docstring
+        rots into a lie. What matters is that the rejection is a `TypeError` and never a
+        silent drop: a swallowed `retryable=False` hands a caller a doomed retry with
+        nothing to explain it.
+        """
+        from gflow_cli import errors
+        from gflow_cli.errors import is_retryable
+
+        accepts = {
+            name
+            for name, obj in vars(errors).items()
+            if isinstance(obj, type)
+            and issubclass(obj, errors.GFlowError)
+            and obj is not errors.GFlowError
+            and "__init__" not in obj.__dict__
+        }
+        # A class inheriting the base __init__ accepts it...
+        assert errors.UiSelectorDriftError.__name__ in accepts
+        assert is_retryable(errors.UiSelectorDriftError(detail="x", retryable=True)) is True
+
+        # ...one declaring its own does not, and says so out loud.
+        with pytest.raises(TypeError, match="retryable"):
+            errors.WireFormatError(detail="x", retryable=False)  # type: ignore[call-arg]
+
+        # FlowApiError is the exception: it forwards **kwargs, including the legacy
+        # positional branch, which used to pop named kwargs one at a time and drop this.
+        assert is_retryable(errors.FlowApiError(503, "body", retryable=False)) is False
+
+    async def test_the_signin_landing_raises_auth_expired(self) -> None:
         """The `"signin"` arm, which only the e2e reached before — and `addopts`
         excludes that, so the offline suite never executed this branch (council D4).
 
@@ -207,14 +253,14 @@ class TestPerInstanceRetryability:
         url = "https://labs.google/fx/api/auth/callback/google?state=s3cr3t&code=4/0Aabc"
         page = type("P", (), {"url": url})()
         with pytest.raises(AuthExpiredError) as exc_info:
-            raise_if_known_landing(page, requested="the Flow gallery", at="test")
+            await raise_if_known_landing(page, requested="the Flow gallery", at="test")
 
         detail = str(exc_info.value)
         assert "https://labs.google/fx/api/auth/callback/google" in detail
         assert "code=" not in detail and "state=" not in detail and "s3cr3t" not in detail
         assert "sign-in page" not in detail, "the family includes callback and /session"
 
-    def test_a_midrun_chooser_hop_raises_the_chooser_error_not_drift(self) -> None:
+    async def test_a_midrun_chooser_hop_raises_the_chooser_error_not_drift(self) -> None:
         """Measured live, not imagined (2026-09-10, `denon82`): a session can land on
         `accounts.google.com` AFTER bootstrap, where `client._handle_account_chooser`
         no longer runs — and the labs gallery sweep then reported a missing
@@ -231,7 +277,7 @@ class TestPerInstanceRetryability:
         )
         page = type("P", (), {"url": url})()
         with pytest.raises(FlowAccountChooserError) as exc_info:
-            raise_if_known_landing(page, requested="the Flow gallery", at="test")
+            await raise_if_known_landing(page, requested="the Flow gallery", at="test")
 
         detail = str(exc_info.value)
         assert "accounts.google.com/v3/signin/accountchooser" in detail
@@ -239,7 +285,7 @@ class TestPerInstanceRetryability:
         assert "New project" not in detail
         assert EXIT_CODE_MAP[FlowAccountChooserError] == 38
 
-    def test_the_about_landing_is_not_flagged_retryable(self) -> None:
+    async def test_the_about_landing_is_not_flagged_retryable(self) -> None:
         """The raise site itself, not just the constructor.
 
         Pins the non-claim: this shape raised exit 23 before (already non-retryable),
@@ -250,7 +296,7 @@ class TestPerInstanceRetryability:
 
         page = type("P", (), {"url": "https://flow.google.com/about"})()
         with pytest.raises(FlowAppError) as exc_info:
-            raise_if_known_landing(page, requested="project abc", at="test")
+            await raise_if_known_landing(page, requested="project abc", at="test")
 
         assert is_retryable(exc_info.value) is False
         assert EXIT_CODE_MAP[FlowAppError] == 31

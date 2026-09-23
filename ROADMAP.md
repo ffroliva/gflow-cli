@@ -1,6 +1,6 @@
 # Roadmap
 
-> Themes, not deadlines. `gflow-cli` is an unofficial CLI tracking a private Google Flow API — a single upstream UI change can rearrange a sprint, so we publish themed milestones with deliverables and let velocity emerge.
+> Themes, not deadlines. `gflow-cli` is an independent CLI tracking a private Google Flow API — a single upstream UI change can rearrange a sprint, so we publish themed milestones with deliverables and let velocity emerge.
 
 ## v0.9.0 — Maturity & Visibility (current)
 
@@ -43,4 +43,4 @@ The point at which `FlowApiClient` carries a SemVer commitment and the documenta
 
 ---
 
-*Themes, not deadlines. An unofficial CLI tracking a private API can have its sprint broken by a single UI change upstream — fixed dates would be dishonest.*
+*Themes, not deadlines. An independent CLI tracking a private API can have its sprint broken by a single UI change upstream — fixed dates would be dishonest.*

@@ -65,10 +65,24 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
         "access_token"
     )
     if not isinstance(token, str) or not token:
+        # #795: this is the labs session BFF answering 200 with no token — most
+        # often an account Google has migrated to flow.google.com, for which it
+        # never mints one. aisandbox-pa has not been contacted at this point, and
+        # SAPISID is present and fine (it is what made the session probe report a
+        # Google session at all), so the class default remediation would send the
+        # user to re-authenticate something that is not broken.
         raise AisandboxAuthError(
-            detail="no access_token in Flow session",
+            detail="the labs.google session returned no access token",
             status=session_status,
             route="auth/session",
+            remediation_hint=(
+                "Flow's labs.google session carries no API token for this account. "
+                "On accounts Google serves from flow.google.com this is expected and "
+                "re-authenticating will not help — generation still works. `gflow "
+                "credits` needs a token that only the labs.google session mints, and "
+                "this account no longer gets one; check your balance in Flow instead. "
+                "See issue #795."
+            ),
         )
 
     async with httpx.AsyncClient(follow_redirects=False, timeout=15.0) as client:
@@ -82,10 +96,25 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
             },
         )
         if response.status_code in {401, 403}:
+            # #795: labs minted a token and aisandbox-pa refused it. SAPISID is not the
+            # cause — it is what let labs mint that token at all — so the class default
+            # sends the user to re-authenticate a credential that is working. Say what
+            # was actually rejected, and do not name a fix we cannot stand behind: on an
+            # account Google has moved to flow.google.com, `gflow auth login` can roll
+            # the profile's browser-strategy marker back and start the #791 spiral.
             raise AisandboxAuthError(
                 detail=f"credits endpoint returned {response.status_code}",
                 status=response.status_code,
                 route="credits",
+                remediation_hint=(
+                    "Flow's labs.google session issued an API token and aisandbox-pa "
+                    "rejected it. Your Google sign-in is not the problem — minting that "
+                    "token is what proves it works. Most commonly Flow now serves this "
+                    "account from flow.google.com, where the aisandbox-pa read endpoints "
+                    "have not answered for us; generation keeps working, and `gflow "
+                    "credits` has no equivalent there yet — check your balance in Flow. "
+                    "A 403 can also be an entitlement or region refusal. See issue #795."
+                ),
             )
         if response.status_code != 200:
             raise FlowApiError(

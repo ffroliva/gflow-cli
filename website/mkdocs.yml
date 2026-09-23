@@ -1,12 +1,12 @@
 site_name: gflow-cli
 site_description: >-
-  Unofficial CLI and MCP server for Google Flow — script Veo video and Imagen
+  CLI and MCP server for Google Flow — script Veo video and Imagen
   stills from the terminal, or let your AI assistant drive it.
 site_url: https://ffroliva.github.io/gflow-cli/docs/
 repo_url: https://github.com/ffroliva/gflow-cli
 repo_name: ffroliva/gflow-cli
 copyright: >-
-  Unofficial · not affiliated with Google · MIT-licensed · your credits, your account, your risk.
+  Not affiliated with Google · MIT-licensed · your credits, your account, your risk.
 docs_dir: docs
 site_dir: site
 
@@ -90,6 +90,7 @@ nav:
       - E2E Testing: E2E_TESTING.md
       - Security: SECURITY.md
       - Known issues: KNOWN_ISSUES.md
+  - Sponsors: SPONSORS.md
 
 plugins:
   - search

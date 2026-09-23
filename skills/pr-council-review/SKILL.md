@@ -1,6 +1,6 @@
 ---
 name: pr-council-review
-version: "2.1"
+version: "2.2"
 description: Multi-dimensional LLM council review of an open PR (default) or a local feature branch (§ 8 branch mode, invoked via `/gflow:branch-review`). Five baseline dimensions (correctness, quality, security, tests, memory-hygiene) plus adaptive dimensions per surface (transports / data / CLI / docs / auth / BDD / scripts / release-gate). Each agent invokes specialized skills (security-review, code-review, verify) for its dimension. Reads files via `git show <sha>:<path>` to avoid stale-working-tree false positives. Cross-tool portable.
 ---
 
@@ -45,6 +45,17 @@ with a logged justification (§ 5 step 8).
    ```
    - **Any non-zero → record a `D0 — CI-mechanical` RED.** This is a hard blocker regardless of the LLM dimensions' verdicts; surface the failing command + output verbatim in the report and do NOT call the PR merge-ready. (Mirrors the SonarCloud-gate rule in the wrapper: the council must not bless a tree CI will reject.)
    - If running the gate is impractical (no `uv`, worktree add fails), fall back to `gh pr checks <N>` and inspect the `test` job's Lint/Format steps; if they are **pending or failing**, flag D0 as `UNVERIFIED — must be confirmed green before merge`, never as GREEN.
+   - **On a fork PR, `gh pr checks` is not sufficient and the fallback above is blind.**
+     GitHub holds `pull_request` workflows from forks at `conclusion=action_required`
+     until a maintainer clicks *Approve and run*, and such a run **does not appear in
+     `statusCheckRollup` at all** — so the PR reports every check green while nothing
+     ran. Measured on 2026-09-15: #781 (approved) showed 16 checks; #793 (held) and
+     #787 (no run) each showed 2, all green. Run:
+     ```bash
+     uv run python scripts/ci/check_fork_pr_ci.py --pr <N>
+     ```
+     Non-zero → D0 is `RED — CI never ran`. Approve the workflow run, or gate the head
+     locally, before trusting any green on that PR.
    - Unlike steps 1–5, a D0 failure does **not** halt — dispatch the LLM council anyway so its findings are gathered in one pass, then fold D0 into the Phase 5 verdict.
 
 ---
@@ -95,6 +106,48 @@ Pull in parallel via `ctx_batch_execute`:
 
 **Reference files** (read via `git show origin/$head_branch:<path>` — NOT local `Read`, because the working tree is on `develop`):
 - `CLAUDE.md`, `AGENTS.md`, `docs/INDEX.md`
+
+**Spike traversal (NEW v2.2) — do this BEFORE dispatch, and hand the result to the
+reviewers.** The council reasons about the *diff*. A measurement that refutes the diff's
+premise does not appear in the diff, so no dimension can find it by reading well. Sweep
+`docs/superpowers/spikes/` for the surface the PR touches and pass every match into the
+prompts of the dimensions that own that surface, as **required reading**:
+
+```bash
+total=$(ls docs/superpowers/spikes/*.md | wc -l)
+gh pr diff <N> | grep -ohiE '/about|batchexecute|recaptcha|networkidle|SNlM0e|aisandbox[a-z-]*|agent-mode|referenceEntit[a-z]*|SignOutOptions|flow-[a-z-]+|ya29|SAPISID' \
+| tr 'A-Z' 'a-z' | sort -u | while read -r t; do
+    hits=$(grep -rli -- "$t" docs/superpowers/spikes/ 2>/dev/null)
+    n=$(printf '%s\n' "$hits" | grep -c . )
+    # A term matching most of the corpus is a topic, not a lead. Skip it.
+    [ "$n" -gt 0 ] && [ "$n" -le $(( total / 3 )) ] && printf '## %s (%s)\n%s\n' "$t" "$n" "$hits"
+  done
+```
+
+Do **not** pipe the loop through `sort -u` — it separates the headers from their paths,
+and the grouping is the readable part.
+
+**Selectivity is the whole trick**, and it is measurable rather than a matter of taste.
+Counted against the 30-spike corpus on 2026-09-16: `flow.google.com` hits **23** — a topic,
+useless as a lead — while `/about` hits **9**, including all three about-redirect spikes.
+So filter out any term matching more than a third of the corpus; what remains is short
+enough to actually read.
+
+Read the **verdict** section of each hit, not the whole spike. If one contradicts something
+the PR asserts, that is a blocking finding **before a single agent is dispatched** — and it
+is cheaper than every dimension that would have failed to notice.
+
+> **Written from PR #835.** It added a migrated-host auth oracle that read the rendered
+> DOM and claimed the signal was *server-attested*. Eight dimensions passed it — D1, D3,
+> D6, D10 all read the auth path closely and none objected to the premise. The refutation
+> was five days old and already in this repository:
+> `2026-09-11-about-redirect-is-decided-client-side.md` measured that Flow's `/about` hop
+> is decided **client-side with zero requests to Flow**, and states outright that
+> *"the backend grants access while the frontend declines to open it."* That single
+> sentence invalidates the oracle. The diff touched `flow.google.com` in fourteen places;
+> a grep would have put the spike in front of D6 and D10 as required reading. The e2e
+> caught it instead — by going red on a live account whose state moved mid-session.
+> **This is a routing failure, not a reviewer failure**, and routing is fixable.
 
 **Memory traversal:** for each `TOUCHED_PATH`, look up relevant slugs:
 - `transports/` → `[[migrated-host-driver-wire-lessons]]`, `[[pr-must-verify-on-affected-surface]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[ligature-carrier-differs-by-host]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[ui-selector-drift-error-exit-23]]`
@@ -231,12 +284,12 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 
 | Dim | Mandatory memory slugs |
 |---|---|
-| D1 | `[[pr-must-verify-on-affected-surface]]`, `[[video-model-capability-matrix]]`, `[[flow-capabilities-are-cohort-dependent]]` |
+| D1 | `[[pr-must-verify-on-affected-surface]]`, `[[video-model-capability-matrix]]`, `[[flow-capabilities-are-cohort-dependent]]`, `[[migrated-refusal-is-a-dom-card-not-a-wire-record]]` |
 | D2 | `[[ruff-format-scope-is-src-tests]]`, `[[git-add-all-sweeps-scratch-files]]` |
 | D3 | `[[real-browser-auth-mandatory]]`, `[[release-signing]]` |
 | D4 | `[[e2e-evidence-is-a-contributor-deliverable]]`, `[[force-color-breaks-cli-tests]]`, `[[pr-must-verify-on-affected-surface]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]`, `[[windows-running-launcher-blocks-uv-upgrade]]` |
 | D5 | `[[memory-is-working-dir-keyed]]`, `[[release-spec-plan-memory-consolidation]]`, `[[pr-council-review-stale-tree-reads]]` (this very bug, as the council should self-improve) |
-| D6 | `[[ui-selector-drift-error-exit-23]]`, `[[credit-free-route-abort-verification]]`, `[[flow-credits-videos-only]]`, `[[flow-recon-must-run-on-denon82-ffroliva-migrated]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[ligature-carrier-differs-by-host]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]`, `[[migrated-host-driver-wire-lessons]]` |
+| D6 | `[[ui-selector-drift-error-exit-23]]`, `[[credit-free-route-abort-verification]]`, `[[flow-credits-videos-only]]`, `[[flow-recon-must-run-on-denon82-ffroliva-migrated]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[ligature-carrier-differs-by-host]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]`, `[[migrated-host-driver-wire-lessons]]`, `[[content-policy-text-scan-false-positives-on-page-chrome]]` |
 | D7 | `[[on-started-callback-recorder-safety]]`, `[[data-layer-test-pollution-trap]]`, `[[exit-code-16-data-store]]` |
 | D8 | (none mandatory) |
 | D9 | `[[prose-conflicts-hide-in-disjoint-files]]`, `[[doc-examples-are-untested-fixtures]]`, `[[readme-hybrid-router-pattern]]`, `[[agents-md-vs-llms-txt]]`, `[[pypi-readme-staleness-fix]]` |

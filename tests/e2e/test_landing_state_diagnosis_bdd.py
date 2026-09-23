@@ -31,7 +31,13 @@ from pytest_bdd import given, scenarios, then, when
 
 from gflow_cli.api.transports.migrated_composer import MigratedComposer
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-from gflow_cli.errors import AuthExpiredError, FlowAppError, UiSelectorDriftError, is_retryable
+from gflow_cli.errors import (
+    AuthExpiredError,
+    FlowAccessUnavailableError,
+    FlowAppError,
+    UiSelectorDriftError,
+    is_retryable,
+)
 
 scenarios("../features/landing_state_diagnosis.feature")
 
@@ -40,6 +46,28 @@ PROJECT_URL = f"https://flow.google.com/project/{PROJECT_ID}"
 ABOUT_URL = "https://flow.google.com/about"
 LABS_GALLERY = "https://labs.google/fx/tools/flow?hl=en"
 LABS_SIGNIN = "https://labs.google/fx/api/auth/signin?error=Callback"
+LABS_PROJECT = "https://labs.google/fx/tools/flow/project/" + PROJECT_ID
+UNAVAILABLE_URL = "https://flow.google.com/unavailable"
+
+# The measured shape, 2026-09-15, from a real account with no Flow entitlement
+# (spike: scripts/dev/spike_flow_unavailable_signal.py). Flow's own Angular shell
+# renders and routes to a dedicated component — the app IS loaded, it simply has
+# nothing to show this account. The <h2> and the support link are reproduced so a
+# selector that keys on prose instead of the component would still find prose to
+# key on, and would still be wrong.
+_UNAVAILABLE_HTML = """<!doctype html><html><body>
+<aisandbox-root>
+  <main>
+    <flow-banner></flow-banner>
+    <router-outlet></router-outlet>
+    <flow-pinhole-unavailable-screen>
+      <h2>It looks like you don't have access to Flow.</h2>
+      <a href="https://support.google.com/flow/answer/16353333">here</a>
+      <a href="https://labs.google/flow/tv">Flow TV</a>
+    </flow-pinhole-unavailable-screen>
+  </main>
+</aisandbox-root>
+</body></html>"""
 
 # Flow's hop is client-side (spike 2026-09-04): `goto` returns on
 # domcontentloaded and the redirect runs after. Reproducing it as a script —
@@ -104,6 +132,11 @@ def _gallery_url(world: dict[str, Any]) -> None:
     world["start"] = LABS_GALLERY
 
 
+@given("a project URL on the labs host")
+def _labs_project_url(world: dict[str, Any]) -> None:
+    world["start"] = LABS_PROJECT
+
+
 # ---------------------------------------------------------------------------- when
 
 
@@ -149,7 +182,95 @@ def _signin_error(world: dict[str, Any]) -> None:
     )
 
 
+@when("Flow answers it with the unavailable screen")
+def _unavailable_screen(world: dict[str, Any]) -> None:
+    """The hop is client-side on purpose.
+
+    Measured: `https://flow.google.com/` answers **200** and Angular routes to the
+    unavailable screen afterwards — there is no HTTP 3xx to key on. Reproducing it
+    as a script rather than a redirect is what lets this test fail the #639 way if
+    the check is ever moved ahead of the readiness wait.
+    """
+    world["pages"] = {
+        UNAVAILABLE_URL: _UNAVAILABLE_HTML,
+        PROJECT_URL: _REDIRECT_HTML.format(UNAVAILABLE_URL),
+    }
+    world["error"] = asyncio.run(
+        _drive(
+            world["pages"],
+            world["start"],
+            lambda page: MigratedComposer().ensure_editor(page, PROJECT_ID, timeout_s=2.0),
+        )
+    )
+
+
+@when("Flow answers the labs editor with the unavailable screen")
+def _labs_unavailable(world: dict[str, Any]) -> None:
+    """The labs arm, which `_enter_editor`'s guard cannot reach.
+
+    With a project id, `_enter_editor` navigates and returns with no readiness gate, so
+    the first place that can ask "can this account reach Flow at all?" is the mode
+    switch. Driving `_switch_to_image_mode` directly is what makes this a test of the
+    guard rather than of the navigation above it.
+    """
+    world["pages"] = {LABS_PROJECT: _UNAVAILABLE_HTML}
+    world["error"] = asyncio.run(
+        _drive(
+            world["pages"],
+            world["start"],
+            lambda page: UiAutomationTransport._switch_to_image_mode(page),  # noqa: SLF001
+        )
+    )
+
+
 # ---------------------------------------------------------------------------- then
+
+
+@then("the failure says this account cannot reach Flow")
+def _says_no_access(world: dict[str, Any]) -> None:
+    error = world["error"]
+    assert isinstance(error, FlowAccessUnavailableError), (
+        f"expected FlowAccessUnavailableError, got {error!r}"
+    )
+    text = f"{error} {error.remediation_hint or ''}".casefold()
+    assert "subscription" in text or "google ai" in text, (
+        "must name the requirement the user can act on; Flow needs Google AI "
+        f"Plus/Pro/Ultra (or a qualifying Workspace plan): {text}"
+    )
+
+
+@then("the failure does not tell the user to sign in again")
+def _no_relogin_loop(world: dict[str, Any]) -> None:
+    """The defect this scenario exists for.
+
+    Every wrong answer this state produced pointed back at sign-in. Measured
+    2026-09-15 on a real unentitled account: `gflow auth login` exited 8 with "the
+    Flow app sign-in wasn't completed. Re-run ... until the Flow editor loads", and
+    `gflow image t2i` without a project exited 3 with "Authentication expired -> Run
+    `gflow auth login`". Both instruct a retry that can never terminate, because the
+    editor does not exist for this account at any price short of a subscription. On
+    the route this scenario covers the old answer was different and worse (exit 23,
+    "file a frontend bug"), so the assertion is the union: nothing here may send the
+    user back to a login.
+    """
+    text = str(world["error"]).casefold()
+    hint = (getattr(world["error"], "remediation_hint", "") or "").casefold()
+    for claim in ("auth login", "sign in again", "expired", "re-run"):
+        assert claim not in text, f"sends the user back into the login loop ({claim!r}): {text}"
+        assert claim not in hint, f"sends the user back into the login loop ({claim!r}): {hint}"
+
+
+@then("the failure is terminal, not retryable")
+def _terminal(world: dict[str, Any]) -> None:
+    """A missing subscription is a state, not a blip.
+
+    Decided by evidence rather than by class default, per the Bug Lane's "a flag is
+    a claim": the screen renders on every visit to that account, and no retry can
+    grant access that was never purchased.
+    """
+    error = world["error"]
+    assert isinstance(error, FlowAccessUnavailableError), f"got {error!r}"
+    assert is_retryable(error) is False
 
 
 @then("the failure names the landing page and the project it did not open")

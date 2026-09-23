@@ -43,7 +43,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - name: Audit locked dependencies for known CVEs
         # Fails the build on any known advisory. Accept later via: pip-audit --ignore-vuln <GHSA-id>
         #
@@ -80,7 +80,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       - name: Audit workflows (zizmor)
         # --offline: the online audits need a GH token and reach the network, so
@@ -116,7 +116,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       - name: Set up Python
         run: uv python install 3.13
@@ -172,7 +172,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       - name: Set up Python
         run: uv python install ${{ matrix.python-version }}
@@ -199,6 +199,9 @@ jobs:
       - name: Council memory (every cited slug resolves, every file is cited)
         run: uv run python scripts/ci/check_council_memory.py
 
+      - name: Plugin skills in sync (curated payload, no maintainer-only skill shipped)
+        run: uv run python scripts/ci/generate_plugin_skills.py --check
+
       - name: Lint
         run: uv run ruff check src tests
 
@@ -223,6 +226,28 @@ jobs:
         # Flow credits. pyproject.toml excludes both markers by default; CI
         # intentionally relies on that default smoke set.
         run: uv run python -m pytest -q --cov=gflow_cli --cov-report=xml --junitxml=pytest-report.xml
+
+      # Five files under tests/e2e/ are hermetic: every Flow origin is served by
+      # `page.route(...).fulfill(...)`, so they need no account, no profile, no
+      # network and no credits — only the Chromium installed above. They are the
+      # regression tests for #593, #773, #859 and #860, and because `-m e2e` is
+      # excluded by pyproject's addopts and no job overrode it, they ran nowhere:
+      # a regression of any of those fixes would have gone green. They are the
+      # only e2e tests that CAN run here; the other 42 need a logged-in profile.
+      - name: E2E (hermetic subset — route-intercepted, $0, no profile)
+        if: matrix.python-version == '3.13'
+        run: >
+          uv run python -m pytest -q -m e2e
+          tests/e2e/test_account_chooser_e2e.py
+          tests/e2e/test_blocking_dialog_dismissal_bdd.py
+          tests/e2e/test_click_attribution_bdd.py
+          tests/e2e/test_frame_picker_binding_bdd.py
+          tests/e2e/test_landing_state_diagnosis_bdd.py
+          --junitxml=pytest-e2e-hermetic.xml
+
+      - name: E2E-count guard (an empty e2e run is not a passing e2e run)
+        if: matrix.python-version == '3.13'
+        run: uv run python scripts/ci/check_test_count.py pytest-e2e-hermetic.xml 10
 
       - name: Test-count guard (a green build that ran nothing is not green)
         # Floor well below the real count (~2900): catches collection collapse
@@ -260,7 +285,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       - name: Set up Python
         run: uv python install 3.13
@@ -332,7 +357,7 @@ jobs:
         # archived actions, so its pin would rot silently); sonarqube-scan-action
         # is SonarSource's maintained successor and serves SonarCloud when
         # SONAR_HOST_URL points at it.
-        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        uses: SonarSource/sonarqube-scan-action@ba9859eae8dd6bd29e412f25ddbbef3d032000f4 # v8.2.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # PR decoration
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    # set in repo → Settings → Secrets

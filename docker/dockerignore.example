@@ -1,0 +1,10 @@
+.venv
+# .git — NOT excluded: check_repo_hygiene and generate_plugin_skills shell out to
+# `git ls-files`, so a context without a repo makes them fail with exit 128.
+.claude
+tmp
+out
+node_modules
+website/node_modules
+**/__pycache__
+*.har

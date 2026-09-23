@@ -123,6 +123,49 @@ def test_resolve_profile_falls_back_to_env(tmp_path: Path, monkeypatch: pytest.M
         reset_settings()
 
 
+def test_resolve_profile_exits_2_and_lists_bracketed_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Several profiles and no default → ``sys.exit(2)`` naming every candidate.
+
+    The sibling ``NoProfilesError`` arm ("run `gflow auth login`") is already
+    covered by ``tests/features/auth.feature``; this is the other one, and it is
+    the one carrying user-controlled text: ``NoDefaultProfileError`` builds its
+    message out of the discovered directory names.
+
+    Rich reads a lowercase ``[...]`` run as a style tag and, when the style will
+    not parse, drops it from the output without a word. So an unescaped
+    ``f"[yellow]{exc}[/yellow]"`` prints "Available: alpha, beta" for a profile
+    actually called ``alpha[chain]`` — a name the user then cannot pass back to
+    ``gflow auth use``. ``escape()`` (#813) is what keeps it; reverting it at
+    ``_cli_helpers.py``'s ``NoDefaultProfileError`` print turns this red.
+    """
+    import re
+
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    monkeypatch.delenv("GFLOW_CLI_PROFILE", raising=False)
+    monkeypatch.setenv("COLUMNS", "300")  # no soft wrap inside the token
+    reset_settings()
+    try:
+        (tmp_path / "profile_alpha[chain]").mkdir(parents=True)
+        (tmp_path / "profile_beta").mkdir(parents=True)
+
+        from gflow_cli._cli_helpers import _resolve_profile
+
+        with pytest.raises(SystemExit) as excinfo:
+            _resolve_profile(None)
+        assert excinfo.value.code == 2
+
+        plain = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out).split())
+        assert "Cannot pick a default profile" in plain
+        assert "alpha[chain]" in plain
+        assert "beta" in plain
+    finally:
+        reset_settings()
+
+
 def test_make_provider_dir_returns_existing_profile_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

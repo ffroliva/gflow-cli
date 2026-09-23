@@ -436,3 +436,69 @@ def test_data_list_db_missing_exits_0_with_empty_rows(
     assert result.exit_code == 0, result.output
     # DataStore.open is responsible for creating the file + applying migrations.
     assert missing.exists(), "DataStore.open must create the catalog file"
+
+
+# ─── data download (#865) ────────────────────────────────────────────────────
+
+
+def _fake_download(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Stub the service so the CLI layer is tested without a browser."""
+    from gflow_cli.services.media_recovery import DownloadedMedia
+
+    written = tmp_path / "9ad33c78.mp4"
+    written.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+
+    async def _fake(*, media_id: str, profile: str | None, out_dir: Path | None) -> DownloadedMedia:
+        return DownloadedMedia(
+            media_id=media_id,
+            workflow_id="wf-42",
+            profile_name=profile or "alice",
+            project_id="flow-proj-alice-000",
+            path=written,
+            bytes=written.stat().st_size,
+        )
+
+    monkeypatch.setattr("gflow_cli.cli_data.download_media", _fake)
+
+
+def test_data_download_prints_a_table(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _fake_download(monkeypatch, tmp_path)
+    result = CliRunner().invoke(main, ["data", "download", "9ad33c78"])
+
+    assert result.exit_code == 0, result.output
+    assert "9ad33c78" in result.output
+    assert "flow-proj-alice-000" in result.output
+
+
+def test_data_download_emits_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _fake_download(monkeypatch, tmp_path)
+    result = CliRunner().invoke(main, ["data", "download", "9ad33c78", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output.strip().splitlines()[-1])
+    assert payload["media_id"] == "9ad33c78"
+    assert payload["workflow_id"] == "wf-42"
+    assert payload["bytes"] > 0
+    assert payload["path"].endswith(".mp4")
+
+
+def test_data_download_reports_a_catalog_miss(empty_db: Path) -> None:
+    """Exit 16 (DataStoreError family) when no row exists — no browser is launched."""
+    result = CliRunner().invoke(main, ["data", "download", "does-not-exist"])
+
+    assert result.exit_code == 16, result.output
+
+
+def test_data_media_prints_the_row(seeded_db: Path) -> None:
+    """`data media` and `data download` share one resolver — cover its read path."""
+    result = CliRunner().invoke(main, ["data", "media", "vid-media-alice-0"])
+
+    assert result.exit_code == 0, result.output
+    assert "alice" in result.output
+    assert "flow-proj-alice-000" in result.output
+
+
+def test_data_media_reports_an_unknown_id(empty_db: Path) -> None:
+    result = CliRunner().invoke(main, ["data", "media", "nope"])
+
+    assert result.exit_code == 16, result.output

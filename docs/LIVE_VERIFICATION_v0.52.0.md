@@ -22,8 +22,8 @@ This live verification run exercises recent core infrastructure, transport, and 
 | Layer | Recorded Live Evidence | Result |
 |---|---|---|
 | **1. File Count & Summary** | `2/2 succeeded · 0 failure(s) · 0 skipped` | 🟢 PASS |
-| **2. Artifact 0 (Prompt 0)** | [`prompt_0_0.jpg`](file:///C:/Users/ffrol/Downloads/gflow-cli/images/2026-08-06/prompt_0_0.jpg) (862,548 bytes, `1:1` aspect, Nano Banana 2) | 🟢 PASS |
-| **3. Artifact 1 (Prompt 1)** | [`prompt_1_0.jpg`](file:///C:/Users/ffrol/Downloads/gflow-cli/images/2026-08-06/prompt_1_0.jpg) (1,093,468 bytes, `16:9` aspect, Nano Banana 2) | 🟢 PASS |
+| **2. Artifact 0 (Prompt 0)** | `prompt_0_0.jpg` (862,548 bytes, `1:1` aspect, Nano Banana 2) | 🟢 PASS |
+| **3. Artifact 1 (Prompt 1)** | `prompt_1_0.jpg` (1,093,468 bytes, `16:9` aspect, Nano Banana 2) | 🟢 PASS |
 | **4. Structlog Invariants** | `ui_automation.image_mode_entered` → `ui_automation.image_model_selected` → `ui_automation.aspect_ratio_set` → `ui_automation.prompt_submitted` → `batch_jitter_sleep` (0.99s) | 🟢 PASS |
 | **5. DAG Intra-Batch Binding** | Prompt 1 (`16:9`) bound Prompt 0's generated asset as `ref: "batch:0"` via `batchGenerateImages` payload | 🟢 PASS |
 
@@ -50,6 +50,6 @@ This live verification run exercises recent core infrastructure, transport, and 
 
 ## 4. User-Confirmable Outputs
 
-- Batch Manifest: [`tmp/live_verify_batch.json`](file:///C:/development/github/gflow-cli/tmp/live_verify_batch.json)
+- Batch Manifest: `tmp/live_verify_batch.json`
 - Prompt 0 Output: `C:\Users\ffrol\Downloads\gflow-cli\images\2026-08-06\prompt_0_0.jpg`
 - Prompt 1 Output: `C:\Users\ffrol\Downloads\gflow-cli\images\2026-08-06\prompt_1_0.jpg`

@@ -14,9 +14,34 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### Every command lands on `flow.google.com/about` (exit 31) while `gflow auth status` says the session is fine
+
+- **Status:** Open · **Severity:** High for the affected account (nothing runs) · **Affected:** measured on one account (`denon82`, 2026-09-23). Other `/about` occurrences are not yet shown to share the cause.
+- **Tracked:** [#902](https://github.com/ffroliva/gflow-cli/issues/902) (`auth login` cannot clear it) · [#888](https://github.com/ffroliva/gflow-cli/issues/888) · [#756](https://github.com/ffroliva/gflow-cli/issues/756)
+- **Evidence:** [spike](docs/superpowers/spikes/2026-09-23-about-cta-leads-to-google-reauth.md)
+
+Flow sends every visit to its public landing page `/about`, while every Google and Flow cookie
+gflow checks is present and unexpired. On the measured account, the page's "Create with Google
+Flow" button led to Google's **"Confirm it's you — sign in again to continue"** page: Google was
+waiting for the account to re-verify its identity.
+
+**`gflow auth login` does not fix it.** It sees the valid cookies, reports `Flow session
+verified` in about half a second, and closes Chrome before Google can ask (#902).
+
+**Workaround (needs the account password):** with no gflow command running, open real Chrome on
+the profile directory yourself:
+
+```bash
+"<chrome.exe>" --user-data-dir="<GFLOW_CLI_HOME profile dir, e.g. …/profile_<name>>" --password-store=basic https://flow.google.com/
+```
+
+Click the landing page's main button, complete "Confirm it's you", wait for the Flow editor, then
+close Chrome yourself. On the measured account, `/about` was gone on the next run and
+`gflow project create` succeeded.
+
 ### Flow is migrating to `flow.google.com`; generation coverage is partial but includes images
 
-- **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i` now run on the migrated host. Image mode supports Nano Banana 2 / Pro, the four aspect ratios its radiogroup was enumerated with (16:9, 4:3, 1:1, 9:16), and count 1–4; `3:4` had no radio in that enumeration and is refused before submit rather than reported as selector drift. Image refs by UUID, `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video end frames, video refs by UUID/name, scenes, extend, instructions and tools are not ported yet and fail before submit. **`character` is NOT in that list any more** — `character create` and `character list` work on the migrated host. Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, `extend`, `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
+- **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i` now run on the migrated host. Image mode supports Nano Banana 2 / Pro, all five aspect ratios its radiogroup renders (16:9, 4:3, 1:1, 3:4, 9:16 — 3:4 appeared by 2026-09-17, #864), and count 1–4. Image refs by UUID, `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video frame refs by UUID/name, scenes, extend, instructions and tools are not ported yet and fail before submit. **`character create` is NOT in that list any more** — it works on the migrated host. `character list` does NOT: it reads the retired labs `projectInitialData` route and exits 7, measured 2026-09-20 both on `auto` and with `GFLOW_CLI_FLOW_HOST=flow.google.com` (#875). Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, `extend`, `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
 - **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
 - **`--reference-entity` was refused on `r2v` but not on `t2v`** ([#716](https://github.com/ffroliva/gflow-cli/issues/716), fixed in v0.71.0): the "not ported, exit 36" refusal above sat inside the r2v branch of the routing gate, so a `t2v` request carrying a character entity returned from that gate without its entities ever being inspected — and nothing downstream attaches one on this host. The generation was **submitted and billed** with the entity silently dropped, returning a plausible clip of the wrong person. The check is now mode-independent and ahead of every early return. If you ran `gflow video t2v @Name …` or `--reference-entity` on a moved account before this fix, the identity in those clips was never bound.
@@ -55,10 +80,9 @@ the clip). Two real clips were generated this way on 2026-09-05 — spike
 `docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md`. Routing
 (`GFLOW_CLI_FLOW_HOST=auto`): flow.google.com is the **default** host for that
 command on every account — moved or not; `flow.google.com` forces it for
-everything, and `labs.google` switches the migrated composer off. Limits today: `--project` is required (project creation from the
-migrated editor is not ported), and `t2v`, `i2v` from a local `--initial-frame` (no end frame,
-no UUID/`@Name` frame — the migrated Frames picker exposes no media id in its DOM, so a frame is
-found by file name after gflow uploads it through the editor), and `r2v` from local `--ref` files
+everything, and `labs.google` switches the migrated composer off. Limits today: only `t2v`, `i2v` from local start (and end) frames (no UUID/`@Name` frame —
+the migrated Frames picker exposes no media id in its DOM, so a frame is
+found by the run-unique name gflow uploads it under, #792), and `r2v` from local `--ref` files
 (see the next paragraph), plus `image t2i` and local-file `image i2i` — unsupported
 forms still exit 36.
 
@@ -98,7 +122,7 @@ is a per-account setting the labs.google app applies on every load (measured
 once the account is flagged, re-running will not land the old frontend. Earlier text here said the rollout
 "flaps" and told you to retry; that observation straddled the account's one-time
 switch and is withdrawn. The REST surface (`gflow project list`, `gflow data …`)
-is unaffected. Automated callers now receive `retryable: false` so retry loops
+is unaffected; `gflow credits` is **not** — its token comes from `labs.google`, which mints none for a moved account ([#795](https://github.com/ffroliva/gflow-cli/issues/795), open; see the quota entry below). Automated callers now receive `retryable: false` so retry loops
 stop instead of burning a doomed attempt each time.
 
 **What gflow does today for the rest of the matrix:** recognises the migrated
@@ -108,7 +132,7 @@ with the distinct, non-retryable exit 36 instead of the misleading
 `UiSelectorDriftError` (exit 23, "file a selector bug"). `_check_logged_in` also
 accepts the migrated host, so a migrated load is no longer misread as a
 logged-out session. The generation forms listed above and characters are driven;
-scenes, extend, instructions, tools, project creation, and the named reference/model
+scenes, extend, instructions, tools, and the named reference/model
 variants are the remaining work
 tracked here — no retry helps for those until each is ported.
 
@@ -808,15 +832,42 @@ A block that survives dismissal now aborts pre-submit with exit 23 (probe `overl
 
 ---
 
-### No in-CLI quota visibility — resolved
+### No in-CLI quota visibility — resolved on labs, still open on the migrated host
 
-- **Status:** Resolved 2026-09-05
+- **Status:** Resolved 2026-09-05 for `labs.google` accounts · **Open** on accounts Google has migrated to `flow.google.com` · **Tracked:** [#795](https://github.com/ffroliva/gflow-cli/issues/795)
 
 Use `gflow credits user` for the selected profile or `gflow credits list` for all saved
 profiles. Both commands query Flow's current read-only credits endpoint with the saved browser
 session; `--json` provides a stable automation contract. The equivalent MCP surface is
 `gflow_get_credits`. The reported balance funds Veo video generation; image generation consumes
 separate per-model daily quotas.
+
+**On accounts served from `flow.google.com` there is still no in-CLI quota visibility.** The
+credits endpoint is reached with a token minted by `labs.google`, and the move takes that
+away in **two stages**, so `gflow credits user` / `list` and `gflow_get_credits` fail in one
+of two ways:
+
+- labs answers `200` with no `access_token` — it never mints one → *"the labs.google session
+  returned no access token"*.
+- labs still mints one and **aisandbox-pa rejects it** → *"credits endpoint returned 401"*.
+  An account can move into either with no other visible change.
+
+Since v0.74.0 both name the real cause. Through 0.73.1 the first was reported as "aisandbox-pa
+authentication failed … SAPISID cookie missing, expired, or unreadable", and through 0.73.2
+the second still was — which sent migrated users into a re-login loop that cannot terminate:
+aisandbox-pa had either not been contacted or had answered, and SAPISID was present and fine.
+On a profile with no browser-strategy marker that advice is worse than useless, since a failed
+*first* login rolls the marker back ([#791](https://github.com/ffroliva/gflow-cli/issues/791)).
+
+v0.74.0 corrected the two `gflow credits` sites; the same wording survived on **every other
+aisandbox route** — `createScene`, `commitWorkflow`, `createEntity`, `projectInitialData`,
+`upsampleImage` and the rest — because they inherited the class default instead of passing a
+hint. Fixed in v0.79.0 ([#803](https://github.com/ffroliva/gflow-cli/issues/803)): each of the
+three remaining raise sites now states what was actually rejected, the 401 site names the route
+that refused, and the class default no longer asserts a SAPISID failure at all.
+
+Reading a balance on the migrated host is **not** implemented
+([#795](https://github.com/ffroliva/gflow-cli/issues/795), open). Generation is unaffected.
 
 ---
 
@@ -1183,6 +1234,42 @@ your prompts.
 
 ---
 
+### `gflow-cli[chain]` ≤ 0.74.0 does not install Pillow — `video chain` fails with exit 1
+
+- **Status:** **Fixed in v0.75.0** · affects `gflow-cli` ≤ 0.74.0 · **Severity:** High (the command was unusable) · **Affects:** `gflow video chain` · **Tracked:** [#813](https://github.com/ffroliva/gflow-cli/issues/813)
+
+Through 0.74.0 the `chain` extra declared `av` alone, but `gflow_cli/media.py`
+imports `PIL` at module level. So the documented install produced a CLI that
+could not run the command it was installed for:
+
+```console
+$ uvx --isolated --from 'gflow-cli[chain]==0.74.0' gflow video chain one.jsonl --dry-run
+Unexpected error ... file a bug          # exit 1; the real cause is No module named 'PIL'
+```
+
+A missing **`av`** was worse than it looked: `import av` was deferred into the
+decode helper, which only runs *between* links — so it surfaced after link 0 had
+already been generated and **paid for**.
+
+**Workaround on ≤ 0.74.0** — install Pillow alongside the extra:
+
+```bash
+pip install 'gflow-cli[chain]' pillow
+# or:  uv tool install 'gflow-cli[chain]' --with pillow
+```
+
+**Fixed in v0.75.0:** `pillow` ships in the `chain` extra, `av` moved to
+a module-level import so both fail at the same point, and `video chain` now
+raises `FrameExtractionError` (**exit 20**) naming the extra and both packages —
+before the manifest is read, before `--dry-run` prints a plan, and before the
+cost prompt. Verified against a real wheel installed without extras: a
+**nonexistent** manifest still exits 20 on the dependency error rather than
+file-not-found, which is what shows the guard precedes the manifest read.
+The advice is also legible now — Rich used to eat `[chain]` out of it and print
+`pip install 'gflow-cli'`, i.e. reinstall what you already have.
+
+---
+
 ### `gflow video chain` outputs N clips, not one file — auto-concat is deferred
 
 - **Status:** Open (by design) · **Severity:** Low · **Affects:** `gflow video chain` (v0.12.0)
@@ -1226,6 +1313,40 @@ continue as a seeded I2V generation — tracked as backlog.
 ---
 
 ## Mitigated
+
+### Some accounts get an agent-only composer on flow.google.com, which gflow cannot drive
+
+Some accounts on `flow.google.com` are served a composer with **no classic arm at all**:
+the only prompt box is the agent panel, there is no `agent-mode-chip` to turn off, and
+aspect / model / count are Agent-settings **defaults** rather than per-request controls.
+Every control the migrated driver reaches for is structurally absent, so `gflow video`
+and `gflow image` cannot run there at all.
+
+**Mitigation (v0.74.0):** the state is named before submit — `FlowAgentUiError`, exit 25,
+`retryable: false`, $0 spent — instead of the generic `UiSelectorDriftError` (exit 23)
+that reads as a gflow frontend bug and invites a doomed retry. The discriminator is the
+chip, because the DOM is otherwise identical to the *recoverable* agent mode of
+[#749](https://github.com/ffroliva/gflow-cli/issues/749): a hidden settings trigger **with**
+a chip is recoverable and gflow turns it back itself; a hidden trigger with **no chip
+anywhere** is this cohort.
+
+**No workaround inside gflow.** No flag, `--ui-mode`, or profile change reaches it — the
+composer is a property of the Google account. Generating from the Flow web UI still works.
+A driver for the agent panel is not implemented;
+[#799](https://github.com/ffroliva/gflow-cli/issues/799) stays open for it.
+
+**Prevalence is unmeasured.** One reporter, one account (Windows 11, ru locale), whose DOM
+capture is what made this diagnosable. No account available to the maintainers is in this
+cohort, so the **positive** case is verified against the reporter's captured markup driven
+by a real Chromium (`tests/api/transports/test_agent_only_composer.py`) and **not** against
+live Flow — that needs an account in the cohort and is the named blocker on #799.
+
+The **negative** controls were measured live at $0 on 2026-09-13, which is what makes the
+discriminator more than a guess: a healthy migrated composer carries
+`button.agent-mode-chip` **present and un-pressed** with its settings trigger visible. So a
+migrated account normally has a chip, and having none is the anomaly this keys on.
+
+---
 
 ### Flow can pin the agentic cohort server-side for hours
 
@@ -1350,7 +1471,7 @@ key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 
 - **Status:** Mitigated (crash → typed fail-fast rejection) · **Severity:** Low · **Affects:** all versions
 
-Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** by default — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never silently corrupts the profile. Since #478, setting [`GFLOW_CLI_LEASE_WAIT_SECONDS`](docs/CONFIGURATION.md#gflow_cli_lease_wait_seconds) opts a waiter into a bounded wait that takes over as soon as the current holder finishes (holders always run to completion and are never asked to release early; same-process contention still fails fast — waiting on yourself would deadlock).
+Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** by default — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never silently corrupts the profile. Since #478, setting [`GFLOW_CLI_LEASE_WAIT_SECONDS`](docs/CONFIGURATION.md#gflow_cli_lease_wait_seconds) opts a waiter into a bounded wait that takes over as soon as the current holder finishes (holders always run to completion and are never asked to release early; same-process contention still fails fast — waiting on yourself would deadlock). Since #864 an MCP server waits 180 s by default, and queues its own calls on one profile rather than rejecting the second.
 
 **Workaround:** use different profiles for parallel work — different profiles acquire independent leases and run fully concurrently.
 

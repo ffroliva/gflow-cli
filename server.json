@@ -1,0 +1,42 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ffroliva/gflow-cli",
+  "title": "gflow-cli",
+  "description": "Drive Google Flow from an agent: Veo video and Imagen image generation",
+  "version": "0.79.1",
+  "websiteUrl": "https://ffroliva.github.io/gflow-cli/",
+  "repository": {
+    "url": "https://github.com/ffroliva/gflow-cli",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "gflow-cli",
+      "version": "0.79.1",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
+        {
+          "type": "positional",
+          "value": "run"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "GFLOW_CLI_HOME",
+          "description": "Where gflow keeps its Chrome profile, config and database. Defaults to a per-user directory.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

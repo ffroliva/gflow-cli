@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
@@ -27,6 +29,7 @@ from gflow_cli.profile_lease import ProfileLease
 from .cookies import get_chrome_cookie_snapshot
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
     from playwright.async_api import BrowserContext
@@ -61,6 +64,12 @@ class FlowSessionOutcome(StrEnum):
     GOOGLE_SESSION_ONLY = "google_session_only"
     NO_SESSION = "no_session"
     VERIFICATION_ERROR = "verification_error"
+    #: The profile's `.gflow_browser_strategy` marker is missing, so the
+    #: Playwright cookie reader refuses to open it (#796). Distinct from
+    #: VERIFICATION_ERROR because the cause is local profile state, not the
+    #: network — and telling the user to "check connectivity" sends them
+    #: looking in the wrong place, on a profile a failed login just rolled back.
+    PROFILE_MARKER_MISSING = "profile_marker_missing"
 
 
 _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
@@ -68,6 +77,9 @@ _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
     FlowSessionOutcome.GOOGLE_SESSION_ONLY: "Signed in to Google, but not to the Flow app.",
     FlowSessionOutcome.NO_SESSION: "No sign-in detected.",
     FlowSessionOutcome.VERIFICATION_ERROR: "Could not verify the Flow session.",
+    FlowSessionOutcome.PROFILE_MARKER_MISSING: (
+        "This profile is missing its Chrome-strategy marker."
+    ),
 }
 
 
@@ -75,7 +87,7 @@ _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
 class FlowSessionStatus:
     """The verdict of a Flow-session probe.
 
-    `detail` is a derived property — always one of the four fixed strings in
+    `detail` is a derived property — always one of the fixed strings in
     `_DETAIL_BY_OUTCOME`, never built from response, cookie, or exception
     content. Deriving it (rather than storing a free string) makes it
     structurally impossible to leak a secret through this field.
@@ -320,6 +332,171 @@ async def verify_flow_session(
     return result
 
 
+#: The migrated-host fallback probe. `myaccount` is the oracle because it is
+#: server-side: a revoked session is redirected off it, which a client-rendered page
+#: cannot attest to.
+_MYACCOUNT_ORIGIN = "https://myaccount.google.com"
+#: Any domain, not just gmail.com — an `@gmail.com`-only pattern declined every
+#: Google Workspace account (dev@axelate.io, user@mycompany.com, user@googlemail.com
+#: all failed to match), leaving #791 open for them with no signal it had refused.
+#:
+#: Split in two, and anchored on the `@`, because one combined pattern was
+#: quadratic (#852). `[\w.+-]+@…` retries from every start position and rescans
+#: its run before failing to find an `@`, so an unbroken run of characters that
+#: class accepts costs O(n²) — measured 12.1 s for 40 000 of them, and the class
+#: covers the whole URL-safe base64 alphabet, which a Google page is full of.
+#: Leading with the literal `@` lets CPython's `re` use its literal-prefix fast
+#: search, so the work becomes proportional to the number of `@` in the document.
+_DOMAIN_RE = re.compile(r"@[\w.-]+\.[A-Za-z]{2,}")
+#: The non-alphanumeric half of `[\w.+-]`. Python's `\w` is exactly
+#: "`str.isalnum()` or underscore" (its own docs say so), so the two together
+#: reproduce that class character for character.
+#:
+#: Spelled out rather than left as a regex because `[\w.+-]+\Z` is itself
+#: super-linear (Sonar python:S8786) — the window below bounds it in practice,
+#: but a reader cannot see that from the pattern, and neither can a scanner. A
+#: backwards scan is O(1) per character and visibly so.
+_LOCAL_PART_PUNCT = "_.+-"
+#: RFC 5321 caps a local part at 64 octets. It is also what keeps the scan
+#: linear: the window is constant, so each `@` costs the same regardless of the
+#: page. ponytail: a longer local part is truncated rather than dropped — raise
+#: this if a real address is ever found past it.
+_MAX_LOCAL_PART = 64
+_MYACCOUNT_URL = f"{_MYACCOUNT_ORIGIN}/?hl=en"
+#: 15 s was measured too tight: the probe answers in 2.6-7.2 s idle but timed out under
+#: browser contention during a 10-profile sweep.
+_MIGRATED_PROBE_TIMEOUT_MS = 30_000
+
+
+def find_emails(body: str) -> list[str]:
+    """Every address in `body`, in document order, in one linear pass.
+
+    Behaviourally the same as the single pattern it replaces for anything that
+    looks like an address; see `_DOMAIN_RE` for why that pattern could not stay.
+    """
+    found: list[str] = []
+    consumed = 0  # end of the last address emitted — matches never overlap
+    for match in _DOMAIN_RE.finditer(body):
+        at = match.start()
+        # `findall` resumed scanning at the end of its previous match, so a local
+        # part could never reach back into one. Two `@` within 64 characters of
+        # each other is the only shape where that shows, and fuzzing against the
+        # old pattern is what turned it up: 2 differences in 4 000 random bodies.
+        floor = max(consumed, at - _MAX_LOCAL_PART)
+        start = at
+        while start > floor and (body[start - 1].isalnum() or body[start - 1] in _LOCAL_PART_PUNCT):
+            start -= 1
+        if start < at:  # an `@` with no local part in front of it is not an address
+            found.append(body[start:at] + match.group())
+            consumed = match.end()
+    return found
+
+
+def has_migrated_app_session(cookies: Iterable[Mapping[str, Any]]) -> bool:
+    """Both halves of a migrated Flow session are present in this jar.
+
+    The `.google.com` SSO cookie alone means "signed in to Google"; the
+    `flow.google.com` app-session cookie alone means nothing without it. Only
+    the pair says an account has a session on the host that serves the app.
+
+    This is a NECESSARY condition, never a sufficient one — a cookie on disk
+    outlives a password change or a "sign out of all devices". Everything that
+    decides authentication goes on to ask a server (`_verify_migrated_host_fallback`
+    below). What the pair IS good for on its own is deciding when to stop
+    *waiting*: the labs oracle never answers for these accounts, so without some
+    other signal the login poll runs to its deadline (#849).
+    """
+    names = {(c.get("name"), c.get("domain", "")) for c in cookies}
+    has_sso = any(n == "SAPISID" and "google.com" in d for n, d in names)
+    has_flow_osid = any(n in ("__Secure-OSID", "OSID") and "flow.google.com" in d for n, d in names)
+    return has_sso and has_flow_osid
+
+
+def _origin_of(url: str) -> str:
+    """Scheme + host only — never log a URL with a query string from an auth page."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme else "(unparseable)"
+
+
+async def _verify_migrated_host_fallback(
+    profile_dir: Path, source: str
+) -> FlowSessionStatus | None:
+    """ai4u delta (2026-09-12) — migrated-host session oracle.
+
+    For accounts Google has moved to flow.google.com, the labs.google NextAuth
+    session is never minted (the labs app hands off immediately; observed:
+    47 cookies, zero on labs.google, but OSID/__Secure-OSID present on
+    .flow.google.com and SAPISID/SID on .google.com). The labs oracle then
+    reports GOOGLE_SESSION_ONLY although the workspace is fully usable —
+    gflow's own migrated-host driver authenticates via exactly these cookies
+    (spike 2026-09-05-migrated-host-wire-protocol: ".google.com SSO cookies
+    already in the profile authenticate the host").
+
+    Fail-closed: upgrades GOOGLE_SESSION_ONLY to AUTHENTICATED only when BOTH
+    the .google.com SSO cookie (SAPISID) AND the flow.google.com app session
+    cookie (__Secure-OSID/OSID) are present, AND the account email resolves
+    from myaccount.google.com. Anything else returns None (caller keeps the
+    original outcome). Never touches other outcomes.
+    """
+    from .strategies import async_playwright
+
+    try:
+        async with async_playwright() as pw:
+            ctx = await pw.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                channel="chrome",
+                headless=True,
+                args=["--password-store=basic"],
+            )
+            try:
+                if not has_migrated_app_session(await ctx.cookies()):
+                    return None
+                resp = await ctx.request.get(_MYACCOUNT_URL, timeout=_MIGRATED_PROBE_TIMEOUT_MS)
+                page_body = await resp.text()
+                final_url = str(resp.url)
+            finally:
+                await ctx.close()
+    except Exception as exc:
+        logger.warning(
+            "auth_migrated_fallback_probe_error", source=source, error=type(exc).__name__
+        )
+        return None
+
+    # THE auth signal, and it is server-attested: a dead or revoked session cannot stay
+    # on myaccount — Google redirects it to the sign-in page. Checking where we landed
+    # is therefore the decision; the address below is only a label.
+    #
+    # The address must NOT be the decision. It used to be, via an `@gmail.com`-only
+    # regex, which silently declined every Google Workspace account (measured:
+    # `dev@axelate.io`, `user@mycompany.com`, even `user@googlemail.com` all failed to
+    # match) — so #791 stayed open for them with no signal that the fallback had
+    # refused. Widening that regex alone would have been worse: any address on a
+    # signed-out page would then read as proof of a session.
+    if not final_url.startswith(_MYACCOUNT_ORIGIN):
+        logger.warning(
+            "auth_migrated_fallback_not_signed_in", source=source, landed=_origin_of(final_url)
+        )
+        return None
+
+    # Most frequent, not first. Measured on a live myaccount response (1.28 MB,
+    # 2026-09-16): 9 matches, all 9 the account's own address, 0 competing candidates —
+    # so first-match happened to be right. It is right by luck, though: one support or
+    # noreply address rendered above the account's would silently relabel the user.
+    # Counting costs nothing and removes the coin flip. Ties keep document order, so
+    # the single-candidate case is unchanged.
+    found = find_emails(page_body)
+    email = Counter(found).most_common(1)[0][0] if found else None
+    return FlowSessionStatus(
+        outcome=FlowSessionOutcome.AUTHENTICATED,
+        # Absent when the page shape changes — the session is still proven by the URL,
+        # so a missing label must not cost the user their login.
+        user_email=email,
+        source=source,
+    )
+
+
 async def verify_flow_profile(
     profile_dir: Path,
     *,
@@ -331,6 +508,9 @@ async def verify_flow_profile(
     (falling back to a marker-gated Playwright context on decryption failure),
     then calls the NextAuth session endpoint with up to `_MAX_ATTEMPTS` attempts.
     Fail-closed: any failure yields VERIFICATION_ERROR, never AUTHENTICATED.
+
+    ai4u delta (2026-09-12): when the labs oracle yields GOOGLE_SESSION_ONLY,
+    a migrated-host fallback probe runs (see _verify_migrated_host_fallback).
     """
     _validate_profile_in_home(profile_dir)
 
@@ -338,6 +518,20 @@ async def verify_flow_profile(
     body: str
     try:
         status_code, body, google_session = await fetch_flow_session_httpx(profile_dir)
+
+    # #796: the marker gate is local profile state, not a network fault. It was
+    # flattened into VERIFICATION_ERROR, whose remediation says "check network
+    # connectivity" — wrong advice, and specifically wrong on a profile whose
+    # marker a failed login had just rolled back (real_chrome.py:433-434).
+    # `_validate_profile_in_home` raises SecurityError too, but above the try, so
+    # a path violation still propagates instead of being classified here.
+    except SecurityError:
+        logger.warning("auth_profile_marker_missing", source=source)
+        return FlowSessionStatus(
+            outcome=FlowSessionOutcome.PROFILE_MARKER_MISSING,
+            user_email=None,
+            source=source,
+        )
 
     # Fail-closed: any failure here yields VERIFICATION_ERROR, never AUTHENTICATED.
     except Exception as exc:
@@ -362,4 +556,15 @@ async def verify_flow_profile(
             source=source,
             status_code=status_code,
         )
+    if result.outcome is FlowSessionOutcome.GOOGLE_SESSION_ONLY:
+        # ai4u delta (2026-09-12): migrated-host fallback — see
+        # _verify_migrated_host_fallback docstring. Fail-closed.
+        fallback = await _verify_migrated_host_fallback(profile_dir, source)
+        if fallback is not None:
+            logger.warning(
+                "auth_migrated_host_fallback_authenticated",
+                source=source,
+                detail="labs NextAuth absent; flow.google.com OSID session + SSO cookies present",
+            )
+            return fallback
     return result

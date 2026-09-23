@@ -687,10 +687,14 @@ def test_specific_remediation_hints() -> None:
         SceneConcatError().remediation_hint
         == "Ensure video clip dimensions and codecs match before concatenation"
     )
+    # #813: the hint must name the extra AND both packages it carries. It used to
+    # say only "PyAV", so an operator whose `gflow-cli[chain]` install was missing
+    # Pillow was told to check the one dependency they already had.
     assert (
         FrameExtractionError().remediation_hint
-        == "Verify input video file is readable and non-corrupt. Ensure gflow-cli[chain] "
-        "dependencies (PyAV) are installed."
+        == "Verify input video file is readable and non-corrupt. Ensure the gflow-cli[chain] "
+        "extra and both packages it carries (av, pillow) are installed: "
+        "pip install 'gflow-cli[chain]'"
     )
     # #493: the hint must name the artifacts drift sites actually write (the
     # mode-switch probe produces a diagnostics JSON, not a screenshot) — exact
