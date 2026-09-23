@@ -14,6 +14,31 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### Every command lands on `flow.google.com/about` (exit 31) while `gflow auth status` says the session is fine
+
+- **Status:** Open · **Severity:** High for the affected account (nothing runs) · **Affected:** measured on one account (`denon82`, 2026-09-23). Other `/about` occurrences are not yet shown to share the cause.
+- **Tracked:** [#902](https://github.com/ffroliva/gflow-cli/issues/902) (`auth login` cannot clear it) · [#888](https://github.com/ffroliva/gflow-cli/issues/888) · [#756](https://github.com/ffroliva/gflow-cli/issues/756)
+- **Evidence:** [spike](docs/superpowers/spikes/2026-09-23-about-cta-leads-to-google-reauth.md)
+
+Flow sends every visit to its public landing page `/about`, while every Google and Flow cookie
+gflow checks is present and unexpired. On the measured account, the page's "Create with Google
+Flow" button led to Google's **"Confirm it's you — sign in again to continue"** page: Google was
+waiting for the account to re-verify its identity.
+
+**`gflow auth login` does not fix it.** It sees the valid cookies, reports `Flow session
+verified` in about half a second, and closes Chrome before Google can ask (#902).
+
+**Workaround (needs the account password):** with no gflow command running, open real Chrome on
+the profile directory yourself:
+
+```bash
+"<chrome.exe>" --user-data-dir="<GFLOW_CLI_HOME profile dir, e.g. …/profile_<name>>" --password-store=basic https://flow.google.com/
+```
+
+Click the landing page's main button, complete "Confirm it's you", wait for the Flow editor, then
+close Chrome yourself. On the measured account, `/about` was gone on the next run and
+`gflow project create` succeeded.
+
 ### Flow is migrating to `flow.google.com`; generation coverage is partial but includes images
 
 - **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i` now run on the migrated host. Image mode supports Nano Banana 2 / Pro, all five aspect ratios its radiogroup renders (16:9, 4:3, 1:1, 3:4, 9:16 — 3:4 appeared by 2026-09-17, #864), and count 1–4. Image refs by UUID, `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video frame refs by UUID/name, scenes, extend, instructions and tools are not ported yet and fail before submit. **`character create` is NOT in that list any more** — it works on the migrated host. `character list` does NOT: it reads the retired labs `projectInitialData` route and exits 7, measured 2026-09-20 both on `auto` and with `GFLOW_CLI_FLOW_HOST=flow.google.com` (#875). Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, `extend`, `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
