@@ -225,7 +225,9 @@ jobs:
         # e2e/live tests require a logged-in Chromium profile and may spend
         # Flow credits. pyproject.toml excludes both markers by default; CI
         # intentionally relies on that default smoke set.
-        run: uv run python -m pytest -q --cov=gflow_cli --cov-report=xml --junitxml=pytest-report.xml
+        # -n auto: pytest-xdist, one worker per runner vCPU (~2x on the full suite;
+        # 198 s vs ~390 s measured locally at -n 8).
+        run: uv run python -m pytest -q -n auto --cov=gflow_cli --cov-report=xml --junitxml=pytest-report.xml
 
       # Five files under tests/e2e/ are hermetic: every Flow origin is served by
       # `page.route(...).fulfill(...)`, so they need no account, no profile, no

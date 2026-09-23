@@ -194,11 +194,14 @@ def test_every_shipped_skill_is_byte_identical_to_its_source() -> None:
     Uses the generator's own `render()` rather than restating the rewrite rule. A second copy
     of the regex here would drift from the generator and the test would still pass.
     """
-    render = _generator().render
+    generator = _generator()
+    render = generator.render
     for name in _SHIPPED:
-        for source in (_REPO / "skills" / name).rglob("*"):
-            if not source.is_file():
-                continue
+        # Tracked files only, exactly as the generator ships them. Walking the disk made an
+        # untracked file in skills/ fail this test: a local scratch note, or the fixture that
+        # `test_the_generator_ships_only_what_git_tracks` creates while another pytest-xdist
+        # worker runs this one (measured).
+        for source in generator._tracked_files(_REPO / "skills" / name):
             dest = _PLUGIN_DIR / "skills" / name / source.relative_to(_REPO / "skills" / name)
             assert dest.exists(), f"{dest} is missing — run generate_plugin_skills.py"
             text = source.read_text(encoding="utf-8")
