@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Fixed
+
+- **`gflow auth login` no longer reports success while Google is waiting for the account to
+  "Confirm it's you" (#902).** In that state the cookies stay valid, so the session probe
+  answered in 0.4 s and the login closed Chrome before Flow's client-side hop to
+  `flow.google.com/about` could land. It then printed `[OK] Flow session verified` on an
+  account where every command still exited 31. The login now watches a `flow.google.com`
+  landing for up to 3 s before it closes. If Flow routes the page to `/about`, Chrome stays open
+  and the user is told to press the page's main button and finish Google's check. Closing the
+  window or running out of time in that state exits 12 with the new
+  `IdentityRecheckPendingError`. The #849 on-disk check is skipped in that case, because it reads
+  the same healthy cookies. A labs-served login closes as fast as before. The failing state is
+  tested offline only: the one account measured in it (2026-09-23) had already been cleared by
+  hand, and none of the profiles here is in that state now.
 ## [0.79.1] — 2026-09-22
 
 ### Fixed

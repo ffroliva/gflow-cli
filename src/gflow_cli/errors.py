@@ -35,6 +35,7 @@ __all__ = [
     "FlowHostMigratedError",
     "FrameExtractionError",
     "GFlowError",
+    "IdentityRecheckPendingError",
     "MediaAttributionError",
     "MediaUploadRejectedError",
     "ReferenceNotFoundError",
@@ -1076,6 +1077,25 @@ class AuthLoginTimeoutError(GFlowError):
         "The sign-in was not completed within the allowed time. "
         "Run `gflow auth login` again and complete sign-in promptly. "
         "Increase GFLOW_CLI_AUTH_LOGIN_TIMEOUT (seconds) if you need more time."
+    )
+
+
+class IdentityRecheckPendingError(AuthLoginTimeoutError):
+    """The login ended while Google still wanted this account to "Confirm it's you" (#902).
+
+    The cookies are valid, so every session probe says yes, but Flow keeps routing the
+    account to ``flow.google.com/about``, and Flow's own button there leads to Google's
+    identity re-check (measured 2026-09-23). Only the person who owns the account can
+    pass that check, because it asks for the password. Exit 12 through the isinstance
+    walk: it is still a login the user did not finish, so no new exit code.
+    """
+
+    title = "Google identity check not completed"
+    _default_remediation = (
+        'Google is asking this account to "Confirm it\'s you". Run `gflow auth login` '
+        "again, press the main button on the Flow page that opens, and finish Google's "
+        "check (it asks for your password) until the Flow app loads. gflow then closes "
+        "Chrome for you."
     )
 
 
