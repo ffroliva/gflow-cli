@@ -629,6 +629,41 @@ class TestPlaywrightAutoClose:
         ctx.close.assert_awaited()
 
     @pytest.mark.asyncio
+    async def test_pending_identity_recheck_is_not_overruled_by_the_disk(
+        self, tmp_path: Path
+    ) -> None:
+        """#902, end to end through `login()`: the page sits on flow.google.com/about.
+
+        The #849 "ask the disk" rescue above must NOT run here. The disk holds the
+        same healthy cookies that fooled the detector, and asking it is exactly how
+        the 2026-09-23 run printed `[OK] Flow session verified` on a broken account.
+        """
+        from gflow_cli.errors import IdentityRecheckPendingError
+
+        gflow_home, profile_dir = self._home(tmp_path)
+        ap, _pw, ctx = _build_fake_playwright(page_url="https://flow.google.com/about")
+        verify = AsyncMock(return_value=_authenticated_status())
+
+        with (
+            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch(
+                "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
+                return_value=True,
+            ),
+            patch("gflow_cli.auth.strategies.async_playwright", ap),
+            patch("gflow_cli.auth.real_chrome.verify_flow_profile", verify),
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()),
+        ):
+            mock_settings.return_value.home = gflow_home
+            with pytest.raises(IdentityRecheckPendingError) as excinfo:
+                await RealChromeStrategy(timeout_seconds=1).login(profile_dir, headless=False)
+
+        assert "Confirm it's you" in (excinfo.value.remediation_hint or "")
+        verify.assert_not_awaited()
+        assert not (profile_dir / ".gflow_account").exists()
+        ctx.close.assert_awaited()
+
+    @pytest.mark.asyncio
     async def test_timeout_teardown_order(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

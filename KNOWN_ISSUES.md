@@ -25,8 +25,14 @@ gflow checks is present and unexpired. On the measured account, the page's "Crea
 Flow" button led to Google's **"Confirm it's you — sign in again to continue"** page: Google was
 waiting for the account to re-verify its identity.
 
-**`gflow auth login` does not fix it.** It sees the valid cookies, reports `Flow session
-verified` in about half a second, and closes Chrome before Google can ask (#902).
+**Through v0.79.1, `gflow auth login` does not fix it.** It sees the valid cookies, reports
+`Flow session verified` in about half a second, and closes Chrome before Google can ask (#902).
+From the next release, the login watches where the page lands. If Flow sends it to `/about`, the
+login keeps Chrome open and asks you to press the page's main button and finish "Confirm it's
+you". If you close the window or the time limit runs out first, it exits 12
+(`IdentityRecheckPendingError`) instead of reporting success. The failing state could not be
+reproduced live for this fix, because the one measured account was already cleared by hand. The
+detection is tested offline only.
 
 **Workaround (needs the account password):** with no gflow command running, open real Chrome on
 the profile directory yourself:
