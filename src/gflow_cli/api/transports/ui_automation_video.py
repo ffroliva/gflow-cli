@@ -58,6 +58,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.errors import (
     AuthExpiredError,
+    ConfigurationError,
     FlowAgentUiError,
     FlowAppError,
     FlowHostMigratedError,
@@ -4059,6 +4060,19 @@ class VideoGenerationMixin:
             # or a silently reused project). Park it; the next run navigates.
             await self._park_composer_page(page, event="migrated.page_park_failed")
             return result
+
+        if request.resolution is not None:
+            # #787 drives the resolution radio on flow.google.com only. This driver has no
+            # resolution step, so honouring the flag here would mean silently billing
+            # Flow's default for a user who asked for something else. Refused here, on the
+            # labs route only (the migrated one returned above), before any submit.
+            raise ConfigurationError(
+                detail=(
+                    f"--resolution {request.resolution} is not driven on the labs Flow "
+                    "editor yet; only the flow.google.com composer selects a resolution."
+                ),
+                remediation_hint="Drop --resolution to accept Flow's default on this account.",
+            )
 
         # #299: the video path binds through the mode policy like images do —
         # get_ui_driver switches to the required arm, VERIFIES via a DOM

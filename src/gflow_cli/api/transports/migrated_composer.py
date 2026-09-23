@@ -401,6 +401,7 @@ IMAGE_MODEL_MENU_MATCHERS: dict[ImageModel, ModelMenuMatcher] = {
     # depending on the decorative banana glyph that precedes both live labels.
     ImageModel.NARWHAL: ModelMenuMatcher("Nano Banana 2", excludes=("Lite",)),
     ImageModel.GEM_PIX_2: ModelMenuMatcher("Nano Banana Pro"),
+    ImageModel.HARBOR_SEAL: ModelMenuMatcher("Nano Banana 2 Lite"),
 }
 
 
@@ -1351,11 +1352,14 @@ class MigratedComposer:
                 await self._select(page, pane, axis="duration", text=f"{request.duration}s")
             elif request.mode is Mode.R2V:
                 await self._pin_r2v_duration(page, pane)
+            if request.resolution is not None:
+                await self._select_resolution(page, pane, request.resolution)
             await self._select(page, pane, axis="count", text=f"x{request.count}")
             log.info(
                 "migrated.settings_applied",
                 aspect=request.aspect.value,
                 duration=request.duration,
+                resolution=request.resolution,
                 count=request.count,
                 # The EFFECTIVE model — `request.model` is None on an i2v run that
                 # took the #125 default, and logging that read as "no model bound".
@@ -1622,6 +1626,38 @@ class MigratedComposer:
             ),
         )
 
+    async def _select_resolution(self, page: Page, pane: Any, resolution: str) -> None:
+        """Select 360p or 720p on models that offer a resolution control (Omni Flash)."""
+        radios = pane.locator(RADIO)
+        matches = radios.filter(has_text=re.compile(re.escape(resolution)))
+        target = matches.first
+        if not await target.count():
+            groups = await pane.locator(RADIOGROUP).count()
+            raise ConfigurationError(
+                detail=(
+                    f"the migrated Flow host renders no resolution control offering {resolution!r} "
+                    f"for this account and model ({groups} option groups shown)"
+                ),
+                remediation_hint=(
+                    "Drop --resolution to accept Flow's default, or use a model whose "
+                    "settings pane shows a resolution row (Omni 1.1 Flash)."
+                ),
+            )
+        if await target.get_attribute("aria-checked") == "true":
+            log.info("migrated.resolution_already_selected", resolution=resolution)
+            return
+        await target.click(timeout=4000)
+        await asyncio.sleep(0.2)
+        if await matches.first.get_attribute("aria-checked") == "true":
+            log.info("migrated.resolution_selected", resolution=resolution)
+            return
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated host: the resolution radio {resolution!r} did not become aria-checked "
+                f"after the click (host=migrated)"
+            ),
+        )
+
     async def _select_model(self, page: Page, pane: Any, model: VideoModel) -> None:
         matcher = VIDEO_MODEL_MENU_MATCHERS.get(model)
         if matcher is None:
@@ -1634,13 +1670,16 @@ class MigratedComposer:
                 remediation_hint="Pass --model with one of the offered names, or omit it.",
             )
         button = pane.locator("button").filter(has=_ligature(page, "arrow_drop_down")).first
-        if not await button.count():
-            raise UiSelectorDriftError(
-                detail=(
-                    "migrated host: model picker button (arrow_drop_down) not found in the "
-                    "settings pane (host=migrated)"
-                ),
-            )
+        try:
+            await button.wait_for(state="visible", timeout=4000)
+        except Exception:
+            if not await button.count():
+                raise UiSelectorDriftError(
+                    detail=(
+                        "migrated host: model picker button (arrow_drop_down) not found in the "
+                        "settings pane (host=migrated)"
+                    ),
+                ) from None
         current = (await button.text_content() or "").strip()
         if matcher.matches(current):
             # Logged, because otherwise this path is invisible: a run that short-circuits
@@ -1702,10 +1741,13 @@ class MigratedComposer:
                 ),
             )
         button = pane.locator("button").filter(has=_ligature(page, "arrow_drop_down")).first
-        if not await button.count():
-            raise UiSelectorDriftError(
-                detail="migrated host: image model picker is missing (host=migrated)"
-            )
+        try:
+            await button.wait_for(state="visible", timeout=4000)
+        except Exception:
+            if not await button.count():
+                raise UiSelectorDriftError(
+                    detail="migrated host: image model picker is missing (host=migrated)"
+                ) from None
         current = (await button.text_content() or "").strip()
         if matcher.matches(current):
             log.info("migrated.image_model_already_selected", model=current, requested=model.value)
@@ -2670,13 +2712,21 @@ class MigratedComposer:
                 return
             try:
                 text = await response.text()
+                parsed = parse_frames(text)
                 records = [
                     record
-                    for rpcid, payload in parse_frames(text)
+                    for rpcid, payload in parsed
                     if rpcid == IMAGE_SUBMIT_RPC
                     for record in image_records(rpcid, payload)
                 ]
                 if not records:
+                    log.warning(
+                        "migrated.image_submit_unparsed_reply",
+                        rpcid=IMAGE_SUBMIT_RPC,
+                        text_len=len(text),
+                        parsed_count=len(parsed),
+                        parsed_rpcids=[p[0] for p in parsed],
+                    )
                     raise WireFormatError(
                         detail="migrated image submit returned no ogiZ0b frame",
                         route=f"batchexecute:{IMAGE_SUBMIT_RPC}",

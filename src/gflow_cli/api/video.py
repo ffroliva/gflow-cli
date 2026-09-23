@@ -283,10 +283,13 @@ class GenerateVideoRequest:
     # The video pipeline clamps to classic-required (no agentic video driver
     # exists); see _generate_video_locked.
     ui_mode: UiMode | None = None
+    # Requested video resolution ("360p" or "720p", omni-flash only); None -> Flow default
+    resolution: str | None = None
 
     def __post_init__(self) -> None:
         self._validate_prompt()
         self._validate_duration()
+        self._validate_resolution()
         self._validate_count()
         self._validate_frame_ref_ids()
         self._validate_mode_symmetry()
@@ -294,6 +297,11 @@ class GenerateVideoRequest:
         self._validate_model_capabilities()
         self._validate_seed()
         self._validate_ui_mode()
+
+    def _validate_resolution(self) -> None:
+        if self.resolution is not None and self.resolution not in ("360p", "720p"):
+            msg = f"resolution must be '360p' or '720p', got {self.resolution!r}"
+            raise ValueError(msg)
 
     def _has_frame_input(self) -> bool:
         """True when the request carries an i2v start/end frame in any form."""

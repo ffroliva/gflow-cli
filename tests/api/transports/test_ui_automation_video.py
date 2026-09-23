@@ -780,6 +780,30 @@ class TestGenerateVideoGuards:
 
 class TestGenerateVideoOrchestration:
     @pytest.mark.asyncio
+    async def test_labs_route_refuses_resolution_before_submit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#787: the labs driver has no resolution step, so the flag must not be dropped.
+
+        Dropping it would bill Flow's default for a user who asked for 720p. The refusal
+        sits AFTER routing: the same entry point serves flow.google.com, which does
+        drive the radio (a guard at the entry blocked it, measured live).
+        """
+        from gflow_cli.errors import ConfigurationError
+
+        transport = UiAutomationTransport()
+        transport._page = _mock_async_page()
+        transport._setup_done = True
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        send = AsyncMock()
+        monkeypatch.setattr(transport, "_send_prompt", send)
+        _stub_video_helpers(monkeypatch, generate_resp={"status": 200, "body": {}})
+        req = GenerateVideoRequest(prompt="x", resolution="720p")
+        with pytest.raises(ConfigurationError, match="resolution 720p"):
+            await transport.generate_video(request=req, download=False)
+        send.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_t2v_happy_path_returns_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
         transport = UiAutomationTransport()
         transport._page = _mock_async_page()

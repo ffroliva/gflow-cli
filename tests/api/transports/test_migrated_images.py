@@ -160,6 +160,11 @@ def test_nano_banana_2_does_not_match_the_lite_sibling() -> None:
     assert matcher.matches("🍌 Nano Banana 2")
     assert not matcher.matches("🍌 Nano Banana 2 Lite")
 
+    lite_matcher = IMAGE_MODEL_MENU_MATCHERS[Model.HARBOR_SEAL]
+    assert lite_matcher.matches("🍌 Nano Banana 2 Lite")
+    assert not lite_matcher.matches("🍌 Nano Banana 2")
+    assert not lite_matcher.matches("🍌 Nano Banana Pro")
+
 
 class _PageOwnedImageTransport:
     def __init__(self, owned: bool) -> None:

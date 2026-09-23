@@ -98,6 +98,7 @@ class Model(StrEnum):
     NARWHAL = "NARWHAL"
     GEM_PIX_2 = "GEM_PIX_2"
     IMAGEN_3_5 = "IMAGEN_3_5"
+    HARBOR_SEAL = "HARBOR_SEAL"
 
     @classmethod
     def from_cli(cls, cli: str | None) -> Model:
@@ -146,6 +147,16 @@ _MODEL_FROM_CLI: Mapping[str, Model] = MappingProxyType(
         "nano-pro": Model.GEM_PIX_2,
         "nano_pro": Model.GEM_PIX_2,
         "nanopro": Model.GEM_PIX_2,
+        # HARBOR_SEAL — Nano Banana 2 Lite
+        "harbor_seal": Model.HARBOR_SEAL,
+        "harbor-seal": Model.HARBOR_SEAL,
+        "nano2-lite": Model.HARBOR_SEAL,
+        "nano2_lite": Model.HARBOR_SEAL,
+        "nano-banana-2-lite": Model.HARBOR_SEAL,
+        "nano_banana_2_lite": Model.HARBOR_SEAL,
+        "nanobanana2lite": Model.HARBOR_SEAL,
+        "nano-lite": Model.HARBOR_SEAL,
+        "nano_lite": Model.HARBOR_SEAL,
         # IMAGEN_3_5 — Imagen 4 family alias
         "imagen_3_5": Model.IMAGEN_3_5,
         "imagen-3-5": Model.IMAGEN_3_5,
@@ -164,6 +175,11 @@ _IMAGE_REFERENCE_CAP: Mapping[Model, int] = MappingProxyType(
     {
         Model.NARWHAL: 10,
         Model.GEM_PIX_2: 10,
+        # ponytail: NOT observed. Lite's cap has never been measured (#787 checked t2i
+        # only), so it starts at the lowest cap any Flow image model is known to have.
+        # A too-low cap refuses up front; a too-high one silently drops billed refs.
+        # Raise it to what a live i2i with 4+ references actually keeps.
+        Model.HARBOR_SEAL: 3,
         Model.IMAGEN_3_5: 3,
     },
 )

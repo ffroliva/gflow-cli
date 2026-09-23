@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Explicit video resolution control (`--resolution [360p|720p]`).** Added `--resolution`
+  to `gflow video t2v`, `i2v`, and `r2v`, as well as MCP tool `gflow_generate_video`.
+  Enables explicit selection of `360p` or `720p` on models providing resolution controls
+  (such as `omni-flash`), preventing unintended defaults.
+- **Support for Nano Banana 2 Lite (`--model nano2-lite`).** Added `nano2-lite` alias mapped
+  to Google's internal `HARBOR_SEAL` wire model for `gflow image t2i`, `i2i`, and `batch`. Its I2I reference
+  cap starts at 3 because it has not been measured yet, and its daily quota is
+  unmeasured too ([spike](docs/superpowers/spikes/2026-09-11-nano2-lite-capability.md)).
+
 ### Fixed
 
 - **`gflow auth login` no longer reports success while Google is waiting for the account to

@@ -2638,7 +2638,7 @@ class TestSelectorLocaleInvariance:
         """Every model entry in IMAGE_MODEL_OPTION_SELECTORS must be a non-empty tuple."""
         from gflow_cli.api.image import Model
 
-        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.IMAGEN_3_5):
+        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.HARBOR_SEAL, Model.IMAGEN_3_5):
             sels = IMAGE_MODEL_OPTION_SELECTORS.get(model)
             assert sels is not None, f"Missing entry for {model!r}"
             assert isinstance(sels, tuple), f"Entry for {model!r} must be a tuple, got {type(sels)}"
@@ -2652,10 +2652,10 @@ class TestSelectorLocaleInvariance:
             )
 
     def test_image_model_option_selectors_all_models_covered(self) -> None:
-        """All three image models must have selector entries."""
+        """All image models must have selector entries."""
         from gflow_cli.api.image import Model
 
-        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.IMAGEN_3_5):
+        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.HARBOR_SEAL, Model.IMAGEN_3_5):
             assert model in IMAGE_MODEL_OPTION_SELECTORS, (
                 f"{model!r} missing from IMAGE_MODEL_OPTION_SELECTORS"
             )

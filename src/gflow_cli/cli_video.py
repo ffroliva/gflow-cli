@@ -83,6 +83,16 @@ _reference_entity_name_option = click.option(
     multiple=True,
     help="Display name paired with --reference-entity.",
 )
+_resolution_option = click.option(
+    "--resolution",
+    default=None,
+    type=click.Choice(["360p", "720p"], case_sensitive=False),
+    help=(
+        "Video resolution ('360p' or '720p'). Omit for Flow's default. Only models whose "
+        "settings show a resolution row offer it (omni-flash); on any other model, or on "
+        "the labs editor, the run stops before submit (exit 11), with no credits spent."
+    ),
+)
 
 
 def _warn_persistence_failed_after_success(
@@ -400,6 +410,7 @@ async def _run_t2v(
     output_file: Path | None = None,
     model: str | None = None,
     duration: int | None = None,
+    resolution: str | None = None,
     count: int = 1,
     as_json: bool = False,
     reference_entities: tuple[str, ...] = (),
@@ -420,6 +431,7 @@ async def _run_t2v(
         aspect=Aspect.from_cli(aspect),
         model=VideoModel.from_cli(model),
         duration=duration,
+        resolution=resolution,
         count=count,
         reference_entities=reference_entities,
         reference_entity_names=reference_entity_names,
@@ -461,6 +473,7 @@ class _I2VParams:
     end_frame_ref_id: str | None = None  # in-project asset media UUID (#287)
     model: str | None = None
     duration: int | None = None
+    resolution: str | None = None
     original_prompt: str | None = None
     tool: AppliedTool | None = None
     # Picker project-menu display-name override (#287): the media picker's
@@ -556,6 +569,7 @@ async def _run_i2v(
         aspect=Aspect.from_cli(params.aspect),
         model=resolved_model,
         duration=params.duration,
+        resolution=params.resolution,
         count=count,
         start_image=Path(params.image) if params.image else None,
         start_image_ref_id=params.image_ref_id,
@@ -597,6 +611,7 @@ async def _run_r2v(
     out_dir: Path | None,
     model: str | None = None,
     duration: int | None = None,
+    resolution: str | None = None,
     count: int = 1,
     output_file: Path | None = None,
     as_json: bool = False,
@@ -617,6 +632,7 @@ async def _run_r2v(
         aspect=Aspect.from_cli(aspect),
         model=VideoModel.from_cli(model),
         duration=duration,
+        resolution=resolution,
         count=count,
         reference_images=tuple(Path(r) for r in refs),
         reference_entities=reference_entities,
@@ -1158,6 +1174,7 @@ def video() -> None:
         "account's cohort renders no duration control for the model."
     ),
 )
+@_resolution_option
 @click.option(
     "--count",
     default=1,
@@ -1176,6 +1193,7 @@ def t2v(
     aspect: str,
     model: str | None,
     duration: str | None,
+    resolution: str | None,
     count: int,
     ui_mode: str | None,
     profile: str | None,
@@ -1203,6 +1221,7 @@ def t2v(
             output_file=output_file,
             model=model,
             duration=int(duration) if duration is not None else None,
+            resolution=resolution,
             count=count,
             as_json=as_json,
             reference_entities=tuple(reference_entities),
@@ -1338,6 +1357,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
         "account's cohort renders no duration control for the model."
     ),
 )
+@_resolution_option
 @click.option(
     "--count",
     default=1,
@@ -1356,6 +1376,7 @@ def i2v(  # NOSONAR
     aspect: str,
     model: str | None,
     duration: str | None,
+    resolution: str | None,
     count: int,
     ui_mode: str | None,
     profile: str | None,
@@ -1405,6 +1426,7 @@ def i2v(  # NOSONAR
         end_frame_ref_id=end_ref_id,
         model=model,
         duration=int(duration) if duration is not None else None,
+        resolution=resolution,
         original_prompt=original_prompt,
         tool=applied_tool,
         project_name=project_name,
@@ -1483,6 +1505,7 @@ def i2v(  # NOSONAR
         "account's cohort renders no duration control for the model."
     ),
 )
+@_resolution_option
 @click.option(
     "--count",
     default=1,
@@ -1523,6 +1546,7 @@ def r2v(
     aspect: str,
     model: str | None,
     duration: str | None,
+    resolution: str | None,
     count: int,
     profile: str | None,
     tool_specs: tuple[str, ...],
@@ -1568,6 +1592,7 @@ def r2v(
             aspect=aspect,
             model=model,
             duration=int(duration) if duration is not None else None,
+            resolution=resolution,
             count=count,
             out_dir=out_dir,
             output_file=output_file,

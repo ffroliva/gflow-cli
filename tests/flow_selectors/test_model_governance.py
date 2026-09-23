@@ -70,12 +70,7 @@ _VIDEO_NOT_OFFERED: dict[VideoModel, str] = {
     ),
 }
 
-_UNMODELLED_WAIVERS: dict[str, str] = {
-    "🍌 Nano Banana 2 Lite": (
-        "Discovered 2026-08-26. A lower-tier image model we do not expose. "
-        "Waived pending a capability spike (cost/quality) before we ship it."
-    ),
-}
+_UNMODELLED_WAIVERS: dict[str, str] = {}
 
 
 def _inventory() -> dict:
