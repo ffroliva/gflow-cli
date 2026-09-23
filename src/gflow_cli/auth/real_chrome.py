@@ -15,6 +15,7 @@ from gflow_cli.errors import (
     AuthBrowserRejectedError,
     AuthLoginTimeoutError,
     AuthMissingError,
+    IdentityRecheckPendingError,
     SecurityError,
 )
 from gflow_cli.profile_lease import ProfileLease
@@ -107,6 +108,10 @@ def _print_login_instructions() -> None:
     )
     _console.print(
         "   Signing in to Google is NOT enough; gflow needs a completed Flow app sign-in.",
+    )
+    _console.print(
+        "   If Flow shows its public page instead, press its main button and finish "
+        "Google's \"Confirm it's you\" check.",
     )
     _console.print(
         "4. That's it — gflow detects the sign-in and [bold]closes Chrome for you[/bold], "
@@ -276,6 +281,11 @@ class RealChromeStrategy(AuthStrategy):
         else:
             try:
                 fallback_reason = await self._login_owned_browser(profile_dir, headless)
+            except IdentityRecheckPendingError:
+                # The disk is NOT the authority here (#902): the cookies are healthy,
+                # so `_verify_and_record` would print `[OK]` over an account Flow is
+                # still routing to `/about`. The page was the evidence, and it is gone.
+                raise
             except AuthLoginTimeoutError as timeout:
                 # Our detector gave up. It is not the authority — the disk is,
                 # and the banner says so out loud: "gflow verifies what's on
@@ -387,6 +397,10 @@ class RealChromeStrategy(AuthStrategy):
                 self.name,
                 raise_on_close=False,
             )
+        except IdentityRecheckPendingError:
+            # Already names the real cause (#902); the generic "not detected" rewrite
+            # below would send the user back to a login that cannot see it.
+            raise
         except AuthLoginTimeoutError:
             raise _login_timeout_error(self._timeout_seconds) from None
         if session is None:

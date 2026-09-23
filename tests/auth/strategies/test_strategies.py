@@ -952,3 +952,148 @@ class TestMigratedHostStopSignal:
             await poll_session_until_authenticated(ctx, page, 1, "chrome", raise_on_close=False)
 
         ctx.cookies.assert_not_awaited()
+
+
+class TestPendingIdentityRecheck:
+    """#902 — valid cookies, but Flow routes the account to `/about` because Google
+    wants it to "Confirm it's you". The session probe says yes in 0.4 s, so the login
+    used to close Chrome before the hop and report `[OK]` on an account that stayed
+    broken. The login must watch where the page LANDS, not only what the cookies say.
+    Evidence: docs/superpowers/spikes/2026-09-23-about-cta-leads-to-google-reauth.md.
+    """
+
+    ABOUT = "https://flow.google.com/about"
+    APP = "https://flow.google.com/"
+
+    @staticmethod
+    def _page(urls: list[str], *, closed_after: int | None = None) -> MagicMock:
+        """A page whose URL advances one step per session probe.
+
+        ``closed_after`` = number of probes after which the window reports closed.
+        """
+        page = MagicMock(name="page")
+        page.url = urls[0]
+        probes = {"n": 0}
+        resp = MagicMock(name="resp")
+        resp.status = 200
+        resp.text = AsyncMock(
+            return_value='{"user":{"email":"test@example.com"},"expires":"2099-01-01"}'
+        )
+
+        async def _get(*_a: object, **_k: object) -> MagicMock:
+            probes["n"] += 1
+            page.url = urls[min(probes["n"], len(urls) - 1)]
+            return resp
+
+        page.request.get = AsyncMock(side_effect=_get)
+        page.is_closed = MagicMock(
+            side_effect=lambda: closed_after is not None and probes["n"] >= closed_after
+        )
+        return page
+
+    @staticmethod
+    def _ctx() -> MagicMock:
+        ctx = MagicMock(name="ctx")
+        ctx.cookies = AsyncMock(return_value=[{"name": "SAPISID", "value": "x"}])
+        return ctx
+
+    @pytest.mark.asyncio
+    async def test_close_on_about_is_not_a_success(self) -> None:
+        """The 2026-09-23 denon82 run: valid session, page on `/about`, window closed.
+        Returning None would hand the decision to `verify_flow_profile`, which reads
+        the same healthy cookies and prints `[OK]` — the bug, one layer down."""
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+        from gflow_cli.errors import IdentityRecheckPendingError
+
+        page = self._page([self.ABOUT], closed_after=1)
+        with (
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()),
+            pytest.raises(IdentityRecheckPendingError) as excinfo,
+        ):
+            await poll_session_until_authenticated(
+                self._ctx(), page, 600, "chrome", raise_on_close=False
+            )
+
+        assert "Confirm it's you" in (excinfo.value.remediation_hint or "")
+        # Exit 12 via the isinstance walk — no new exit code.
+        assert isinstance(excinfo.value, AuthLoginTimeoutError)
+
+    @pytest.mark.asyncio
+    async def test_timeout_on_about_names_the_recheck(self) -> None:
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+        from gflow_cli.errors import IdentityRecheckPendingError
+
+        page = self._page([self.ABOUT])
+        with (
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", AsyncMock()),
+            pytest.raises(IdentityRecheckPendingError),
+        ):
+            await poll_session_until_authenticated(
+                self._ctx(), page, 1, "chrome", raise_on_close=False
+            )
+
+    @pytest.mark.asyncio
+    async def test_hop_after_the_probe_is_still_seen(self) -> None:
+        """The race that produced #902: the probe answers while the page is still on
+        the app URL, and Flow's client-side hop to `/about` lands afterwards."""
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+        from gflow_cli.errors import IdentityRecheckPendingError
+
+        page = self._page(["https://flow.google.com/fx/tools/flow"], closed_after=2)
+
+        # The probe has answered with the page still on the app URL; the hop lands
+        # during the first settle tick, as it does ~340 ms after navigation live.
+        async def _sleep(_s: float) -> None:
+            page.url = self.ABOUT
+
+        with (
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", _sleep),
+            pytest.raises(IdentityRecheckPendingError),
+        ):
+            await poll_session_until_authenticated(
+                self._ctx(), page, 600, "chrome", raise_on_close=False
+            )
+
+    @pytest.mark.asyncio
+    async def test_completing_the_recheck_ends_in_success(self) -> None:
+        """Measured: finishing "Confirm it's you" by hand cleared `/about` (0/2 after,
+        6/6 before). Once the page reaches the app, the login succeeds as before."""
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        # probe 1 on /about -> user goes to Google -> back on the app.
+        page = self._page(
+            [
+                self.ABOUT,
+                self.ABOUT,
+                "https://accounts.google.com/v3/signin/challenge/pwd",
+                self.APP,
+            ]
+        )
+
+        # Once on Google's host the probe is (rightly) skipped, so advance the URL
+        # from the sleep instead, to model the user finishing the password step.
+        async def _sleep(_s: float) -> None:
+            if page.url.startswith("https://accounts.google.com"):
+                page.url = self.APP
+
+        with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", _sleep):
+            session = await poll_session_until_authenticated(
+                self._ctx(), page, 600, "chrome", raise_on_close=False
+            )
+
+        assert session is not None
+        assert session.user_email == "test@example.com"
+
+    @pytest.mark.asyncio
+    async def test_labs_landing_is_not_watched(self) -> None:
+        """`/about` was measured on flow.google.com only (`flow_landing_kind` scopes
+        "public" to it), so a labs-served login keeps today's instant close."""
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        page = self._page(["https://labs.google/fx/tools/flow"])
+        sleep = AsyncMock()
+        with patch("gflow_cli.auth.internal_chromium.asyncio.sleep", sleep):
+            session = await poll_session_until_authenticated(self._ctx(), page, 600, "chrome")
+
+        assert session is not None
+        sleep.assert_not_awaited()

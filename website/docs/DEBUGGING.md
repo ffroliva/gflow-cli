@@ -257,6 +257,7 @@ First visible-and-clickable wins. Log:
 | `AuthExpiredError` | 3 | Session cookies no longer valid | `gflow auth login --profile <name>` |
 | `AuthBrowserRejectedError` | 14 | Google's sign-in rejected the browser for advertising automation; only the `internal` strategy surfaces it | Re-run `gflow auth login` (default `auto` picks the `chrome` strategy, which retries on a no-automation path) |
 | `AuthLoginTimeoutError` | 12 | User did not finish the OAuth flow in time | Run `gflow auth login` again; raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT` |
+| `IdentityRecheckPendingError` | 12 | Login ended while Flow was still sending the account to `/about` because Google wants it to "Confirm it's you" (#902) | Run `gflow auth login` again, press the page's main button, and finish Google's check until the Flow app loads |
 | `TransportTimeoutError` | 9 | A single API call exceeded its timeout | Retry; check Flow status |
 | `WafRejectionError` | 10 | reCAPTCHA / WAF blocked the request | Wait + retry; verify session is healthy |
 

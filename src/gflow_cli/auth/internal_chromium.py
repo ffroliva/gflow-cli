@@ -8,7 +8,12 @@ from playwright.async_api import Error as PlaywrightError
 from rich.console import Console
 
 from gflow_cli.config import get_settings
-from gflow_cli.errors import AuthBrowserRejectedError, AuthLoginTimeoutError, SecurityError
+from gflow_cli.errors import (
+    AuthBrowserRejectedError,
+    AuthLoginTimeoutError,
+    IdentityRecheckPendingError,
+    SecurityError,
+)
 from gflow_cli.profile_lease import ProfileLease
 
 from .base import AuthStrategy
@@ -30,6 +35,13 @@ _console = Console()
 GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
 GOOGLE_REJECTED_BROWSER_ROUTE = "accounts.google.com/v3/signin/rejected"
 POLL_INTERVAL_SECONDS = 3
+
+#: How long a flow.google.com landing is watched, after the session probe says yes,
+#: for Flow's client-side hop to `/about`. The hop was measured about 340 ms after
+#: navigation (docs/superpowers/spikes/2026-09-11-about-redirect-is-decided-client-side.md),
+#: so this allows roughly ten times that.
+LANDING_SETTLE_SECONDS = 3.0
+_LANDING_SETTLE_STEP_SECONDS = 0.25
 
 
 def login_launch_kwargs(
@@ -105,9 +117,15 @@ async def poll_session_until_authenticated(
     login red — and, for the same reason, that caller (and only that caller) may
     stop on the migrated-host signal below, which ends a wait without claiming
     to have authenticated anything.
+
+    The one exception to "a close returns None": a window closed while Flow is still
+    routing the account to `/about` (#902) raises ``IdentityRecheckPendingError``
+    whatever ``raise_on_close`` says. The fallback oracle reads the same healthy
+    cookies and would report the login a success.
     """
     timeout_at = asyncio.get_running_loop().time() + timeout_seconds
     success = False
+    recheck_pending = False
     _status: FlowSessionStatus | None = None
 
     while asyncio.get_running_loop().time() < timeout_at:
@@ -150,7 +168,29 @@ async def poll_session_until_authenticated(
                 google_session=google_session,
                 source=strategy_name,
             )
-            if status.outcome is FlowSessionOutcome.AUTHENTICATED:
+            migrated_stop = (
+                not raise_on_close
+                and status.outcome is FlowSessionOutcome.GOOGLE_SESSION_ONLY
+                and has_migrated_app_session(cookies)
+            )
+            # #902: a session that probes healthy can still be one Flow refuses to
+            # serve. When Google wants the account to "Confirm it's you", the cookies
+            # stay valid and Flow hops to `/about` client-side, AFTER this probe has
+            # answered. Closing on the probe alone reported `[OK]` on an account that
+            # stayed broken. So look at where the page lands before ending the wait.
+            if (
+                status.outcome is FlowSessionOutcome.AUTHENTICATED or migrated_stop
+            ) and await _landed_on_public_page(page):
+                if not recheck_pending:
+                    logger.warning("auth_login_identity_recheck_pending", strategy=strategy_name)
+                    _console.print(
+                        "\n[bold yellow]Google wants to confirm it's you.[/bold yellow] "
+                        "Flow sent this account to its public page. Press the page's main "
+                        "button and finish Google's check (it asks for your password). "
+                        "Keep the window open: gflow closes it once the Flow app loads.",
+                    )
+                recheck_pending = True
+            elif status.outcome is FlowSessionOutcome.AUTHENTICATED:
                 logger.info(
                     "auth_flow_session_verified",
                     strategy=strategy_name,
@@ -182,11 +222,7 @@ async def poll_session_until_authenticated(
             # is on a Flow host and off NextAuth's own routes — a user still on
             # Google's password screen never gets here, and their window is
             # never closed out from under them.
-            if (
-                not raise_on_close
-                and status.outcome is FlowSessionOutcome.GOOGLE_SESSION_ONLY
-                and has_migrated_app_session(cookies)
-            ):
+            elif migrated_stop:
                 logger.info(
                     "auth_login_migrated_session_detected",
                     strategy=strategy_name,
@@ -225,6 +261,9 @@ async def poll_session_until_authenticated(
 
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
     else:
+        if recheck_pending:
+            msg = f"Google's identity check was not completed within {timeout_seconds}s."
+            raise IdentityRecheckPendingError(msg)
         msg = f"Flow sign-in not completed within {timeout_seconds}s."
         raise AuthLoginTimeoutError(
             msg,
@@ -236,6 +275,10 @@ async def poll_session_until_authenticated(
         )
 
     if not success:
+        if recheck_pending:
+            logger.warning("auth_login_closed_during_identity_recheck", strategy=strategy_name)
+            msg = "Chrome was closed while Google still wanted this account to confirm it's you."
+            raise IdentityRecheckPendingError(msg)
         if not raise_on_close:
             logger.info("auth_login_browser_closed_by_user", strategy=strategy_name)
             return None
@@ -249,6 +292,31 @@ async def poll_session_until_authenticated(
         )
 
     return _status
+
+
+async def _landed_on_public_page(page: Any) -> bool:
+    """True when Flow has routed this page to its public `/about` page (#902).
+
+    Watches for up to ``LANDING_SETTLE_SECONDS``, because the hop is client-side and
+    lands after the session probe has answered. Only a flow.google.com landing is
+    watched: `/about` was measured there and nowhere else, and ``flow_landing_kind``
+    scopes "public" to that host, so a labs-served login closes as fast as before.
+    """
+    # Deferred for the same import cycle as `_is_safe_to_probe_session`.
+    from gflow_cli.api.transports._common import flow_host_kind, flow_landing_kind
+
+    if flow_host_kind(page.url) != "migrated":
+        return False
+    # ponytail: a fixed watch window, not a positive "the app loaded" anchor. A hop
+    # slower than the window is missed, which is the pre-#902 behaviour and never a
+    # false alarm: `/about` in the URL is the evidence itself. If misses are seen,
+    # end the window early on the app's first batchexecute request instead (the
+    # healthy arm's first came at 275 ms; the /about arm made none).
+    for _ in range(int(LANDING_SETTLE_SECONDS / _LANDING_SETTLE_STEP_SECONDS)):
+        if flow_landing_kind(page.url) == "public":
+            return True
+        await asyncio.sleep(_LANDING_SETTLE_STEP_SECONDS)
+    return flow_landing_kind(page.url) == "public"
 
 
 def _is_google_rejected_browser_page(page: object) -> bool:
