@@ -48,7 +48,6 @@ def test_persistent_context_kwargs_are_unchanged(tmp_path: Path) -> None:
     assert "--password-store=basic" in kwargs["args"]
     assert kwargs["args"] == [
         "--password-store=basic",
-        "--disable-blink-features=AutomationControlled",
         "--disable-dev-shm-usage",
     ]
     # channel is profile-derived; a marker-less tmp_path has no

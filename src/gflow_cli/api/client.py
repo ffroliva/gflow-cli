@@ -515,7 +515,10 @@ class FlowApiClient:
             # regardless of Playwright's defaults.
             "args": [
                 "--password-store=basic",
-                "--disable-blink-features=AutomationControlled",
+                # DO NOT add --disable-blink-features=AutomationControlled here:
+                # Chrome paints a visible "unsupported command-line flag" infobar
+                # for it, which is itself an automation tell. webdriver stays
+                # false because ignore_default_args strips --enable-automation.
                 "--disable-dev-shm-usage",
             ],
         }
@@ -1095,6 +1098,27 @@ class FlowApiClient:
     async def _launch_persistent_context(self, kwargs: JsonObject) -> BrowserContext:
         """Launch the persistent context; translate a launch-time crash into ProfileLockedError."""
         assert self._pw is not None
+        # Opt-in real-Chrome path: spawn chrome.exe ourselves and attach via CDP
+        # so the command line carries no --enable-automation and (with the
+        # patchright engine) no Runtime.enable leak. Default is the unchanged
+        # playwright launch. Requires the patchright engine.
+        from gflow_cli.api._engine import active_engine
+        from gflow_cli.api.cdp_launch import cdp_launch_requested, launch_via_cdp
+        from gflow_cli.config import BrowserEngine
+
+        if cdp_launch_requested():
+            if active_engine() != BrowserEngine.PATCHRIGHT:
+                raise ConfigurationError(
+                    detail=(
+                        "GFLOW_CLI_CDP_LAUNCH=1 requires "
+                        "GFLOW_CLI_BROWSER_ENGINE=patchright — the playwright "
+                        "engine still enables Runtime.enable on CDP-attach."
+                    ),
+                    remediation_hint=(
+                        "Set GFLOW_CLI_BROWSER_ENGINE=patchright or unset GFLOW_CLI_CDP_LAUNCH."
+                    ),
+                )
+            return await launch_via_cdp(self._pw, dict(kwargs))
         try:
             return await self._pw.chromium.launch_persistent_context(**kwargs)
         except Exception as exc:

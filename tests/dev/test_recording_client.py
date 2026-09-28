@@ -30,6 +30,5 @@ def test_recording_client_injects_video_and_preserves_base(tmp_path: Path) -> No
     assert kwargs["headless"] is True
     assert kwargs["args"] == [
         "--password-store=basic",
-        "--disable-blink-features=AutomationControlled",
         "--disable-dev-shm-usage",
     ]
