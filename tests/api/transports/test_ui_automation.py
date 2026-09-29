@@ -263,6 +263,11 @@ class TestSetup:
             return cdp_ctx
 
         monkeypatch.setattr("gflow_cli.api.cdp_launch.launch_via_cdp", _fake_cdp)
+        # The patchright arm resolves its factory from _engine, not the module-level
+        # async_playwright — stub it so CI (no patchright installed) never imports it.
+        monkeypatch.setattr(
+            "gflow_cli.api._engine.resolve_async_playwright", lambda _engine: lambda: pw_cm
+        )
         with patch(
             "gflow_cli.api.transports.ui_automation.async_playwright",
             return_value=pw_cm,

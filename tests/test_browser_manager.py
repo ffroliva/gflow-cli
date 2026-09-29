@@ -440,6 +440,9 @@ class TestLaunchSitesGuarded:
             "auth/real_chrome.py",
             # Chrome-marker-gated fallback: only ever launches channel="chrome".
             "auth/cookies.py",
+            # Names launch_persistent_context only in prose; spawns system chrome.exe
+            # itself, and both callers run the guard before routing here.
+            "api/cdp_launch.py",
         }
         offenders = []
         for py in src.rglob("*.py"):
