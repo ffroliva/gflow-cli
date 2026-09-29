@@ -33,6 +33,8 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import os
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -609,9 +611,16 @@ def _picker_pane(page: Any) -> Any:
     return page.locator(OVERLAY).filter(has=page.locator(PICKER)).last
 
 
-def _ligature(page: Any, name: str) -> Any:
-    """A ``mat-icon`` whose ligature text is exactly ``name`` — for ``filter(has=…)``."""
-    return page.locator("mat-icon").filter(has_text=_exact(name))
+def _with_ligature(base: str, name: str, *, scoped: bool = False) -> str:
+    """XPath locator for ``base`` elements containing a ``mat-icon`` whose text is ``name``.
+
+    ``filter(has=_ligature(...))`` silently resolves to 0 under the patchright/CDP
+    engine — ``has=`` runs a page-side evaluate in the isolated world, which cannot
+    see the main DOM on this host. XPath descendant selection is engine-neutral.
+    ``scoped=True`` emits a ``.//`` selector for use inside ``pane.locator(...)``.
+    """
+    root = "." if scoped else ""
+    return f"xpath={root}//{base}[.//mat-icon[normalize-space(.)='{name}']]"
 
 
 #: Google's ErrorInfo reason on a submit reCAPTCHA Enterprise scored as a bot. The labs
@@ -795,7 +804,11 @@ def _interpolation_body_problem(
     # Matching on key SHAPE rather than a pinned literal is deliberate: the two
     # cohorts disagree on the key, so a literal would refuse a valid run on one of
     # them. A plain i2v/t2v key means a frame dropped before the app submitted.
-    if "interpolation" not in key_text and "first_last" not in key_text:
+    if (
+        "interpolation" not in key_text
+        and "first_last" not in key_text
+        and not key_text.endswith("_fl")
+    ):
         return (
             f"migrated host: the submit went out on {rpcid} with {key_text} for a "
             "start+end (interpolation) request — expected an interpolation "
@@ -890,6 +903,54 @@ def _redacted_page_url(page: Any) -> str:
     if not parsed.scheme or not parsed.netloc:
         return "<unavailable>"
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+
+#: Opt-in "behave like a person" surface. When ``GFLOW_HUMAN`` is truthy the
+#: composer path adds small randomized delays around clicks and typing — the
+#: measured failure mode this guards is a submit that lands a few hundred ms
+#: after the prompt, which Flow's abuse heuristics read as scripted. Off by
+#: default so the scripted cadence in tests and docs stays intact.
+_HUMAN_MODE_ENV = "GFLOW_HUMAN"
+
+
+def _human_mode() -> bool:
+    return os.environ.get(_HUMAN_MODE_ENV, "").lower() in ("1", "true", "yes")
+
+
+async def _human_pause(lo_s: float, hi_s: float) -> None:
+    if _human_mode():
+        await asyncio.sleep(random.uniform(lo_s, hi_s))
+
+
+async def _human_click(page: Page, locator: Any) -> None:
+    """``locator.click`` with pointer settle + jittered position when human mode is on."""
+    if not _human_mode():
+        await locator.click(timeout=5000)
+        return
+    try:
+        box = await locator.bounding_box()
+    except Exception:  # noqa: BLE001 - fall back to a plain click on a moving target
+        box = None
+    if box:
+        await page.mouse.move(
+            box["x"] + box["width"] / 2,
+            box["y"] + box["height"] / 2,
+            steps=random.randint(4, 9),
+        )
+        await asyncio.sleep(random.uniform(0.08, 0.3))
+    try:
+        await locator.click(
+            timeout=5000,
+            position={
+                "x": random.uniform(0.2, 0.8) * (box["width"] if box else 10),
+                "y": random.uniform(0.25, 0.75) * (box["height"] if box else 10),
+            }
+            if box
+            else None,
+        )
+    except Exception:
+        await locator.click(timeout=5000)
+    await _human_pause(0.3, 0.9)
 
 
 class MigratedComposer:
@@ -1210,9 +1271,9 @@ class MigratedComposer:
         # Some accounts leave the Agent panel expanded over the chip. Close only the
         # structural panel close button; the pressed-state chip has already been
         # confirmed above, so this cannot click a healthy composer into agent mode.
-        panel_close = (
-            page.locator("flow-agent-panel button").filter(has=_ligature(page, "close")).first
-        )
+        panel_close = page.locator(
+            "xpath=//flow-agent-panel//button[.//mat-icon[normalize-space(.)='close']]"
+        ).first
         try:
             if await panel_close.count() and await panel_close.is_visible():
                 await panel_close.click(timeout=5000)
@@ -1516,22 +1577,34 @@ class MigratedComposer:
         # menu (a second overlay) has opened and closed, a detached menu pane can
         # still be the last one in the DOM, and every axis after `--model` then
         # reads "0 option groups" (measured 2026-09-05, $0 run).
-        pane = page.locator(OVERLAY).filter(has=page.locator(RADIOGROUP)).last
-        try:
-            await pane.locator(RADIOGROUP).first.wait_for(state="visible", timeout=8000)
-        except Exception as e:
-            detail = await self._ui_failure_detail(
-                page,
-                phase="discover_settings_pane",
-                selector=f"{OVERLAY} -> {RADIOGROUP}",
-                detail=(
-                    "migrated host: the settings pane opened but rendered no option "
-                    "groups ([role='radiogroup']) (host=migrated)"
-                ),
-                error=e,
-            )
-            raise UiSelectorDriftError(detail=detail) from e
-        return pane
+        # XPath, not filter(has=): under the patchright/CDP engine ``has=``
+        # evaluates in the isolated world and resolves to 0 on live overlays.
+        # Poll, not wait_for: Angular remounts the overlay between the trigger
+        # click and the first probe on this host (patchright/CDP, 2026-09-28),
+        # so a wait_for can resolve on a radiogroup that detaches before the
+        # caller reads it. Re-resolve the whole locator until the pane holds.
+        deadline = asyncio.get_event_loop().time() + 8.0
+        last_err: Exception | None = None
+        while True:
+            try:
+                pane = page.locator(
+                    "xpath=(//div[contains(@class,'cdk-overlay-pane')][.//*[@role='radiogroup']])[last()]"
+                )
+                if (
+                    await pane.locator(RADIOGROUP).first.is_visible()
+                    and await pane.locator(RADIOGROUP).count() >= 1
+                ):
+                    return pane
+            except Exception as e:  # noqa: BLE001 - transient detach while Angular re-renders
+                last_err = e
+            if asyncio.get_event_loop().time() >= deadline:
+                raise UiSelectorDriftError(
+                    detail=(
+                        "migrated host: the settings pane opened but rendered no option "
+                        "groups ([role='radiogroup']) (host=migrated)"
+                    ),
+                ) from last_err
+            await asyncio.sleep(0.3)
 
     def _blocking_overlays(self, page: Page) -> Any:
         """Visible overlays that are ours to dismiss — the settings pane and the model
@@ -1542,7 +1615,10 @@ class MigratedComposer:
         which cover the composer or answer to Escape. An unrelated toast visible at the
         wrong moment would otherwise burn both escapes and abort a run that was fine.
         """
-        return page.locator(VISIBLE_OVERLAY).filter(has=page.locator(f"{RADIOGROUP}, {MENU_ITEM}"))
+        return page.locator(
+            "xpath=//div[contains(@class,'cdk-overlay-pane')]"
+            "[.//*[@role='radiogroup' or @role='menuitem']]"
+        ).filter(visible=True)
 
     async def _close_pane(self, page: Page, *, strict: bool = True) -> None:
         """Dismiss every visible settings/menu overlay, and verify that none is left.
@@ -1637,11 +1713,18 @@ class MigratedComposer:
         radios = pane.locator(RADIO)
         wanted = text if text is not None else str(lig)
         matches = (
-            radios.filter(has=_ligature(page, lig))
+            pane.locator(_with_ligature("*[@role='radio']", lig, scoped=True))
             if lig
             else radios.filter(has_text=_exact(wanted))
         )
         target = matches.first
+        # The pane's option groups can vanish for a beat while Angular re-mounts
+        # the overlay (observed under the patchright/CDP engine, 2026-09-28):
+        # treat "nothing rendered" as transient for up to 6 s before calling it
+        # selector drift — a genuinely empty pane costs the same wait either way.
+        not_found_deadline = asyncio.get_event_loop().time() + 6.0
+        while not await target.count() and asyncio.get_event_loop().time() < not_found_deadline:
+            await asyncio.sleep(0.3)
         if not await target.count():
             groups = await pane.locator(RADIOGROUP).count()
             # Only the duration row is a per-account/model capability (#650) — a missing
@@ -1720,7 +1803,7 @@ class MigratedComposer:
                 ),
                 remediation_hint="Pass --model with one of the offered names, or omit it.",
             )
-        button = pane.locator("button").filter(has=_ligature(page, "arrow_drop_down")).first
+        button = pane.locator(_with_ligature("button", "arrow_drop_down", scoped=True)).first
         try:
             await button.wait_for(state="visible", timeout=4000)
         except Exception:
@@ -1791,7 +1874,7 @@ class MigratedComposer:
                     "helps if Flow still serves you labs."
                 ),
             )
-        button = pane.locator("button").filter(has=_ligature(page, "arrow_drop_down")).first
+        button = pane.locator(_with_ligature("button", "arrow_drop_down", scoped=True)).first
         try:
             await button.wait_for(state="visible", timeout=4000)
         except Exception:
@@ -2376,8 +2459,20 @@ class MigratedComposer:
             await self._click(page, composer, named=COMPOSER, timeout=5000)
         # insert_text dispatches input events without key presses: a newline in the
         # prompt lands as text instead of an Enter that might submit early.
-        await page.keyboard.insert_text(prompt)
-        log.info("migrated.prompt_typed", chars=len(prompt))
+        # GFLOW_HUMAN_TYPE=1 or GFLOW_HUMAN=1 types single-line prompts with
+        # per-key events, jitter and occasional mid-word pauses instead
+        # (measured 2026-09-27: instant paste was the automation tell that
+        # earned PUBLIC_ERROR_UNUSUAL_ACTIVITY).
+        human = _human_mode() or os.environ.get("GFLOW_HUMAN_TYPE") == "1"
+        if human and "\n" not in prompt:
+            for ch in prompt:
+                await page.keyboard.type(ch, delay=random.randint(45, 200))
+                if ch == " " and random.random() < 0.14:
+                    await asyncio.sleep(random.uniform(0.25, 0.9))
+            log.info("migrated.prompt_typed", chars=len(prompt), mode="human")
+        else:
+            await page.keyboard.insert_text(prompt)
+            log.info("migrated.prompt_typed", chars=len(prompt))
 
     async def submit_and_observe(
         self,
@@ -2541,7 +2636,7 @@ class MigratedComposer:
         # early for a t2v submit it has nothing to assert about.
         page.on("request", on_request)
         try:
-            submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
+            submit = page.locator(_with_ligature("button", "arrow_forward")).first
             if not await submit.count():
                 # A credit shortfall and a moved frontend look identical here: both are
                 # "arrow_forward is gone". Ask which one BEFORE naming a culprit --
@@ -2570,7 +2665,11 @@ class MigratedComposer:
             deadline = time.monotonic() + poll_timeout_s
             # The credit-spending click: a bare timeout here leaves "did it submit?"
             # unanswerable, which is the worst place in this driver to lose attribution.
-            await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
+            await _human_pause(1.0, 3.0)
+            if _human_mode():
+                await _human_click(page, submit)
+            else:
+                await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             log.info("migrated.submit_clicked")
             budget = min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s)
             await asyncio.wait(
@@ -2713,7 +2812,7 @@ class MigratedComposer:
                 error=f"{remaining} blocking overlay(s)",
             )
             raise UiSelectorDriftError(detail=detail)
-        submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
+        submit = page.locator(_with_ligature("button", "arrow_forward")).first
         if not await submit.count():
             await _raise_if_out_of_credits(page)
             detail = await self._ui_failure_detail(
@@ -2827,7 +2926,28 @@ class MigratedComposer:
                         detail="migrated host: image submit stayed disabled (host=migrated)"
                     )
                 await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
-            await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
+            # The migrated page mints its reCAPTCHA Enterprise token inside its own
+            # submit handler on ogiZ0b. Clicking before recaptcha/enterprise.js has
+            # loaded sends an unminted/absent token, and the server answers with
+            # PUBLIC_ERROR_UNUSUAL_ACTIVITY — measured live 2026-09-27: three image
+            # submits ~7 s after navigation all refused, while a video submit that
+            # spent ~60 s in settings passed on the same page and session. Wait for
+            # the mint surface, then give Angular a beat before the click.
+            try:
+                await page.wait_for_function(
+                    "typeof grecaptcha !== 'undefined' && !!grecaptcha.enterprise",
+                    timeout=15000,
+                )
+            except Exception:
+                pass
+            await asyncio.sleep(1.0)
+            await _human_pause(1.2, 3.5)
+            if _human_mode():
+                await _human_click(page, submit)
+            else:
+                await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
+            # The scripted "type-and-click-instantly" cadence is the tell that
+            # earned this host's PUBLIC_ERROR_UNUSUAL_ACTIVITY.
             done, _ = await asyncio.wait(
                 {result, route_error},
                 timeout=IMAGE_REPLY_BUDGET_S,

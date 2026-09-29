@@ -258,7 +258,13 @@ class FakeLocator:
             self.page, self.kind, self.items[index : index + 1], visible=self.visible
         )
 
-    def filter(self, *, has: FakeLocator | None = None, has_text: Any = None) -> FakeLocator:
+    def filter(
+        self,
+        *,
+        has: FakeLocator | None = None,
+        has_text: Any = None,
+        visible: bool | None = None,
+    ) -> FakeLocator:
         items = self.items
         if has is not None and has.kind == "ours":  # overlays we are allowed to dismiss
             items = [i for i in items if i in ("pane", "menu", "lingering-menu")]
@@ -274,6 +280,8 @@ class FakeLocator:
         if has_text is not None:
             pat = has_text if hasattr(has_text, "search") else re.compile(re.escape(str(has_text)))
             items = [i for i in items if pat.search(i.text if isinstance(i, Radio) else str(i))]
+        # visible=True narrows nothing here: the fake encodes visibility in which
+        # items are appended (a toast only appears while dom.toast_visible).
         return FakeLocator(self.page, self.kind, items, visible=self.visible)
 
     def locator(self, css: str) -> FakeLocator:
@@ -545,12 +553,27 @@ class FakeResponse:
 class FakePage:
     """Resolves the fixed set of CSS the composer is allowed to use."""
 
+    class _Mouse:
+        async def move(self, x: float, y: float) -> None:
+            await asyncio.sleep(0)
+
+        async def down(self) -> None:
+            await asyncio.sleep(0)
+
+        async def up(self) -> None:
+            await asyncio.sleep(0)
+
+    async def wait_for_function(self, *_: Any, **__: Any) -> None:
+        # The fake has no JS runtime — the grecaptcha wait resolves instantly.
+        await asyncio.sleep(0)
+
     def __init__(
         self, dom: Dom | None = None, *, url: str = "https://flow.google.com/project/p1"
     ) -> None:
         self.dom = dom or _default_dom()
         self.url = url
         self.keyboard = FakeKeyboard(self)
+        self.mouse = self._Mouse()
         self.gotos: list[str] = []
         self._handlers: dict[str, list[Any]] = {"response": [], "request": []}
         self._pending_lig: re.Pattern[str] | None = None
@@ -703,6 +726,8 @@ class FakePage:
         if css == migrated_composer.CREDITS_WARNING:
             hits = ["warning"] if dom.credits_warning_present else []
             return FakeLocator(self, "credits_warning", hits)
+        if css.startswith("xpath="):
+            return self._xpath_locator(css, scope)
         if css == migrated_composer.COOKIE_BAR:
             # Always in the DOM, visibility read LAZILY: the driver holds this locator
             # across the dismiss click and then waits for it to go hidden, so a bool
@@ -711,6 +736,47 @@ class FakePage:
         if css == migrated_composer.COOKIE_BAR_REJECT:
             return FakeLocator(self, "cookie_reject", ["reject"] if dom.cookie_bar_visible else [])
         raise AssertionError(f"composer used an unmodelled selector: {css!r}")
+
+    def _xpath_locator(self, css: str, scope: FakeLocator | None) -> FakeLocator:
+        """Model the XPath selectors the composer emits instead of ``filter(has=)``.
+
+        Each ``_with_ligature`` call encodes its ligature inline; the fake extracts
+        it and reuses the same branches the CSS equivalents took.
+        """
+        dom = self.dom
+        lig_m = re.search(r"mat-icon\[normalize-space\(\.\)='([^']+)'\]", css)
+        lig = lig_m.group(1) if lig_m else ""
+        if "flow-agent-panel" in css:
+            buttons = [Radio("close", "Close")] if dom.agent_panel_expanded else []
+            return FakeLocator(self, "agent_close", buttons)
+        if "role='radiogroup'" in css and "role='menuitem'" not in css:
+            # _open_pane's `(…[.//*[@role='radiogroup']])[last()]` — the overlay that
+            # actually holds option groups.
+            return FakeLocator(self, "pane", ["pane"] if dom.pane_open else [])
+        if "role='menuitem'" in css:
+            # _blocking_overlays' union — panes that are ours to dismiss.
+            panes = (["pane"] if dom.pane_open else []) + (["menu"] if dom.menu_open else [])
+            if dom.menu_overlay_lingering:
+                panes.append("lingering-menu")
+            return FakeLocator(self, "ours", panes)
+        if "@role='radio'" in css:
+            if scope is not None and scope.items and scope.items[0] != "pane":
+                return FakeLocator(self, "radio", [])
+            radios = [r for g in dom.groups.values() for r in g] if dom.pane_open else []
+            radios = [r for r in radios if lig and lig in r.lig]
+            return FakeLocator(self, "radio", radios)
+        if "//button" in css:
+            if "arrow_drop_down" in lig:
+                return FakeLocator(
+                    self,
+                    "model_button",
+                    [dom.model_label] if dom.pane_open else [],
+                )
+            if "arrow_forward" in lig:
+                present = ["submit"] if dom.submit_anchor_present else []
+                return FakeLocator(self, "submit", present)
+            return FakeLocator(self, "button", [])
+        raise AssertionError(f"composer used an unmodelled xpath: {css!r}")
 
 
 class _ButtonLocator(FakeLocator):

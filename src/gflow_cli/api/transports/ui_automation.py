@@ -1097,18 +1097,52 @@ class UiAutomationTransport(VideoGenerationMixin):
             # #477: refuse a bundled-Chromium open of a profile last written by
             # a newer Chromium — downgrade cleanup can shred the session store.
             ensure_profile_engine_compatible(profile_dir, channel)
-            ctx = await pw.chromium.launch_persistent_context(
-                str(profile_dir),
-                headless=False,
-                viewport=cast("ViewportSize", _VIEWPORT),
-                locale=locale_env,
-                channel=channel,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
+            cdp_kwargs: dict[str, Any] = {
+                "user_data_dir": str(profile_dir),
+                "headless": False,
+                "viewport": cast("ViewportSize", _VIEWPORT),
+                "locale": locale_env,
+                "ignore_default_args": [
+                    "--enable-automation",
+                    "--no-sandbox",
+                ],
+                "args": [
                     "--password-store=basic",
                     "--disable-dev-shm-usage",
                 ],
+            }
+            # Opt-in real-Chrome path (same contract as
+            # FlowApiClient._launch_persistent_context): spawn chrome.exe and
+            # attach over CDP so no --enable-automation / Runtime.enable tells
+            # reach flow.google.com. This transport owns its own context, so it
+            # must opt in itself — the client.py hook cannot see it.
+            from gflow_cli.api.cdp_launch import (  # noqa: PLC0415
+                cdp_launch_requested,
+                launch_via_cdp,
             )
+
+            if cdp_launch_requested():
+                if engine != BrowserEngine.PATCHRIGHT:
+                    raise ConfigurationError(
+                        detail=(
+                            "GFLOW_CLI_CDP_LAUNCH=1 requires "
+                            "GFLOW_CLI_BROWSER_ENGINE=patchright — the playwright "
+                            "engine still enables Runtime.enable on CDP-attach."
+                        ),
+                        remediation_hint=(
+                            "Set GFLOW_CLI_BROWSER_ENGINE=patchright or unset GFLOW_CLI_CDP_LAUNCH."
+                        ),
+                    )
+                ctx = await launch_via_cdp(pw, cdp_kwargs)
+            else:
+                # channel selects real Chrome vs bundled Chromium for the stock
+                # path; cdp_launch spawns the binary itself so it is absent from
+                # the shared kwargs.
+                ctx = await pw.chromium.launch_persistent_context(
+                    cdp_kwargs.pop("user_data_dir"),
+                    channel=channel,
+                    **{k: v for k, v in cdp_kwargs.items() if k != "user_data_dir"},
+                )
             # Hide the automation flag so reCAPTCHA Enterprise doesn't score
             # the session as a bot — navigator.webdriver=true causes low-score
             # tokens and HTTP 403 on batchGenerateImages.

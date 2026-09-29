@@ -41,7 +41,12 @@ from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
     zip_entity_refs,
 )
-from gflow_cli.errors import ContentPolicyError, UiSelectorDriftError, WafRejectionError
+from gflow_cli.errors import (
+    ConfigurationError,
+    ContentPolicyError,
+    UiSelectorDriftError,
+    WafRejectionError,
+)
 
 # ---------------------------------------------------------------------------
 # Async helpers shared across units
@@ -235,6 +240,67 @@ class TestSetup:
                 assert t._setup_done is True  # type: ignore[attr-defined]
             finally:
                 await t.teardown()
+
+    @pytest.mark.asyncio
+    async def test_own_context_routes_through_cdp_when_requested(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GFLOW_CLI_CDP_LAUNCH=1 (+ patchright engine) must route the image
+        transport's own-context launch through cdp_launch — the client.py hook
+        cannot see this path, so the opt-in lives here (2026-09-28: a paid run's
+        image submit refused as PUBLIC_ERROR_UNUSUAL_ACTIVITY because this branch
+        was missing)."""
+        t = UiAutomationTransport()
+        ctx = _make_fake_context(pages=[])
+        pw_cm, fake_pw = _make_fake_playwright(ctx)
+        monkeypatch.setenv("GFLOW_CLI_CDP_LAUNCH", "1")
+        monkeypatch.setenv("GFLOW_CLI_BROWSER_ENGINE", "patchright")
+        cdp_ctx = _make_fake_context(pages=[MagicMock()])
+        launch_calls: list[dict[str, object]] = []
+
+        async def _fake_cdp(pw: object, kwargs: dict[str, object]) -> MagicMock:
+            launch_calls.append(kwargs)
+            return cdp_ctx
+
+        monkeypatch.setattr("gflow_cli.api.cdp_launch.launch_via_cdp", _fake_cdp)
+        # The patchright arm resolves its factory from _engine, not the module-level
+        # async_playwright — stub it so CI (no patchright installed) never imports it.
+        monkeypatch.setattr(
+            "gflow_cli.api._engine.resolve_async_playwright", lambda _engine: lambda: pw_cm
+        )
+        with patch(
+            "gflow_cli.api.transports.ui_automation.async_playwright",
+            return_value=pw_cm,
+        ):
+            try:
+                await t.setup(tmp_path)
+                assert launch_calls, "launch_via_cdp was not invoked"
+                assert launch_calls[0]["user_data_dir"] == str(tmp_path)
+                fake_pw.chromium.launch_persistent_context.assert_not_called()
+                assert t._page is cdp_ctx.pages[0]  # type: ignore[attr-defined]
+            finally:
+                await t.teardown()
+
+    @pytest.mark.asyncio
+    async def test_own_context_cdp_rejects_non_patchright_engine(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CDP launch with the playwright engine must fail closed — same
+        contract as FlowApiClient._launch_persistent_context."""
+        t = UiAutomationTransport()
+        ctx = _make_fake_context(pages=[])
+        pw_cm, fake_pw = _make_fake_playwright(ctx)
+        monkeypatch.setenv("GFLOW_CLI_CDP_LAUNCH", "1")
+        monkeypatch.delenv("GFLOW_CLI_BROWSER_ENGINE", raising=False)
+        with (
+            patch(
+                "gflow_cli.api.transports.ui_automation.async_playwright",
+                return_value=pw_cm,
+            ),
+            pytest.raises(ConfigurationError, match="patchright"),
+        ):
+            await t.setup(tmp_path)
+        fake_pw.chromium.launch_persistent_context.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_own_context_acquires_and_releases_profile_lease(

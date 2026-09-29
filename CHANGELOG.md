@@ -6,7 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-
 ### Added
 
 - **Explicit video resolution control (`--resolution [360p|720p]`).** Added `--resolution`
@@ -17,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to Google's internal `HARBOR_SEAL` wire model for `gflow image t2i`, `i2i`, and `batch`. Its I2I reference
   cap starts at 3 because it has not been measured yet, and its daily quota is
   unmeasured too ([spike](docs/superpowers/spikes/2026-09-11-nano2-lite-capability.md)).
+- **Real-Chrome CDP launch for the migrated host (`GFLOW_CLI_CDP_LAUNCH=1`).**
+  On `flow.google.com` accounts, launches the system's real `chrome.exe` with
+  `--remote-debugging-port` and attaches patchright over CDP instead of launching
+  a patchright-branded browser. Removes the `--enable-automation` /
+  `--disable-blink-features=AutomationControlled` automation tells that trip
+  Flow's WAF on the migrated host, and adds `GFLOW_HUMAN`/`GFLOW_HUMAN_TYPE`
+  humanized prompt entry plus XPath selectors for the settings pane and submit
+  buttons that `filter(has=…)` silently resolves to zero elements under the
+  patchright engine. Diagnosed and tested live by
+  [@stgmt](https://github.com/stgmt) — one `t2v` and two `t2i` generations
+  completed end-to-end on a migrated account before the server-side
+  `PUBLIC_ERROR_UNUSUAL_ACTIVITY` rate window kicked in after three submits.
 
 ### Fixed
 
