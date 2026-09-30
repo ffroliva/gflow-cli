@@ -2565,7 +2565,60 @@ class FlowApiClient:
             media_id=media_id,
             resolution=target_resolution.name,
         )
-        token = await self._mint_recaptcha_token(recaptcha_action)
+
+        is_migrated = self.settings.flow_host == "flow.google.com"
+        if not is_migrated and self.settings.flow_host == "auto":
+            current_url = getattr(self._page, "url", None)
+            if self._page is not None and flow_host_kind(current_url) == "migrated":
+                is_migrated = True
+
+        if is_migrated:
+            from gflow_cli.api.transports.migrated_upscale import upscale_image_migrated
+
+            page = await self._checkout_page()
+            try:
+                target = await upscale_image_migrated(
+                    page,
+                    project_id=project_id,
+                    media_id=media_id,
+                    target_resolution=target_resolution,
+                    out_path=out_path,
+                )
+                storage_uri = self.settings.storage_uri
+                if storage_uri:
+                    from gflow_cli.storage import upload_file
+
+                    remote = await upload_file(out_path, storage_uri)
+                    logger.info("image.upscale_uploaded", uri=remote)
+                    return remote
+                return target
+            finally:
+                self._checkin_page(page)
+
+        try:
+            token = await self._mint_recaptcha_token(recaptcha_action)
+        except FlowHostMigratedError:
+            from gflow_cli.api.transports.migrated_upscale import upscale_image_migrated
+
+            page = await self._checkout_page()
+            try:
+                target = await upscale_image_migrated(
+                    page,
+                    project_id=project_id,
+                    media_id=media_id,
+                    target_resolution=target_resolution,
+                    out_path=out_path,
+                )
+                storage_uri = self.settings.storage_uri
+                if storage_uri:
+                    from gflow_cli.storage import upload_file
+
+                    remote = await upload_file(out_path, storage_uri)
+                    logger.info("image.upscale_uploaded", uri=remote)
+                    return remote
+                return target
+            finally:
+                self._checkin_page(page)
         req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
         session_id = f";{int(time.time() * 1000)}"
         try:
@@ -2636,6 +2689,46 @@ class FlowApiClient:
         target = adjust_key_extension(target, image_bytes)
         await write_asset_async(target, image_bytes)
         return target
+
+    async def upsample_video(
+        self,
+        *,
+        media_id: str,
+        project_id: str,
+        scale: str = "1080p",
+        out_path: Path,
+    ) -> AnyPath:
+        """Upscale or export a platform-generated video to 1080p, 720p, or 270p GIF.
+
+        Drives the migrated Flow editor to export an upsampled 1080p Full HD video or
+        animated GIF.
+        """
+        from gflow_cli.api.transports.migrated_video_upscale import upscale_video_migrated
+
+        logger.info(
+            "video.upscale_started",
+            media_id=media_id,
+            scale=scale,
+        )
+        page = await self._checkout_page()
+        try:
+            target = await upscale_video_migrated(
+                page,
+                project_id=project_id,
+                media_id=media_id,
+                scale=scale,
+                out_path=out_path,
+            )
+            storage_uri = self.settings.storage_uri
+            if storage_uri:
+                from gflow_cli.storage import upload_file
+
+                remote = await upload_file(out_path, storage_uri)
+                logger.info("video.upscale_uploaded", uri=remote)
+                return remote
+            return target
+        finally:
+            self._checkin_page(page)
 
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
