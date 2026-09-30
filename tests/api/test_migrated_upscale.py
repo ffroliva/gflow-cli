@@ -7,6 +7,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.image_upscale import TargetResolution
 from gflow_cli.api.transports.migrated_upscale import upscale_image_migrated
@@ -144,7 +145,7 @@ async def test_migrated_upscale_missing_tile_raises_wireformat(tmp_path) -> None
 
     page = MagicMock()
     page.goto = AsyncMock()
-    page.wait_for_selector = AsyncMock(return_value=None)
+    page.wait_for_selector = AsyncMock(side_effect=PlaywrightTimeoutError("timeout"))
 
     with pytest.raises(WireFormatError, match="Could not locate image tile"):
         await upscale_image_migrated(

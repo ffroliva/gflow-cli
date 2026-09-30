@@ -1577,14 +1577,19 @@ async def gflow_upscale_image(
             out_path=out_path,
         )
 
+    from gflow_cli.storage import is_cloud_path
+
     target_path = Path(str(target))
+    file_bytes = (
+        target_path.stat().st_size if target_path.exists() and not is_cloud_path(target) else 0
+    )
     return {
         "status": "ok",
         "media_id": media_id,
         "project_id": resolved_project,
         "scale": scale_label,
-        "path": str(target_path),
-        "bytes": target_path.stat().st_size if target_path.exists() else 0,
+        "path": str(target),
+        "bytes": file_bytes,
     }
 
 
@@ -1669,14 +1674,19 @@ async def gflow_upscale_video(
             out_path=out_path,
         )
 
+    from gflow_cli.storage import is_cloud_path
+
     target_path = Path(str(target))
+    file_bytes = (
+        target_path.stat().st_size if target_path.exists() and not is_cloud_path(target) else 0
+    )
     return {
         "status": "ok",
         "media_id": media_id,
         "project_id": resolved_project,
         "scale": scale_label,
-        "path": str(target_path),
-        "bytes": target_path.stat().st_size if target_path.exists() else 0,
+        "path": str(target),
+        "bytes": file_bytes,
     }
 
 

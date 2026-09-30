@@ -2573,52 +2573,22 @@ class FlowApiClient:
                 is_migrated = True
 
         if is_migrated:
-            from gflow_cli.api.transports.migrated_upscale import upscale_image_migrated
-
-            page = await self._checkout_page()
-            try:
-                target = await upscale_image_migrated(
-                    page,
-                    project_id=project_id,
-                    media_id=media_id,
-                    target_resolution=target_resolution,
-                    out_path=out_path,
-                )
-                storage_uri = self.settings.storage_uri
-                if storage_uri:
-                    from gflow_cli.storage import upload_file
-
-                    remote = await upload_file(out_path, storage_uri)
-                    logger.info("image.upscale_uploaded", uri=remote)
-                    return remote
-                return target
-            finally:
-                self._checkin_page(page)
+            return await self._drive_migrated_image_upscale(
+                project_id=project_id,
+                media_id=media_id,
+                target_resolution=target_resolution,
+                out_path=out_path,
+            )
 
         try:
             token = await self._mint_recaptcha_token(recaptcha_action)
         except FlowHostMigratedError:
-            from gflow_cli.api.transports.migrated_upscale import upscale_image_migrated
-
-            page = await self._checkout_page()
-            try:
-                target = await upscale_image_migrated(
-                    page,
-                    project_id=project_id,
-                    media_id=media_id,
-                    target_resolution=target_resolution,
-                    out_path=out_path,
-                )
-                storage_uri = self.settings.storage_uri
-                if storage_uri:
-                    from gflow_cli.storage import upload_file
-
-                    remote = await upload_file(out_path, storage_uri)
-                    logger.info("image.upscale_uploaded", uri=remote)
-                    return remote
-                return target
-            finally:
-                self._checkin_page(page)
+            return await self._drive_migrated_image_upscale(
+                project_id=project_id,
+                media_id=media_id,
+                target_resolution=target_resolution,
+                out_path=out_path,
+            )
         req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
         session_id = f";{int(time.time() * 1000)}"
         try:
@@ -2690,6 +2660,38 @@ class FlowApiClient:
         await write_asset_async(target, image_bytes)
         return target
 
+    async def _drive_migrated_image_upscale(
+        self,
+        *,
+        project_id: str,
+        media_id: str,
+        target_resolution: TargetResolution,
+        out_path: Path,
+    ) -> AnyPath:
+        from gflow_cli.api.transports.migrated_upscale import upscale_image_migrated
+
+        page = await self._checkout_page()
+        try:
+            target = await upscale_image_migrated(
+                page,
+                project_id=project_id,
+                media_id=media_id,
+                target_resolution=target_resolution,
+                out_path=out_path,
+            )
+            storage_uri = self.settings.storage_uri
+            if storage_uri:
+                data = target.read_bytes()
+                key = _storage_key_from_path(target, self.settings.output_dir)
+                remote = storage_path(storage_uri, self.settings.output_dir, key)
+                remote = adjust_key_extension(remote, data)
+                await write_asset_async(remote, data)
+                logger.info("image.upscale_uploaded", uri=str(remote))
+                return remote
+            return target
+        finally:
+            self._checkin_page(page)
+
     async def upsample_video(
         self,
         *,
@@ -2721,12 +2723,15 @@ class FlowApiClient:
             )
             storage_uri = self.settings.storage_uri
             if storage_uri:
-                from gflow_cli.storage import upload_file
-
-                remote = await upload_file(out_path, storage_uri)
-                logger.info("video.upscale_uploaded", uri=remote)
+                data = target.read_bytes()
+                key = _storage_key_from_path(target, self.settings.output_dir)
+                remote = storage_path(storage_uri, self.settings.output_dir, key)
+                await write_asset_async(remote, data)
+                logger.info("video.upscale_uploaded", uri=str(remote))
                 return remote
             return target
+        except Exception as exc:
+            await self._raise_with_incident(exc, phase="video_upscale")
         finally:
             self._checkin_page(page)
 

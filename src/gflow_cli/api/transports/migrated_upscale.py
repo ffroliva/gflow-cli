@@ -12,6 +12,7 @@ import base64
 from typing import TYPE_CHECKING
 
 import structlog
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.image_upscale import TargetResolution
 from gflow_cli.api.transports.batchexecute import parse_frames
@@ -56,11 +57,15 @@ async def upscale_image_migrated(
     log.info("migrated_upscale.navigate", project_id=project_id, media_id=media_id)
     await page.goto(project_url, wait_until="domcontentloaded")
 
-    # Locate image tile by data-media-id with fallback
+    # Locate image tile strictly matching media_id
     img_sel = f'img[data-media-id="{media_id}"]'
-    tile_img = await page.wait_for_selector(img_sel, timeout=30_000)
-    if not tile_img:
-        tile_img = await page.wait_for_selector("flow-image-tile img", timeout=5000)
+    try:
+        tile_img = await page.wait_for_selector(img_sel, timeout=30_000)
+    except PlaywrightTimeoutError as exc:
+        raise WireFormatError(
+            detail=f"Could not locate image tile for media_id {media_id}",
+            route="image_upscale",
+        ) from exc
     if not tile_img:
         raise WireFormatError(
             detail=f"Could not locate image tile for media_id {media_id}",
@@ -70,13 +75,18 @@ async def upscale_image_migrated(
     await tile_img.click()
     await page.wait_for_timeout(1000)
 
-    # Click the download button in the image detail viewer
-    download_btn = await page.wait_for_selector(
-        'button:has(mat-icon:has-text("download")), '
-        'button[aria-label*="download" i], '
-        'button[aria-label*="baixar" i]',
-        timeout=15_000,
-    )
+    # Click the download button in the image detail viewer (language-agnostic)
+    try:
+        download_btn = await page.wait_for_selector(
+            'button:has(mat-icon:has-text("download")), '
+            'button:has(.google-symbols:has-text("download"))',
+            timeout=15_000,
+        )
+    except PlaywrightTimeoutError as exc:
+        raise WireFormatError(
+            detail="Download button not found in image detail view",
+            route="image_upscale",
+        ) from exc
     if not download_btn:
         raise WireFormatError(
             detail="Download button not found in image detail view",
@@ -86,8 +96,14 @@ async def upscale_image_migrated(
     await page.wait_for_timeout(500)
 
     # Check 2K and 4K menu items availability
-    btn_2k = await page.wait_for_selector('button[role="menuitem"]:has-text("2K")', timeout=5000)
-    btn_4k = await page.wait_for_selector('button[role="menuitem"]:has-text("4K")', timeout=5000)
+    try:
+        btn_2k = await page.wait_for_selector('[role="menuitem"]:has-text("2K")', timeout=5000)
+    except PlaywrightTimeoutError:
+        btn_2k = None
+    try:
+        btn_4k = await page.wait_for_selector('[role="menuitem"]:has-text("4K")', timeout=5000)
+    except PlaywrightTimeoutError:
+        btn_4k = None
 
     can_2k = btn_2k is not None and not await btn_2k.is_disabled()
     can_4k = btn_4k is not None and not await btn_4k.is_disabled()
@@ -134,8 +150,9 @@ async def upscale_image_migrated(
 
     page.on("response", on_response)
     try:
-        # Prevent default blob download link click from navigating or closing page
+        # Override anchor click and preserve original to restore later
         await page.evaluate("""() => {
+            window._origAnchorClick = HTMLAnchorElement.prototype.click;
             HTMLAnchorElement.prototype.click = function() {};
         }""")
         await target_btn.click()
@@ -143,6 +160,15 @@ async def upscale_image_migrated(
         b64_data = await asyncio.wait_for(found_b64, timeout=timeout_s)
     finally:
         page.remove_listener("response", on_response)
+        try:
+            await page.evaluate("""() => {
+                if (window._origAnchorClick) {
+                    HTMLAnchorElement.prototype.click = window._origAnchorClick;
+                    delete window._origAnchorClick;
+                }
+            }""")
+        except Exception:  # noqa: BLE001
+            pass
 
     try:
         image_bytes = base64.b64decode(b64_data)
@@ -157,6 +183,9 @@ async def upscale_image_migrated(
             detail="upscaled output is not a valid PNG/JPEG",
             route="upsampleImage",
         )
+
+    if image_bytes.startswith(_JPEG_MAGIC) and out_path.suffix.lower() == ".png":
+        out_path = out_path.with_suffix(".jpg")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(image_bytes)

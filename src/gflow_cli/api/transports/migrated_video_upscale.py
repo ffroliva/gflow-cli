@@ -13,6 +13,7 @@ import base64
 from typing import TYPE_CHECKING
 
 import structlog
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.errors import UpscaleUnavailableError, WireFormatError
 
@@ -57,47 +58,51 @@ async def upscale_video_migrated(
     )
     await page.goto(edit_url, wait_until="domcontentloaded")
 
-    download_btn = await page.wait_for_selector(
-        'button:has(mat-icon:has-text("download")), '
-        'button[aria-label*="download" i], '
-        'button[aria-label*="baixar" i]',
-        timeout=15_000,
-    )
-    if not download_btn:
-        # Fallback: navigate to project gallery and select video tile
-        project_url = MIGRATED_PROJECT_URL.format(project_id=project_id)
-        await page.goto(project_url, wait_until="domcontentloaded")
-        tile_sel = (
-            f'img[data-media-id="{media_id}"], [data-media-id="{media_id}"], '
-            "flow-grid-tile-container, flow-video-tile"
-        )
-        video_tile = await page.wait_for_selector(tile_sel, timeout=15_000)
-        if not video_tile:
-            raise WireFormatError(
-                detail=f"Could not locate video tile for media_id {media_id}",
-                route="video_upscale",
-            )
-        await video_tile.click()
-        await page.wait_for_timeout(1000)
+    download_btn = None
+    try:
         download_btn = await page.wait_for_selector(
             'button:has(mat-icon:has-text("download")), '
-            'button[aria-label*="download" i], '
-            'button[aria-label*="baixar" i]',
+            'button:has(.google-symbols:has-text("download"))',
             timeout=15_000,
         )
+    except PlaywrightTimeoutError:
+        pass
+
+    if not download_btn:
+        # Fallback: navigate to project gallery and select video tile scoped to media_id
+        project_url = MIGRATED_PROJECT_URL.format(project_id=project_id)
+        await page.goto(project_url, wait_until="domcontentloaded")
+        tile_sel = f'img[data-media-id="{media_id}"], [data-media-id="{media_id}"]'
+        try:
+            video_tile = await page.wait_for_selector(tile_sel, timeout=15_000)
+            if video_tile:
+                await video_tile.click()
+                await page.wait_for_timeout(1000)
+                download_btn = await page.wait_for_selector(
+                    'button:has(mat-icon:has-text("download")), '
+                    'button:has(.google-symbols:has-text("download"))',
+                    timeout=15_000,
+                )
+        except PlaywrightTimeoutError:
+            pass
 
     if not download_btn:
         raise WireFormatError(
-            detail="Download button not found in video detail view",
+            detail=f"Download button not found for video media_id {media_id}",
             route="video_upscale",
         )
     await download_btn.click()
     await page.wait_for_timeout(500)
 
     # Locate scale menu item
-    btn_target = await page.wait_for_selector(
-        f'button[role="menuitem"]:has-text("{scale_norm}")', timeout=5000
-    )
+    btn_target = None
+    try:
+        btn_target = await page.wait_for_selector(
+            f'[role="menuitem"]:has-text("{scale_norm}")', timeout=5000
+        )
+    except PlaywrightTimeoutError:
+        pass
+
     if not btn_target or await btn_target.is_disabled():
         raise UpscaleUnavailableError(
             detail=f"{scale_norm} video option is not available or disabled on this account.",
@@ -105,12 +110,13 @@ async def upscale_video_migrated(
             status=403,
         )
 
-    # Hook URL.createObjectURL to convert blob stream to base64
+    # Hook URL.createObjectURL and HTMLAnchorElement.prototype.click
     await page.evaluate("""() => {
         window._videoCapturedBase64 = null;
         window._capturing = true;
+        window._origVideoCreateObjectURL = URL.createObjectURL;
+        window._origVideoAnchorClick = HTMLAnchorElement.prototype.click;
 
-        const origCreate = URL.createObjectURL;
         URL.createObjectURL = function(blob) {
             if (window._capturing) {
                 const reader = new FileReader();
@@ -119,46 +125,78 @@ async def upscale_video_migrated(
                 };
                 reader.readAsDataURL(blob);
             }
-            return origCreate.call(URL, blob);
+            return window._origVideoCreateObjectURL.call(URL, blob);
         };
 
         HTMLAnchorElement.prototype.click = function() {};
     }""")
 
-    await btn_target.click()
-
-    # Poll for captured base64 data
-    poll_interval = 1.0
-    deadline = asyncio.get_running_loop().time() + timeout_s
-    b64_data: str | None = None
-
-    while asyncio.get_running_loop().time() < deadline:
-        await asyncio.sleep(poll_interval)
-        b64_data = await page.evaluate("() => window._videoCapturedBase64")
-        if b64_data:
-            break
-
-    if not b64_data:
-        raise WireFormatError(
-            detail=f"Timed out waiting for {scale_norm} video stream from Flow after {timeout_s}s",
-            route="video_upscale",
-        )
-
     try:
-        video_bytes = base64.b64decode(b64_data)
-    except ValueError as exc:
-        raise WireFormatError(
-            detail="video upscale returned undecodable stream data",
-            route="video_upscale",
-        ) from exc
+        await btn_target.click()
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_bytes(video_bytes)
-    log.info(
-        "migrated_video_upscale.completed",
-        media_id=media_id,
-        scale=scale_norm,
-        bytes=len(video_bytes),
-        path=str(out_path),
-    )
-    return out_path
+        # Poll for captured base64 data
+        poll_interval = 1.0
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        b64_data: str | None = None
+
+        while asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(poll_interval)
+            b64_data = await page.evaluate("() => window._videoCapturedBase64")
+            if b64_data:
+                break
+
+        if not b64_data:
+            raise WireFormatError(
+                detail=(
+                    f"Timed out waiting for {scale_norm} video stream from Flow after {timeout_s}s"
+                ),
+                route="video_upscale",
+            )
+
+        try:
+            video_bytes = base64.b64decode(b64_data)
+        except ValueError as exc:
+            raise WireFormatError(
+                detail="video upscale returned undecodable stream data",
+                route="video_upscale",
+            ) from exc
+
+        # Validate magic bytes
+        if scale_norm == "270p":
+            if not video_bytes.startswith(b"GIF8"):
+                raise WireFormatError(
+                    detail="upscaled output is not a valid GIF",
+                    route="video_upscale",
+                )
+        else:
+            if len(video_bytes) < 8 or video_bytes[4:8] != b"ftyp":
+                raise WireFormatError(
+                    detail="upscaled output is not a valid MP4",
+                    route="video_upscale",
+                )
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(video_bytes)
+        log.info(
+            "migrated_video_upscale.completed",
+            media_id=media_id,
+            scale=scale_norm,
+            bytes=len(video_bytes),
+            path=str(out_path),
+        )
+        return out_path
+    finally:
+        try:
+            await page.evaluate("""() => {
+                window._capturing = false;
+                if (window._origVideoCreateObjectURL) {
+                    URL.createObjectURL = window._origVideoCreateObjectURL;
+                    delete window._origVideoCreateObjectURL;
+                }
+                if (window._origVideoAnchorClick) {
+                    HTMLAnchorElement.prototype.click = window._origVideoAnchorClick;
+                    delete window._origVideoAnchorClick;
+                }
+            }""")
+        except Exception:  # noqa: BLE001
+            pass
