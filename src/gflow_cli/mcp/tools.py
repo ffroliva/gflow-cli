@@ -39,7 +39,7 @@ from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.image_upscale import TargetResolution
 from gflow_cli.api.video import VIDEO_DURATION_CHOICES, is_media_uuid
 from gflow_cli.auth import verification
-from gflow_cli.cli_image import _lookup_project_in_catalog
+from gflow_cli.cli_image import lookup_project_in_catalog
 from gflow_cli.cli_instructions import classify_refs
 from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.models import AssetKind, AssetLookup
@@ -1545,7 +1545,7 @@ async def gflow_upscale_image(
     if project is not None and not is_media_uuid(project):
         return _bad_param("Invalid Project ID", f"Project ID {project!r} is not a valid UUID")
 
-    resolved_project = project or _lookup_project_in_catalog(media_id, resolved)
+    resolved_project = project or lookup_project_in_catalog(media_id, resolved)
     if not resolved_project:
         return _bad_param(
             "Project Required",
@@ -1642,7 +1642,7 @@ async def gflow_upscale_video(
     if project is not None and not is_media_uuid(project):
         return _bad_param("Invalid Project ID", f"Project ID {project!r} is not a valid UUID")
 
-    resolved_project = project or _lookup_project_in_catalog(media_id, resolved)
+    resolved_project = project or lookup_project_in_catalog(media_id, resolved)
     if not resolved_project:
         return _bad_param(
             "Project Required",

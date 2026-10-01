@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -140,11 +140,13 @@ async def upscale_image_migrated(
                 text = await response.text()
                 frames = parse_frames(text)
                 for rpcid, payload in frames:
-                    if rpcid == UPSCALE_RPCID and isinstance(payload, list) and len(payload) >= 2:
-                        b64_str = payload[1]
-                        if isinstance(b64_str, str) and len(b64_str) > 0:
-                            if not found_b64.done():
-                                found_b64.set_result(b64_str)
+                    if rpcid == UPSCALE_RPCID and isinstance(payload, list):
+                        items = cast("list[Any]", payload)
+                        if len(items) >= 2:
+                            b64_val = items[1]
+                            if isinstance(b64_val, str) and len(b64_val) > 0:
+                                if not found_b64.done():
+                                    found_b64.set_result(b64_val)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -155,6 +157,7 @@ async def upscale_image_migrated(
             window._origAnchorClick = HTMLAnchorElement.prototype.click;
             HTMLAnchorElement.prototype.click = function() {};
         }""")
+        assert target_btn is not None
         await target_btn.click()
 
         b64_data = await asyncio.wait_for(found_b64, timeout=timeout_s)

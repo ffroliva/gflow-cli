@@ -42,7 +42,7 @@ async def test_upscale_invalid_project_id() -> None:
 
 @pytest.mark.asyncio
 async def test_upscale_missing_project_not_in_catalog(monkeypatch) -> None:
-    monkeypatch.setattr("gflow_cli.mcp.tools._lookup_project_in_catalog", lambda m, p: None)
+    monkeypatch.setattr("gflow_cli.mcp.tools.lookup_project_in_catalog", lambda m, p: None)
 
     res = await gflow_upscale_image(media_id=_VALID_MEDIA_ID, scale="2k", project=None)
     assert res["status"] == "error"
@@ -55,7 +55,7 @@ async def test_upscale_happy_path(tmp_path: Path, monkeypatch) -> None:
     out_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
 
     monkeypatch.setattr(
-        "gflow_cli.mcp.tools._lookup_project_in_catalog",
+        "gflow_cli.mcp.tools.lookup_project_in_catalog",
         lambda m, p: _VALID_PROJECT_ID,
     )
 
@@ -114,7 +114,7 @@ async def test_video_upscale_happy_path(tmp_path: Path, monkeypatch) -> None:
     out_file.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 32)
 
     monkeypatch.setattr(
-        "gflow_cli.mcp.tools._lookup_project_in_catalog",
+        "gflow_cli.mcp.tools.lookup_project_in_catalog",
         lambda m, p: _VALID_PROJECT_ID,
     )
 

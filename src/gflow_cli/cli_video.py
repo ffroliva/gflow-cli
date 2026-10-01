@@ -2238,9 +2238,9 @@ def upscale(
             "MEDIA_ID must be a bare UUID (8-4-4-4-12 hex).", param_hint="MEDIA_ID"
         )
     profile_name = _resolve_profile(profile)
-    from gflow_cli.cli_image import _resolve_upscale_project_id
+    from gflow_cli.cli_image import resolve_upscale_project_id
 
-    resolved_project = _resolve_upscale_project_id(
+    resolved_project = resolve_upscale_project_id(
         media_id=media_id, explicit=project_id, profile_name=profile_name
     )
     provider_dir = _make_provider_dir(profile_name)
@@ -2268,7 +2268,7 @@ async def _run_video_upscale(
 ) -> None:
     from datetime import date
 
-    from gflow_cli.paths import safe_path_text
+    from gflow_cli._cli_helpers import safe_path_text
 
     settings = get_settings()
     output_root = out_dir if out_dir is not None else settings.output_dir
