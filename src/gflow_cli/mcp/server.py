@@ -123,7 +123,7 @@ def _configure_utf8_pipes() -> None:
 # Credit-spending tools gated by --no-spend (#496). BOTH generate tools:
 # image generation is only *empirically* free ("~0 credits observed") and
 # no-spend must be a hard guarantee, so anything not contractually free is in.
-_SPEND_TOOLS = ("gflow_generate_image", "gflow_generate_video", "gflow_upscale_video")
+_SPEND_TOOLS = ("gflow_generate_image", "gflow_generate_video")
 
 
 #: How long a tool call waits for a profile another process holds (#862). A human at the

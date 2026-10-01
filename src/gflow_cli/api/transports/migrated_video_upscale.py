@@ -159,37 +159,37 @@ async def upscale_video_migrated(
             except Exception:  # noqa: BLE001
                 pass
 
-    page.on("response", on_response)
-
-    # Hook URL.createObjectURL and HTMLAnchorElement.prototype.click
-    expected_type = "gif" if scale_norm == "270p" else "video"
-    await page.evaluate(
-        """(expected) => {
-        window._videoCapturedBase64 = null;
-        window._capturing = true;
-        window._origVideoCreateObjectURL = URL.createObjectURL;
-        window._origVideoAnchorClick = HTMLAnchorElement.prototype.click;
-
-        URL.createObjectURL = function(blob) {
-            if (window._capturing && blob && blob.size > 1000) {
-                const mime = (blob.type || '').toLowerCase();
-                if (mime.includes(expected) || (expected === 'video' && mime.includes('mp4'))) {
-                    const reader = new FileReader();
-                    reader.onloadend = function() {
-                        window._videoCapturedBase64 = reader.result.split(',')[1];
-                    };
-                    reader.readAsDataURL(blob);
-                }
-            }
-            return window._origVideoCreateObjectURL.call(URL, blob);
-        };
-
-        HTMLAnchorElement.prototype.click = function() {};
-    }""",
-        expected_type,
-    )
-
     try:
+        page.on("response", on_response)
+
+        # Hook URL.createObjectURL and HTMLAnchorElement.prototype.click
+        expected_type = "gif" if scale_norm == "270p" else "video"
+        await page.evaluate(
+            """(expected) => {
+            window._videoCapturedBase64 = null;
+            window._capturing = true;
+            window._origVideoCreateObjectURL = URL.createObjectURL;
+            window._origVideoAnchorClick = HTMLAnchorElement.prototype.click;
+
+            URL.createObjectURL = function(blob) {
+                if (window._capturing && blob && blob.size > 1000) {
+                    const mime = (blob.type || '').toLowerCase();
+                    if (mime.includes(expected) || (expected === 'video' && mime.includes('mp4'))) {
+                        const reader = new FileReader();
+                        reader.onloadend = function() {
+                            window._videoCapturedBase64 = reader.result.split(',')[1];
+                        };
+                        reader.readAsDataURL(blob);
+                    }
+                }
+                return window._origVideoCreateObjectURL.call(URL, blob);
+            };
+
+            HTMLAnchorElement.prototype.click = function() {};
+        }""",
+            expected_type,
+        )
+
         await btn_target.click()
 
         poll_interval = 1.0
