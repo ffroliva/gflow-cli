@@ -35,9 +35,11 @@ async def test_upscale_invalid_media_id() -> None:
 
 @pytest.mark.asyncio
 async def test_upscale_invalid_project_id() -> None:
-    res = await gflow_upscale_image(media_id=_VALID_MEDIA_ID, scale="2k", project="invalid-project")
+    res = await gflow_upscale_image(
+        media_id=_VALID_MEDIA_ID, scale="2k", project="bad_id with spaces"
+    )
     assert res["status"] == "error"
-    assert "Invalid Project ID" in res["error"]["title"]
+    assert "Invalid Project" in res["error"]["title"]
 
 
 @pytest.mark.asyncio

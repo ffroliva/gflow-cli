@@ -1542,8 +1542,8 @@ async def gflow_upscale_image(
     if not is_media_uuid(media_id):
         return _bad_param("Invalid Media ID", f"Media ID {media_id!r} is not a valid UUID")
 
-    if project is not None and not is_media_uuid(project):
-        return _bad_param("Invalid Project ID", f"Project ID {project!r} is not a valid UUID")
+    if (proj_err := _validate_project(project)) is not None:
+        return proj_err
 
     resolved_project = project or lookup_project_in_catalog(media_id, resolved)
     if not resolved_project:
@@ -1639,8 +1639,8 @@ async def gflow_upscale_video(
     if not is_media_uuid(media_id):
         return _bad_param("Invalid Media ID", f"Media ID {media_id!r} is not a valid UUID")
 
-    if project is not None and not is_media_uuid(project):
-        return _bad_param("Invalid Project ID", f"Project ID {project!r} is not a valid UUID")
+    if (proj_err := _validate_project(project)) is not None:
+        return proj_err
 
     resolved_project = project or lookup_project_in_catalog(media_id, resolved)
     if not resolved_project:

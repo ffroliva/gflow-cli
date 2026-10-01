@@ -15,17 +15,20 @@ import structlog
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.image_upscale import TargetResolution
-from gflow_cli.api.transports.batchexecute import parse_frames
-from gflow_cli.errors import UpscaleUnavailableError, WireFormatError
+from gflow_cli.api.transports.batchexecute import parse_frames, rpc_errors
+from gflow_cli.api.transports.migrated_composer import MIGRATED_PROJECT_URL
+from gflow_cli.errors import (
+    TransportTimeoutError,
+    UiSelectorDriftError,
+    UpscaleUnavailableError,
+    WireFormatError,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from pathlib import Path
-
     from playwright.async_api import Page, Response
 
 log = structlog.get_logger(__name__)
 
-MIGRATED_PROJECT_URL = "https://flow.google.com/project/{project_id}"
 UPSCALE_RPCID = "SPrCad"
 _DEFAULT_TIMEOUT_S = 90.0
 
@@ -33,7 +36,8 @@ _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGIC = b"\xff\xd8"
 
 
-def _is_png_or_jpeg(data: bytes) -> bool:
+def is_png_or_jpeg(data: bytes) -> bool:
+    """True if data begins with a PNG or JPEG magic-byte signature."""
     return data.startswith(_PNG_MAGIC) or data.startswith(_JPEG_MAGIC)
 
 
@@ -43,15 +47,17 @@ async def upscale_image_migrated(
     project_id: str,
     media_id: str,
     target_resolution: TargetResolution,
-    out_path: Path,
     timeout_s: float = _DEFAULT_TIMEOUT_S,
-) -> Path:
+) -> bytes:
     """Upscale an image on the migrated ``flow.google.com`` frontend.
 
     Navigates to the project, selects the image tile by ``data-media-id``, opens
     the download menu, checks whether the requested scale is available on the
     current account tier, triggers the upscale, and decodes the resulting
-    ``SPrCad`` payload.
+    ``SPrCad`` payload into raw image bytes.
+
+    Returns:
+        Raw decoded JPEG/PNG bytes.
     """
     project_url = MIGRATED_PROJECT_URL.format(project_id=project_id)
     log.info("migrated_upscale.navigate", project_id=project_id, media_id=media_id)
@@ -75,11 +81,11 @@ async def upscale_image_migrated(
     await tile_img.click()
     await page.wait_for_timeout(1000)
 
-    # Click the download button in the image detail viewer (language-agnostic)
+    # Click the download button in the image detail viewer (exact icon match)
     try:
         download_btn = await page.wait_for_selector(
-            'button:has(mat-icon:has-text("download")), '
-            'button:has(.google-symbols:has-text("download"))',
+            'button:has(mat-icon:text-is("download")), '
+            'button:has(.google-symbols:text-is("download"))',
             timeout=15_000,
         )
     except PlaywrightTimeoutError as exc:
@@ -96,20 +102,29 @@ async def upscale_image_migrated(
     await page.wait_for_timeout(500)
 
     # Check 2K and 4K menu items availability
+    scale_label = "4K" if target_resolution is TargetResolution.RES_4K else "2K"
+    btn_target = None
     try:
-        btn_2k = await page.wait_for_selector('[role="menuitem"]:has-text("2K")', timeout=5000)
-    except PlaywrightTimeoutError:
-        btn_2k = None
-    try:
-        btn_4k = await page.wait_for_selector('[role="menuitem"]:has-text("4K")', timeout=5000)
-    except PlaywrightTimeoutError:
-        btn_4k = None
+        btn_target = await page.wait_for_selector(
+            f'[role="menuitem"]:has-text("{scale_label}")', timeout=5000
+        )
+    except PlaywrightTimeoutError as exc:
+        raise UiSelectorDriftError(
+            detail=f"migrated upscale: menu item for {scale_label} was not found on {page.url}",
+            route="image_upscale",
+        ) from exc
 
-    can_2k = btn_2k is not None and not await btn_2k.is_disabled()
-    can_4k = btn_4k is not None and not await btn_4k.is_disabled()
+    if btn_target is None:
+        raise UiSelectorDriftError(
+            detail=f"migrated upscale: menu item for {scale_label} was not found on {page.url}",
+            route="image_upscale",
+        )
 
-    if target_resolution is TargetResolution.RES_4K:
-        if not can_4k:
+    is_disabled = await btn_target.is_disabled() or (
+        await btn_target.get_attribute("aria-disabled") == "true"
+    )
+    if is_disabled:
+        if target_resolution is TargetResolution.RES_4K:
             raise UpscaleUnavailableError(
                 detail=(
                     "4K upscale requires a Flow Ultra subscription. "
@@ -118,18 +133,11 @@ async def upscale_image_migrated(
                 route="upsampleImage",
                 status=403,
             )
-        target_btn = btn_4k
-    elif target_resolution is TargetResolution.RES_2K:
-        if not can_2k:
-            raise UpscaleUnavailableError(
-                detail="2K upscale is not available on this account.",
-                route="upsampleImage",
-                status=403,
-            )
-        target_btn = btn_2k
-    else:
-        msg = f"Unsupported target resolution {target_resolution}"
-        raise ValueError(msg)
+        raise UpscaleUnavailableError(
+            detail=f"{scale_label} upscale is not available on this account.",
+            route="upsampleImage",
+            status=403,
+        )
 
     loop = asyncio.get_running_loop()
     found_b64: asyncio.Future[str] = loop.create_future()
@@ -138,6 +146,17 @@ async def upscale_image_migrated(
         if "batchexecute" in response.url and UPSCALE_RPCID in response.url:
             try:
                 text = await response.text()
+                errors = rpc_errors(text)
+                if any(e.rpcid == UPSCALE_RPCID for e in errors):
+                    err = next(e for e in errors if e.rpcid == UPSCALE_RPCID)
+                    if not found_b64.done():
+                        found_b64.set_exception(
+                            WireFormatError(
+                                detail=f"SPrCad RPC refused: code={err.code} reasons={err.reasons}",
+                                route="image_upscale",
+                            )
+                        )
+                    return
                 frames = parse_frames(text)
                 for rpcid, payload in frames:
                     if rpcid == UPSCALE_RPCID and isinstance(payload, list):
@@ -147,8 +166,15 @@ async def upscale_image_migrated(
                             if isinstance(b64_val, str) and len(b64_val) > 0:
                                 if not found_b64.done():
                                     found_b64.set_result(b64_val)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                log.warning("migrated_upscale.parse_error", error=str(exc))
+                if not found_b64.done():
+                    found_b64.set_exception(
+                        WireFormatError(
+                            detail=f"Failed to parse SPrCad response: {exc}",
+                            route="image_upscale",
+                        )
+                    )
 
     page.on("response", on_response)
     try:
@@ -157,12 +183,17 @@ async def upscale_image_migrated(
             window._origAnchorClick = HTMLAnchorElement.prototype.click;
             HTMLAnchorElement.prototype.click = function() {};
         }""")
-        if target_btn is None:
-            msg = "Upscale menu item unexpectedly missing"
-            raise WireFormatError(detail=msg, route="image_upscale")
-        await target_btn.click()
+        await btn_target.click()
 
-        b64_data = await asyncio.wait_for(found_b64, timeout=timeout_s)
+        try:
+            b64_data = await asyncio.wait_for(found_b64, timeout=timeout_s)
+        except TimeoutError as exc:
+            raise TransportTimeoutError(
+                detail=(
+                    f"Timed out after {timeout_s}s waiting for {UPSCALE_RPCID} response from Flow"
+                ),
+                route="image_upscale",
+            ) from exc
     finally:
         page.remove_listener("response", on_response)
         try:
@@ -183,22 +214,16 @@ async def upscale_image_migrated(
             route="upsampleImage",
         ) from exc
 
-    if not _is_png_or_jpeg(image_bytes):
+    if not is_png_or_jpeg(image_bytes):
         raise WireFormatError(
             detail="upscaled output is not a valid PNG/JPEG",
             route="upsampleImage",
         )
 
-    if image_bytes.startswith(_JPEG_MAGIC) and out_path.suffix.lower() == ".png":
-        out_path = out_path.with_suffix(".jpg")
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_bytes(image_bytes)
     log.info(
         "migrated_upscale.completed",
         media_id=media_id,
         resolution=target_resolution.name,
         bytes=len(image_bytes),
-        path=str(out_path),
     )
-    return out_path
+    return image_bytes

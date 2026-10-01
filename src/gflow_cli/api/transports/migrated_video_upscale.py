@@ -15,16 +15,20 @@ from typing import TYPE_CHECKING
 import structlog
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from gflow_cli.errors import UpscaleUnavailableError, WireFormatError
+from gflow_cli.api.transports.batchexecute import rpc_errors
+from gflow_cli.api.transports.migrated_composer import MIGRATED_PROJECT_URL
+from gflow_cli.errors import (
+    TransportTimeoutError,
+    UiSelectorDriftError,
+    UpscaleUnavailableError,
+    WireFormatError,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from pathlib import Path
-
-    from playwright.async_api import Page
+    from playwright.async_api import Page, Response
 
 log = structlog.get_logger(__name__)
 
-MIGRATED_PROJECT_URL = "https://flow.google.com/project/{project_id}"
 _DEFAULT_TIMEOUT_S = 120.0
 VALID_VIDEO_SCALES = ("1080p", "720p", "270p")
 
@@ -35,14 +39,16 @@ async def upscale_video_migrated(
     project_id: str,
     media_id: str,
     scale: str = "1080p",
-    out_path: Path,
     timeout_s: float = _DEFAULT_TIMEOUT_S,
-) -> Path:
+) -> bytes:
     """Upscale/export a video on the migrated ``flow.google.com`` frontend.
 
     Navigates to the project, selects the video tile, opens the download menu,
     clicks the requested quality option (1080p, 720p, or 270p), and captures
     the rendered blob stream.
+
+    Returns:
+        Raw video (MP4 or GIF) bytes.
     """
     scale_norm = scale.strip().lower()
     if scale_norm not in VALID_VIDEO_SCALES:
@@ -61,8 +67,8 @@ async def upscale_video_migrated(
     download_btn = None
     try:
         download_btn = await page.wait_for_selector(
-            'button:has(mat-icon:has-text("download")), '
-            'button:has(.google-symbols:has-text("download"))',
+            'button:has(mat-icon:text-is("download")), '
+            'button:has(.google-symbols:text-is("download"))',
             timeout=15_000,
         )
     except PlaywrightTimeoutError:
@@ -79,8 +85,8 @@ async def upscale_video_migrated(
                 await video_tile.click()
                 await page.wait_for_timeout(1000)
                 download_btn = await page.wait_for_selector(
-                    'button:has(mat-icon:has-text("download")), '
-                    'button:has(.google-symbols:has-text("download"))',
+                    'button:has(mat-icon:text-is("download")), '
+                    'button:has(.google-symbols:text-is("download"))',
                     timeout=15_000,
                 )
         except PlaywrightTimeoutError:
@@ -100,53 +106,105 @@ async def upscale_video_migrated(
         btn_target = await page.wait_for_selector(
             f'[role="menuitem"]:has-text("{scale_norm}")', timeout=5000
         )
-    except PlaywrightTimeoutError:
-        pass
+    except PlaywrightTimeoutError as exc:
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated video upscale: menu item for {scale_norm} was not found on {page.url}"
+            ),
+            route="video_upscale",
+        ) from exc
 
-    if not btn_target or await btn_target.is_disabled():
+    if btn_target is None:
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated video upscale: menu item for {scale_norm} was not found on {page.url}"
+            ),
+            route="video_upscale",
+        )
+
+    is_disabled = await btn_target.is_disabled() or (
+        await btn_target.get_attribute("aria-disabled") == "true"
+    )
+    if is_disabled:
         raise UpscaleUnavailableError(
             detail=f"{scale_norm} video option is not available or disabled on this account.",
             route="video_upscale",
             status=403,
+            remediation_hint=(
+                f"{scale_norm} video export is disabled on your account plan. "
+                "Check available options in Google Flow."
+            ),
         )
 
+    loop = asyncio.get_running_loop()
+    found_b64: asyncio.Future[str] = loop.create_future()
+
+    async def on_response(response: Response) -> None:
+        if "batchexecute" in response.url:
+            try:
+                text = await response.text()
+                errors = rpc_errors(text)
+                for err in errors:
+                    if err.rpcid in ("p0UkFb", "jwpduf"):
+                        if not found_b64.done():
+                            found_b64.set_exception(
+                                WireFormatError(
+                                    detail=(
+                                        f"Video export RPC {err.rpcid} refused: code={err.code} "
+                                        f"reasons={err.reasons}"
+                                    ),
+                                    route="video_upscale",
+                                )
+                            )
+            except Exception:  # noqa: BLE001
+                pass
+
+    page.on("response", on_response)
+
     # Hook URL.createObjectURL and HTMLAnchorElement.prototype.click
-    await page.evaluate("""() => {
+    expected_type = "gif" if scale_norm == "270p" else "video"
+    await page.evaluate(
+        """(expected) => {
         window._videoCapturedBase64 = null;
         window._capturing = true;
         window._origVideoCreateObjectURL = URL.createObjectURL;
         window._origVideoAnchorClick = HTMLAnchorElement.prototype.click;
 
         URL.createObjectURL = function(blob) {
-            if (window._capturing) {
-                const reader = new FileReader();
-                reader.onloadend = function() {
-                    window._videoCapturedBase64 = reader.result.split(',')[1];
-                };
-                reader.readAsDataURL(blob);
+            if (window._capturing && blob && blob.size > 1000) {
+                const mime = (blob.type || '').toLowerCase();
+                if (mime.includes(expected) || (expected === 'video' && mime.includes('mp4'))) {
+                    const reader = new FileReader();
+                    reader.onloadend = function() {
+                        window._videoCapturedBase64 = reader.result.split(',')[1];
+                    };
+                    reader.readAsDataURL(blob);
+                }
             }
             return window._origVideoCreateObjectURL.call(URL, blob);
         };
 
         HTMLAnchorElement.prototype.click = function() {};
-    }""")
+    }""",
+        expected_type,
+    )
 
     try:
         await btn_target.click()
 
-        # Poll for captured base64 data
         poll_interval = 1.0
         deadline = asyncio.get_running_loop().time() + timeout_s
-        b64_data: str | None = None
 
         while asyncio.get_running_loop().time() < deadline:
+            if found_b64.done():
+                # Caught an RPC error from on_response
+                await found_b64
             await asyncio.sleep(poll_interval)
             b64_data = await page.evaluate("() => window._videoCapturedBase64")
             if b64_data:
                 break
-
-        if not b64_data:
-            raise WireFormatError(
+        else:
+            raise TransportTimeoutError(
                 detail=(
                     f"Timed out waiting for {scale_norm} video stream from Flow after {timeout_s}s"
                 ),
@@ -175,17 +233,15 @@ async def upscale_video_migrated(
                     route="video_upscale",
                 )
 
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(video_bytes)
         log.info(
             "migrated_video_upscale.completed",
             media_id=media_id,
             scale=scale_norm,
             bytes=len(video_bytes),
-            path=str(out_path),
         )
-        return out_path
+        return video_bytes
     finally:
+        page.remove_listener("response", on_response)
         try:
             await page.evaluate("""() => {
                 window._capturing = false;

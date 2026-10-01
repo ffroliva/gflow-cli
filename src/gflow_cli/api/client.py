@@ -66,6 +66,7 @@ from gflow_cli.api.transports import (
 from gflow_cli.api.transports._common import (
     await_url_settled,
     flow_host_kind,
+    migrated_route,
     raise_if_migrated,
     safe_page_url,
 )
@@ -2567,99 +2568,112 @@ class FlowApiClient:
             resolution=target_resolution.name,
         )
 
-        is_migrated = self.settings.flow_host == "flow.google.com"
-        if not is_migrated and self.settings.flow_host == "auto":
-            current_url = getattr(self._page, "url", None)
-            if self._page is not None and flow_host_kind(current_url) == "migrated":
-                is_migrated = True
-
-        if is_migrated:
-            return await self._drive_migrated_image_upscale(
-                project_id=project_id,
-                media_id=media_id,
-                target_resolution=target_resolution,
-                out_path=out_path,
-            )
-
         try:
-            token = await self._mint_recaptcha_token(recaptcha_action)
-        except FlowHostMigratedError:
-            return await self._drive_migrated_image_upscale(
-                project_id=project_id,
-                media_id=media_id,
-                target_resolution=target_resolution,
-                out_path=out_path,
+            route = migrated_route(
+                getattr(self._page, "url", None),
+                self.settings.flow_host,
+                prefer_migrated=False,
             )
-        req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
-        session_id = f";{int(time.time() * 1000)}"
-        try:
-            resp = await self._post_json(
-                routes.UPSAMPLE_IMAGE,
-                build_upsample_image_body(req, session_id=session_id),
-                route_name="upsampleImage",
-            )
-        except WafRejectionError as exc:
-            # A 403 on a 4K request is almost certainly the Ultra-tier gate, not a
-            # WAF/fingerprint block. Surface the distinct error (exit 22) so callers
-            # can branch on "upgrade your plan" — and crucially, NEVER auto-retry it
-            # (a retry only inflates per-profile WAF heat and never succeeds).
-            if target_resolution is TargetResolution.RES_4K:
-                raise UpscaleUnavailableError(
-                    detail="4K upscale rejected (HTTP 403) — requires a Flow Ultra subscription",
-                    status=403,
+            if route == "blocked":
+                raise_if_migrated(self._page, at="image_upscale_flow_host_kill_switch")
+            if route == "migrated":
+                return await self._drive_migrated_image_upscale(
+                    project_id=project_id,
+                    media_id=media_id,
+                    target_resolution=target_resolution,
+                    out_path=out_path,
+                )
+
+            try:
+                token = await self._mint_recaptcha_token(recaptcha_action)
+            except FlowHostMigratedError:
+                route = migrated_route(
+                    getattr(self._page, "url", None),
+                    self.settings.flow_host,
+                    prefer_migrated=True,
+                )
+                if route == "migrated":
+                    return await self._drive_migrated_image_upscale(
+                        project_id=project_id,
+                        media_id=media_id,
+                        target_resolution=target_resolution,
+                        out_path=out_path,
+                    )
+                raise
+            req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
+            session_id = f";{int(time.time() * 1000)}"
+            try:
+                resp = await self._post_json(
+                    routes.UPSAMPLE_IMAGE,
+                    build_upsample_image_body(req, session_id=session_id),
+                    route_name="upsampleImage",
+                )
+            except WafRejectionError as exc:
+                # A 403 on a 4K request is almost certainly the Ultra-tier gate, not a
+                # WAF/fingerprint block. Surface the distinct error (exit 22) so callers
+                # can branch on "upgrade your plan" — and crucially, NEVER auto-retry it
+                # (a retry only inflates per-profile WAF heat and never succeeds).
+                if target_resolution is TargetResolution.RES_4K:
+                    raise UpscaleUnavailableError(
+                        detail=(
+                            "4K upscale rejected (HTTP 403) — requires a Flow Ultra subscription"
+                        ),
+                        status=403,
+                        instance=_make_instance(),
+                        route="upsampleImage",
+                    ) from exc
+                raise
+
+            resp_obj: JsonObject = cast("JsonObject", resp) if isinstance(resp, dict) else {}
+            encoded = str(resp_obj.get("encodedImage") or "")
+            if not encoded:
+                raise WireFormatError(
+                    detail="upsampleImage response missing encodedImage",
                     instance=_make_instance(),
                     route="upsampleImage",
+                    discovery={"keys": sorted(resp_obj)},
+                )
+            if len(encoded) > MAX_UPSAMPLE_B64_LEN:
+                # Reject before decode — never log the body (mitigation: no MBs in logs).
+                raise WireFormatError(
+                    detail=(
+                        f"upscaled image exceeds the {MAX_UPSAMPLE_B64_LEN // (1024 * 1024)} MB "
+                        "size cap"
+                    ),
+                    route="upsampleImage",
+                )
+            try:
+                image_bytes = base64.b64decode(encoded)
+            except ValueError as exc:  # binascii.Error subclasses ValueError
+                raise WireFormatError(
+                    detail="upsampleImage returned undecodable image data",
+                    route="upsampleImage",
                 ) from exc
-            raise
+            del encoded, resp  # drop the multi-MB payload promptly
+            if not _is_png_or_jpeg(image_bytes):
+                raise WireFormatError(
+                    detail="upscaled output is not a valid PNG/JPEG",
+                    route="upsampleImage",
+                )
+            logger.info(
+                "image.upscale_completed",
+                media_id=media_id,
+                resolution=target_resolution.name,
+                bytes=len(image_bytes),
+            )
 
-        resp_obj: JsonObject = cast("JsonObject", resp) if isinstance(resp, dict) else {}
-        encoded = str(resp_obj.get("encodedImage") or "")
-        if not encoded:
-            raise WireFormatError(
-                detail="upsampleImage response missing encodedImage",
-                instance=_make_instance(),
-                route="upsampleImage",
-                discovery={"keys": sorted(resp_obj)},
-            )
-        if len(encoded) > MAX_UPSAMPLE_B64_LEN:
-            # Reject before decode — never log the body (mitigation: no MBs in logs).
-            raise WireFormatError(
-                detail=(
-                    f"upscaled image exceeds the {MAX_UPSAMPLE_B64_LEN // (1024 * 1024)} MB "
-                    "size cap"
-                ),
-                route="upsampleImage",
-            )
-        try:
-            image_bytes = base64.b64decode(encoded)
-        except ValueError as exc:  # binascii.Error subclasses ValueError
-            raise WireFormatError(
-                detail="upsampleImage returned undecodable image data",
-                route="upsampleImage",
-            ) from exc
-        del encoded, resp  # drop the multi-MB payload promptly
-        if not _is_png_or_jpeg(image_bytes):
-            raise WireFormatError(
-                detail="upscaled output is not a valid PNG/JPEG",
-                route="upsampleImage",
-            )
-        logger.info(
-            "image.upscale_completed",
-            media_id=media_id,
-            resolution=target_resolution.name,
-            bytes=len(image_bytes),
-        )
-
-        storage_uri = self.settings.storage_uri
-        if storage_uri:
-            key = _storage_key_from_path(out_path, self.settings.output_dir)
-            target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
-        else:
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            target = out_path
-        target = adjust_key_extension(target, image_bytes)
-        await write_asset_async(target, image_bytes)
-        return target
+            storage_uri = self.settings.storage_uri
+            if storage_uri:
+                key = _storage_key_from_path(out_path, self.settings.output_dir)
+                target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
+            else:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                target = out_path
+            target = adjust_key_extension(target, image_bytes)
+            await write_asset_async(target, image_bytes)
+            return target
+        except Exception as exc:
+            await self._raise_with_incident(exc, phase="image_upscale")
 
     async def _drive_migrated_image_upscale(
         self,
@@ -2673,22 +2687,27 @@ class FlowApiClient:
 
         page = await self._checkout_page()
         try:
-            target = await upscale_image_migrated(
+            image_bytes = await upscale_image_migrated(
                 page,
                 project_id=project_id,
                 media_id=media_id,
                 target_resolution=target_resolution,
-                out_path=out_path,
             )
             storage_uri = self.settings.storage_uri
             if storage_uri:
-                data = target.read_bytes()
-                key = _storage_key_from_path(target, self.settings.output_dir)
-                remote = storage_path(storage_uri, self.settings.output_dir, key)
-                remote = adjust_key_extension(remote, data)
-                await write_asset_async(remote, data)
-                logger.info("image.upscale_uploaded", uri=str(remote))
-                return remote
+                key = _storage_key_from_path(out_path, self.settings.output_dir)
+                target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
+            else:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                target = out_path
+            target = adjust_key_extension(target, image_bytes)
+            await write_asset_async(target, image_bytes)
+            logger.info(
+                "image.upscale_completed",
+                media_id=media_id,
+                resolution=target_resolution.name,
+                bytes=len(image_bytes),
+            )
             return target
         finally:
             self._checkin_page(page)
@@ -2713,28 +2732,38 @@ class FlowApiClient:
             media_id=media_id,
             scale=scale,
         )
-        page = await self._checkout_page()
         try:
-            target = await upscale_video_migrated(
-                page,
-                project_id=project_id,
-                media_id=media_id,
-                scale=scale,
-                out_path=out_path,
-            )
-            storage_uri = self.settings.storage_uri
-            if storage_uri:
-                data = target.read_bytes()
-                key = _storage_key_from_path(target, self.settings.output_dir)
-                remote = storage_path(storage_uri, self.settings.output_dir, key)
-                await write_asset_async(remote, data)
-                logger.info("video.upscale_uploaded", uri=str(remote))
-                return remote
-            return target
+            page = await self._checkout_page()
+            try:
+                video_bytes = await upscale_video_migrated(
+                    page,
+                    project_id=project_id,
+                    media_id=media_id,
+                    scale=scale,
+                )
+                ext = ".gif" if scale.strip().lower() == "270p" else ".mp4"
+                if out_path.suffix.lower() != ext:
+                    out_path = out_path.with_suffix(ext)
+
+                storage_uri = self.settings.storage_uri
+                if storage_uri:
+                    key = _storage_key_from_path(out_path, self.settings.output_dir)
+                    target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
+                else:
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    target = out_path
+                await write_asset_async(target, video_bytes)
+                logger.info(
+                    "video.upscale_completed",
+                    media_id=media_id,
+                    scale=scale,
+                    bytes=len(video_bytes),
+                )
+                return target
+            finally:
+                self._checkin_page(page)
         except Exception as exc:
             await self._raise_with_incident(exc, phase="video_upscale")
-        finally:
-            self._checkin_page(page)
 
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.

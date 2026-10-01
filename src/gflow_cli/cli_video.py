@@ -2190,10 +2190,13 @@ def extend(  # noqa: PLR0913
     "upscale",
     short_help="Upscale a Flow-generated video to 1080p (or export as 270p GIF).",
     help=(
-        "Upscale a Flow-generated video to 1080p Full HD (or export as 270p GIF) and save it.\n\n"
+        "Upscale a Flow-generated video to 1080p Full HD, download the original 720p, "
+        "or export as a 270p animated GIF and save it locally.\n\n"
         "MEDIA_ID is the UUID of a platform video — find one with `gflow data list videos`.\n\n"
+        "\b\n"
         "Examples:\n"
         "  gflow video upscale <mediaId> --scale 1080p\n"
+        "  gflow video upscale <mediaId> --scale 720p\n"
         "  gflow video upscale <mediaId> --scale 270p\n"
         "  gflow video upscale <mediaId> --scale 1080p --out ~/Downloads\n"
     ),
@@ -2204,7 +2207,10 @@ def extend(  # noqa: PLR0913
     type=click.Choice(["1080p", "720p", "270p"], case_sensitive=False),
     default="1080p",
     show_default=True,
-    help="Target quality: 1080p (enhanced), 720p (original), or 270p (animated GIF).",
+    help=(
+        "Target quality: 1080p (enhanced Full HD), 720p (original download), "
+        "or 270p (animated GIF export)."
+    ),
 )
 @click.option(
     "-o",
@@ -2244,10 +2250,11 @@ def upscale(
         media_id=media_id, explicit=project_id, profile_name=profile_name
     )
     provider_dir = _make_provider_dir(profile_name)
+    settings = get_settings()
     run_with_handlers(
         lambda: _run_video_upscale(
             profile_dir=provider_dir,
-            headless=True,
+            headless=settings.headless,
             media_id=media_id,
             project_id=resolved_project,
             scale=scale.lower(),

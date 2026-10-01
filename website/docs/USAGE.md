@@ -196,6 +196,10 @@ gflow image i2i "make it cinematic" --ref "$UUID"
 Upscale a **platform-generated** image to 2K or 4K (the same 1K/2K/4K options Flow's
 download menu offers) and save it locally. Uploaded images are not supported.
 
+> **Migrated `flow.google.com` accounts (#639):** image upscaling is supported on both hosts.
+> On `flow.google.com`, gflow automates the image detail view's download menu via the `SPrCad`
+> batchexecute wire, decoding the upscaled JPEG directly.
+
 ```text
 gflow image upscale MEDIA_ID --scale 2k|4k [OPTIONS]
 
@@ -213,21 +217,53 @@ Options:
   --profile NAME            Profile name (overrides default).
 ```
 
-```bash
-# Upscale a previously generated image to 2K (project auto-resolved from the catalog)
-gflow image upscale 3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14 --scale 2k
-
-# Upscale an image generated in the Flow web UI (not in the local catalog)
-gflow image upscale <mediaId> --scale 2k --project <projectId>
+\b
+Examples:
+  gflow image upscale 3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14 --scale 2k
+  gflow image upscale <mediaId> --scale 2k --project <projectId>
 ```
 
 Notes:
 
 - **Credit-free** — upscaling is an image operation and spends no credits.
 - **4K is Ultra-only.** On a non-Ultra account a 4K request fails with exit code 22
-  (`UpscaleUnavailableError`) and a hint to use `--scale 2k` or upgrade.
+  (`UpscaleUnavailableError`, detected from the disabled UI state or 403) and a hint to use `--scale 2k` or upgrade.
 - The result is saved as `<output_dir>/images/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>`
   (extension matches the returned format — usually `.jpg`).
+
+## `gflow video upscale`
+
+Upscale or export a **platform-generated** video to 1080p Full HD, download the original 720p,
+or export as a 270p animated GIF and save it locally.
+
+```text
+gflow video upscale MEDIA_ID [OPTIONS]
+
+Arguments:
+  MEDIA_ID                  UUID of a Flow-generated video (find one with
+                            `gflow data list videos`).
+
+Options:
+  --scale [1080p|720p|270p] Target quality: 1080p (enhanced Full HD), 720p (original download),
+                            or 270p (animated GIF export). [default: 1080p]
+  --project ID              Project that owns the video. Resolved from the local
+                            catalog when omitted; pass it explicitly for videos
+                            gflow didn't record (e.g. generated in the web UI).
+  --out PATH                Output directory (see "Output paths" below).
+  --profile NAME            Profile name (overrides default).
+```
+
+\b
+Examples:
+  gflow video upscale 412832b1-3685-46f9-a5da-49c472d18a23 --scale 1080p
+  gflow video upscale 412832b1-3685-46f9-a5da-49c472d18a23 --scale 270p
+```
+
+Notes:
+
+- **Quality options**: 720p is the original generation download, 1080p is the enhanced Full HD export,
+  and 270p exports an animated GIF.
+- Saved as `<output_dir>/videos/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>` (`.mp4` or `.gif`).
 
 ## `gflow image t2i`
 
@@ -1962,7 +1998,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --output`) | Retry; the recorded compose survives, so re-render is safe |
 | `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |
 | `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
-| `22` | `UpscaleUnavailableError` | 4K upscale is gated to Flow **Ultra** accounts (HTTP 403) | Use `--scale 2k`, or upgrade the Flow plan                |
+| `22` | `UpscaleUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts; or requested video export quality is disabled | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issues #183, #493) — **or** a blocking announcement overlay survived dismissal, so no control below it can be clicked (probe `overlay_close_button`, #593). On the migrated host a missing submit control is checked against the wallet first and reported as **37** when Flow swapped in its insufficient-credits warning, so a short balance no longer arrives here | Update gflow-cli; file a bug with the probe name + the diagnostics JSON / debug screenshot referenced in the error message, plus the incident bundle's `report.md` when one was written. For `overlay_close_button`: open the project once in Chrome and dismiss the announcement — the dismissal persists on your account |
 | `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
 | `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation — **or**, on `flow.google.com`, the account's composer is agent-only and there is no classic arm at all ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) | On labs this is rare since v0.38.0 (#332): the mode controller reliably recovers agentic→classic, so first retry with `--ui-mode classic`. The migrated agent-only cohort reports `retryable: false` — no flag or profile change helps; use the Flow web UI. See KNOWN_ISSUES |
