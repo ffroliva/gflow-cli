@@ -1451,7 +1451,9 @@ failed assert left the profile unusable — it is usable, just possibly as the w
 
 Two further items on the same issue are unfixed and worth knowing about: a second chooser
 hop (chooser → consent → chooser) is not handled and degrades into the landing timeout, and
-that timeout is still an unmeasured number.
+that timeout is still an unmeasured number. The generation browser opens off-screen since
+v0.81.0; to clear such a screen by hand, re-run with
+`GFLOW_CLI_BROWSER_WINDOW_POSITION=0,0` (see [CONFIGURATION](CONFIGURATION.md#gflow_cli_browser_window_position)).
 
 ### Auth verification depends on Google's NextAuth session endpoint
 
@@ -1485,7 +1487,7 @@ key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 
 Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** by default — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never silently corrupts the profile. Since #478, setting [`GFLOW_CLI_LEASE_WAIT_SECONDS`](CONFIGURATION.md#gflow_cli_lease_wait_seconds) opts a waiter into a bounded wait that takes over as soon as the current holder finishes (holders always run to completion and are never asked to release early; same-process contention still fails fast — waiting on yourself would deadlock). Since #864 an MCP server waits 180 s by default, and queues its own calls on one profile rather than rejecting the second.
 
-**Not every `ProcessSingleton` failure is contention.** On Windows, a `ProcessSingleton` error carrying access-denied code `(0x5)` means Chrome cannot write the profile directory; gflow reports it as `ProfileAccessError` — see [CONFIGURATION § Profile-directory permissions at browser launch](CONFIGURATION.md#profile-directory-permissions-at-browser-launch).
+**Not every `ProcessSingleton` failure is contention.** On Windows, a `ProcessSingleton` error carrying access-denied code `(0x5)` means Chrome cannot write the profile directory; at the generation client's launch gflow reports it as `ProfileAccessError` — see [CONFIGURATION § Profile-directory permissions at browser launch](CONFIGURATION.md#profile-directory-permissions-at-browser-launch).
 
 **Workaround:** use different profiles for parallel work — different profiles acquire independent leases and run fully concurrently.
 

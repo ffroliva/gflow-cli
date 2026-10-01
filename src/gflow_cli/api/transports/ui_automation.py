@@ -1076,7 +1076,9 @@ class UiAutomationTransport(VideoGenerationMixin):
             from gflow_cli.browser_manager import (
                 channel_for_profile,
                 ensure_profile_engine_compatible,
+                window_position_args,
             )
+            from gflow_cli.config import get_settings
 
             # Own the profile BEFORE Chrome launches (D3). Contention raises
             # ProfileLockedError here; the except below tears the driver back
@@ -1098,6 +1100,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                     "--disable-blink-features=AutomationControlled",
                     "--password-store=basic",
                     "--disable-dev-shm-usage",
+                    *window_position_args(get_settings().browser_window_position),
                 ],
             )
             # Hide the automation flag so reCAPTCHA Enterprise doesn't score

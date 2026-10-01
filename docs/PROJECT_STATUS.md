@@ -4,6 +4,31 @@
 
 ## Current release
 
+**v0.81.0 — alpha.** The generation browser stops covering your desktop, a denied profile
+directory stops looking like another gflow holding it, and one dependency CVE locked out.
+
+**The generation browser opens off-screen (#923).** Generation needs a real headed Chrome,
+so every `image`/`video` run used to put a window over whatever you were doing. It now
+opens at `-30000,-30000`, still fully headed, so Flow and reCAPTCHA see the same browser.
+`GFLOW_CLI_BROWSER_WINDOW_POSITION` takes any `X,Y` to watch a run or clear a consent
+screen by hand; empty restores Chrome's placement. Measured before adopting it: image and
+video generation unchanged, no timer or animation throttling off-screen. The contributor's
+`--no-focus-on-init` measured as a no-op on Windows and was dropped, so the docs say
+plainly that Chrome can still take keyboard focus at launch. Thanks to @johngbl.
+
+**A write-denied profile gets its own error (#919).** Chrome reports a profile it cannot
+write with the same `ProcessSingleton` failure as one another process holds. gflow now
+tells the two apart and raises `ProfileAccessError` (exit 11) with a permissions remedy
+instead of a lock-contention one. Covered at the generation client's launch only. Thanks to
+@L1meSn0w.
+
+**Security:** `urllib3` 2.8.0 (CVE-2026-97687, CVE-2026-97688, CVE-2026-97689), transitive.
+
+**Not verified here:** macOS and Linux for the off-screen window, and polls longer than
+about five minutes. Full ledger: [LIVE_VERIFICATION_v0.81.0](LIVE_VERIFICATION_v0.81.0.md).
+
+<details><summary>v0.80.0 — --resolution, nano2-lite, unported forms refused by name</summary>
+
 **v0.80.0 — alpha.** Two new controls, four fixes, and two dependency CVEs locked out.
 
 **`--resolution 360p|720p` and `--model nano2-lite` (#787).** Video models that render a
@@ -36,6 +61,8 @@ transitive.
 proven), the `/about` re-check arm (no profile is in that state), and accounts served
 labs (labs answers 308 on every profile here). Full ledger:
 [LIVE_VERIFICATION_v0.80.0](LIVE_VERIFICATION_v0.80.0.md).
+
+</details>
 
 <details><summary>v0.79.1 — a billed clip survives a dropped download</summary>
 
@@ -298,6 +325,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| The generation browser opens off-screen, placeable via `GFLOW_CLI_BROWSER_WINDOW_POSITION`, measured unchanged for image and video (#923); a write-denied profile raises `ProfileAccessError` instead of posing as lock contention (#919); `urllib3` CVE lock (#920) | ✅ done (v0.81.0) |
 | An unported image form is refused by name instead of crashing a `gflow run` batch with a misleading `RecaptchaError` — the browser transport stops pre-minting a token it never read (#891); a lost transfer is recorded as a generated clip with a visible `STATUS` (#896); `--resolution` and `nano2-lite` (#787); flow.google.com refusals read from the wire (#909); `auth login` stops on the `/about` identity re-check (#902); `oauthlib`/`pyjwt` CVE locks | ✅ done (v0.80.0) |
 | A finished, billed clip is no longer discarded when its download hits a transient connection reset, at all three download sites including the recovery command's own; and the failure that survives is typed rather than `Unexpected error` — naming the clip and the free way to fetch it, on the CLI and through both MCP doors (#895) | ✅ done (v0.79.1) |
 | A billed generation whose download failed can be fetched back for free instead of paid for twice — `gflow data download`, video only (#865/#871, image gap #877); and two error paths stop asserting what nothing measured: aisandbox auth failures stop blaming a SAPISID cookie no such route reads (#803), and the migrated host stops echoing the requested model back as though Flow had confirmed it (#789). CI runs e2e tests for the first time — five hermetic, route-intercepted files that had been excluded from every run | ✅ done (v0.79.0) |

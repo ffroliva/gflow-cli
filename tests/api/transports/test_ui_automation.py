@@ -231,6 +231,8 @@ class TestSetup:
                 assert call_kwargs.get("headless") is False
                 assert call_kwargs.get("viewport") == {"width": 1920, "height": 1080}
                 assert call_kwargs.get("locale") == "en-US"
+                # #923: the standalone launch honours the window position too.
+                assert "--window-position=-30000,-30000" in call_kwargs["args"]
                 assert t._owns_playwright is True  # type: ignore[attr-defined]
                 assert t._setup_done is True  # type: ignore[attr-defined]
             finally:

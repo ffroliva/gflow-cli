@@ -50,6 +50,7 @@ def test_persistent_context_kwargs_are_unchanged(tmp_path: Path) -> None:
         "--password-store=basic",
         "--disable-blink-features=AutomationControlled",
         "--disable-dev-shm-usage",
+        "--window-position=-30000,-30000",
     ]
     # channel is profile-derived; a marker-less tmp_path has no
     # .gflow_browser_strategy file, so channel_for_profile() returns None.

@@ -207,6 +207,15 @@ def resolved_chrome_binary() -> str | None:
         return None
 
 
+def window_position_args(position: str) -> list[str]:
+    """Chrome args placing the headed generation window (#923); '' keeps Chrome's own.
+
+    Shared by both generation launch sites (``FlowApiClient`` and the standalone
+    ``UiAutomationTransport``) so they cannot drift. Login launches stay visible.
+    """
+    return [f"--window-position={position}"] if position else []
+
+
 def channel_for_profile(profile_dir: Path) -> str | None:
     """Return the Playwright channel to use for ``profile_dir``, or None.
 

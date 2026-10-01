@@ -83,7 +83,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.api.video_extend import ExtendStarted
 from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
-from gflow_cli.browser_manager import channel_for_profile
+from gflow_cli.browser_manager import channel_for_profile, window_position_args
 from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_incidents_root
 from gflow_cli.errors import (
@@ -529,6 +529,7 @@ class FlowApiClient:
                 "--password-store=basic",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
+                *window_position_args(self.settings.browser_window_position),
             ],
         }
         if self.settings.har_path is not None:

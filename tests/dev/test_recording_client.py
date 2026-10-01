@@ -32,4 +32,5 @@ def test_recording_client_injects_video_and_preserves_base(tmp_path: Path) -> No
         "--password-store=basic",
         "--disable-blink-features=AutomationControlled",
         "--disable-dev-shm-usage",
+        "--window-position=-30000,-30000",
     ]

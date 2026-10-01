@@ -534,6 +534,18 @@ class Settings(BaseSettings):
             "that use a different transport (e.g. bearer/sapisidhash)."
         ),
     )
+    browser_window_position: str = Field(
+        default="-30000,-30000",
+        pattern=r"^(-?\d+,-?\d+)?$",
+        description=(
+            "Screen position 'X,Y' of the headed generation browser window (#923). "
+            "The default puts it off-screen: still a real headed Chrome, so reCAPTCHA "
+            "is unaffected, but it no longer covers your desktop. Set e.g. '0,0' to "
+            "watch a run, or '' for Chrome's own placement. It does NOT stop Chrome "
+            "taking keyboard focus at launch. Override via "
+            "GFLOW_CLI_BROWSER_WINDOW_POSITION."
+        ),
+    )
     browser_engine: BrowserEngine = Field(
         default=BrowserEngine.PLAYWRIGHT,
         description=(
