@@ -157,7 +157,9 @@ async def upscale_image_migrated(
             window._origAnchorClick = HTMLAnchorElement.prototype.click;
             HTMLAnchorElement.prototype.click = function() {};
         }""")
-        assert target_btn is not None
+        if target_btn is None:
+            msg = "Upscale menu item unexpectedly missing"
+            raise WireFormatError(detail=msg, route="image_upscale")
         await target_btn.click()
 
         b64_data = await asyncio.wait_for(found_b64, timeout=timeout_s)
