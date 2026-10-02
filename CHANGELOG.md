@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Image and video upscaling on the migrated `flow.google.com` frontend (Refs #914).**
+  `gflow image upscale` now drives the migrated editor's download menu via the `SPrCad`
+  batchexecute wire, decoding upscaled 2K/4K JPEGs directly without hitting the legacy
+  aisandbox REST route.
+- **`gflow video upscale` command.** Upscales or exports platform-generated videos to 1080p
+  Full HD, downloads the original 720p, or exports a 270p animated GIF.
+- **MCP tools `gflow_upscale_image` and `gflow_upscale_video`.** Exposes image upscaling
+  and video upscaling/export over the MCP interface with full catalog resolution.
+
+### Changed
+
+- **Proactive 4K tier detection.** On accounts below the Ultra tier, 4K image upscaling
+  detects the disabled UI state and fails fast with exit code 22 (`UpscaleUnavailableError`),
+  advising `--scale 2k`, without waiting for an API 403. A missing menu item raises
+  `UiSelectorDriftError` (exit 23) instead.
+
 ### Fixed
 
 - **A reCAPTCHA mint failure is a typed error with Problem Details (#915).** It was a bare

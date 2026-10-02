@@ -10,8 +10,9 @@ the 2K-403 -> WafRejectionError passthrough, and the base64-never-logged mandate
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from structlog.testing import capture_logs
@@ -167,3 +168,139 @@ async def test_upsample_encoded_image_never_logged(tmp_path: Path) -> None:
     # The completion event reports size as an int, not the payload.
     completed = [e for e in logs if e.get("event") == "image.upscale_completed"]
     assert completed and completed[0]["bytes"] == len(_PNG)
+
+
+@pytest.mark.asyncio
+async def test_upsample_migrated_host_routes_to_migrated_upscale(
+    tmp_path: Path, monkeypatch
+) -> None:
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    c.settings.flow_host = "flow.google.com"
+
+    mock_page = MagicMock()
+    c._checkout_page = AsyncMock(return_value=mock_page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+
+    out = tmp_path / "migrated_out.png"
+    mock_upscale = AsyncMock(return_value=_PNG)
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_upscale.upscale_image_migrated", mock_upscale
+    )
+
+    res = await c.upsample_image(
+        media_id=_MEDIA_ID,
+        project_id=_PROJECT_ID,
+        target_resolution=TargetResolution.RES_2K,
+        out_path=out,
+    )
+
+    assert Path(str(res)).read_bytes() == _PNG
+    mock_upscale.assert_awaited_once_with(
+        mock_page,
+        project_id=_PROJECT_ID,
+        media_id=_MEDIA_ID,
+        target_resolution=TargetResolution.RES_2K,
+    )
+    c._checkin_page.assert_called_once_with(mock_page)  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_upsample_fallback_when_mint_raises_flow_host_migrated(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from gflow_cli.errors import FlowHostMigratedError
+
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    c._mint_recaptcha_token = AsyncMock(side_effect=FlowHostMigratedError("host migrated"))  # type: ignore[method-assign]
+
+    mock_page = MagicMock()
+    c._checkout_page = AsyncMock(return_value=mock_page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+
+    out = tmp_path / "fallback_out.png"
+    mock_upscale = AsyncMock(return_value=_PNG)
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_upscale.upscale_image_migrated", mock_upscale
+    )
+
+    res = await c.upsample_image(
+        media_id=_MEDIA_ID,
+        project_id=_PROJECT_ID,
+        target_resolution=TargetResolution.RES_2K,
+        out_path=out,
+    )
+
+    assert Path(str(res)).read_bytes() == _PNG
+    mock_upscale.assert_awaited_once_with(
+        mock_page,
+        project_id=_PROJECT_ID,
+        media_id=_MEDIA_ID,
+        target_resolution=TargetResolution.RES_2K,
+    )
+    c._checkin_page.assert_called_once_with(mock_page)  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_upsample_video_happy_path(tmp_path: Path, monkeypatch) -> None:
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+
+    mock_page = MagicMock()
+    c._checkout_page = AsyncMock(return_value=mock_page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+
+    dummy_mp4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 32
+    mock_upscale = AsyncMock(return_value=dummy_mp4)
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_video_upscale.upscale_video_migrated", mock_upscale
+    )
+
+    out = tmp_path / "video.mp4"
+    res = await c.upsample_video(
+        media_id=_MEDIA_ID,
+        project_id=_PROJECT_ID,
+        scale="1080p",
+        out_path=out,
+    )
+
+    assert Path(str(res)).read_bytes() == dummy_mp4
+    mock_upscale.assert_awaited_once_with(
+        mock_page,
+        project_id=_PROJECT_ID,
+        media_id=_MEDIA_ID,
+        scale="1080p",
+    )
+    c._checkin_page.assert_called_once_with(mock_page)  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_upsample_video_storage_uri(tmp_path: Path, monkeypatch) -> None:
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    c.settings.storage_uri = "gs://my-bucket/prefix"
+
+    mock_page = MagicMock()
+    c._checkout_page = AsyncMock(return_value=mock_page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+
+    local_target = tmp_path / "cloud_dest" / "video.mp4"
+    monkeypatch.setattr(
+        "gflow_cli.api.client.storage_path",
+        lambda uri, out_dir, key: local_target,
+    )
+
+    dummy_mp4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 32
+    mock_upscale = AsyncMock(return_value=dummy_mp4)
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_video_upscale.upscale_video_migrated", mock_upscale
+    )
+
+    out = tmp_path / "video.mp4"
+    res = await c.upsample_video(
+        media_id=_MEDIA_ID,
+        project_id=_PROJECT_ID,
+        scale="1080p",
+        out_path=out,
+    )
+
+    assert res == local_target
+    assert local_target.read_bytes() == dummy_mp4
+    c._checkin_page.assert_called_once_with(mock_page)  # type: ignore[attr-defined]

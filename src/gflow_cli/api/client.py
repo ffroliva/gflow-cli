@@ -66,6 +66,7 @@ from gflow_cli.api.transports import (
 from gflow_cli.api.transports._common import (
     await_url_settled,
     flow_host_kind,
+    migrated_route,
     raise_if_migrated,
     safe_page_url,
 )
@@ -2589,7 +2590,38 @@ class FlowApiClient:
             media_id=media_id,
             resolution=target_resolution.name,
         )
-        token = await self._mint_recaptcha_token(recaptcha_action)
+
+        route = migrated_route(
+            getattr(self._page, "url", None),
+            self.settings.flow_host,
+            prefer_migrated=False,
+        )
+        if route == "blocked":
+            raise_if_migrated(self._page, at="image_upscale_flow_host_kill_switch")
+        if route == "migrated":
+            return await self._drive_migrated_image_upscale(
+                project_id=project_id,
+                media_id=media_id,
+                target_resolution=target_resolution,
+                out_path=out_path,
+            )
+
+        try:
+            token = await self._mint_recaptcha_token(recaptcha_action)
+        except FlowHostMigratedError:
+            route = migrated_route(
+                getattr(self._page, "url", None),
+                self.settings.flow_host,
+                prefer_migrated=True,
+            )
+            if route == "migrated":
+                return await self._drive_migrated_image_upscale(
+                    project_id=project_id,
+                    media_id=media_id,
+                    target_resolution=target_resolution,
+                    out_path=out_path,
+                )
+            raise
         req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
         session_id = f";{int(time.time() * 1000)}"
         try:
@@ -2605,7 +2637,7 @@ class FlowApiClient:
             # (a retry only inflates per-profile WAF heat and never succeeds).
             if target_resolution is TargetResolution.RES_4K:
                 raise UpscaleUnavailableError(
-                    detail="4K upscale rejected (HTTP 403) — requires a Flow Ultra subscription",
+                    detail=("4K upscale rejected (HTTP 403) — requires a Flow Ultra subscription"),
                     status=403,
                     instance=_make_instance(),
                     route="upsampleImage",
@@ -2660,6 +2692,96 @@ class FlowApiClient:
         target = adjust_key_extension(target, image_bytes)
         await write_asset_async(target, image_bytes)
         return target
+
+    async def _drive_migrated_image_upscale(
+        self,
+        *,
+        project_id: str,
+        media_id: str,
+        target_resolution: TargetResolution,
+        out_path: Path,
+    ) -> AnyPath:
+        from gflow_cli.api.transports.migrated_upscale import upscale_image_migrated
+
+        page = await self._checkout_page()
+        try:
+            image_bytes = await upscale_image_migrated(
+                page,
+                project_id=project_id,
+                media_id=media_id,
+                target_resolution=target_resolution,
+            )
+            storage_uri = self.settings.storage_uri
+            if storage_uri:
+                key = _storage_key_from_path(out_path, self.settings.output_dir)
+                target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
+            else:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                target = out_path
+            target = adjust_key_extension(target, image_bytes)
+            await write_asset_async(target, image_bytes)
+            logger.info(
+                "image.upscale_completed",
+                media_id=media_id,
+                resolution=target_resolution.name,
+                bytes=len(image_bytes),
+            )
+            return target
+        finally:
+            self._checkin_page(page)
+
+    async def upsample_video(
+        self,
+        *,
+        media_id: str,
+        project_id: str,
+        scale: str = "1080p",
+        out_path: Path,
+    ) -> AnyPath:
+        """Upscale or export a platform-generated video to 1080p, 720p, or 270p GIF.
+
+        Drives the migrated Flow editor to export an upsampled 1080p Full HD video or
+        animated GIF.
+        """
+        from gflow_cli.api.transports.migrated_video_upscale import upscale_video_migrated
+
+        logger.info(
+            "video.upscale_started",
+            media_id=media_id,
+            scale=scale,
+        )
+        try:
+            page = await self._checkout_page()
+            try:
+                video_bytes = await upscale_video_migrated(
+                    page,
+                    project_id=project_id,
+                    media_id=media_id,
+                    scale=scale,
+                )
+                ext = ".gif" if scale.strip().lower() == "270p" else ".mp4"
+                if out_path.suffix.lower() != ext:
+                    out_path = out_path.with_suffix(ext)
+
+                storage_uri = self.settings.storage_uri
+                if storage_uri:
+                    key = _storage_key_from_path(out_path, self.settings.output_dir)
+                    target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
+                else:
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    target = out_path
+                await write_asset_async(target, video_bytes)
+                logger.info(
+                    "video.upscale_completed",
+                    media_id=media_id,
+                    scale=scale,
+                    bytes=len(video_bytes),
+                )
+                return target
+            finally:
+                self._checkin_page(page)
+        except Exception as exc:
+            await self._raise_with_incident(exc, phase="video_upscale")
 
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.

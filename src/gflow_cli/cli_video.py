@@ -2184,3 +2184,114 @@ def extend(  # noqa: PLR0913
         cli_command="video extend",
         as_json=as_json,
     )
+
+
+@video.command(
+    "upscale",
+    short_help="Upscale a Flow-generated video to 1080p (or export as 270p GIF).",
+    help=(
+        "Upscale a Flow-generated video to 1080p Full HD, download the original 720p, "
+        "or export as a 270p animated GIF and save it locally.\n\n"
+        "MEDIA_ID is the UUID of a platform video — find one with `gflow data list videos`.\n\n"
+        "\b\n"
+        "Examples:\n"
+        "  gflow video upscale <mediaId> --scale 1080p\n"
+        "  gflow video upscale <mediaId> --scale 720p\n"
+        "  gflow video upscale <mediaId> --scale 270p\n"
+        "  gflow video upscale <mediaId> --scale 1080p --out ~/Downloads\n"
+    ),
+)
+@click.argument("media_id")
+@click.option(
+    "--scale",
+    type=click.Choice(["1080p", "720p", "270p"], case_sensitive=False),
+    default="1080p",
+    show_default=True,
+    help=(
+        "Target quality: 1080p (enhanced Full HD), 720p (original download), "
+        "or 270p (animated GIF export)."
+    ),
+)
+@click.option(
+    "-o",
+    "--out",
+    "out_dir",
+    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+    default=None,
+    help="Output directory (defaults to the configured gflow output dir).",
+)
+@click.option(
+    "--project",
+    "project_id",
+    default=None,
+    callback=_validate_project_id,
+    help=(
+        "Project that owns the video. Resolved from the local catalog when "
+        "omitted; pass it explicitly for videos gflow didn't record."
+    ),
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+def upscale(
+    media_id: str,
+    scale: str,
+    out_dir: Path | None,
+    project_id: str | None,
+    profile: str | None,
+) -> None:
+    """Upscale or export MEDIA_ID to the requested --scale and save it locally."""
+    if not is_media_uuid(media_id):
+        raise click.BadParameter(
+            "MEDIA_ID must be a bare UUID (8-4-4-4-12 hex).", param_hint="MEDIA_ID"
+        )
+    profile_name = _resolve_profile(profile)
+    from gflow_cli.cli_image import resolve_upscale_project_id
+
+    resolved_project = resolve_upscale_project_id(
+        media_id=media_id, explicit=project_id, profile_name=profile_name
+    )
+    provider_dir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    run_with_handlers(
+        lambda: _run_video_upscale(
+            profile_dir=provider_dir,
+            headless=settings.headless,
+            media_id=media_id,
+            project_id=resolved_project,
+            scale=scale.lower(),
+            out_dir=out_dir,
+        ),
+        cli_command="video upscale",
+    )
+
+
+async def _run_video_upscale(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    media_id: str,
+    project_id: str,
+    scale: str,
+    out_dir: Path | None,
+) -> None:
+    from datetime import date
+
+    from gflow_cli._cli_helpers import safe_path_text
+
+    settings = get_settings()
+    output_root = out_dir if out_dir is not None else settings.output_dir
+    ext = "gif" if scale == "270p" else "mp4"
+    out_path = output_root / "videos" / date.today().isoformat() / f"{media_id}_{scale}.{ext}"
+
+    async with FlowApiClient(
+        profile_dir=profile_dir,
+        headless=headless,
+        out_dir=output_root,
+    ) as client:
+        console.print(f"Upscaling video [bold]{media_id}[/bold] to {scale}...")
+        target = await client.upsample_video(
+            media_id=media_id,
+            project_id=project_id,
+            scale=scale,
+            out_path=out_path,
+        )
+        console.print(f"[bold green]Saved:[/bold green] {safe_path_text(target)}")

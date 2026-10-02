@@ -13,7 +13,19 @@ feature adds `gflow image upscale <mediaId> --scale 2k|4k` to fetch the upscaled
 Scope: **platform-generated images only** (referenced by `mediaId`). Uploaded images are not
 supported by this endpoint. **4K is Ultra-tier-gated**; Pro accounts see "Upgrade" in the UI.
 
-## Wire protocol
+## Migrated frontend wire protocol (`flow.google.com`, 2026-09-30)
+
+On `flow.google.com` (#639), the legacy `aisandbox-pa` REST endpoint returns HTTP 403.
+Upscaling is driven through the image editor's download menu via `batchexecute`:
+
+- **Endpoint:** `POST https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=SPrCad`
+- **Request:** carries `[media_id, 1, clientContext]`
+- **Response:** anti-XSSI `)]}'` envelope returning `[["wrb.fr", "SPrCad", "[[\"metadata\"], \"<base64>\"]"]]`.
+  Returns the upscaled JPEG bytes directly inside frame `[1]`.
+- **Tier gating:** 4K is present in the menu but rendered with `disabled="true"` and an "Upgrade" CTA on non-Ultra accounts.
+- **Reference:** `docs/superpowers/spikes/2026-09-30-migrated-upscale-wire.md`.
+
+## Wire protocol (legacy labs.google host)
 
 ### Endpoint
 ```
