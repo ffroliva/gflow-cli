@@ -107,7 +107,7 @@ _MCP_EXEMPT: dict[str, str] = {
         "would be harmless and is the upgrade path if agents ever need it"
     ),
     "models": "informational; models are enumerated in the generate tools' descriptions",
-    "run": "chain-manifest runner — not yet ported",
+    "run": "image-batch config runner (rows, batch:N and local-file refs) — not yet ported",
     "character create": (
         "GAP #691 — unported, not principled. 'Mutation' was never a reason: "
         "gflow_generate_image spends the same per-model image quota over MCP. "

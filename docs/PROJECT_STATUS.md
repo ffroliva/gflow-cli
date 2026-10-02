@@ -4,14 +4,43 @@
 
 ## Current release
 
+**v0.82.0 — alpha.** A `gflow run` config can build a series from one image, and every
+generation it makes is now tracked.
+
+**`"ref": "batch:N"` (#913).** A row can generate from an earlier row's image. The image is
+already in the run's Flow project, so it is referenced where it is, by the handle Flow
+returned: nothing is re-uploaded. On flow.google.com the image is chosen by identity (its
+thumbnail token in the `@` picker equals its grid tile's), because captions repeat. The
+editor is reloaded until a just-generated image is listed, because the grid and the picker
+are per-load snapshots. A submit that does not carry the reference is aborted before Flow
+acts. Rows keep file order; a failed parent skips its dependents with the reason.
+
+**Local-file references (#913).** A row's `ref` can be an image file, resolved against the
+config's folder and checked before the browser starts. It is uploaded once per run and
+referenced in place by every row that names it.
+
+**Tracking.** `gflow run` and multi-prompt `gflow image t2i` now record their successful
+generations (they recorded failures only); a referencing row is recorded as image-to-image
+with its parent as input.
+
+**Fixed:** manifest references were parsed and silently ignored since v0.52.0, whose
+verification record claimed otherwise (corrected); the docs no longer suggest clearing a
+sign-in screen in the generation window (#925).
+
+**Not verified here:** accounts served labs (labs answers 308 on the three profiles here that hold a live Flow session). Full
+ledger: [LIVE_VERIFICATION_v0.82.0](LIVE_VERIFICATION_v0.82.0.md).
+
+<details><summary>v0.81.0 — the generation browser opens off-screen</summary>
+
 **v0.81.0 — alpha.** The generation browser stops covering your desktop, a denied profile
 directory stops looking like another gflow holding it, and one dependency CVE locked out.
 
 **The generation browser opens off-screen (#923).** Generation needs a real headed Chrome,
 so every `image`/`video` run used to put a window over whatever you were doing. It now
 opens at `-30000,-30000`, still fully headed, so Flow and reCAPTCHA see the same browser.
-`GFLOW_CLI_BROWSER_WINDOW_POSITION` takes any `X,Y` to watch a run or clear a consent
-screen by hand; empty restores Chrome's placement. Measured before adopting it: image and
+`GFLOW_CLI_BROWSER_WINDOW_POSITION` takes any `X,Y` to watch or debug a run; empty
+restores Chrome's placement. (A consent or account-chooser screen is cleared through
+`gflow auth login`, whose window is always visible; see #925.) Measured before adopting it: image and
 video generation unchanged, no timer or animation throttling off-screen. The contributor's
 `--no-focus-on-init` measured as a no-op on Windows and was dropped, so the docs say
 plainly that Chrome can still take keyboard focus at launch. Thanks to @johngbl.
@@ -26,6 +55,8 @@ instead of a lock-contention one. Covered at the generation client's launch only
 
 **Not verified here:** macOS and Linux for the off-screen window, and polls longer than
 about five minutes. Full ledger: [LIVE_VERIFICATION_v0.81.0](LIVE_VERIFICATION_v0.81.0.md).
+
+</details>
 
 <details><summary>v0.80.0 — --resolution, nano2-lite, unported forms refused by name</summary>
 
@@ -325,6 +356,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| A run config row generates from an earlier row's image or a local file, referenced in place with no re-upload (#913); `gflow run` successes recorded with lineage; refs were silently dropped since v0.52.0 (fixed, record corrected) | ✅ done (v0.82.0) |
 | The generation browser opens off-screen, placeable via `GFLOW_CLI_BROWSER_WINDOW_POSITION`, measured unchanged for image and video (#923); a write-denied profile raises `ProfileAccessError` instead of posing as lock contention (#919); `urllib3` CVE lock (#920) | ✅ done (v0.81.0) |
 | An unported image form is refused by name instead of crashing a `gflow run` batch with a misleading `RecaptchaError` — the browser transport stops pre-minting a token it never read (#891); a lost transfer is recorded as a generated clip with a visible `STATUS` (#896); `--resolution` and `nano2-lite` (#787); flow.google.com refusals read from the wire (#909); `auth login` stops on the `/about` identity re-check (#902); `oauthlib`/`pyjwt` CVE locks | ✅ done (v0.80.0) |
 | A finished, billed clip is no longer discarded when its download hits a transient connection reset, at all three download sites including the recovery command's own; and the failure that survives is typed rather than `Unexpected error` — naming the clip and the free way to fetch it, on the CLI and through both MCP doors (#895) | ✅ done (v0.79.1) |

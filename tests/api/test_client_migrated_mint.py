@@ -158,13 +158,11 @@ async def test_mint_failure_off_migrated_host_records_where_the_page_was(
 class _ContextDestroyedDuringMint:
     """The mid-mint navigation destroys the execution context.
 
-    #692 review finding: ``TokenMinter.mint`` guards only its SECOND evaluate.
-    ``site_key()`` -> ``discover_site_key`` runs an unguarded
-    ``page.evaluate`` (``recaptcha.py``), and ``TokenMinter`` is rebuilt per
-    call so ``_site_key`` is always ``None`` — meaning the unguarded call runs
-    every time. A hop mid-mint therefore surfaces as a RAW Playwright error,
-    not ``RecaptchaError``, which is the likeliest shape of the reporter's
-    failure and the one a ``except RecaptchaError`` net misses entirely.
+    #692 review finding: ``TokenMinter.mint`` then guarded only its SECOND evaluate,
+    so a hop mid-mint surfaced as a RAW Playwright error from the site-key read.
+    Since #915 both evaluates raise ``RecaptchaError``; this fake keeps raising a raw
+    error so the client's broad re-classification stays pinned against any failure
+    shape, not only the minter's.
     """
 
     def __init__(self, page: Any, **_: Any) -> None:

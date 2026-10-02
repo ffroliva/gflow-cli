@@ -371,6 +371,12 @@ class OperationRecorder:
             metadata["entity_ids"] = list(request.reference_entities)
         if request.reference_entity_names:
             metadata["entity_names"] = list(request.reference_entity_names)
+        # #913: a generation made from another image keeps that image's media id here
+        # too, so the lineage survives even when the parent's asset row is missing (its
+        # download failed, so there is no local file to record it with).
+        refs = getattr(request, "refs", ())
+        if refs:
+            metadata["reference_media_ids"] = [ref.name for ref in refs]
         return metadata
 
     # ------------------------------------------------------------------

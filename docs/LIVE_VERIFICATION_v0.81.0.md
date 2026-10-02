@@ -81,4 +81,8 @@ keyboard focus at launch.
 
 ## Post-tag evidence
 
-_Filled after the tag: PyPI publish, GitHub Release, back-merge._
+- **Release workflow:** [run 36786572400](https://github.com/ffroliva/gflow-cli/actions/runs/36786572400) — success (build-and-publish, mcp-registry publish).
+- **PyPI:** `gflow_cli-0.81.0-py3-none-any.whl` and `gflow_cli-0.81.0.tar.gz`, uploaded 2026-09-30T22:37Z.
+- **GitHub Release:** [v0.81.0](https://github.com/ffroliva/gflow-cli/releases/tag/v0.81.0), published 2026-09-30T22:37Z.
+- **Release PR:** #924, merged to `main` with a merge commit (`8fa5ea0c`).
+- **Back-merge:** `main` → `develop` (`be334758`).

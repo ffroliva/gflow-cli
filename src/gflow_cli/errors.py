@@ -48,6 +48,7 @@ __all__ = [
     "ProfileAccessError",
     "QueueSchemaError",
     "RateLimitError",
+    "RecaptchaError",
     "SceneConcatError",
     "SecurityError",
     "SyncPartialError",
@@ -873,6 +874,30 @@ class FlowAccountChooserError(GFlowError):
     _default_remediation = (
         "Run `gflow auth login --profile <name>` and complete the account chooser "
         "manually while signed in as the recorded account."
+    )
+
+
+class RecaptchaError(GFlowError):
+    """A reCAPTCHA Enterprise token could not be minted, so no request was sent (#915).
+
+    Raised by ``api.recaptcha.TokenMinter``, which only the client's own mint reaches:
+    ``gflow image upscale``, ``gflow video extend`` and image generation on a transport
+    that does not drive Flow's page (the default UI transport lets the page mint, #891).
+
+    **No exit code of its own** (exits 1, like ``FlowApiError``): callers branch on the
+    ``type``. Retryability is set per raise site from a live measurement
+    (``docs/superpowers/spikes/2026-10-01-recaptcha-error-shape.md``): a mint that lost a
+    race with a navigation succeeds on the settled page (retryable); a page with no
+    reCAPTCHA script fails the same way every time (not retryable). The class default is
+    not retryable.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/recaptcha-mint"
+    title = "reCAPTCHA token mint failed"
+    _default_remediation = (
+        "No request was sent and no credit was spent. When `retryable` is true, run the "
+        "command again; otherwise the page it ran on cannot mint, and a repeat run that "
+        "fails the same way is worth reporting with the incident ID."
     )
 
 

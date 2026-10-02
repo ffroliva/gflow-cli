@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -24,7 +24,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile
-from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.client import FlowApiClient, validate_image_file
 from gflow_cli.api.transports import EXPERIMENTAL_TRANSPORTS
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
@@ -34,6 +34,7 @@ from gflow_cli.image_batch import (
     MIN_PROMPTS,
     BatchOutcome,
     BatchPromptItem,
+    order_batch_rows,
     parse_batch_item_dict,
     render_image_batch_summary,
     resolve_exit_code,
@@ -50,6 +51,33 @@ _ALLOWED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 # Dataclasses — validated config + per-prompt outcome.
 # ---------------------------------------------------------------------------
+
+
+def _resolve_file_ref(item: BatchPromptItem, base_dir: Path) -> BatchPromptItem:
+    """Resolve a row's local-file ``ref`` and check it is an image, or refuse (exit 11).
+
+    Relative paths resolve against the config file's folder. Symlinks are resolved
+    strictly, and the image check (size, magic bytes) is the one every upload applies:
+    a manifest must not be a way to send ``~/.ssh/id_rsa`` to Google.
+    """
+    if item.ref is None or item.ref.startswith("batch:"):
+        return item
+    raw = Path(item.ref).expanduser()
+    target = raw if raw.is_absolute() else base_dir / raw
+    try:
+        resolved = target.resolve(strict=True)
+    except OSError:
+        msg = f"prompts[{item.index}].ref {item.ref!r} does not exist (relative to {base_dir})."
+        raise ConfigurationError(msg) from None
+    if not resolved.is_file():
+        msg = f"prompts[{item.index}].ref {item.ref!r} is not a file."
+        raise ConfigurationError(msg)
+    try:
+        asyncio.run(validate_image_file(resolved))
+    except (ValueError, OSError) as exc:
+        msg = f"prompts[{item.index}].ref {item.ref!r}: {exc}"
+        raise ConfigurationError(msg) from None
+    return replace(item, ref=str(resolved))
 
 
 @dataclass(frozen=True)
@@ -88,10 +116,10 @@ class BatchConfig:
             raise ConfigurationError(
                 msg,
             )
-        return cls._from_dict(cast("dict[str, Any]", data))
+        return cls._from_dict(cast("dict[str, Any]", data), base_dir=path.parent)
 
     @classmethod
-    def _from_dict(cls, data: dict[str, Any]) -> BatchConfig:
+    def _from_dict(cls, data: dict[str, Any], *, base_dir: Path | None = None) -> BatchConfig:
         unknown = set(data) - _ALLOWED_TOP_LEVEL_KEYS
         if unknown:
             msg = (
@@ -121,6 +149,12 @@ class BatchConfig:
                 msg = f"prompts[{idx}] must be a JSON object."
                 raise ConfigurationError(msg)
             prompts.append(parse_batch_item_dict(cast("dict[str, Any]", p), idx))
+        # Local-file refs resolve against the config's folder, so a config is portable,
+        # and must be a real image before any browser work (#913).
+        prompts = [_resolve_file_ref(p, base_dir or Path.cwd()) for p in prompts]
+        # Validate `batch:N` references (range, self, cycle, multi-image parent) here, so
+        # a bad config exits 11 before any browser work (#913).
+        order_batch_rows(prompts)
 
         profile = data.get("profile")
         if profile is not None and (not isinstance(profile, str) or not profile):
@@ -219,7 +253,7 @@ async def _run_batch(
     "config_path",
     required=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Path to a JSON batch config (see AUDIT_E1 § D for the schema).",
+    help="Path to a JSON batch config (schema: docs/USAGE.md, gflow run).",
 )
 @click.option(
     "--output-dir",

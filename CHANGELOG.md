@@ -25,6 +25,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   advising `--scale 2k`, without waiting for an API 403. A missing menu item raises
   `UiSelectorDriftError` (exit 23) instead.
 
+### Fixed
+
+- **A reCAPTCHA mint failure is a typed error with Problem Details (#915).** It was a bare
+  `RuntimeError`: `gflow image upscale` and `gflow video extend` (and image generation on
+  the experimental HTTP transports) exited 1 with an "unexpected" message and no
+  remediation, an MCP/worker caller got a hashed "Unknown Error", and on an experimental
+  transport one failure ended a multi-prompt run past `--continue-on-error`. It now has its
+  own `type` (`…/errors/recaptcha-mint`) and a `retryable` flag set from a live measurement:
+  a mint that lost a race with a navigation, or ran on a Flow page before Flow injected its
+  reCAPTCHA script, is retryable (the settled page mints); a mint on a page that is not a
+  web page (`about:blank`) is not (it fails the same way every time). It still exits 1 —
+  branch on the `type`. The site-key message no longer blames "the Flow editor page" or "the
+  script tag layout", which was false on the `about:blank` page where it was seen (#891).
+
+## [0.82.0] — 2026-10-01
+
+### Added
+
+- **A `gflow run --config` row can reference a local image file (#913).** Set `"ref"` to a
+  path, resolved against the config file's folder. The file is checked before the browser
+  starts (it must exist and be a real image). It is uploaded once per run, on first use;
+  every row naming the same file references that upload in place, so the project holds
+  one copy. See [docs/USAGE.md](docs/USAGE.md#referencing-a-local-file).
+- **A `gflow run --config` row can generate from an earlier row's image (#913).** Set
+  `"ref": "batch:N"`. The earlier image is already in the run's Flow project, so it is
+  referenced in place by the handle Flow returned. Nothing is re-uploaded, and the
+  project holds no duplicate. Rows run in file order, deferred only until
+  their parent has run. A failed parent skips its dependents with the reason instead of
+  submitting them without the reference. A referenced row must make one image. On
+  flow.google.com the image is found in the composer's `@` picker and chosen by its
+  thumbnail identity, not its caption (captions repeat). The submit is aborted before
+  Flow acts if it does not carry the reference. `gflow image batch` refuses references and
+  points at `gflow run`. See [docs/USAGE.md](docs/USAGE.md#referencing-an-earlier-row).
+- **`gflow run --config` and multi-prompt `gflow image t2i` now record their successful
+  generations in the local catalog.** They recorded failures only. A referencing row is
+  recorded as image-to-image with its parent as the input.
+
+### Fixed
+
+- **Manifest references are refused instead of silently ignored (#913).** A
+  `gflow run --config` or `gflow image batch` row with `ref` or `reference_entity` was
+  accepted, then ran as plain text-to-image with exit 0. v0.52.0 announced the fields
+  (#317), but nothing ever applied them. Both commands now refuse such a row before any
+  browser work, naming the row and field: exit 11 for `run`, a usage error (exit 2) for
+  `image batch`. The exceptions are `"ref": "batch:N"` and a local image file in
+  `gflow run --config`, which now work (see Added).
+
+- **The docs no longer suggest clearing a sign-in screen in the generation window
+  (#925).** 0.81.0's docs said to make the off-screen generation browser visible and
+  clear an account chooser or consent screen in it. A generation run gives up about 30 s
+  after it clicks the chooser row, so that was a race. It also contradicted the error
+  itself, which says to run `gflow auth login --profile <name>`. The login window is
+  always visible and waits for you, so that is the remedy the docs now give.
+  `GFLOW_CLI_BROWSER_WINDOW_POSITION` remains for watching or debugging a run.
+
 ## [0.81.0] — 2026-09-30
 
 ### Added
@@ -3035,6 +3090,8 @@ completed exit 0, proving no regression. See
 ### Added
 
 - **Intra-batch reference support for image batches (#317).** `BatchPromptItem` and `gflow image batch` now support `ref` and `reference_entity` fields (e.g. `ref="batch:0"`), with topological dependency sorting and circular dependency validation.
+  **Correction (#913):** this never worked. The fields were parsed and silently ignored,
+  and the sorting was never called; see the `[Unreleased]` Fixed entry for #913.
 - **Character entity provenance recording and video CLI flag parity (#402).** Added `--reference-entity` and `--reference-entity-name` CLI options to `gflow video` commands (`t2v`, `i2v`, `r2v`) and verified character provenance recording in `operations.metadata_json`.
 
 ### Fixed
@@ -5759,7 +5816,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.81.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.82.0...HEAD
+[0.82.0]: https://github.com/ffroliva/gflow-cli/compare/v0.81.0...v0.82.0
 [0.81.0]: https://github.com/ffroliva/gflow-cli/compare/v0.80.0...v0.81.0
 [0.80.0]: https://github.com/ffroliva/gflow-cli/compare/v0.79.1...v0.80.0
 [0.79.1]: https://github.com/ffroliva/gflow-cli/compare/v0.79.0...v0.79.1

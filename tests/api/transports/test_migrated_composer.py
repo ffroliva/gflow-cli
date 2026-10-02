@@ -571,6 +571,15 @@ class FakePage:
     def remove_listener(self, event: str, handler: Any) -> None:
         self._handlers[event] = [h for h in self._handlers[event] if h is not handler]
 
+    async def route(self, _url: Any, _handler: Any) -> None:
+        # The submit guard (#913) is installed here; this double fires requests through
+        # its listeners, so the observer path these tests pin still runs. The guard
+        # itself is covered in test_migrated_existing_refs.py.
+        return None
+
+    async def unroute(self, _url: Any, _handler: Any) -> None:
+        return None
+
     def listeners(self, event: str) -> list[Any]:
         return list(self._handlers[event])
 

@@ -390,6 +390,17 @@ listing endpoint (privacy-gated to `store` history mode), and `gflow doctor`
 (#542) surfaces the affected-row count. Freshly generated rows whose caption
 has not landed yet stay nameless until the next sync sweep.
 
+### `gflow run --config` references cannot resume (#913)
+
+- **Status:** Open · **Severity:** Low (a re-run regenerates; nothing is lost) · **Affected:** every `gflow run --config` with `"ref"` rows (`batch:N` or a local file)
+- **Tracked:** [#913](https://github.com/ffroliva/gflow-cli/issues/913)
+
+A run with `"ref": "batch:N"` rows has no resume: a re-run creates a new project and
+regenerates every row, parents included, and one early failure skips the whole chain under
+it. The handle that makes in-place referencing work (Flow's reply for the parent) exists
+only within the run that generated it. A local-file `ref` is uploaded again into the
+re-run's new project for the same reason.
+
 ### Video duration control is absent on some account cohorts
 
 - **Status:** Mitigated — fail-fast shipped in
@@ -1452,9 +1463,10 @@ failed assert left the profile unusable — it is usable, just possibly as the w
 
 Two further items on the same issue are unfixed and worth knowing about: a second chooser
 hop (chooser → consent → chooser) is not handled and degrades into the landing timeout, and
-that timeout is still an unmeasured number. The generation browser opens off-screen since
-v0.81.0; to clear such a screen by hand, re-run with
-`GFLOW_CLI_BROWSER_WINDOW_POSITION=0,0` (see [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_browser_window_position)).
+that timeout is still an unmeasured number. To clear such a screen by hand, run
+`gflow auth login --profile <name>`: its window is always visible and waits for you. The
+generation browser opens off-screen since v0.81.0, and making it visible is not a remedy
+here, because the run gives up within 30 s (see [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_browser_window_position)).
 
 ### Auth verification depends on Google's NextAuth session endpoint
 

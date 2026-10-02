@@ -28,7 +28,7 @@ import structlog
 from gflow_cli.api._retry import parse_retry_after
 from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.dto import BatchSubmissionResult, GeneratedImage
-from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
 from gflow_cli.api.transports._common import (
     await_url_settled,
     close_menu,
@@ -3080,6 +3080,41 @@ class UiAutomationTransport(VideoGenerationMixin):
             return await self._generate_images_locked(
                 request, project_id=project_id, name_resolver=name_resolver
             )
+
+    async def upload_reference(self, *, project_id: str, path: Path) -> ImageRef | None:
+        """Upload ``path`` into the project on flow.google.com and return its handle.
+
+        ``None`` when this page routes to the labs driver: the client then uses the REST
+        upload. On flow.google.com the composer toolbar uploads it and names the media id
+        and the run-unique caption it was listed under, which is everything a later
+        in-place mention needs (#913). Serialized with generation, parked after use.
+        """
+        if not self._setup_done or self._page is None:
+            msg = "UiAutomationTransport.setup() must be called before upload_reference()"
+            raise RuntimeError(msg)
+        from gflow_cli.api.transports.migrated_composer import MigratedComposer  # noqa: PLC0415
+        from gflow_cli.config import get_settings  # noqa: PLC0415
+
+        async with self._generate_lock:
+            page: Page = self._page
+            await self.park_deferred_page()
+            route = migrated_route(page.url, get_settings().flow_host, prefer_migrated=True)
+            if route == "labs":
+                return None
+            if route == "blocked":
+                raise_if_migrated(page, at="reference_upload_kill_switch")
+            composer = MigratedComposer(out_dir=self._out_dir)
+            try:
+                await composer.ensure_editor(page, project_id)
+                media_id, display_name = await composer.upload(page, project_id, path)
+            except Exception:
+                # Same failure discipline as image generation (#792): keep the page for
+                # the incident bundle; the next run drains the park.
+                self._deferred_park_pending = True
+                raise
+            await self._park_composer_page(page, event="migrated.upload_page_park_failed")
+            log.info("migrated.reference_uploaded", media_id=media_id)
+            return ImageRef(name=media_id, display_name=display_name, in_project=True)
 
     def uses_page_owned_image_recaptcha(self) -> bool:
         """This transport drives Flow's own page, which mints its own reCAPTCHA token on

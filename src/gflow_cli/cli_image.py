@@ -1519,6 +1519,14 @@ def batch(
         )
     except ConfigurationError as exc:
         raise _as_usage_error(exc) from exc
+    for row in prompts:
+        if row.ref is not None:
+            # The stay-mounted batch path cannot reference an earlier row (#913).
+            msg = (
+                f"prompts[{row.index}].ref: manifest references (an earlier row or a "
+                "local file) work with `gflow run --config`, not `gflow image batch`."
+            )
+            raise click.UsageError(msg)
 
     # Apply --tool to each manifest row before submission (≤5 prompts, sequential,
     # never-fatal per row; unknown tool/style fails fast pre-network).

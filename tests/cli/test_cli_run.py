@@ -233,7 +233,11 @@ def _patched_client_factory(
     inst.__aexit__ = AsyncMock(return_value=None)
     inst.create_project = AsyncMock(return_value=MagicMock(project_id="proj-uuid"))
     if image_for_prompt is None:
-        inst.generate_image = AsyncMock(return_value=_fake_generated_image())
+        # One distinct media id per generation, as Flow returns: successful rows are
+        # recorded (#913), and the catalog's attribution guard rejects a reused id.
+        inst.generate_image = AsyncMock(
+            side_effect=[_fake_generated_image(seed=s) for s in range(100, 150)]
+        )
     else:
         inst.generate_image = image_for_prompt
     inst.generate_images_batch = AsyncMock(

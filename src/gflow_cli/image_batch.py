@@ -22,7 +22,7 @@ from gflow_cli._cli_helpers import (
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import BatchSubmissionResult, ProjectInfo
-from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import get_settings, parse_jitter_range
 from gflow_cli.data.models import OperationKind
@@ -144,54 +144,72 @@ class BatchPromptItem:
     reference_entity: str | None = None
 
 
-def resolve_batch_dependencies(prompts: list[BatchPromptItem]) -> list[BatchPromptItem]:
-    """Validate references and return prompt items sorted by dependency order DAG.
+_BATCH_REF = re.compile(r"batch:(0|[1-9][0-9]*)", re.ASCII)
+_MEDIA_ID = re.compile(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}")
 
-    Raises:
-        BatchIntegrityError: If circular dependencies exist or reference targets do not exist.
-        ConfigurationError: If reference syntax is invalid.
+
+def batch_parent(item: BatchPromptItem) -> int | None:
+    """The row index ``item.ref`` names (``"batch:N"``), or None without a reference.
+
+    Raises ConfigurationError for anything but the exact ``batch:<index>`` form: ``int()``
+    alone would accept ``"batch: 1"``, ``"batch:01"``, ``"batch:1_0"`` (10) and non-ASCII
+    digits (#913).
     """
-    index_map: dict[int, BatchPromptItem] = {item.index: item for item in prompts}
-    adj: dict[int, list[int]] = {item.index: [] for item in prompts}
-    in_degree: dict[int, int] = {item.index: 0 for item in prompts}
+    if item.ref is None or not item.ref.startswith("batch:"):
+        return None  # no reference, or a local file
+    match = _BATCH_REF.fullmatch(item.ref)
+    if match is None:
+        msg = (
+            f"prompts[{item.index}].ref {item.ref!r} is not a batch reference: "
+            'use "batch:<row index>", e.g. "batch:0".'
+        )
+        raise ConfigurationError(msg)
+    return int(match.group(1))
 
-    for item in prompts:
-        ref_val = item.ref
-        if not ref_val and item.reference_entity and item.reference_entity.startswith("batch:"):
-            ref_val = item.reference_entity
 
-        if ref_val and ref_val.startswith("batch:"):
-            try:
-                parent_idx = int(ref_val.split(":", 1)[1])
-            except ValueError:
-                msg = f"Invalid reference format '{ref_val}' for prompt at index {item.index}."
-                raise ConfigurationError(msg) from None
+def order_batch_rows(rows: list[BatchPromptItem]) -> list[BatchPromptItem]:
+    """Validate intra-batch references and return the rows in a stable run order.
 
-            if parent_idx not in index_map:
-                msg = f"Invalid reference target '{ref_val}' for prompt at index {item.index}."
-                raise BatchIntegrityError(msg)
-            if parent_idx == item.index:
-                msg = f"Circular dependency: prompt at index {item.index} references itself."
-                raise BatchIntegrityError(msg)
+    File order is kept; a row is deferred only until the row it references has run, so a
+    manifest that is already in order runs unchanged (the #317 resolver reshuffled it).
+    A referenced row must make exactly one image: ``batch:N`` names one image.
+    """
+    by_index = {row.index: row for row in rows}
+    parents: dict[int, int] = {}
+    for row in rows:
+        parent = batch_parent(row)
+        if parent is None:
+            continue
+        if parent == row.index:
+            msg = f"prompts[{row.index}].ref {row.ref!r} references itself."
+            raise ConfigurationError(msg)
+        if parent not in by_index:
+            msg = f"prompts[{row.index}].ref {row.ref!r} names a row that does not exist."
+            raise ConfigurationError(msg)
+        if by_index[parent].count != 1:
+            msg = (
+                f"prompts[{parent}] makes {by_index[parent].count} images, so "
+                f"prompts[{row.index}].ref {row.ref!r} is ambiguous: a referenced row "
+                'needs "count": 1.'
+            )
+            raise ConfigurationError(msg)
+        parents[row.index] = parent
 
-            adj[parent_idx].append(item.index)
-            in_degree[item.index] += 1
-
-    queue = [idx for idx, deg in in_degree.items() if deg == 0]
     ordered: list[BatchPromptItem] = []
-
-    while queue:
-        curr = queue.pop(0)
-        ordered.append(index_map[curr])
-        for nxt in adj[curr]:
-            in_degree[nxt] -= 1
-            if in_degree[nxt] == 0:
-                queue.append(nxt)
-
-    if len(ordered) != len(prompts):
-        msg = "Circular dependency detected in image batch prompt references."
-        raise BatchIntegrityError(msg)
-
+    done: set[int] = set()
+    pending = list(rows)
+    while pending:
+        ready = [r for r in pending if parents.get(r.index) in (None, *done)]
+        if not ready:
+            cycle = sorted(r.index for r in pending)
+            msg = f"prompts{cycle} reference each other in a cycle; no row can run first."
+            raise ConfigurationError(msg)
+        # One row per pass, the earliest ready in file order: a child runs as soon as its
+        # parent has, never ahead of an earlier independent row.
+        first = ready[0]
+        ordered.append(first)
+        done.add(first.index)
+        pending.remove(first)
     return ordered
 
 
@@ -215,6 +233,10 @@ class BatchOutcome:
     saved_paths: list[Path] = field(default_factory=lambda: [])
     error: str | None = None
     exit_code: int = 0
+    # What Flow generated, kept apart from the download result: a row whose transfer
+    # failed still has its image in the project, and a `batch:N` child references it
+    # (#913, SCENARIO #35).
+    images: list[GeneratedImage] = field(default_factory=lambda: [])
 
 
 def resolve_exit_code(exc: GFlowError) -> int:
@@ -380,6 +402,21 @@ def parse_batch_item_dict(p: dict[str, Any], idx: int) -> BatchPromptItem:
     if reference_entity is not None and not isinstance(reference_entity, str):
         msg = f"prompts[{idx}].reference_entity must be a string."
         raise ConfigurationError(msg)
+    # #913: both fields were parsed and then silently ignored (the row ran as plain
+    # text-to-image, exit 0). `"ref"` takes an earlier row (`batch:N`, validated by
+    # `order_batch_rows`) or a local image file (resolved and checked when the run
+    # config is loaded); a media id and `reference_entity` are refused.
+    for key, value in (("ref", ref), ("reference_entity", reference_entity)):
+        if key == "ref" and isinstance(value, str) and not _MEDIA_ID.fullmatch(value):
+            continue
+        if value is not None:
+            msg = (
+                f"prompts[{idx}].{key} is not supported yet: manifest references were "
+                "never applied (#913). A row's `ref` names an earlier row "
+                '("batch:N") or a local image file, not a media id; for that use '
+                "`gflow image i2i --ref <media id>`."
+            )
+            raise ConfigurationError(msg)
     return BatchPromptItem(
         text=text_raw,
         aspect_ratio=aspect_ratio,
@@ -490,6 +527,8 @@ async def run_one_image_prompt(
     profile_name: str | None = None,
     profile_dir: Path | None = None,
     command: str = "image t2i",
+    project_title: str | None = None,
+    reference: ImageRef | None = None,
 ) -> BatchOutcome:
     """Generate images for one prompt and download them.
 
@@ -498,7 +537,7 @@ async def run_one_image_prompt(
 
     When ``recorder``/``profile_name``/``profile_dir`` are provided, a failed
     prompt also persists a FAILED operation row (#341) before the outcome is
-    returned.
+    returned, and a successful one is recorded with its images (#913).
     """
     req = GenerateImageRequest(
         prompt=item.text,
@@ -506,8 +545,28 @@ async def run_one_image_prompt(
         model=Model.from_cli(item.model),
         original_prompt=item.original_prompt,
         tool=item.tool,
+        # An image already in this run's project (`batch:N`, or a local file uploaded
+        # once), referenced in place. Never a `local_path`: that fallback would
+        # re-upload a duplicate (#913).
+        refs=(reference,) if reference is not None else (),
     )
     stem = item.output_filename or f"prompt_{idx}"
+    mode = OperationKind.I2I if req.refs else OperationKind.T2I
+
+    def record_failure(exc: BaseException) -> None:
+        if profile_name is not None and profile_dir is not None:
+            record_failed_operation_safe(
+                recorder,
+                logger=logger,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                command=command,
+                mode=mode,
+                exc=exc,
+                request=req,
+                flow_project_id=project_id,
+            )
+
     try:
         if item.count == 1:
             img = await client.generate_image(project_id=project_id, req=req)
@@ -518,29 +577,12 @@ async def run_one_image_prompt(
                 req=req,
                 count=item.count,
             )
-        saved: list[Path] = []
-        for img_idx, img in enumerate(images):
-            target = output_dir / f"{stem}_{img_idx}.png"
-            path = await client.download_image(img, target)
-            saved.append(path)
-        return BatchOutcome(index=idx, prompt=item, status="ok", saved_paths=saved)
     except Exception as exc:
         # #341: both typed and unexpected failures reach the funnel (the
         # single-prompt CLI paths catch `Exception`; batch coverage must not
         # be narrower). Batch semantics unchanged: GFlowError becomes a "fail"
         # outcome, anything else still propagates.
-        if profile_name is not None and profile_dir is not None:
-            record_failed_operation_safe(
-                recorder,
-                logger=logger,
-                profile_name=profile_name,
-                profile_dir=profile_dir,
-                command=command,
-                mode=OperationKind.T2I,
-                exc=exc,
-                request=req,
-                flow_project_id=project_id,
-            )
+        record_failure(exc)
         if not isinstance(exc, GFlowError):
             raise
         return BatchOutcome(
@@ -549,6 +591,89 @@ async def run_one_image_prompt(
             status="fail",
             error=f"{type(exc).__name__}: {exc}",
             exit_code=resolve_exit_code(exc),
+        )
+
+    saved: list[Path] = []
+    try:
+        for img_idx, img in enumerate(images):
+            target = output_dir / f"{stem}_{img_idx}.png"
+            saved.append(await client.download_image(img, target))
+    except Exception as exc:  # noqa: BLE001 - one row's transfer must not end the run
+        # The images exist in Flow; only the local copy failed. Report the row as failed
+        # but keep what Flow generated, so a `batch:N` child can still reference it.
+        logger.warning("batch.download_failed", index=idx, error_class=type(exc).__name__)
+        record_failure(exc)
+        return BatchOutcome(
+            index=idx,
+            prompt=item,
+            status="fail",
+            saved_paths=saved,
+            images=list(images),
+            error=f"download failed: {type(exc).__name__}: {exc}",
+            exit_code=resolve_exit_code(exc) if isinstance(exc, GFlowError) else 1,
+        )
+    if recorder is not None and profile_name is not None and profile_dir is not None and project_id:
+        try:
+            _record_row_success(
+                recorder=recorder,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                project=ProjectInfo(project_id=project_id, title=project_title or ""),
+                request=req,
+                images=list(images),
+                saved=saved,
+                operation_kind=mode.value,
+            )
+        except MediaAttributionError as exc:
+            # Same as the manifest path: the generation succeeded, so this row fails
+            # without a FAILED-operation record, and the run goes on (#913 review).
+            logger.warning("batch.media_attribution_collision", index=idx, error=str(exc))
+            return BatchOutcome(
+                index=idx,
+                prompt=item,
+                status="fail",
+                saved_paths=saved,
+                images=list(images),
+                error=f"{type(exc).__name__}: {exc}",
+                exit_code=resolve_exit_code(exc),
+            )
+    return BatchOutcome(index=idx, prompt=item, status="ok", saved_paths=saved, images=list(images))
+
+
+def _record_row_success(
+    *,
+    recorder: OperationRecorder,
+    profile_name: str,
+    profile_dir: Path,
+    project: ProjectInfo,
+    request: GenerateImageRequest,
+    images: list[GeneratedImage],
+    saved: list[Path],
+    operation_kind: str,
+) -> None:
+    """Record one successful row; a store failure warns and never fails the row.
+
+    Same collision escalation as the manifest path's :func:`_try_record_images`.
+    """
+    try:
+        recorder.record_generated_images(
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            project=project,
+            request=request,
+            images=images,
+            saved_paths=saved,
+            cloud_storage_infos=[cloud_info_from_path(path) for path in saved],
+            input_media_ids=[ref.name for ref in request.refs],
+            operation_kind=operation_kind,
+        )
+    except DataStoreError as exc:
+        if isinstance(exc, DataIntegrityError):
+            escalate_asset_collision(exc, images=images, saved_paths=saved)
+        _warn_persistence_failed_after_success(
+            exc=exc,
+            flow_media_id=images[0].media_name if images else None,
+            local_path=saved[0] if saved else None,
         )
 
 
@@ -569,31 +694,87 @@ async def run_image_batch(
     # caller's failure rows with another command's name (#341 review).
     _command: str,
 ) -> list[BatchOutcome]:
-    """Run prompts sequentially through one FlowApiClient session."""
+    """Run prompts sequentially through one FlowApiClient session.
+
+    Rows run in dependency order (``order_batch_rows``) but keep their own index for
+    file names and results, which are returned in file order. A row whose ``batch:N``
+    parent produced no image is skipped with the reason, never submitted without it.
+    """
+    results: dict[int, BatchOutcome] = {}
+    # One upload per distinct local file per run (one run, one project).
+    uploads: dict[str, ImageRef] = {}
 
     async def image_worker(
         client: Any,
         project_id: str,
-        idx: int,
+        _position: int,
         item: BatchPromptItem,
     ) -> BatchOutcome:
-        return await run_one_image_prompt(
+        parent = batch_parent(item)
+        reference: ImageRef | None = None
+        if parent is not None:
+            parent_outcome = results.get(parent)
+            if parent_outcome is None or not parent_outcome.images:
+                skipped = parent_outcome is not None and parent_outcome.status == "skipped"
+                outcome = BatchOutcome(
+                    index=item.index,
+                    prompt=item,
+                    status="skipped",
+                    error=f"parent row {parent} {'was skipped' if skipped else 'failed'}",
+                )
+                results[item.index] = outcome
+                return outcome
+            image = parent_outcome.images[0]
+            reference = ImageRef(
+                name=image.media_name, display_name=image.display_name or "", in_project=True
+            )
+        elif item.ref is not None:
+            # A local file, validated when the config was loaded: uploaded into this
+            # run's project once, then referenced in place by every row that names it.
+            cached = uploads.get(item.ref)
+            if cached is None:
+                try:
+                    cached = await client.upload_reference(project_id, Path(item.ref))
+                except Exception as exc:  # noqa: BLE001 - one row's upload must not end the run
+                    # Like a generation failure: the row fails with the reason and the run
+                    # goes on. Not cached, so a later row naming the file retries it.
+                    logger.warning(
+                        "batch.reference_upload_failed",
+                        index=item.index,
+                        error_class=type(exc).__name__,
+                    )
+                    outcome = BatchOutcome(
+                        index=item.index,
+                        prompt=item,
+                        status="fail",
+                        error=f"reference upload failed: {type(exc).__name__}: {exc}",
+                        exit_code=resolve_exit_code(exc) if isinstance(exc, GFlowError) else 1,
+                    )
+                    results[item.index] = outcome
+                    return outcome
+                uploads[item.ref] = cached
+            reference = cached
+        outcome = await run_one_image_prompt(
             client=client,
             project_id=project_id,
-            idx=idx,
+            idx=item.index,
             item=item,
             output_dir=output_dir,
             recorder=_recorder,
             profile_name=_profile_name,
             profile_dir=profile_dir,
             command=_command,
+            project_title=project_title,
+            reference=reference,
         )
+        results[item.index] = outcome
+        return outcome
 
-    return await run_sequential_batch(
+    outcomes = await run_sequential_batch(
         profile_dir=profile_dir,
         headless=headless,
         transport=transport,
-        items=prompts,
+        items=tuple(order_batch_rows(list(prompts))),
         continue_on_error=continue_on_error,
         project_title=project_title,
         worker=image_worker,
@@ -601,6 +782,7 @@ async def run_image_batch(
         output_dir=output_dir,
         jitter_range=jitter_range,
     )
+    return sorted(outcomes, key=lambda outcome: outcome.index)
 
 
 async def run_sequential_batch(
@@ -643,7 +825,9 @@ async def run_sequential_batch(
                 for skip_idx in range(idx + 1, len(items)):
                     outcomes.append(
                         BatchOutcome(
-                            index=skip_idx,
+                            # The row's own index: under dependency order the loop
+                            # position is not the row (#913).
+                            index=getattr(items[skip_idx], "index", skip_idx),
                             prompt=items[skip_idx],
                             status="skipped",
                         ),
@@ -941,28 +1125,16 @@ def _try_record_images(
     other (unrelated) ``DataIntegrityError``, in which case this falls through
     to the same warn-and-continue path as a plain ``DataStoreError``.
     """
-    try:
-        recorder.record_generated_images(
-            profile_name=profile_name,
-            profile_dir=profile_dir,
-            project=ProjectInfo(project_id=result.project_id, title="gflow-cli image batch"),
-            request=_to_request(item),
-            images=list(result.images),
-            saved_paths=saved,
-            cloud_storage_infos=[cloud_info_from_path(path) for path in saved],
-            input_media_ids=[],
-            operation_kind="t2i",
-        )
-    except DataStoreError as exc:
-        if isinstance(exc, DataIntegrityError):
-            escalate_asset_collision(exc, images=list(result.images), saved_paths=saved)
-        first_image = result.images[0] if result.images else None
-        first_path = saved[0] if saved else None
-        _warn_persistence_failed_after_success(
-            exc=exc,
-            flow_media_id=first_image.media_name if first_image else None,
-            local_path=first_path,
-        )
+    _record_row_success(
+        recorder=recorder,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        project=ProjectInfo(project_id=result.project_id, title="gflow-cli image batch"),
+        request=_to_request(item),
+        images=list(result.images),
+        saved=saved,
+        operation_kind="t2i",
+    )
 
 
 async def _process_ok_row(
@@ -1274,7 +1446,7 @@ def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> i
             detail = outcome.error or ""
             status_str = "[red]FAIL[/red]"
         else:
-            detail = "(not attempted)"
+            detail = outcome.error or "(not attempted)"
             status_str = "[yellow]SKIPPED[/yellow]"
         table.add_row(
             str(outcome.index),

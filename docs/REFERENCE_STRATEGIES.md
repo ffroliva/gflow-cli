@@ -29,6 +29,7 @@ transports.
 | Reference a Character by **explicit id** in a script | `--reference-entity <entityId>` (`t2i`/`i2i`/`t2v`/`r2v`) | Same wire as `@Name`, no name-resolution ambiguity. **Not available on `i2v`** (its DTO rejects reference entities). |
 | Reference a **saved media asset** (generated/uploaded) by name | `@Name` in the prompt | Resolves to the asset's UUID → `referenceImages`, zero re-upload. |
 | Reference a **one-off / arbitrary image** or a look | `--ref <path>` (`i2i`, `r2v`) or `--ref <uuid>` (`i2i` only) | Stages `referenceImages` directly; no saved identity needed. |
+| Build a **series from one image** in a single run | `"ref": "batch:N"` (or a local file path) in a `gflow run --config` row | The earlier row's image is already in the run's project: referenced in place, no upload, no duplicate. See [USAGE § Referencing an earlier row](USAGE.md#referencing-an-earlier-row). |
 | Reuse the **same subject** across many generations | `gflow character` once → then `@Name` everywhere | A Character is the durable, name-addressable identity. See [CHARACTER.md](CHARACTER.md). |
 | Anchor an **identity *and* a look** in one shot | Both — a Character mention **and** a `--ref` | They complement (entity + image), and identical references dedupe, within the model's reference cap. |
 

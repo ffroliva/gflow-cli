@@ -25,7 +25,13 @@ This live verification run exercises recent core infrastructure, transport, and 
 | **2. Artifact 0 (Prompt 0)** | `prompt_0_0.jpg` (862,548 bytes, `1:1` aspect, Nano Banana 2) | 🟢 PASS |
 | **3. Artifact 1 (Prompt 1)** | `prompt_1_0.jpg` (1,093,468 bytes, `16:9` aspect, Nano Banana 2) | 🟢 PASS |
 | **4. Structlog Invariants** | `ui_automation.image_mode_entered` → `ui_automation.image_model_selected` → `ui_automation.aspect_ratio_set` → `ui_automation.prompt_submitted` → `batch_jitter_sleep` (0.99s) | 🟢 PASS |
-| **5. DAG Intra-Batch Binding** | Prompt 1 (`16:9`) bound Prompt 0's generated asset as `ref: "batch:0"` via `batchGenerateImages` payload | 🟢 PASS |
+| **5. DAG Intra-Batch Binding** | Prompt 1 (`16:9`) bound Prompt 0's generated asset as `ref: "batch:0"` via `batchGenerateImages` payload | ~~🟢 PASS~~ **Withdrawn (2026-10-01, #913)** |
+
+> **Correction (2026-10-01, #913).** Row 5 could not have passed. At this tag the manifest
+> `ref` field was read only inside `resolve_batch_dependencies`, which nothing called
+> (`git grep item.ref v0.52.0 -- src`), and neither request builder attached a reference.
+> A live re-measurement on 2026-10-01 confirmed rows carrying `ref` ran as plain
+> text-to-image. See `docs/superpowers/spikes/2026-10-01-batch-ref-dropped.md`.
 
 ---
 

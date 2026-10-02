@@ -127,7 +127,7 @@ if TYPE_CHECKING:
 
     from _typeshed import DataclassInstance
 
-    from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ProjectBrief
+    from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef, ProjectBrief
     from gflow_cli.api.video import (
         GenerateVideoRequest,
         VideoResult,
@@ -2038,6 +2038,29 @@ class FlowApiClient:
         data = await self._post_json(routes.UPLOAD_IMAGE, body)
         return AssetInfo.from_upload_response(data)
 
+    async def upload_reference(self, project_id: str, path: Path) -> ImageRef:
+        """Upload a local image into ``project_id`` once, as a reference to use in place.
+
+        Returns an ``ImageRef`` for an image now in the project (``in_project=True``),
+        so every later use is a mention, never another upload (#913). The transport
+        uploads it when it drives the host Flow served (flow.google.com: the composer
+        toolbar, which names the media id and a run-unique caption); otherwise the REST
+        upload. The file is checked first either way (size, image magic bytes).
+        """
+        from gflow_cli.api.image import ImageRef  # noqa: PLC0415 - typing-only at module level
+
+        await validate_image_file(path)
+        uploader = cast(
+            "Callable[..., Awaitable[ImageRef | None]] | None",
+            getattr(self.transport, "upload_reference", None),
+        )
+        if uploader is not None:
+            ref = await uploader(project_id=project_id, path=path)
+            if ref is not None:
+                return ref
+        asset = await self.upload_image(project_id, path)
+        return ImageRef(name=asset.name, display_name=asset.display_name, in_project=True)
+
     async def download(self, name_or_url: str, out_path: Path) -> Path:
         """Download an asset (image or video) to `out_path`. Returns out_path.
 
@@ -2798,15 +2821,12 @@ class FlowApiClient:
             minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
             try:
                 return await minter.mint(action)
-            # Deliberately broad. `TokenMinter.mint` guards only its SECOND
-            # evaluate: `site_key()` -> `discover_site_key` runs an unguarded
-            # `page.evaluate`, and the minter is rebuilt per call so `_site_key`
-            # is always None and that unguarded call runs every time. A hop
-            # mid-mint destroys the execution context, so the likeliest shape of
-            # this failure is a RAW Playwright error, not RecaptchaError —
-            # catching only the latter would miss the very race this exists for.
-            # Nothing is swallowed: the original propagates untouched unless the
-            # page turns out to be migrated.
+            # Deliberately broad. Both of `TokenMinter`'s evaluates now raise
+            # `RecaptchaError` (#915; the site-key read was unguarded until then and
+            # surfaced a RAW Playwright error), but the minter is not the only code in
+            # this block, and the re-classification below must see any failure a hop
+            # mid-mint can cause. Nothing is swallowed: the original propagates
+            # untouched unless the page turns out to be migrated.
             except Exception:
                 # #692: the guard above is a point-in-time read, and the handoff
                 # to flow.google.com is a CLIENT-SIDE navigation that can land

@@ -120,6 +120,43 @@ def test_e2e_file_has_cost_sub_marker(test_file: pathlib.Path) -> None:
     )
 
 
+def _duration_without_omni_flash(source: str) -> list[int]:
+    """Line numbers of argument lists that pass ``--duration`` without ``omni-flash``.
+
+    Veo 3.1 models render no duration control, so the CLI refuses ``--duration``
+    with them before any browser work (exit 11). These opt-in, credit-spending
+    tests never run in CI, so a bare ``--duration`` sits unnoticed until someone
+    pays to find it: ``test_i2v_flags_e2e.py`` carried one for months, and
+    ``test_json_output_e2e.py`` did again (#926).
+    """
+    import ast
+
+    bad: list[int] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.List):
+            args = {e.value for e in node.elts if isinstance(e, ast.Constant)}
+            if "--duration" in args and "omni-flash" not in args:
+                bad.append(node.lineno)
+    return bad
+
+
+@pytest.mark.parametrize("test_file", _collect_e2e_test_files(), ids=lambda p: p.name)
+def test_e2e_duration_is_paired_with_omni_flash(test_file: pathlib.Path) -> None:
+    bad = _duration_without_omni_flash(test_file.read_text(encoding="utf-8"))
+    assert not bad, (
+        f"{test_file.name}: --duration without --model omni-flash at line(s) {bad}. "
+        "Only omni-flash renders a duration control; drop --duration or use omni-flash."
+    )
+
+
+def test_duration_guard_catches_the_926_shape() -> None:
+    """The guard must flag the exact argument list that shipped in #926."""
+    bad = '["video", "t2v", "p", "--model", "veo-lite", "--duration", "8"]'
+    good = '["video", "t2v", "p", "--model", "omni-flash", "--duration", "4"]'
+    assert _duration_without_omni_flash(bad) == [1]
+    assert _duration_without_omni_flash(good) == []
+
+
 def test_bdd_bound_tier_resolution_actually_reads_the_gherkin() -> None:
     """Prove the resolution above works, and is not passing for another reason.
 

@@ -1027,3 +1027,21 @@ async def test_a_failure_before_any_media_id_still_records_none(temp_db: DataSto
     row = repo.get_task("task-895-early")
     assert row is not None
     assert row.flow_media_id is None
+
+
+@pytest.mark.asyncio
+async def test_a_mint_failure_reaches_an_mcp_caller_as_problem_details(
+    temp_db: DataStore,
+) -> None:
+    """#915: it took the hashed "Unknown Error" branch; now it is typed, redacted, flagged."""
+    from gflow_cli.api.recaptcha import RecaptchaError
+
+    exc = RecaptchaError(
+        "reCAPTCHA evaluate failed: Execution context was destroyed", retryable=True
+    )
+    error = await _fail_t2v_with(temp_db, exc, "task-915")
+    assert error["type"] == "https://gflow-cli.dev/errors/recaptcha-mint"
+    assert error["exit_code"] == 1
+    assert not error["detail"].startswith("sha256:")
+    assert "Execution context was destroyed" in error["detail"]
+    assert error["retryable"] is True

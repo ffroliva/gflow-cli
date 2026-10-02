@@ -12,6 +12,10 @@ from __future__ import annotations
 
 from typing import Any, Protocol, cast
 
+from gflow_cli.errors import RecaptchaError
+
+__all__ = ["RecaptchaError", "TokenMinter", "discover_site_key"]
+
 
 class _PageLike(Protocol):
     """Minimal subset of playwright.async_api.Page we need.
@@ -20,11 +24,6 @@ class _PageLike(Protocol):
     """
 
     async def evaluate(self, expression: str, arg: Any = None) -> Any: ...
-
-
-class RecaptchaError(RuntimeError):
-    """Raised when reCAPTCHA token minting fails (script missing,
-    Google refused to mint, etc.)."""
 
 
 _DISCOVER_SITE_KEY_JS = """
@@ -58,19 +57,30 @@ async ([siteKey, action]) => {
 async def discover_site_key(page: _PageLike) -> str:
     """Read the reCAPTCHA Enterprise site key from the loaded page.
 
-    Raises `RecaptchaError` if the recaptcha/enterprise.js script tag is
-    missing or doesn't carry a `render=<key>` query param.
+    Raises `RecaptchaError` (#915) if the read itself fails, typically because a
+    navigation destroyed the page's context mid-read (retryable), or if no
+    recaptcha/enterprise.js tag carries a `render=<key>` query param. A missing key is
+    retryable only on a web page: Flow injects the script after the document reports
+    `complete`, so a Flow page read too early has none yet and a re-read finds it
+    (spike arms E/F), while a non-web page such as `about:blank` never will.
     """
-    key = await page.evaluate(_DISCOVER_SITE_KEY_JS)
+    try:
+        key = await page.evaluate(_DISCOVER_SITE_KEY_JS)
+    except Exception as exc:
+        msg = f"reading the reCAPTCHA site key failed: {exc}"
+        raise RecaptchaError(msg, retryable=True) from exc
     if not isinstance(key, str) or not key:
-        msg = (
-            "Could not discover reCAPTCHA site key from the page. "
-            "The Flow editor page may have failed to load, or the reCAPTCHA "
-            "script tag layout has changed."
+        # Name the page state, not a cause: "the editor failed to load" sent #891 the
+        # wrong way on a pool page parked at about:blank.
+        url = getattr(page, "url", None)
+        on_web_page = isinstance(url, str) and url.startswith(("https://", "http://"))
+        state = (
+            "carries no reCAPTCHA Enterprise script yet (Flow injects it after the page loads)"
+            if on_web_page
+            else "is not a Flow page, so it has no reCAPTCHA Enterprise script"
         )
-        raise RecaptchaError(
-            msg,
-        )
+        msg = f"Could not discover the reCAPTCHA site key: the page the mint ran on {state}."
+        raise RecaptchaError(msg, retryable=on_web_page)
     return key
 
 
@@ -109,16 +119,14 @@ class TokenMinter:
                 "Likely causes: grecaptcha not loaded, page navigated away, "
                 "or Playwright timeout. Try GFLOW_CLI_HEADLESS=false."
             )
-            raise RecaptchaError(
-                msg,
-            ) from exc
+            # Spike arm D: a mint that lost a race with a navigation succeeds once the
+            # page settles (3/3), so this one is worth a retry.
+            raise RecaptchaError(msg, retryable=True) from exc
         if not isinstance(token, str) or not token:
             msg = (
                 f"reCAPTCHA returned an empty token for action={action!r}. "
                 "Likely causes: headless detection by Google, or the page "
                 "navigated away before mint. Try GFLOW_CLI_HEADLESS=false."
             )
-            raise RecaptchaError(
-                msg,
-            )
+            raise RecaptchaError(msg)  # class default (not retryable) until it is observed
         return token

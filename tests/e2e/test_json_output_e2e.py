@@ -155,7 +155,7 @@ def test_e2e_video_t2v_json_shape(e2e_env: dict[str, str], tmp_path: Path) -> No
     """`gflow video t2v --json` produces a pure-JSON document with the
     ``video_result`` schema (status / command / media_id / generation_status /
     succeeded / local_path / request) when run against real Flow. Costs 1
-    Veo credit (cheapest: veo-lite, 8s).
+    Veo credit (cheapest: veo-lite, Flow's default length).
     """
     # ``e2e_env`` already creates ``tmp_path/out`` (see tests/e2e/conftest.py).
     out_dir = tmp_path / "out"
@@ -181,8 +181,9 @@ def test_e2e_video_t2v_json_shape(e2e_env: dict[str, str], tmp_path: Path) -> No
             "a golden sunset over mountains",
             "--model",
             "veo-lite",
-            "--duration",
-            "8",
+            # No --duration (#926): veo-lite renders no duration control on some
+            # accounts, where the flag is refused pre-submit (exit 11). Duration
+            # is not what this test asserts; Flow's default length is enough.
             "--aspect",
             "9:16",
             "--out-dir",

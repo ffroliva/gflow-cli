@@ -35,6 +35,7 @@ import json
 import mimetypes
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -46,6 +47,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.dto import GeneratedImage, ProjectInfo
 from gflow_cli.api.image import Aspect as ImageAspect
+from gflow_cli.api.image import ImageRef
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.transports._common import (
     expired_link_hint,
@@ -213,6 +215,56 @@ BOUND_CHIP = "flow-prompt-box button.chip-container:has(img)"
 PICKER = "flow-add-menu-popover-content"
 PICKER_SEARCH = "input[type='text']"
 PICKER_OPTION = "button.asset-item[role='option']"
+#: The `/asb/<token>` of the grid tile whose `data-media-id` is the argument (#913).
+#: The id is passed as an argument and compared in JS, never formatted into a selector.
+_GRID_TOKEN_JS = (
+    "(id) => { for (const e of document.querySelectorAll('img[data-media-id]')) {"
+    " if (e.getAttribute('data-media-id') === id) {"
+    " const m = (e.getAttribute('src') || '').match(/\\/asb\\/([A-Za-z0-9_-]+)/);"
+    " return m ? m[1] : ''; } } return ''; }"
+)
+#: The `/asb/<token>` of each picker option, in display order.
+_OPTION_TOKENS_JS = (
+    "(sel) => [...document.querySelectorAll(sel)].map(o => {"
+    " const img = o.querySelector('img');"
+    " const m = ((img && img.getAttribute('src')) || '').match(/\\/asb\\/([A-Za-z0-9_-]+)/);"
+    " return m ? m[1] : ''; })"
+)
+#: Budget for a just-generated image to become mentionable, across editor reloads
+#: (#913). Checked after each attempt, so a row can overrun it by one attempt.
+EXISTING_REF_WAIT_S = 90.0
+#: Pause before each editor reload while waiting for it.
+EXISTING_REF_RELOAD_PAUSE_S = 5.0
+#: ArrowDown loads the highlighted asset's detail (`UpteDb`); an Enter sent before it
+#: settles fails (measured, scripts/dev/capture_migrated_attach_rpcs.py).
+ARROW_SETTLE_MS = 3500
+#: Flow writes captions with its own model; they reach the composer by typing.
+_CAPTION_MAX = 120
+
+
+def _picker_query(ref: ImageRef) -> str:
+    """The search text for an existing image: its Flow caption, only if safe to type.
+
+    A newline would press Enter mid-query and ``@`` opens a nested mention. Rather than
+    search a string other than the caption, refuse (SCENARIO #18, #19).
+    """
+    caption = ref.display_name
+    if (
+        not caption.strip()
+        or "@" in caption
+        # Control, format (zero-width, direction marks) and line/paragraph separators.
+        or any(unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"} for ch in caption)
+        or len(caption) > _CAPTION_MAX
+    ):
+        raise ReferenceNotFoundError(
+            detail=(
+                f"migrated host: image {ref.name} has no caption that can be searched "
+                f"safely ({len(caption)} chars), so it cannot be referenced in place"
+            ),
+        )
+    return caption.strip()
+
+
 #: The Ingredients sub-mode holds references; Frames holds the i2v chips.
 INGREDIENTS_LIGATURE = "chrome_extension"
 #: The only duration at which this host offers reference-to-video. Measured 2026-09-06 at
@@ -524,8 +576,15 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
 
 
 def _unported_image_form(request: GenerateImageRequest) -> str | None:
-    if request.refs:
+    if request.refs and request.ref_paths:
+        return "existing-image references mixed with local files"
+    if any(not ref.in_project for ref in request.refs):
+        # Only an image this run generated in this project is referenced in place (#913);
+        # a UUID ref from the catalog or MCP is not ported here.
         return "a reference given by Flow media UUID"
+    if any(not ref.display_name for ref in request.refs):
+        # Found by its Flow caption, then matched by thumbnail; Flow returned none.
+        return "a reference to an image Flow returned without a caption"
     if request.reference_entities:
         return "character references"
     if request.instructions:
@@ -875,6 +934,26 @@ def _image_body_problem(
             "migrated host: the image submit body is missing uploaded reference(s) "
             f"{', '.join(missing[:4])} — refusing to report a text-only generation as i2i"
         )
+    return None
+
+
+async def _guard_image_submit(
+    route: Any,
+    request: Any,
+    reference_ids: tuple[str, ...],
+    model: ImageModel | None,
+) -> str | None:
+    """Abort an ``ogiZ0b`` submit that does not carry its references, before Flow acts.
+
+    The observer path (``_image_body_problem`` in ``on_request``) only refuses to *report*
+    such a run: by then Flow has generated it, spent quota and added an image (#913,
+    SCENARIO #15). Returns the problem when aborted, ``None`` when let through.
+    """
+    problem = _image_body_problem(_post_data(request), reference_ids, model)
+    if problem is not None:
+        await route.abort()
+        return problem
+    await route.continue_()
     return None
 
 
@@ -1853,6 +1932,14 @@ class MigratedComposer:
         )
         return media_id
 
+    async def upload(self, page: Page, project_id: str, image_path: Path) -> tuple[str, str]:
+        """Upload ``image_path`` into the project; ``(media_id, run-unique caption)``.
+
+        The public face of :meth:`_upload_via_toolbar`, for a reference that will be
+        mentioned in place on later rows instead of uploaded again (#913).
+        """
+        return await self._upload_via_toolbar(page, project_id, image_path)
+
     async def _upload_via_toolbar(
         self, page: Page, project_id: str, image_path: Path
     ) -> tuple[str, str]:
@@ -2044,6 +2131,120 @@ class MigratedComposer:
         finally:
             page.remove_listener("response", on_response)
             page.remove_listener("request", on_request)
+
+    async def reference_existing(
+        self, page: Page, project_id: str, request: GenerateImageRequest
+    ) -> tuple[str, ...]:
+        """Apply the image settings and mention ``request.refs`` in place, reloading on a miss.
+
+        A just-generated image can be missing from this page load's grid or picker
+        search and present after a reload (measured twice, live e2e 2026-10-01). A reload
+        resets the settings and the composer, so each attempt redoes all three steps.
+        """
+        for ref in request.refs:
+            _picker_query(ref)  # an unusable caption is refused before any reload
+        deadline = time.monotonic() + EXISTING_REF_WAIT_S
+        while True:
+            try:
+                tokens = await self.await_existing_references(page, request.refs)
+                await self.apply_image_settings(page, request)
+                return await self.attach_existing_references(page, request.refs, tokens)
+            except ReferenceNotFoundError:
+                if time.monotonic() >= deadline:
+                    raise
+            log.info("migrated.existing_reference_reload")
+            await page.wait_for_timeout(EXISTING_REF_RELOAD_PAUSE_S * 1000)
+            await page.reload(wait_until="domcontentloaded", timeout=45_000)
+            await self.ensure_editor(page, project_id)
+
+    async def await_existing_references(
+        self, page: Page, refs: tuple[ImageRef, ...]
+    ) -> dict[str, str]:
+        """Each reference's grid thumbnail token in this page load; a missing one raises.
+
+        Measured (live e2e, 2026-10-01): the project grid is the asset list fetched when
+        the editor loads, and it is not updated in place. A row that opened the editor a
+        second after its parent was generated polled for 30 s without the tile; the next
+        row, after a reload, found it at once. :meth:`reference_existing` reloads.
+        """
+        tokens = {
+            ref.name: str(await page.evaluate(_GRID_TOKEN_JS, ref.name) or "") for ref in refs
+        }
+        missing = [media_id for media_id, token in tokens.items() if not token]
+        if missing:
+            log.info("migrated.existing_reference_not_listed", missing=len(missing))
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: image {missing[0]} is not in this project's grid, so "
+                    "it cannot be referenced in place"
+                ),
+            )
+        return tokens
+
+    async def attach_existing_references(
+        self, page: Page, refs: tuple[ImageRef, ...], tokens: dict[str, str]
+    ) -> tuple[str, ...]:
+        """Mention images already in the project, chosen by identity; upload nothing.
+
+        Measured (docs/superpowers/spikes/2026-10-01-batch-ref-dropped.md, Gate): the
+        ``@`` picker is project-scoped and lists matches by Flow's caption, but captions
+        collide and the older match comes first. Each option's thumbnail is
+        ``/asb/<token>``; the project grid tile ``img[data-media-id=<uuid>]`` carries the
+        same token. So: search by caption, select the option whose token is the
+        reference's, and confirm a chip landed. ``_image_body_problem`` still checks the
+        submit carries the ids.
+        """
+        for count, ref in enumerate(refs, start=1):
+            query = _picker_query(ref)
+            await self._mention_by_token(
+                page, query, tokens[ref.name], ref.name, expect_chips=count
+            )
+        media_ids = tuple(ref.name for ref in refs)
+        # Distinct from `migrated.references_attached` (the upload path): this one means
+        # nothing was uploaded.
+        log.info("migrated.existing_references_attached", count=len(refs), media_ids=media_ids)
+        return media_ids
+
+    async def _mention_by_token(
+        self, page: Page, query: str, token: str, media_id: str, *, expect_chips: int
+    ) -> None:
+        """One search in this page load; a miss closes the picker and raises.
+
+        Measured (live e2e, 2026-10-01): when the picker does not offer a just-generated
+        image, searching again in the same page load does not help (0 options three times
+        over 30 s), while a fresh editor load offers it at once. So retrying belongs to
+        :meth:`reference_existing`, which reloads.
+        """
+        await page.locator(COMPOSER).first.click(timeout=5000)
+        await page.keyboard.type("@", delay=120)
+        await page.wait_for_timeout(2200)
+        await page.keyboard.type(query, delay=100)
+        await page.wait_for_timeout(2500)
+        tokens = [str(t) for t in await page.evaluate(_OPTION_TOKENS_JS, PICKER_OPTION)]
+        if token in tokens:
+            # The option's position: >0 means another image shares the caption (#21).
+            log.info("migrated.existing_reference_option", option_index=tokens.index(token))
+            for _ in range(tokens.index(token)):
+                await page.keyboard.press("ArrowDown")
+                await page.wait_for_timeout(ARROW_SETTLE_MS)
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(2500)
+            chips = await self.read_chips(page)
+            # A query can also match a character; only a media chip is this image.
+            if len(chips) == expect_chips and chips[-1].get("reference_type") == "media":
+                await page.keyboard.type(" ", delay=80)
+                return
+        else:
+            log.info("migrated.mention_miss", offered=len(tokens), by="token")
+            # The picker is a dialog over the composer (measured, gate #39): close it.
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(800)
+        raise ReferenceNotFoundError(
+            detail=(
+                f"migrated host: image {media_id} did not attach as a reference "
+                f"({len(tokens)} picker option(s) offered for its caption, none of them it)"
+            ),
+        )
 
     async def attach_references(
         self, page: Page, project_id: str, paths: tuple[Path, ...]
@@ -2813,9 +3014,26 @@ class MigratedComposer:
                 return
             result.set_result(images)
 
+        def is_image_submit(url: str) -> bool:
+            return _rpcid(url) == IMAGE_SUBMIT_RPC
+
+        async def guard(route: Any, raw_request: Any) -> None:
+            problem = await _guard_image_submit(route, raw_request, reference_ids, request.model)
+            log.info(
+                "migrated.image_submit_guarded",
+                outcome="aborted" if problem else "passed",
+                references=len(reference_ids),
+            )
+            if problem is not None and not route_error.done():
+                route_error.set_result(
+                    WireFormatError(detail=problem, route=f"batchexecute:{IMAGE_SUBMIT_RPC}")
+                )
+
         page.on("request", on_request)
         page.on("response", on_response)
         try:
+            if reference_ids:
+                await page.route(is_image_submit, guard)
             enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
             while not await submit.is_enabled():
                 if time.monotonic() >= enable_deadline:
@@ -2849,6 +3067,11 @@ class MigratedComposer:
                 result.exception()
             page.remove_listener("request", on_request)
             page.remove_listener("response", on_response)
+            if reference_ids:
+                try:
+                    await page.unroute(is_image_submit, guard)
+                except Exception as exc:  # noqa: BLE001 - must not mask the real outcome
+                    log.debug("migrated.image_submit_unroute_failed", error=type(exc).__name__)
 
     @staticmethod
     async def _await_terminal(
@@ -3095,8 +3318,13 @@ async def run_images(
         )
     composer = MigratedComposer(out_dir=out_dir)
     await composer.ensure_editor(page, pid)
-    await composer.apply_image_settings(page, request)
     reference_ids: tuple[str, ...] = ()
+    if request.refs:
+        # Images already in this project (a manifest's `batch:N`, #913): referenced in
+        # place, never re-uploaded. Finding them may reload, so settings are applied there.
+        reference_ids = await composer.reference_existing(page, pid, request)
+    else:
+        await composer.apply_image_settings(page, request)
     if request.ref_paths:
         reference_ids = await composer.attach_references(page, pid, request.ref_paths)
         chips = await composer.read_chips(page)

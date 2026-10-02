@@ -364,12 +364,15 @@ headed, so Flow and reCAPTCHA see exactly the same browser.
 | `0,0`, `1920,0`, … | the window opens there: watch a run, or park it on a second monitor |
 | empty (`GFLOW_CLI_BROWSER_WINDOW_POSITION=`) | Chrome's own placement, the behaviour before this setting existed |
 
-**When to bring it back on-screen:** a run that waits on something only a person can
-clear, such as an account chooser that wants a click or a Google consent or
-verification screen. The error names where the session stopped. Set a visible
-position, re-run, and deal with it in the window. (Flow's one-time *rights to use this
-image* confirmation has its own remedy: see
-[KNOWN_ISSUES](../KNOWN_ISSUES.md).)
+**When to bring it back on-screen:** to watch a run, debug a step, or record a demo.
+
+**Not for a screen that needs a person.** If a run stops on an account chooser, a Google
+consent or verification screen, the error tells you to run
+`gflow auth login --profile <name>`. Do that: the login window always opens where you
+can see it, and it waits for you. A generation run does not: after clicking the
+chooser row it gives up within 30 seconds, so clearing a screen in a visible
+generation window is a race. (Flow's one-time *rights to use this image* confirmation
+has its own remedy: see [KNOWN_ISSUES](../KNOWN_ISSUES.md).)
 
 **What it does not do:** it does not stop Chrome **taking keyboard focus** when it
 launches: the `--no-focus-on-init` switch we tried made no measurable difference. If you are typing when a run starts, the
@@ -620,7 +623,7 @@ gflow image t2i "test idea" --profile experiments
 | `ValidationError: GFLOW_CLI_TIMEOUT_SECONDS must be a positive integer` | Bad `.env` value | Set to a number ≥ 1 |
 | `FileNotFoundError: $GFLOW_CLI_HOME/profile_default not found` | First run, no auth yet | `gflow auth login` |
 | `AuthExpiredError` | Cookies expired or revoked | `gflow auth login --profile <name>` |
-| A run waits, then times out on an account chooser, consent or verification screen | The generation browser opens off-screen, so you cannot click it | Re-run with `GFLOW_CLI_BROWSER_WINDOW_POSITION=0,0` (or empty) and clear the screen in the window. See [`GFLOW_CLI_BROWSER_WINDOW_POSITION`](#gflow_cli_browser_window_position) |
+| A run stops on an account chooser, consent or verification screen (`FlowAccountChooserError`, exit 38) | Google wants a person to answer that screen | `gflow auth login --profile <name>` and clear it there; the login window is always visible. Making the generation window visible does not help: the run gives up within 30 s. See [`GFLOW_CLI_BROWSER_WINDOW_POSITION`](#gflow_cli_browser_window_position) |
 | `ProfileAccessError` (exit code 11) | Chrome cannot write the profile directory (Windows access denied) | Grant write access to the whole profile directory, or use a writable profile. See [Profile-directory permissions](#profile-directory-permissions-at-browser-launch) |
 | Output files don't appear where I expect | Flag > env > .env > default — check actual resolved path | `gflow image t2i ... --verbose` shows the resolved output path |
 | `ProfileLockedError` (exit code 11) | Two concurrent calls against the same profile — the cross-process `ProfileLease` fails fast (never waits) on same-profile contention, whether the second holder is another `gflow` process, the `gflow serve` daemon, or an MCP call | Wait for the first call to finish, or use `--profile other` — different profiles run fully in parallel, each with its own lease |

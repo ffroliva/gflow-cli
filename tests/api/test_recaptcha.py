@@ -56,3 +56,82 @@ class TestTokenMinter:
         minter = TokenMinter(page)
         with pytest.raises(RecaptchaError):
             await minter.mint("videoGen")
+
+
+class TestTyped:
+    """#915: a mint failure is a GFlowError, retryable only where the spike measured it."""
+
+    async def test_is_a_domain_error_with_its_own_type_and_remediation(self) -> None:
+        from gflow_cli.errors import GFlowError
+
+        page = AsyncMock()
+        page.evaluate.return_value = None
+        with pytest.raises(GFlowError) as info:
+            await discover_site_key(page)
+        assert isinstance(info.value, RecaptchaError)
+        assert info.value.problem_type == "https://gflow-cli.dev/errors/recaptcha-mint"
+        assert info.value.remediation_hint
+
+    async def test_missing_site_key_off_the_web_is_not_retryable(self) -> None:
+        from gflow_cli.errors import is_retryable
+
+        page = AsyncMock()
+        page.url = "about:blank"
+        page.evaluate.return_value = None
+        with pytest.raises(RecaptchaError) as info:
+            await discover_site_key(page)
+        # Spike arm A: 3/3 identical on about:blank -- the page state, not timing (#891).
+        assert is_retryable(info.value) is False
+        assert "script tag layout" not in str(info.value)
+        assert "not a Flow page" in str(info.value)
+
+    async def test_missing_site_key_on_a_web_page_is_retryable(self) -> None:
+        from gflow_cli.errors import is_retryable
+
+        page = AsyncMock()
+        page.url = "https://flow.google.com/project/p"
+        page.evaluate.return_value = None
+        with pytest.raises(RecaptchaError) as info:
+            await discover_site_key(page)
+        # Spike arms E/F: read 0.1-0.3 s into a load the key is absent (readyState may
+        # already be "complete"); a re-read on the settled page found it, 4/4.
+        assert is_retryable(info.value) is True
+        assert "yet" in str(info.value)
+
+    async def test_a_page_without_a_url_string_is_not_claimed_retryable(self) -> None:
+        from gflow_cli.errors import is_retryable
+
+        page = AsyncMock()  # a mock url attribute is not a str
+        page.evaluate.return_value = None
+        with pytest.raises(RecaptchaError) as info:
+            await discover_site_key(page)
+        assert is_retryable(info.value) is False
+
+    async def test_a_site_key_evaluate_that_raises_is_typed_and_retryable(self) -> None:
+        from gflow_cli.errors import is_retryable
+
+        page = AsyncMock()
+        page.evaluate.side_effect = RuntimeError("Execution context was destroyed")
+        with pytest.raises(RecaptchaError) as info:
+            await discover_site_key(page)
+        assert is_retryable(info.value) is True
+        assert isinstance(info.value.__cause__, RuntimeError)
+
+    async def test_an_execute_failure_is_retryable(self) -> None:
+        from gflow_cli.errors import is_retryable
+
+        page = AsyncMock()
+        page.evaluate.side_effect = ["site-key", RuntimeError("Execution context was destroyed")]
+        with pytest.raises(RecaptchaError) as info:
+            await TokenMinter(page).mint("videoGen")
+        # Spike arm D: 3/3 raced mints failed, 3/3 re-mints on the settled page succeeded.
+        assert is_retryable(info.value) is True
+
+    async def test_an_empty_token_keeps_the_class_default(self) -> None:
+        from gflow_cli.errors import is_retryable
+
+        page = AsyncMock()
+        page.evaluate.side_effect = ["site-key", ""]
+        with pytest.raises(RecaptchaError) as info:
+            await TokenMinter(page).mint("videoGen")
+        assert is_retryable(info.value) is False  # unmeasured: no claim
