@@ -11,7 +11,7 @@ Exit code 16 covers three error classes in `src/gflow_cli/errors.py`:
 
 All three are re-exported via `gflow_cli.exceptions`. Comment in `errors.py:423` documents the EXIT_CODE_MAP ordering invariant — see [[exit-code-map-ordering-invariant-test-pitfall]].
 
-**Contract:** exit code 16 fires ONLY for pre-Flow failures (DB open, migration check before any paid Flow call). Post-success persistence failures (generation completed, file downloaded, but `INSERT` failed) emit `data.persistence_failed_after_success` structlog event with `flow_media_id` + `local_path`, print a yellow console warning, and STILL return 0. This prevents scripts from retrying paid generations just because the local catalog couldn't be updated.
+**Contract:** exit code 16 fires for data-store failures that do NOT follow a successful paid generation: DB open, migration check before any paid Flow call, and (since #900) a catalog write blocked past `busy_timeout` outside a successful generation. Post-success persistence failures (generation completed, file downloaded, but `INSERT` failed) emit `data.persistence_failed_after_success` structlog event with `flow_media_id` + `local_path`, print a yellow console warning, and STILL return 0. This prevents scripts from retrying paid generations just because the local catalog couldn't be updated.
 
 **How to apply:**
 - User reports exit 16: check `GFLOW_CLI_DB_PATH` filesystem permissions, then check for "newer schema" — upgrade gflow-cli OR repoint `GFLOW_CLI_DB_PATH` to a compatible DB.

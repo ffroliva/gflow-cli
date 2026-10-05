@@ -149,7 +149,7 @@ agent-only exception in § 6.1, which overrides it to `false`), an unreachable
 UI arm (`UiModeUnavailableError`), and a partially-completed sync
 (`SyncPartialError`). That list is `errors.RETRYABLE_ERRORS`, but it is no longer
 the whole answer: `errors.is_retryable` consults the **instance** first, so a raise
-site can override its class. Two do today — Flow's `/about` redirect raises
+site can override its class. Among them, Flow's `/about` redirect raises
 `FlowAppError` with `retryable: false`, and since 2026-09-11 that is a **measurement**, not a
 preserved default: caught during a live occurrence, 5/5 consecutive attempts over ~3 minutes
 landed on `/about` again, on the account's own project with a healthy session — so a retry is
@@ -157,7 +157,11 @@ doomed and costs ~35 s each ([#756](https://github.com/ffroliva/gflow-cli/issues
 second is the migrated **agent-only composer**, which raises `FlowAgentUiError` with
 `retryable: false` because which composer an account gets is server-assigned and does not
 flap ([#799](https://github.com/ffroliva/gflow-cli/issues/799)). The
-*cause*, and whether it ever clears, remain unmeasured.
+*cause*, and whether it ever clears, remain unmeasured. The override also runs the other
+way: a reCAPTCHA mint failure (`type` `…/errors/recaptcha-mint`, exit 1, no request sent,
+no credit spent) is `retryable: true` when a navigation raced the mint or the page was a
+Flow page whose script had not loaded yet, and `false` on a page that is not a web page —
+each measured live ([#915](https://github.com/ffroliva/gflow-cli/issues/915)).
 Read the flag off the envelope; never re-derive it from the class list.
 Everything
 else (auth, content-policy, configuration, security) is terminal

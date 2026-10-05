@@ -254,7 +254,7 @@ The `gflow-cli` supports a 3-layer pipeline for persistent generation context (A
 |---|---|---|
 | `No session for profile 'default'` | First run, no auth | `gflow auth login` |
 | `403 Forbidden` from upload / generate | Account doesn't have Flow access | Verify in [labs.google/fx/tools/flow](https://labs.google/fx/tools/flow) |
-| reCAPTCHA refuses to mint a token (headless detected) | Google bot-detection | Set `GFLOW_CLI_HEADLESS=false` and re-run; a headed window passes detection |
+| reCAPTCHA refuses to mint a token (headless detected) | Google bot-detection | Set `GFLOW_CLI_HEADLESS=false` and re-run; a headed window passes detection. With `--json`, a mint failure has `type` `…/errors/recaptcha-mint` and exits 1; re-run only when `retryable` is true |
 | `Playwright Executable doesn't exist` | Chromium not downloaded | `uvx --from gflow-cli playwright install chromium` |
 | Generations all fail with the same UUID | Stale Flow session | `gflow auth login` again to refresh cookies |
 | Quota exceeded | Burned through monthly credits | Wait for reset, or upgrade subscription |

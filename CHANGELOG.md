@@ -25,8 +25,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   advising `--scale 2k`, without waiting for an API 403. A missing menu item raises
   `UiSelectorDriftError` (exit 23) instead.
 
+## [0.82.1] — 2026-10-02
+
 ### Fixed
 
+- **A video's Flow workflow id is recorded in the catalog (#898).** It was written as
+  `NULL` for every clip. As a result, the MCP task result's `flow_workflow_id` was always
+  `null` for a video, and a clip could not be looked up by its workflow id. On
+  flow.google.com the id now comes from the generation record (slot 0, the id Flow polls
+  the clip by); on labs, from the generate reply's `media[0].workflowId`, which is not the
+  operation name already stored as `flow_operation_id`.
+- **Recording a started video twice no longer crashes (#898).** A second start for a
+  media id already in the catalog minted a fresh row id and hit
+  `UNIQUE(profile_name, flow_media_id)` (`DataIntegrityError`). A start for a media id the
+  catalog already holds is now a no-op, so it cannot reset a completed clip to `pending`.
+- **A busy catalog no longer turns a successful generation into a failed one (#900).**
+  When another gflow process held the local database's write lock past the 5 s
+  `busy_timeout`, recording a finished clip raised a raw `sqlite3.OperationalError`. That
+  missed every handler that downgrades a recording failure to a warning, so `gflow video`
+  exited 1 ("unexpected error") for a clip that existed and was paid for, and tried to
+  record it as failed. Catalog transactions now raise `DataStoreError`, so `gflow image`
+  and `gflow video` succeed and log a `data.persistence_failed_after_success` warning
+  naming the media id. Outside a successful generation the same failure exits 16
+  instead of 1.
 - **A reCAPTCHA mint failure is a typed error with Problem Details (#915).** It was a bare
   `RuntimeError`: `gflow image upscale` and `gflow video extend` (and image generation on
   the experimental HTTP transports) exited 1 with an "unexpected" message and no
@@ -35,7 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own `type` (`…/errors/recaptcha-mint`) and a `retryable` flag set from a live measurement:
   a mint that lost a race with a navigation, or ran on a Flow page before Flow injected its
   reCAPTCHA script, is retryable (the settled page mints); a mint on a page that is not a
-  web page (`about:blank`) is not (it fails the same way every time). It still exits 1 —
+  web page (`about:blank`) is not (it fails the same way every time); an empty token, never
+  observed, keeps the class default (not retryable). It still exits 1 —
   branch on the `type`. The site-key message no longer blames "the Flow editor page" or "the
   script tag layout", which was false on the `about:blank` page where it was seen (#891).
 
@@ -5816,7 +5838,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.82.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.82.1...HEAD
+[0.82.1]: https://github.com/ffroliva/gflow-cli/compare/v0.82.0...v0.82.1
 [0.82.0]: https://github.com/ffroliva/gflow-cli/compare/v0.81.0...v0.82.0
 [0.81.0]: https://github.com/ffroliva/gflow-cli/compare/v0.80.0...v0.81.0
 [0.80.0]: https://github.com/ffroliva/gflow-cli/compare/v0.79.1...v0.80.0

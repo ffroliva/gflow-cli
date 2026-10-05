@@ -55,6 +55,7 @@ from gflow_cli.api.video import (
     media_name_from_generate_response,
     operation_name_from_generate_response,
     parse_video_status,
+    workflow_id_from_generate_response,
 )
 from gflow_cli.errors import (
     AuthExpiredError,
@@ -3540,11 +3541,12 @@ class VideoGenerationMixin:
     @staticmethod
     def _parse_generate_response(
         generate_resp: dict[str, Any],
-    ) -> tuple[str, str | None]:
-        """Validate HTTP status, extract media_name and flow_operation_id.
+    ) -> tuple[str, str | None, str | None]:
+        """Validate HTTP status, extract media_name, flow_operation_id and workflow_id.
 
         Raises AuthExpiredError, WafRejectionError, or WireFormatError on bad
-        status codes or missing media id. Returns (media_name, flow_operation_id).
+        status codes or missing media id. Returns (media_name, flow_operation_id,
+        workflow_id).
         """
         http_status = generate_resp.get("status")
         url = str(generate_resp.get("url", ""))
@@ -3599,7 +3601,7 @@ class VideoGenerationMixin:
         # Stored SEPARATELY from media_name even when they currently match —
         # spec explicitly keeps them distinct for future divergence.
         flow_operation_id: str | None = operation_name_from_generate_response(body)
-        return media_name, flow_operation_id
+        return media_name, flow_operation_id, workflow_id_from_generate_response(body)
 
     @staticmethod
     async def _run_stage(
@@ -3931,8 +3933,8 @@ class VideoGenerationMixin:
                     generate_resp, expected=list(request.reference_entities)
                 )
 
-            media_name, flow_operation_id = VideoGenerationMixin._parse_generate_response(
-                generate_resp
+            media_name, flow_operation_id, workflow_id = (
+                VideoGenerationMixin._parse_generate_response(generate_resp)
             )
 
             if on_started is not None:
@@ -3940,6 +3942,7 @@ class VideoGenerationMixin:
                     media_id=media_name,
                     project_id=project_id,
                     flow_operation_id=flow_operation_id,
+                    workflow_id=workflow_id,
                 )
                 await VideoGenerationMixin._fire_on_started(on_started, started)
 
@@ -3959,6 +3962,7 @@ class VideoGenerationMixin:
                 local_path=local_path,
                 project_id=project_id,
                 flow_operation_id=flow_operation_id,
+                workflow_id=workflow_id,
             )
         finally:
             # The Page is pooled and persistent — remove both listeners so they

@@ -239,6 +239,7 @@ The data layer follows a "fail fast before billing, warn after success" contract
 | DB has a NEWER schema than installed gflow-cli | Raise `DataMigrationError` BEFORE Flow call | 16 |
 | Recorder write fails AFTER successful paid generation | Emit `data.persistence_failed_after_success` structlog event with `flow_media_id` + `local_path` when available; print yellow warning; **return 0** | 0 |
 | Batch row N fails to persist | Same warning; later rows still recorded | 0 (or 1 if other failure modes apply) |
+| A write cannot take the lock within `busy_timeout` (another process is writing) | `DataStore.transaction()` raises `DataStoreError` (#900): after a successful generation, the warning row above; anywhere else, the error | 0 after success, else 16 |
 
 **Why "warn and continue" after success?** If your `gflow video t2v` succeeds and the file lands on disk, exiting non-zero solely because the local catalog could not be updated would teach scripts to retry the paid generation. The catalog can be reconciled later by a future `gflow data repair`; the file cannot be un-billed.
 
@@ -521,7 +522,7 @@ Every SQLite connection opened by `DataStore` enables:
 |---|---|---|
 | `foreign_keys` | `ON` | The schema declares FK constraints; SQLite ignores them by default |
 | `journal_mode` | `WAL` | Allows parallel CLI processes to read while one writes |
-| `busy_timeout` | `5000` (ms) | Two CLI processes upserting concurrently retry briefly instead of failing immediately with `database is locked` |
+| `busy_timeout` | `5000` (ms) | Two CLI processes upserting concurrently retry briefly instead of failing immediately with `database is locked`; past 5 s the write raises `DataStoreError` (#900) |
 
 Writes are explicitly grouped with `BEGIN IMMEDIATE` via `DataStore.transaction(immediate=True)` to avoid deferred-writer deadlocks under WAL. Connections use `isolation_level=None` so the transaction context manager controls boundaries explicitly.
 

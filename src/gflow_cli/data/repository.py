@@ -205,6 +205,11 @@ class DataRepository:
                         created_at, metadata_json
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    -- Conflict on `id`, NOT on UNIQUE(profile_name, flow_media_id), on
+                    -- purpose (#898): callers link operations by the id they pass, and
+                    -- the image paths rely on a repeated media id raising so that
+                    -- escalate_asset_collision can name an attribution collision. A
+                    -- caller re-recording a known media id looks its row up first.
                     ON CONFLICT(id) DO UPDATE SET
                         profile_name = excluded.profile_name,
                         flow_project_id = excluded.flow_project_id,

@@ -984,3 +984,116 @@ def test_record_started_extend_does_not_persist_the_prompt(tmp_path: Path) -> No
         )
         raw = store.conn.execute("SELECT metadata_json FROM assets").fetchone()[0]
     assert "prompt" not in (raw or "")
+
+
+def _started(media: str = "media-v", workflow: str | None = "wf-v") -> VideoStarted:
+    return VideoStarted(
+        media_id=media, project_id="proj-v", flow_operation_id="op-v", workflow_id=workflow
+    )
+
+
+def _t2v() -> GenerateVideoRequest:
+    return GenerateVideoRequest(prompt="p", mode=Mode.T2V, aspect=VideoAspect.PORTRAIT)
+
+
+def test_started_video_records_the_workflow_id_on_the_asset(tmp_path: Path) -> None:
+    """#898 item 2: it was hardcoded None, so a video could not be found by workflow id."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        recorder.record_started_video(
+            profile_name="default", profile_dir=tmp_path / "pd", request=_t2v(), started=_started()
+        )
+        asset = recorder.repository.get_asset_by_flow_media_id("default", "media-v")
+        assert asset is not None and asset.flow_workflow_id == "wf-v"
+        by_wf = recorder.repository.get_asset_by_any_id("default", "wf-v")
+        assert by_wf is not None and by_wf.flow_media_id == "media-v"
+
+
+def test_completed_video_keeps_the_workflow_id_the_start_recorded(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        recorder.record_started_video(
+            profile_name="default", profile_dir=tmp_path / "pd", request=_t2v(), started=_started()
+        )
+        recorder.record_completed_video(
+            profile_name="default",
+            _profile_dir=tmp_path / "pd",
+            request=_t2v(),
+            result=VideoResult(
+                status=VideoStatus(media_id="media-v", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+                local_path=None,
+                project_id="proj-v",
+            ),
+        )
+        asset = recorder.repository.get_asset_by_flow_media_id("default", "media-v")
+        assert asset is not None and asset.flow_workflow_id == "wf-v"
+
+
+def test_completed_video_records_the_workflow_id_it_carries(tmp_path: Path) -> None:
+    """A start that named no workflow id (the labs reply) is filled in by the result."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        recorder.record_started_video(
+            profile_name="default",
+            profile_dir=tmp_path / "pd",
+            request=_t2v(),
+            started=_started(media="media-w", workflow=None),
+        )
+        recorder.record_completed_video(
+            profile_name="default",
+            _profile_dir=tmp_path / "pd",
+            request=_t2v(),
+            result=VideoResult(
+                status=VideoStatus(media_id="media-w", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+                local_path=None,
+                project_id="proj-v",
+                workflow_id="wf-w",
+            ),
+        )
+        asset = recorder.repository.get_asset_by_flow_media_id("default", "media-w")
+        assert asset is not None and asset.flow_workflow_id == "wf-w"
+
+
+def test_recording_a_started_video_twice_is_a_no_op(tmp_path: Path) -> None:
+    """#898 item 4: a second start for a known media id raised DataIntegrityError."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        recorder.record_started_video(
+            profile_name="default", profile_dir=tmp_path / "pd", request=_t2v(), started=_started()
+        )
+        # A retry that names no workflow id (the labs shape) must not wipe the first one.
+        recorder.record_started_video(
+            profile_name="default",
+            profile_dir=tmp_path / "pd",
+            request=_t2v(),
+            started=_started(workflow=None),
+        )
+        assert store.conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 1
+        assert store.conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 1
+        asset = recorder.repository.get_asset_by_flow_media_id("default", "media-v")
+        assert asset is not None and asset.flow_workflow_id == "wf-v"
+
+
+def test_a_start_recorded_after_completion_leaves_the_clip_alone(tmp_path: Path) -> None:
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        recorder.record_started_video(
+            profile_name="default", profile_dir=tmp_path / "pd", request=_t2v(), started=_started()
+        )
+        recorder.record_completed_video(
+            profile_name="default",
+            _profile_dir=tmp_path / "pd",
+            request=_t2v(),
+            result=VideoResult(
+                status=VideoStatus(media_id="media-v", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+                local_path=None,
+                project_id="proj-v",
+            ),
+        )
+        recorder.record_started_video(
+            profile_name="default", profile_dir=tmp_path / "pd", request=_t2v(), started=_started()
+        )
+        row = store.conn.execute(
+            "SELECT status, flow_workflow_id FROM assets WHERE flow_media_id='media-v'"
+        ).fetchone()
+        assert (row[0], row[1]) == ("MEDIA_GENERATION_STATUS_SUCCESSFUL", "wf-v")

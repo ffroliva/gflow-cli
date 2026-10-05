@@ -2791,6 +2791,7 @@ class MigratedComposer:
                 media_id=first.media_id,
                 project_id=project_id or first.project_id,
                 flow_operation_id=first.workflow_id,
+                workflow_id=first.workflow_id,
             )
             if on_started is not None:
                 maybe = on_started(started)
@@ -3290,6 +3291,7 @@ async def run_video(
         local_path=Path(local_path) if local_path is not None else None,
         project_id=pid,
         flow_operation_id=record.workflow_id,
+        workflow_id=record.workflow_id,
     )
 
 

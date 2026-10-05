@@ -791,6 +791,13 @@ class OperationRecorder:
                 ),
             )
 
+        # A start for a media id the catalog already holds adds nothing: the generation
+        # is recorded. Re-writing the row would reset a completed clip to "pending" and
+        # drop its metadata, and a second STARTED operation would never be resolved.
+        # Before #898 this raised DataIntegrityError (a fresh id for a recorded media id
+        # violates UNIQUE(profile_name, flow_media_id)).
+        if repo.get_asset_by_flow_media_id(profile_name, started.media_id) is not None:
+            return
         asset_id = _new_id()
         repo.upsert_asset(
             AssetRecord(
@@ -798,7 +805,7 @@ class OperationRecorder:
                 profile_name=profile_name,
                 flow_project_id=started.project_id,
                 flow_media_id=started.media_id,
-                flow_workflow_id=None,
+                flow_workflow_id=started.workflow_id,
                 flow_media_generation_id=None,
                 kind=AssetKind.VIDEO,
                 status="pending",
@@ -948,7 +955,9 @@ class OperationRecorder:
                 profile_name=profile_name,
                 flow_project_id=result.project_id,
                 flow_media_id=flow_media_id,
-                flow_workflow_id=None,
+                # Never clobber the id the start recorded with None (#898).
+                flow_workflow_id=result.workflow_id
+                or (existing_asset.flow_workflow_id if existing_asset is not None else None),
                 flow_media_generation_id=None,
                 kind=AssetKind.VIDEO,
                 status=result.status.status,

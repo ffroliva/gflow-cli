@@ -104,6 +104,10 @@ def _warn_persistence_failed_after_success(
     logger.warning(
         "data.persistence_failed_after_success",
         error_class=type(exc).__name__,
+        # Since #900 every sqlite fault in a catalog write arrives as DataStoreError, a
+        # real bug as well as a lock; the class alone no longer tells them apart.
+        detail=getattr(exc, "detail", None) or str(exc),
+        route=getattr(exc, "route", None),
         flow_media_id=flow_media_id,
         local_path=str(local_path) if local_path is not None else None,
     )

@@ -4,6 +4,30 @@
 
 ## Current release
 
+**v0.82.1 — alpha.** Three fixes for failures that misreported what happened.
+
+**A reCAPTCHA mint failure is a typed error (#915).** It was a bare `RuntimeError`: exit 1
+with no remediation, a hashed "Unknown Error" over MCP, and one failure ended a
+multi-prompt run past `--continue-on-error`. It now has its own `type`
+(`…/errors/recaptcha-mint`) and a `retryable` flag measured live: a mint that lost a race
+with a navigation, or ran before Flow injected its script, is retryable; a mint on a
+non-web page (`about:blank`) is not. Still exit 1 — branch on the `type`.
+
+**A busy catalog no longer fails a successful generation (#900).** A write blocked past the
+5 s lock timeout raised a raw sqlite error that missed every "recording failed after
+success" handler, so `gflow video` exited 1 for a clip that existed and was paid for.
+Catalog transactions now raise `DataStoreError`: the run succeeds with a warning.
+
+**A video's Flow workflow id is recorded (#898).** It was `NULL` for every clip, so the MCP
+task result's `flow_workflow_id` was always `null` for a video. A repeated start for a
+known media id is now a no-op instead of a crash.
+
+**Not verified here:** accounts served labs (labs answers 308 on the three profiles here
+that hold a live Flow session). Full ledger:
+[LIVE_VERIFICATION_v0.82.1](LIVE_VERIFICATION_v0.82.1.md).
+
+<details><summary>v0.82.0 — a run config builds a series from one image</summary>
+
 **v0.82.0 — alpha.** A `gflow run` config can build a series from one image, and every
 generation it makes is now tracked.
 
@@ -29,6 +53,8 @@ sign-in screen in the generation window (#925).
 
 **Not verified here:** accounts served labs (labs answers 308 on the three profiles here that hold a live Flow session). Full
 ledger: [LIVE_VERIFICATION_v0.82.0](LIVE_VERIFICATION_v0.82.0.md).
+
+</details>
 
 <details><summary>v0.81.0 — the generation browser opens off-screen</summary>
 
@@ -356,6 +382,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| A reCAPTCHA mint failure, a busy catalog and a missing video workflow id stop misreporting what happened (#915, #900, #898) | ✅ done (v0.82.1) |
 | A run config row generates from an earlier row's image or a local file, referenced in place with no re-upload (#913); `gflow run` successes recorded with lineage; refs were silently dropped since v0.52.0 (fixed, record corrected) | ✅ done (v0.82.0) |
 | The generation browser opens off-screen, placeable via `GFLOW_CLI_BROWSER_WINDOW_POSITION`, measured unchanged for image and video (#923); a write-denied profile raises `ProfileAccessError` instead of posing as lock contention (#919); `urllib3` CVE lock (#920) | ✅ done (v0.81.0) |
 | An unported image form is refused by name instead of crashing a `gflow run` batch with a misleading `RecaptchaError` — the browser transport stops pre-minting a token it never read (#891); a lost transfer is recorded as a generated clip with a visible `STATUS` (#896); `--resolution` and `nano2-lite` (#787); flow.google.com refusals read from the wire (#909); `auth login` stops on the `/about` identity re-check (#902); `oauthlib`/`pyjwt` CVE locks | ✅ done (v0.80.0) |

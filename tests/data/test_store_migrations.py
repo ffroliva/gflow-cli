@@ -90,8 +90,11 @@ def test_transaction_uses_begin_immediate_for_writes(tmp_path: Path) -> None:
 
 
 def test_migration_statement_batch_rolls_back_on_failure(tmp_path: Path) -> None:
+    from gflow_cli.errors import DataStoreError
+
     with DataStore.open(tmp_path / "gflow.db") as store:
-        with pytest.raises(sqlite3.Error):
+        # Typed since #900; what this pins is the rollback below.
+        with pytest.raises(DataStoreError):
             with store.transaction(immediate=True):
                 for statement in _iter_sql_statements(
                     "CREATE TABLE rollback_probe(id INTEGER); "

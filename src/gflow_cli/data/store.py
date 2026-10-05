@@ -265,15 +265,26 @@ class DataStore:
 
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Generator[None, None, None]:
+        """Run the block in one transaction; a sqlite failure leaves as ``DataStoreError``.
+
+        Every catalog write runs in here, and every caller that records a generation
+        AFTER it succeeded catches ``DataStoreError`` to warn instead of failing it. A raw
+        ``sqlite3.OperationalError`` -- ``database is locked`` past ``busy_timeout``, or a
+        nested BEGIN -- missed all of them and turned a paid-for clip into a failed run
+        (#900). ``IntegrityError`` stays raw: callers translate it into
+        ``DataIntegrityError`` with their own route.
+        """
         try:
             self.conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
             yield
             self.conn.execute("COMMIT")
-        except Exception:
+        except Exception as exc:
             try:
                 self.conn.execute("ROLLBACK")
             except sqlite3.OperationalError:
                 pass
+            if isinstance(exc, sqlite3.Error) and not isinstance(exc, sqlite3.IntegrityError):
+                raise DataStoreError(detail=str(exc), route="data.transaction") from exc
             raise
 
     def apply_migrations(self) -> None:

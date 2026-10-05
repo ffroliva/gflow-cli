@@ -1283,6 +1283,8 @@ async def test_submit_observes_submit_then_poll_then_result() -> None:
         started and started[0].media_id == MEDIA and started[0].flow_operation_id == rec.workflow_id
     )
     assert started[0].project_id == PROJ
+    # #898: record slot 0 is Flow's workflow id (wire spike 2026-09-05); carry it by name.
+    assert started[0].workflow_id == rec.workflow_id
     assert page.dom.submit_clicked == 1
 
 
