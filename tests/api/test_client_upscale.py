@@ -304,3 +304,31 @@ async def test_upsample_video_storage_uri(tmp_path: Path, monkeypatch) -> None:
     assert res == local_target
     assert local_target.read_bytes() == dummy_mp4
     c._checkin_page.assert_called_once_with(mock_page)  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_upsample_video_refused_under_labs_google_kill_switch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Video upscale exists only on flow.google.com; GFLOW_CLI_FLOW_HOST=labs.google
+    switches that host off, so the request fails with exit 36 before any page is used."""
+    from gflow_cli.errors import FlowHostMigratedError
+
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    c.settings.flow_host = "labs.google"
+    c._checkout_page = AsyncMock()  # type: ignore[method-assign]
+    mock_upscale = AsyncMock()
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.migrated_video_upscale.upscale_video_migrated", mock_upscale
+    )
+
+    with pytest.raises(FlowHostMigratedError, match="labs.google"):
+        await c.upsample_video(
+            media_id=_MEDIA_ID,
+            project_id=_PROJECT_ID,
+            scale="1080p",
+            out_path=tmp_path / "video.mp4",
+        )
+
+    mock_upscale.assert_not_awaited()
+    c._checkout_page.assert_not_awaited()  # type: ignore[attr-defined]

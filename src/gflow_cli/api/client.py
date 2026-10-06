@@ -2741,9 +2741,28 @@ class FlowApiClient:
         """Upscale or export a platform-generated video to 1080p, 720p, or 270p GIF.
 
         Drives the migrated Flow editor to export an upsampled 1080p Full HD video or
-        animated GIF.
+        animated GIF. There is no labs.google route for this, so
+        ``GFLOW_CLI_FLOW_HOST=labs.google`` (the kill switch) refuses it with exit 36.
         """
         from gflow_cli.api.transports.migrated_video_upscale import upscale_video_migrated
+
+        route = migrated_route(
+            getattr(self._page, "url", None),
+            self.settings.flow_host,
+            prefer_migrated=True,
+        )
+        if route != "migrated":
+            raise FlowHostMigratedError(
+                detail=(
+                    "video upscale is driven only on flow.google.com (there is no "
+                    "labs.google route for it), and GFLOW_CLI_FLOW_HOST=labs.google "
+                    "switched that host off"
+                ),
+                remediation_hint=(
+                    "Unset GFLOW_CLI_FLOW_HOST (or set it to auto / flow.google.com) "
+                    "to export the video through flow.google.com."
+                ),
+            )
 
         logger.info(
             "video.upscale_started",
