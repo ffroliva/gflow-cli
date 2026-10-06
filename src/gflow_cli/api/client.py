@@ -2126,6 +2126,7 @@ class FlowApiClient:
                 self._checkin_page(page)
 
         resp = await self._run_with_retry(attempt, route=route)
+        _validate_fife_final_url(str(resp.url))
         if resp.status >= 400:
             _raise_for_non_retryable(resp, await resp.text(), route=route)
         body = await resp.body()
@@ -3631,7 +3632,8 @@ def _validate_fife_url(url: str) -> None:
     constructed from untrusted input), the URL could point to internal
     services (``http://169.254.169.254/``, ``http://localhost:6006/``,
     ``http://127.0.0.1/``, ...). Playwright's ``max_redirects`` does not
-    constrain the redirect target host, so we validate up-front.
+    constrain the redirect target host, so this up-front check is paired with
+    :func:`_validate_fife_final_url` on the host the response ended on.
 
     Allowlist: scheme must be ``https`` AND host must be ``flow-content.google``
     or any subdomain of ``.google``. The captured samples (see
@@ -3644,9 +3646,30 @@ def _validate_fife_url(url: str) -> None:
         msg = f"Refusing non-HTTPS download URL: scheme={parts.scheme!r}"
         raise ValueError(msg)
     host = parts.hostname or ""
-    if not (host == "flow-content.google" or host.endswith(".google")):
+    # flow.google.com: agent-only image tiles serve from an opaque /asb/ URL there (2026-10-04).
+    if not (host == "flow-content.google" or host.endswith(".google") or host == "flow.google.com"):
         msg = f"Refusing download from unexpected host: {host!r}"
         raise ValueError(msg)
+
+
+def _validate_fife_final_url(url: str) -> None:
+    """Refuse a download whose redirects ended off Google's hosts (SSRF guard, part 2).
+
+    ``flow.google.com/asb/...`` answers with a redirect to ``lh3.google.com``, so the
+    final host is checked against the same allowlist the agent-only clip download uses.
+    """
+    from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415 - cycle
+        _is_allowed_download_host,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    if _is_allowed_download_host(url):
+        return
+    try:
+        _validate_fife_url(url)
+    except ValueError:
+        parts = urlsplit(url)
+        msg = f"Refusing image download redirected to {parts.scheme}://{parts.hostname!r}"
+        raise ValueError(msg) from None
 
 
 def _make_instance() -> str:

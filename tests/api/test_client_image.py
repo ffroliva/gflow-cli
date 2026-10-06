@@ -398,6 +398,7 @@ class TestDownloadImage:
 
         async def fake_request_get(url, **kwargs):
             resp = MagicMock()
+            resp.url = url
             resp.status = 200
             resp.body = AsyncMock(return_value=payload)
             return resp
@@ -418,6 +419,7 @@ class TestDownloadImage:
 
         async def fake_request_get(url, **kwargs):
             resp = MagicMock()
+            resp.url = url
             resp.status = 200
             resp.body = AsyncMock(return_value=payload)
             return resp
@@ -444,6 +446,7 @@ class TestDownloadImage:
         async def fake_request_get(url, **kwargs):
             captured["url"] = url
             resp = MagicMock()
+            resp.url = url
             resp.status = 200
             resp.body = AsyncMock(return_value=b"x")
             return resp
@@ -468,6 +471,7 @@ class TestDownloadImage:
 
         async def fake_request_get(url, **kwargs):
             resp = MagicMock()
+            resp.url = url
             resp.status = 403
             resp.text = AsyncMock(return_value="signed url expired")
             resp.body = AsyncMock(return_value=b"")
@@ -491,6 +495,7 @@ class TestDownloadImage:
 
         async def fake_request_get(url, **kwargs):
             resp = MagicMock()
+            resp.url = url
             resp.status = 200
             resp.body = AsyncMock(return_value=mp4)
             return resp
@@ -511,6 +516,7 @@ class TestDownloadImage:
 
         async def fake_request_get(url, **kwargs):
             resp = MagicMock()
+            resp.url = url
             resp.status = 403
             resp.text = AsyncMock(return_value="forbidden")
             resp.body = AsyncMock(return_value=b"")
@@ -578,6 +584,7 @@ class TestDownloadImage:
 
         async def fake_request_get(url, **kwargs):
             resp = MagicMock()
+            resp.url = url
             resp.status = 200
             resp.body = AsyncMock(return_value=b"png")
             return resp
@@ -596,6 +603,7 @@ class TestDownloadImage:
 
         async def fake_request_get(url, **kwargs):
             resp = MagicMock()
+            resp.url = url
             resp.status = 200
             resp.body = AsyncMock(return_value=jpeg_bytes)
             return resp
@@ -620,6 +628,7 @@ class TestDownloadImage:
 
         async def fake_request_get(url, **kwargs):
             resp = MagicMock()
+            resp.url = url
             resp.status = 200
             resp.body = AsyncMock(return_value=payload)
             return resp
@@ -932,3 +941,62 @@ def test_drive_image_generation_private_has_no_seed_kwarg() -> None:
     params = inspect.signature(FlowApiClient._drive_image_generation).parameters
     assert "seed" not in params
     assert "batch_id" not in params
+
+
+class TestDownloadImageHosts:
+    """Agent-only image tiles serve from ``flow.google.com/asb/...``, which redirects to
+    ``lh3.google.com``. ``max_redirects`` does not constrain the target host, so the host
+    the response ENDED on is checked too."""
+
+    @staticmethod
+    def _serve(client: FlowApiClient, final_url: str | None = None) -> AsyncMock:
+        async def fake_request_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status = 200
+            resp.url = final_url or url
+            resp.body = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimg")
+            return resp
+
+        get_mock = AsyncMock(side_effect=fake_request_get)
+        client._page.request.get = get_mock
+        return get_mock
+
+    async def test_flow_google_com_asb_url_is_accepted(
+        self, client: FlowApiClient, tmp_path: Path
+    ) -> None:
+        self._serve(client, final_url="https://lh3.google.com/rd-asb/opaque=s0")
+        out = tmp_path / "out.png"
+        await client.download_image(
+            _make_image(fife_url="https://flow.google.com/asb/opaque=s0"), out
+        )
+        assert out.exists()
+
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            "https://evil.flow.google.com.x/asb/opaque=s0",  # confusable suffix
+            "http://flow.google.com/asb/opaque=s0",  # http scheme
+        ],
+    )
+    async def test_flow_google_com_lookalikes_are_refused_before_any_request(
+        self, client: FlowApiClient, tmp_path: Path, bad_url: str
+    ) -> None:
+        get_mock = self._serve(client)
+        with pytest.raises(ValueError):
+            await client.download_image(_make_image(fife_url=bad_url), tmp_path / "out.png")
+        get_mock.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "landed_on",
+        ["https://evil.example/x.png", "http://lh3.google.com/rd-asb/opaque=s0"],
+    )
+    async def test_a_redirect_off_an_allowed_host_is_refused_and_nothing_is_written(
+        self, client: FlowApiClient, tmp_path: Path, landed_on: str
+    ) -> None:
+        self._serve(client, final_url=landed_on)
+        out = tmp_path / "out.png"
+        with pytest.raises(ValueError, match="redirected"):
+            await client.download_image(
+                _make_image(fife_url="https://flow.google.com/asb/opaque=s0"), out
+            )
+        assert not out.exists()

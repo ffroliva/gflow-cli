@@ -77,7 +77,6 @@ from gflow_cli.errors import (
     CONTENT_SAFETY_REASONS,
     ConfigurationError,
     ContentPolicyError,
-    FlowAgentUiError,
     FlowHostMigratedError,
     InsufficientCreditsError,
     MediaUploadRejectedError,
@@ -143,6 +142,19 @@ AGENT_MODE_CHIP_ANY = "button.agent-mode-chip"
 #: a local Angular re-render, not a navigation — measured well under a second on both
 #: accounts — so this is headroom, not an expectation.
 AGENT_RECOVERY_S = 20.0
+#: The first slice of the readiness wait. Long enough for Angular to mount the composer
+#: after `domcontentloaded` (the chip was reliably absent before that — see
+#: `ensure_editor`), short enough that #799's agent-only composer, whose trigger never
+#: becomes visible, is reported without paying the whole gate. A page that is neither
+#: gets the rest of the gate on a re-entry, so slow loads keep their full budget.
+AGENT_ONLY_EARLY_S = 5.0
+#: A positive agent-only verdict is re-asked after this long: the verdict rests on the chip's
+#: ABSENCE, and a slow mount can put the trigger in the DOM before the chip.
+AGENT_ONLY_SETTLE_S = 2.0
+#: The agent-only composer's own Agent-settings button — the thing its driver needs anyway.
+AGENT_ONLY_ANCHOR = "flow-creative-agent-prompt-box button:has(mat-icon:text-is('tune'))"
+#: What `ensure_editor` found: the classic migrated composer, or #799's agent-only one.
+ComposerKind = Literal["classic", "agent_only"]
 #: What :meth:`MigratedComposer._exit_agent_mode` did. `"blocked"` — the chip was there
 #: and the click did not land — is not `"clicked"`: nothing was toggled, so there is
 #: nothing to wait :data:`AGENT_RECOVERY_S` for.
@@ -1085,9 +1097,12 @@ class MigratedComposer:
 
     # --- readiness ------------------------------------------------------------
 
-    async def ensure_editor(self, page: Page, project_id: str, *, timeout_s: float = 30.0) -> None:
+    async def ensure_editor(
+        self, page: Page, project_id: str, *, timeout_s: float = 30.0
+    ) -> ComposerKind:
         """Land on ``flow.google.com/project/<id>`` (direct — no labs.google visit
-        needed on either kind of account) and wait for the settings trigger."""
+        needed on either kind of account), wait for the settings trigger, and report
+        which composer is there: ``"classic"``, or #799's ``"agent_only"``."""
         target = MIGRATED_PROJECT_URL.format(project_id=project_id)
         current = str(getattr(page, "url", "") or "")
         if not current.startswith(target):
@@ -1098,8 +1113,9 @@ class MigratedComposer:
         # (2026-09-09 incident 8dc6c020); clear it before anything clicks.
         await self._dismiss_cookie_bar(page)
         trigger = page.locator(READY_ANCHOR).first
+        early_s = min(AGENT_ONLY_EARLY_S, timeout_s)
         try:
-            await trigger.wait_for(state="visible", timeout=int(timeout_s * 1000))
+            await trigger.wait_for(state="visible", timeout=int(early_s * 1000))
         except Exception as e:
             # Before blaming the anchor, ask the prior question: is this even the page
             # we asked for? Flow answers a project navigation with its public /about
@@ -1126,29 +1142,11 @@ class MigratedComposer:
                 # the opposite finding, a renamed selector, and stays drift.
                 if await self._is_agent_only_composer(page, trigger):
                     log.info("migrated.agent_only_composer", issue_ref="#799", url=page.url)
-                    raise FlowAgentUiError(
-                        detail=(
-                            f"migrated host: this account's composer is agent-only — the "
-                            f"settings trigger ({READY_ANCHOR}) is in the page but hidden, "
-                            f"and no agent-mode chip ({AGENT_MODE_CHIP_ANY}) exists to turn "
-                            f"off, so there is no classic composer to drive on {page.url} "
-                            f"(host=migrated). Not selector drift, and not the recoverable "
-                            f"agent mode of #749. Readiness gate: {e}"
-                        ),
-                        remediation_hint=(
-                            "Google has put this account on Flow's agent-only composer, "
-                            "where aspect, model and count are Agent-settings defaults "
-                            "rather than per-request controls. gflow-cli has no driver for "
-                            "it yet, so no flag or profile change helps and a re-run will "
-                            "not either — this is tracked in issue #799. Generating from "
-                            "the Flow web UI still works."
-                        ),
-                        # Not retryable: #749's chip flips per click, but which composer an
-                        # account gets is server-assigned per account, so a retry lands the
-                        # same page. Same reasoning that keeps FlowHostMigratedError out of
-                        # RETRYABLE_ERRORS; FlowAgentUiError is in it for the labs A/B.
-                        retryable=False,
-                    ) from e
+                    return "agent_only"
+                if timeout_s > early_s:
+                    # Neither composer yet — a slow mount. Spend the rest of the gate on a
+                    # full re-entry, so the chip and the discriminator get asked again.
+                    return await self.ensure_editor(page, project_id, timeout_s=timeout_s - early_s)
                 raise UiSelectorDriftError(
                     detail=(
                         f"migrated host: the settings trigger ({READY_ANCHOR}) did not "
@@ -1217,6 +1215,7 @@ class MigratedComposer:
         if await self._agent_chip_pressed(page):
             log.warning("migrated.agent_mode_chip_pressed_while_ready", issue_ref="#752")
         log.info("migrated.editor_ready", url=page.url)
+        return "classic"
 
     @staticmethod
     async def _agent_chip_pressed(page: Page) -> bool | None:
@@ -1254,12 +1253,24 @@ class MigratedComposer:
         it contradicts the measured mechanism (pressed ⇒ hidden) and falls through to
         drift rather than being asserted as a cohort.
 
+        Both are absences, so the verdict also needs one presence — the agent composer's own
+        settings button — and is asked a second time after ``AGENT_ONLY_SETTLE_S``: a slow
+        mount can put the trigger in the DOM seconds before the chip, and a classic account
+        called agent-only would get account defaults written to it.
+
         Fail-closed: an unreadable page is not evidence of a cohort.
         """
         try:
-            if not await trigger.count() or await trigger.is_visible():
-                return False
-            return not await page.locator(AGENT_MODE_CHIP_ANY).first.count()
+            for attempt in range(2):
+                if attempt:
+                    await asyncio.sleep(AGENT_ONLY_SETTLE_S)
+                if not await trigger.count() or await trigger.is_visible():
+                    return False
+                if await page.locator(AGENT_MODE_CHIP_ANY).first.count():
+                    return False
+                if not await page.locator(AGENT_ONLY_ANCHOR).first.count():
+                    return False
+            return True
         except Exception as exc:  # noqa: BLE001 - an unreadable page is not an answer
             log.warning("migrated.agent_only_probe_failed", error=str(exc)[:200])
             return False
@@ -3207,9 +3218,12 @@ async def run_video(
     project is created by ``FlowApiClient`` before this runs (#864), so reaching
     here without one means a caller bypassed the client.
     """
+    from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415 - cycle
+
     unported = _unported_form(request)
-    if unported is not None:
-        raise FlowHostMigratedError(
+
+    def refuse() -> FlowHostMigratedError:
+        return FlowHostMigratedError(
             detail=(
                 f"Flow served flow.google.com, where gflow drives "
                 f"text-to-video, image-to-video from local start (and end) frames, and "
@@ -3217,6 +3231,10 @@ async def run_video(
                 f"(#639) — pass --initial-frame / --ref as local files"
             ),
         )
+
+    # $0 and before the page only when neither composer takes it (see run_images).
+    if unported is not None and agent._unported_video(request) is not None:  # pyright: ignore[reportPrivateUsage]
+        raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
         raise ConfigurationError(
@@ -3227,7 +3245,22 @@ async def run_video(
         )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
     composer = MigratedComposer()
-    await composer.ensure_editor(page, pid)
+    if await composer.ensure_editor(page, pid) == "agent_only":
+        from gflow_cli.api.transports.agent_only_composer import (  # noqa: PLC0415 - cycle
+            run_agent_video,
+        )
+
+        return await run_agent_video(
+            page,
+            request,
+            project_id=pid,
+            out_dir=out_dir,
+            poll_timeout_s=poll_timeout_s,
+            download=download,
+            on_started=on_started,
+        )
+    if unported is not None:
+        raise refuse()
     await composer.apply_video_settings(page, request)
     media_id: str | None = None
     end_media_id: str | None = None
@@ -3301,14 +3334,22 @@ async def run_images(
     out_dir: Path | None = None,
 ) -> list[GeneratedImage]:
     """Drive supported image requests through the migrated project composer."""
+    from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415 - cycle
+
     unported = _unported_image_form(request)
-    if unported is not None:
-        raise FlowHostMigratedError(
+
+    def refuse() -> FlowHostMigratedError:
+        return FlowHostMigratedError(
             detail=(
                 "Flow served flow.google.com, where gflow drives t2i "
                 f"and i2i from local files; {unported} is not ported yet (#639)"
             )
         )
+
+    # $0 and before the page only when NEITHER composer takes it: the agent-only one has
+    # its own limits (#799) — its Agent-settings pane offers 3:4, the classic pane does not.
+    if unported is not None and agent._unported_image(request) is not None:  # pyright: ignore[reportPrivateUsage]
+        raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
         raise ConfigurationError(
@@ -3317,7 +3358,10 @@ async def run_images(
             )
         )
     composer = MigratedComposer(out_dir=out_dir)
-    await composer.ensure_editor(page, pid)
+    if await composer.ensure_editor(page, pid) == "agent_only":
+        return await agent.run_agent_images(page, request, project_id=pid)
+    if unported is not None:
+        raise refuse()
     reference_ids: tuple[str, ...] = ()
     if request.refs:
         # Images already in this project (a manifest's `batch:N`, #913): referenced in

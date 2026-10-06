@@ -140,8 +140,18 @@ def _duration_without_omni_flash(source: str) -> list[int]:
     return bad
 
 
+#: e2e modules whose ``--duration`` does not go through a duration control, with why.
+_DURATION_GUARD_EXEMPT = {
+    # The agent-only composer (#799) has no duration control: the length is part of the
+    # plain-language ask to Flow's agent, live-verified with a 4 s clip.
+    "test_agent_only_composer_bdd.py",
+}
+
+
 @pytest.mark.parametrize("test_file", _collect_e2e_test_files(), ids=lambda p: p.name)
 def test_e2e_duration_is_paired_with_omni_flash(test_file: pathlib.Path) -> None:
+    if test_file.name in _DURATION_GUARD_EXEMPT:
+        pytest.skip("--duration is part of the agent-only prompt directive (#799)")
     bad = _duration_without_omni_flash(test_file.read_text(encoding="utf-8"))
     assert not bad, (
         f"{test_file.name}: --duration without --model omni-flash at line(s) {bad}. "
