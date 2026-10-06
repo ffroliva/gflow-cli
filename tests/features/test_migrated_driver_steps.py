@@ -78,6 +78,33 @@ def _unmoved(world: dict[str, Any]) -> None:
     world["hop"] = False  # the labs bootstrap URL stays; the composer navigates itself
 
 
+@given("every record Flow replies with has null in its fourth slot")
+def _null_slot_3(world: dict[str, Any]) -> None:
+    # Measured 2026-10-06 (spike_948_submit_envelope.py): YhhmEf and jwpduf records
+    # are unchanged except slot 3, "CAE" -> null.
+    def rec(status: int, url: str | None = None) -> list[Any]:
+        r = _record(status, url) if url else _record(status)
+        r[3] = None
+        return r
+
+    world["page"].scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", [None, 881, [[MEDIA]], [[rec(6)]]])),
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[rec(2)]]])),
+        (_batch_url("as29s"), _frame("as29s", rec(3, VIDEO_URL))),
+    ]
+
+
+@given("the status poll lists another clip's finished record before this run's")
+def _other_clip_first(world: dict[str, Any]) -> None:
+    other = _record(3, "https://flow-content.google/video/other?Signature=o")
+    other[0] = "99999999-9999-4999-8999-999999999999"
+    other[2] = "88888888-8888-4888-8888-888888888888"
+    world["page"].scripted_responses[1] = (
+        _batch_url("jwpduf"),
+        _frame("jwpduf", [None, 881, [[other], [_record(2)]]]),
+    )
+
+
 @given("GFLOW_CLI_FLOW_HOST is labs.google")
 def _kill_switch(world: dict[str, Any]) -> None:
     world["set_flow_host"]("labs.google")

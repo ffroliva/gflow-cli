@@ -313,11 +313,14 @@ async def test_e2e_t2v_runs_on_flow_google_com_by_default(
     submit/status/result replies, and land a real mp4 — the five-layer ledger."""
     project = _project_id()
     _set_flow_host(monkeypatch, os.environ.get("GFLOW_CLI_E2E_FLOW_HOST") or None)
+    # No duration unless asked, as in the i2v e2e: cohorts with no duration row for the
+    # default model (#650, the #948 reporters) refuse a forced 8 s with a $0 exit 11.
+    duration_env = os.environ.get("GFLOW_CLI_E2E_VIDEO_DURATION", "").strip()
     req = GenerateVideoRequest(
         prompt=_PROMPT,
         mode=Mode.T2V,
         aspect=Aspect.LANDSCAPE,
-        duration=int(os.environ.get("GFLOW_CLI_E2E_VIDEO_DURATION", "8")),
+        duration=int(duration_env) if duration_env else None,
     )
     transport = UiAutomationTransport()
     try:

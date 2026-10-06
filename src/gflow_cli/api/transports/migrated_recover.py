@@ -130,13 +130,18 @@ async def _await_signed_record(
 def _collect(text: str, *, media_id: str, into: dict[str, Any]) -> None:
     """Record the first frame that is a status record for *media_id* with a URL."""
     for rpcid, payload in parse_frames(text):
+        # Only the clip route's own status reply: the project load's `Zzl0ze` listing
+        # carries this clip's record too, with an unsigned lh3 URL that answers 302
+        # (measured 2026-10-06, #948).
+        if rpcid != "as29s":
+            continue
         try:
-            record = generation_record(rpcid, payload)
+            record = generation_record(rpcid, payload, media_id=media_id)
         except WireFormatError:
             # Most frames on a project load are not generation records. A frame that
             # does not decode is not evidence about THIS media id.
             continue
-        if record.media_id != media_id or not record.video_url:
+        if not record.video_url:
             continue
         into.update(
             url=record.video_url,

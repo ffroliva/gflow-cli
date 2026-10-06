@@ -13,6 +13,21 @@ Feature: migrated-host driver
     And a reply with status 3 yields a flow-content.google URL
     And the result reports success with that workflow id
 
+  Scenario: Flow's records carry null where "CAE" used to be (#948)
+    Given the editor hands the session to flow.google.com after entering the project
+    And every record Flow replies with has null in its fourth slot
+    When gflow video t2v runs with an 8 s request
+    Then the migrated composer applies the settings and submits
+    And the YhhmEf reply yields a workflow id and a media id
+    And the result reports success with that workflow id
+
+  Scenario: a status poll lists another clip's finished record first
+    Given the editor hands the session to flow.google.com after entering the project
+    And the status poll lists another clip's finished record before this run's
+    When gflow video t2v runs with an 8 s request
+    Then the migrated composer applies the settings and submits
+    And the result reports success with that workflow id
+
   Scenario: an unmoved account is routed to flow.google.com by default for t2v
     Given the account has not been moved and a project is given
     When gflow video t2v runs with an 8 s request

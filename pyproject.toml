@@ -109,7 +109,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-xdist>=3.6",
-    "ruff==0.16.9",
+    "ruff==0.16.10",
     "pyright>=1.1.0",
     # video-chain: the last-frame extractor (media.py) decodes with PyAV, and its
     # tests build synthetic mp4 fixtures with numpy. Declared here so the dev/CI
@@ -247,7 +247,7 @@ dev = [
     "pytest-bdd>=8.1.0",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.6",
-    "ruff==0.16.9",
+    "ruff==0.16.10",
 ]
 # Container-based integration tests — requires Docker daemon.
 # Install: uv sync --group containers
