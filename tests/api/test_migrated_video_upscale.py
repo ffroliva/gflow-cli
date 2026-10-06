@@ -107,8 +107,9 @@ async def test_migrated_video_upscale_accepts_portrait_1080p() -> None:
 async def test_migrated_video_upscale_rejects_the_720p_original_for_1080p() -> None:
     page = fake_page(_video_menu(), captured_b64=_b64(_mp4((1280, 720))))
 
-    with pytest.raises(WireFormatError, match="1280x720"):
+    with pytest.raises(WireFormatError, match="1280x720") as exc_info:
         await _run(page)
+    assert "simpler prompt" not in exc_info.value.remediation_hint
 
 
 async def test_migrated_video_upscale_rejects_mp4_without_track_dimensions() -> None:
@@ -175,8 +176,9 @@ async def test_migrated_video_upscale_missing_download_button_raises_drift() -> 
 async def test_migrated_video_upscale_missing_tile_raises_drift() -> None:
     page = fake_page(_video_menu(), tile=False, download=False)
 
-    with pytest.raises(UiSelectorDriftError, match="video tile for media_id"):
+    with pytest.raises(UiSelectorDriftError, match="video tile for media_id") as exc_info:
         await _run(page)
+    assert "--project" in exc_info.value.remediation_hint
 
 
 async def test_migrated_video_upscale_rpc_refusal_fails_fast() -> None:

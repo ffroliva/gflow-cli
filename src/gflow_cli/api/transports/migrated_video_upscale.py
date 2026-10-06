@@ -21,6 +21,7 @@ from gflow_cli.api.transports.migrated_upscale import (
     DOWNLOAD_BUTTON_SELECTOR,
     find_download_menu_item,
     is_menu_item_disabled,
+    missing_tile_hint,
 )
 from gflow_cli.errors import (
     TransportTimeoutError,
@@ -80,6 +81,14 @@ def mp4_track_dimensions(data: bytes) -> tuple[int, int] | None:
     return best
 
 
+#: The export finished but its bytes are not the file asked for; a retry is free (the
+#: 1080p export measured 0 credits, 2026-10-07) and the prompt is irrelevant here.
+_EXPORT_HINT = (
+    "Re-run the export; it spends no credits. If it keeps failing, Flow changed how it "
+    "delivers exports — file a bug at https://github.com/ffroliva/gflow-cli/issues."
+)
+
+
 def _check_mp4_resolution(video_bytes: bytes, scale: str) -> None:
     """Refuse an MP4 smaller than ``scale`` — a preview or the 720p original."""
     dims = mp4_track_dimensions(video_bytes)
@@ -87,6 +96,7 @@ def _check_mp4_resolution(video_bytes: bytes, scale: str) -> None:
         raise WireFormatError(
             detail=f"{scale} export: could not read the MP4's track dimensions (no tkhd box)",
             route="video_upscale",
+            remediation_hint=_EXPORT_HINT,
         )
     if min(dims) < _MIN_SHORT_SIDE[scale]:
         raise WireFormatError(
@@ -95,6 +105,7 @@ def _check_mp4_resolution(video_bytes: bytes, scale: str) -> None:
                 "(a preview or the original was captured, not the export)"
             ),
             route="video_upscale",
+            remediation_hint=_EXPORT_HINT,
         )
 
 
@@ -126,6 +137,7 @@ async def _open_download_menu(page: Page, *, project_id: str, media_id: str) -> 
                     f"on {page.url}"
                 ),
                 route="video_upscale",
+                remediation_hint=missing_tile_hint(media_id, project_id),
             )
         await video_tile.click()
         await page.wait_for_timeout(1000)
@@ -274,6 +286,7 @@ async def upscale_video_migrated(
             raise WireFormatError(
                 detail="video upscale returned undecodable stream data",
                 route="video_upscale",
+                remediation_hint=_EXPORT_HINT,
             ) from exc
 
         if scale_norm == "270p":
@@ -281,12 +294,14 @@ async def upscale_video_migrated(
                 raise WireFormatError(
                     detail="upscaled output is not a valid GIF",
                     route="video_upscale",
+                    remediation_hint=_EXPORT_HINT,
                 )
         else:
             if len(video_bytes) < 8 or video_bytes[4:8] != b"ftyp":
                 raise WireFormatError(
                     detail="upscaled output is not a valid MP4",
                     route="video_upscale",
+                    remediation_hint=_EXPORT_HINT,
                 )
             _check_mp4_resolution(video_bytes, scale_norm)
 

@@ -136,6 +136,14 @@ the five other mirror axes), which no command here can check and no CI gate can 
   drifts, which is the exact failure this row exists to prevent.
 - **Locale-Invariance Discipline for UI Automation**: **Never** write text-label string selectors (`has-text(...)` or multi-locale text lists) for DOM elements, overlays, announcements, menus, tabs, or buttons. All DOM selectors in `src/gflow_cli/api/transports/` must be 100% language-agnostic, anchoring exclusively on structural properties: **Tier 1 Anchors** — e.g. hyperlinks (`a[href*='changelog']`), icon ligatures (`button:has(i.google-symbols:text('close'))`), ARIA roles (`[role='banner']`, `button[data-dismiss]`), and hierarchical DOM relationships (`[role='dialog']:has(a[href*='changelog']) button`). Relying on translated display labels or maintaining multi-locale text cascades is strictly forbidden as an anti-pattern hack.
 
+  **One measured exception: a format token that is not a word.** Flow's upscale download
+  menu gives its items no attribute or icon, and their order changes, but each label carries
+  a resolution token (`2K`, `1080p`) that measured identical in English and Portuguese while
+  the words around it were translated (#922, `scripts/dev/spike_upscale_menu_anchors.py`).
+  `migrated_upscale.menu_token_pattern` matches that token as a whole token. That is the bar
+  for any further exception: no structural anchor exists, the token is measured on 2+
+  locales, and a miss raises exit 23 rather than clicking the wrong item.
+
 - **Host-Membership Discipline**: say which host Flow **served**; never use host
   membership to assert a **capability**. "This account is migrated, therefore X is
   unavailable" is an inference the evidence does not support, and **"X is labs-only" is

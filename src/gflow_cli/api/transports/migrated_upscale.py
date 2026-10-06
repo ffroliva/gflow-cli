@@ -41,6 +41,15 @@ DOWNLOAD_BUTTON_SELECTOR = (
 )
 
 
+def missing_tile_hint(media_id: str, project_id: str) -> str:
+    """A tile that is not in the project is likelier a wrong id or project than drift."""
+    return (
+        f"Check that media {media_id} belongs to project {project_id}: pass the owning "
+        "project with --project (a catalog-resolved project may not hold it). If it does, "
+        "Flow's page changed — file a bug at https://github.com/ffroliva/gflow-cli/issues."
+    )
+
+
 def menu_token_pattern(token: str) -> re.Pattern[str]:
     """Match ``token`` (``2K``, ``1080p``, …) as a whole token, case-insensitively.
 
@@ -114,6 +123,7 @@ async def upscale_image_migrated(
         raise UiSelectorDriftError(
             detail=f"migrated upscale: image tile for media_id {media_id} not found on {page.url}",
             route="image_upscale",
+            remediation_hint=missing_tile_hint(media_id, project_id),
         )
 
     await tile_img.click()

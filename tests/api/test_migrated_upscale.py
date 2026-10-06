@@ -118,8 +118,10 @@ async def test_migrated_upscale_menu_never_opens_raises_drift() -> None:
 async def test_migrated_upscale_missing_tile_raises_drift() -> None:
     page = fake_page([FakeItem("2K")], tile=False)
 
-    with pytest.raises(UiSelectorDriftError, match="image tile for media_id"):
+    with pytest.raises(UiSelectorDriftError, match="image tile for media_id") as exc_info:
         await _run(page)
+    # A wrong id/project is likelier than a frontend change; the class default blames Google.
+    assert "--project" in exc_info.value.remediation_hint
 
 
 async def test_migrated_upscale_missing_download_button_raises_drift() -> None:
