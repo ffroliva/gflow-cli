@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import base64
 import json
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.image_upscale import TargetResolution
-from gflow_cli.api.transports.migrated_upscale import upscale_image_migrated
+from gflow_cli.api.transports.migrated_upscale import menu_token_pattern, upscale_image_migrated
 from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     UpscaleUnavailableError,
     WireFormatError,
 )
+from tests.api._upscale_fakes import FakeItem, emit_response, fake_page
 
+_PROJECT_ID = "00000000-0000-4000-8000-000000000001"
+_MEDIA_ID = "00000000-0000-4000-8000-000000000002"
 _PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 _PNG_B64 = base64.b64encode(_PNG_BYTES).decode("ascii")
 
@@ -34,257 +35,122 @@ def _make_sprcad_error_body() -> str:
     return ")]}'\n\n1234\n" + row
 
 
-@pytest.mark.asyncio
-async def test_migrated_upscale_2k_happy_path() -> None:
-    page = MagicMock()
-    page.goto = AsyncMock()
-    page.wait_for_timeout = AsyncMock()
-    page.evaluate = AsyncMock()
-
-    tile_img = MagicMock()
-    tile_img.click = AsyncMock()
-
-    download_btn = MagicMock()
-    download_btn.click = AsyncMock()
-
-    btn_2k = MagicMock()
-    btn_2k.is_disabled = AsyncMock(return_value=False)
-    btn_2k.get_attribute = AsyncMock(return_value=None)
-
-    btn_4k = MagicMock()
-    btn_4k.is_disabled = AsyncMock(return_value=True)
-    btn_4k.get_attribute = AsyncMock(return_value="true")
-
-    async def wait_for_selector(sel, **kwargs):
-        if "img[" in sel or "flow-image-tile" in sel:
-            return tile_img
-        if "download" in sel:
-            return download_btn
-        if "2K" in sel:
-            return btn_2k
-        if "4K" in sel:
-            return btn_4k
-        return None
-
-    page.wait_for_selector = AsyncMock(side_effect=wait_for_selector)
-
-    response_handlers = []
-
-    def on_func(event, handler):
-        if event == "response":
-            response_handlers.append(handler)
-
-    def remove_func(event, handler):
-        if event == "response" and handler in response_handlers:
-            response_handlers.remove(handler)
-
-    page.on = MagicMock(side_effect=on_func)
-    page.remove_listener = MagicMock(side_effect=remove_func)
-
-    async def on_click_2k():
-        res = MagicMock()
-        res.url = (
-            "https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=SPrCad"
-        )
-        res.text = AsyncMock(return_value=_make_sprcad_body(_PNG_B64))
-        for h in list(response_handlers):
-            await h(res)
-
-    btn_2k.click = AsyncMock(side_effect=on_click_2k)
-
-    result = await upscale_image_migrated(
+async def _run(page, resolution=TargetResolution.RES_2K, timeout_s=5.0) -> bytes:
+    return await upscale_image_migrated(
         page,
-        project_id="263ce917-9e5a-4a07-8206-7e56a63bcdd4",
-        media_id="31d7f80f-8cf0-47db-b730-e5e46bb0c316",
-        target_resolution=TargetResolution.RES_2K,
-        timeout_s=5.0,
+        project_id=_PROJECT_ID,
+        media_id=_MEDIA_ID,
+        target_resolution=resolution,
+        timeout_s=timeout_s,
     )
 
-    assert result == _PNG_BYTES
+
+def _replying_item(text: str, body: str) -> tuple[FakeItem, list]:
+    holder: list = []
+
+    async def reply() -> None:
+        await emit_response(holder[0], body, rpcid="SPrCad")
+
+    return FakeItem(text, on_click=reply), holder
 
 
-@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token", "text", "matches"),
+    [
+        ("2K", "2K", True),
+        ("2K", "2K (Aprimorada)", True),
+        ("2K", "Upscaled 2k", True),
+        ("2K", "12K", False),
+        ("2K", "2KB", False),
+        ("1K", "1K Tamanho original", True),
+        ("1080p", "1080p Full HD", True),
+        ("080p", "1080p", False),
+        ("720p", "1080p", False),
+        ("270p", "GIF animado 270p", True),
+    ],
+)
+def test_menu_token_pattern_matches_whole_token(token: str, text: str, matches: bool) -> None:
+    assert bool(menu_token_pattern(token).search(text)) is matches
+
+
+async def test_migrated_upscale_2k_happy_path() -> None:
+    item_2k, holder = _replying_item("2K", _make_sprcad_body(_PNG_B64))
+    page = fake_page([FakeItem("1K"), item_2k, FakeItem("4K", disabled=True)])
+    holder.append(page)
+
+    assert await _run(page) == _PNG_BYTES
+    assert item_2k.clicked
+
+
+async def test_migrated_upscale_picks_token_from_pt_labels_in_any_order() -> None:
+    """pt labels and a reordered menu still select the 2K item, never 12K or 1K."""
+    item_2k, holder = _replying_item("2K (Aprimorada)", _make_sprcad_body(_PNG_B64))
+    decoys = [FakeItem("4K (Aprimorada)", disabled=True), FakeItem("12K"), FakeItem("1K")]
+    page = fake_page([decoys[0], decoys[1], item_2k, decoys[2]])
+    holder.append(page)
+
+    assert await _run(page) == _PNG_BYTES
+    assert item_2k.clicked
+    assert not any(d.clicked for d in decoys)
+
+
 async def test_migrated_upscale_4k_disabled_raises_unavailable() -> None:
-    page = MagicMock()
-    page.goto = AsyncMock()
-    page.wait_for_timeout = AsyncMock()
-
-    tile_img = MagicMock()
-    tile_img.click = AsyncMock()
-
-    download_btn = MagicMock()
-    download_btn.click = AsyncMock()
-
-    btn_2k = MagicMock()
-    btn_2k.is_disabled = AsyncMock(return_value=False)
-    btn_2k.get_attribute = AsyncMock(return_value=None)
-
-    btn_4k = MagicMock()
-    btn_4k.is_disabled = AsyncMock(return_value=True)  # Pro plan -> 4k is disabled
-    btn_4k.get_attribute = AsyncMock(return_value="true")
-
-    async def wait_for_selector(sel, **kwargs):
-        if "img[" in sel or "flow-image-tile" in sel:
-            return tile_img
-        if "download" in sel:
-            return download_btn
-        if "2K" in sel:
-            return btn_2k
-        if "4K" in sel:
-            return btn_4k
-        return None
-
-    page.wait_for_selector = AsyncMock(side_effect=wait_for_selector)
+    page = fake_page([FakeItem("1K"), FakeItem("2K"), FakeItem("4K", disabled=True)])
 
     with pytest.raises(UpscaleUnavailableError, match="4K upscale requires a Flow Ultra"):
-        await upscale_image_migrated(
-            page,
-            project_id="263ce917-9e5a-4a07-8206-7e56a63bcdd4",
-            media_id="31d7f80f-8cf0-47db-b730-e5e46bb0c316",
-            target_resolution=TargetResolution.RES_4K,
-            timeout_s=5.0,
-        )
+        await _run(page, TargetResolution.RES_4K)
 
 
-@pytest.mark.asyncio
 async def test_migrated_upscale_missing_menu_item_raises_drift() -> None:
-    page = MagicMock()
-    page.goto = AsyncMock()
-    page.wait_for_timeout = AsyncMock()
-
-    tile_img = MagicMock()
-    tile_img.click = AsyncMock()
-
-    download_btn = MagicMock()
-    download_btn.click = AsyncMock()
-
-    async def wait_for_selector(sel, **kwargs):
-        if "img[" in sel:
-            return tile_img
-        if "download" in sel:
-            return download_btn
-        if "4K" in sel:
-            raise PlaywrightTimeoutError("timeout")
-        return None
-
-    page.wait_for_selector = AsyncMock(side_effect=wait_for_selector)
+    page = fake_page([FakeItem("1K"), FakeItem("2K"), FakeItem("14K")])
 
     with pytest.raises(UiSelectorDriftError, match="menu item for 4K was not found"):
-        await upscale_image_migrated(
-            page,
-            project_id="263ce917-9e5a-4a07-8206-7e56a63bcdd4",
-            media_id="31d7f80f-8cf0-47db-b730-e5e46bb0c316",
-            target_resolution=TargetResolution.RES_4K,
-            timeout_s=5.0,
-        )
+        await _run(page, TargetResolution.RES_4K)
 
 
-@pytest.mark.asyncio
-async def test_migrated_upscale_missing_tile_raises_wireformat() -> None:
-    page = MagicMock()
-    page.goto = AsyncMock()
-    page.wait_for_selector = AsyncMock(side_effect=PlaywrightTimeoutError("timeout"))
+async def test_migrated_upscale_menu_never_opens_raises_drift() -> None:
+    page = fake_page([])
 
-    with pytest.raises(WireFormatError, match="Could not locate image tile"):
-        await upscale_image_migrated(
-            page,
-            project_id="263ce917-9e5a-4a07-8206-7e56a63bcdd4",
-            media_id="31d7f80f-8cf0-47db-b730-e5e46bb0c316",
-            target_resolution=TargetResolution.RES_2K,
-            timeout_s=5.0,
-        )
+    with pytest.raises(UiSelectorDriftError, match="download menu did not open"):
+        await _run(page)
 
 
-@pytest.mark.asyncio
+async def test_migrated_upscale_missing_tile_raises_drift() -> None:
+    page = fake_page([FakeItem("2K")], tile=False)
+
+    with pytest.raises(UiSelectorDriftError, match="image tile for media_id"):
+        await _run(page)
+
+
+async def test_migrated_upscale_missing_download_button_raises_drift() -> None:
+    page = fake_page([FakeItem("2K")], download=False)
+
+    with pytest.raises(UiSelectorDriftError, match="download button not found"):
+        await _run(page)
+
+
 async def test_migrated_upscale_timeout_raises_transport_timeout() -> None:
-    page = MagicMock()
-    page.goto = AsyncMock()
-    page.wait_for_timeout = AsyncMock()
-    page.evaluate = AsyncMock()
-    page.on = MagicMock()
-    page.remove_listener = MagicMock()
-
-    tile_img = MagicMock()
-    tile_img.click = AsyncMock()
-    download_btn = MagicMock()
-    download_btn.click = AsyncMock()
-    btn_2k = MagicMock()
-    btn_2k.is_disabled = AsyncMock(return_value=False)
-    btn_2k.get_attribute = AsyncMock(return_value=None)
-    btn_2k.click = AsyncMock()
-
-    async def wait_for_selector(sel, **kwargs):
-        if "img[" in sel:
-            return tile_img
-        if "download" in sel:
-            return download_btn
-        if "2K" in sel:
-            return btn_2k
-        return None
-
-    page.wait_for_selector = AsyncMock(side_effect=wait_for_selector)
+    page = fake_page([FakeItem("2K")])
 
     with pytest.raises(TransportTimeoutError, match="Timed out after 0.01s"):
-        await upscale_image_migrated(
-            page,
-            project_id="263ce917-9e5a-4a07-8206-7e56a63bcdd4",
-            media_id="31d7f80f-8cf0-47db-b730-e5e46bb0c316",
-            target_resolution=TargetResolution.RES_2K,
-            timeout_s=0.01,
-        )
+        await _run(page, timeout_s=0.01)
 
 
-@pytest.mark.asyncio
 async def test_migrated_upscale_rpc_error_raises_wireformat() -> None:
-    page = MagicMock()
-    page.goto = AsyncMock()
-    page.wait_for_timeout = AsyncMock()
-    page.evaluate = AsyncMock()
-
-    tile_img = MagicMock()
-    tile_img.click = AsyncMock()
-    download_btn = MagicMock()
-    download_btn.click = AsyncMock()
-    btn_2k = MagicMock()
-    btn_2k.is_disabled = AsyncMock(return_value=False)
-    btn_2k.get_attribute = AsyncMock(return_value=None)
-
-    async def wait_for_selector(sel, **kwargs):
-        if "img[" in sel:
-            return tile_img
-        if "download" in sel:
-            return download_btn
-        if "2K" in sel:
-            return btn_2k
-        return None
-
-    page.wait_for_selector = AsyncMock(side_effect=wait_for_selector)
-
-    response_handlers = []
-
-    def _on(evt, fn):
-        if evt == "response":
-            response_handlers.append(fn)
-
-    page.on = MagicMock(side_effect=_on)
-    page.remove_listener = MagicMock()
-
-    async def on_click_2k():
-        res = MagicMock()
-        res.url = (
-            "https://flow.google.com/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=SPrCad"
-        )
-        res.text = AsyncMock(return_value=_make_sprcad_error_body())
-        for h in list(response_handlers):
-            await h(res)
-
-    btn_2k.click = AsyncMock(side_effect=on_click_2k)
+    item_2k, holder = _replying_item("2K", _make_sprcad_error_body())
+    page = fake_page([item_2k])
+    holder.append(page)
 
     with pytest.raises(WireFormatError, match="SPrCad RPC refused"):
-        await upscale_image_migrated(
-            page,
-            project_id="263ce917-9e5a-4a07-8206-7e56a63bcdd4",
-            media_id="31d7f80f-8cf0-47db-b730-e5e46bb0c316",
-            target_resolution=TargetResolution.RES_2K,
-            timeout_s=5.0,
-        )
+        await _run(page)
+
+
+async def test_migrated_upscale_non_image_payload_raises_wireformat() -> None:
+    """A JPEG needs FF D8 FF, not just FF D8."""
+    bogus = base64.b64encode(b"\xff\xd8\x00not-a-jpeg").decode("ascii")
+    item_2k, holder = _replying_item("2K", _make_sprcad_body(bogus))
+    page = fake_page([item_2k])
+    holder.append(page)
+
+    with pytest.raises(WireFormatError, match="not a valid PNG/JPEG"):
+        await _run(page)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -23,22 +24,62 @@ from gflow_cli.errors import (
     UpscaleUnavailableError,
     WireFormatError,
 )
+from gflow_cli.paths import extension_from_magic
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from playwright.async_api import Page, Response
+    from playwright.async_api import Locator, Page, Response
 
 log = structlog.get_logger(__name__)
 
 UPSCALE_RPCID = "SPrCad"
 _DEFAULT_TIMEOUT_S = 90.0
+_MENU_TIMEOUT_MS = 5_000
 
-_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
-_JPEG_MAGIC = b"\xff\xd8"
+# The download button in the image / video detail view (icon ligature, not a label).
+DOWNLOAD_BUTTON_SELECTOR = (
+    'button:has(mat-icon:text-is("download")), button:has(.google-symbols:text-is("download"))'
+)
 
 
-def is_png_or_jpeg(data: bytes) -> bool:
-    """True if data begins with a PNG or JPEG magic-byte signature."""
-    return data.startswith(_PNG_MAGIC) or data.startswith(_JPEG_MAGIC)
+def menu_token_pattern(token: str) -> re.Pattern[str]:
+    """Match ``token`` (``2K``, ``1080p``, …) as a whole token, case-insensitively.
+
+    ``2K`` matches "2K (Aprimorada)" but not "12K"; ``1080p`` never matches "080p".
+    """
+    return re.compile(rf"(?<![0-9A-Za-z]){re.escape(token)}(?![0-9A-Za-z])", re.IGNORECASE)
+
+
+async def find_download_menu_item(page: Page, token: str, *, route: str) -> Locator:
+    """The open download menu's item for resolution ``token``, picked by that token.
+
+    Measured 2026-10-07 (scripts/dev/spike_upscale_menu_anchors.py, en) against the
+    contributor's 2026-09-30 pt capture: every item is a bare
+    ``button[role=menuitem][mat-menu-item]`` with no per-option attribute or icon; the
+    ORDER differs between the two (video 270p/720p/1080p vs 720p/1080p/270p) and the
+    WORDS are translated ("2K (Aprimorada)", "Tamanho original"), but the resolution
+    token itself is identical in en and pt. So the token is the only stable anchor —
+    it is a format name, not a translated label. A missing item is selector drift
+    (exit 23); a present-but-disabled one is the caller's tier gate (exit 22).
+    """
+    items = page.locator('[role="menuitem"]')
+    try:
+        await items.first.wait_for(state="visible", timeout=_MENU_TIMEOUT_MS)
+    except PlaywrightTimeoutError as exc:
+        raise UiSelectorDriftError(
+            detail=f"migrated upscale: the download menu did not open on {page.url}",
+            route=route,
+        ) from exc
+    match = items.filter(has_text=menu_token_pattern(token))
+    if await match.count() == 0:
+        raise UiSelectorDriftError(
+            detail=f"migrated upscale: menu item for {token} was not found on {page.url}",
+            route=route,
+        )
+    return match.first
+
+
+async def is_menu_item_disabled(item: Locator) -> bool:
+    return await item.is_disabled() or await item.get_attribute("aria-disabled") == "true"
 
 
 async def upscale_image_migrated(
@@ -67,63 +108,33 @@ async def upscale_image_migrated(
     img_sel = f'img[data-media-id="{media_id}"]'
     try:
         tile_img = await page.wait_for_selector(img_sel, timeout=30_000)
-    except PlaywrightTimeoutError as exc:
-        raise WireFormatError(
-            detail=f"Could not locate image tile for media_id {media_id}",
-            route="image_upscale",
-        ) from exc
+    except PlaywrightTimeoutError:
+        tile_img = None
     if not tile_img:
-        raise WireFormatError(
-            detail=f"Could not locate image tile for media_id {media_id}",
+        raise UiSelectorDriftError(
+            detail=f"migrated upscale: image tile for media_id {media_id} not found on {page.url}",
             route="image_upscale",
         )
 
     await tile_img.click()
     await page.wait_for_timeout(1000)
 
-    # Click the download button in the image detail viewer (exact icon match)
     try:
-        download_btn = await page.wait_for_selector(
-            'button:has(mat-icon:text-is("download")), '
-            'button:has(.google-symbols:text-is("download"))',
-            timeout=15_000,
-        )
-    except PlaywrightTimeoutError as exc:
-        raise WireFormatError(
-            detail="Download button not found in image detail view",
-            route="image_upscale",
-        ) from exc
+        download_btn = await page.wait_for_selector(DOWNLOAD_BUTTON_SELECTOR, timeout=15_000)
+    except PlaywrightTimeoutError:
+        download_btn = None
     if not download_btn:
-        raise WireFormatError(
-            detail="Download button not found in image detail view",
+        raise UiSelectorDriftError(
+            detail=f"migrated upscale: download button not found in image detail on {page.url}",
             route="image_upscale",
         )
     await download_btn.click()
     await page.wait_for_timeout(500)
 
-    # Check 2K and 4K menu items availability
     scale_label = "4K" if target_resolution is TargetResolution.RES_4K else "2K"
-    btn_target = None
-    try:
-        btn_target = await page.wait_for_selector(
-            f'[role="menuitem"]:has-text("{scale_label}")', timeout=5000
-        )
-    except PlaywrightTimeoutError as exc:
-        raise UiSelectorDriftError(
-            detail=f"migrated upscale: menu item for {scale_label} was not found on {page.url}",
-            route="image_upscale",
-        ) from exc
+    btn_target = await find_download_menu_item(page, scale_label, route="image_upscale")
 
-    if btn_target is None:
-        raise UiSelectorDriftError(
-            detail=f"migrated upscale: menu item for {scale_label} was not found on {page.url}",
-            route="image_upscale",
-        )
-
-    is_disabled = await btn_target.is_disabled() or (
-        await btn_target.get_attribute("aria-disabled") == "true"
-    )
-    if is_disabled:
+    if await is_menu_item_disabled(btn_target):
         if target_resolution is TargetResolution.RES_4K:
             raise UpscaleUnavailableError(
                 detail=(
@@ -214,7 +225,7 @@ async def upscale_image_migrated(
             route="upsampleImage",
         ) from exc
 
-    if not is_png_or_jpeg(image_bytes):
+    if extension_from_magic(image_bytes) not in (".jpg", ".png"):
         raise WireFormatError(
             detail="upscaled output is not a valid PNG/JPEG",
             route="upsampleImage",
