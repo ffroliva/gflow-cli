@@ -1602,7 +1602,8 @@ async def gflow_upscale_image(
         "project is optional (resolved from the local catalog when omitted). "
         "out_dir is the output directory (defaults to configured videos directory). "
         "profile selects the auth profile (defaults to the active profile). "
-        "Spends no credits: video upscale/export is free."
+        "flow.google.com only (GFLOW_CLI_FLOW_HOST=labs.google refuses it). "
+        "Measured free (1 observation, 2026-10-07): the 1080p export spent no credits."
     ),
 )
 @_guarded
@@ -1614,6 +1615,9 @@ async def gflow_upscale_video(
     profile: str = _DEFAULT_PROFILE,
 ) -> dict[str, Any]:
     """Upscale or export a platform-generated video to 1080p, 720p, or 270p.
+
+    Driven on flow.google.com only. Measured free (1 observation, 2026-10-07), so this
+    tool is deliberately not in ``_SPEND_TOOLS``.
 
     Args:
         media_id: The Flow media ID (UUID) of the generated video.

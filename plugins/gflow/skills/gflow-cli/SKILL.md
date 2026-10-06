@@ -73,7 +73,7 @@ gflow image upscale <mediaId> --scale {2k|4k} [--project ID] [--out DIR]  # 4K i
 gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out DIR]  # shared project, up to 5 prompts; refuses any row ref (exit 2)
 gflow run --config <batch.json>                           # JSON image batch; a row's "ref" may be "batch:N" (an earlier
                                                           # row's image, in place, no upload) or a local file (uploaded once)
-# On migrated flow.google.com accounts (#639), t2i, i2i, and upscale are ported (a project is
+# For accounts Flow serves flow.google.com (#639), t2i, i2i, and upscale are ported (a project is
 # created when --project is omitted, #864): i2i accepts local --ref files only, all
 # five aspects. UUIDs, @Name/entity references, Imagen 4 (image4), and image batch
 # are refused there with exit 36.

@@ -11,10 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Image and video upscaling on the migrated `flow.google.com` frontend (Refs #914).**
   `gflow image upscale` now drives the migrated editor's download menu via the `SPrCad`
-  batchexecute wire, decoding upscaled 2K/4K JPEGs directly without hitting the legacy
-  aisandbox REST route.
+  batchexecute wire, decoding the upscaled JPEG directly without hitting the legacy
+  aisandbox REST route (2K captured live; 4K is driven the same way but was only seen
+  disabled, on a non-Ultra account). The menu item is picked by its resolution token
+  (`2K`, `1080p`), which was measured identical across locales, never by its label.
 - **`gflow video upscale` command.** Upscales or exports platform-generated videos to 1080p
-  Full HD, downloads the original 720p, or exports a 270p animated GIF.
+  Full HD, downloads the original 720p, or exports a 270p animated GIF, on
+  `flow.google.com` only (`GFLOW_CLI_FLOW_HOST=labs.google` refuses it, exit 36). The
+  1080p export was measured free (1 observation, 2026-10-07), and the saved MP4 is checked
+  to really be 1080p so a preview or the 720p original is never written as the export.
 - **MCP tools `gflow_upscale_image` and `gflow_upscale_video`.** Exposes image upscaling
   and video upscaling/export over the MCP interface with full catalog resolution.
 

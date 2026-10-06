@@ -217,10 +217,11 @@ Options:
   --profile NAME            Profile name (overrides default).
 ```
 
-\b
 Examples:
-  gflow image upscale 3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14 --scale 2k
-  gflow image upscale <mediaId> --scale 2k --project <projectId>
+
+```bash
+gflow image upscale 3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14 --scale 2k
+gflow image upscale <mediaId> --scale 2k --project <projectId>
 ```
 
 Notes:
@@ -253,16 +254,22 @@ Options:
   --profile NAME            Profile name (overrides default).
 ```
 
-\b
 Examples:
-  gflow video upscale 412832b1-3685-46f9-a5da-49c472d18a23 --scale 1080p
-  gflow video upscale 412832b1-3685-46f9-a5da-49c472d18a23 --scale 270p
+
+```bash
+gflow video upscale 00000000-0000-4000-8000-000000000002 --scale 1080p
+gflow video upscale 00000000-0000-4000-8000-000000000002 --scale 270p
 ```
 
 Notes:
 
 - **Quality options**: 720p is the original generation download, 1080p is the enhanced Full HD export,
-  and 270p exports an animated GIF.
+  and 270p exports an animated GIF. A saved MP4 is checked to really be at least the
+  requested resolution, so a preview or the 720p original is refused (exit 7,
+  `WireFormatError`) rather than saved as the export.
+- **flow.google.com only.** There is no labs.google route; `GFLOW_CLI_FLOW_HOST=labs.google`
+  refuses the command with exit 36.
+- **Cost:** the 1080p export was measured free (1 observation, 2026-10-07).
 - Saved as `<output_dir>/videos/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>` (`.mp4` or `.gif`).
 
 ## `gflow image t2i`

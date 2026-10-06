@@ -83,7 +83,11 @@ so `discover_site_key` raised `RecaptchaError` — then a `RuntimeError` unmappe
 exit 36. The guard now runs at the
 mint too (`client.py`, `at="mint_recaptcha_token"`); `git grep raise_if_migrated` is
 the current list of sites. Since #891 that mint guard covers only callers that really send
-the token (HTTP image transports, extend — #914); UI images and upscaling no longer mint. Reviewing anything that adds a pre-transport step: ask
+the token (HTTP image transports, extend — #914); UI images no longer mint. Image
+upscale still mints whenever the pooled page is not already on flow.google.com (e.g. parked
+on `about:blank`): `client.py` routes it with `prefer_migrated=False`, so it tries the labs
+mint first and only falls back to the migrated `SPrCad` driver when that mint raises
+`FlowHostMigratedError`. Video upscale has no labs route and never mints. Reviewing anything that adds a pre-transport step: ask
 "which page is the pool holding at that moment on a moved account?"
 
 Related: [[flow-recon-must-run-on-denon82-ffroliva-migrated]],
