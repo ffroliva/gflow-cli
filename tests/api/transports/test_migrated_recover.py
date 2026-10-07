@@ -37,19 +37,26 @@ MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 92  # 100 bytes, valid magic
 _XSSI = ")]}'\n\n"
 
 
-def _as29s_frame(*, media_id: str = MEDIA_ID, url: str = SIGNED, size: int = len(MP4)) -> str:
+def _as29s_frame(
+    *,
+    media_id: str = MEDIA_ID,
+    url: str = SIGNED,
+    size: int = len(MP4),
+    rpcid: str = "as29s",
+    marker: str | None = "CAE",
+) -> str:
     """One `batchexecute` envelope shaped like the status reply the app receives.
 
-    Slots mirror `generation_record`: [0] workflow, [1] project, [2] media, 'CAE' at [3],
-    status at [5][8][0], size at [5][13], signed url at [7][0][8].
+    Slots mirror `generation_record`: [0] workflow, [1] project, [2] media, a marker at [3]
+    ('CAE', null since #948), status at [5][8][0], size at [5][13], url at [7][0][8].
     """
     details: list[Any] = [None] * 14
     details[8] = [3]
     details[13] = size
     generation = [None] * 9
     generation[8] = url
-    record = [WORKFLOW_ID, PROJECT_ID, media_id, "CAE", None, details, None, [generation]]
-    payload = json.dumps([["wrb.fr", "as29s", json.dumps(record)]])
+    record = [WORKFLOW_ID, PROJECT_ID, media_id, marker, None, details, None, [generation]]
+    payload = json.dumps([["wrb.fr", rpcid, json.dumps(record)]])
     return _XSSI + str(len(payload)) + "\n" + payload
 
 
@@ -199,6 +206,24 @@ class TestRecoverClip:
                     media_id="00000000-0000-0000-0000-000000000000", url="https://x/other"
                 ),
                 _as29s_frame(),
+            ]
+        )
+        clip = await _recover(page, tmp_path)
+
+        assert page.fetched == [SIGNED]
+        assert clip.media_id == MEDIA_ID
+
+    @pytest.mark.asyncio
+    async def test_takes_the_signed_url_from_as29s_not_the_project_listing(
+        self, tmp_path: Path
+    ) -> None:
+        """Measured 2026-10-06: the project load's `Zzl0ze` listing carries this clip's
+        record too, with an unsigned lh3.googleusercontent.com URL that answers 302."""
+        listing_url = "https://lh3.googleusercontent.com/unsigned-rendition"
+        page = FakePage(
+            frames=[
+                _as29s_frame(rpcid="Zzl0ze", url=listing_url, marker=None),
+                _as29s_frame(marker=None),
             ]
         )
         clip = await _recover(page, tmp_path)

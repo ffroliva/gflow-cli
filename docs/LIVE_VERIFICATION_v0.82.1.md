@@ -88,4 +88,9 @@ it is covered offline against those captures.
 
 ## Post-tag evidence
 
-_Filled after the tag: PyPI publish, GitHub Release, back-merge._
+- **Release workflow:** [run 36989594319](https://github.com/ffroliva/gflow-cli/actions/runs/36989594319) — success (build-and-publish, mcp-registry publish).
+- **PyPI:** `gflow_cli-0.82.1` wheel and sdist published 2026-10-02.
+- **GitHub Release:** [v0.82.1](https://github.com/ffroliva/gflow-cli/releases/tag/v0.82.1), published 2026-10-02T09:25Z.
+- **Release PR:** #943, merged to `main` with a merge commit (`c1341cb8`).
+- **Back-merge:** `main` → `develop` (`7dba9418`).
+- **Install from PyPI:** `uvx --from gflow-cli==0.82.1 gflow --version` → `gflow, version 0.82.1`.

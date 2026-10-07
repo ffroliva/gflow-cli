@@ -698,6 +698,11 @@ def _lookup_project_in_catalog(media_id: str, profile_name: str) -> str | None:
     return None
 
 
+def lookup_project_in_catalog(media_id: str, profile_name: str) -> str | None:
+    """Public wrapper around _lookup_project_in_catalog for external callers."""
+    return _lookup_project_in_catalog(media_id, profile_name)
+
+
 def _resolve_upscale_project_id(*, media_id: str, explicit: str | None, profile_name: str) -> str:
     """Resolve the owning project: explicit --project wins, else the catalog.
 
@@ -720,6 +725,13 @@ def _resolve_upscale_project_id(*, media_id: str, explicit: str | None, profile_
         f"editor URL (…/project/<id>/…) or via `gflow data list images`."
     )
     raise click.UsageError(msg)
+
+
+def resolve_upscale_project_id(*, media_id: str, explicit: str | None, profile_name: str) -> str:
+    """Public wrapper around _resolve_upscale_project_id for external callers."""
+    return _resolve_upscale_project_id(
+        media_id=media_id, explicit=explicit, profile_name=profile_name
+    )
 
 
 async def _run_upscale(

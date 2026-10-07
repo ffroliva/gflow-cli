@@ -196,6 +196,10 @@ gflow image i2i "make it cinematic" --ref "$UUID"
 Upscale a **platform-generated** image to 2K or 4K (the same 1K/2K/4K options Flow's
 download menu offers) and save it locally. Uploaded images are not supported.
 
+> **When Flow serves `flow.google.com` (#639):** gflow drives the image detail view's download
+> menu, which answers on the `SPrCad` batchexecute wire with the upscaled JPEG. Verified for 2K
+> on 2026-10-07; 4K was seen only as a disabled option (exit 22) on the account used.
+
 ```text
 gflow image upscale MEDIA_ID --scale 2k|4k [OPTIONS]
 
@@ -204,20 +208,20 @@ Arguments:
                             `gflow data list images`).
 
 Options:
-  --scale [2k|4k]           Target resolution. 4k requires a Flow Ultra
+  --scale 2k|4k             Target resolution (required). 4k requires a Flow Ultra
                             subscription; 1k is the original (no upscale).
   --project ID              Project that owns the image. Resolved from the local
                             catalog when omitted; pass it explicitly for images
                             gflow didn't record (e.g. generated in the web UI).
   --out PATH                Output directory (see "Output paths" below).
   --profile NAME            Profile name (overrides default).
+  --transport ui_automation Override transport strategy (advanced).
 ```
 
-```bash
-# Upscale a previously generated image to 2K (project auto-resolved from the catalog)
-gflow image upscale 3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14 --scale 2k
+Examples:
 
-# Upscale an image generated in the Flow web UI (not in the local catalog)
+```bash
+gflow image upscale 3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14 --scale 2k
 gflow image upscale <mediaId> --scale 2k --project <projectId>
 ```
 
@@ -225,9 +229,49 @@ Notes:
 
 - **Credit-free** — upscaling is an image operation and spends no credits.
 - **4K is Ultra-only.** On a non-Ultra account a 4K request fails with exit code 22
-  (`UpscaleUnavailableError`) and a hint to use `--scale 2k` or upgrade.
+  (`UpscaleUnavailableError`, detected from the disabled UI state or 403) and a hint to use `--scale 2k` or upgrade.
 - The result is saved as `<output_dir>/images/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>`
   (extension matches the returned format — usually `.jpg`).
+
+## `gflow video upscale`
+
+Upscale or export a **platform-generated** video to 1080p Full HD, download the original 720p,
+or export as a 270p animated GIF and save it locally.
+
+```text
+gflow video upscale MEDIA_ID [OPTIONS]
+
+Arguments:
+  MEDIA_ID                  UUID of a Flow-generated video (find one with
+                            `gflow data list videos`).
+
+Options:
+  --scale [1080p|720p|270p] Target quality: 1080p (enhanced Full HD), 720p (original download),
+                            or 270p (animated GIF export). [default: 1080p]
+  --project ID              Project that owns the video. Resolved from the local
+                            catalog when omitted; pass it explicitly for videos
+                            gflow didn't record (e.g. generated in the web UI).
+  --out PATH                Output directory (see "Output paths" below).
+  --profile NAME            Profile name (overrides default).
+```
+
+Examples:
+
+```bash
+gflow video upscale 00000000-0000-4000-8000-000000000002 --scale 1080p
+gflow video upscale 00000000-0000-4000-8000-000000000002 --scale 270p
+```
+
+Notes:
+
+- **Quality options**: 720p is the original generation download, 1080p is the enhanced Full HD export,
+  and 270p exports an animated GIF. A saved MP4 is checked to really be at least the
+  requested resolution, so a preview or the 720p original is refused (exit 7,
+  `WireFormatError`) rather than saved as the export.
+- **flow.google.com only.** There is no labs.google route; `GFLOW_CLI_FLOW_HOST=labs.google`
+  refuses the command with exit 36.
+- **Cost:** the 1080p export was measured free (1 observation, 2026-10-07).
+- Saved as `<output_dir>/videos/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>` (`.mp4` or `.gif`).
 
 ## `gflow image t2i`
 
@@ -2025,7 +2069,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --output`) | Retry; the recorded compose survives, so re-render is safe |
 | `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |
 | `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
-| `22` | `UpscaleUnavailableError` | 4K upscale is gated to Flow **Ultra** accounts (HTTP 403) | Use `--scale 2k`, or upgrade the Flow plan                |
+| `22` | `UpscaleUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts; or requested video export quality is disabled | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issues #183, #493) — **or** a blocking announcement overlay survived dismissal, so no control below it can be clicked (probe `overlay_close_button`, #593). On the migrated host a missing submit control is checked against the wallet first and reported as **37** when Flow swapped in its insufficient-credits warning, so a short balance no longer arrives here | Update gflow-cli; file a bug with the probe name + the diagnostics JSON / debug screenshot referenced in the error message, plus the incident bundle's `report.md` when one was written. For `overlay_close_button`: open the project once in Chrome and dismiss the announcement — the dismissal persists on your account |
 | `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
 | `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation — **or**, on `flow.google.com`, the account's composer is agent-only and there is no classic arm at all ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) | On labs this is rare since v0.38.0 (#332): the mode controller reliably recovers agentic→classic, so first retry with `--ui-mode classic`. The migrated agent-only cohort reports `retryable: false` — no flag or profile change helps; use the Flow web UI. See KNOWN_ISSUES |
@@ -2039,7 +2083,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
-| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; local-file `image i2i`; and `gflow run --config` rows referencing an earlier row (`batch:N`) or a local file. Image UUID/entity/instruction/Imagen-4 forms and `image batch` remain unsupported. Not selector drift (23) | **Not retryable.** Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
+| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; local-file `image i2i`; and `gflow run --config` rows referencing an earlier row (`batch:N`) or a local file; `image upscale`; and `video upscale` (served here only). Image UUID/entity/instruction/Imagen-4 forms and `image batch` remain unsupported. Not selector drift (23) | **Not retryable.** Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
 | `37` | `InsufficientCreditsError` | The account's balance is short **for the model it asked for**, so Flow **replaced** the submit control with its `Insufficient credits warning` instead of disabling it. Short, not necessarily empty: measured 2026-09-07, an account holding **50** credits requesting `--model veo-quality` (**100**) rendered the warning. Explicitly **not** selector drift (23): reporting it as drift told users to file a frontend bug over a credit shortfall | Check the balance with `gflow credits user`, then pick a cheaper `--model` (`veo-lite` costs 10), top up, or wait for the allowance to reset. Nothing was submitted, so no credit was spent. `gflow image` draws on a separate daily quota and may still work |
 | `38` | `FlowAccountChooserError` | The post-migration hop landed on Google's account chooser and the profile's recorded account (`.gflow_account`) could not be selected automatically (row absent, click-through did not return to the editor, or `--account` mismatch) | **Not retryable**: run `gflow auth login --profile <name>` and complete the chooser manually, while signed in as the recorded account (re-run `gflow auth login` if the chooser offers a different session) |
 | `39` | `FlowAccessUnavailableError` | Flow loaded and routed to its own "you don't have access" screen (`<flow-pinhole-unavailable-screen>`): this Google account has no Flow entitlement. Detected by component, not by URL — the hop is client-side (`flow.google.com/` answers 200) and the path varies (`/unavailable`, `/u/8/unavailable`). Explicitly **not** auth expiry (3/8) and **not** selector drift (23): nothing expired and nothing drifted | **Not retryable, and signing in again cannot change it.** Flow needs an age-verified account in a supported region on a Google AI Plus/Pro/Ultra or qualifying Workspace plan — check which applies at [Google's eligibility page](https://support.google.com/flow/answer/16353333) and open https://flow.google.com in a browser on this account to confirm |

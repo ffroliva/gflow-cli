@@ -64,8 +64,11 @@ having a migrated driver at all, and read as "the new host cannot be driven"):
   the mint too, so the failure is classified before `discover_site_key` is reached.
   **Since #639's image slice this is no longer the end of the story for images:** the
   migrated page mints its own token and submits `ogiZ0b` itself, so `image t2i`/`i2i`
-  now RUN on a moved account and the client skips the labs mint entirely. `upscale`
-  and `extend` still take the old path and still exit 36.
+  now RUN when Flow serves flow.google.com and the client skips the labs mint entirely.
+  Upscale is ported too (#922): video always drives flow.google.com; image tries the labs
+  mint first unless the pooled page is already on flow.google.com, and falls back to the
+  migrated driver when that mint raises exit 36. `extend` still takes the old path and
+  exits 36.
 - **Labs-side** behaviour is what is now unreachable: no maintainer account is left on
   `labs.google`, so a labs-only claim is cohort-external — verify via a contributor or
   record it NOT verified.

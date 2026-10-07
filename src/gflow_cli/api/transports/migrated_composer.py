@@ -187,7 +187,7 @@ SUBMIT_RPCS = ("YhhmEf", "eb1hJf", "MZZa6b", "nprQif")
 #: The start+end (interpolation) submit. Same composer, different contract: the model
 #: key is ``veo_3_1_interpolation_lite``, the body carries BOTH frame ids, and the rpc
 #: name travels in the ``f.req`` body — the URL carries no ``rpcids`` query param
-#: (captured 2026-09-16, issue #639). The reply embeds the standard ``CAE`` record,
+#: (captured 2026-09-16, issue #639). The reply embeds the standard generation record,
 #: so status/terminal/download are shared with the other submit rpcs.
 INTERPOLATION_SUBMIT_RPC = "nprQif"
 IMAGE_SUBMIT_RPC = "ogiZ0b"
@@ -2720,10 +2720,8 @@ class MigratedComposer:
                     _settle(rec)
                 elif rid in STATUS_RPCS and workflow:
                     try:
-                        rec = generation_record(rid, payload)
+                        rec = generation_record(rid, payload, workflow_id=workflow["id"])
                     except WireFormatError:
-                        continue
-                    if rec.workflow_id != workflow["id"]:
                         continue
                     log.info("migrated.status", rpc=rid, status=rec.status, bytes=rec.size_bytes)
                     _settle(rec)

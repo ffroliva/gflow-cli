@@ -605,9 +605,10 @@ library (plus your locale) on that issue.
 
 `gflow image upscale <mediaId> --scale 4k` returns **exit code 22**
 (`UpscaleUnavailableError`) on accounts below the Ultra tier — Flow gates 4K
-upscaling behind Ultra (the web UI shows an "Upgrade" button instead of a 4K
-option). The account tier is reported on the wire as `userPaygateTier` but is
-enforced server-side, so gflow cannot grant 4K locally.
+upscaling behind Ultra (the web UI shows an "Upgrade" button instead of an active 4K
+option). On `flow.google.com`, gflow inspects the menu item's disabled state directly
+in the UI and fails fast before submitting; on the legacy labs REST endpoint, the
+account tier is enforced server-side. gflow cannot grant 4K locally.
 
 **Workaround:** use `--scale 2k` (available on all tiers), or upgrade the Flow
 account to Ultra. If you just upgraded, re-run `gflow auth login --profile <name>`
