@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Image and video upscaling on the migrated `flow.google.com` frontend (Refs #914).**
+  `gflow image upscale` now drives the migrated editor's download menu via the `SPrCad`
+  batchexecute wire, decoding the upscaled JPEG directly without hitting the legacy
+  aisandbox REST route (2K captured live; 4K is driven the same way but was only seen
+  disabled, on a non-Ultra account). The menu item is picked by its resolution token
+  (`2K`, `1080p`), which was measured identical across locales, never by its label.
+- **`gflow video upscale` command.** Upscales or exports platform-generated videos to 1080p
+  Full HD, downloads the original 720p, or exports a 270p animated GIF, on
+  `flow.google.com` only (`GFLOW_CLI_FLOW_HOST=labs.google` refuses it, exit 36). The
+  1080p export was measured free (1 observation, 2026-10-07), and the saved MP4 is checked
+  to really be 1080p so a preview or the 720p original is never written as the export.
+- **MCP tools `gflow_upscale_image` and `gflow_upscale_video`.** Exposes image upscaling
+  and video upscaling/export over the MCP interface with full catalog resolution.
+
+### Changed
+
+- **Proactive 4K tier detection.** On accounts below the Ultra tier, 4K image upscaling
+  detects the disabled UI state and fails fast with exit code 22 (`UpscaleUnavailableError`),
+  advising `--scale 2k`, without waiting for an API 403. A missing menu item raises
+  `UiSelectorDriftError` (exit 23) instead.
+
 ### Fixed
 
 - **flow.google.com video runs no longer fail after Flow has billed them (#948).** Since
@@ -30,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one unexplained post-submit timeout seen while fixing #948 was not measured.
 
 ## [0.82.1] — 2026-10-02
+
 
 ### Fixed
 
@@ -88,6 +112,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generations in the local catalog.** They recorded failures only. A referencing row is
   recorded as image-to-image with its parent as the input.
 
+
 ### Fixed
 
 - **Manifest references are refused instead of silently ignored (#913).** A
@@ -126,6 +151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Transitive only — via `requests` and, with the `s3` extra, `botocore`. No gflow
   code imports it directly.
 
+
 ### Fixed
 
 - **Windows profile write-denial is distinguished from browser contention.** When
@@ -157,6 +183,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to Google's internal `HARBOR_SEAL` wire model for `gflow image t2i`, `i2i`, and `batch`. Its I2I reference
   cap starts at 3 because it has not been measured yet, and its daily quota is
   unmeasured too ([spike](docs/superpowers/spikes/2026-09-11-nano2-lite-capability.md)).
+
 
 ### Fixed
 
@@ -209,6 +236,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hand, and none of the profiles here is in that state now.
 
 ## [0.79.1] — 2026-09-22
+
 
 ### Fixed
 
@@ -328,6 +356,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is refused immediately with exit 11 rather than opening a browser
   ([#877](https://github.com/ffroliva/gflow-cli/issues/877)).
 
+
 ### Fixed
 
 - **Auth errors on aisandbox routes no longer blame a cookie they never read
@@ -429,6 +458,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each raising typed `UiSelectorDriftError` with bounded redacted diagnostics
   instead of bare Playwright timeouts.
 
+
 ### Fixed
 
 - **The Frames picker could not bind the frame it had just uploaded.** On
@@ -499,6 +529,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `labs.google` kill-switch behavior is unchanged.
 
 ## [0.77.1] — 2026-09-17
+
 
 ### Fixed
 
@@ -572,6 +603,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#848](https://github.com/ffroliva/gflow-cli/issues/848))
 
 ## [0.77.0] — 2026-09-16
+
 
 ### Fixed
 
@@ -657,6 +689,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
 
 ## [0.76.0] — 2026-09-16
+
 
 ### Fixed
 
@@ -800,6 +833,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or otherwise connected to Google LLC" — only the word "unofficial" left its first sentence.
   It was leading with a negative in the one line PyPI shows in search results.
 
+
 ### Fixed
 
 - **The Codex and ChatGPT-desktop plugin manifests shipped every skill in `skills/`**, including
@@ -862,6 +896,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this failure must add `25`. Nothing else moved: a trigger missing from the DOM is still
   exit 23. See the `### Fixed` entry below for why
   ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).
+
 
 ### Fixed
 
@@ -940,6 +975,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still has no driver for that composer; #799 stays open for it.
 ## [0.73.2] — 2026-09-12
 
+
 ### Fixed
 
 - **A missing browser-strategy marker no longer reports as a network problem (#796).**
@@ -992,6 +1028,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.73.1] — 2026-09-11
 
+
 ### Fixed
 
 - **Google's cookie-consent bar no longer blocks generation on `flow.google.com`.**
@@ -1031,6 +1068,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `raise_if_known_landing`) route through it rather than stripping inline.
   - The landing is still named — knowing *where* the session stopped is the whole
     value of the message; only the credentials are gone.
+
 
 ### Fixed
 - **A click that never lands now says what was true instead of nothing at all**
@@ -1226,6 +1264,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and nothing to choose.**
   ([spike](docs/superpowers/spikes/2026-09-08-g12-blocks-webdriver-not-playwright.md))
 
+
 ### Fixed
 
 - **The second image in one session no longer falls back to the labs reCAPTCHA mint**
@@ -1278,6 +1317,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed on any platform gflow supports.
 
 ## [0.71.1] — 2026-09-08
+
 
 ### Fixed
 
@@ -1375,6 +1415,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   way to find.
 
 ## [0.71.0] — 2026-09-07
+
 
 ### Fixed
 
@@ -1631,6 +1672,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.70.0] — 2026-09-06
 
+
 ### Fixed
 
 - **`-o <existing directory>` no longer costs you a clip.** `--output` on `video t2v` / `i2v` /
@@ -1868,6 +1910,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bug is fixed with it: float accumulation made `1.0 - 0.3 + 0.1` fall short of the `>= 0.8`
   PASS threshold, so a task at exactly the threshold graded PARTIAL while printing "0.80".
 
+
 ### Fixed
 
 - **Moved accounts: `image t2i` / `i2i` (and `upscale`, `extend`) now exit 36, not a
@@ -1964,6 +2007,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gains a matching *Lifecycle* checklist; the quality-gate list is now identical to
   AGENTS.md's (it had drifted to six of nine commands).
 
+
 ### Fixed
 
 - **Migrated host: `video t2v` no longer fails on the submit-enable race (#670,
@@ -2025,6 +2069,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instantly at the CLI edge — a deliberate trade, since a static per-model table
   cannot express a per-account capability.
 
+
 ### Fixed
 
 - **`--model` on the migrated host selected the model and then lost the settings pane**
@@ -2037,6 +2082,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value against the supported set regardless of model, like the CLI's choice list.
 
 ## [0.66.3] — 2026-09-03
+
 
 ### Fixed
 
@@ -2073,6 +2119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once per process.
 
 ## [0.66.2] — 2026-09-03
+
 
 ### Fixed
 
@@ -2121,6 +2168,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.66.1] — 2026-09-03
 
+
 ### Fixed
 
 - **A migrated-origin run spent ~36 s discovering a failure knowable in microseconds
@@ -2152,6 +2200,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Flow. Where Flow does state the locale in the URL, that stays authoritative.
 
 ## [0.66.0] — 2026-09-03
+
 
 ### Fixed
 
@@ -2198,6 +2247,7 @@ completed exit 0, proving no regression. See
 [docs/LIVE_VERIFICATION_v0.66.0.md](docs/LIVE_VERIFICATION_v0.66.0.md).
 
 ## [0.65.0] — 2026-09-02
+
 
 ### Fixed
 
@@ -2334,6 +2384,7 @@ completed exit 0, proving no regression. See
   Automating the mechanically checkable part is tracked in
   [#628](https://github.com/ffroliva/gflow-cli/issues/628).
 
+
 ### Fixed
 
 - **`AGENTS.md`'s Impeccable Routine was missing `generate_website_docs.py --check`**,
@@ -2378,6 +2429,7 @@ completed exit 0, proving no regression. See
     completed segments preserved and is never auto-retried.
   - `1:1` is refused up front — Flow publishes no square extend model.
 
+
 ### Fixed
 
 - **Ctrl+C during a billed run said nothing.** `run_with_handlers` exited 130
@@ -2408,6 +2460,7 @@ completed exit 0, proving no regression. See
   than a silent branch switch.
 
 ## [0.62.1] — 2026-08-30
+
 
 ### Fixed
 
@@ -2475,6 +2528,7 @@ completed exit 0, proving no regression. See
   instructions, which are agentic-only and still force it). The image **batch**
   path carried its own inline mode resolution and so kept binding `auto`; it now
   routes through the same policy as the single-prompt path.
+
 
 ### Fixed
 
@@ -2596,6 +2650,7 @@ completed exit 0, proving no regression. See
   no-redirect observation is therefore **provisional** until a second run agrees;
   a transient timeout costs one extra probe instead of a lasting defect.
 
+
 ### Fixed
 
 - **A NULL `model` / `aspect` / `project_id` no longer reads back as the string
@@ -2609,6 +2664,7 @@ completed exit 0, proving no regression. See
   output carries `null`.
 
 ## [0.61.0] — 2026-08-27
+
 
 ### Fixed
 
@@ -2739,6 +2795,7 @@ completed exit 0, proving no regression. See
   origin-less mutation still returns 200 — so this is consistency and
   defence-in-depth, not a fix for any observed failure.
 
+
 ### Fixed
 
 - **Content-policy 400s are no longer misclassified as `WireFormatError`
@@ -2836,6 +2893,7 @@ completed exit 0, proving no regression. See
 
 ## [0.58.0] — 2026-08-16
 
+
 ### Fixed
 
 - **R2V named remote references (`ref_names`) work again after Flow's picker
@@ -2879,6 +2937,7 @@ completed exit 0, proving no regression. See
   prompt-hint hypothesis.
 
 ## [0.57.1] — 2026-08-14
+
 
 ### Fixed
 
@@ -2983,6 +3042,7 @@ completed exit 0, proving no regression. See
   (`gflow://docs/known-issues/{slug}`) serves a single issue's full text,
   capped at 16 KB. No unbounded read path remains.
 
+
 ### Fixed
 
 - **MCP response-contract breaches (#498).** Both generate tools now refuse
@@ -3039,6 +3099,7 @@ completed exit 0, proving no regression. See
 
 - **Chromium downgrade guard for persisted profiles (#477).** Opening a profile with an older Chromium major version than last wrote it triggers Chromium's downgrade cleanup, which can shred the newer session store and surface as a mystery post-upgrade logout. Every bundled-Chromium open of a persisted profile (generation client, UI-automation transport, the experimental transports, headless verification probe) now compares the profile's `Last Version` against the active engine's bundled Chromium (`playwright`, or `patchright` when selected) and refuses on a major-version downgrade (`ProfileEngineDowngradeError`, exit 11; the fail-closed verification probe reports it as a verification failure) with an error naming both versions and the remedy. Best-effort: `chrome`-strategy profiles and unknown/unparseable versions skip the check; same-major build rollbacks are allowed; `gflow auth login` stays unguarded as the recovery path.
 
+
 ### Fixed
 
 - **Mode-switch drift errors now name the right evidence (#493).** An external
@@ -3069,6 +3130,7 @@ completed exit 0, proving no regression. See
 
 - **`gflow auth status` now proves the Flow session and exits 0/1 (#471).** The command previously only checked that the profile directory and cookies file exist — it could report OK on a dead session. It now runs the fast `verify_flow_profile` probe (cookie snapshot + Flow session endpoint; no browser, no credits) and exits 0 only on a verified session, printing the verified account email; any other outcome exits 1 with a `gflow auth login` remediation hint. Fail-closed: an unreachable endpoint is a failure, never an OK.
 
+
 ### Fixed
 
 - **Removed the false "requires a Google AI Ultra or Pro subscription" claim across all docs.** Any Google account with Flow access can use gflow-cli — a paid plan only affects credit allowances and tier-gated features (e.g. 4K upscale stays Ultra-only). Swept README, AGENTS.md, DISCLAIMER.md, USER_GUIDE, CONFIGURATION, AUTHENTICATION, DEBUGGING, the medium tutorial, and the gflow-cli skill; factual tier-gating notes are unchanged.
@@ -3086,6 +3148,7 @@ completed exit 0, proving no regression. See
 
 - **Clearer close-the-browser guidance in `gflow auth login` (#470).** Reworded the final passive-capture step in `real_chrome.py` from the abrupt "CLOSE THE BROWSER" command into plain-language guidance: closing the Chrome window is how you signal you're done, after which gflow verifies the Flow session automatically. No behavior change — the manual close stays required on the real-Chrome path, because Chrome holds an exclusive lock on its cookie store while running (verified empirically), so gflow cannot auto-detect completion there without breaking the zero-automation-surface stealth model.
 - **Overlay/watermark detection hardened to pure structural selectors.** Council-review cleanup of `ui_automation.py`: enforced 100% language-agnostic structural anchors, removed text-label hacks and dead aliases, and fixed a stale test assertion — strengthens the #403 release-modal dismissal across localized profiles.
+
 
 ### Fixed
 
@@ -3107,6 +3170,7 @@ completed exit 0, proving no regression. See
 
 - **Driver interaction delay humanization (#315).** Added `_jitter_ms` timing entropy helper to `ui_automation.py` to randomize Playwright interaction wait durations around base values, mitigating anti-automation fingerprinting without degrading batch throughput.
 
+
 ### Fixed
 
 - **Flow release overlay detection for visible watermark toggle modal (#403).** Added locale-invariant structural anchors (`a[href*='changelog']`, `[role='dialog']:has(a[href*='changelog']) button`) and a 9-locale cascade (EN, PT, ES, DE, FR, IT, JA, ZH, KO) to `TOP_BANNER_SELECTORS` and `OVERLAY_CLOSE_BUTTON_SELECTORS` in `ui_automation.py` to reliably detect and dismiss release-note modals across localized profiles.
@@ -3119,6 +3183,7 @@ completed exit 0, proving no regression. See
   **Correction (#913):** this never worked. The fields were parsed and silently ignored,
   and the sorting was never called; see the `[Unreleased]` Fixed entry for #913.
 - **Character entity provenance recording and video CLI flag parity (#402).** Added `--reference-entity` and `--reference-entity-name` CLI options to `gflow video` commands (`t2v`, `i2v`, `r2v`) and verified character provenance recording in `operations.metadata_json`.
+
 
 ### Fixed
 
@@ -3173,6 +3238,7 @@ completed exit 0, proving no regression. See
   cannot red-light the batch, and security updates stay ungrouped so an
   advisory fix still opens immediately.
 
+
 ### Fixed
 
 - **Dependabot PRs land labelled again.** `dependabot.yml` asked for
@@ -3206,6 +3272,7 @@ completed exit 0, proving no regression. See
 - **Adopted MCP 2026-07-28 Tasks extension (SEP-2663) (#409).** Added `TasksExtension` subclass serving `tasks/get` and `tasks/cancel`. Generation tools (`gflow_generate_image`, `gflow_generate_video`) support non-blocking task handle responses (`wait=False`).
 - **Hardened CLI and MCP `-o`/`--output` path routing (#414, #415).** Custom output paths land generated assets at target locations with automatic parent directory creation, S3 cloud storage relative path preservation, and multi-count stem suffixes (`_1`, `_2`).
 
+
 ### Fixed
 
 - **PR triage notification resilience (#428).** Fallback alerts via Telegram on missing credentials or auth failure.
@@ -3223,6 +3290,7 @@ completed exit 0, proving no regression. See
   first+last as "coming soon"), and `chain` still rejects omni-flash
   (single-clip proof does not cover N seeded links). New credit-free recon
   spike: `scripts/dev/spike_omni_flash_i2v_ui_recon.py`.
+
 
 ### Fixed
 
@@ -3276,6 +3344,7 @@ completed exit 0, proving no regression. See
 
 ## [0.47.0] — 2026-08-01
 
+
 ### Fixed
 
 - **Entity attachments left no trace in the catalog, making character provenance
@@ -3317,6 +3386,7 @@ completed exit 0, proving no regression. See
   pinned by a regression test.
 
 ## [0.46.1] — 2026-07-31
+
 
 ### Fixed
 
@@ -3367,6 +3437,7 @@ completed exit 0, proving no regression. See
   `GFLOW_CLI_GEMINI_MODEL` had in fact never had a live code path — its only
   reader was an uncalled helper — despite being documented as a global override.
 
+
 ### Fixed
 
 - **`reverse-engineer` no longer expands a file path as if it were a prompt (#387).**
@@ -3387,6 +3458,7 @@ completed exit 0, proving no regression. See
   prompts and base64 image bytes were sent.
 
 ## [0.45.0] — 2026-07-28
+
 
 ### Fixed
 
@@ -3493,6 +3565,7 @@ completed exit 0, proving no regression. See
   automatic/background pruning — deletion is always an explicit operator
   action. Both honor `--profile` and the exit-16 `DataStoreError` convention.
 
+
 ### Fixed
 
 - **`gflow character create` safely activates the current Create-Body
@@ -3567,6 +3640,7 @@ completed exit 0, proving no regression. See
   `github.com/ffroliva/gflow-cli` and the APP_AUTHOR path are trap-free by
   construction, so the guard needs no allow-list.
 
+
 ### Fixed
 
 - **Incident-capture hardening from the max-effort review** (14 confirmed
@@ -3628,6 +3702,7 @@ completed exit 0, proving no regression. See
   set + `resolve_transport_name()` helper in `api/transports`.
 
 ## [0.42.0] — 2026-07-21
+
 
 ### Fixed
 
@@ -3801,6 +3876,7 @@ completed exit 0, proving no regression. See
 
 ## [0.38.1] — 2026-07-17
 
+
 ### Fixed
 
 - **Agentic-pin recovery: opt-in reload after a real toggle-off** (#338): when a REAL
@@ -3846,6 +3922,7 @@ completed exit 0, proving no regression. See
 
 ## [0.37.0] — 2026-07-17
 
+
 ### Fixed
 
 - **Agentic image count enforcement** (#313): in the agentic (conversational) Flow UI cohort, the requested image count (`-n`) is now reliably enforced via the Agent settings panel, reworked to reuse classic mode's robust count-tab primitives (a stale sticky default there could previously override the natural-language directive). Covered by a live regression test.
@@ -3867,6 +3944,7 @@ completed exit 0, proving no regression. See
 - **`GFLOW_CLI_DEBUG_TRACEBACK`:** prints the real exception message + traceback for unhandled errors — to the console and, under `--json`, into the payload's `error.detail`/`error.traceback` fields — instead of the generic placeholder. The structured telemetry event stays SHA-256-hashed unconditionally either way; this only changes what the operator/caller sees (#316).
 - **`llm-council` skill:** `/gflow:llm-council` composes with `pr-council-review`, adding `codex`/`gemini` (opt-in `agy`) as independent external reviewers alongside the internal Claude-subagent council for high-stakes reviews (#320).
 
+
 ### Fixed
 
 - **Reference entity smuggling:** a poisoned character entity (from a `gflow character create` that failed mid-workflow, e.g. the body-triptych step) could leak its `referenceEntities` into unrelated `gflow image i2i` calls in the same project workspace, even when the caller never passed `--reference-entity`. The UI-automation interceptor now strips unrequested `referenceEntities` before submit (#312).
@@ -3885,6 +3963,7 @@ completed exit 0, proving no regression. See
 - **Agent-Agnostic Skills:** Refactored six command protocols and relocated them to the `skills/` directory to ensure they are accessible by any developer or AI coding agent regardless of the tool being used (#305).
 - **Security Updates:** Bumped the `pillow` dependency to `>=12.3.0` to address 5 CVEs (PYSEC-2026-2253..2257) (#306).
 - **Ruff Dependency:** Updated the dev-dependency `ruff` from `0.15.20` to `0.15.21` (#304).
+
 
 ### Fixed
 
@@ -3911,6 +3990,7 @@ completed exit 0, proving no regression. See
 
 - **Default image-batch jitter lowered from 3–7 s to 0.5–1.5 s (#241).** The default is deliberately minimal — enough to break a perfectly uniform burst signature without wasting wall-clock. Widen (`--jitter 10-30` / `GFLOW_CLI_JITTER_RANGE=10-30`) when runs start hitting WAF 403s, then dial back once the score decays.
 
+
 ### Fixed
 
 - **`gflow video i2v <media-uuid>` now reaches assets deep in a crowded project's virtualised media grid (#287 — primary fix, part 1: scroll on the RIGHT node, progress-bounded).** The live repro: `TransportTimeoutError` ("Start frame asset ... could not be located in the media picker") on a ~100+-asset project for an asset that WAS in the project and in the local catalog, while the same command worked from a small scratch project. `_select_existing_asset`'s scroll fallback had a fixed budget (12 scrolls x 500 px), capping the reachable depth of the react-virtuoso grid regardless of grid size — and the round-6 audit exposed a second layer: the scroll was a blind hover+wheel over the dialog, but react-virtuoso scrolls its OWN container, so a wheel over the wrong node is a silent no-op that looks exactly like "end of grid". The scroll (shared with `_find_picker_entity_tile` via `_scroll_picker_grid_until_rendered`) now drives the dialog's ACTUAL scrollable element via JS (`[data-virtuoso-scroller]` preferred, then the first overflow container; hover+wheel kept as fallback when the probe fails), and is bounded by evidence of progress: it keeps scrolling while the set of rendered tile identifiers still changes between scrolls — depth proportional to grid size — stops after 3 consecutive no-progress scrolls, retains the legacy 12-scroll budget when the DOM probe yields no evidence, and caps at a 200-scroll hard ceiling. Every scroll probe event reports WHICH node moved (tag + class) and its scrollTop before/after, so a wrong-node no-op (frozen scrollTop) is visible in telemetry. The not-found contract is unchanged: same `TransportTimeoutError` naming the slot and UUID (#287).
@@ -3919,6 +3999,7 @@ completed exit 0, proving no regression. See
 - **Every picker-lookup decision point now emits structured telemetry, and each failure mode leaves a bounded DOM dump (#287 diagnosis).** The first live verification failed with zero events from the new code paths, making the failing layer indistinguishable (search tiers vs progress probe vs tile matcher vs wrong library project) — this telemetry is what confirmed the root cause in round 2. New `ui_automation_video.*` events: `picker_project_selector_absent` / `picker_project_already_active` / `picker_project_menu_opened` (opened + method: click/hover/keyboard) / `picker_project_menu_populated` (element count after the population poll) / `picker_project_switched` (matched_by: href/id/name) / `picker_project_switch_miss` (menu_opened, menu_elements, candidate count, dump path) / `picker_project_sync_skipped` / `picker_project_name_override` / `picker_project_name_resolved` / `picker_project_name_unresolved` (both name events carry the raw tab title) / `picker_project_menu_scroll_probe` (per menu scroll: rendered item count + new-item delta) / `picker_project_menu_scroll_done` (reason: found / stall / no_menu / ceiling) (project alignment), `picker_search_tier` (term, found, rendered-tile count) and `picker_search_unavailable`, `picker_scroll_probe` (per scroll: rendered-tile count + new-tile delta, plus WHICH node was scrolled — tag + class — and its scrollTop before/after, so a wrong-node no-op scroll with a frozen scrollTop is visible) and `picker_scroll_done` (termination reason: found / stall / legacy_budget / ceiling, total attempts), and `existing_asset_not_found` (media id, project id, screenshot + dump paths). On a final not-found, `_capture_picker_dom_dump` writes `debug_picker_dom_<uuid8>.json` to the out-dir — tile count, the first 3 tiles' outerHTML truncated to 500 chars (enough to see which attribute carries the media identity in a given cohort), the dialog's aria/role/data attributes, the project-selector candidates' outerHTML, and whether the target project id appears in the dialog at all — plus a `debug_picker_miss_<uuid8>.png` screenshot. On a project-switch miss, the OPEN portal's raw innerHTML (bounded to 4000 chars) plus its child-element count and tag histogram are written to `debug_picker_project_menu_<uuid8>.json` and summarized on the event — round 2's closed-trigger dump and round 3's role-filtered item list both left the menu structure invisible; raw markup can't be blinded by role assumptions. All dumps follow the 0.32.1 None-on-capture-failure contract (never report a file that was not written) (#287).
 
 ## [0.32.1] — 2026-07-11
+
 
 ### Fixed
 
@@ -3938,12 +4019,14 @@ completed exit 0, proving no regression. See
 
 - **`gflow video i2v` accepts an in-project asset media UUID for `--initial-frame` / `--end-frame` (and the positional IMAGE).** A UUID-shaped value selects the already-existing Flow asset in place via the same `_select_existing_asset` picker the image `--ref` flow uses (#282 scroll/search fixes included) instead of forcing a duplicate local-file upload — the duplicate-asset pileup and per-run re-upload from the 2026-07-11 chalkboard pilot. Pair with `--project` so the asset's project is the one generated in; a UUID that can't be located in the picker fails with `TransportTimeoutError` (exit 9) naming the slot and UUID (#287).
 
+
 ### Fixed
 
 - **A Flow upload-endpoint rejection is now a typed error instead of "Unexpected error." (exit 1).** An `uploadImage` 4xx during frame/reference attach (observed live: one JPEG rejected with HTTP 400 while byte-identical-format siblings uploaded fine) raised a bare `RuntimeError` that fell through to the generic handler with no hint the *input image* was refused. It now raises the new `MediaUploadRejectedError` (**exit code 27**, RFC 9457 type `media-upload-rejected`) with a re-encode remediation hint (`ffmpeg -q:v 2 -map_metadata -1`) (#287).
 - **An explicit `--duration` that cannot be applied now fails fast instead of silently producing a clip of Flow's default length.** When the video settings panel's duration tab probe missed (observed 3/3 on a live 2026-07-11 Frames-submode run: `--duration 4` returned an 8-second clip and the JSON result reported success), `_select_video_duration` demoted the failure to a warning and generation continued on Flow's default. Duration is a contract parameter — downstream timeline math sizes cuts from the requested value — so a probe miss with an explicit `--duration` now raises `UiSelectorDriftError` (**exit code 23**, the #183 selector-drift semantics) with a `debug_no_duration_tab.png` viewport screenshot and an omit-`--duration` remediation hint. Omitting `--duration` is unaffected. Root cause confirmed live 2026-07-11: the duration control is absent from the affected cohort's settings popover (#288, #289).
 
 ## [0.31.0] — 2026-07-10
+
 
 ### Fixed
 
@@ -3958,6 +4041,7 @@ completed exit 0, proving no regression. See
 ### Added
 
 - **MCP `gflow_generate_video` model/duration/count parameters (CLI↔MCP parity):** agents can now select the Veo model (`veo_lite`/`veo_fast`/`veo_quality`/`omni_flash`, aliases accepted), clip duration, and batch count through MCP, matching the CLI `gflow video` flags. An unknown model is rejected up front with a 400 instead of failing deep in the worker; an omitted model still lets the transport apply its i2v veo-lite default (issue #125). Co-authored-by C1ph3r404 (from the closed PR #258). Note: the pre-existing transport-level i2v veo-lite default already protected the MCP path, so this is parity + agent control, not a new credit guard.
+
 
 ### Fixed
 
@@ -3994,6 +4078,7 @@ completed exit 0, proving no regression. See
   reference image assets. Persistent CRUD (`gflow instructions`) and movie-manifest wiring are
   planned follow-ups.
 
+
 ### Fixed
 
 - **Instructions were silently inert (agentic transport).** Two root causes, both found via a
@@ -4008,6 +4093,7 @@ completed exit 0, proving no regression. See
   emitted (instructions only apply on agentic sessions).
 
 ## [0.27.1] — 2026-07-07
+
 
 ### Fixed
 
@@ -4060,6 +4146,7 @@ completed exit 0, proving no regression. See
   #253/#255.)
 
 ## [0.25.0] — 2026-07-06
+
 
 ### Fixed
 
@@ -4123,6 +4210,7 @@ completed exit 0, proving no regression. See
   long browser timeout. (Contributed by @C1ph3r404; the attach mechanism was
   reworked during maintainer live-verification — see Fixed below.)
 
+
 ### Fixed
 
 - **Removed a shadowed duplicate `Settings.daemon_token` field definition (#243)**: the
@@ -4179,6 +4267,7 @@ completed exit 0, proving no regression. See
   history recording. The `tools` parameter (e.g. `creative-director`) is now applied to
   expand the prompt before generation (it was previously accepted but never applied), and
   reference images are supported across the image (`i2i`) and video (`i2v` / `r2v`) tools.
+
 
 ### Fixed
 
@@ -4277,6 +4366,7 @@ completed exit 0, proving no regression. See
 - **MCP over HTTP/SSE** (`gflow serve`): serves the same MCP server over Server-Sent Events — stream at `/sse`, POST messages to `/messages/`. Binds `127.0.0.1:8000` by default; non-loopback binds require `GFLOW_DAEMON_TOKEN`. Foundation for the forthcoming Gflow Studio Web UI and REST `/api/v1` surface.
 - **Daemon & generation-queue scaffolding** (internal foundation): a FastAPI lifespan daemon, a `FlowWorker` background processor, and a SQLite-backed generation queue (`QueueRepository` + migration `0007_queue`, swept to `failed` on restart). Lays the groundwork for queued asynchronous generation; not yet wired into a user command (`gflow serve` currently runs the MCP/SSE server only).
 
+
 ### Fixed
 
 - **Security — `cryptography` advisory** ([GHSA-537c-gmf6-5ccf](https://github.com/advisories/GHSA-537c-gmf6-5ccf)): bumped the locked `cryptography` from 48.0.0 to 49.0.0 (transitive dependency).
@@ -4287,6 +4377,7 @@ completed exit 0, proving no regression. See
 - **Code health**: SonarCloud cleanup sweep across the CLI, API, transport drivers, and movie/manifest layers (cognitive-complexity, duplicate-literal, and unused-argument refactors) with no behavioral change.
 
 ## [0.20.1] — 2026-06-16
+
 
 ### Fixed
 
@@ -4317,6 +4408,7 @@ completed exit 0, proving no regression. See
   the package installed now fails with a clear `pip install patchright`
   remediation hint instead of a raw `ImportError` hashed to a generic exit 1.
 
+
 ### Fixed
 
 - An invalid `GFLOW_CLI_*` enum value (e.g. a typo'd `GFLOW_CLI_BROWSER_ENGINE`,
@@ -4335,6 +4427,7 @@ completed exit 0, proving no regression. See
   probes: mode-switch trigger, Image/Video mode tabs, and video sub-mode tabs, in both the
   image and video transports.
 
+
 ### Fixed
 
 - `gflow image` commands (`t2i` / `i2i` / `upscale` / `upload`) now plumb their output
@@ -4348,6 +4441,7 @@ completed exit 0, proving no regression. See
 
 - Added `verify_flow_profile` in `gflow_cli.auth.verification` using `browser_cookie3` and `httpx` to verify sessions directly from the Chrome cookie store (fast path), with a marker-gated Playwright fallback for encrypted/locked stores. `RealChromeStrategy` now writes the Chrome marker before verification (the fallback reads it) and, on failure, rolls back only a speculative write — a marker that legitimately pre-existed (a previously-verified chrome profile) survives a transient probe failure, and an interrupted verification never leaves an unverified profile claiming the chrome strategy. Cookie extraction is centralised in the new `gflow_cli.auth.cookies` module.
 
+
 ### Fixed
 
 - `gflow_cli.auth.cookies._get_chrome_cookies3` now catches `RuntimeError` (Windows DPAPI failure — `RuntimeError('Failed to decrypt the cipher text with DPAPI')`) in addition to `browser_cookie3.BrowserCookieError`, and re-raises both as `PermissionError` so the Playwright fallback is triggered instead of propagating an unhandled exception.
@@ -4358,6 +4452,7 @@ completed exit 0, proving no regression. See
 - Entity-attach `WireFormatError` failures (exit 7) now carry a remediation hint pointing at Flow's new full-page media-library UI rollout ([#174](https://github.com/ffroliva/gflow-cli/issues/174)) — affected accounts can stage entities via the include action but the submit never carries `referenceEntities`; the error now explains how to tell which UI an account has and where to follow the fix, instead of the generic file-a-bug hint. Both backstops also emit an `entity_attach_context` discovery field (`video`/`image`) for drift telemetry. New KNOWN_ISSUES entry documents the rollout
 
 ## [0.16.0] — 2026-06-12
+
 
 ### Fixed
 
@@ -4378,6 +4473,7 @@ completed exit 0, proving no regression. See
 
 - `scripts/diag/` directory — documented home for investigation scripts that require a live authenticated profile; includes `memory_profile.py` (Chrome process-tree RSS profiler for issue #155), `capture_flow_traffic.py`, and `recaptcha_mint.py` (both moved from `scripts/` root via git mv, history preserved)
 
+
 ### Fixed
 
 - Video status poll now raises `AuthExpiredError` (exit 3) immediately on HTTP 401 from `batchCheckAsyncVideoGenerationStatus` instead of silently timing out after 600 s with a bare `TimeoutError` (exit 1) — session expiry is now detected mid-workflow, not only at login time (issue #156)
@@ -4396,6 +4492,7 @@ completed exit 0, proving no regression. See
   reference cap. `--project` / `--reference-entity` are single-prompt only; for a pure
   character reference use `t2i` (`i2i` still needs a `--ref`). See `docs/USAGE.md` →
   "Character-consistent images (entity references)".
+
 
 ### Fixed
 
@@ -4434,6 +4531,7 @@ completed exit 0, proving no regression. See
   mechanism, and the best-effort consistency model.
 - Dev utilities: `scripts/dev/make_project.py` (create a Flow project) and
   `scripts/dev/patch_character.py` (rename / set voice + personality on an entity).
+
 
 ### Fixed
 
@@ -4485,6 +4583,7 @@ completed exit 0, proving no regression. See
   `DeprecationWarning`; will be removed in a future minor release). The positional
   `IMAGE` argument remains supported for back-compatibility.
 
+
 ### Fixed
 
 - **Character editor 404 on non-English locales (#153).** `gflow character`'s
@@ -4496,6 +4595,7 @@ completed exit 0, proving no regression. See
   locale.
 
 ## [0.12.0] — 2026-06-03
+
 
 ### Fixed
 
@@ -4595,6 +4695,7 @@ completed exit 0, proving no regression. See
   (and `--duration 10`) remain valid for `gflow video t2v` and `gflow video r2v`.
   See issue #125.
 
+
 ### Fixed
 
 - **`gflow video i2v` silently produced text-to-video output, ignoring the
@@ -4643,6 +4744,7 @@ completed exit 0, proving no regression. See
   already locks the SPA to English, so the override was a no-op.
 
 ## [0.10.0] — 2026-05-29
+
 
 ### Fixed
 
@@ -4790,6 +4892,7 @@ completed exit 0, proving no regression. See
   cost sub-marker, and self-tests for the auto-marker conftest hook.
 - `docs/E2E_TESTING.md` — comprehensive e2e strategy and layer reference document.
 
+
 ### Fixed
 
 - Structlog logs are now routed to stderr (via
@@ -4840,6 +4943,7 @@ completed exit 0, proving no regression. See
   Chromium launch arg is retained only to stabilise `IMAGE_MODEL_OPTION_SELECTORS`
   (English product names); its removal is tracked as issue #24 Phase 5 (#94).
 
+
 ### Fixed
 
 - Bare `pytest` no longer collects live/e2e tests by default. The project-wide
@@ -4884,6 +4988,7 @@ completed exit 0, proving no regression. See
   guess and prints the list of candidate profiles, each annotated with
   its `kind`). Closes
   [#87](https://github.com/ffroliva/gflow-cli/issues/87).
+
 
 ### Fixed
 
@@ -4963,6 +5068,7 @@ completed exit 0, proving no regression. See
   still enforced in `GenerateVideoRequest.__post_init__` when the model is
   known; the constant is only the absolute upper bound. Anyone pinning to the
   old value of 3 should re-check against the per-model caps.
+
 
 ### Fixed
 
@@ -5117,6 +5223,7 @@ completed exit 0, proving no regression. See
   [#24](https://github.com/ffroliva/gflow-cli/issues/24); `ONBOARDING_SELECTORS`
   still localized text — see KNOWN_ISSUES.
 
+
 ### Fixed
 
 - `gflow image t2i` and `gflow image batch` now explicitly select Image
@@ -5194,6 +5301,7 @@ completed exit 0, proving no regression. See
 
 - The 401-dead HTTP video API path (`FlowApiClient.generate_video`, `get_video_status`) — retired in favour of the new UI-automation transport (`VideoGenerationMixin` in `api/transports/ui_automation_video.py`).
 
+
 ### Fixed
 
 - `gflow auth login` now verifies a real Flow app session before reporting
@@ -5224,6 +5332,7 @@ completed exit 0, proving no regression. See
 > generation, restores a green CI pipeline (the test job had been hanging
 > indefinitely), and clears every open SonarCloud issue so the project's
 > Quality Gate passes.
+
 
 ### Fixed
 
@@ -5297,6 +5406,7 @@ completed exit 0, proving no regression. See
 > was `headless=True`; reCAPTCHA Enterprise immediately rejects headless
 > Chromium.
 
+
 ### Fixed
 
 - **`headless` default changed `True` → `False`** in `config.py` and
@@ -5335,6 +5445,7 @@ completed exit 0, proving no regression. See
   orchestrator — now accepts a swappable worker callback, allowing for uniform
   video and image batch handling in the future.
 
+
 ### Fixed
 
 - Removed ~80 lines of duplicate validation logic from `cli_run.py`.
@@ -5358,6 +5469,7 @@ completed exit 0, proving no regression. See
 - **Broad `GFlowError` catch** in `auth_login` CLI command — previously only
   caught `ConfigurationError`; now looks up any `GFlowError` subclass in
   `EXIT_CODE_MAP` and exits with the correct code plus a `remediation_hint`.
+
 
 ### Fixed
 
@@ -5390,6 +5502,7 @@ completed exit 0, proving no regression. See
   as an explicit fallback strategy.
 - **`AuthStrategyFactory`** — routes `auto`/`chrome`/`internal` to the
   appropriate strategy based on system state.
+
 
 ### Fixed
 
@@ -5436,6 +5549,7 @@ completed exit 0, proving no regression. See
   memory exhaustion when piping large or infinite streams.
 - **`examples/multi_prompt_t2i.py` + `examples/sample_prompts.txt`** — 
   runnable template for the new shell-multi-prompt surface.
+
 
 ### Fixed
 
@@ -5514,6 +5628,7 @@ completed exit 0, proving no regression. See
   `_send_prompt` failures are now **viewport-only**
   (`full_page=False`) and emit a `WARNING` log line noting the file
   may contain identifying information from the authenticated session.
+
 
 ### Fixed
 
