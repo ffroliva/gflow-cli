@@ -37,6 +37,17 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 log = structlog.get_logger(__name__)
 
 _DEFAULT_TIMEOUT_S = 120.0
+#: Flow renders the 270p GIF client-side, and the delay varies: measured 2026-10-07 the blob
+#: arrived 40 s after the click once, a whole run took 104 s once, and one run outlasted the
+#: 120 s MP4 budget. Five minutes covers what was seen with room to spare.
+_GIF_TIMEOUT_S = 300.0
+
+
+def export_timeout_s(scale_norm: str) -> float:
+    """How long to wait for the exported file at ``scale_norm``."""
+    return _GIF_TIMEOUT_S if scale_norm == "270p" else _DEFAULT_TIMEOUT_S
+
+
 VALID_VIDEO_SCALES = ("1080p", "720p", "270p")
 _EXPORT_RPCIDS = ("p0UkFb", "jwpduf")
 #: Minimum SHORT side of the exported track per MP4 scale. The short side is what
@@ -252,6 +263,10 @@ async def _await_capture(
     raise TransportTimeoutError(
         detail=f"Timed out waiting for {scale_norm} video stream from Flow after {timeout_s}s",
         route="video_upscale",
+        remediation_hint=(
+            "Flow had not finished rendering the export. Re-run the command: an export "
+            "spends no credits, and a GIF can take several minutes to render."
+        ),
     )
 
 
@@ -281,7 +296,7 @@ async def upscale_video_migrated(
     project_id: str,
     media_id: str,
     scale: str = "1080p",
-    timeout_s: float = _DEFAULT_TIMEOUT_S,
+    timeout_s: float | None = None,
 ) -> bytes:
     """Upscale/export a video on the migrated ``flow.google.com`` frontend.
 
@@ -311,7 +326,8 @@ async def upscale_video_migrated(
         page.on("response", on_response)
         await _install_capture_hooks(page, "gif" if scale_norm == "270p" else "video")
         await btn_target.click()
-        b64_data = await _await_capture(page, failed, scale_norm, timeout_s)
+        budget = timeout_s if timeout_s is not None else export_timeout_s(scale_norm)
+        b64_data = await _await_capture(page, failed, scale_norm, budget)
         video_bytes = _decode_export(b64_data, scale_norm)
         log.info(
             "migrated_video_upscale.completed",
