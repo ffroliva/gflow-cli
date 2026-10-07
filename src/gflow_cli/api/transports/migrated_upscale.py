@@ -27,7 +27,9 @@ from gflow_cli.errors import (
 from gflow_cli.paths import extension_from_magic
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from playwright.async_api import Locator, Page, Response
+    from collections.abc import Awaitable, Callable
+
+    from playwright.async_api import ElementHandle, Locator, Page, Response
 
 log = structlog.get_logger(__name__)
 
@@ -91,6 +93,119 @@ async def is_menu_item_disabled(item: Locator) -> bool:
     return await item.is_disabled() or await item.get_attribute("aria-disabled") == "true"
 
 
+async def wait_for_or_none(page: Page, selector: str, timeout_ms: int) -> ElementHandle | None:
+    """``page.wait_for_selector`` that answers ``None`` instead of raising on a timeout."""
+    try:
+        return await page.wait_for_selector(selector, timeout=timeout_ms)
+    except PlaywrightTimeoutError:
+        return None
+
+
+async def click_download_button(page: Page, *, media_id: str, prefix: str, route: str) -> None:
+    """Open the download menu of the media shown in the detail view."""
+    download_btn = await wait_for_or_none(page, DOWNLOAD_BUTTON_SELECTOR, 15_000)
+    if not download_btn:
+        raise UiSelectorDriftError(
+            detail=f"{prefix}: download button not found for media_id {media_id} on {page.url}",
+            route=route,
+        )
+    await download_btn.click()
+    await page.wait_for_timeout(500)
+
+
+async def open_tile_download_menu(
+    page: Page,
+    *,
+    project_id: str,
+    media_id: str,
+    tile_selector: str,
+    tile_timeout_ms: int,
+    kind: str,
+    prefix: str,
+    route: str,
+) -> None:
+    """Open ``media_id``'s tile on the project grid, then its download menu."""
+    await page.goto(
+        MIGRATED_PROJECT_URL.format(project_id=project_id), wait_until="domcontentloaded"
+    )
+    tile = await wait_for_or_none(page, tile_selector, tile_timeout_ms)
+    if not tile:
+        raise UiSelectorDriftError(
+            detail=f"{prefix}: {kind} tile for media_id {media_id} not found on {page.url}",
+            route=route,
+            remediation_hint=missing_tile_hint(media_id, project_id),
+        )
+    await tile.click()
+    await page.wait_for_timeout(1000)
+    await click_download_button(page, media_id=media_id, prefix=prefix, route=route)
+
+
+def _unavailable_error(target_resolution: TargetResolution) -> UpscaleUnavailableError:
+    if target_resolution is TargetResolution.RES_4K:
+        return UpscaleUnavailableError(
+            detail=(
+                "4K upscale requires a Flow Ultra subscription. "
+                "Your account supports up to 2K (use --scale 2k)."
+            ),
+            route="upsampleImage",
+            status=403,
+        )
+    return UpscaleUnavailableError(
+        detail="2K upscale is not available on this account.",
+        route="upsampleImage",
+        status=403,
+    )
+
+
+def _sprcad_b64(text: str) -> str | None:
+    """The upscaled image's base64 in an ``SPrCad`` reply; raises on an RPC refusal."""
+    for err in rpc_errors(text):
+        if err.rpcid == UPSCALE_RPCID:
+            raise WireFormatError(
+                detail=f"SPrCad RPC refused: code={err.code} reasons={err.reasons}",
+                route="image_upscale",
+            )
+    for rpcid, payload in parse_frames(text):
+        if rpcid != UPSCALE_RPCID or not isinstance(payload, list):
+            continue
+        items = cast("list[Any]", payload)
+        if len(items) >= 2 and isinstance(items[1], str) and items[1]:
+            return items[1]
+    return None
+
+
+def _sprcad_listener(found_b64: asyncio.Future[str]) -> Callable[[Response], Awaitable[None]]:
+    """A response listener that settles ``found_b64`` from the first ``SPrCad`` reply."""
+
+    async def on_response(response: Response) -> None:
+        if "batchexecute" not in response.url or UPSCALE_RPCID not in response.url:
+            return
+        try:
+            b64_val = _sprcad_b64(await response.text())
+        except WireFormatError as exc:
+            settle_exception(found_b64, exc)
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("migrated_upscale.parse_error", error=str(exc))
+            settle_exception(
+                found_b64,
+                WireFormatError(
+                    detail=f"Failed to parse SPrCad response: {exc}", route="image_upscale"
+                ),
+            )
+            return
+        if b64_val and not found_b64.done():
+            found_b64.set_result(b64_val)
+
+    return on_response
+
+
+def settle_exception(future: asyncio.Future[Any], exc: BaseException) -> None:
+    """Fail ``future`` with ``exc`` unless it already settled (first outcome wins)."""
+    if not future.done():
+        future.set_exception(exc)
+
+
 async def upscale_image_migrated(
     page: Page,
     *,
@@ -109,94 +224,25 @@ async def upscale_image_migrated(
     Returns:
         Raw decoded JPEG/PNG bytes.
     """
-    project_url = MIGRATED_PROJECT_URL.format(project_id=project_id)
     log.info("migrated_upscale.navigate", project_id=project_id, media_id=media_id)
-    await page.goto(project_url, wait_until="domcontentloaded")
-
-    # Locate image tile strictly matching media_id
-    img_sel = f'img[data-media-id="{media_id}"]'
-    try:
-        tile_img = await page.wait_for_selector(img_sel, timeout=30_000)
-    except PlaywrightTimeoutError:
-        tile_img = None
-    if not tile_img:
-        raise UiSelectorDriftError(
-            detail=f"migrated upscale: image tile for media_id {media_id} not found on {page.url}",
-            route="image_upscale",
-            remediation_hint=missing_tile_hint(media_id, project_id),
-        )
-
-    await tile_img.click()
-    await page.wait_for_timeout(1000)
-
-    try:
-        download_btn = await page.wait_for_selector(DOWNLOAD_BUTTON_SELECTOR, timeout=15_000)
-    except PlaywrightTimeoutError:
-        download_btn = None
-    if not download_btn:
-        raise UiSelectorDriftError(
-            detail=f"migrated upscale: download button not found in image detail on {page.url}",
-            route="image_upscale",
-        )
-    await download_btn.click()
-    await page.wait_for_timeout(500)
+    await open_tile_download_menu(
+        page,
+        project_id=project_id,
+        media_id=media_id,
+        tile_selector=f'img[data-media-id="{media_id}"]',
+        tile_timeout_ms=30_000,
+        kind="image",
+        prefix="migrated upscale",
+        route="image_upscale",
+    )
 
     scale_label = "4K" if target_resolution is TargetResolution.RES_4K else "2K"
     btn_target = await find_download_menu_item(page, scale_label, route="image_upscale")
-
     if await is_menu_item_disabled(btn_target):
-        if target_resolution is TargetResolution.RES_4K:
-            raise UpscaleUnavailableError(
-                detail=(
-                    "4K upscale requires a Flow Ultra subscription. "
-                    "Your account supports up to 2K (use --scale 2k)."
-                ),
-                route="upsampleImage",
-                status=403,
-            )
-        raise UpscaleUnavailableError(
-            detail=f"{scale_label} upscale is not available on this account.",
-            route="upsampleImage",
-            status=403,
-        )
+        raise _unavailable_error(target_resolution)
 
-    loop = asyncio.get_running_loop()
-    found_b64: asyncio.Future[str] = loop.create_future()
-
-    async def on_response(response: Response) -> None:
-        if "batchexecute" in response.url and UPSCALE_RPCID in response.url:
-            try:
-                text = await response.text()
-                errors = rpc_errors(text)
-                if any(e.rpcid == UPSCALE_RPCID for e in errors):
-                    err = next(e for e in errors if e.rpcid == UPSCALE_RPCID)
-                    if not found_b64.done():
-                        found_b64.set_exception(
-                            WireFormatError(
-                                detail=f"SPrCad RPC refused: code={err.code} reasons={err.reasons}",
-                                route="image_upscale",
-                            )
-                        )
-                    return
-                frames = parse_frames(text)
-                for rpcid, payload in frames:
-                    if rpcid == UPSCALE_RPCID and isinstance(payload, list):
-                        items = cast("list[Any]", payload)
-                        if len(items) >= 2:
-                            b64_val = items[1]
-                            if isinstance(b64_val, str) and len(b64_val) > 0:
-                                if not found_b64.done():
-                                    found_b64.set_result(b64_val)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("migrated_upscale.parse_error", error=str(exc))
-                if not found_b64.done():
-                    found_b64.set_exception(
-                        WireFormatError(
-                            detail=f"Failed to parse SPrCad response: {exc}",
-                            route="image_upscale",
-                        )
-                    )
-
+    found_b64: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    on_response = _sprcad_listener(found_b64)
     page.on("response", on_response)
     try:
         # Override anchor click and preserve original to restore later

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import json
 import os
 import re
@@ -2516,15 +2517,25 @@ class FlowApiClient:
         logger.info("scene.concat_completed", bytes=len(video_bytes))
 
         # Write via the same storage_uri-aware path as download_image.
+        target = self._write_target(out_path)
+        await write_asset_async(target, video_bytes)
+        return target
+
+    def _upscale_route(self, *, prefer_migrated: bool) -> str:
+        return migrated_route(
+            getattr(self._page, "url", None),
+            self.settings.flow_host,
+            prefer_migrated=prefer_migrated,
+        )
+
+    def _write_target(self, out_path: Path) -> AnyPath:
+        """``out_path``, or its key under the configured cloud ``storage_uri``."""
         storage_uri = self.settings.storage_uri
         if storage_uri:
             key = _storage_key_from_path(out_path, self.settings.output_dir)
-            target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
-        else:
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            target = out_path
-        await write_asset_async(target, video_bytes)
-        return target
+            return storage_path(storage_uri, self.settings.output_dir, key)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        return out_path
 
     async def upsample_image(
         self,
@@ -2591,37 +2602,25 @@ class FlowApiClient:
             resolution=target_resolution.name,
         )
 
-        route = migrated_route(
-            getattr(self._page, "url", None),
-            self.settings.flow_host,
-            prefer_migrated=False,
+        migrated = functools.partial(
+            self._drive_migrated_image_upscale,
+            project_id=project_id,
+            media_id=media_id,
+            target_resolution=target_resolution,
+            out_path=out_path,
         )
+        route = self._upscale_route(prefer_migrated=False)
         if route == "blocked":
             raise_if_migrated(self._page, at="image_upscale_flow_host_kill_switch")
         if route == "migrated":
-            return await self._drive_migrated_image_upscale(
-                project_id=project_id,
-                media_id=media_id,
-                target_resolution=target_resolution,
-                out_path=out_path,
-            )
+            return await migrated()
 
         try:
             token = await self._mint_recaptcha_token(recaptcha_action)
         except FlowHostMigratedError:
-            route = migrated_route(
-                getattr(self._page, "url", None),
-                self.settings.flow_host,
-                prefer_migrated=True,
-            )
-            if route == "migrated":
-                return await self._drive_migrated_image_upscale(
-                    project_id=project_id,
-                    media_id=media_id,
-                    target_resolution=target_resolution,
-                    out_path=out_path,
-                )
-            raise
+            if self._upscale_route(prefer_migrated=True) != "migrated":
+                raise
+            return await migrated()
         req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
         session_id = f";{int(time.time() * 1000)}"
         try:
@@ -2644,37 +2643,8 @@ class FlowApiClient:
                 ) from exc
             raise
 
-        resp_obj: JsonObject = cast("JsonObject", resp) if isinstance(resp, dict) else {}
-        encoded = str(resp_obj.get("encodedImage") or "")
-        if not encoded:
-            raise WireFormatError(
-                detail="upsampleImage response missing encodedImage",
-                instance=_make_instance(),
-                route="upsampleImage",
-                discovery={"keys": sorted(resp_obj)},
-            )
-        if len(encoded) > MAX_UPSAMPLE_B64_LEN:
-            # Reject before decode — never log the body (mitigation: no MBs in logs).
-            raise WireFormatError(
-                detail=(
-                    f"upscaled image exceeds the {MAX_UPSAMPLE_B64_LEN // (1024 * 1024)} MB "
-                    "size cap"
-                ),
-                route="upsampleImage",
-            )
-        try:
-            image_bytes = base64.b64decode(encoded)
-        except ValueError as exc:  # binascii.Error subclasses ValueError
-            raise WireFormatError(
-                detail="upsampleImage returned undecodable image data",
-                route="upsampleImage",
-            ) from exc
-        del encoded, resp  # drop the multi-MB payload promptly
-        if not _is_png_or_jpeg(image_bytes):
-            raise WireFormatError(
-                detail="upscaled output is not a valid PNG/JPEG",
-                route="upsampleImage",
-            )
+        image_bytes = _decode_upsample_response(resp)
+        del resp  # drop the multi-MB payload promptly
         logger.info(
             "image.upscale_completed",
             media_id=media_id,
@@ -2682,13 +2652,7 @@ class FlowApiClient:
             bytes=len(image_bytes),
         )
 
-        storage_uri = self.settings.storage_uri
-        if storage_uri:
-            key = _storage_key_from_path(out_path, self.settings.output_dir)
-            target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
-        else:
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            target = out_path
+        target = self._write_target(out_path)
         target = adjust_key_extension(target, image_bytes)
         await write_asset_async(target, image_bytes)
         return target
@@ -2711,13 +2675,7 @@ class FlowApiClient:
                 media_id=media_id,
                 target_resolution=target_resolution,
             )
-            storage_uri = self.settings.storage_uri
-            if storage_uri:
-                key = _storage_key_from_path(out_path, self.settings.output_dir)
-                target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
-            else:
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                target = out_path
+            target = self._write_target(out_path)
             target = adjust_key_extension(target, image_bytes)
             await write_asset_async(target, image_bytes)
             logger.info(
@@ -2746,12 +2704,7 @@ class FlowApiClient:
         """
         from gflow_cli.api.transports.migrated_video_upscale import upscale_video_migrated
 
-        route = migrated_route(
-            getattr(self._page, "url", None),
-            self.settings.flow_host,
-            prefer_migrated=True,
-        )
-        if route != "migrated":
+        if self._upscale_route(prefer_migrated=True) != "migrated":
             raise FlowHostMigratedError(
                 detail=(
                     "video upscale is driven only on flow.google.com (there is no "
@@ -2782,13 +2735,7 @@ class FlowApiClient:
                 if out_path.suffix.lower() != ext:
                     out_path = out_path.with_suffix(ext)
 
-                storage_uri = self.settings.storage_uri
-                if storage_uri:
-                    key = _storage_key_from_path(out_path, self.settings.output_dir)
-                    target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
-                else:
-                    out_path.parent.mkdir(parents=True, exist_ok=True)
-                    target = out_path
+                target = self._write_target(out_path)
                 await write_asset_async(target, video_bytes)
                 logger.info(
                     "video.upscale_completed",
@@ -3839,6 +3786,41 @@ def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> JsonO
         "top_level_keys": top_keys,
         "body_prefix_redacted": _redact_for_log(body_text)[:200],
     }
+
+
+def _decode_upsample_response(resp: object) -> bytes:
+    """The PNG/JPEG bytes in an ``upsampleImage`` reply; the base64 is never logged."""
+    resp_obj: JsonObject = cast("JsonObject", resp) if isinstance(resp, dict) else {}
+    encoded = str(resp_obj.get("encodedImage") or "")
+    if not encoded:
+        raise WireFormatError(
+            detail="upsampleImage response missing encodedImage",
+            instance=_make_instance(),
+            route="upsampleImage",
+            discovery={"keys": sorted(resp_obj)},
+        )
+    if len(encoded) > MAX_UPSAMPLE_B64_LEN:
+        # Reject before decode — never log the body (mitigation: no MBs in logs).
+        raise WireFormatError(
+            detail=(
+                f"upscaled image exceeds the {MAX_UPSAMPLE_B64_LEN // (1024 * 1024)} MB size cap"
+            ),
+            route="upsampleImage",
+        )
+    try:
+        image_bytes = base64.b64decode(encoded)
+    except ValueError as exc:  # binascii.Error subclasses ValueError
+        raise WireFormatError(
+            detail="upsampleImage returned undecodable image data",
+            route="upsampleImage",
+        ) from exc
+    del encoded  # drop the multi-MB payload promptly
+    if not _is_png_or_jpeg(image_bytes):
+        raise WireFormatError(
+            detail="upscaled output is not a valid PNG/JPEG",
+            route="upsampleImage",
+        )
+    return image_bytes
 
 
 def _is_png_or_jpeg(data: bytes) -> bool:

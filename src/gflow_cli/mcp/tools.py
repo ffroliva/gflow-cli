@@ -1539,58 +1539,21 @@ async def gflow_upscale_image(
     except ValueError as exc:
         return _bad_param("Invalid Scale", str(exc))
 
-    if not is_media_uuid(media_id):
-        return _bad_param("Invalid Media ID", f"Media ID {media_id!r} is not a valid UUID")
-
-    if (proj_err := _validate_project(project)) is not None:
-        return proj_err
-
-    resolved_project = project or lookup_project_in_catalog(media_id, resolved)
-    if not resolved_project:
-        return _bad_param(
-            "Project Required",
-            f"Could not resolve the owning project for media {media_id!r} from the local catalog "
-            f"(profile {resolved!r}). Pass project parameter explicitly.",
-        )
-
-    settings = get_settings()
-    profile_dir = settings.profile_subdir(resolved)
-    output_root = Path(out_dir) if out_dir is not None else settings.output_dir
-    scale_label = scale.strip().lower()
-    from datetime import date
-
-    out_path = output_root / "images" / date.today().isoformat() / f"{media_id}_{scale_label}.png"
-
-    log.info("mcp.tool.upscale_image", media_id=media_id, scale=scale_label, profile=resolved)
-    async with (
-        _profile_lock(resolved),
-        FlowApiClient(
-            profile_dir=profile_dir,
-            headless=settings.headless,
-            out_dir=output_root,
-        ) as client,
-    ):
-        target = await client.upsample_image(
+    return await _run_upscale_tool(
+        kind="image",
+        profile=resolved,
+        media_id=media_id,
+        project=project,
+        out_dir=out_dir,
+        scale_label=scale.strip().lower(),
+        ext="png",
+        upscale=lambda client, project_id, out_path: client.upsample_image(
             media_id=media_id,
-            project_id=resolved_project,
+            project_id=project_id,
             target_resolution=resolution,
             out_path=out_path,
-        )
-
-    from gflow_cli.storage import is_cloud_path
-
-    target_path = Path(str(target))
-    file_bytes = (
-        target_path.stat().st_size if target_path.exists() and not is_cloud_path(target) else 0
+        ),
     )
-    return {
-        "status": "ok",
-        "media_id": media_id,
-        "project_id": resolved_project,
-        "scale": scale_label,
-        "path": str(target),
-        "bytes": file_bytes,
-    }
 
 
 @server.tool(
@@ -1640,43 +1603,68 @@ async def gflow_upscale_video(
         msg = f"Scale must be one of {VALID_VIDEO_SCALES}, got {scale!r}"
         return _bad_param("Invalid Scale", msg)
 
+    return await _run_upscale_tool(
+        kind="video",
+        profile=resolved,
+        media_id=media_id,
+        project=project,
+        out_dir=out_dir,
+        scale_label=scale_label,
+        ext="gif" if scale_label == "270p" else "mp4",
+        upscale=lambda client, project_id, out_path: client.upsample_video(
+            media_id=media_id,
+            project_id=project_id,
+            scale=scale_label,
+            out_path=out_path,
+        ),
+    )
+
+
+async def _run_upscale_tool(
+    *,
+    kind: str,
+    profile: str,
+    media_id: str,
+    project: str | None,
+    out_dir: str | None,
+    scale_label: str,
+    ext: str,
+    upscale: Callable[[FlowApiClient, str, Path], Awaitable[Any]],
+) -> dict[str, Any]:
+    """Shared tail of the upscale tools: validate ids, resolve the project, run, report."""
     if not is_media_uuid(media_id):
         return _bad_param("Invalid Media ID", f"Media ID {media_id!r} is not a valid UUID")
 
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
 
-    resolved_project = project or lookup_project_in_catalog(media_id, resolved)
+    resolved_project = project or lookup_project_in_catalog(media_id, profile)
     if not resolved_project:
         return _bad_param(
             "Project Required",
             f"Could not resolve the owning project for media {media_id!r} from the local catalog "
-            f"(profile {resolved!r}). Pass project parameter explicitly.",
+            f"(profile {profile!r}). Pass project parameter explicitly.",
         )
 
     settings = get_settings()
-    profile_dir = settings.profile_subdir(resolved)
+    profile_dir = settings.profile_subdir(profile)
     output_root = Path(out_dir) if out_dir is not None else settings.output_dir
-    ext = "gif" if scale_label == "270p" else "mp4"
     from datetime import date
 
-    out_path = output_root / "videos" / date.today().isoformat() / f"{media_id}_{scale_label}.{ext}"
+    out_path = (
+        output_root / f"{kind}s" / date.today().isoformat() / f"{media_id}_{scale_label}.{ext}"
+    )
 
-    log.info("mcp.tool.upscale_video", media_id=media_id, scale=scale_label, profile=resolved)
+    log.info(f"mcp.tool.upscale_{kind}", media_id=media_id, scale=scale_label, profile=profile)
     async with (
-        _profile_lock(resolved),
+        _profile_lock(profile),
         FlowApiClient(
             profile_dir=profile_dir,
             headless=settings.headless,
             out_dir=output_root,
         ) as client,
     ):
-        target = await client.upsample_video(
-            media_id=media_id,
-            project_id=resolved_project,
-            scale=scale_label,
-            out_path=out_path,
-        )
+        target = await upscale(client, resolved_project, out_path)
 
     from gflow_cli.storage import is_cloud_path
 
