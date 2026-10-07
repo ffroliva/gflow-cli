@@ -141,3 +141,46 @@ async def test_migrated_video_upscale_1080p_e2e(
     seen = _events(install_log_capture)
     for required in ("migrated_video_upscale.navigate", "migrated_video_upscale.completed"):
         assert required in seen, f"{required} missing; events: {seen}"
+
+
+@pytest.mark.e2e_video
+@pytest.mark.asyncio
+async def test_migrated_video_export_270p_gif_e2e(
+    e2e_profile_dir: Path,
+    real_catalog: None,
+    tmp_path: Path,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """Live proof: the 270p animated-GIF export lands within its longer budget.
+
+    Flow renders the GIF client-side with a variable delay (40 s to past 120 s measured on
+    2026-10-07), which is why this arm exists apart from the 1080p one.
+    """
+    if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO", "") != "1":
+        pytest.skip("set GFLOW_CLI_E2E_RUN_VIDEO=1 to include the 270p GIF export e2e")
+    profile = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
+    if not profile:
+        pytest.skip("GFLOW_CLI_E2E_PROFILE required")
+
+    db_path = get_settings().resolved_db_path()
+    usable = [
+        r for r in list_videos(db_path=db_path, profile=profile, limit=20, offset=0) if r.project_id
+    ]
+    if not usable:
+        pytest.skip(f"no catalogued videos for profile {profile!r} to export")
+    row = usable[0]
+    assert row.project_id is not None
+
+    async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
+        result = await client.upsample_video(
+            media_id=row.media_id,
+            project_id=row.project_id,
+            scale="270p",
+            out_path=tmp_path / f"{row.media_id}_270p.gif",
+        )
+
+    data = Path(str(result)).read_bytes()
+    assert data[:4] == b"GIF8", "output is not a GIF"
+    assert len(data) > 100_000, f"implausibly small for an animated GIF: {len(data)} bytes"
+    seen = _events(install_log_capture)
+    assert "migrated_video_upscale.completed" in seen, f"events: {seen}"

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`gflow video upscale --scale 270p` no longer gives up while Flow is still rendering the
+  GIF.** Flow renders the animated GIF in the page, and the delay varies: measured on
+  2026-10-07, once 40 s, once a 104 s run, and once past the 120 s that MP4 exports get. A
+  270p export now waits up to 5 minutes. A timeout now says to re-run (an export spends no
+  credits) instead of the generic "a single API call exceeded the 30 s deadline".
+
 ### Added
 
 - **Image and video upscaling on the migrated `flow.google.com` frontend (Refs #914).**
