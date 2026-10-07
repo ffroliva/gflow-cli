@@ -218,8 +218,20 @@ async def test_migrated_video_upscale_unreadable_response_fails_with_wireformat(
 async def test_migrated_video_upscale_timeout_raises_transport_timeout() -> None:
     page = fake_page(_video_menu())
 
-    with pytest.raises(TransportTimeoutError, match="Timed out waiting for 1080p video stream"):
+    with pytest.raises(TransportTimeoutError, match="Timed out waiting for 1080p") as exc:
         await _run(page, timeout_s=0.01)
+    # The class default ("a single API call exceeded the 30 s deadline") is false here.
+    assert "30 s" not in exc.value.remediation_hint
+    assert "no credits" in exc.value.remediation_hint
+
+
+def test_a_gif_export_gets_a_longer_budget_than_an_mp4() -> None:
+    """Measured 2026-10-07: Flow renders the 270p GIF client-side — blob at 40 s once,
+    a whole run 104 s once, and one run past the 120 s MP4 budget."""
+    from gflow_cli.api.transports.migrated_video_upscale import export_timeout_s
+
+    assert export_timeout_s("270p") >= 300.0
+    assert export_timeout_s("1080p") == export_timeout_s("720p") < export_timeout_s("270p")
 
 
 async def test_migrated_video_upscale_invalid_magic_bytes() -> None:
