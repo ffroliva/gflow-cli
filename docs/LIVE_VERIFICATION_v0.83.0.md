@@ -94,4 +94,11 @@ classic composer). Requested from the contributor.
 
 ## Post-tag evidence
 
-_Filled after the signed tag is published: PyPI version, release workflow run, `gflow --version` from a clean install._
+| Evidence | Result |
+|---|---|
+| Signed tag | `v0.83.0` (SSH signature) on `5d6f46c4` |
+| Release workflow | [run 37603775449](https://github.com/ffroliva/gflow-cli/actions/runs/37603775449): `build-and-publish` success, `mcp-registry / publish` success |
+| GitHub Release | https://github.com/ffroliva/gflow-cli/releases/tag/v0.83.0 (not a prerelease) |
+| PyPI | `gflow-cli 0.83.0` served by pypi.org/pypi/gflow-cli/json |
+| Clean install | `uvx --refresh --from gflow-cli==0.83.0 gflow --version` → `gflow, version 0.83.0` |
+| Release PR | #955 merged into `main` (`9d8bebbc`, merge commit); back-merged into `develop` (`52574004`) |
