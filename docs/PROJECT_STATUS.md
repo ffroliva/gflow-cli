@@ -4,6 +4,30 @@
 
 ## Current release
 
+**v0.83.0 — alpha.** Video runs on flow.google.com download again, and upscaling is
+ported there.
+
+**Billed video runs no longer fail on flow.google.com (#948).** Since about 2026-10-05,
+Flow sends `null` in the generation record's fourth slot, where it used to send `"CAE"`.
+gflow found the record by that marker. As a result, video submits (reported on t2v, i2v and
+r2v, reproduced on t2v) were accepted and billed, then exited 7 and never downloaded. A record is now matched by its
+three ids and its details block. A run now selects its own record from a reply that lists
+several. `gflow data download` reads only the clip route's signed `as29s` URL. If a record
+is ever missing again, the error says the run may already be billed instead of suggesting
+a retry.
+
+**Upscaling on flow.google.com (#922).** `gflow image upscale` (2K) works there, a new
+`gflow video upscale` exports 1080p, 720p or a 270p GIF, and both have MCP twins
+(`gflow_upscale_image`, `gflow_upscale_video`). A 1080p export measured 0 credits in one
+observation. The download menu items are anchored on their resolution token, measured
+identical across locales. AGENTS.md records this as the one exception to the
+text-selector rule.
+
+**Not verified here:** 4K upscale (the button is disabled on the account used); accounts
+served labs. Full ledger: [LIVE_VERIFICATION_v0.83.0](LIVE_VERIFICATION_v0.83.0.md).
+
+<details><summary>v0.82.1 — a mint failure, a busy catalog and a missing workflow id stop misreporting</summary>
+
 **v0.82.1 — alpha.** Three fixes for failures that misreported what happened.
 
 **A reCAPTCHA mint failure is a typed error (#915).** It was a bare `RuntimeError`: exit 1
@@ -25,6 +49,8 @@ known media id is now a no-op instead of a crash.
 **Not verified here:** accounts served labs (labs answers 308 on the three profiles here
 that hold a live Flow session). Full ledger:
 [LIVE_VERIFICATION_v0.82.1](LIVE_VERIFICATION_v0.82.1.md).
+
+</details>
 
 <details><summary>v0.82.0 — a run config builds a series from one image</summary>
 
@@ -382,6 +408,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Billed video runs on flow.google.com download again — the generation record is found without its `"CAE"` marker, picked by id from multi-record replies, recovered from `as29s` only (#948); image and video upscale ported to flow.google.com with MCP twins (#922) | ✅ done (v0.83.0) |
 | A reCAPTCHA mint failure, a busy catalog and a missing video workflow id stop misreporting what happened (#915, #900, #898) | ✅ done (v0.82.1) |
 | A run config row generates from an earlier row's image or a local file, referenced in place with no re-upload (#913); `gflow run` successes recorded with lineage; refs were silently dropped since v0.52.0 (fixed, record corrected) | ✅ done (v0.82.0) |
 | The generation browser opens off-screen, placeable via `GFLOW_CLI_BROWSER_WINDOW_POSITION`, measured unchanged for image and video (#923); a write-denied profile raises `ProfileAccessError` instead of posing as lock contention (#919); `urllib3` CVE lock (#920) | ✅ done (v0.81.0) |

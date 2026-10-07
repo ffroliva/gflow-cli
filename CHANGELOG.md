@@ -7,13 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **`gflow video upscale --scale 270p` no longer gives up while Flow is still rendering the
-  GIF.** Flow renders the animated GIF in the page, and the delay varies: measured on
-  2026-10-07, once 40 s, once a 104 s run, and once past the 120 s that MP4 exports get. A
-  270p export now waits up to 5 minutes. A timeout now says to re-run (an export spends no
-  credits) instead of the generic "a single API call exceeded the 30 s deadline".
+## [0.83.0] — 2026-10-07
 
 ### Added
 
@@ -40,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow video upscale --scale 270p` no longer gives up while Flow is still rendering the
+  GIF.** Flow renders the animated GIF in the page, and the delay varies: measured on
+  2026-10-07, once 40 s, once a 104 s run, and once past the 120 s that MP4 exports get. A
+  270p export now waits up to 5 minutes. A timeout now says to re-run (an export spends no
+  credits) instead of the generic "a single API call exceeded the 30 s deadline".
 - **flow.google.com video runs no longer fail after Flow has billed them (#948).** Since
   about 2026-10-05, Flow sends `null` in the generation record's fourth slot, where it
   used to send `"CAE"`. gflow located the record by that marker. As a result,
@@ -5965,7 +5964,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.82.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.83.0...HEAD
+[0.83.0]: https://github.com/ffroliva/gflow-cli/compare/v0.82.1...v0.83.0
 [0.82.1]: https://github.com/ffroliva/gflow-cli/compare/v0.82.0...v0.82.1
 [0.82.0]: https://github.com/ffroliva/gflow-cli/compare/v0.81.0...v0.82.0
 [0.81.0]: https://github.com/ffroliva/gflow-cli/compare/v0.80.0...v0.81.0

@@ -196,9 +196,9 @@ gflow image i2i "make it cinematic" --ref "$UUID"
 Upscale a **platform-generated** image to 2K or 4K (the same 1K/2K/4K options Flow's
 download menu offers) and save it locally. Uploaded images are not supported.
 
-> **Migrated `flow.google.com` accounts (#639):** image upscaling is supported on both hosts.
-> On `flow.google.com`, gflow automates the image detail view's download menu via the `SPrCad`
-> batchexecute wire, decoding the upscaled JPEG directly.
+> **When Flow serves `flow.google.com` (#639):** gflow drives the image detail view's download
+> menu, which answers on the `SPrCad` batchexecute wire with the upscaled JPEG. Verified for 2K
+> on 2026-10-07; 4K was seen only as a disabled option (exit 22) on the account used.
 
 ```text
 gflow image upscale MEDIA_ID --scale 2k|4k [OPTIONS]
@@ -208,13 +208,14 @@ Arguments:
                             `gflow data list images`).
 
 Options:
-  --scale [2k|4k]           Target resolution. 4k requires a Flow Ultra
+  --scale 2k|4k             Target resolution (required). 4k requires a Flow Ultra
                             subscription; 1k is the original (no upscale).
   --project ID              Project that owns the image. Resolved from the local
                             catalog when omitted; pass it explicitly for images
                             gflow didn't record (e.g. generated in the web UI).
   --out PATH                Output directory (see "Output paths" below).
   --profile NAME            Profile name (overrides default).
+  --transport ui_automation Override transport strategy (advanced).
 ```
 
 Examples:
@@ -2082,7 +2083,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
-| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; local-file `image i2i`; and `gflow run --config` rows referencing an earlier row (`batch:N`) or a local file. Image UUID/entity/instruction/Imagen-4 forms and `image batch` remain unsupported. Not selector drift (23) | **Not retryable.** Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
+| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; local-file `image i2i`; and `gflow run --config` rows referencing an earlier row (`batch:N`) or a local file; `image upscale`; and `video upscale` (served here only). Image UUID/entity/instruction/Imagen-4 forms and `image batch` remain unsupported. Not selector drift (23) | **Not retryable.** Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
 | `37` | `InsufficientCreditsError` | The account's balance is short **for the model it asked for**, so Flow **replaced** the submit control with its `Insufficient credits warning` instead of disabling it. Short, not necessarily empty: measured 2026-09-07, an account holding **50** credits requesting `--model veo-quality` (**100**) rendered the warning. Explicitly **not** selector drift (23): reporting it as drift told users to file a frontend bug over a credit shortfall | Check the balance with `gflow credits user`, then pick a cheaper `--model` (`veo-lite` costs 10), top up, or wait for the allowance to reset. Nothing was submitted, so no credit was spent. `gflow image` draws on a separate daily quota and may still work |
 | `38` | `FlowAccountChooserError` | The post-migration hop landed on Google's account chooser and the profile's recorded account (`.gflow_account`) could not be selected automatically (row absent, click-through did not return to the editor, or `--account` mismatch) | **Not retryable**: run `gflow auth login --profile <name>` and complete the chooser manually, while signed in as the recorded account (re-run `gflow auth login` if the chooser offers a different session) |
 | `39` | `FlowAccessUnavailableError` | Flow loaded and routed to its own "you don't have access" screen (`<flow-pinhole-unavailable-screen>`): this Google account has no Flow entitlement. Detected by component, not by URL — the hop is client-side (`flow.google.com/` answers 200) and the path varies (`/unavailable`, `/u/8/unavailable`). Explicitly **not** auth expiry (3/8) and **not** selector drift (23): nothing expired and nothing drifted | **Not retryable, and signing in again cannot change it.** Flow needs an age-verified account in a supported region on a Google AI Plus/Pro/Ultra or qualifying Workspace plan — check which applies at [Google's eligibility page](https://support.google.com/flow/answer/16353333) and open https://flow.google.com in a browser on this account to confirm |
