@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.83.0] — 2026-10-07
+
 ### Added
 
 - **Image and video upscaling on the migrated `flow.google.com` frontend (Refs #914).**
@@ -5957,7 +5959,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.82.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.83.0...HEAD
+[0.83.0]: https://github.com/ffroliva/gflow-cli/compare/v0.82.1...v0.83.0
 [0.82.1]: https://github.com/ffroliva/gflow-cli/compare/v0.82.0...v0.82.1
 [0.82.0]: https://github.com/ffroliva/gflow-cli/compare/v0.81.0...v0.82.0
 [0.81.0]: https://github.com/ffroliva/gflow-cli/compare/v0.80.0...v0.81.0
