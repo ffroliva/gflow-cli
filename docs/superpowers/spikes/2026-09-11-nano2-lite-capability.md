@@ -72,6 +72,9 @@ reply:
 | `HTrJv` | 24,762 B | **all six** — HARBOR_SEAL, NARWHAL, GEM_PIX_2, and the three menu labels | **none** |
 | `Zzl0ze` | 38,880 B | **none** | **both** |
 
+> **Superseded 2026-10-08 (#958):** `HTrJv` on that host now lists `BELUGA` (Nano Banana
+> 2.1) and no `NARWHAL` — see `2026-10-08-nano-banana-21-replaced-2.md`.
+
 The catalogue lists models. The media listing lists media. **Neither joins them.**
 
 ## Verdict

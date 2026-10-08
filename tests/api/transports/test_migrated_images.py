@@ -171,6 +171,11 @@ def test_nano2_submit_accepts_the_beluga_token_nano_banana_2_1_sends() -> None:
     assert problem is not None
     assert "NARWHAL" in problem
 
+    # BELUGA is nano2's alias only: every other model still needs its own name.
+    for other in (Model.GEM_PIX_2, Model.HARBOR_SEAL):
+        body = f'[["ogiZ0b", "BELUGA {REFERENCE}"]]'
+        assert _image_body_problem(body, (REFERENCE,), model=other) is not None, other
+
 
 def test_nano2_matches_exactly_one_entry_of_the_live_2_1_menu() -> None:
     from gflow_cli.api.transports.migrated_composer import IMAGE_MODEL_MENU_MATCHERS

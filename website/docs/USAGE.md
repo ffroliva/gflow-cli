@@ -278,8 +278,8 @@ Notes:
 Generate 1–4 images from one text prompt, or run a shell-friendly batch of 1–50
 prompts through one Flow session/project.
 
-> **Migrated `flow.google.com` accounts (#639):** T2I is supported with Nano Banana 2
-> (`nano2`) and Nano Banana Pro (`nano-pro`), all five aspects (`16:9`,
+> **Migrated `flow.google.com` accounts (#639):** T2I is supported with Nano Banana 2.1
+> (`nano2`, #958) and Nano Banana Pro (`nano-pro`), all five aspects (`16:9`,
 > `4:3`, `1:1`, `3:4`, `9:16`), and count 1–4. Without `--project`, gflow creates a fresh project
 > there first ([#864](https://github.com/ffroliva/gflow-cli/issues/864)). The
 > migrated page owns its reCAPTCHA + `ogiZ0b` submit. Imagen 4, Agent instructions,
