@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.83.1] — 2026-10-08
+
+### Fixed
+
+- **The default image model failed on `flow.google.com` once Flow moved to Nano Banana 2.1
+  (#958).** Flow replaced "Nano Banana 2" with "Nano Banana 2.1" in the migrated model menu,
+  and the submit now carries `BELUGA` where it carried `NARWHAL`, so the submit guard refused
+  every `nano2` run (the default) with exit 7: *the image submit body does not carry requested
+  model NARWHAL*. `nano2` now accepts that token; upgrade with `gflow update`. On an older
+  version, `--model nano-pro` or `--model nano2-lite` still works. Measured on two
+  accounts on that host: 2.1 replaced 2 rather than appearing beside it, and Flow's
+  catalogue there no longer lists `NARWHAL`. Found and first fixed by @omid-io.
+
 ## [0.83.0] — 2026-10-07
 
 ### Added
@@ -5964,7 +5977,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.83.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.83.1...HEAD
+[0.83.1]: https://github.com/ffroliva/gflow-cli/compare/v0.83.0...v0.83.1
 [0.83.0]: https://github.com/ffroliva/gflow-cli/compare/v0.82.1...v0.83.0
 [0.82.1]: https://github.com/ffroliva/gflow-cli/compare/v0.82.0...v0.82.1
 [0.82.0]: https://github.com/ffroliva/gflow-cli/compare/v0.81.0...v0.82.0

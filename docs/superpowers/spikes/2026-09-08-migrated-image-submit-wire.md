@@ -59,6 +59,8 @@ with redirects disabled returned HTTP 200, **492,358 bytes**, beginning
 - UUID/name-only image references and character references on the migrated image path.
 - Every image model. `GEM_PIX_2` was observed; model-menu labels/keys for NARWHAL and
   IMAGEN_3_5 still require either a zero-cost menu read or the first live run.
+  *(2026-10-08: the NARWHAL slot now shows Nano Banana 2.1 / `BELUGA` — see
+  `2026-10-08-nano-banana-21-replaced-2.md`.)*
 - A content-policy rejection or an out-of-quota image response.
 - A labs-host control on this account: the rollout is permanent, so the old host cannot be
   reached with this profile.

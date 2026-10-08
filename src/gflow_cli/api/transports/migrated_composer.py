@@ -460,6 +460,16 @@ IMAGE_MODEL_MENU_MATCHERS: dict[ImageModel, ModelMenuMatcher] = {
     ImageModel.HARBOR_SEAL: ModelMenuMatcher("Nano Banana 2 Lite"),
 }
 
+#: Wire tokens an ``ogiZ0b`` body may carry for a model, where not just its own name.
+#: "Nano Banana 2.1" REPLACED "Nano Banana 2" in the menu and sends ``BELUGA``; Flow's
+#: catalogue no longer lists ``NARWHAL`` at all (#958, measured on two accounts 2026-10-08,
+#: ``scripts/dev/spike_nano_banana_21_wire.py``). Accepting BELUGA is only safe while the
+#: two are never offered side by side: the "already selected" shortcut in
+#: ``_select_image_model`` would then let a ``nano2`` request run 2.1 unnoticed.
+IMAGE_MODEL_WIRE_TOKENS: dict[ImageModel, tuple[str, ...]] = {
+    ImageModel.NARWHAL: ("NARWHAL", "BELUGA"),
+}
+
 
 def _unported_form(request: GenerateVideoRequest) -> str | None:
     """The noun for what this request asks of the new host that slice 1 does not
@@ -923,7 +933,9 @@ def _image_body_problem(
             "migrated host: the image submit body could not be read, so the request "
             "could not be confirmed before Flow acted on it"
         )
-    if model is not None and model.value not in body:
+    if model is not None and not any(
+        token in body for token in IMAGE_MODEL_WIRE_TOKENS.get(model, (model.value,))
+    ):
         return (
             f"migrated host: the image submit body does not carry requested model "
             f"{model.value} — refusing to report a generation made with persisted settings"
