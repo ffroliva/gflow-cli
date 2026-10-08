@@ -8,9 +8,10 @@
   },
   "image": [
     "🍌 Nano Banana Pro",
-    "🍌 Nano Banana 2",
+    "🍌 Nano Banana 2.1",
     "🍌 Nano Banana 2 Lite"
   ],
+  "_image_recaptured": "Image list re-read 2026-10-08 on denon82 and ffroliva (en) with scripts/dev/spike_nano_banana_21_wire.py, menu read WHILE OPEN: 'Nano Banana 2' was REPLACED by 'Nano Banana 2.1' (wire BELUGA), not added beside it (#958). The video list and _provenance are still the 2026-08-30 capture.",
   "video": [
     "volume_up Omni 1.1 Flash",
     "volume_up Veo 3.1 - Lite",

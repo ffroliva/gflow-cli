@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The default image model failed on `flow.google.com` once Flow moved to Nano Banana 2.1
+  (#958).** Flow replaced "Nano Banana 2" with "Nano Banana 2.1" in the migrated model menu,
+  and the submit now carries `BELUGA` where it carried `NARWHAL`, so the submit guard refused
+  every `nano2` run (the default) with exit 7. `nano2` now accepts that token. Measured on two
+  accounts on that host: 2.1 replaced 2 rather than appearing beside it, and Flow's
+  catalogue there no longer lists `NARWHAL`. Found and first fixed by @omid-io.
+
 ## [0.83.0] — 2026-10-07
 
 ### Added

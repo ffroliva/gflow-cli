@@ -211,7 +211,7 @@ What happens:
 4. Four files land at `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` through `_4.png`.
 
 **Model aliases:**
-- `nano2` → `NARWHAL` (Nano Banana 2; default, fastest)
+- `nano2` → `NARWHAL` (Nano Banana 2; default, fastest — on `flow.google.com` it selects Nano Banana 2.1, which replaced it there, #958)
 - `nano-pro` → `GEM_PIX_2` (Nano Banana Pro; higher quality)
 - `image4` → `IMAGEN_3_5` (Imagen 4; photoreal lean)
 
