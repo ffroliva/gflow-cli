@@ -106,7 +106,7 @@ UUID does: the picker exposes no media id to anchor on. Capture:
 [2026-09-05-migrated-r2v-attach-surface](docs/superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md).
 
 **Images also run there (2026-09-08).** The driver selects Image mode, Nano Banana 2
-(2.1 since 2026-10-08, #958) or Pro, any supported aspect and count 1–4, then observes the page's own synchronous
+(2.1 by 2026-10-08, #958) or Pro, any supported aspect and count 1–4, then observes the page's own synchronous
 `ogiZ0b` reply. Local I2I files use the existing `maseQ` upload and mention path; every
 uploaded id must appear in the submit body before the result is trusted. UUID/entity
 references, Agent instructions, and Imagen 4 remain pre-submit refusals on this host.
