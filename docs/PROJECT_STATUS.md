@@ -4,6 +4,20 @@
 
 ## Current release
 
+**v0.83.1 — alpha.** The default image model works on flow.google.com again.
+
+**`nano2` runs Nano Banana 2.1 on flow.google.com (#958).** Flow replaced "Nano Banana 2"
+with "Nano Banana 2.1" in that host's image menu, and the submit now carries `BELUGA`
+where it carried `NARWHAL`. gflow's submit guard refused every `nano2` run (the default
+model) with exit 7. `nano2` now accepts `BELUGA`; every other model still needs its own
+token. Measured on two accounts: 2.1 replaced 2 rather than appearing beside it. Found and
+first fixed by @omid-io.
+
+**Not verified here:** accounts served labs. Full ledger:
+[LIVE_VERIFICATION_v0.83.1](LIVE_VERIFICATION_v0.83.1.md).
+
+<details><summary>v0.83.0 — video downloads on flow.google.com, upscaling ported</summary>
+
 **v0.83.0 — alpha.** Video runs on flow.google.com download again, and upscaling is
 ported there.
 
@@ -25,6 +39,8 @@ text-selector rule.
 
 **Not verified here:** 4K upscale (the button is disabled on the account used); accounts
 served labs. Full ledger: [LIVE_VERIFICATION_v0.83.0](LIVE_VERIFICATION_v0.83.0.md).
+
+</details>
 
 <details><summary>v0.82.1 — a mint failure, a busy catalog and a missing workflow id stop misreporting</summary>
 
@@ -408,6 +424,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| The default image model (`nano2`) runs Nano Banana 2.1 on flow.google.com — the submit guard accepts its `BELUGA` token (#958) | ✅ done (v0.83.1) |
 | Billed video runs on flow.google.com download again — the generation record is found without its `"CAE"` marker, picked by id from multi-record replies, recovered from `as29s` only (#948); image and video upscale ported to flow.google.com with MCP twins (#922) | ✅ done (v0.83.0) |
 | A reCAPTCHA mint failure, a busy catalog and a missing video workflow id stop misreporting what happened (#915, #900, #898) | ✅ done (v0.82.1) |
 | A run config row generates from an earlier row's image or a local file, referenced in place with no re-upload (#913); `gflow run` successes recorded with lineage; refs were silently dropped since v0.52.0 (fixed, record corrected) | ✅ done (v0.82.0) |
