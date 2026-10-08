@@ -154,6 +154,33 @@ def test_image_submit_body_requires_every_uploaded_reference() -> None:
     assert MEDIA in problem
 
 
+def test_nano2_submit_accepts_the_beluga_token_nano_banana_2_1_sends() -> None:
+    """2.1 replaced 2 in the menu and sends BELUGA (#958, spike 2026-10-08).
+
+    Before this, the default model aborted every image run on those accounts.
+    """
+    from gflow_cli.api.transports.migrated_composer import _image_body_problem
+
+    for token in ("NARWHAL", "BELUGA"):
+        body = f'[["ogiZ0b", "{token} {REFERENCE}"]]'
+        assert _image_body_problem(body, (REFERENCE,), model=Model.NARWHAL) is None, token
+
+    problem = _image_body_problem(
+        f'[["ogiZ0b", "GEM_PIX_2 {REFERENCE}"]]', (REFERENCE,), model=Model.NARWHAL
+    )
+    assert problem is not None
+    assert "NARWHAL" in problem
+
+
+def test_nano2_matches_exactly_one_entry_of_the_live_2_1_menu() -> None:
+    from gflow_cli.api.transports.migrated_composer import IMAGE_MODEL_MENU_MATCHERS
+
+    # Measured on denon82 and ffroliva, 2026-10-08 (spike_nano_banana_21_wire.py).
+    offered = ["🍌 Nano Banana Pro", "🍌 Nano Banana 2 Lite", "🍌 Nano Banana 2.1"]
+    matcher = IMAGE_MODEL_MENU_MATCHERS[Model.NARWHAL]
+    assert [label for label in offered if matcher.matches(label)] == ["🍌 Nano Banana 2.1"]
+
+
 def test_nano_banana_2_does_not_match_the_lite_sibling() -> None:
     from gflow_cli.api.transports.migrated_composer import IMAGE_MODEL_MENU_MATCHERS
 
