@@ -154,16 +154,36 @@ def test_image_submit_body_requires_every_uploaded_reference() -> None:
     assert MEDIA in problem
 
 
+def test_image_submit_body_accepts_narwhal_and_beluga_wire_tokens() -> None:
+    from gflow_cli.api.transports.migrated_composer import _image_body_problem
+
+    # Classic Nano Banana 2 wire token: NARWHAL
+    body_narwhal = f'[["ogiZ0b", "NARWHAL {REFERENCE}"]]'
+    assert _image_body_problem(body_narwhal, (REFERENCE,), model=Model.NARWHAL) is None
+
+    # Updated Nano Banana 2.1 wire token: BELUGA
+    body_beluga = f'[["ogiZ0b", "BELUGA {REFERENCE}"]]'
+    assert _image_body_problem(body_beluga, (REFERENCE,), model=Model.NARWHAL) is None
+
+    # Mismatched model rejected
+    body_gem = f'[["ogiZ0b", "GEM_PIX_2 {REFERENCE}"]]'
+    problem = _image_body_problem(body_gem, (REFERENCE,), model=Model.NARWHAL)
+    assert problem is not None
+    assert "NARWHAL" in problem
+
+
 def test_nano_banana_2_does_not_match_the_lite_sibling() -> None:
     from gflow_cli.api.transports.migrated_composer import IMAGE_MODEL_MENU_MATCHERS
 
     matcher = IMAGE_MODEL_MENU_MATCHERS[Model.NARWHAL]
     assert matcher.matches("🍌 Nano Banana 2")
+    assert matcher.matches("🍌 Nano Banana 2.1")
     assert not matcher.matches("🍌 Nano Banana 2 Lite")
 
     lite_matcher = IMAGE_MODEL_MENU_MATCHERS[Model.HARBOR_SEAL]
     assert lite_matcher.matches("🍌 Nano Banana 2 Lite")
     assert not lite_matcher.matches("🍌 Nano Banana 2")
+    assert not lite_matcher.matches("🍌 Nano Banana 2.1")
     assert not lite_matcher.matches("🍌 Nano Banana Pro")
 
 

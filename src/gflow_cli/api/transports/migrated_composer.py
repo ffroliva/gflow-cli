@@ -455,9 +455,17 @@ IMAGE_ASPECT_LIGATURE_MEASURED: frozenset[ImageAspect] = frozenset(IMAGE_ASPECT_
 IMAGE_MODEL_MENU_MATCHERS: dict[ImageModel, ModelMenuMatcher] = {
     # Exact enough to exclude the separate "Nano Banana 2 Lite" entry without
     # depending on the decorative banana glyph that precedes both live labels.
+    # Matches both "Nano Banana 2" and the updated "Nano Banana 2.1".
     ImageModel.NARWHAL: ModelMenuMatcher("Nano Banana 2", excludes=("Lite",)),
     ImageModel.GEM_PIX_2: ModelMenuMatcher("Nano Banana Pro"),
     ImageModel.HARBOR_SEAL: ModelMenuMatcher("Nano Banana 2 Lite"),
+}
+
+#: The model identifier tokens that Flow may serialize into an ``ogiZ0b`` submit
+#: payload for each ImageModel. On flow.google.com, Nano Banana 2.1 sends "BELUGA"
+#: where Nano Banana 2 sent "NARWHAL".
+IMAGE_MODEL_WIRE_TOKENS: dict[ImageModel, tuple[str, ...]] = {
+    ImageModel.NARWHAL: ("NARWHAL", "BELUGA"),
 }
 
 
@@ -923,11 +931,13 @@ def _image_body_problem(
             "migrated host: the image submit body could not be read, so the request "
             "could not be confirmed before Flow acted on it"
         )
-    if model is not None and model.value not in body:
-        return (
-            f"migrated host: the image submit body does not carry requested model "
-            f"{model.value} — refusing to report a generation made with persisted settings"
-        )
+    if model is not None:
+        tokens = IMAGE_MODEL_WIRE_TOKENS.get(model, (model.value,))
+        if not any(token in body for token in tokens):
+            return (
+                f"migrated host: the image submit body does not carry requested model "
+                f"{model.value} — refusing to report a generation made with persisted settings"
+            )
     missing = [media_id for media_id in reference_ids if media_id not in body]
     if missing:
         return (
