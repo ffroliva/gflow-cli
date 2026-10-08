@@ -32,6 +32,10 @@ run costs $0. `--submit` adds one nano2 image (daily quota, 0 credits). Output g
   - The e2e `test_e2e_t2i_runs_on_a_moved_account`. On the same profile and project, it
     fails on `develop` (body lacks `NARWHAL`) and passes once `BELUGA` is accepted.
 
+**Update, same day (release v0.83.1).** A hook on `_image_body_problem` during a live nano2
+i2i read both submit bodies: `BELUGA` present, `NARWHAL` absent. The body token is now
+measured, not inferred ([ledger](../../LIVE_VERIFICATION_v0.83.1.md)).
+
 **Verdict.**
 - `nano2` → accept `("NARWHAL", "BELUGA")` in `IMAGE_MODEL_WIRE_TOKENS`. Keep `NARWHAL`:
   only two accounts were measured, and other cohorts may still be served 2.
