@@ -820,6 +820,86 @@ class TestMigratedHostFallback:
         assert await _verify_migrated_host_fallback(tmp_path, "t") is None
 
 
+class TestMigratedHostFallbackChannel:
+    """The probe must open the profile with the engine that owns it.
+
+    It hard-coded ``channel="chrome"``. On a host without Google Chrome at
+    ``/opt/google/chrome/chrome`` (the only Linux path Playwright's channel
+    resolves), the launch raised, the fail-closed wrapper swallowed it as
+    ``auth_migrated_fallback_probe_error``, and ``gflow auth status`` reported
+    "Signed in to Google, but not to the Flow app" for a profile that
+    generation — which picks its channel via ``channel_for_profile`` — drove
+    successfully on bundled Chromium.
+    """
+
+    @staticmethod
+    def _launch_kwargs(mock_ap: MagicMock) -> dict:
+        pw = mock_ap.return_value.__aenter__.return_value
+        return pw.chromium.launch_persistent_context.await_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_a_bundled_chromium_profile_is_probed_with_bundled_chromium(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No strategy marker = an `--browser internal` profile: channel must be None."""
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        mock_ap = _migrated_mock()
+        monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+        # Even with Chrome installed, an unmarked profile is not Chrome's to open.
+        monkeypatch.setattr(
+            "gflow_cli.browser_manager.is_playwright_chrome_channel_available", lambda: True
+        )
+
+        result = await _verify_migrated_host_fallback(tmp_path, "t")
+
+        assert result is not None, "a bundled-Chromium profile must still verify"
+        assert self._launch_kwargs(mock_ap)["channel"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_chrome_profile_is_probed_with_chrome(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The Chrome-strategy path keeps its behaviour exactly."""
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        (tmp_path / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
+        mock_ap = _migrated_mock()
+        monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+        monkeypatch.setattr(
+            "gflow_cli.browser_manager.is_playwright_chrome_channel_available", lambda: True
+        )
+
+        result = await _verify_migrated_host_fallback(tmp_path, "t")
+
+        assert result is not None
+        assert self._launch_kwargs(mock_ap)["channel"] == "chrome"
+
+    @pytest.mark.asyncio
+    async def test_the_engine_downgrade_guard_still_fails_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#477: opening the profile with bundled Chromium must not skip the guard.
+
+        A refusal is a probe that cannot run — it maps to None, and Chromium is
+        never launched against the newer profile.
+        """
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+        from gflow_cli.errors import ProfileEngineDowngradeError
+
+        mock_ap = _migrated_mock()
+        monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+
+        def _refuse(_profile_dir: Path, _channel: str | None) -> None:
+            raise ProfileEngineDowngradeError("older bundled Chromium")
+
+        monkeypatch.setattr("gflow_cli.browser_manager.ensure_profile_engine_compatible", _refuse)
+
+        assert await _verify_migrated_host_fallback(tmp_path, "t") is None
+        pw = mock_ap.return_value.__aenter__.return_value
+        pw.chromium.launch_persistent_context.assert_not_awaited()
+
+
 class TestFindEmails:
     """#852 — the address scan must stay linear.
 

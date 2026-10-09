@@ -439,14 +439,26 @@ async def _verify_migrated_host_fallback(
     cookie (__Secure-OSID/OSID) are present, AND the account email resolves
     from myaccount.google.com. Anything else returns None (caller keeps the
     original outcome). Never touches other outcomes.
+
+    The profile is opened with the engine that owns it — ``channel_for_profile``,
+    the same resolver generation uses — not a hard-coded ``channel="chrome"``.
+    That literal made the probe raise on every host without Google Chrome at
+    Playwright's fixed path (``/opt/google/chrome/chrome`` on Linux), so a
+    bundled-Chromium profile that generation drove fine was reported as
+    GOOGLE_SESSION_ONLY. On the bundled path the #477 engine-downgrade guard
+    runs first; a refusal is a probe that cannot run and maps to None.
     """
+    from gflow_cli.browser_manager import channel_for_profile, ensure_profile_engine_compatible
+
     from .strategies import async_playwright
 
     try:
+        channel = channel_for_profile(profile_dir)
+        ensure_profile_engine_compatible(profile_dir, channel)
         async with async_playwright() as pw:
             ctx = await pw.chromium.launch_persistent_context(
                 user_data_dir=str(profile_dir),
-                channel="chrome",
+                channel=channel,
                 headless=True,
                 args=["--password-store=basic"],
             )
