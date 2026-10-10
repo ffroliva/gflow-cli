@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`--duration` failed before submit on a Flow account whose UI is not in English
+  (#963).** On `flow.google.com` the duration radio was matched on its exact English
+  label (`8s`), so a Vietnamese pane reading `8 giây` matched nothing and every run with
+  `--duration` stopped with exit 11, before any credit was spent. The radio is now matched
+  on its number, refusing a `4K`/`480p` sibling that shares the leading digit. CLI and MCP
+  share this transport, so both are fixed.
+
+- **A notice-only cookie bar blocked every run on `flow.google.com`, at exit 23.** Some
+  languages are served a consent bar with only an *OK, got it* button and no reject
+  option; the driver looked only for reject, so the bar stayed over the settings control.
+  It now clicks reject where the bar offers one and acknowledges the notice only when it
+  does not. Found while live-checking #963 under a Vietnamese UI.
+
 - **`gflow auth status` reported a migrated account as not signed in to Flow on hosts
   without Google Chrome.** For a `flow.google.com` account, the migrated-host probe opened
   the profile with a hard-coded `channel="chrome"`. Playwright resolves that only to
