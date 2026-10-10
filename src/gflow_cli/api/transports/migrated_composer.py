@@ -177,6 +177,10 @@ COOKIE_BAR = "#glue-cookie-notification-bar-1, .glue-cookie-notification-bar"
 #: structural (glue's own BEM modifier), so this stays locale-invariant where matching
 #: "No thanks" would not.
 COOKIE_BAR_REJECT = "button.glue-cookie-notification-bar__reject"
+#: The notice-only bar has no reject at all — just ``OK, got it`` (measured under
+#: ``hl=vi``, 2026-10-10, found by the #963 spike). Acknowledging a notice answers no
+#: consent question, so this is the fallback only when :data:`COOKIE_BAR_REJECT` is absent.
+COOKIE_BAR_ACCEPT = "button.glue-cookie-notification-bar__accept"
 
 #: ``YhhmEf`` is the text-to-video submit; ``eb1hJf`` the image-to-video one (a bound
 #: Start chip switches the app between them — 2026-09-05 frames spike).
@@ -647,6 +651,19 @@ def migrated_images_prefer(
 
 def _exact(label: str) -> re.Pattern[str]:
     return re.compile(r"^\s*" + re.escape(label) + r"\s*$")
+
+
+def _duration(label: str) -> re.Pattern[str]:
+    """A duration radio by its number — ``8s`` also matches ``8 giây`` (#963).
+
+    The unit is a translated word, the number is not: the same exception, and the same
+    bar, as ``migrated_upscale.menu_token_pattern``. Siblings in the pane share the
+    leading digit: ``480p`` is refused because a digit follows, ``4K`` because a resolution
+    suffix does. A miss still raises exit 11 from :meth:`MigratedComposer._select` rather
+    than clicking a wrong radio.
+    """
+    number = label.removesuffix("s")
+    return re.compile(r"^\s*" + re.escape(number) + r"(?!\d)(?!\s*[pPkK]\b)\D*$")
 
 
 def _unique_display_name(image_path: Path) -> str:
@@ -1555,7 +1572,9 @@ class MigratedComposer:
         try:
             if not await bar.is_visible():
                 return
-            await bar.locator(COOKIE_BAR_REJECT).first.click(timeout=3000)
+            reject = bar.locator(COOKIE_BAR_REJECT)
+            button = reject if await reject.count() else bar.locator(COOKIE_BAR_ACCEPT)
+            await button.first.click(timeout=3000)
             await bar.wait_for(state="hidden", timeout=3000)
         except Exception as e:  # noqa: BLE001 - the click post-mortem reports what is left
             log.warning("migrated.cookie_bar_not_dismissed", error=str(e)[:120])
@@ -1706,7 +1725,7 @@ class MigratedComposer:
         this cannot go through :meth:`_select`, whose duration branch raises exit 11.
         """
         wanted = f"{R2V_DURATION_S}s"
-        if not await pane.locator(RADIO).filter(has_text=_exact(wanted)).count():
+        if not await pane.locator(RADIO).filter(has_text=_duration(wanted)).count():
             log.info("migrated.r2v_duration_row_absent", wanted=wanted)
             return
         await self._select(page, pane, axis="duration", text=wanted)
@@ -1727,7 +1746,7 @@ class MigratedComposer:
         matches = (
             radios.filter(has=_ligature(page, lig))
             if lig
-            else radios.filter(has_text=_exact(wanted))
+            else radios.filter(has_text=_duration(wanted) if axis == "duration" else _exact(wanted))
         )
         target = matches.first
         if not await target.count():
