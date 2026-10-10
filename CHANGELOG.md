@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`gflow auth status` reported a migrated account as not signed in to Flow on hosts
+  without Google Chrome.** For a `flow.google.com` account, the migrated-host probe opened
+  the profile with a hard-coded `channel="chrome"`. Playwright resolves that only to
+  `/opt/google/chrome/chrome` on Linux. On a host with just the bundled Chromium the launch
+  raised, the probe logged `auth_migrated_fallback_probe_error`, and status printed
+  *"Signed in to Google, but not to the Flow app"*, even though generation, which picks its
+  channel with `channel_for_profile`, ran fine on the same profile. The probe now opens the
+  profile with that same resolver and runs the #477 engine-downgrade guard first.
+
 ## [0.83.1] — 2026-10-08
 
 ### Fixed
