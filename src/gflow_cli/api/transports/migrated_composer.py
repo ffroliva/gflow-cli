@@ -657,9 +657,10 @@ def _duration(label: str) -> re.Pattern[str]:
     """A duration radio by its number — ``8s`` also matches ``8 giây`` (#963).
 
     The unit is a translated word, the number is not: the same exception, and the same
-    bar, as ``migrated_upscale.menu_token_pattern``. A ``4K`` or ``480p`` sibling in the
-    pane shares the leading digit, so a resolution suffix is refused; a miss still raises
-    exit 11 from :meth:`MigratedComposer._select` rather than clicking a wrong radio.
+    bar, as ``migrated_upscale.menu_token_pattern``. Siblings in the pane share the
+    leading digit: ``480p`` is refused because a digit follows, ``4K`` because a resolution
+    suffix does. A miss still raises exit 11 from :meth:`MigratedComposer._select` rather
+    than clicking a wrong radio.
     """
     number = label.removesuffix("s")
     return re.compile(r"^\s*" + re.escape(number) + r"(?!\d)(?!\s*[pPkK]\b)\D*$")

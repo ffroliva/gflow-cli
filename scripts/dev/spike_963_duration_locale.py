@@ -68,9 +68,9 @@ async def _pass(page: Any, project_id: str, hl: str, lengths: list[int]) -> dict
             "els => els.map(e => ({text: (e.textContent||'').trim(), cls: e.className,"
             " visible: !!e.offsetParent}))"
         )
-        buttons = bar.locator("button:visible")
-        if await buttons.count():
-            await buttons.last.click(timeout=3000)
+        # The shipped dismissal, not an ad-hoc click: it prefers reject, so a rerun on a
+        # bar that offers one never consents on the profile's behalf.
+        await composer._dismiss_cookie_bar(page)  # noqa: SLF001 — dev instrument
     pane = await composer._open_pane(page)  # noqa: SLF001 — dev instrument
     try:
         await composer._select_model(page, pane, VideoModel.OMNI_FLASH)  # noqa: SLF001
