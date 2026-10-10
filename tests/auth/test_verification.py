@@ -846,15 +846,36 @@ class TestMigratedHostFallbackChannel:
 
         mock_ap = _migrated_mock()
         monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
-        # Even with Chrome installed, an unmarked profile is not Chrome's to open.
-        monkeypatch.setattr(
-            "gflow_cli.browser_manager.is_playwright_chrome_channel_available", lambda: True
-        )
 
         result = await _verify_migrated_host_fallback(tmp_path, "t")
 
         assert result is not None, "a bundled-Chromium profile must still verify"
         assert self._launch_kwargs(mock_ap)["channel"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_chrome_profile_on_a_host_without_chrome_falls_back_to_bundled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The reported host: chrome marker, no Chrome at Playwright's path → channel None."""
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        (tmp_path / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
+        mock_ap = _migrated_mock()
+        monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+        monkeypatch.setattr(
+            "gflow_cli.browser_manager.is_playwright_chrome_channel_available", lambda: False
+        )
+        guarded: list[str | None] = []
+        monkeypatch.setattr(
+            "gflow_cli.browser_manager.ensure_profile_engine_compatible",
+            lambda _p, channel: guarded.append(channel),
+        )
+
+        result = await _verify_migrated_host_fallback(tmp_path, "t")
+
+        assert result is not None
+        assert self._launch_kwargs(mock_ap)["channel"] is None
+        assert guarded == [None], "the #477 guard must run on the bundled fallback"
 
     @pytest.mark.asyncio
     async def test_a_chrome_profile_is_probed_with_chrome(
