@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 import structlog
@@ -63,8 +64,11 @@ async def test_migrated_image_upscale_2k_e2e(
     if not usable:
         pytest.skip(f"no catalogued images for profile {profile!r} to upscale")
 
-    # Prefer a row whose original is on disk, so the output can be compared to it.
-    row = next((r for r in usable if r.local_path and Path(r.local_path).is_file()), usable[0])
+    # The NEWEST row, not the first one with a file on disk: the on-disk preference
+    # reached back to an image no longer on its project's grid and failed exit 23 on
+    # untouched develop as well (A/B-controlled, 2026-10-10, #957). The size comparison
+    # below still runs whenever this row's original happens to be on disk.
+    row = usable[0]
     assert row.project_id is not None
     out_file = tmp_path / f"{row.media_id}_2k.jpg"
 
@@ -96,6 +100,39 @@ async def test_migrated_image_upscale_2k_e2e(
     seen = _events(install_log_capture)
     for required in ("migrated_upscale.navigate", "migrated_upscale.completed"):
         assert required in seen, f"{required} missing; events: {seen}"
+
+
+@pytest.mark.e2e_image
+@pytest.mark.asyncio
+async def test_mcp_upscale_image_2k_e2e(
+    e2e_profile_dir: Path,
+    real_catalog: None,
+    tmp_path: Path,
+) -> None:
+    """The MCP twin, run separately: ``gflow_upscale_image`` resolves the profile, finds
+    the project and drives the same migrated transport ($0). The CLI run proves the
+    service; only this proves the adapter an agent actually calls (#957)."""
+    from gflow_cli.mcp import tools
+
+    profile = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
+    if not profile:
+        pytest.skip("GFLOW_CLI_E2E_PROFILE required")
+    rows = list_images(
+        db_path=get_settings().resolved_db_path(), profile=profile, limit=20, offset=0
+    )
+    row = next((r for r in rows if r.project_id), None)
+    if row is None:
+        pytest.skip(f"no catalogued images for profile {profile!r} to upscale")
+
+    result: dict[str, Any] = await tools.gflow_upscale_image(
+        media_id=row.media_id, scale="2k", out_dir=str(tmp_path), profile=profile
+    )
+
+    assert result.get("status") == "ok", f"MCP upscale failed: {result}"
+    saved = Path(result["path"])
+    assert saved.is_file(), f"reported {saved} but nothing written"
+    with Image.open(saved) as im:
+        assert max(im.size) >= _2K_LONG_SIDE_FLOOR, f"not 2K: {im.size}"
 
 
 @pytest.mark.e2e_video

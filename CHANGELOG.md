@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It now clicks reject where the bar offers one and acknowledges the notice only when it
   does not. Found while live-checking #963 under a Vietnamese UI.
 
+- **`gflow image upscale` on `flow.google.com` failed with *Element is not attached to
+  the DOM* (#957).** The image tile and the download button were held as element handles
+  resolved once, and Flow re-renders the grid after it first appears, so the click landed
+  on a detached node. They are now Playwright locators, re-resolved on every action. Video
+  upscale opens its download menu through the same helper, so it shares the fix; the MCP
+  tools call the same transport. Image upscale was verified live on the CLI and over MCP.
+
 - **`gflow auth status` reported a migrated account as not signed in to Flow on hosts
   without Google Chrome.** For a `flow.google.com` account, the migrated-host probe opened
   the profile with a hard-coded `channel="chrome"`. Playwright resolves that only to
