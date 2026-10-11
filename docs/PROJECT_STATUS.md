@@ -4,6 +4,28 @@
 
 ## Current release
 
+**v0.83.2 — alpha.** Three fixes on flow.google.com: non-English UIs, image upscale, and
+`auth status` on hosts without Chrome.
+
+**`--duration` works in a non-English Flow UI (#963).** The duration radio was matched on
+its English label (`8s`), so a Vietnamese pane (`8 giây`) stopped every `--duration` run
+at exit 11, before any credit was spent. The radio is now matched on its number, measured
+identical across locales; AGENTS.md records this as the second text-selector exception.
+Live-checking it under a Vietnamese UI also found a **notice-only cookie bar** (no reject
+button) that blocked every run at exit 23; it is now acknowledged when it has no reject.
+
+**`gflow image upscale` no longer fails with *Element is not attached to the DOM* (#957).**
+The tile and download button are Playwright locators, re-resolved on every action.
+
+**`gflow auth status` no longer reports a migrated account as signed out on hosts without
+Google Chrome.** The probe opens the profile with the same channel generation uses.
+
+**Not verified here:** a host without Google Chrome; video upscale, which shares the fixed
+helper but whose live run hit a disabled 1080p option (#967); accounts served labs. Full ledger:
+[LIVE_VERIFICATION_v0.83.2](LIVE_VERIFICATION_v0.83.2.md).
+
+<details><summary>v0.83.1 — the default image model works on flow.google.com again</summary>
+
 **v0.83.1 — alpha.** The default image model works on flow.google.com again.
 
 **`nano2` runs Nano Banana 2.1 on flow.google.com (#958).** Flow replaced "Nano Banana 2"
@@ -15,6 +37,8 @@ first fixed by @omid-io.
 
 **Not verified here:** accounts served labs. Full ledger:
 [LIVE_VERIFICATION_v0.83.1](LIVE_VERIFICATION_v0.83.1.md).
+
+</details>
 
 <details><summary>v0.83.0 — video downloads on flow.google.com, upscaling ported</summary>
 
@@ -424,6 +448,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `--duration` binds in a non-English Flow UI (#963), a notice-only cookie bar is acknowledged, image upscale clicks through locators (#957), and `auth status` probes with the profile's own channel (#962) | ✅ done (v0.83.2) |
 | The default image model (`nano2`) runs Nano Banana 2.1 on flow.google.com — the submit guard accepts its `BELUGA` token (#958) | ✅ done (v0.83.1) |
 | Billed video runs on flow.google.com download again — the generation record is found without its `"CAE"` marker, picked by id from multi-record replies, recovered from `as29s` only (#948); image and video upscale ported to flow.google.com with MCP twins (#922) | ✅ done (v0.83.0) |
 | A reCAPTCHA mint failure, a busy catalog and a missing video workflow id stop misreporting what happened (#915, #900, #898) | ✅ done (v0.82.1) |

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.83.2] — 2026-10-11
+
 ### Fixed
 
 - **`--duration` failed before submit on a Flow account whose UI is not in English
@@ -30,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tools call the same transport. Image upscale was verified live on the CLI and over MCP.
 
 - **`gflow auth status` reported a migrated account as not signed in to Flow on hosts
-  without Google Chrome.** For a `flow.google.com` account, the migrated-host probe opened
+  without Google Chrome (PR #962, by @mohaidoss).** For a `flow.google.com` account, the migrated-host probe opened
   the profile with a hard-coded `channel="chrome"`. Playwright resolves that only to
   `/opt/google/chrome/chrome` on Linux. On a host with just the bundled Chromium the launch
   raised, the probe logged `auth_migrated_fallback_probe_error`, and status printed
@@ -6008,7 +6010,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.83.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.83.2...HEAD
+[0.83.2]: https://github.com/ffroliva/gflow-cli/compare/v0.83.1...v0.83.2
 [0.83.1]: https://github.com/ffroliva/gflow-cli/compare/v0.83.0...v0.83.1
 [0.83.0]: https://github.com/ffroliva/gflow-cli/compare/v0.82.1...v0.83.0
 [0.82.1]: https://github.com/ffroliva/gflow-cli/compare/v0.82.0...v0.82.1
