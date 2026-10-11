@@ -29,7 +29,7 @@ from gflow_cli.paths import extension_from_magic
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Awaitable, Callable
 
-    from playwright.async_api import ElementHandle, Locator, Page, Response
+    from playwright.async_api import Locator, Page, Response
 
 log = structlog.get_logger(__name__)
 
@@ -93,12 +93,19 @@ async def is_menu_item_disabled(item: Locator) -> bool:
     return await item.is_disabled() or await item.get_attribute("aria-disabled") == "true"
 
 
-async def wait_for_or_none(page: Page, selector: str, timeout_ms: int) -> ElementHandle | None:
-    """``page.wait_for_selector`` that answers ``None`` instead of raising on a timeout."""
+async def wait_for_or_none(page: Page, selector: str, timeout_ms: int) -> Locator | None:
+    """The first visible match of ``selector``, or ``None`` on a timeout.
+
+    A Locator, never an ``ElementHandle`` (#957): Flow re-renders the grid and the detail
+    view after they first appear, and a handle resolved once is then clicked detached —
+    ``Element is not attached to the DOM``. A Locator re-resolves on every action.
+    """
+    target = page.locator(selector).first
     try:
-        return await page.wait_for_selector(selector, timeout=timeout_ms)
+        await target.wait_for(timeout=timeout_ms)
     except PlaywrightTimeoutError:
         return None
+    return target
 
 
 async def click_download_button(page: Page, *, media_id: str, prefix: str, route: str) -> None:

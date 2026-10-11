@@ -54,9 +54,9 @@
 
 | Evidence | Result |
 |---|---|
-| Signed tag | pending |
-| Release workflow | pending |
-| GitHub Release | pending |
-| PyPI | pending |
-| Clean install | pending |
-| Release PR | pending |
+| Signed tag | `v0.83.1` (SSH signature) on `a841e716` |
+| Release workflow | [run 37809384940](https://github.com/ffroliva/gflow-cli/actions/runs/37809384940): `build-and-publish` success, `mcp-registry / publish` success |
+| GitHub Release | https://github.com/ffroliva/gflow-cli/releases/tag/v0.83.1 (not a prerelease) |
+| PyPI | `gflow-cli 0.83.1` served by pypi.org/pypi/gflow-cli/json |
+| Clean install | `uvx --refresh --from gflow-cli==0.83.1 gflow --version` → `gflow, version 0.83.1` (first attempt hit PyPI index lag, "unsatisfiable"; resolved on retry) |
+| Release PR | #960 merged into `main` (`d0dc678c`, merge commit) after `ProfileLease (macos-latest)` twice got no runner (0 steps) and passed on attempt 3; back-merged into `develop` (`7e1eeacb`) |

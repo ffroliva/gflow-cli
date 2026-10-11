@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 MENU_SELECTOR = '[role="menuitem"]'
@@ -48,6 +49,24 @@ class FakeItem:
 class _Absent:
     async def wait_for(self, **_: Any) -> None:
         raise PlaywrightTimeoutError("menu never opened")
+
+
+class FakeTarget:
+    """``page.locator(tile|download)`` — re-resolved on every action, like Playwright's."""
+
+    def __init__(self, *, present: bool, what: str) -> None:
+        self.present, self.what = present, what
+
+    @property
+    def first(self) -> FakeTarget:
+        return self
+
+    async def wait_for(self, **_: Any) -> None:
+        if not self.present:
+            raise PlaywrightTimeoutError(self.what)
+
+    async def click(self) -> None:
+        return None
 
 
 class FakeMenu:
@@ -102,23 +121,22 @@ def fake_page(
 
     page.evaluate = AsyncMock(side_effect=_evaluate)
 
-    clickable = MagicMock()
-    clickable.click = AsyncMock()
-
     async def _wait_for_selector(sel: str, **_: Any) -> Any:
-        if "data-media-id" in sel:
-            if tile:
-                return clickable
-            raise PlaywrightTimeoutError("no tile")
-        if "download" in sel:
-            if download:
-                return clickable
-            raise PlaywrightTimeoutError("no download button")
-        raise AssertionError(f"unexpected selector {sel!r}")
+        # #957: the grid re-renders after it is found, so a handle resolved once is
+        # stale by the time it is clicked. Only a lazily re-resolved Locator survives.
+        handle = MagicMock()
+        handle.click = AsyncMock(
+            side_effect=PlaywrightError("ElementHandle.click: Element is not attached to the DOM")
+        )
+        return handle
 
     page.wait_for_selector = AsyncMock(side_effect=_wait_for_selector)
 
-    def _locator(sel: str) -> FakeMenu:
+    def _locator(sel: str) -> Any:
+        if "data-media-id" in sel:
+            return FakeTarget(present=tile, what="no tile")
+        if "download" in sel:
+            return FakeTarget(present=download, what="no download button")
         assert sel == MENU_SELECTOR, sel
         return FakeMenu(menu)
 
