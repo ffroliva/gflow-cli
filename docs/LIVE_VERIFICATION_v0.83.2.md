@@ -63,8 +63,8 @@ release tree: **3 passed in 101.93 s**.
 
 | Evidence | Result |
 |---|---|
-| Signed tag | _pending_ |
-| Release workflow | _pending_ |
-| GitHub Release | _pending_ |
-| PyPI | _pending_ |
-| Release PR | _pending_ |
+| Signed tag | `v0.83.2` (SSH signature) on `a486f831` |
+| Release workflow | [run 38109515205](https://github.com/ffroliva/gflow-cli/actions/runs/38109515205): `build-and-publish` success, `mcp-registry / publish` success |
+| GitHub Release | https://github.com/ffroliva/gflow-cli/releases/tag/v0.83.2 (not a prerelease) |
+| PyPI | `uvx --refresh --from gflow-cli==0.83.2 gflow --version` → `gflow, version 0.83.2` |
+| Release PR | #968 merged into `main` (`b12a1730`, merge commit; all checks incl. SonarCloud green); back-merged into `develop` (`98ea3232`) |
