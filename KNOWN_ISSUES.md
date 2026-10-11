@@ -416,6 +416,12 @@ re-run's new project for the same reason.
 
 **Workaround:** omit `--duration` and accept Flow's default clip length.
 
+**Not this issue if your Flow UI is not in English.** Before v0.83.2, a translated duration
+unit (`8 giây` in Vietnamese) also raised exit 11 on `flow.google.com`, because the radio
+was matched on its English label ([#963](https://github.com/ffroliva/gflow-cli/issues/963)).
+Upgrade first (`gflow update`). The locale refutation below applies to the Portuguese
+labs cohort it was measured on.
+
 **What actually happens today.** gflow accepts `--duration 4`, `6` or `8` on the
 Veo 3.1 models and `10` on `omni-flash` only — the CLI no longer refuses a
 duration it cannot know your account supports. What it still cannot do is tell
