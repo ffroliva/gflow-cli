@@ -56,12 +56,13 @@ Before any gflow-cli invocation, verify:
 # Auth (one-time)
 gflow auth login                                          # opens Chromium, user signs in
 gflow auth status                                         # confirms session
+gflow auth renew [--profile NAME | --all] [--json]        # headless cookie refresh, no re-login
 gflow auth                                                # bare: list profiles or trigger first login
 gflow auth logout                                         # delete a saved session
 
 # Veo video-credit balance (read-only; image models use separate daily quotas)
-gflow credits user [--profile NAME] [--json]
-gflow credits list [--json]                               # all saved profiles
+gflow credits user [--profile NAME] [--refresh] [--json]
+gflow credits list [--refresh] [--json]                   # all saved profiles; --refresh renews expired sessions
 
 # Image generation (Imagen / Nano Banana)
 gflow image upload <path>                                 # → asset UUID + dimensions

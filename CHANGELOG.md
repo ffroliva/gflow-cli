@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow auth renew` refreshes saved sessions without signing in again.** It opens each
+  profile (`--profile`, or `--all`) in a headless browser and loads Flow, so Google and Flow
+  rotate the saved cookies. It then verifies the session like `gflow auth status`. No credits
+  are spent. A revoked session still needs `gflow auth login`, and a profile in use by another
+  gflow process is skipped.
+- **`gflow credits user|list --refresh` renews expired sessions again.** Since #802, an expired
+  session fails the credits read without opening a browser. That is the right default, because
+  re-asking aisandbox-pa with the same Bearer cannot change its answer. It also removed the only
+  automatic renewal that `credits list` used to give stale profiles. `--refresh` brings it back as
+  an opt-in. A profile whose fast path raises an expired-session error is renewed through
+  `auth renew` and asked again, while the others are untouched. A failed renewal keeps the
+  original diagnosis. The MCP twin is `gflow_get_credits(refresh=true)`.
+
 ## [0.85.0] — 2026-10-14
 
 ### Added

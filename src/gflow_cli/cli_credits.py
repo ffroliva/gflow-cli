@@ -44,20 +44,26 @@ def _render_many(payload: dict[str, Any]) -> None:
     console.print(f"[bold]Total credits:[/bold] {payload['total_credits']}")
 
 
-async def _show_one(profile: str | None, as_json: bool) -> None:
-    payload = await inspect_profile(profile)
+async def _show_one(profile: str | None, as_json: bool, refresh: bool) -> None:
+    payload = await inspect_profile(profile, refresh=refresh)
     if as_json:
         json_output.emit(payload)
     else:
         _render_one(payload)
 
 
-async def _show_all(as_json: bool) -> None:
-    payload = await inspect_all_profiles()
+async def _show_all(as_json: bool, refresh: bool) -> None:
+    payload = await inspect_all_profiles(refresh=refresh)
     if as_json:
         json_output.emit(payload)
     else:
         _render_many(payload)
+
+
+_REFRESH_HELP = (
+    "Renew an expired session in a headless browser, then ask again. "
+    "A revoked session still needs `gflow auth login`."
+)
 
 
 @click.group()
@@ -67,20 +73,24 @@ def credits() -> None:
 
 @credits.command("user")
 @click.option("--profile", default=None, help="Profile name.")
+@click.option("--refresh", is_flag=True, help=_REFRESH_HELP)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
-def user(profile: str | None, as_json: bool) -> None:
+def user(profile: str | None, refresh: bool, as_json: bool) -> None:
     """Show the credit balance for one profile."""
 
     selected = _resolve_profile(profile)
     _make_provider_dir(selected)
     run_with_handlers(
-        lambda: _show_one(selected, as_json), cli_command="credits user", as_json=as_json
+        lambda: _show_one(selected, as_json, refresh), cli_command="credits user", as_json=as_json
     )
 
 
 @credits.command("list")
+@click.option("--refresh", is_flag=True, help=_REFRESH_HELP)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
-def list_command(as_json: bool) -> None:
+def list_command(refresh: bool, as_json: bool) -> None:
     """Show credit balances for all saved profiles."""
 
-    run_with_handlers(lambda: _show_all(as_json), cli_command="credits list", as_json=as_json)
+    run_with_handlers(
+        lambda: _show_all(as_json, refresh), cli_command="credits list", as_json=as_json
+    )

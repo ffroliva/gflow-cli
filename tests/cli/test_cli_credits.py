@@ -24,8 +24,9 @@ def test_credits_user_json(monkeypatch) -> None:
     from gflow_cli import cli_credits
     from gflow_cli.cli import main
 
-    async def fake(profile: str | None) -> dict[str, object]:
+    async def fake(profile: str | None, *, refresh: bool = False) -> dict[str, object]:
         assert profile == "demo"
+        assert refresh is False
         return _one()
 
     monkeypatch.setattr(cli_credits, "inspect_profile", fake)
@@ -45,7 +46,8 @@ def test_credits_list_json(monkeypatch) -> None:
 
     payload = {"status": "ok", "profiles": [_one()], "total_credits": 5, "count": 1}
 
-    async def fake() -> dict[str, object]:
+    async def fake(*, refresh: bool = False) -> dict[str, object]:
+        assert refresh is False
         return payload
 
     monkeypatch.setattr(cli_credits, "inspect_all_profiles", fake)
@@ -59,8 +61,9 @@ def test_credits_user_renders_human_output(monkeypatch) -> None:
     from gflow_cli import cli_credits
     from gflow_cli.cli import main
 
-    async def fake(profile: str | None) -> dict[str, object]:
+    async def fake(profile: str | None, *, refresh: bool = False) -> dict[str, object]:
         assert profile == "demo"
+        assert refresh is False
         return _one()
 
     monkeypatch.setattr(cli_credits, "inspect_profile", fake)
@@ -82,7 +85,8 @@ def test_credits_list_renders_human_output(monkeypatch) -> None:
 
     payload = {"status": "ok", "profiles": [_one()], "total_credits": 5, "count": 1}
 
-    async def fake() -> dict[str, object]:
+    async def fake(*, refresh: bool = False) -> dict[str, object]:
+        assert refresh is False
         return payload
 
     monkeypatch.setattr(cli_credits, "inspect_all_profiles", fake)
@@ -114,3 +118,43 @@ def test_credits_user_rejects_positional_profile() -> None:
 
     assert result.exit_code == 2
     assert "unexpected extra argument" in result.output.lower()
+
+
+def test_credits_list_refresh_is_passed_to_the_service(monkeypatch) -> None:
+    from gflow_cli import cli_credits
+    from gflow_cli.cli import main
+
+    seen: list[bool] = []
+
+    async def fake(*, refresh: bool = False) -> dict[str, object]:
+        seen.append(refresh)
+        return {"status": "ok", "profiles": [_one()], "total_credits": 5, "count": 1}
+
+    monkeypatch.setattr(cli_credits, "inspect_all_profiles", fake)
+    result = CliRunner().invoke(
+        main, ["credits", "list", "--refresh", "--json"], catch_exceptions=False
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == [True]
+
+
+def test_credits_user_refresh_is_passed_to_the_service(monkeypatch) -> None:
+    from gflow_cli import cli_credits
+    from gflow_cli.cli import main
+
+    seen: list[bool] = []
+
+    async def fake(profile: str | None, *, refresh: bool = False) -> dict[str, object]:
+        seen.append(refresh)
+        return _one()
+
+    monkeypatch.setattr(cli_credits, "inspect_profile", fake)
+    monkeypatch.setattr(cli_credits, "_resolve_profile", lambda profile: profile or "demo")
+    monkeypatch.setattr(cli_credits, "_make_provider_dir", lambda profile: None)
+    result = CliRunner().invoke(
+        main, ["credits", "user", "--profile", "demo", "--refresh"], catch_exceptions=False
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == [True]

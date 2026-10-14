@@ -134,9 +134,18 @@ video generation; image generation uses separate per-model daily quotas.
 > still works. Open, tracked in [#795](https://github.com/ffroliva/gflow-cli/issues/795).
 
 ```text
-gflow credits user [--profile NAME] [--json]
-gflow credits list [--json]
+gflow credits user [--profile NAME] [--refresh] [--json]
+gflow credits list [--refresh] [--json]
 ```
+
+`--refresh` renews an expired session instead of reporting it. When the fast path says the
+session has expired, gflow opens that profile in a headless browser, loads Flow so Google and Flow
+rotate the saved cookies (the same renewal as [`gflow auth renew`](AUTHENTICATION.md#gflow-auth-renew)),
+then asks for the balance again. That costs one Chrome launch per expired profile and no credits.
+Without `--refresh`, nothing launches. A session Google has revoked cannot be renewed, so the row
+keeps its original diagnosis. A profile another gflow process is using is recorded as
+`ProfileLockedError` and the list carries on. `--refresh` cannot help where Flow serves
+`flow.google.com` (#795, above), because that host mints no labs token to renew.
 
 `credits user` applies the normal profile precedence chain. `credits list` inspects every saved
 profile sequentially and returns successful balances even when another profile is expired or

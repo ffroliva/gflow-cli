@@ -403,6 +403,92 @@ def auth_status(profile: str | None) -> None:
     console.print(f"[green]Flow session verified{who}.[/green]")
 
 
+@auth.command("renew")
+@click.option("--profile", default=None, help="Profile to renew. Defaults to the default profile.")
+@click.option("--all", "renew_all", is_flag=True, help="Renew every saved profile, one at a time.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON instead of text.")
+def auth_renew(profile: str | None, renew_all: bool, as_json: bool) -> None:
+    """Refresh saved sessions headlessly, without signing in again.
+
+    Opens each profile in a hidden browser, loads Flow so Google and Flow can
+    rotate their session cookies, then verifies the session like
+    `gflow auth status`. No credits are spent. A session Google has revoked
+    still needs `gflow auth login`.
+
+    Exits 0 when every renewed profile verifies, 1 otherwise. A profile that
+    another gflow process is using is skipped, not failed.
+    """
+    import json
+
+    from gflow_cli.auth import renew
+    from gflow_cli.auth.verification import FlowSessionOutcome
+    from gflow_cli.errors import ProfileEngineDowngradeError, ProfileLockedError
+
+    if renew_all and profile:
+        console.print("[red]Use either --profile or --all, not both.[/red]")
+        sys.exit(2)
+    if renew_all:
+        names = [p.name for p in profile_store.list_profiles() if p.cookies_present]
+        if not names:
+            console.print("[yellow]No profiles with a saved session.[/yellow]")
+            sys.exit(1)
+    else:
+        names = [profile or _resolve_or_exit()]
+
+    authenticated = FlowSessionOutcome.AUTHENTICATED.value
+    results: list[dict[str, str | None]] = []
+    for name in names:
+        row: dict[str, str | None] = {"profile": name, "result": "", "email": None, "hint": None}
+        results.append(row)
+        s = auth_mod.status(name)
+        if not (s["exists"] and s["cookies_present"]):
+            row["result"] = FlowSessionOutcome.NO_SESSION.value
+            continue
+        if not as_json:
+            console.print(f"[dim]Renewing {escape(name)}...[/dim]")
+        try:
+            verdict = asyncio.run(renew.renew_profile(auth_mod.profile_dir(name)))
+        except ProfileLockedError:
+            row["result"] = "in_use"
+            continue
+        except ProfileEngineDowngradeError as exc:
+            row["result"] = "engine_downgrade"
+            row["hint"] = exc.remediation_hint
+            continue
+        row["result"] = verdict.outcome.value
+        row["email"] = verdict.user_email
+
+    failed = any(r["result"] not in (authenticated, "in_use") for r in results)
+    if as_json:
+        click.echo(json.dumps(results))
+        sys.exit(1 if failed else 0)
+
+    for r in results:
+        name = escape(str(r["profile"]))
+        if r["result"] == authenticated:
+            who = f" as [bold]{escape(r['email'])}[/bold]" if r["email"] else ""
+            console.print(f"[green]{name}: session renewed and verified{who}.[/green]")
+        elif r["result"] == "in_use":
+            console.print(f"[dim]{name}: in use by another gflow process — skipped.[/dim]")
+        elif r["result"] == "engine_downgrade":
+            console.print(
+                f"[yellow]{name}: profile was written by a newer browser — skipped.[/yellow]",
+            )
+            if r["hint"]:
+                console.print(f"[dim]{escape(r['hint'])}[/dim]")
+        elif r["result"] == FlowSessionOutcome.VERIFICATION_ERROR.value:
+            console.print(
+                f"[yellow]{name}: could not verify the session.[/yellow] Check network "
+                "connectivity and retry; re-login is only needed if the session is dead.",
+            )
+        else:
+            console.print(
+                f"[yellow]{name}: session could not be renewed.[/yellow] "
+                f"Run [bold]gflow auth login --profile {name}[/bold].",
+            )
+    sys.exit(1 if failed else 0)
+
+
 @auth.command("list")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON instead of a table.")
 def auth_list(as_json: bool) -> None:

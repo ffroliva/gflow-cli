@@ -262,6 +262,33 @@ Flow session verified as you@example.com.
 
 > Note: `cookies_present: True` only confirms the file exists. The final verdict line is the live probe result, and it has three failing shapes — all exit 1, each with a different hint. A **dead session** prints a `gflow auth login` remediation hint. A probe that **cannot reach the endpoint** (offline, 5xx) suggests checking connectivity instead of re-logging in. And a profile **missing its `.gflow_browser_strategy` marker** — the state a failed *first* login leaves behind, since that rolls the marker back — says so and points at `gflow auth login --browser chrome --profile <name>`; it is local profile state, not a network fault, and "check connectivity" would send you to the wrong place ([#796](https://github.com/ffroliva/gflow-cli/issues/796), 0.73.2). The MCP twin `gflow_auth_status` reports the same three as HTTP 401, 503 (`retryable: true`) and 409 (`retryable: false`) — see [MCP.md](MCP.md).
 
+### `gflow auth renew`
+
+Refreshes saved sessions **without signing in again**. Google rotates its session cookies, and
+Flow re-mints its own session, only when a real browser visits the app. A profile left unused for
+weeks therefore drifts towards an expired session even though nothing about the account changed.
+`auth renew` opens the profile in a hidden browser and loads Flow. It then loads
+`labs.google/fx/` and waits up to 20 s for the labs app to sign in again on its own: a stale labs
+session reports `ACCESS_TOKEN_REFRESH_NEEDED`, and the page renews it through Google without a
+prompt. This step matters because `gflow credits` reads its token from that labs session, and the
+Flow visit alone never refreshes it. The browser saves whatever cookies were rotated, and the
+result is verified exactly like `gflow auth status`. It spends no credits.
+
+```bash
+gflow auth renew                    # the default profile
+gflow auth renew --profile work     # one named profile
+gflow auth renew --all --json       # every profile with a saved session
+```
+
+It exits `0` when every renewed profile verifies and `1` otherwise. An account that Flow sends to
+its public `/about` page (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) never finishes the labs sign-in,
+so it needs `gflow auth login`. A profile another gflow
+process is using is skipped, not failed. It cannot bring back a session Google has **revoked**
+(a password change, "sign out of all devices", an identity re-check). That still needs
+`gflow auth login`. `gflow credits user|list --refresh` runs the same renewal automatically for
+a profile whose credits read fails with an expired session. Over MCP, that is
+`gflow_get_credits(refresh=true)`.
+
 ### `gflow auth list`
 
 Same output as bare `gflow auth` when profiles exist — useful when you want the table even from a script (no auto-login fallback).

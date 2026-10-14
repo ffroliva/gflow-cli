@@ -96,6 +96,11 @@ _MCP_EXEMPT: dict[str, str] = {
     "auth list": "interactive session management",
     "auth login": "interactive session management",
     "auth logout": "interactive session management",
+    # Not interactive, but an agent reaches the renewal where it pays off: an expired
+    # session surfaces as a credits failure, and gflow_get_credits(refresh=true) renews
+    # it with the same `auth/renew.py`. Revisit if an agent needs to renew without a
+    # credits read (e.g. a scheduled keep-alive over MCP).
+    "auth renew": "reached over MCP as gflow_get_credits(refresh=true)",
     "auth use": "interactive session management",
     "mcp run": "the MCP server bootstrap itself",
     "mcp setup": "client-config generator for the MCP server itself",

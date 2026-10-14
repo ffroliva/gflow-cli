@@ -338,3 +338,168 @@ def test_a_recorded_failure_has_a_remediation_key_even_for_an_unexpected_error()
     result = credits._failure(_meta("one"), RuntimeError("boom"))  # pyright: ignore[reportPrivateUsage]
 
     assert result["remediation_hint"] is None
+
+
+# --- --refresh: renew an expired session, then re-ask the fast path ----------------
+#
+# #802 stopped the browser fallback from re-deriving an aisandbox-pa verdict: it asked
+# the same endpoint with the same Bearer. A renewal is a different act — it loads Flow
+# so Google and NextAuth rotate the cookies on disk (`auth/renew.py`), so the retried
+# fast path reads a NEW session. It costs a headless Chrome launch, so it is opt-in.
+
+
+def _verdict(outcome: str) -> object:
+    from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
+
+    return FlowSessionStatus(
+        outcome=FlowSessionOutcome(outcome), user_email=None, source="credits_refresh"
+    )
+
+
+def _install_expiring_fast_path(
+    monkeypatch: pytest.MonkeyPatch,
+    profiles: list[ProfileMeta],
+    *,
+    renewed: str = "authenticated",
+) -> list[str]:
+    """Fast path refuses until the profile is renewed. Returns the renew-call log."""
+    from gflow_cli.services import credits
+
+    renewals: list[str] = []
+
+    async def fast(profile_dir: Path) -> CreditsInfo:
+        if profile_dir.name in renewals and renewed == "authenticated":
+            return CreditsInfo(credits=7, sku="G1_FREEMIUM")
+        raise AisandboxAuthError(status=401, route="credits", remediation_hint="the accurate one")
+
+    async def renew(profile_dir: Path, *, source: str = "renew") -> object:
+        assert source == "credits_refresh"
+        renewals.append(profile_dir.name)
+        return _verdict(renewed)
+
+    monkeypatch.setattr(credits, "fetch_credits_http", fast)
+    monkeypatch.setattr(credits, "renew_profile", renew)
+    monkeypatch.setattr(credits, "FlowApiClient", _never_launches)
+    monkeypatch.setattr(credits.profile_store, "resolve_profile", lambda value: profiles[0].name)
+    monkeypatch.setattr(credits.profile_store, "list_profiles", lambda: profiles)
+    return renewals
+
+
+async def test_refresh_renews_an_expired_session_and_retries_the_fast_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.services import credits
+
+    renewals = _install_expiring_fast_path(monkeypatch, [_meta("one")])
+
+    result = await credits.inspect_profile(None, refresh=True)
+
+    assert renewals == ["one"]
+    assert result["authenticated"] is True
+    assert result["credits"] == 7
+
+
+async def test_without_refresh_an_expired_session_is_never_renewed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default stays #802's: no browser once aisandbox-pa has answered."""
+    from gflow_cli.services import credits
+
+    renewals = _install_expiring_fast_path(monkeypatch, [_meta("one")])
+
+    with pytest.raises(AisandboxAuthError):
+        await credits.inspect_profile(None)
+
+    assert renewals == []
+
+
+async def test_a_failed_renewal_reports_the_fast_paths_diagnosis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A revoked session cannot be renewed; the user still needs the accurate hint,
+    and the fast path is not re-asked a question whose answer cannot have changed."""
+    from gflow_cli.services import credits
+
+    renewals = _install_expiring_fast_path(
+        monkeypatch, [_meta("one")], renewed="google_session_only"
+    )
+
+    with pytest.raises(AisandboxAuthError) as caught:
+        await credits.inspect_profile(None, refresh=True)
+
+    assert renewals == ["one"]
+    assert caught.value.remediation_hint == "the accurate one"
+
+
+async def test_refresh_does_not_renew_a_non_auth_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Renewal fixes stale cookies, nothing else. A malformed reply is not stale cookies."""
+    from gflow_cli.services import credits
+
+    renewals: list[str] = []
+
+    async def fast(profile_dir: Path) -> CreditsInfo:
+        raise SecurityError(detail="refused")
+
+    async def renew(profile_dir: Path, *, source: str = "renew") -> object:
+        renewals.append(profile_dir.name)
+        return _verdict("authenticated")
+
+    monkeypatch.setattr(credits, "fetch_credits_http", fast)
+    monkeypatch.setattr(credits, "renew_profile", renew)
+    monkeypatch.setattr(credits.profile_store, "resolve_profile", lambda value: "one")
+    monkeypatch.setattr(credits.profile_store, "list_profiles", lambda: [_meta("one")])
+
+    with pytest.raises(SecurityError):
+        await credits.inspect_profile(None, refresh=True)
+
+    assert renewals == []
+
+
+async def test_refresh_list_renews_only_the_profiles_that_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.services import credits
+
+    renewals = _install_expiring_fast_path(monkeypatch, [_meta("one"), _meta("two")])
+    real_fast = credits.fetch_credits_http
+
+    async def fast(profile_dir: Path) -> CreditsInfo:
+        if profile_dir.name == "two":
+            return CreditsInfo(credits=3, sku="G1_FREEMIUM")
+        return await real_fast(profile_dir)
+
+    monkeypatch.setattr(credits, "fetch_credits_http", fast)
+
+    result = await credits.inspect_all_profiles(refresh=True)
+
+    assert renewals == ["one"]
+    assert result["status"] == "ok"
+    assert result["total_credits"] == 10
+
+
+async def test_refresh_list_records_a_profile_in_use_and_carries_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.errors import ProfileLockedError
+    from gflow_cli.services import credits
+
+    _install_expiring_fast_path(monkeypatch, [_meta("one"), _meta("two")])
+    calls: list[str] = []
+
+    async def renew(profile_dir: Path, *, source: str = "renew") -> object:
+        calls.append(profile_dir.name)
+        if profile_dir.name == "one":
+            raise ProfileLockedError(detail="held")
+        return _verdict("google_session_only")
+
+    monkeypatch.setattr(credits, "renew_profile", renew)
+
+    result = await credits.inspect_all_profiles(refresh=True)
+
+    assert calls == ["one", "two"]
+    assert [item["error_type"] for item in result["profiles"]] == [
+        "ProfileLockedError",
+        "AisandboxAuthError",
+    ]

@@ -11,8 +11,10 @@ from gflow_cli import profile_store
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credits import fetch_credits_http
 from gflow_cli.api.dto import CreditsInfo
+from gflow_cli.auth.renew import renew_profile
+from gflow_cli.auth.verification import FlowSessionOutcome
 from gflow_cli.config import get_settings
-from gflow_cli.errors import AisandboxAuthError, GFlowError, SecurityError
+from gflow_cli.errors import AisandboxAuthError, AuthExpiredError, GFlowError, SecurityError
 
 log = structlog.get_logger(__name__)
 
@@ -55,7 +57,7 @@ def _log_fallback(meta: profile_store.ProfileMeta, exc: Exception) -> None:
     )
 
 
-async def _fetch(meta: profile_store.ProfileMeta) -> dict[str, Any]:
+async def _fetch_once(meta: profile_store.ProfileMeta) -> dict[str, Any]:
     # #795. The browser fallback is for TRANSPORT failures. When it also catches a
     # verdict the server already gave, it re-derives that verdict with less information
     # and throws the better diagnosis away: it fails inside the SHARED aisandbox retry
@@ -97,11 +99,34 @@ async def _fetch(meta: profile_store.ProfileMeta) -> dict[str, Any]:
         raise verdict from None
 
 
-async def inspect_profile(profile: str | None) -> dict[str, Any]:
-    """Inspect one profile selected with the normal CLI precedence chain."""
+async def _fetch(meta: profile_store.ProfileMeta, *, refresh: bool = False) -> dict[str, Any]:
+    # `refresh` is not the browser fallback #795 retired. That one re-asked aisandbox-pa
+    # with the same Bearer; this one loads Flow headlessly so Google and NextAuth rotate
+    # the cookies on disk (`auth/renew.py`), and the retried fast path reads a NEW
+    # session. Opt-in, because it costs a Chrome launch per expired profile.
+    try:
+        return await _fetch_once(meta)
+    except AuthExpiredError as exc:
+        if not refresh:
+            raise
+        expired = exc
+    log.info("credits.refresh_renewing", profile=meta.name, error_type=type(expired).__name__)
+    status = await renew_profile(meta.profile_dir, source="credits_refresh")
+    if status.outcome is not FlowSessionOutcome.AUTHENTICATED:
+        # Revoked, not stale: the fast path's diagnosis is still the accurate one.
+        log.info("credits.refresh_failed", profile=meta.name, outcome=status.outcome.value)
+        raise expired
+    return await _fetch_once(meta)
+
+
+async def inspect_profile(profile: str | None, *, refresh: bool = False) -> dict[str, Any]:
+    """Inspect one profile selected with the normal CLI precedence chain.
+
+    With ``refresh``, an expired session is renewed headlessly and asked again.
+    """
 
     resolved = profile_store.resolve_profile(profile)
-    return await _fetch(_profile_meta(resolved))
+    return await _fetch(_profile_meta(resolved), refresh=refresh)
 
 
 def _failure(meta: profile_store.ProfileMeta, exc: BaseException) -> dict[str, Any]:
@@ -130,13 +155,16 @@ def _failure(meta: profile_store.ProfileMeta, exc: BaseException) -> dict[str, A
     }
 
 
-async def inspect_all_profiles() -> dict[str, Any]:
-    """Inspect all saved profiles sequentially, preserving partial results."""
+async def inspect_all_profiles(*, refresh: bool = False) -> dict[str, Any]:
+    """Inspect all saved profiles sequentially, preserving partial results.
+
+    With ``refresh``, each expired session is renewed headlessly and asked again.
+    """
 
     snapshots: list[dict[str, Any]] = []
     for meta in profile_store.list_profiles():
         try:
-            snapshots.append(await _fetch(meta))
+            snapshots.append(await _fetch(meta, refresh=refresh))
         except SecurityError:
             raise
         except Exception as exc:  # noqa: BLE001 — preserve partial cross-profile results

@@ -22,7 +22,7 @@ def result_holder() -> dict[str, Any]:
 
 @given("a saved Flow profile with 12 credits")
 def _saved_profile(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def inspect(profile: str | None) -> dict[str, Any]:
+    async def inspect(profile: str | None, *, refresh: bool = False) -> dict[str, Any]:
         return {
             "status": "ok",
             "profile": profile,
@@ -37,7 +37,7 @@ def _saved_profile(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @given("an all-profile balance response with one unavailable account")
 def _partial_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def inspect() -> dict[str, Any]:
+    async def inspect(*, refresh: bool = False) -> dict[str, Any]:
         return {
             "status": "partial",
             "profiles": [
