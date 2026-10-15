@@ -13,14 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile (`--profile`, or `--all`) in a headless browser and loads Flow, so Google and Flow
   rotate the saved cookies. It then verifies the session like `gflow auth status`. No credits
   are spent. A revoked session still needs `gflow auth login`, and a profile in use by another
-  gflow process is skipped.
+  gflow process is skipped. It reports a profile as renewed only when it saw it renewed: an
+  account Flow holds at its public `/about` page is `public_landing`; a labs.google session that
+  stayed expired, or never answered readably, is `labs_stale` / `labs_unverified`; a browser
+  that cannot start (the profile is open in your own Chrome) is a `launch_error` row, and the
+  rest of an `--all` run carries on. `--json` prints JSON on every path, including errors.
 - **`gflow credits user|list --refresh` renews expired sessions again.** Since #802, an expired
   session fails the credits read without opening a browser. That is the right default, because
   re-asking aisandbox-pa with the same Bearer cannot change its answer. It also removed the only
   automatic renewal that `credits list` used to give stale profiles. `--refresh` brings it back as
   an opt-in. A profile whose fast path raises an expired-session error is renewed through
   `auth renew` and asked again, while the others are untouched. A failed renewal keeps the
-  original diagnosis. The MCP twin is `gflow_get_credits(refresh=true)`.
+  original diagnosis. The MCP twin is `gflow_get_credits(refresh=true)`. The credits 401 hint
+  now points at `--refresh` / `gflow auth renew` instead of "check your balance in Flow"; an
+  account whose labs session issues no token at all is not helped by renewal, and says so.
 
 ## [0.85.0] — 2026-10-14
 

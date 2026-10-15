@@ -30,6 +30,7 @@ def _playwright_mock(
     goto_error: Exception | None = None,
     session_error: Exception | None = None,
     session_bodies: list[str] | None = None,
+    session_status: int = 200,
 ) -> tuple[MagicMock, MagicMock, list[str]]:
     events: list[str] = []
     page = MagicMock(name="page")
@@ -43,7 +44,7 @@ def _playwright_mock(
             raise session_error
         bodies = session_bodies or [_FRESH]
         body = bodies.pop(0) if len(bodies) > 1 else bodies[0]
-        return MagicMock(status=200, text=AsyncMock(return_value=body))
+        return MagicMock(status=session_status, text=AsyncMock(return_value=body))
 
     page.request.get = AsyncMock(side_effect=_session_get)
 
@@ -277,6 +278,51 @@ async def test_a_launch_failure_raises_before_any_verdict(
     assert "verify" not in events
 
 
-@pytest.mark.parametrize("body", ["<html>not json</html>", "[]", '{"user": {}}'])
-def test_session_error_reads_only_a_dict_error(body: str) -> None:
-    assert renew._session_error(body) is None  # pyright: ignore[reportPrivateUsage]
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "body", "error"),
+    [
+        (500, _FRESH, None),
+        (401, "{}", None),
+        (200, "<html>not json</html>", None),
+        (200, "[]", None),
+        (200, _FRESH, PlaywrightError("net::ERR_ABORTED")),
+    ],
+)
+async def test_a_labs_state_never_observed_is_not_reported_renewed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    body: str,
+    error: Exception | None,
+) -> None:
+    """Unknown is not fresh. A non-200, an unparseable body or a failed request
+    means labs was never seen to refresh, so the renewal is unverified (#982)."""
+    mock_ap, _page, events = _playwright_mock(
+        session_bodies=[body], session_status=status, session_error=error
+    )
+    monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+    _patch_verdict(monkeypatch, events, FlowSessionOutcome.AUTHENTICATED)
+
+    result = await renew.renew_profile(tmp_path)
+
+    assert result.labs_stale is None
+    assert result.result == "labs_unverified"
+    assert result.renewed is False
+
+
+@pytest.mark.asyncio
+async def test_a_public_landing_wins_over_the_verifier_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measured 2026-10-15: on /about profiles the verifier answered
+    google_session_only, and the row then carried no /about guidance at all."""
+    mock_ap, page, events = _playwright_mock()
+    page.url = "https://flow.google.com/about"
+    monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+    _patch_verdict(monkeypatch, events, FlowSessionOutcome.GOOGLE_SESSION_ONLY)
+
+    result = await renew.renew_profile(tmp_path)
+
+    assert result.result == "public_landing"
+    assert result.renewed is False

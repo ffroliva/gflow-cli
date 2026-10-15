@@ -210,6 +210,11 @@ async def test_a_tokenless_labs_session_does_not_blame_sapisid(
     hint = caught.value.remediation_hint
     assert "SAPISID" not in hint
     assert "flow.google.com" in hint
+    # PR #982, measured 2026-10-15 (4 of 4): renewal does not make labs issue a token,
+    # so the hint must not let `--refresh` read as the cure — and must not claim the
+    # host alone predicts it (7 of 10 flow.google.com profiles had a token to renew).
+    assert "does not change it" in hint
+    assert "is expected" not in hint
     assert "no access token" in caught.value.detail
 
 
@@ -239,3 +244,7 @@ async def test_an_aisandbox_rejection_does_not_blame_sapisid(
     # `gflow auth renew` now fix headlessly — the hint must say so, not "check Flow".
     assert "--refresh" in hint
     assert "gflow auth renew" in hint
+    # Raised again after a renewal that did not take, so it cannot just say "re-run
+    # with --refresh" (a loop), and MCP callers spell the flag `refresh=true`.
+    assert "refresh=true" in hint
+    assert "already ran" in hint

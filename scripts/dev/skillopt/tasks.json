@@ -38,14 +38,14 @@
   {
     "id": "auth-004",
     "question": "The user's gflow commands are suddenly failing with 'No session for profile default'. What is the fix?",
-    "context": "Profile 'default' exists but the session cookies have expired.",
+    "context": "gflow prints this message only when the profile directory itself is missing (_cli_helpers.py).",
     "expected": {
-      "must_include": ["gflow auth renew"],
+      "must_include": ["gflow auth login"],
       "must_not_include": ["gflow auth refresh", "gflow auth reset", "gflow auth update"],
-      "partial_credit": ["gflow auth login", "gflow auth status"]
+      "partial_credit": ["gflow auth status"]
     },
     "tags": ["auth", "error-recovery"],
-    "notes": "Expired cookies are renewed headlessly by 'gflow auth renew' (no sign-in). 'gflow auth login' is the fallback for a revoked session. There is no 'refresh' subcommand."
+    "notes": "There is no saved session to renew, so 'gflow auth renew' cannot help (it reports no_session); 'gflow auth login' creates one. Expired-but-present sessions are error-002's case. There is no 'refresh' subcommand."
   },
   {
     "id": "video-001",

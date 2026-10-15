@@ -56,6 +56,10 @@ async def test_auth_renew_verifies_a_live_profile_and_leaves_it_readable(
     from gflow_cli.services import credits
 
     profile = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
+    # "Never worse than it found it" needs a balance to compare against. An account whose
+    # labs session issues no token (#795) reads none before or after.
+    if await _is_stale(profile):
+        pytest.skip(f"{profile} reads no balance before renewal (#795); nothing to compare")
 
     code, rows = await _renew("--profile", profile)
 
@@ -113,5 +117,7 @@ async def test_auth_renew_does_not_claim_an_about_profile_renewed(
     code, rows = await _renew("--profile", profile)
 
     assert code == 1, rows
-    assert rows[0]["result"] != "authenticated"
+    # The landing wins over the verdict (RenewResult.result), so an /about account is
+    # named as such whatever the verifier says — not merely "not authenticated".
+    assert rows[0]["result"] == "public_landing"
     assert await _is_stale(profile)

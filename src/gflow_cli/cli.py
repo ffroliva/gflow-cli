@@ -476,16 +476,7 @@ def auth_renew(profile: str | None, renew_all: bool, as_json: bool) -> None:
             )
             continue
         row["email"] = renewal.verdict.user_email
-        if renewal.verdict.outcome.value != authenticated:
-            row["result"] = renewal.verdict.outcome.value
-        elif renewal.landing == "public":
-            # The verifier says fine on an /about account (KNOWN_ISSUES); renewal saw
-            # Flow hold it at the public page, so it was not renewed.
-            row["result"] = "public_landing"
-        elif renewal.labs_stale:
-            row["result"] = "labs_stale"
-        else:
-            row["result"] = authenticated
+        row["result"] = renewal.result
 
     failed = any(r["result"] not in (authenticated, "in_use") for r in results)
     if as_json:
@@ -509,12 +500,22 @@ def auth_renew(profile: str | None, renew_all: bool, as_json: bool) -> None:
             console.print(f"[yellow]{name}: {reason} — skipped.[/yellow]")
             if r["hint"]:
                 console.print(f"[dim]{escape(r['hint'])}[/dim]")
-        elif r["result"] in ("public_landing", "labs_stale"):
+        elif r["result"] == "public_landing":
             console.print(
                 f"[yellow]{name}: not renewed — Flow is holding this account at its public "
                 f"page, waiting for Google to confirm it's you.[/yellow] Run "
                 f'[bold]gflow auth login --profile {name}[/bold] and finish the "Confirm '
                 f"it's you\" step ({about}).",
+            )
+        elif r["result"] in ("labs_stale", "labs_unverified"):
+            reason = (
+                "labs.google did not finish its silent sign-in in time"
+                if r["result"] == "labs_stale"
+                else "labs.google did not return a readable session"
+            )
+            console.print(
+                f"[yellow]{name}: not renewed — {reason}.[/yellow] Retry later; if it "
+                f"persists, run [bold]gflow auth login --profile {name}[/bold].",
             )
         elif r["result"] == FlowSessionOutcome.VERIFICATION_ERROR.value:
             console.print(

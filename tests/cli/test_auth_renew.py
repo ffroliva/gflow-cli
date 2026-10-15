@@ -143,10 +143,14 @@ def test_bracketed_email_renders_without_markup_loss(monkeypatch: pytest.MonkeyP
 
 @pytest.mark.parametrize(
     ("landing", "labs_stale", "expected"),
-    [("public", False, "public_landing"), (None, True, "labs_stale")],
+    [
+        ("public", False, "public_landing"),
+        (None, True, "labs_stale"),
+        (None, None, "labs_unverified"),
+    ],
 )
 def test_an_about_account_is_not_reported_as_renewed(
-    monkeypatch: pytest.MonkeyPatch, landing: str | None, labs_stale: bool, expected: str
+    monkeypatch: pytest.MonkeyPatch, landing: str | None, labs_stale: bool | None, expected: str
 ) -> None:
     """The verifier says fine on an /about account (KNOWN_ISSUES, #902). Renewal saw
     Flow hold it at the public page, or labs never finish its re-sign-in, so it must
@@ -165,8 +169,9 @@ def test_an_about_account_is_not_reported_as_renewed(
     assert json.loads(result.output)[0]["result"] == expected
 
     text = CliRunner().invoke(main, ["auth", "renew", "--profile", "alice"])
-    assert "Confirm" in text.output
     assert "renewed and verified" not in text.output
+    # Only a public landing was observed at /about; a labs row must not claim it.
+    assert ("public page" in text.output) is (expected == "public_landing")
 
 
 def test_a_browser_that_cannot_start_is_a_row_not_a_traceback(

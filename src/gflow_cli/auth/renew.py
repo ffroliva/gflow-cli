@@ -66,41 +66,59 @@ class RenewResult:
     #: `flow_landing_kind` of the Flow visit — ``"public"`` is the `/about` page.
     landing: str | None
     #: Whether labs' session still said ACCESS_TOKEN_REFRESH_NEEDED at the end.
-    #: ``None`` when that was never observed (the labs step failed).
+    #: ``None`` when that was never observed: the labs step failed, or labs answered
+    #: something other than a 200 JSON object. Unknown is not fresh (#982).
     labs_stale: bool | None
 
     @property
+    def result(self) -> str:
+        """The `gflow auth renew` row value — the one place the renewal rule lives.
+
+        A public landing wins over the verdict: on /about accounts the verifier may say
+        fine or google_session_only, and either way the remedy is the /about one.
+        """
+        if self.landing == "public":
+            return "public_landing"
+        if self.verdict.outcome is not FlowSessionOutcome.AUTHENTICATED:
+            return self.verdict.outcome.value
+        if self.labs_stale is None:
+            return "labs_unverified"
+        if self.labs_stale:
+            return "labs_stale"
+        return FlowSessionOutcome.AUTHENTICATED.value
+
+    @property
     def renewed(self) -> bool:
-        return (
-            self.verdict.outcome is FlowSessionOutcome.AUTHENTICATED
-            and self.landing != "public"
-            and self.labs_stale is not True
-        )
+        return self.result == FlowSessionOutcome.AUTHENTICATED.value
 
 
-def _session_error(body: str) -> object:
-    """The labs session body's ``error`` value — the only field read, never the token."""
+def _session_stale(body: str) -> bool | None:
+    """Whether the labs session body says ACCESS_TOKEN_REFRESH_NEEDED; ``None`` when it
+    is not a JSON object. Only ``error`` is read, never the token."""
     try:
         data: object = json.loads(body)
     except ValueError:
         return None
-    return cast("dict[str, object]", data).get("error") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    return cast("dict[str, object]", data).get("error") == _LABS_REFRESH_NEEDED
 
 
-async def _await_labs_refresh(page: Any, source: str) -> bool:
+async def _await_labs_refresh(page: Any, source: str) -> bool | None:
     """Poll labs' session until its silent re-sign-in lands or the budget runs out.
 
-    Returns whether the session is still stale. Each request is capped at the budget
-    left (floor 1 s), so the whole wait stays within ~_LABS_REFRESH_TIMEOUT_S.
+    Returns whether the session is still stale, or ``None`` when labs did not answer
+    with a readable session. Each request is capped at the budget left (floor 1 s),
+    so the whole wait stays within ~_LABS_REFRESH_TIMEOUT_S.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _LABS_REFRESH_TIMEOUT_S
     while True:
         remaining_ms = max(deadline - loop.time(), 1.0) * 1000
         resp = await page.request.get(_LABS_SESSION_URL, timeout=remaining_ms)
-        stale = _session_error(await resp.text()) == _LABS_REFRESH_NEEDED
-        if resp.status != 200 or not stale or loop.time() >= deadline:
-            # Status and a boolean only — the body carries the access token.
+        stale = _session_stale(await resp.text()) if resp.status == 200 else None
+        if not stale or loop.time() >= deadline:
+            # Status and the verdict only — the body carries the access token.
             logger.info("auth_renew_labs_session", source=source, status=resp.status, stale=stale)
             return stale
         await asyncio.sleep(_LABS_POLL_INTERVAL_S)

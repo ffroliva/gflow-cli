@@ -76,12 +76,11 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
             status=session_status,
             route="auth/session",
             remediation_hint=(
-                "Flow's labs.google session carries no API token for this account. "
-                "On accounts Google serves from flow.google.com this is expected and "
-                "re-authenticating will not help — generation still works. `gflow "
-                "credits` needs a token that only the labs.google session mints, and "
-                "this account no longer gets one; check your balance in Flow instead. "
-                "See issue #795."
+                "Flow's labs.google session carries no API token for this account, "
+                "and renewing it (`--refresh`, `gflow auth renew`) does not change it — "
+                "observed on accounts Flow serves from flow.google.com. Generation still "
+                "works. `gflow credits` needs a token that only the labs.google session "
+                "mints; check your balance in Flow instead. See issue #795."
             ),
         )
 
@@ -111,10 +110,11 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
                     "rejected it. Your Google sign-in is not the problem — minting that "
                     "token is what proves it works. Most often the token has expired: "
                     "labs only renews it when a browser visits it. Re-run with "
-                    "`--refresh`, or run `gflow auth renew --profile <name>`, to renew "
-                    "it headlessly without signing in. If the renewal reports Flow's "
-                    "public /about page, see KNOWN_ISSUES. A 403 can also be an "
-                    "entitlement or region refusal. See issue #795."
+                    "`--refresh` (MCP: `refresh=true`), or run `gflow auth renew "
+                    "--profile <name>`, to renew it headlessly without signing in. If a "
+                    "renewal already ran and this persists, `gflow auth renew` reports "
+                    "why it did not take (Flow's public /about page: see KNOWN_ISSUES). "
+                    "A 403 can also be an entitlement or region refusal. See issue #795."
                 ),
             )
         if response.status_code != 200:
