@@ -58,8 +58,13 @@ async def test_auth_renew_verifies_a_live_profile_and_leaves_it_readable(
     profile = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
     # "Never worse than it found it" needs a balance to compare against. An account whose
     # labs session issues no token (#795) reads none before or after.
-    if await _is_stale(profile):
-        pytest.skip(f"{profile} reads no balance before renewal (#795); nothing to compare")
+    # Only the no-token case skips: an expired token is exactly what renewal is for, so
+    # skipping on any AuthExpiredError would hide the case this test exists to run.
+    try:
+        await credits.inspect_profile(profile)
+    except AuthExpiredError as exc:
+        if "returned no access token" in (exc.detail or ""):
+            pytest.skip(f"{profile} reads no balance before renewal (#795); nothing to compare")
 
     code, rows = await _renew("--profile", profile)
 

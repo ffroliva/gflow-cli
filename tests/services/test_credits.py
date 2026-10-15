@@ -558,3 +558,23 @@ async def test_an_about_account_is_not_re_asked(
         await credits.inspect_profile(None, refresh=True)
 
     assert asked == ["one"]
+
+
+async def test_an_unverified_labs_state_is_still_re_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`labs_unverified` keeps `auth renew` from claiming success, but the re-ask is one
+    self-checking HTTP call: if the Flow visit's rotated cookies did the job, use it."""
+    from gflow_cli.services import credits
+
+    renewals = _install_expiring_fast_path(monkeypatch, [_meta("one")])
+
+    async def renew(profile_dir: Path, *, source: str = "renew") -> object:
+        renewals.append(profile_dir.name)
+        return _verdict("authenticated", labs_stale=None)
+
+    monkeypatch.setattr(credits, "renew_profile", renew)
+
+    info = await credits.inspect_profile(None, refresh=True)
+
+    assert info["credits"] == 7

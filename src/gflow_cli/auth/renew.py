@@ -51,6 +51,9 @@ _LABS_SESSION_URL = "https://labs.google/fx/api/auth/session"
 _LABS_REFRESH_NEEDED = "ACCESS_TOKEN_REFRESH_NEEDED"
 _LABS_REFRESH_TIMEOUT_S = 20.0
 _LABS_POLL_INTERVAL_S = 1.0
+#: Verdicts observed on accounts Flow holds at /about (2026-10-14/15): the verifier
+#: says fine, or Google-but-not-Flow. Only these are re-labelled `public_landing`.
+_ABOUT_VERDICTS = (FlowSessionOutcome.AUTHENTICATED, FlowSessionOutcome.GOOGLE_SESSION_ONLY)
 
 
 @dataclass(frozen=True)
@@ -74,12 +77,13 @@ class RenewResult:
     def result(self) -> str:
         """The `gflow auth renew` row value — the one place the renewal rule lives.
 
-        A public landing wins over the verdict: on /about accounts the verifier may say
-        fine or google_session_only, and either way the remedy is the /about one.
+        A public landing wins over the two verdicts measured on /about accounts
+        (authenticated, google_session_only); any other verdict is reported as itself.
         """
-        if self.landing == "public":
+        outcome = self.verdict.outcome
+        if self.landing == "public" and outcome in _ABOUT_VERDICTS:
             return "public_landing"
-        if self.verdict.outcome is not FlowSessionOutcome.AUTHENTICATED:
+        if outcome is not FlowSessionOutcome.AUTHENTICATED:
             return self.verdict.outcome.value
         if self.labs_stale is None:
             return "labs_unverified"

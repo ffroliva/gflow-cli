@@ -326,3 +326,22 @@ async def test_a_public_landing_wins_over_the_verifier_verdict(
 
     assert result.result == "public_landing"
     assert result.renewed is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome", [FlowSessionOutcome.NO_SESSION, FlowSessionOutcome.VERIFICATION_ERROR]
+)
+async def test_a_public_landing_does_not_mask_an_unmeasured_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: FlowSessionOutcome
+) -> None:
+    """Only authenticated / google_session_only were measured on /about; for any other
+    verdict, saying "waiting for Google to confirm it's you" would be a guess."""
+    mock_ap, page, events = _playwright_mock()
+    page.url = "https://flow.google.com/about"
+    monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+    _patch_verdict(monkeypatch, events, outcome)
+
+    result = await renew.renew_profile(tmp_path)
+
+    assert result.result == outcome.value

@@ -126,7 +126,9 @@ async def _fetch(meta: profile_store.ProfileMeta, *, refresh: bool = False) -> d
         # channel is missing). The fast path's diagnosis is still the accurate one.
         log.info("credits.refresh_failed", profile=meta.name, error_type=type(exc).__name__)
         raise expired from exc
-    if not result.renewed:
+    # `labs_unverified` still gets the re-ask: it is one self-checking HTTP call, and the
+    # Flow visit may have rotated what the fast path needs even when labs said nothing.
+    if not result.renewed and result.result != "labs_unverified":
         # Revoked, or held at Flow's /about page: the fast path's diagnosis stands.
         log.info(
             "credits.refresh_failed",
