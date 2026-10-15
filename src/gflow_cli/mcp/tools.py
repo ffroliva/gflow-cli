@@ -1280,9 +1280,10 @@ async def gflow_list_tools() -> dict[str, Any]:
     name="gflow_get_credits",
     description=(
         "Read the current Google Flow credit balance for one saved profile or all profiles. "
-        "This is read-only and spends no credits. Set all_profiles=true when choosing an "
+        "Spends no credits. Set all_profiles=true when choosing an "
         "account for generation; partial profile failures remain visible in the result. "
-        "Set refresh=true to renew an expired session in a headless browser and ask again "
+        "Set refresh=true to renew an expired session (rewrites that profile's saved "
+        "cookies) in a headless browser and ask again "
         "(slower — one Chrome launch per expired profile; a revoked session still needs "
         "`gflow auth login`)."
     ),

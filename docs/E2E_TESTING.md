@@ -160,6 +160,8 @@ test, not a mocked proxy — the Bug Lane's step 5.
 | `GFLOW_CLI_E2E_BATCH_MANIFEST` | `test_assets/sample_batch.tsv` | TSV manifest for the batch image e2e. |
 | `GFLOW_CLI_E2E_BATCH_JITTER` | `"1"` | Set to `"0"` to disable inter-request jitter in batch tests. |
 | `GFLOW_CLI_E2E_PROMPT` | *(safe default)* | Prompt override for the smoke test. |
+| `GFLOW_CLI_E2E_STALE_PROFILES` | *(unset)* | Comma-separated profiles whose labs session has **lapsed** (the credits fast path fails with an expired session). Used by the session-renewal e2e (`e2e_auth`): index 0 drives `gflow_get_credits(refresh=true)`, index 1 drives `gflow credits user --refresh`, and index 2 drives `gflow auth renew`. Each is consumed by its first successful renewal, because a renewed labs token lasts about 24 h. A test whose profile is fresh **skips**; it never passes on a read that needed no renewal. `GFLOW_CLI_E2E_PROFILE` must also be set. |
+| `GFLOW_CLI_E2E_ABOUT_PROFILE` | *(unset)* | A profile Flow holds at its public `/about` page (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)). `tests/e2e/test_auth_renew_e2e.py` asserts that `gflow auth renew` does **not** report it renewed. It skips if the profile reads a balance. |
 
 ---
 
@@ -399,6 +401,8 @@ tests/
     ├── conftest.py                       # e2e_profile_dir, e2e_nosession_profile,
     │                                     #   e2e_env (shared fixtures)
     ├── test_auth_verification_e2e.py     # [e2e, e2e_auth]
+    ├── test_auth_renew_e2e.py            # [e2e, e2e_auth] `gflow auth renew` leaf — 0 credits
+    ├── test_credits_refresh_e2e.py       # [e2e, e2e_auth] `--refresh` on CLI + MCP — 0 credits
     ├── test_transports_e2e.py            # [e2e, e2e_{auth,image,batch,video}]
     ├── test_image_batch_e2e.py           # [e2e, e2e_batch]
     ├── test_video_t2v_e2e.py             # [e2e, e2e_video]

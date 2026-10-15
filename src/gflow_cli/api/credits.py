@@ -109,11 +109,12 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
                 remediation_hint=(
                     "Flow's labs.google session issued an API token and aisandbox-pa "
                     "rejected it. Your Google sign-in is not the problem — minting that "
-                    "token is what proves it works. Most commonly Flow now serves this "
-                    "account from flow.google.com, where the aisandbox-pa read endpoints "
-                    "have not answered for us; generation keeps working, and `gflow "
-                    "credits` has no equivalent there yet — check your balance in Flow. "
-                    "A 403 can also be an entitlement or region refusal. See issue #795."
+                    "token is what proves it works. Most often the token has expired: "
+                    "labs only renews it when a browser visits it. Re-run with "
+                    "`--refresh`, or run `gflow auth renew --profile <name>`, to renew "
+                    "it headlessly without signing in. If the renewal reports Flow's "
+                    "public /about page, see KNOWN_ISSUES. A 403 can also be an "
+                    "entitlement or region refusal. See issue #795."
                 ),
             )
         if response.status_code != 200:

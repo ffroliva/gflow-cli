@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 from playwright.async_api import async_playwright
 
-from gflow_cli.browser_manager import channel_for_profile
+from gflow_cli.browser_manager import channel_for_profile, ensure_profile_engine_compatible
 from gflow_cli.config import get_settings
 from gflow_cli.profile_lease import ProfileLease
 
@@ -37,6 +37,8 @@ def shape(body: str) -> dict:
 async def main():
     t0 = time.time()
     async with ProfileLease(pdir):
+        # #477: never open a profile with an older engine than the one that wrote it.
+        ensure_profile_engine_compatible(pdir, channel_for_profile(pdir))
         async with async_playwright() as pw:
             ctx = await pw.chromium.launch_persistent_context(
                 str(pdir),

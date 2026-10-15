@@ -19,13 +19,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
 from gflow_cli.profile_lease import ProfileLease
 
-from .verification import FlowSessionStatus, verify_flow_profile
+from .verification import FlowSessionOutcome, FlowSessionStatus, verify_flow_profile
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -52,6 +53,31 @@ _LABS_REFRESH_TIMEOUT_S = 20.0
 _LABS_POLL_INTERVAL_S = 1.0
 
 
+@dataclass(frozen=True)
+class RenewResult:
+    """What a renewal observed, not only what the verifier concluded afterwards.
+
+    The verifier alone is not enough: on an account Flow sends to its public `/about`
+    page it still reports the session as fine (KNOWN_ISSUES, #902), and that is exactly
+    the account a renewal cannot fix. So the two observations made on the way are kept.
+    """
+
+    verdict: FlowSessionStatus
+    #: `flow_landing_kind` of the Flow visit — ``"public"`` is the `/about` page.
+    landing: str | None
+    #: Whether labs' session still said ACCESS_TOKEN_REFRESH_NEEDED at the end.
+    #: ``None`` when that was never observed (the labs step failed).
+    labs_stale: bool | None
+
+    @property
+    def renewed(self) -> bool:
+        return (
+            self.verdict.outcome is FlowSessionOutcome.AUTHENTICATED
+            and self.landing != "public"
+            and self.labs_stale is not True
+        )
+
+
 def _session_error(body: str) -> object:
     """The labs session body's ``error`` value — the only field read, never the token."""
     try:
@@ -61,29 +87,33 @@ def _session_error(body: str) -> object:
     return cast("dict[str, object]", data).get("error") if isinstance(data, dict) else None
 
 
-async def _await_labs_refresh(page: Any, source: str) -> None:
+async def _await_labs_refresh(page: Any, source: str) -> bool:
     """Poll labs' session until its silent re-sign-in lands or the budget runs out.
 
-    Never raises on a stale result: the oracle verdict that follows is the answer.
+    Returns whether the session is still stale. Each request is capped at the budget
+    left (floor 1 s), so the whole wait stays within ~_LABS_REFRESH_TIMEOUT_S.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _LABS_REFRESH_TIMEOUT_S
     while True:
-        resp = await page.request.get(_LABS_SESSION_URL, timeout=_SETTLE_TIMEOUT_MS)
+        remaining_ms = max(deadline - loop.time(), 1.0) * 1000
+        resp = await page.request.get(_LABS_SESSION_URL, timeout=remaining_ms)
         stale = _session_error(await resp.text()) == _LABS_REFRESH_NEEDED
         if resp.status != 200 or not stale or loop.time() >= deadline:
             # Status and a boolean only — the body carries the access token.
             logger.info("auth_renew_labs_session", source=source, status=resp.status, stale=stale)
-            return
+            return stale
         await asyncio.sleep(_LABS_POLL_INTERVAL_S)
 
 
-async def renew_profile(profile_dir: Path, *, source: str = "renew") -> FlowSessionStatus:
-    """Refresh ``profile_dir``'s session headlessly and return the verified verdict.
+async def renew_profile(profile_dir: Path, *, source: str = "renew") -> RenewResult:
+    """Refresh ``profile_dir``'s session headlessly and report what was observed.
 
     Raises ``ProfileLockedError`` when another gflow process holds the profile
     and ``ProfileEngineDowngradeError`` when the profile was written by a newer
     browser than the one that would open it — both before any browser starts.
+    A launch failure (the user's own Chrome holds the profile, the channel is not
+    installed) raises Playwright's ``Error``; callers record it per profile.
     A navigation failure is logged and NOT raised: the verification that
     follows is the verdict, and it is fail-closed on its own.
     """
@@ -96,6 +126,8 @@ async def renew_profile(profile_dir: Path, *, source: str = "renew") -> FlowSess
     from .strategies import async_playwright
 
     channel = channel_for_profile(profile_dir)
+    landing: str | None = None
+    labs_stale: bool | None = None
     # Lease first, then the #477 guard: a check made before the lease could
     # validate a 'Last Version' the previous holder rewrites as it releases.
     async with ProfileLease(profile_dir):
@@ -130,11 +162,12 @@ async def renew_profile(profile_dir: Path, *, source: str = "renew") -> FlowSess
                         pass  # see _SETTLE_TIMEOUT_MS
                     # Host/landing labels only — never the URL, which can carry
                     # OAuth state on an accounts.google.com hop.
+                    landing = flow_landing_kind(page.url)
                     logger.info(
                         "auth_renew_landed",
                         source=source,
                         host=flow_host_kind(page.url),
-                        landing=flow_landing_kind(page.url),
+                        landing=landing,
                     )
                 except PlaywrightError as exc:
                     logger.warning(
@@ -146,7 +179,7 @@ async def renew_profile(profile_dir: Path, *, source: str = "renew") -> FlowSess
                         wait_until="domcontentloaded",
                         timeout=_NAVIGATION_TIMEOUT_MS,
                     )
-                    await _await_labs_refresh(page, source)
+                    labs_stale = await _await_labs_refresh(page, source)
                 except PlaywrightError as exc:
                     logger.warning(
                         "auth_renew_labs_session_error", source=source, error=type(exc).__name__
@@ -158,4 +191,5 @@ async def renew_profile(profile_dir: Path, *, source: str = "renew") -> FlowSess
 
     # Outside the lease: the verifier's cookie-decrypt fallback takes its own,
     # and a same-process double acquire fails fast by design.
-    return await verify_flow_profile(profile_dir, source=source)
+    verdict = await verify_flow_profile(profile_dir, source=source)
+    return RenewResult(verdict=verdict, landing=landing, labs_stale=labs_stale)

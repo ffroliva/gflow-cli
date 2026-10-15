@@ -742,16 +742,27 @@ Google's web session cookies aren't permanent. They expire when:
 
 When this happens, the next API call returns 401/403 and `gflow-cli` raises `AuthExpiredError`.
 
-**Workaround:**
+**Workaround, stale session (the common case):**
+```bash
+gflow auth renew --profile <name>        # or: gflow auth renew --all
+gflow credits list --refresh             # renews only the expired profiles, then reads them
+```
+
+A profile that has just sat unused has a lapsed labs.google token, not a dead Google session.
+`auth renew` loads Flow and labs.google in a headless browser and waits for labs to sign in
+again on its own, with no prompt. Measured 2026-10-14: 7 of 10 stale profiles recovered.
+
+**Workaround, revoked session:**
 ```bash
 gflow auth login --profile <name>
 ```
 
 Re-running `auth login` reuses the existing profile dir (you typically just click "Continue as <you>" on the Google account chooser). No data is lost; only the cookie jar is refreshed.
 
-**Why we don't auto-refresh:** Google's session-refresh flow can include CAPTCHA / device verification that only a human can complete. A community SDK can't reliably automate that step. See [docs/AUTHENTICATION.md § Refresh / expiry](AUTHENTICATION.md#refresh--expiry).
-
-**Roadmap:** not scheduled. The Phase 4 hardening pass (v0.4.0a2) added typed `AuthExpiredError` + exit code `3` so scripts can branch on auth expiry deterministically. A periodic "session liveness" check + a `gflow auth refresh` command are still candidates for a later phase, but not committed to a version yet.
+**What renewal cannot do:** complete a step only a human can, such as CAPTCHA, device
+verification, or "Confirm it's you". The 3 profiles that did not recover on 2026-10-14 were held
+at Flow's public `/about` page ([entry above](#every-command-lands-on-flowgooglecomabout-exit-31-while-gflow-auth-status-says-the-session-is-fine)),
+and `auth renew` reports them as not renewed. See [docs/AUTHENTICATION.md § Refresh / expiry](AUTHENTICATION.md#refresh--expiry).
 
 ---
 

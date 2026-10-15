@@ -234,5 +234,8 @@ async def test_an_aisandbox_rejection_does_not_blame_sapisid(
 
     hint = caught.value.remediation_hint
     assert "SAPISID" not in hint
-    assert "flow.google.com" in hint
     assert "auth login" not in hint
+    # PR #982: the commonest cause is an expired labs token, which `--refresh` and
+    # `gflow auth renew` now fix headlessly — the hint must say so, not "check Flow".
+    assert "--refresh" in hint
+    assert "gflow auth renew" in hint

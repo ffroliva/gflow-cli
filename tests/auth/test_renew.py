@@ -94,9 +94,9 @@ async def test_visits_flow_closes_then_verifies(
     monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
     _patch_verdict(monkeypatch, events, FlowSessionOutcome.AUTHENTICATED)
 
-    verdict = await renew.renew_profile(tmp_path)
+    result = await renew.renew_profile(tmp_path)
 
-    assert verdict.authenticated
+    assert result.verdict.authenticated
     # Verifying before the close would read the pre-rotation cookie store.
     assert events == ["launch", "labs_session", "close", "verify"]
     assert "labs.google/fx/tools/flow" in page.goto.await_args_list[0].args[0]
@@ -130,9 +130,9 @@ async def test_a_failed_labs_session_request_still_returns_the_oracle_verdict(
     monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
     _patch_verdict(monkeypatch, events, FlowSessionOutcome.AUTHENTICATED)
 
-    verdict = await renew.renew_profile(tmp_path)
+    result = await renew.renew_profile(tmp_path)
 
-    assert verdict.authenticated
+    assert result.verdict.authenticated
     assert events == ["launch", "labs_session", "close", "verify"]
 
 
@@ -162,9 +162,9 @@ async def test_navigation_failure_still_returns_the_oracle_verdict(
     monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
     _patch_verdict(monkeypatch, events, FlowSessionOutcome.VERIFICATION_ERROR)
 
-    verdict = await renew.renew_profile(tmp_path)
+    result = await renew.renew_profile(tmp_path)
 
-    assert verdict.outcome is FlowSessionOutcome.VERIFICATION_ERROR
+    assert result.verdict.outcome is FlowSessionOutcome.VERIFICATION_ERROR
     # Every goto fails here, so the labs session request is never reached either.
     assert events == ["launch", "close", "verify"]
 
@@ -221,3 +221,62 @@ async def test_a_labs_refresh_that_never_lands_is_bounded(
     await renew.renew_profile(tmp_path)
 
     assert events == ["launch", "labs_session", "close", "verify"]
+
+
+@pytest.mark.asyncio
+async def test_reports_the_landing_and_final_labs_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verifier says fine on an /about account; what renewal saw must survive."""
+    mock_ap, page, events = _playwright_mock(session_bodies=[_STALE])
+    page.url = "https://flow.google.com/about"
+    monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+    monkeypatch.setattr(renew, "_LABS_POLL_INTERVAL_S", 0)
+    monkeypatch.setattr(renew, "_LABS_REFRESH_TIMEOUT_S", 0)
+    _patch_verdict(monkeypatch, events, FlowSessionOutcome.AUTHENTICATED)
+
+    result = await renew.renew_profile(tmp_path)
+
+    assert result.verdict.authenticated
+    assert result.landing == "public"
+    assert result.labs_stale is True
+    assert result.renewed is False
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_labs_session_on_the_app_is_renewed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock_ap, _page, events = _playwright_mock()
+    monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+    _patch_verdict(monkeypatch, events, FlowSessionOutcome.AUTHENTICATED)
+
+    result = await renew.renew_profile(tmp_path)
+
+    assert result.labs_stale is False
+    assert result.renewed is True
+
+
+@pytest.mark.asyncio
+async def test_a_launch_failure_raises_before_any_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The caller records it per profile; no verdict is invented for a browser that
+    never started."""
+    mock_ap, _page, events = _playwright_mock()
+    pw = mock_ap.return_value.__aenter__.return_value
+    pw.chromium.launch_persistent_context = AsyncMock(
+        side_effect=PlaywrightError("ProcessSingleton")
+    )
+    monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+    _patch_verdict(monkeypatch, events, FlowSessionOutcome.AUTHENTICATED)
+
+    with pytest.raises(PlaywrightError):
+        await renew.renew_profile(tmp_path)
+
+    assert "verify" not in events
+
+
+@pytest.mark.parametrize("body", ["<html>not json</html>", "[]", '{"user": {}}'])
+def test_session_error_reads_only_a_dict_error(body: str) -> None:
+    assert renew._session_error(body) is None  # pyright: ignore[reportPrivateUsage]

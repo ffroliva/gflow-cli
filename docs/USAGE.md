@@ -127,11 +127,12 @@ Read the current Google Flow balance through an existing authenticated profile. 
 read-only request: it does not generate media or spend credits. The displayed balance funds Veo
 video generation; image generation uses separate per-model daily quotas.
 
-> **Unavailable where Flow serves `flow.google.com`.** The balance comes from a `labs.google` endpoint. On an
-> account Google has moved to `flow.google.com`, the labs session answers `200` with no access
-> token, so the command fails with "the labs.google session returned no access token". That is
-> expected on that cohort — the session is fine and re-authenticating will not help; generation
-> still works. Open, tracked in [#795](https://github.com/ffroliva/gflow-cli/issues/795).
+> **Unavailable on an account whose labs session issues no token.** The balance comes from a
+> `labs.google` endpoint. On some accounts the labs session answers `200` with no access token,
+> so the command fails with "the labs.google session returned no access token". The session is
+> fine, and re-authenticating will not help; generation still works. Which host Flow serves does
+> not predict this: on 2026-10-14, 7 of 10 profiles served `flow.google.com` read a balance after
+> `--refresh`. Open, tracked in [#795](https://github.com/ffroliva/gflow-cli/issues/795).
 
 ```text
 gflow credits user [--profile NAME] [--refresh] [--json]
@@ -144,8 +145,9 @@ rotate the saved cookies (the same renewal as [`gflow auth renew`](AUTHENTICATIO
 then asks for the balance again. That costs one Chrome launch per expired profile and no credits.
 Without `--refresh`, nothing launches. A session Google has revoked cannot be renewed, so the row
 keeps its original diagnosis. A profile another gflow process is using is recorded as
-`ProfileLockedError` and the list carries on. `--refresh` cannot help where Flow serves
-`flow.google.com` (#795, above), because that host mints no labs token to renew.
+`ProfileLockedError` and the list carries on. `--refresh` cannot help an account whose labs
+session issues no token at all (#795, above), and it does not clear Flow's public `/about` page
+(see [KNOWN_ISSUES](../KNOWN_ISSUES.md)). Both keep their original diagnosis.
 
 `credits user` applies the normal profile precedence chain. `credits list` inspects every saved
 profile sequentially and returns successful balances even when another profile is expired or

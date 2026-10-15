@@ -12,9 +12,15 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credits import fetch_credits_http
 from gflow_cli.api.dto import CreditsInfo
 from gflow_cli.auth.renew import renew_profile
-from gflow_cli.auth.verification import FlowSessionOutcome
 from gflow_cli.config import get_settings
-from gflow_cli.errors import AisandboxAuthError, AuthExpiredError, GFlowError, SecurityError
+from gflow_cli.errors import (
+    AisandboxAuthError,
+    AuthExpiredError,
+    GFlowError,
+    ProfileEngineDowngradeError,
+    ProfileLockedError,
+    SecurityError,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -111,10 +117,24 @@ async def _fetch(meta: profile_store.ProfileMeta, *, refresh: bool = False) -> d
             raise
         expired = exc
     log.info("credits.refresh_renewing", profile=meta.name, error_type=type(expired).__name__)
-    status = await renew_profile(meta.profile_dir, source="credits_refresh")
-    if status.outcome is not FlowSessionOutcome.AUTHENTICATED:
-        # Revoked, not stale: the fast path's diagnosis is still the accurate one.
-        log.info("credits.refresh_failed", profile=meta.name, outcome=status.outcome.value)
+    try:
+        result = await renew_profile(meta.profile_dir, source="credits_refresh")
+    except (ProfileLockedError, ProfileEngineDowngradeError):
+        raise  # typed and actionable on their own: "in use", "newer browser"
+    except Exception as exc:  # noqa: BLE001 — a renewal that never ran changes nothing
+        # The browser could not start (the user's own Chrome holds the profile, the
+        # channel is missing). The fast path's diagnosis is still the accurate one.
+        log.info("credits.refresh_failed", profile=meta.name, error_type=type(exc).__name__)
+        raise expired from exc
+    if not result.renewed:
+        # Revoked, or held at Flow's /about page: the fast path's diagnosis stands.
+        log.info(
+            "credits.refresh_failed",
+            profile=meta.name,
+            outcome=result.verdict.outcome.value,
+            landing=result.landing,
+            labs_stale=result.labs_stale,
+        )
         raise expired
     return await _fetch_once(meta)
 

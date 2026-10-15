@@ -286,8 +286,8 @@ so it needs `gflow auth login`. A profile another gflow
 process is using is skipped, not failed. It cannot bring back a session Google has **revoked**
 (a password change, "sign out of all devices", an identity re-check). That still needs
 `gflow auth login`. `gflow credits user|list --refresh` runs the same renewal automatically for
-a profile whose credits read fails with an expired session. Over MCP, that is
-`gflow_get_credits(refresh=true)`.
+a profile whose credits read fails with an expired session. Over MCP, that case is reached
+through `gflow_get_credits(refresh=true)`; `auth renew` itself has no MCP tool.
 
 ### `gflow auth list`
 
@@ -444,7 +444,24 @@ ERROR: Auth expired for profile 'default'.
 Run: gflow auth login --profile default
 ```
 
-Re-running `auth login` refreshes the cookies in place — no other state is lost.
+Two cases look the same at that point and are fixed differently:
+
+- **Stale, not revoked.** This is the common one: the profile has simply not been opened for a
+  while. Google's cookies are still good, but labs' NextAuth token has lapsed
+  (`ACCESS_TOKEN_REFRESH_NEEDED`), and labs only renews it when a browser visits. Run
+  [`gflow auth renew`](#gflow-auth-renew), or add `--refresh` to `gflow credits user|list`. It
+  renews the session headlessly with no sign-in.
+- **Revoked.** A password change, a removed device, or Google asking to "Confirm it's you" cannot
+  be renewed from cookies. `auth renew` reports "could not be renewed" (or names Flow's public
+  `/about` page). Re-running `gflow auth login` refreshes the cookies in place, and no other state
+  is lost.
+
+> **Renewal signs in headlessly.** The labs re-sign-in runs Google's OAuth hop in a headless
+> browser, which identifies itself as `HeadlessChrome` (only `navigator.webdriver` is hidden).
+> Generation runs headed by default, so this is the one Google sign-in gflow does headless.
+> It worked on 7 of 7 recoverable profiles on 2026-10-14. If Google ever starts challenging it,
+> fall back to `gflow auth login`. Note that `gflow_get_credits(refresh=true)` lets an agent
+> trigger a renewal on every expired profile.
 
 ## Chromium downgrade guard
 

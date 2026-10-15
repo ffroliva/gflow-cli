@@ -348,12 +348,16 @@ def test_a_recorded_failure_has_a_remediation_key_even_for_an_unexpected_error()
 # fast path reads a NEW session. It costs a headless Chrome launch, so it is opt-in.
 
 
-def _verdict(outcome: str) -> object:
+def _verdict(
+    outcome: str, *, landing: str | None = None, labs_stale: bool | None = False
+) -> object:
+    from gflow_cli.auth.renew import RenewResult
     from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
 
-    return FlowSessionStatus(
+    verdict = FlowSessionStatus(
         outcome=FlowSessionOutcome(outcome), user_email=None, source="credits_refresh"
     )
+    return RenewResult(verdict=verdict, landing=landing, labs_stale=labs_stale)
 
 
 def _install_expiring_fast_path(
@@ -503,3 +507,54 @@ async def test_refresh_list_records_a_profile_in_use_and_carries_on(
         "ProfileLockedError",
         "AisandboxAuthError",
     ]
+
+
+async def test_a_renewal_that_cannot_launch_keeps_the_fast_paths_diagnosis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user's own Chrome holds the profile: the browser never starts. That must
+    not replace an accurate AisandboxAuthError with an UnexpectedError."""
+    from playwright.async_api import Error as PlaywrightError
+
+    from gflow_cli.services import credits
+
+    _install_expiring_fast_path(monkeypatch, [_meta("one")])
+
+    async def renew(profile_dir: Path, *, source: str = "renew") -> object:
+        raise PlaywrightError("ProcessSingleton: profile in use")
+
+    monkeypatch.setattr(credits, "renew_profile", renew)
+
+    with pytest.raises(AisandboxAuthError) as caught:
+        await credits.inspect_profile(None, refresh=True)
+
+    assert caught.value.remediation_hint == "the accurate one"
+    assert isinstance(caught.value.__cause__, PlaywrightError)
+
+
+@pytest.mark.parametrize(("landing", "labs_stale"), [("public", False), (None, True)])
+async def test_an_about_account_is_not_re_asked(
+    monkeypatch: pytest.MonkeyPatch, landing: str | None, labs_stale: bool
+) -> None:
+    """The verifier says AUTHENTICATED on an /about account; renewal did not fix it."""
+    from gflow_cli.services import credits
+
+    renewals = _install_expiring_fast_path(monkeypatch, [_meta("one")])
+    asked: list[str] = []
+    real_fast = credits.fetch_credits_http
+
+    async def fast(profile_dir: Path) -> CreditsInfo:
+        asked.append(profile_dir.name)
+        return await real_fast(profile_dir)
+
+    async def renew(profile_dir: Path, *, source: str = "renew") -> object:
+        renewals.append(profile_dir.name)
+        return _verdict("authenticated", landing=landing, labs_stale=labs_stale)
+
+    monkeypatch.setattr(credits, "fetch_credits_http", fast)
+    monkeypatch.setattr(credits, "renew_profile", renew)
+
+    with pytest.raises(AisandboxAuthError):
+        await credits.inspect_profile(None, refresh=True)
+
+    assert asked == ["one"]
