@@ -22,6 +22,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports.migrated_character import ProjectRead, read_project
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
+    AisandboxAuthError,
     AuthExpiredError,
     ConfigurationError,
     WafRejectionError,
@@ -181,3 +182,70 @@ async def test_read_project_without_a_reply_times_out_rather_than_reading_empty(
 
     with pytest.raises(TransportTimeoutError):
         await read_project(_Page(None), PID, timeout_s=0.2)  # type: ignore[arg-type]
+
+
+# --- patch_entity: REST first, the editor on the measured refusal ------------------
+
+REST_401 = AisandboxAuthError(detail="aisandbox-pa returned 401 after token refresh", status=401)
+
+
+def _patch_client(tmp_path: Path, flow_host: str, rest: Any) -> FlowApiClient:
+    c = FlowApiClient(profile_dir=tmp_path / "prof", settings=Settings(flow_host=flow_host))
+    c._page = MagicMock()  # noqa: SLF001
+    c._patch_json = (  # type: ignore[method-assign]
+        AsyncMock(side_effect=rest) if isinstance(rest, Exception) else AsyncMock(return_value=rest)
+    )
+    return c
+
+
+@pytest.fixture
+def editor() -> Any:
+    with patch(
+        "gflow_cli.api.transports.migrated_character.patch_character", new=AsyncMock()
+    ) as edit:
+        yield edit
+
+
+_PATCH = {
+    "project_id": PID,
+    "entity_id": NORA.entity_id,
+    "display_name": "Nora",
+    "workflow_ids": ["wf-portrait"],
+    "voice": "Aoede",
+    "personality": "calm",
+}
+
+
+async def test_patch_falls_back_to_the_editor_on_the_rest_401(tmp_path: Path, editor: Any) -> None:
+    c = _patch_client(tmp_path, "auto", REST_401)
+
+    await c.patch_entity(**_PATCH)
+
+    editor.assert_awaited_once()
+    kwargs = editor.await_args.kwargs
+    assert (kwargs["name"], kwargs["voice"], kwargs["personality"]) == ("Nora", "Aoede", "calm")
+
+
+async def test_pinned_flow_google_com_patches_in_the_editor(tmp_path: Path, editor: Any) -> None:
+    c = _patch_client(tmp_path, "flow.google.com", {})
+
+    await c.patch_entity(**_PATCH)
+
+    c._patch_json.assert_not_awaited()  # type: ignore[attr-defined]
+    editor.assert_awaited_once()
+
+
+async def test_pinned_labs_keeps_the_rest_error(tmp_path: Path, editor: Any) -> None:
+    c = _patch_client(tmp_path, "labs.google", REST_401)
+
+    with pytest.raises(AisandboxAuthError):
+        await c.patch_entity(**_PATCH)
+    editor.assert_not_awaited()
+
+
+async def test_a_waf_refusal_is_not_a_reason_to_switch(tmp_path: Path, editor: Any) -> None:
+    c = _patch_client(tmp_path, "auto", WafRejectionError(detail="waf", status=403))
+
+    with pytest.raises(WafRejectionError):
+        await c.patch_entity(**_PATCH)
+    editor.assert_not_awaited()

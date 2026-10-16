@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@Name` resolves the character by id on that host instead of by name, and a video `@Name`
   stops at the not-yet-ported video gate (exit 36) instead of exit 29. `character create` and
   `character rm` on that host are not ported yet (#639).
+- **A successful `gflow character create` remembers which character it made** (#737). The
+  completion write replaced the operation's metadata and dropped the `entity_id` and `name`
+  the start had recorded; it now merges, so `gflow data` can tie a voice to its character.
 - **The voice catalog lists 30 voices.** `Enceladus` ("Male, breathy, lower pitch") was in
   Flow's live catalog and missing from `gflow character voices`.
 - **Log and error scrubbing covers flow.google.com's wire.** reCAPTCHA Enterprise tokens, the

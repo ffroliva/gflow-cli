@@ -3348,6 +3348,49 @@ class FlowApiClient:
         Only the fields supplied are written; absent optional fields are omitted
         from both the request body and the ``updateMask``.
         """
+        if self.settings.flow_host != "flow.google.com":
+            try:
+                await self._patch_entity_rest(
+                    project_id=project_id,
+                    entity_id=entity_id,
+                    display_name=display_name,
+                    workflow_ids=workflow_ids,
+                    voice=voice,
+                    personality=personality,
+                )
+                return
+            except (AuthExpiredError, WireFormatError) as exc:
+                if not self._labs_project_route_refused(exc, event="character.rest_route_refused"):
+                    raise
+        # flow.google.com: aisandbox REST answers 401 for this account (measured
+        # 2026-10-16), so the editor writes it. Image references are bound by the
+        # editor's own upload, so ``workflow_ids`` has nothing to do here.
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        page = await self._checkout_page()
+        try:
+            await migrated_character.patch_character(
+                page,
+                project_id,
+                entity_id,
+                name=display_name,
+                personality=personality,
+                voice=voice,
+            )
+        finally:
+            self._checkin_page(page)
+
+    async def _patch_entity_rest(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        display_name: str,
+        workflow_ids: list[str],
+        voice: str | None,
+        personality: str | None,
+    ) -> None:
+        """The labs-era Bearer PATCH to ``flow/entities`` (see :meth:`patch_entity`)."""
         character_info: JsonObject = {
             "imageReferences": [{"workflowId": w} for w in workflow_ids],
         }
