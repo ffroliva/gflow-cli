@@ -222,3 +222,37 @@ class TestCreateReplies:
 
         with pytest.raises(WireFormatError):
             bound_upload(self._upload("00000000-0000-4000-8000-0000000000bb"), entity_id=_ENTITY)
+
+
+class TestOriginalImageUrl:
+    """Export downloads `lh3.googleusercontent.com/asb/…` with `=s0` (bare = 288x512 preview).
+    The host is checked exactly: the shared `_validate_fife_url` only admits `*.google`."""
+
+    @staticmethod
+    def _img(url: str | None) -> Any:
+        from gflow_cli.api.transports.migrated_character import CharacterImage
+
+        return CharacterImage(workflow_id="wf", media_id="m", download_url=url)
+
+    def test_the_original_is_asked_for(self) -> None:
+        from gflow_cli.api.transports.migrated_character import original_image_url
+
+        url = original_image_url(self._img("https://lh3.googleusercontent.com/asb/ABC-def_1"))
+        assert url == "https://lh3.googleusercontent.com/asb/ABC-def_1=s0"
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            None,
+            "http://lh3.googleusercontent.com/asb/x",
+            "https://evil.example/asb/x",
+            "https://lh3.googleusercontent.com.evil.example/asb/x",
+            "https://lh3.googleusercontent.com/a/x",
+            "https://169.254.169.254/asb/x",
+        ],
+    )
+    def test_anything_else_is_refused(self, bad: str | None) -> None:
+        from gflow_cli.api.transports.migrated_character import original_image_url
+
+        with pytest.raises(WireFormatError):
+            original_image_url(self._img(bad))

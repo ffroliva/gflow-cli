@@ -1361,6 +1361,49 @@ the error's remediation hint names the character's id (it is named right after c
 so you can finish or remove it in Flow. On a project Flow serves from labs.google, `--image`
 is not ported yet and exits 11.
 
+### `gflow character export` / `gflow character import`
+
+A character belongs to one Flow project, and Flow has no way to copy one. These two
+commands move it through a plain folder, to another project or another **account**
+(another `--profile`). Nothing is generated on either side: no credits, no image quota.
+
+```text
+gflow character export --project PROJECT_ID (--id ENTITY_ID | --name NAME) --out FOLDER
+                       [--profile NAME] [--json]
+gflow character import FOLDER --project PROJECT_ID [--name NAME] [--voice VOICE]
+                       [--profile NAME] [--json]
+```
+
+```bash
+gflow character export --project <A> --name Nora --out nora/ --profile work
+gflow character import nora/ --project <B> --profile personal
+```
+
+The folder holds `manifest.json` (name, voice, personality, and each image's file, sha256
+and type) next to `portrait.<ext>` and an optional `body.<ext>`, downloaded at full size.
+It names **no** project, character id, link or account, so it is safe to share. `--out`
+must not exist or be empty (checked before Flow is read).
+
+`import` treats the folder as untrusted. It refuses, with exit **11** and before
+anything is sent, any of these:
+
+- a file name that is not a bare name inside the folder;
+- a symlink;
+- a file over 20 MB, or one that is not a JPEG, PNG, WebP or GIF;
+- a file that changed since export (sha256);
+- an unknown `schema_version`;
+- a bundle with no portrait.
+
+Control, bidi and zero-width characters are removed from the name and personality.
+`import` then checks the voice against the **target account's** live catalog, and
+refuses a voice that account does not offer (exit 11; pass `--voice`). Only after that
+does it rebuild the character with the same steps as `create --image`. `--name` and
+`--voice` override the bundle's values.
+
+The voice is **attached** to the imported character. Whether Flow applies it to
+generated audio is not proven yet
+([#738](https://github.com/ffroliva/gflow-cli/issues/738)).
+
 ### `gflow character list`
 
 ```text

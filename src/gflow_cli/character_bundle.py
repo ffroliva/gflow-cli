@@ -94,6 +94,13 @@ def _text(
     return _clean(raw, multiline=multiline) or None
 
 
+def check_destination(out: Path) -> None:
+    """Refuse a destination that would overwrite or mix with something already there —
+    checked before anything is read from Flow, and again when writing."""
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        raise _refuse(out, "the destination exists and is not an empty folder")
+
+
 def write_bundle(
     out: Path,
     *,
@@ -106,8 +113,7 @@ def write_bundle(
 
     ``images`` is ``(role, bytes)`` in slot order. Each file is named by its role and the
     extension of its REAL type (from its bytes) — never from the character's name."""
-    if out.exists() and (not out.is_dir() or any(out.iterdir())):
-        raise _refuse(out, "the destination exists and is not an empty folder")
+    check_destination(out)
     entries: list[dict[str, str]] = []
     files: list[tuple[str, bytes]] = []
     for role, body in images:

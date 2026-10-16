@@ -45,6 +45,8 @@ CLI_TO_MCP: dict[str, str] = {
     "character list": "gflow_character_list",
     "character voices": "gflow_character_voices",
     "character show": "gflow_character_show",
+    "character export": "gflow_character_export",
+    "character import": "gflow_character_import",
     "credits user": "gflow_get_credits",
     "credits list": "gflow_get_credits",
     "image t2i": "gflow_generate_image",

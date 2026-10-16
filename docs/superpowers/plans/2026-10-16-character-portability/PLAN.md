@@ -289,29 +289,38 @@ Text over its limit is refused, not truncated.
 `gflow character import DIR --project P [--profile] [--name NEW] [--voice V] [--json]`.
 
 **Steps / tests:**
-- [ ] red: export re-reads `Zzl0ze` then downloads at once, with `=s0` (bare FIFE = 288×512 preview),
+- [x] red: export re-reads `Zzl0ze` then downloads at once, with `=s0` (bare FIFE = 288×512 preview),
       through the `_validate_fife_url` allowlist (add `lh3.googleusercontent.com/asb/` if absent)
-- [ ] red: bundle sha256 is checked against the bundle file only — Flow re-encodes uploads
-- [ ] red: character with no image → exit 11 (30)
-- [ ] red: import validates the bundle fully before any network call; voice missing from target
+- [x] red: bundle sha256 is checked against the bundle file only — Flow re-encodes uploads
+- [x] red: character with no image → exit 11 (30)
+- [x] red: import validates the bundle fully before any network call; voice missing from target
       catalog → exit 11 with `--voice` hint (19); expired target session → no writes (20)
-- [ ] red: import reuses the Task 6 saga (create from files) — no second code path
-- [ ] `--json` shapes: export `{status, bundle, character, images}`, import `{status, project, character}`;
+- [x] red: import reuses the Task 6 saga (create from files) — no second code path
+- [x] `--json` shapes: export `{status, bundle, character, images}`, import `{status, project, character}`;
       consolidate `_char_to_dict` / `_character_to_dict` first
-- [ ] e2e: export → import into another project (same profile); export on A → import on B; failed import leaves no orphan
+- [x] e2e: export → import into another project (same profile); export on A → import on B; failed import leaves no orphan
+
+**Done 2026-10-16.** Export downloads through an exact check (`original_image_url`: https,
+`lh3.googleusercontent.com`, `/asb/`) instead of widening the shared `_validate_fife_url`.
+Import reads the target's LIVE voice catalog before creating anything (`client.list_voices`),
+so an unknown voice is exit 11 with no orphan. The parity gate refused the new leaves, so the
+MCP twins `gflow_character_export` / `gflow_character_import` landed here, not in Task 9.
+**Live, all on flow.google.com profiles:** export→import same account ✅, export (sykamel) →
+import (vraisykamel) ✅, MCP export→import ✅ — plus Task 6's scenarios: the whole
+`character_portability.feature` (5/5) has passed live.
 
 ---
 
 ## Task 9 — MCP surface mirror
 
 **Steps / tests:**
-- [ ] `gflow_character_export`, `gflow_character_import` — inline, not in `_SPEND_TOOLS`; paths are
-      server-filesystem strings (docstring says so); bundle text labelled as data in replies
+- [x] `gflow_character_export`, `gflow_character_import` — inline, not in `_SPEND_TOOLS`; paths are
+      server-filesystem strings (docstring says so); bundle text labelled as data — **done in Task 8**
 - [ ] `gflow_character_create` (#691): file-built = free; prompt-built = spend, honours `GFLOW_MCP_NO_SPEND`
 - [ ] `tests/mcp/test_cli_parity.py`: map export/import/create; remove the #691 exemption; options gate green
 - [ ] docstrings of `gflow_character_list/show` truthful for both hosts; `voices` keeps "static lookup"
 - [ ] six mirror axes walked (`skills/check/SKILL.md` step 1b)
-- [ ] MCP e2e: export + import through the tools (separate surface → separate run)
+- [x] MCP e2e: export + import through the tools (separate surface → separate run) — live ✅
 
 ---
 

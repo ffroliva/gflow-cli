@@ -510,6 +510,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checked before anything is sent; a failure after the character exists names its id
   instead of deleting it. Editing name, voice and personality on that host goes through the
   editor too, because the REST endpoint answers 401 there.
+- **`gflow character export` / `gflow character import` move a character to another
+  project or another account** through a plain folder: `manifest.json` (name, voice,
+  personality) plus its images at full size, naming no project, id, link or account.
+  Import validates the folder first (bare file names, no symlinks, image types, sizes,
+  sha256) and the voice against the target account's live catalog, then rebuilds the
+  character from the files — nothing generated, no credits. MCP twins:
+  `gflow_character_export`, `gflow_character_import`.
 
 ### Changed
 
