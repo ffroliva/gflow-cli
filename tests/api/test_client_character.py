@@ -14,6 +14,7 @@ import pytest
 from gflow_cli.api import routes
 from gflow_cli.api.character import Character
 from gflow_cli.api.client import FlowApiClient, _unwrap_trpc
+from gflow_cli.config import Settings
 from gflow_cli.errors import ConfigurationError, WireFormatError
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,9 @@ class _FakePage:
 
 def _client_with(page: _FakePage) -> FlowApiClient:
     c = FlowApiClient.__new__(FlowApiClient)
+    # list_characters branches on the served host (#639); the default `auto` keeps
+    # these labs-shaped fixtures on the labs read.
+    c.settings = Settings()
     c._page = page
     c._page_queue = None
     c._context = None

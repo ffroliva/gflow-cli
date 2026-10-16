@@ -24,11 +24,18 @@ Parsing is pure. Signed/capability download links are kept apart from
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+import structlog
 
 from gflow_cli.api.character import Character, Voice, voice_from_wire
 from gflow_cli.api.transports.batchexecute import discovery_head
 from gflow_cli.errors import WireFormatError
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page
+
+log = structlog.get_logger(__name__)
 
 PROJECT_READ_RPC = "Zzl0ze"
 
@@ -151,3 +158,31 @@ def parse_project_read(payload: object) -> ProjectRead:
                 download_url=_first_url(media) if media else None,
             )
     return ProjectRead(characters=characters, voices=voices, images=images)
+
+
+async def read_project(page: Page, project_id: str, *, timeout_s: float = 45.0) -> ProjectRead:
+    """Navigate ``page`` to the project and parse the app's own ``Zzl0ze`` reply.
+
+    Nothing is replayed: the reply observed is the one the frontend asks for on load.
+    The listener is attached before the navigation starts, so a fast reply cannot be
+    missed, and no reply at all is a ``TransportTimeoutError`` — never an empty read.
+    """
+    from gflow_cli.api.transports.migrated_composer import (  # noqa: PLC0415 - heavy module
+        MIGRATED_PROJECT_URL,
+        rpc_reply,
+    )
+
+    url = MIGRATED_PROJECT_URL.format(project_id=project_id)
+
+    async def navigate() -> None:
+        await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+
+    payload = await rpc_reply(page, PROJECT_READ_RPC, navigate, timeout_s=timeout_s)
+    read = parse_project_read(payload)
+    log.info(
+        "migrated.project_read",
+        project_id=project_id,
+        characters=len(read.characters),
+        voices=len(read.voices),
+    )
+    return read

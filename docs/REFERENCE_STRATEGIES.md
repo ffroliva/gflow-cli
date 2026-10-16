@@ -83,14 +83,17 @@ Notes:
 
 On an account Flow serves from `flow.google.com`, `image t2i` and `image i2i` take a character
 mention (`@Name` or `--reference-entity`) through the composer's own `@` picker. **Video is
-unchanged:** video characters are still refused there: `--reference-entity` exits 36, and a video `@Name` exits 29 because the character catalog cannot be read on that host.
+unchanged:** video characters are still refused there — `--reference-entity` and a video `@Name`
+both exit 36 before anything is submitted (a video `@Name` used to exit 29, when the character
+catalog could not be read on that host).
 
-- **No catalog needed.** On that host `gflow character list` cannot read the catalog (its labs route
-  answers an error: 401 or 404 measured, the labs route is retired). When the character source fails, an image mention that matches no media asset
-  becomes a character **by name**: the name is the **first word after `@`**. A character
-  whose name has several words needs the catalog to resolve, so use a one-word name on that
-  host. The name stays in the prompt as plain text (`@Sussy cooks` → chip + `Sussy cooks`).
-  Media mentions resolve as before.
+- **The catalog is read on that host.** The labs catalog route is retired (401 or 404 measured);
+  on that refusal `gflow character list` falls back to flow.google.com's own project read
+  (2026-10-16), so an `@Name` resolves to the character's id there as it does on labs. If the
+  character source still fails, an image mention that matches no media asset becomes a
+  character **by name**: the name is the **first word after `@`**. A character whose name has
+  several words needs the catalog to resolve. The name stays in the prompt as plain text
+  (`@Sussy cooks` → chip + `Sussy cooks`). Media mentions resolve as before.
 - **The option titled exactly the name is picked, not the first option.** The picker
   lists characters and media in one list, and their DOM is identical apart from a translated
   subtitle. An image whose caption starts with the character's name can rank above the

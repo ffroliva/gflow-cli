@@ -251,7 +251,7 @@ async def test_unreadable_reply_reply_is_not_misreported_as_a_timeout(rpcid: str
         await page.fire((_batch(rpcid), None))
 
     with pytest.raises(WireFormatError, match="body was unavailable") as exc:
-        await mc._rpc_reply(page, rpcid, action, timeout_s=0.02, write=True)  # type: ignore[arg-type]
+        await mc.rpc_reply(page, rpcid, action, timeout_s=0.02, write=True)  # type: ignore[arg-type]
     assert exc.value.route == f"batchexecute:{rpcid}"
     assert not is_retryable(exc.value)
     assert "outcome" in exc.value.remediation_hint
@@ -342,7 +342,7 @@ async def test_a_read_rpc_with_a_lost_body_still_times_out() -> None:
         await page.fire((_batch(mc.RENAME_PROJECT_RPC), None))
 
     with pytest.raises(TransportTimeoutError, match="1 batchexecute bodies unreadable"):
-        await mc._rpc_reply(page, mc.RENAME_PROJECT_RPC, action, timeout_s=0.02)  # type: ignore[arg-type]
+        await mc.rpc_reply(page, mc.RENAME_PROJECT_RPC, action, timeout_s=0.02)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

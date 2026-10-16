@@ -3901,7 +3901,7 @@ def _navigated_project_id(url: str, before: str) -> str | None:
     return segments[2]
 
 
-async def _rpc_reply(
+async def rpc_reply(
     page: Page,
     rpcid: str,
     action: Callable[[], Awaitable[None]],
@@ -3995,7 +3995,7 @@ async def create_project(
     before = str(page.url)
     deadline = time.monotonic() + timeout_s
     try:
-        payload = await _rpc_reply(
+        payload = await rpc_reply(
             page,
             CREATE_PROJECT_RPC,
             lambda: button.click(timeout=15_000),
@@ -4090,7 +4090,7 @@ async def rename_project(
             ) from e
 
     try:
-        payload = await _rpc_reply(
+        payload = await rpc_reply(
             page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s, write=True
         )
     except (RpcResponseUnavailableError, TransportTimeoutError) as original_error:
@@ -4140,7 +4140,7 @@ async def read_credits(page: Page, *, timeout_s: float = 30.0) -> CreditsInfo:
         await page.goto(MIGRATED_ROOT_URL, wait_until="domcontentloaded", timeout=45_000)
 
     try:
-        payload = await _rpc_reply(page, CREDITS_RPC, load, timeout_s=timeout_s)
+        payload = await rpc_reply(page, CREDITS_RPC, load, timeout_s=timeout_s)
     except TransportTimeoutError as e:
         if flow_landing_kind(page.url) == "public":
             # The generic /about hint says "open the project"; credits has no project.
