@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   original diagnosis. The MCP twin is `gflow_get_credits(refresh=true)`. The credits 401 hint
   now points at `--refresh` / `gflow auth renew` instead of "check your balance in Flow"; an
   account whose labs session issues no token at all is not helped by renewal, and says so.
+- **`gflow character create --image FILE [--body-image FILE]` builds a character from your
+  own images** on accounts Flow serves from flow.google.com — no generation, so no credits
+  and no image quota. gflow uploads the portrait through Flow's character editor (which is
+  what creates the character there), sets the name, uploads the body image into the body
+  slot, then sets voice and personality, confirming each step from Flow's reply. Files are
+  checked before anything is sent; a failure after the character exists names its id
+  instead of deleting it. Editing name, voice and personality on that host goes through the
+  editor too, because the REST endpoint answers 401 there.
 
 ### Fixed
 

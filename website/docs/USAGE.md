@@ -1256,7 +1256,11 @@ gflow character create [OPTIONS]
 Options:
   --project PROJECT_ID      Flow project id.                           [required]
   --name NAME               Display name for the new character.        [required]
-  --face-prompt TEXT        Prompt for the face reference image.       [required]
+  --face-prompt TEXT        Prompt for the face reference image. Give exactly one
+                            of --face-prompt or --image.
+  --image FILE              Build the character from this local image as its
+                            portrait instead of generating one (flow.google.com).
+  --body-image FILE         Local image for the body slot; only with --image.
   --body-prompt TEXT        Body/outfit DESCRIPTION (not a full prompt). gflow
                             wraps it in a self-contained front/side/back triptych
                             instruction seeded by the generated face, so one
@@ -1284,6 +1288,30 @@ and remove a duplicate with `gflow character rm`. What *is* guaranteed is **resu
 an interrupted run**: if a create is killed mid-saga, the next run with the same name
 picks up the recorded entity instead of minting a second one, so a crash costs no extra
 quota.
+
+#### From your own images (`--image`)
+
+On an account Flow serves from flow.google.com, `--image` builds the character from local
+files instead of generating them, so it spends **no credits and no image quota**:
+
+```bash
+gflow character create --project P --name Nora \
+  --image nora-face.jpg --body-image nora-body.jpg \
+  --voice aoede --personality "calm, precise"
+```
+
+gflow uploads the portrait through Flow's character editor, which is what creates the
+character there, then sets the name, uploads the body image into the body slot, and sets
+the voice and personality. Each step is confirmed from Flow's own reply. Each file is
+checked before anything is sent (it must exist, be at most 20 MB, and be a JPEG, PNG,
+WebP or GIF), and a bad file exits **11** without touching Flow. `--body-prompt`,
+`--format-prompt` and an explicit `--model` describe generation and are refused with
+`--image`.
+
+If a step fails **after** the portrait created the character, gflow does not delete it:
+the error's remediation hint names the character's id (it is named right after creation),
+so you can finish or remove it in Flow. On a project Flow serves from labs.google, `--image`
+is not ported yet and exits 11.
 
 ### `gflow character list`
 

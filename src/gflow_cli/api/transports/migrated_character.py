@@ -23,7 +23,9 @@ Parsing is pure. Signed/capability download links are kept apart from
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -41,10 +43,26 @@ PROJECT_READ_RPC = "Zzl0ze"
 #: The editor's field write: ``[[project, entity, null, [1, name|null, [_, voices, notes]]],
 #: [[<mask>]]]`` → the whole entity, echoed. One rpc per committed field.
 PATCH_RPC = "rzMKMb"
+#: Creates the entity — fired by the FIRST image a draft character receives:
+#: ``[[project, null, null, [1, "<default name>", []]]]`` → ``[[project, entity, …]]``.
+CREATE_RPC = "C4BZMd"
+#: The upload; bound to a character when its request ends ``[null, null, [entity, [slot]]]``.
+UPLOAD_RPC = "maseQ"
 
 #: Editor anchors, measured 2026-10-16 on a `fr` account (spike Addendum 1). Structural only:
 #: component tags, classes and ligatures — never a label.
 CHARACTER_URL = "https://flow.google.com/project/{project_id}/character/{entity_id}"
+#: The draft page: no name field until the first image creates the entity.
+DRAFT_URL = "https://flow.google.com/project/{project_id}/character"
+#: The draft footer's Upload — the create gesture (slot 0, the portrait).
+FOOTER_UPLOAD = "flow-create-character-footer button:has(mat-icon:text-is('upload'))"
+#: Slot chips in the preview panel: nth 0 portrait, nth 1 body.
+SLOT_CHIP = "flow-slot-chip-button button"
+#: The selected empty slot's own Upload (binds into that slot). NOT the prompt box's
+#: add-menu Upload, which sends no binding and only adds project media.
+SLOT_UPLOAD = "flow-character-image-preview button:has(mat-icon:text-is('upload'))"
+#: Reads lag writes by seconds (measured); a decision-driving re-read polls this long.
+READ_SETTLE_S = 60.0
 NAME_INPUT = "flow-character-form input.name-input"
 PERSONALITY_INPUT = "flow-character-form textarea.personality-textarea"
 #: With no voice yet the component renders one plain button; `voice-card-start-btn` once set.
@@ -348,3 +366,215 @@ async def _pick_voice(page: Page, entity_id: str, voice: str, *, timeout_s: floa
     reply = await rpc_reply(page, PATCH_RPC, confirm, timeout_s=timeout_s)
     verify_patch(reply, entity_id=entity_id, voice=voice_from_wire(voice_to_wire(voice)))
     log.info("migrated.character_patched", field="voice", entity_id=entity_id)
+
+
+@dataclass(frozen=True)
+class CreatedCharacter:
+    """What a file-built create leaves behind: the entity and its bound images, in slot
+    order (portrait first)."""
+
+    entity_id: str
+    workflow_ids: tuple[str, ...]
+    media_ids: tuple[str, ...]
+
+
+def created_entity(payload: object, *, project_id: str) -> str:
+    """The new entity id from a ``C4BZMd`` reply, for the project we created it in."""
+    rows = _list(payload) or []
+    row = _list(rows[0]) if rows else None
+    project = _str(row[0]) if row else None
+    entity = _str(row[1]) if row and len(row) > 1 else None
+    if entity is None or project != project_id:
+        raise _drift_rpc(payload, CREATE_RPC, f"the reply names no new entity in {project_id}")
+    return entity
+
+
+def bound_upload(payload: object, *, entity_id: str) -> tuple[str, str]:
+    """``(workflow_id, media_id)`` from a ``maseQ`` reply, refusing an upload that did not
+    land in ``entity_id`` — the add-menu Upload binds nothing, and an image bound
+    elsewhere is not this character's."""
+    rows = _list(payload) or []
+    media = _list(rows[0]) if rows else None
+    workflow = _list(rows[1]) if len(rows) > 1 else None
+    media_id = _str(media[0]) if media else None
+    workflow_id = _str(workflow[0]) if workflow else None
+    bound = _str(workflow[5]) if workflow and len(workflow) > 5 else None
+    if media_id is None or workflow_id is None:
+        raise _drift_rpc(payload, UPLOAD_RPC, "the reply names no media and workflow")
+    if bound != entity_id:
+        raise _drift_rpc(
+            payload, UPLOAD_RPC, f"the upload was not bound to {entity_id} (bound to {bound})"
+        )
+    return workflow_id, media_id
+
+
+async def _rpc_replies(
+    page: Page, rpcids: tuple[str, ...], action: Any, *, timeout_s: float
+) -> dict[str, Any]:
+    """Run ``action`` and collect the first reply of each rpcid, for up to ``timeout_s``.
+
+    Returns whatever arrived; a missing rpcid is absent from the dict, never raised here —
+    for an upload, a lost reply is a question for a re-read, not a failure (spike: a
+    ``maseQ`` reply dropped after the server got it was still bound)."""
+    from gflow_cli.api.transports.batchexecute import parse_frames  # noqa: PLC0415
+
+    got: dict[str, Any] = {}
+    done = asyncio.Event()
+
+    async def on_response(response: Any) -> None:
+        if "batchexecute" not in str(getattr(response, "url", "")):
+            return
+        try:
+            text = await response.text()
+        except Exception:  # noqa: BLE001 - an aborted body is not our frame
+            return
+        for rid, frame in parse_frames(text):
+            if rid in rpcids and rid not in got:
+                got[rid] = frame
+        if all(r in got for r in rpcids):
+            done.set()
+
+    page.on("response", on_response)
+    try:
+        await action()
+        try:
+            await asyncio.wait_for(done.wait(), timeout=timeout_s)
+        except TimeoutError:
+            log.warning(
+                "migrated.character_reply_missing", missing=[r for r in rpcids if r not in got]
+            )
+    finally:
+        page.remove_listener("response", on_response)
+    return got
+
+
+async def _choose_file(page: Page, selector: str, path: Path) -> None:
+    async with page.expect_file_chooser(timeout=15_000) as chooser:
+        await page.locator(selector).first.click()
+    await (await chooser.value).set_files(str(path))
+
+
+async def _settled_refs(page: Page, project_id: str, entity_id: str, want: int) -> tuple[str, ...]:
+    """Re-read the project until the entity lists ``want`` images or the settle window ends;
+    return what the last read showed. Reads lag writes, so one early read decides nothing."""
+    refs: tuple[str, ...] = ()
+    deadline = asyncio.get_running_loop().time() + READ_SETTLE_S
+    while True:
+        read = await read_project(page, project_id)
+        char = next((c for c in read.characters if c.entity_id == entity_id), None)
+        refs = char.workflow_ids if char else ()
+        if len(refs) >= want or asyncio.get_running_loop().time() >= deadline:
+            return refs
+        await asyncio.sleep(8)
+
+
+async def _open_editor(page: Page, project_id: str, entity_id: str) -> None:
+    await page.goto(
+        CHARACTER_URL.format(project_id=project_id, entity_id=entity_id),
+        wait_until="domcontentloaded",
+        timeout=45_000,
+    )
+    await _wait_form_loaded(page)
+
+
+async def _upload_body(page: Page, project_id: str, entity_id: str, body: Path) -> tuple[str, str]:
+    """Upload ``body`` into slot 1. A lost reply is settled by a re-read — bound means done
+    (a blind retry would bind a second copy); unbound earns exactly one retry."""
+    for attempt in (1, 2):
+        await page.locator(SLOT_CHIP).nth(1).click()
+        await page.locator(SLOT_UPLOAD).first.wait_for(state="visible", timeout=15_000)
+
+        async def upload() -> None:
+            await _choose_file(page, SLOT_UPLOAD, body)
+
+        got = await _rpc_replies(page, (UPLOAD_RPC,), upload, timeout_s=90)
+        if UPLOAD_RPC in got:
+            return bound_upload(got[UPLOAD_RPC], entity_id=entity_id)
+        refs = await _settled_refs(page, project_id, entity_id, want=2)
+        if len(refs) >= 2:
+            log.info("migrated.character_upload_bound_without_reply", slot=1)
+            return refs[1], ""
+        log.warning("migrated.character_upload_unbound", slot=1, attempt=attempt)
+        await _open_editor(page, project_id, entity_id)
+    from gflow_cli.errors import MediaUploadRejectedError  # noqa: PLC0415
+
+    raise MediaUploadRejectedError(
+        detail=f"flow.google.com never bound {body.name} as the body image (2 attempts)"
+    )
+
+
+async def create_from_files(
+    page: Page,
+    project_id: str,
+    *,
+    name: str,
+    portrait: Path,
+    body: Path | None = None,
+    personality: str | None = None,
+    voice: str | None = None,
+) -> CreatedCharacter:
+    """Build a character from local images through the character editor.
+
+    The order is forced by the host: a character only exists once its first image does,
+    so the portrait upload creates it; the name is set immediately after, so anything
+    that fails later leaves an identifiable character; then the body, then the voice.
+    Nothing here deletes — a failure after the create names the entity in the error."""
+    from gflow_cli.api.transports._common import flow_host_kind  # noqa: PLC0415
+    from gflow_cli.errors import ConfigurationError, GFlowError  # noqa: PLC0415
+
+    await page.goto(
+        DRAFT_URL.format(project_id=project_id), wait_until="domcontentloaded", timeout=45_000
+    )
+    if flow_host_kind(page.url) != "migrated":
+        raise ConfigurationError(
+            detail=(
+                "building a character from local files is driven on flow.google.com; this "
+                "project opened on another host, where it is not ported yet (#639)"
+            ),
+        )
+
+    async def create() -> None:
+        await _choose_file(page, FOOTER_UPLOAD, portrait)
+
+    got = await _rpc_replies(page, (CREATE_RPC, UPLOAD_RPC), create, timeout_s=90)
+    if CREATE_RPC not in got:
+        raise _drift_rpc(None, CREATE_RPC, "uploading the portrait created no character")
+    entity_id = created_entity(got[CREATE_RPC], project_id=project_id)
+    log.info("migrated.character_created", entity_id=entity_id, project_id=project_id)
+    try:
+        workflows: list[str] = []
+        media: list[str] = []
+        if UPLOAD_RPC in got:
+            wf, mid = bound_upload(got[UPLOAD_RPC], entity_id=entity_id)
+            workflows.append(wf)
+            media.append(mid)
+        await page.wait_for_url(f"**/character/{entity_id}*", timeout=30_000)
+        await _wait_form_loaded(page)
+        await patch_character(page, project_id, entity_id, name=name, personality=personality)
+        if not workflows:
+            refs = await _settled_refs(page, project_id, entity_id, want=1)
+            if not refs:
+                from gflow_cli.errors import MediaUploadRejectedError  # noqa: PLC0415
+
+                raise MediaUploadRejectedError(
+                    detail=f"flow.google.com created the character but bound no {portrait.name}"
+                )
+            workflows.append(refs[0])
+            await _open_editor(page, project_id, entity_id)
+        if body is not None:
+            wf, mid = await _upload_body(page, project_id, entity_id, body)
+            workflows.append(wf)
+            media.append(mid)
+        if voice is not None:
+            await patch_character(page, project_id, entity_id, voice=voice)
+    except GFlowError as exc:
+        exc.remediation_hint = (
+            f"Flow already created this character (entity {entity_id}, named {name!r} if the "
+            f"name step ran) in project {project_id}. gflow does not delete it: finish it in "
+            f"Flow, or delete it there before re-running. {exc.remediation_hint or ''}"
+        ).strip()
+        log.warning("migrated.character_orphaned", entity_id=entity_id, project_id=project_id)
+        raise
+    return CreatedCharacter(
+        entity_id=entity_id, workflow_ids=tuple(workflows), media_ids=tuple(m for m in media if m)
+    )

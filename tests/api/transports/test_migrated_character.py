@@ -167,3 +167,58 @@ class TestPatchVerification:
             verify_patch(
                 self._reply(), entity_id="00000000-0000-4000-8000-0000000000aa", name="Nora"
             )
+
+
+class TestCreateReplies:
+    """`C4BZMd` names the new entity; `maseQ` names the workflow and — when the upload was
+    bound — the entity it went into. Shapes captured 2026-10-16 (spike Addendum 1)."""
+
+    _MEDIA, _WF = "00000000-0000-4000-8000-0000000000a1", "00000000-0000-4000-8000-0000000000a2"
+
+    def test_the_create_reply_names_the_new_entity(self) -> None:
+        from gflow_cli.api.transports.migrated_character import created_entity
+
+        reply = [[_PROJECT, _ENTITY, None, [1, "Personnage sans titre", []], None, None, [1], [1]]]
+        assert created_entity(reply, project_id=_PROJECT) == _ENTITY
+
+    def test_a_create_reply_for_another_project_is_drift(self) -> None:
+        from gflow_cli.api.transports.migrated_character import created_entity
+
+        reply = [["00000000-0000-4000-8000-0000000000ff", _ENTITY, None, [1, "x", []]]]
+        with pytest.raises(WireFormatError) as exc:
+            created_entity(reply, project_id=_PROJECT)
+        assert exc.value.route == "batchexecute:C4BZMd"
+
+    def _upload(self, entity: str | None) -> list[Any]:
+        workflow: list[Any] = [
+            self._WF,
+            None,
+            None,
+            ["p.jpg", [1], None, None, self._MEDIA],
+            _PROJECT,
+        ]
+        if entity is not None:
+            workflow.append(entity)
+        return [
+            [self._MEDIA, _PROJECT, self._WF, None, None, [[1]], [None, [], [720, 1280]]],
+            workflow,
+        ]
+
+    def test_a_bound_upload_reply_yields_its_workflow_and_media(self) -> None:
+        from gflow_cli.api.transports.migrated_character import bound_upload
+
+        assert bound_upload(self._upload(_ENTITY), entity_id=_ENTITY) == (self._WF, self._MEDIA)
+
+    def test_an_upload_bound_to_nothing_is_refused(self) -> None:
+        # The prompt box's add-menu Upload sends no binding: plain project media.
+        from gflow_cli.api.transports.migrated_character import bound_upload
+
+        with pytest.raises(WireFormatError) as exc:
+            bound_upload(self._upload(None), entity_id=_ENTITY)
+        assert "not bound" in str(exc.value)
+
+    def test_an_upload_bound_to_another_entity_is_refused(self) -> None:
+        from gflow_cli.api.transports.migrated_character import bound_upload
+
+        with pytest.raises(WireFormatError):
+            bound_upload(self._upload("00000000-0000-4000-8000-0000000000bb"), entity_id=_ENTITY)

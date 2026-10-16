@@ -129,6 +129,7 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
     from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef, ProjectBrief
+    from gflow_cli.api.transports.migrated_character import CreatedCharacter
     from gflow_cli.api.video import (
         GenerateVideoRequest,
         VideoResult,
@@ -3374,6 +3375,46 @@ class FlowApiClient:
                 project_id,
                 entity_id,
                 name=display_name,
+                personality=personality,
+                voice=voice,
+            )
+        finally:
+            self._checkin_page(page)
+
+    async def create_character_from_files(
+        self,
+        project_id: str,
+        *,
+        name: str,
+        portrait: Path,
+        body: Path | None = None,
+        voice: str | None = None,
+        personality: str | None = None,
+    ) -> CreatedCharacter:
+        """Build a character from local images on flow.google.com (#639).
+
+        Every file is checked first (exists, size, image magic bytes), so nothing leaves
+        the machine and no page is touched for a bad path. FREE — uploads and edits only.
+        """
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        for path in (portrait, body):
+            if path is None:
+                continue
+            try:
+                await validate_image_file(path)
+            except (FileNotFoundError, ValueError) as exc:
+                raise ConfigurationError(
+                    detail=f"cannot use {path.name} as a character image: {exc}"
+                ) from exc
+        page = await self._checkout_page()
+        try:
+            return await migrated_character.create_from_files(
+                page,
+                project_id,
+                name=name,
+                portrait=portrait,
+                body=body,
                 personality=personality,
                 voice=voice,
             )
