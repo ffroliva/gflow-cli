@@ -503,6 +503,22 @@ async def _open_editor(page: Page, project_id: str, entity_id: str) -> None:
     await _wait_form_loaded(page)
 
 
+async def _wait_after_create(page: Page, project_id: str, entity_id: str) -> None:
+    """Wait for the editor the app switched to after the create to load the character.
+
+    The draft page turns into the editor in-app, without a page load. Measured
+    2026-10-16: that form usually loads its name like any other, but once it never did
+    within 15 s, while a direct navigation to the same editor loaded it in ~2 s. So a
+    stalled in-app editor is reloaded once — never more."""
+    from gflow_cli.errors import UiSelectorDriftError  # noqa: PLC0415
+
+    try:
+        await _wait_form_loaded(page)
+    except UiSelectorDriftError:
+        log.warning("migrated.character_editor_reloaded", entity_id=entity_id)
+        await _open_editor(page, project_id, entity_id)
+
+
 async def _upload_body(page: Page, project_id: str, entity_id: str, body: Path) -> tuple[str, str]:
     """Upload ``body`` into slot 1. A lost reply is settled by a re-read — bound means done
     (a blind retry would bind a second copy); unbound earns exactly one retry."""
@@ -575,7 +591,7 @@ async def create_from_files(
             workflows.append(wf)
             media.append(mid)
         await page.wait_for_url(f"**/character/{entity_id}*", timeout=30_000)
-        await _wait_form_loaded(page)
+        await _wait_after_create(page, project_id, entity_id)
         await patch_character(page, project_id, entity_id, name=name, personality=personality)
         if not workflows:
             refs = await _settled_refs(page, project_id, entity_id, want=1)
