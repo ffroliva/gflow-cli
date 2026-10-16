@@ -230,7 +230,8 @@ def _url(value: Any) -> str | None:
     return value if isinstance(value, str) and value.startswith("https://") else None
 
 
-def _discovery_head(payload: Any) -> str:
+def discovery_head(payload: Any) -> str:
+    """A redacted, 200-char head of ``payload`` for a ``WireFormatError`` discovery."""
     # Scrub the WHOLE payload, then slice: slicing first cut tokens into fragments
     # shorter than any token pattern's floor, and those fragments survived.
     try:
@@ -274,7 +275,7 @@ def generation_record(
                 "a bug at https://github.com/ffroliva/gflow-cli/issues with this error."
             ),
             route=f"batchexecute:{rpcid}",
-            discovery={"rpcid": rpcid, "payload_head": _discovery_head(payload)},
+            discovery={"rpcid": rpcid, "payload_head": discovery_head(payload)},
         )
     status_cell = _as_list(_at(rec, 5, 8))
     status: Any = status_cell[0] if status_cell else None
@@ -362,6 +363,6 @@ def image_records(rpcid: str, payload: Any) -> list[ImageGenerationRecord]:
                 "([media_uuid, …, workflow_uuid, …, details-with-https-url]) in the reply"
             ),
             route=f"batchexecute:{rpcid}",
-            discovery={"rpcid": rpcid, "payload_head": _discovery_head(payload)},
+            discovery={"rpcid": rpcid, "payload_head": discovery_head(payload)},
         )
     return records

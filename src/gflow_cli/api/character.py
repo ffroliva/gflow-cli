@@ -86,6 +86,8 @@ VOICES: tuple[Voice, ...] = (
     Voice("Callirrhoe", "Female, easy-going, mid pitch"),
     Voice("Charon", "Male, informative, lower pitch"),
     Voice("Despina", "Female, smooth, mid pitch"),  # descriptor unverified
+    # Live catalog (`Zzl0ze` slot 3) listed it on 2026-10-16; the offline list had 29.
+    Voice("Enceladus", "Male, breathy, lower pitch"),
     Voice("Erinome", "Female, clear, mid pitch"),
     Voice("Fenrir", "Male, excitable, younger pitch"),
     Voice("Gacrux", "Female, mature, mid pitch"),
@@ -109,6 +111,23 @@ VOICES: tuple[Voice, ...] = (
 
 # Convenience tuple of just the canonical names — for validation / back-compat.
 VOICE_NAMES: tuple[str, ...] = tuple(v.name for v in VOICES)
+_VOICE_BY_FOLD: dict[str, str] = {name.casefold(): name for name in VOICE_NAMES}
+
+
+def voice_to_wire(name: str) -> str:
+    """The voice id flow.google.com's batchexecute wire carries: lowercase (``aoede``).
+
+    Measured 2026-10-16 on ``rzMKMb`` and ``Zzl0ze``. The labs PATCH takes the
+    capitalized name; only the migrated adapter calls this."""
+    return name.casefold()
+
+
+def voice_from_wire(voice_id: str) -> str:
+    """The canonical (Capitalized) name for a wire voice id.
+
+    A voice Flow added before gflow's list knew it keeps its identity, capitalized,
+    rather than being dropped — the live catalog is authoritative, not ``VOICES``."""
+    return _VOICE_BY_FOLD.get(voice_id.casefold(), voice_id[:1].upper() + voice_id[1:])
 
 
 # ---------------------------------------------------------------------------

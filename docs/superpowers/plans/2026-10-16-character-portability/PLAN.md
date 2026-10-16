@@ -127,12 +127,17 @@ generation time, STOP and re-run `/gflow:predict` on the import design.
 **What:** Parse the project read into existing domain types.
 
 **Steps / tests:**
-- [ ] redacted fixture `tests/api/fixtures/zzl0ze_reply.json` from the 2026-10-16 capture
-- [ ] red: slot 5 → `Character` (entity_id, display_name, project_id, workflow_ids, voice, personality, thumbnail)
-- [ ] red: slot 3 → `Voice` list (30, includes Enceladus); slot 1/2 → per-workflow media id + download URL
-- [ ] red: drifted shape → `WireFormatError` exit 7 naming `batchexecute:Zzl0ze` (scenario 2)
-- [ ] red: voice wire-case: canonical `Aoede` ↔ wire `aoede` (scenario 6)
-- [ ] `VOICES` += Enceladus (`character voices` stays offline — its docstring promises it)
+- [x] redacted fixture `tests/api/fixtures/zzl0ze_reply.json` from the 2026-10-16 capture
+- [x] red: slot 5 → `Character` (entity_id, display_name, project_id, workflow_ids, voice, personality, thumbnail)
+- [x] red: slot 3 → `Voice` list (30, includes Enceladus); slot 1/2 → per-workflow media id + download URL
+- [x] red: drifted shape → `WireFormatError` exit 7 naming `batchexecute:Zzl0ze` (scenario 2)
+- [x] red: voice wire-case: canonical `Aoede` ↔ wire `aoede` (scenario 6)
+- [x] `VOICES` += Enceladus (`character voices` stays offline — its docstring promises it);
+      "29 voices" claims updated in CHARACTER.md, USAGE.md, video-production skill (+ mirrors)
+
+Decided: the parser lives in `api/transports/migrated_character.py` (pure functions; the
+editor-driving functions of Tasks 4–6 join it). `batchexecute._discovery_head` → public
+`discovery_head` so this module reuses the scrub-then-slice head.
 
 ---
 
