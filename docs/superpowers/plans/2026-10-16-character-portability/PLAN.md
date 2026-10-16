@@ -335,9 +335,14 @@ import (vraisykamel) ✅, MCP export→import ✅ — plus Task 6's scenarios: t
 
 ## Task 11 — Gates + verification
 
-- [ ] `/gflow:check` green
-- [ ] `pytest -m e2e` for `e2e_character` (+ `e2e_image` for the `@Name` identity check) on two profiles — pasted, redacted
-- [ ] `/gflow:branch-review`, then `/gflow:live-verify` ledger
+- [x] `/gflow:check` green — incl. 4c duplication proxy (3 pre-existing pairs, none in new code)
+- [x] `pytest -m e2e` for `e2e_character` (+ `e2e_image` for the `@Name` identity check) on two profiles —
+      consolidated run 13/13 at 12253fac
+- [ ] `/gflow:branch-review` — **blocked: the council's 13 Claude subagents hit the account's weekly
+      usage limit (HTTP 429, resets 2026-10-18 22:00 Europe/Paris)**; D0 (mechanical) GREEN. Resume then.
+- [x] `/gflow:live-verify` ledger (`tmp/live-verify/character-portability.md`, gitignored). Found and
+      fixed during it: (1) the `at` redaction regex was quadratic (8k chars 610 ms → 0.2 ms after);
+      (2) a just-created character's editor can stall after the in-app switch → one reload (3/3 after)
 
 ---
 
