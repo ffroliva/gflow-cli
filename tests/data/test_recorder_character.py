@@ -138,6 +138,31 @@ def test_record_character_completed_flips_to_succeeded(tmp_path: Path) -> None:
         assert meta["name"] == "My Character"
 
 
+def test_a_succeeded_row_keeps_which_character_it_was_737(tmp_path: Path) -> None:
+    """#737: the completion write replaced the column, so 104 of 104 succeeded rows lost
+    the `entity_id` and `name` the started write had recorded — the identity of the one
+    case anyone traces (a create that worked)."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        row_id = recorder.record_character_started(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project_id="flow-project-char-1",
+            entity_id="entity-abc-123",
+            name="Nora",
+        )
+        recorder.record_character_completed(
+            row_id=row_id, workflow_ids=["wf-1"], primary_media_ids=["m-1"], voice="Aoede"
+        )
+
+        (raw,) = store.conn.execute(
+            "SELECT metadata_json FROM operations WHERE id = ?", (row_id,)
+        ).fetchone()
+        meta = json.loads(raw)
+        assert (meta["entity_id"], meta["name"]) == ("entity-abc-123", "Nora")
+        assert (meta["voice"], meta["workflow_ids"]) == ("Aoede", ["wf-1"])
+
+
 # ---------------------------------------------------------------------------
 # Scenario #15 — redaction: personality in "redacted" mode
 # ---------------------------------------------------------------------------

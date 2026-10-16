@@ -130,3 +130,40 @@ class TestDrift:
             parse_project_read(payload)
         assert "SECRET-PATH" not in str(exc.value)
         assert "SECRET-PATH" not in json.dumps(exc.value.discovery)
+
+
+class TestPatchVerification:
+    """`rzMKMb` echoes the whole entity; the write is confirmed from that echo (scenario 8)."""
+
+    @staticmethod
+    def _reply(name: str = "Nora", voice: str | None = "aoede", pers: str | None = "calm") -> Any:
+        parts: list[Any] = [[[_PORTRAIT_WF]], [[None, voice]] if voice else None]
+        if pers is not None:
+            parts.append(pers)
+        return [[_PROJECT, _ENTITY, None, [1, name, parts], None, None, [1, 0], [2, 0]]]
+
+    def test_an_echo_matching_every_requested_field_is_confirmed(self) -> None:
+        from gflow_cli.api.transports.migrated_character import verify_patch
+
+        char = verify_patch(self._reply(), entity_id=_ENTITY, name="Nora", voice="Aoede")
+        assert (char.display_name, char.voice, char.personality) == ("Nora", "Aoede", "calm")
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("name", "Laura"), ("voice", "Charon"), ("personality", "loud")],
+    )
+    def test_an_echo_that_differs_is_wire_format_error(self, field: str, value: str) -> None:
+        from gflow_cli.api.transports.migrated_character import verify_patch
+
+        with pytest.raises(WireFormatError) as exc:
+            verify_patch(self._reply(), entity_id=_ENTITY, **{field: value})
+        assert exc.value.route == "batchexecute:rzMKMb"
+        assert field in str(exc.value)
+
+    def test_an_echo_for_another_entity_is_wire_format_error(self) -> None:
+        from gflow_cli.api.transports.migrated_character import verify_patch
+
+        with pytest.raises(WireFormatError):
+            verify_patch(
+                self._reply(), entity_id="00000000-0000-4000-8000-0000000000aa", name="Nora"
+            )

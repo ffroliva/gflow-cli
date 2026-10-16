@@ -29,7 +29,7 @@ simpler shape: no `copy`, no zip). Scenario: [SCENARIO.md](SCENARIO.md). Evidenc
 
 | Severity | Risk | Mitigation |
 |---|---|---|
-| Critical | Saga rollback reads retired labs routes → orphans on flow.google.com | Rollback through host-branching `get_character` / `delete_characters`; name patched immediately after create — Flow has no name field before the first image (Task 0) |
+| Critical | Saga rollback reads retired labs routes → orphans on flow.google.com | No delete on this host (user decision; REST delete 401, confirm unanchorable): a failed create/import reports the orphan's `entity_id`; the name is patched immediately after create so the orphan is identifiable (Task 5) |
 | Critical | #719: upload reply lost ~1 in 4; a lost reply is **still bound** (measured) | Re-read `Zzl0ze` once it reflects the last write; retry at most once, only if unbound (Task 6) |
 | High | Reads lag writes by seconds (measured) | Write outcomes come from `rzMKMb`/`maseQ` replies; decision-driving reads poll until `updated` ≥ last write |
 | Critical | Untrusted bundle: path escape, non-image, oversize, hostile text | Pure validator before any network call (Task 7) |
@@ -175,19 +175,34 @@ navigate to the project and observe `Zzl0ze` (listener attached before `goto`, v
 
 ---
 
-## Task 5 — Writes: create, name/voice/personality, delete; saga rollback; #737
+## Task 5 — Writes: name / voice / personality through the editor; orphan reporting; #737
 
-**What:** Editor-driven `C4BZMd` / `rzMKMb` / `cz8Z4b`, each confirmed from its reply (mask +
-echoed value). Rollback in the create saga goes through the host-branching client methods.
+**Scope change (2026-10-16, user decision):** delete is **out**. Measured: the aisandbox REST
+writes (`patch_entity`, `delete_characters`) answer 401 on a flow.google.com account, and the
+editor's delete confirm has two structurally identical buttons. A character on this host only
+comes into being with its first image, so create lives in Task 6 (files) and Task 6c (prompt).
+
+**What:** `patch_character` drives the editor's name input, personality textarea and voice
+picker, each confirmed from its own `rzMKMb` reply (mask + echoed value). `client.patch_entity`
+falls back to it on the measured REST refusal (or when flow.google.com is pinned). A failed
+create/import never deletes: the error carries the orphan's `entity_id` (it is named right after
+creation, so it is identifiable in Flow).
 
 **Steps / tests:**
-- [ ] red: `rzMKMb` echo mismatch → `WireFormatError` (scenario 8)
-- [ ] red: saga on migrated host rolls back an unbound entity via `cz8Z4b` (scenario 12)
-- [ ] red: rollback failure surfaces the orphan `entity_id` in the error (scenario 11)
-- [ ] red: completed saga row carries `entity_id` + name (scenario 26, #737)
-- [ ] implement `create_character`, `patch_character`, `delete_characters` in `migrated_character.py`;
-      client branches for `create_entity` / `patch_entity` / `delete_characters`
-- [ ] e2e: `character rm` on the migrated host; `create` (prompt-generated) with `--voice` still works
+- [x] red: `rzMKMb` echo mismatch → `WireFormatError` (scenario 8) — pure verifier
+- [x] red: `patch_entity` falls back to the editor on the REST 401 under `auto`, never when
+      labs.google is pinned, never on an unrelated failure
+- [x] a field already equal to the requested value is not re-typed (no reply would come) —
+      covered live by the e2e's restore step, not offline (faking Playwright locators would
+      assert our model of the editor, which is what the e2e exists to check)
+- [x] red: completed saga row carries `entity_id` + name (scenario 26, #737) — root cause:
+      `update_operation_metadata` replaced the column; now `json_patch` merges (its only caller)
+- [x] implement `patch_character` in `migrated_character.py`; client branch in `patch_entity`
+- [x] e2e `tests/e2e/test_character_patch_migrated_e2e.py`: rename + voice + personality, read
+      back after the read lag, restored — **3/3 live** on a flow.google.com profile. Found on the
+      way: the editor's name field is visible but empty ~1.5 s before the app loads it; typing
+      earlier is overwritten (`_wait_form_loaded`)
+- [ ] orphan reporting → **moved to Task 6/6c**: on this host only those paths create an entity
 
 ---
 
@@ -205,6 +220,22 @@ echoed value). Rollback in the create saga goes through the host-branching clien
 - [ ] red: labs-served profile → "not ported to the labs composer yet" (28)
 - [ ] implement `upload_into_character` + client `upload_character_image`; saga branch
 - [ ] e2e: create from two files with `--voice aoede --personality …`; `show` reports both images
+
+---
+
+## Task 6c — Create a character from a prompt on flow.google.com
+
+**What:** `character create --face-prompt …` exits 7 there today (labs `createEntity` is
+retired). On this host a character is created by its first image: type the face prompt into the
+draft page's prompt box (`/project/<id>/character`) and generate — `C4BZMd` then `ogiZ0b`, and
+the page moves to `/character/<new id>`. Then the Task 5 patches. Body generation reuses the
+existing editor flow (`_CHARACTER_BODY_MODE_SELECTOR`).
+
+**Steps / tests:**
+- [ ] spike the draft page's generate gesture (image quota only): which rpcs, and does the URL
+      move to the new entity
+- [ ] red/green: saga branch — no `create_entity` on this host; the entity id comes from `C4BZMd`
+- [ ] e2e: `character create --face-prompt … --voice …` on a flow.google.com profile
 
 ---
 
