@@ -204,9 +204,8 @@ def _mcp_list(world: dict[str, Any], e2e_profile_dir: Path) -> None:
 def _mcp_export(world: dict[str, Any], e2e_profile_dir: Path, name: str) -> None:
     del e2e_profile_dir
     world["bundle"] = world["tmp"] / "bundle-mcp"
-    export = mcp_tools.gflow_character_export  # type: ignore[attr-defined]  # Task 9
     result = asyncio.run(
-        export(
+        mcp_tools.gflow_character_export(
             project=world["project"],
             name=name,
             out=str(world["bundle"]),
@@ -219,10 +218,9 @@ def _mcp_export(world: dict[str, Any], e2e_profile_dir: Path, name: str) -> None
 @when("the MCP import tool imports that bundle into the second project")
 def _mcp_import(world: dict[str, Any], e2e_profile_dir: Path) -> None:
     del e2e_profile_dir
-    import_ = mcp_tools.gflow_character_import  # type: ignore[attr-defined]  # Task 9
     result = asyncio.run(
-        import_(
-            bundle=str(world["bundle"]),
+        mcp_tools.gflow_character_import(
+            bundle_dir=str(world["bundle"]),
             project=world["target"],
             profile=world["target_profile"],
         )
@@ -282,10 +280,11 @@ def _mcp_listed(world: dict[str, Any], name: str, voice: str, n: int) -> None:
 @then("the bundle holds a manifest, a portrait and a body image, and no URL or account id")
 def _bundle_shape(world: dict[str, Any]) -> None:
     bundle: Path = world["bundle"]
-    names = sorted(p.name for p in bundle.iterdir())
-    assert names[0] == "manifest.json", names
+    names = {p.name for p in bundle.iterdir()}
+    assert "manifest.json" in names, names
     assert any(n.startswith("portrait.") for n in names), names
     assert any(n.startswith("body.") for n in names), names
+    assert len(names) == 3, names
     manifest = (bundle / "manifest.json").read_text(encoding="utf-8")
     assert "https://" not in manifest
     assert world["project"] not in manifest

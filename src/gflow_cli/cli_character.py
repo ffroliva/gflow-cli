@@ -20,6 +20,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
 from gflow_cli.services.character_create import character_create, character_create_from_files
+from gflow_cli.services.character_portability import export_character, import_character
 
 console = Console()
 log = structlog.get_logger(__name__)
@@ -353,6 +354,125 @@ async def _run_create(
         finally:
             recorder.close()
     _emit_created(result, as_json=as_json)
+
+
+# ---------------------------------------------------------------------------
+# export / import
+# ---------------------------------------------------------------------------
+
+
+@character.command("export")
+@click.option("--project", "project_id", required=True, help="Flow project holding the character.")
+@click.option("--id", "entity_id", default=None, help="Character entity id.")
+@click.option("--name", default=None, help="Character display name (exact).")
+@click.option(
+    "--out",
+    "out",
+    required=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Folder to write the bundle to; must not exist or be empty.",
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
+def export(
+    project_id: str,
+    entity_id: str | None,
+    name: str | None,
+    out: Path,
+    profile: str | None,
+    as_json: bool,
+) -> None:
+    """Export a character to a folder you can import into any project or account.
+
+    The folder holds manifest.json (name, voice, personality) and the character's
+    images at full size. It names no project, character id or account. FREE.
+    """
+    if (entity_id is None) == (name is None):
+        raise click.UsageError("give exactly one of --id or --name")
+    profile_name = _resolve_profile(profile)
+    pdir = _make_provider_dir(profile_name)
+    settings = get_settings()
+
+    async def run() -> None:
+        async with FlowApiClient(profile_dir=pdir, headless=settings.headless) as client:
+            bundle = await export_character(
+                client, project_id=project_id, out=out, entity_id=entity_id, name=name
+            )
+        if as_json:
+            json_output.emit(
+                {
+                    "status": "ok",
+                    "bundle": str(bundle.root),
+                    "character": {
+                        "name": bundle.name,
+                        "voice": bundle.voice,
+                        "personality": bundle.personality,
+                    },
+                    "images": [
+                        {"role": i.role, "file": i.path.name, "sha256": i.sha256, "mime": i.mime}
+                        for i in bundle.images
+                    ],
+                }
+            )
+            return
+        console.print(f"[bold green]Exported[/bold green] {bundle.name!r} to {bundle.root}")
+        for image in bundle.images:
+            console.print(f"  {image.role}: {image.path.name}")
+
+    run_with_handlers(run, cli_command="character export", as_json=as_json)
+
+
+@character.command("import")
+@click.argument("bundle_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--project", "project_id", required=True, help="Flow project to import into.")
+@click.option(
+    "--name", default=None, help="Name for the imported character (default: the bundle's)."
+)
+@click.option(
+    "--voice",
+    default=None,
+    help="Voice for the imported character (default: the bundle's); case-insensitive.",
+)
+@click.option("--profile", default=None, help="Profile (account) to import into.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
+def import_(
+    bundle_dir: Path,
+    project_id: str,
+    name: str | None,
+    voice: str | None,
+    profile: str | None,
+    as_json: bool,
+) -> None:
+    """Import a character from a folder written by `gflow character export`.
+
+    The bundle is checked first (files, types, sizes, sha256), then the voice against
+    this account's live catalog, and only then is the character rebuilt from the
+    bundle's images — nothing is generated, so it spends no credits or image quota.
+    Use --profile to import into another account.
+    """
+    profile_name = _resolve_profile(profile)
+    pdir = _make_provider_dir(profile_name)
+    settings = get_settings()
+
+    async def run() -> None:
+        async with FlowApiClient(profile_dir=pdir, headless=settings.headless) as client:
+            recorder = OperationRecorder.open(settings)
+            try:
+                result = await import_character(
+                    client,
+                    recorder,
+                    profile_name=profile_name,
+                    profile_dir=pdir,
+                    bundle_dir=bundle_dir,
+                    project_id=project_id,
+                    name=name,
+                    voice=voice,
+                )
+            finally:
+                recorder.close()
+        _emit_created(result, as_json=as_json)
+
+    run_with_handlers(run, cli_command="character import", as_json=as_json)
 
 
 # ---------------------------------------------------------------------------

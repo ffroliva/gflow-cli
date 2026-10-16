@@ -43,7 +43,7 @@ from gflow_cli.api._engine import (
     run_teardown_step,
 )
 from gflow_cli.api._retry import parse_retry_after, post_with_retry
-from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
+from gflow_cli.api.character import Character, CharacterImageRequest, Voice, parse_characters
 from gflow_cli.api.dto import (
     AssetInfo,
     CreditsInfo,
@@ -3288,26 +3288,9 @@ class FlowApiClient:
         if entity_id is None and name is None:
             msg = "Provide either entity_id or name"
             raise ValueError(msg)
-        chars = await self.list_characters(project_id)
-        if entity_id is not None:
-            match = [c for c in chars if c.entity_id == entity_id]
-        else:
-            match = [c for c in chars if c.display_name == name]
-        if not match:
-            lookup = entity_id if entity_id is not None else repr(name)
-            raise ConfigurationError(
-                detail=f"character not found: {lookup}",
-                route="projectInitialData",
-                remediation_hint="Run `gflow character list` to see available characters.",
-            )
-        if len(match) > 1:
-            ids = ", ".join(c.entity_id for c in match)
-            raise ConfigurationError(
-                detail=f"ambiguous character name {name!r} matches multiple entities: {ids}",
-                route="projectInitialData",
-                remediation_hint="Use --entity-id to select one character unambiguously.",
-            )
-        return match[0]
+        return _pick_character(
+            await self.list_characters(project_id), entity_id=entity_id, name=name
+        )
 
     async def patch_entity(
         self,
@@ -3359,6 +3342,66 @@ class FlowApiClient:
             )
         finally:
             self._checkin_page(page)
+
+    async def list_voices(self, project_id: str) -> tuple[Voice, ...]:
+        """The live voice catalog flow.google.com sends with a project read (``Zzl0ze``).
+
+        Live, not :data:`~gflow_cli.api.character.VOICES`: an account may be offered a
+        voice the offline list does not know yet, or lack one it lists."""
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        page = await self._checkout_page()
+        try:
+            read = await migrated_character.read_project(page, project_id)
+        finally:
+            self._checkin_page(page)
+        return read.voices
+
+    async def read_character_for_export(
+        self, project_id: str, *, entity_id: str | None = None, name: str | None = None
+    ) -> tuple[Character, list[tuple[str, bytes]]]:
+        """Read one character and download its images at full size, in slot order
+        (``("portrait", bytes)``, then ``("body", bytes)`` if it has one).
+
+        One fresh project read, then the downloads at once: the links in it expire.
+        Resolution by id or exact name follows :meth:`get_character`.
+        """
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        if self.settings.flow_host == "labs.google":
+            raise ConfigurationError(
+                detail="exporting a character is driven on flow.google.com; it is not "
+                "ported to labs.google yet (#639)"
+            )
+        page = await self._checkout_page()
+        try:
+            read = await migrated_character.read_project(page, project_id)
+            char = _pick_character(list(read.characters), entity_id=entity_id, name=name)
+            if not char.workflow_ids:
+                raise ConfigurationError(
+                    detail=f"character {char.display_name!r} has no image to export"
+                )
+            images: list[tuple[str, bytes]] = []
+            for role, workflow_id in zip(("portrait", "body"), char.workflow_ids, strict=False):
+                image = read.images.get(workflow_id)
+                if image is None:
+                    raise WireFormatError(
+                        detail=f"the project read lists no media for image {workflow_id}",
+                        route="batchexecute:Zzl0ze",
+                    )
+                url = migrated_character.original_image_url(image)
+                resp = await page.request.get(url, max_redirects=2, timeout=120_000)
+                if resp.status != 200:
+                    raise WireFormatError(
+                        detail=f"downloading the {role} image answered HTTP {resp.status}",
+                        status=resp.status,
+                        route="character_image_download",
+                    )
+                images.append((role, await resp.body()))
+        finally:
+            self._checkin_page(page)
+        logger.info("character.export_read", entity_id=char.entity_id, images=len(images))
+        return char, images
 
     async def create_character_from_files(
         self,
@@ -3793,6 +3836,34 @@ def _strip_query(url: str) -> str:
     """
     parts = urlsplit(url)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _pick_character(
+    chars: list[Character], *, entity_id: str | None, name: str | None
+) -> Character:
+    """The one character matching ``entity_id``, or exactly ``name`` (case-sensitive).
+
+    Raises :class:`~gflow_cli.errors.ConfigurationError` when none matches, or when a
+    name matches several (ambiguous)."""
+    if entity_id is not None:
+        match = [c for c in chars if c.entity_id == entity_id]
+    else:
+        match = [c for c in chars if c.display_name == name]
+    if not match:
+        lookup = entity_id if entity_id is not None else repr(name)
+        raise ConfigurationError(
+            detail=f"character not found: {lookup}",
+            route="projectInitialData",
+            remediation_hint="Run `gflow character list` to see available characters.",
+        )
+    if len(match) > 1:
+        ids = ", ".join(c.entity_id for c in match)
+        raise ConfigurationError(
+            detail=f"ambiguous character name {name!r} matches multiple entities: {ids}",
+            route="projectInitialData",
+            remediation_hint="Use --entity-id to select one character unambiguously.",
+        )
+    return match[0]
 
 
 def _validate_fife_url(url: str) -> None:

@@ -88,6 +88,32 @@ class CharacterImage:
     download_url: str | None = field(repr=False)
 
 
+_IMAGE_HOST = "lh3.googleusercontent.com"
+
+
+def original_image_url(image: CharacterImage) -> str:
+    """The full-size download link for a character image, checked before any fetch.
+
+    Exact host and path, because the link comes straight off the wire: https, host
+    ``lh3.googleusercontent.com``, path under ``/asb/`` (measured 2026-10-16). The bare
+    link serves a 288x512 preview; ``=s0`` asks for the original."""
+    from urllib.parse import urlsplit  # noqa: PLC0415
+
+    url = image.download_url or ""
+    parts = urlsplit(url)
+    if (
+        parts.scheme != "https"
+        or parts.hostname != _IMAGE_HOST
+        or not parts.path.startswith("/asb/")
+    ):
+        raise _drift_rpc(
+            None,
+            PROJECT_READ_RPC,
+            f"image {image.workflow_id} has no download link on {_IMAGE_HOST}/asb/",
+        )
+    return url + "=s0"
+
+
 @dataclass(frozen=True)
 class ProjectRead:
     characters: tuple[Character, ...]

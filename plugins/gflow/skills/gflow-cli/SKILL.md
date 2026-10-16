@@ -97,6 +97,9 @@ gflow character create --project <id> --name "<name>" --face-prompt "<prompt>" \
 gflow character create --project <id> --name "<name>" --image <face.jpg> \
                        [--body-image <body.jpg>] [--voice <id>] [--personality "<text>"]
                        # from your own files (flow.google.com): nothing generated, $0
+gflow character export --project <id> (--id <character-id> | --name "<name>") --out <folder>
+gflow character import <folder> --project <id> [--profile <account>] [--name "<new>"] [--voice <id>]
+                       # move a character to another project or account; $0, nothing generated
 gflow character list --project <id>
 gflow character show <character-id> --project <id>
 gflow character rm --project <id> (--id <character-id> | --name "<name>") [--yes]   # delete (FREE)
