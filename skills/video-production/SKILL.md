@@ -174,7 +174,8 @@ So if anyone speaks more than once, you need rung 1. Here is the whole path.
 
 **1 — pick the voice before you create anyone.** `gflow character voices` lists 30 presets.
 Each has a public sample you can actually listen to, so audition rather than trust the
-descriptor — five of the 29 descriptors disagree with the measured pitch of their own sample:
+descriptor — five of the 29 descriptors measured so far disagree with the measured pitch of
+their own sample (Enceladus, in the catalog since 2026-10-16, has not been measured):
 
 ```bash
 gflow character voices --json

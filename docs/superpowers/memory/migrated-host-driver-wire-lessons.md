@@ -1,6 +1,6 @@
 ---
 name: migrated-host-driver-wire-lessons
-description: "What the flow.google.com (migrated) driver builds got wrong and how each was pinned — poster vs mp4 URL slots, status-3-before-URL, labs redirect route 404s for migrated media ids, CSS :text-matches escaping, direct load works for unflagged accounts; plus the i2v slice-1 frame-attach lessons (late picker index, no media id in DOM, empty Frames submit goes out as t2v) and the r2v slice-2 lessons (references are @ mentions not chips, MZZa6b submit rpc, mode-less t2v model key, and a body assertion whose listener was never registered); plus #948: identify the record by structure, never a wire literal (slot 3 CAE->null), never suggest retry after a billed submit, select your record by id from multi-record replies, recover only from as29s (the Zzl0ze listing URL is unsigned)"
+description: "What the flow.google.com (migrated) driver builds got wrong and how each was pinned — poster vs mp4 URL slots, status-3-before-URL, labs redirect route 404s for migrated media ids, CSS :text-matches escaping, direct load works for unflagged accounts; plus the i2v slice-1 frame-attach lessons (late picker index, no media id in DOM, empty Frames submit goes out as t2v) and the r2v slice-2 lessons (references are @ mentions not chips, MZZa6b submit rpc, mode-less t2v model key, and a body assertion whose listener was never registered); plus #948: identify the record by structure, never a wire literal (slot 3 CAE->null), never suggest retry after a billed submit, select your record by id from multi-record replies, recover only from as29s (the Zzl0ze listing URL is unsigned; for images it is a capability link); plus the characters slice (entity created by its first image, prompt-box upload does not bind, a lost maseQ reply still binds, reads lag writes, the in-app editor can stall after create, Flow re-encodes uploads, REST character writes 401)"
 metadata: 
   type: project
 ---
@@ -22,7 +22,11 @@ cost a real run to learn; each is now a unit test in `tests/api/transports/`.
   Two follow-ons from the same fix: pick your own record **by id** from a reply that lists
   several (first-match can hand you another clip's record), and recover only from `as29s`,
   because the project listing `Zzl0ze` carries the same record with an unsigned
-  `lh3.googleusercontent.com` URL that answers 302.
+  `lh3.googleusercontent.com` URL that answers 302 — for **video mp4 recovery**. For
+  **images** that link is usable and sensitive (2026-10-16): `lh3…/asb/<path>` is a
+  capability link that grants access by its path alone — bare it serves a 288x512
+  preview, `=s0` the original — so it is redacted, never logged, and fetched only after
+  an exact host/path check (see the Characters slice below).
 - **Status 3 arrives before the URL:** the app's `jwpduf` poll reports 3 first; the
   record with the signed URLs (`as29s`) follows 2–8 s later. Treating the first 3 as
   terminal loses the URL — wait a grace (20 s) for the URL-carrying record.
@@ -235,3 +239,36 @@ rounds); e2e `tests/e2e/test_migrated_host_e2e.py`. Read this before re-mining t
   three times with 0 options; the next row's fresh editor load found the same image at
   once. To reference a just-generated image, reload the editor; waiting in the page does
   not help. A reload resets the image settings, so re-apply them after it.
+
+## Characters slice — create, edit, export, import (#639, 2026-10-16)
+
+Spike: `docs/superpowers/spikes/2026-10-16-migrated-character-lifecycle-wire.md`. Live on
+two accounts served flow.google.com; each item below cost a run to learn.
+
+- **The lifecycle is five rpcids:** `Zzl0ze` (project read: characters slot 5, live voice
+  catalog slot 3, media slot 2), `C4BZMd` (create), `rzMKMb` (one masked field write,
+  whole entity echoed), `maseQ` (upload; bound when the request ends
+  `[null, null, [<entity>, [<slot>]]]`, slot 0 portrait / 1 body), `cz8Z4b` (delete).
+  Labs `createEntity` / `projectInitialData` are retired; the aisandbox REST writes
+  (`patch_entity`, `batchDeleteAssets`) answered **401** on such an account.
+- **A character exists only once its first image does.** The draft page has no name field:
+  the footer Upload fires `C4BZMd` then `maseQ`. Name it immediately after, so an orphan is
+  identifiable — gflow never deletes it (the delete confirm's two buttons have no
+  structural tell), it reports the id.
+- **The prompt box's add-menu Upload does NOT bind** — plain project media. Only the draft
+  footer and the selected slot's empty-state Upload bind.
+- **A lost `maseQ` reply still binds** (reply dropped after the server got the request,
+  both accounts). Settle with a re-read, retry at most once and only if unbound — a blind
+  retry binds a second copy.
+- **Reads lag writes** by seconds to a minute: a `Zzl0ze` read right after a write showed
+  the entity before its last edits. Write outcomes come from the `rzMKMb`/`maseQ` replies;
+  a decision-driving re-read polls (`READ_SETTLE_S`).
+- **The editor form fills ~1.5 s after it is visible**; text typed earlier is overwritten
+  and nothing commits — wait for the name to load. **After a create, the in-app
+  draft→editor switch can stall** (name never loads in 15 s, 2 of 3 imports into a busy
+  project) while a direct navigation loads in ~2 s: reload once.
+- **Voice ids are lowercase on this wire** (`aoede`); keep the Capitalized name canonical
+  and convert at one boundary. Match the voice picker on the option's name LINE (an
+  untranslated proper noun), never on the whole translated text.
+- **Flow re-encodes uploads:** a downloaded original is not byte-identical to the uploaded
+  file, so a sha256 protects a bundle, never a round trip.

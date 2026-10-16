@@ -1454,6 +1454,96 @@ async def gflow_character_show(
 
 
 @server.tool(
+    name="gflow_character_create",
+    description=(
+        "Create a Flow CHARACTER from local images: `image` becomes its portrait and the "
+        "optional `body_image` its body, with an optional preset `voice` and "
+        "`personality` — mirroring `gflow character create --image`. Nothing is "
+        "generated, so it spends no credits and no image quota. Paths are files on the "
+        "machine running this MCP server. Runs on projects Flow serves from "
+        "flow.google.com. Creating a character from a text prompt (the CLI's "
+        "--face-prompt) is not available over MCP yet (#691). A failure after Flow created "
+        "the character names its id in the remediation hint; gflow never deletes it."
+    ),
+)
+@_guarded
+async def gflow_character_create(
+    project: str,
+    name: str,
+    image: str,
+    body_image: str | None = None,
+    voice: str | None = None,
+    personality: str | None = None,
+    profile: str = _DEFAULT_PROFILE,
+) -> dict[str, Any]:
+    """Create a character from local image files (mirrors ``gflow character create --image``).
+
+    Args:
+        project: Flow project to create it in.
+        name: Display name.
+        image: Portrait image path, on the SERVER's filesystem.
+        body_image: Optional body image path, on the SERVER's filesystem.
+        voice: Preset voice name, case-insensitive (see gflow_character_voices).
+        personality: Personality notes.
+        profile: gflow-cli profile name; resolves like the CLI when left as "default".
+
+    Returns:
+        ``{"status": "ok", "project": ..., "character": {entity_id, name, voice,
+        workflow_ids}}``.
+    """
+    from gflow_cli.api.character import VOICES  # noqa: PLC0415
+    from gflow_cli.data.recorder import OperationRecorder  # noqa: PLC0415
+    from gflow_cli.services.character_create import (  # noqa: PLC0415
+        character_create_from_files,
+    )
+
+    canonical_voice: str | None = None
+    if voice is not None:
+        canonical_voice = {v.name.casefold(): v.name for v in VOICES}.get(voice.strip().casefold())
+        if canonical_voice is None:
+            return _bad_param(
+                "Unknown Voice",
+                f"unknown voice: {voice!r} — call gflow_character_voices for valid names.",
+            )
+    log.info("mcp.tool.character_create", project=project)
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved
+    settings = get_settings()
+    profile_dir = settings.profile_subdir(resolved)
+    async with (
+        _profile_lock(resolved),
+        FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client,
+    ):
+        recorder = OperationRecorder.open(settings)
+        try:
+            result = await character_create_from_files(
+                client,
+                recorder,
+                profile_name=resolved,
+                profile_dir=profile_dir,
+                project_id=project,
+                name=name,
+                portrait=Path(image),
+                body=Path(body_image) if body_image else None,
+                voice=canonical_voice,
+                personality=personality,
+            )
+        finally:
+            recorder.close()
+    return {
+        "status": "ok",
+        "project": project,
+        "character": {
+            "entity_id": result.entity_id,
+            "name": result.name,
+            "voice": result.voice,
+            "workflow_ids": list(result.workflow_ids),
+        },
+    }
+
+
+@server.tool(
     name="gflow_character_export",
     description=(
         "Export a Flow CHARACTER (by entity_id or exact name) to a bundle folder: "

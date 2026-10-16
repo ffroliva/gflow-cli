@@ -196,10 +196,6 @@ __all__ = ["FlowApiClient", "FlowApiError"]
 
 logger = structlog.get_logger(__name__)
 
-# Cap matches Flow's UI upload limit (~20 MB observed in captured traffic). Used
-# by `upload_image` to reject oversize files BEFORE reading them into memory —
-# protects this process from OOM and the remote endpoint from DoS-shaped traffic.
-
 # Server-side concat returns the combined MP4 inline as base64 in `encodedVideo`
 # (~1.27 MB base64 per second of video). Cap before b64decode to avoid OOM on a
 # pathologically long scene; ~350 MB base64 ≈ 260 MB MP4 ≈ a ~4.5-min scene.

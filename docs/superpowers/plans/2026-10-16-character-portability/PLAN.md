@@ -215,10 +215,17 @@ creation, so it is identifiable in Flow).
       rejected with `--image` (exit 2, Click usage)
 - [x] red: order = footer Upload creates (slot 0) → name → personality → body slot Upload (slot 1) → voice
 - [x] red: the prompt add-menu Upload is never used for a character image (it does not bind)
-- [x] red: lost upload reply → re-read; bound → continue; unbound → one retry; still unbound → rollback (scenario 10)
-- [x] red: upload refused → exit 27 + rollback (13); 403 → exit 10, no retry (14)
-- [x] red: labs-served profile → "not ported to the labs composer yet" (28)
-- [x] implement `upload_into_character` + client `upload_character_image`; saga branch
+- [x] lost upload reply → re-read; bound → continue; unbound → one retry; still unbound → `MediaUploadRejectedError`
+      (scenario 10; **no rollback** — delete was scoped out, the orphan id is reported). Offline tests
+      added after the council (`test_migrated_character_decisions.py`); a live lost reply was only
+      exercised by the spike, never by the e2e
+- [ ] upload refused → exit 27 (13); 403 → exit 10, no retry (14) — **not tested**: no measured refusal
+      shape to fake, and none reproducible live at $0. The existing transport error classes apply;
+      no rollback (orphan id reported instead)
+- [x] labs-served project → `ConfigurationError` "not ported yet" (28) — offline test added after the
+      council; no labs-served account exists here to run it live
+- [x] implement — as `create_from_files` / `_upload_body` in `migrated_character.py` and
+      `client.create_character_from_files` (the names first planned were never used)
 - [x] e2e: create from two files with `--voice aoede --personality …`; `show` reports both images
 
 **Done 2026-10-16.** Live: `test_character_portability_bdd.py` scenario 1 (create from two files
@@ -292,13 +299,15 @@ Text over its limit is refused, not truncated.
 - [x] red: export re-reads `Zzl0ze` then downloads at once, with `=s0` (bare FIFE = 288×512 preview),
       through the `_validate_fife_url` allowlist (add `lh3.googleusercontent.com/asb/` if absent)
 - [x] red: bundle sha256 is checked against the bundle file only — Flow re-encodes uploads
-- [x] red: character with no image → exit 11 (30)
+- [x] character with no image → exit 11 (30) — offline test added after the council
 - [x] red: import validates the bundle fully before any network call; voice missing from target
       catalog → exit 11 with `--voice` hint (19); expired target session → no writes (20)
 - [x] red: import reuses the Task 6 saga (create from files) — no second code path
 - [x] `--json` shapes: export `{status, bundle, character, images}`, import `{status, project, character}`;
       consolidate `_char_to_dict` / `_character_to_dict` first
-- [x] e2e: export → import into another project (same profile); export on A → import on B; failed import leaves no orphan
+- [x] e2e: export → import into another project (same profile); export on A → import on B — live ✅
+- [ ] e2e "a failed import leaves no orphan" — **not written**, and superseded: delete was scoped out,
+      so a failed import cannot leave none; it reports the orphan's id (offline test for the hint added)
 
 **Done 2026-10-16.** Export downloads through an exact check (`original_image_url`: https,
 `lh3.googleusercontent.com`, `/asb/`) instead of widening the shared `_validate_fife_url`.
@@ -316,10 +325,12 @@ import (vraisykamel) ✅, MCP export→import ✅ — plus Task 6's scenarios: t
 **Steps / tests:**
 - [x] `gflow_character_export`, `gflow_character_import` — inline, not in `_SPEND_TOOLS`; paths are
       server-filesystem strings (docstring says so); bundle text labelled as data — **done in Task 8**
-- [ ] `gflow_character_create` (#691): file-built = free; prompt-built = spend, honours `GFLOW_MCP_NO_SPEND`
-- [ ] `tests/mcp/test_cli_parity.py`: map export/import/create; remove the #691 exemption; options gate green
-- [ ] docstrings of `gflow_character_list/show` truthful for both hosts; `voices` keeps "static lookup"
-- [ ] six mirror axes walked (`skills/check/SKILL.md` step 1b)
+- [x] `gflow_character_create` (#691): the file-built path, free — ported after the council, live ✅;
+      prompt-built create stays a tracked GAP #691 (option exemptions in the parity test)
+- [x] `tests/mcp/test_cli_parity.py`: map export/import/create; #691 blanket exemption replaced by
+      per-option GAP entries for the prompt-only options; options gate green
+- [x] docstrings of `gflow_character_list/show` truthful for both hosts (no host claim); `voices` keeps "static lookup"
+- [x] six mirror axes walked (`skills/check/SKILL.md` step 1b) — by council D15
 - [x] MCP e2e: export + import through the tools (separate surface → separate run) — live ✅
 
 ---
@@ -338,8 +349,8 @@ import (vraisykamel) ✅, MCP export→import ✅ — plus Task 6's scenarios: t
 - [x] `/gflow:check` green — incl. 4c duplication proxy (3 pre-existing pairs, none in new code)
 - [x] `pytest -m e2e` for `e2e_character` (+ `e2e_image` for the `@Name` identity check) on two profiles —
       consolidated run 13/13 at 12253fac
-- [ ] `/gflow:branch-review` — **blocked: the council's 13 Claude subagents hit the account's weekly
-      usage limit (HTTP 429, resets 2026-10-18 22:00 Europe/Paris)**; D0 (mechanical) GREEN. Resume then.
+- [x] `/gflow:branch-review` — re-run at 80de9b39 after the limit cleared: consensus YELLOW (D0, D12
+      GREEN), 12 must-fixes, all addressed (`.planning/branch-review-…md`, gitignored)
 - [x] `/gflow:live-verify` ledger (`tmp/live-verify/character-portability.md`, gitignored). Found and
       fixed during it: (1) the `at` redaction regex was quadratic (8k chars 610 ms → 0.2 ms after);
       (2) a just-created character's editor can stall after the in-app switch → one reload (3/3 after)

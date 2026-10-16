@@ -34,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slot, then sets voice and personality, confirming each step from Flow's reply. Files are
   checked before anything is sent; a failure after the character exists names its id
   instead of deleting it. Editing name, voice and personality on that host goes through the
-  editor too, because the REST endpoint answers 401 there.
+  editor too, because the REST endpoint answers 401 there. MCP twin:
+  `gflow_character_create` (the file-built path; creating from prompts over MCP is still #691).
 - **`gflow character export` / `gflow character import` move a character to another
   project or another account** through a plain folder: `manifest.json` (name, voice,
   personality) plus its images at full size, naming no project, id, link or account.
@@ -51,8 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default `GFLOW_CLI_FLOW_HOST=auto`, and directly when the host is pinned to flow.google.com.
   The MCP twins `gflow_character_list` / `gflow_character_show` follow. As a result, an image
   `@Name` resolves the character by id on that host instead of by name, and a video `@Name`
-  stops at the not-yet-ported video gate (exit 36) instead of exit 29. `character create` and
-  `character rm` on that host are not ported yet (#639).
+  stops at the not-yet-ported video gate (exit 36) instead of exit 29. `character create
+  --face-prompt` (generated images) and `character rm` on that host are not ported yet (#639).
 - **A successful `gflow character create` remembers which character it made** (#737). The
   completion write replaced the operation's metadata and dropped the `entity_id` and `name`
   the start had recorded; it now merges, so `gflow data` can tie a voice to its character.

@@ -1303,8 +1303,9 @@ gflow character create --project P --name Nora \
 gflow uploads the portrait through Flow's character editor, which is what creates the
 character there, then sets the name, uploads the body image into the body slot, and sets
 the voice and personality. Each step is confirmed from Flow's own reply. Each file is
-checked before anything is sent (it must exist, be at most 20 MB, and be a JPEG, PNG,
-WebP or GIF), and a bad file exits **11** without touching Flow. `--body-prompt`,
+checked before anything is sent: a path that does not exist is a usage error (exit **2**),
+and a file over 20 MB or that is not a JPEG, PNG, WebP or GIF exits **11** — either way
+without touching Flow. `--body-prompt`,
 `--format-prompt` and an explicit `--model` describe generation and are refused with
 `--image`.
 

@@ -288,7 +288,7 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 |---|---|
 | D1 | `[[pr-must-verify-on-affected-surface]]`, `[[video-model-capability-matrix]]`, `[[flow-capabilities-are-cohort-dependent]]`, `[[migrated-refusal-is-a-dom-card-not-a-wire-record]]` |
 | D2 | `[[ruff-format-scope-is-src-tests]]`, `[[git-add-all-sweeps-scratch-files]]` |
-| D3 | `[[real-browser-auth-mandatory]]`, `[[release-signing]]` |
+| D3 | `[[real-browser-auth-mandatory]]`, `[[release-signing]]`, `[[unanchored-token-regex-is-quadratic]]` |
 | D4 | `[[e2e-evidence-is-a-contributor-deliverable]]`, `[[force-color-breaks-cli-tests]]`, `[[pr-must-verify-on-affected-surface]]`, `[[full-test-suite-ooms]]`, `[[stale-test-discovery]]`, `[[structlog-cache-logger-off-for-tests]]`, `[[windows-running-launcher-blocks-uv-upgrade]]` |
 | D5 | `[[memory-is-working-dir-keyed]]`, `[[release-spec-plan-memory-consolidation]]`, `[[pr-council-review-stale-tree-reads]]` (this very bug, as the council should self-improve) |
 | D6 | `[[ui-selector-drift-error-exit-23]]`, `[[credit-free-route-abort-verification]]`, `[[flow-credits-videos-only]]`, `[[flow-recon-must-run-on-denon82-ffroliva-migrated]]`, `[[flow-locale-leak-icon-ligatures]]`, `[[ligature-carrier-differs-by-host]]`, `[[playwright-click-no-downstream-event-signature]]`, `[[rest-transports-drop-ui-fields]]`, `[[image-video-mode-switch-symmetry]]`, `[[verification-ledger-5-layer]]`, `[[migrated-host-driver-wire-lessons]]`, `[[content-policy-text-scan-false-positives-on-page-chrome]]` |

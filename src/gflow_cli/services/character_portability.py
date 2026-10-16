@@ -84,11 +84,12 @@ async def import_character(
             raise ConfigurationError(
                 detail=(
                     f"voice {wanted!r} is not among the {len(offered)} this account offers; "
-                    "pass --voice with one it does. Nothing was created"
+                    "pass --voice (MCP: voice=) with one it does. Nothing was created"
                 ),
                 remediation_hint=(
-                    "Pass --voice with one of the voices this account offers "
-                    "(`gflow character voices`), or edit the bundle's manifest."
+                    "This account's LIVE voice catalog decides, and it can differ from the "
+                    "static `gflow character voices` list. Override the voice, or edit the "
+                    "bundle's manifest."
                 ),
             )
     result = await character_create_from_files(

@@ -265,12 +265,17 @@ def verify_patch(
     char = _character(rows[0], payload)
     asked = {"name": name, "voice": voice, "personality": personality}
     got = {"name": char.display_name, "voice": char.voice, "personality": char.personality}
+    # Only the voice id changes case on the wire (canonical `Aoede`, wire `aoede`); a name
+    # or personality must come back exactly, or a dropped case-only edit reads as applied.
     wrong = [
         f"{field} is {got[field]!r}, not {want!r}"
         for field, want in asked.items()
         if want is not None
-        and (got[field] or "").casefold()
-        != (want.casefold() if field == "voice" else want).casefold()
+        and (
+            (got[field] or "").casefold() != want.casefold()
+            if field == "voice"
+            else got[field] != want
+        )
     ]
     if char.entity_id != entity_id:
         wrong.insert(0, f"it names entity {char.entity_id}, not {entity_id}")
@@ -510,16 +515,20 @@ async def _wait_after_create(page: Page, project_id: str, entity_id: str) -> Non
     2026-10-16: that form usually loads its name like any other, but once it never did
     within 15 s, while a direct navigation to the same editor loaded it in ~2 s. So a
     stalled in-app editor is reloaded once — never more."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError  # noqa: PLC0415
+
     from gflow_cli.errors import UiSelectorDriftError  # noqa: PLC0415
 
     try:
         await _wait_form_loaded(page)
-    except UiSelectorDriftError:
+    except (UiSelectorDriftError, PlaywrightTimeoutError):
         log.warning("migrated.character_editor_reloaded", entity_id=entity_id)
         await _open_editor(page, project_id, entity_id)
 
 
-async def _upload_body(page: Page, project_id: str, entity_id: str, body: Path) -> tuple[str, str]:
+async def _upload_body(
+    page: Page, project_id: str, entity_id: str, body: Path
+) -> tuple[str, str | None]:
     """Upload ``body`` into slot 1. A lost reply is settled by a re-read — bound means done
     (a blind retry would bind a second copy); unbound earns exactly one retry."""
     for attempt in (1, 2):
@@ -535,13 +544,21 @@ async def _upload_body(page: Page, project_id: str, entity_id: str, body: Path) 
         refs = await _settled_refs(page, project_id, entity_id, want=2)
         if len(refs) >= 2:
             log.info("migrated.character_upload_bound_without_reply", slot=1)
-            return refs[1], ""
+            return refs[1], None  # bound, but the lost reply took its media id with it
         log.warning("migrated.character_upload_unbound", slot=1, attempt=attempt)
         await _open_editor(page, project_id, entity_id)
     from gflow_cli.errors import MediaUploadRejectedError  # noqa: PLC0415
 
     raise MediaUploadRejectedError(
         detail=f"flow.google.com never bound {body.name} as the body image (2 attempts)"
+    )
+
+
+def _orphan_hint(entity_id: str, name: str, project_id: str) -> str:
+    return (
+        f"Flow already created this character (entity {entity_id}, named {name!r} if the "
+        f"name step ran) in project {project_id}. gflow does not delete it: finish it in "
+        f"Flow, or delete it there before re-running."
     )
 
 
@@ -561,8 +578,14 @@ async def create_from_files(
     so the portrait upload creates it; the name is set immediately after, so anything
     that fails later leaves an identifiable character; then the body, then the voice.
     Nothing here deletes — a failure after the create names the entity in the error."""
+    from playwright.async_api import Error as PlaywrightError  # noqa: PLC0415
+
     from gflow_cli.api.transports._common import flow_host_kind  # noqa: PLC0415
-    from gflow_cli.errors import ConfigurationError, GFlowError  # noqa: PLC0415
+    from gflow_cli.errors import (  # noqa: PLC0415
+        ConfigurationError,
+        GFlowError,
+        UiSelectorDriftError,
+    )
 
     await page.goto(
         DRAFT_URL.format(project_id=project_id), wait_until="domcontentloaded", timeout=45_000
@@ -585,7 +608,7 @@ async def create_from_files(
     log.info("migrated.character_created", entity_id=entity_id, project_id=project_id)
     try:
         workflows: list[str] = []
-        media: list[str] = []
+        media: list[str | None] = []
         if UPLOAD_RPC in got:
             wf, mid = bound_upload(got[UPLOAD_RPC], entity_id=entity_id)
             workflows.append(wf)
@@ -609,14 +632,25 @@ async def create_from_files(
             media.append(mid)
         if voice is not None:
             await patch_character(page, project_id, entity_id, voice=voice)
+    except PlaywrightError as exc:
+        # A browser timeout is not a GFlowError, so on its own it would surface as an
+        # unclassified error and lose the id of a character Flow already holds.
+        log.warning("migrated.character_orphaned", entity_id=entity_id, project_id=project_id)
+        raise UiSelectorDriftError(
+            detail=(
+                f"the character editor did not respond after the create "
+                f"({type(exc).__name__}) (host=migrated)"
+            ),
+            remediation_hint=_orphan_hint(entity_id, name, project_id),
+        ) from exc
     except GFlowError as exc:
         exc.remediation_hint = (
-            f"Flow already created this character (entity {entity_id}, named {name!r} if the "
-            f"name step ran) in project {project_id}. gflow does not delete it: finish it in "
-            f"Flow, or delete it there before re-running. {exc.remediation_hint or ''}"
+            f"{_orphan_hint(entity_id, name, project_id)} {exc.remediation_hint or ''}"
         ).strip()
         log.warning("migrated.character_orphaned", entity_id=entity_id, project_id=project_id)
         raise
     return CreatedCharacter(
-        entity_id=entity_id, workflow_ids=tuple(workflows), media_ids=tuple(m for m in media if m)
+        entity_id=entity_id,
+        workflow_ids=tuple(workflows),
+        media_ids=tuple(m for m in media if m is not None),
     )

@@ -390,20 +390,32 @@ async def character_create_from_files(
         voice=voice,
         personality=personality,
     )
-    row_id = recorder.record_character_started(
-        profile_name=profile_name,
-        profile_dir=profile_dir,
-        project_id=project_id,
-        entity_id=created.entity_id,
-        name=name,
-    )
-    recorder.record_character_completed(
-        row_id=row_id,
-        workflow_ids=list(created.workflow_ids),
-        primary_media_ids=list(created.media_ids),
-        voice=voice,
-        personality=personality,
-    )
+    from gflow_cli.errors import DataStoreError  # noqa: PLC0415
+
+    try:
+        row_id = recorder.record_character_started(
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            project_id=project_id,
+            entity_id=created.entity_id,
+            name=name,
+        )
+        recorder.record_character_completed(
+            row_id=row_id,
+            workflow_ids=list(created.workflow_ids),
+            primary_media_ids=list(created.media_ids),
+            voice=voice,
+            personality=personality,
+        )
+    except DataStoreError as exc:
+        # The character exists in Flow by now. Failing here would hide its id and invite a
+        # re-run that creates a duplicate — the exit-16 contract is warn and continue.
+        log.warning(
+            "data.persistence_failed_after_success",
+            error_class=type(exc).__name__,
+            detail=exc.detail,
+            entity_id=created.entity_id,
+        )
     log.info(
         "character_create.from_files_completed",
         entity_id=created.entity_id,
