@@ -151,7 +151,7 @@ editor-driving functions of Tasks 4–6 join it). `batchexecute._discovery_head`
       projects created fresh by `gflow project create`; `GFLOW_CLI_E2E_PROFILE_B` documented in
       docs/E2E_TESTING.md (with the previously undocumented RUN_CHARACTER). **Red, measured live**:
       scenario 1 fails on `No such option '--image'` after its project create succeeded
-- [ ] `tests/features/character_bundle.feature` + steps (offline) — **moved to Task 7**: its step module
+- [x] `tests/features/character_bundle.feature` + steps (offline) — **moved to Task 7**, done there: its step module
       imports `character_bundle`, and a committed import error would break normal CI collection
 - [x] `tests/features/test_e2e_binding_guard.py` stays green
 
@@ -269,12 +269,17 @@ media id and completed (spike Addendum 2, 12 credits). One run is "not reproduce
 Manifest (allowlist): `{schema_version: 1, name, voice, personality, images: [{role, file, sha256, mime}]}`.
 
 **Steps / tests:**
-- [ ] red: write → read round-trip; UTF-8 name, `ensure_ascii=False`; fixed filenames (22)
-- [ ] red: unknown schema_version (15); path escape / absolute (17); non-image, >20 MB, sha mismatch (16)
-- [ ] red: control/bidi/zero-width stripped, length limits (18)
-- [ ] red: manifest contains no URL / email / project or entity id (24)
-- [ ] red: `--out` exists and non-empty → refused (23)
-- [ ] implement; offline BDD from Task 3 goes green
+- [x] red: write → read round-trip; UTF-8 name, `ensure_ascii=False`; fixed filenames (22)
+- [x] red: unknown schema_version (15); path escape / absolute (17); non-image, >20 MB, sha mismatch (16)
+- [x] red: control/bidi/zero-width stripped, length limits (18)
+- [x] red: manifest contains no URL / email / project or entity id (24)
+- [x] red: `--out` exists and non-empty → refused (23)
+- [x] implement; offline BDD from Task 3 goes green
+
+**Done 2026-10-16.** The image rule (four containers, 20 MB, extension from the bytes) moved
+from `api/client.py` into `gflow_cli/image_files.py` so the upload and the bundle refuse the
+same files. Offline BDD `tests/features/character_bundle.feature` (moved here from Task 3).
+Text over its limit is refused, not truncated.
 
 ---
 

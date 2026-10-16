@@ -115,6 +115,7 @@ from gflow_cli.errors import (
     WireFormatError,
     classify_content_safety,
 )
+from gflow_cli.image_files import MAX_IMAGE_BYTES, image_kind
 from gflow_cli.paths import adjust_key_extension, character_output_path, looks_like_video
 from gflow_cli.profile_lease import ProfileLease
 from gflow_cli.profile_store import (
@@ -211,7 +212,6 @@ logger = structlog.get_logger(__name__)
 # Cap matches Flow's UI upload limit (~20 MB observed in captured traffic). Used
 # by `upload_image` to reject oversize files BEFORE reading them into memory —
 # protects this process from OOM and the remote endpoint from DoS-shaped traffic.
-MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
 
 # Server-side concat returns the combined MP4 inline as base64 in `encodedVideo`
 # (~1.27 MB base64 per second of video). Cap before b64decode to avoid OOM on a
@@ -270,29 +270,8 @@ def _parse_iso_to_epoch(value: object) -> float:
 
 
 def _is_supported_image_header(header: bytes) -> bool:
-    """Return True if ``header`` (first 12 bytes of a file) matches a known image
-    container's magic bytes.
-
-    Allowed formats — every one is accepted by Flow's web UI:
-
-    * **PNG** — ``\\x89PNG\\r\\n\\x1a\\n``
-    * **JPEG** — bytes 0..2 are ``\\xff\\xd8\\xff``
-    * **WebP** — bytes 0..3 ``RIFF`` + bytes 8..11 ``WEBP``
-    * **GIF** — ``GIF87a`` or ``GIF89a``
-
-    Rejecting anything else is a defense-in-depth measure: combined with
-    ``resolve_path=True`` on the CLI argument it stops a symlink-laundering
-    attack (``./photo.png -> ~/.ssh/id_rsa``) at the bytes layer.
-    """
-    if len(header) < 12:
-        return False
-    if header.startswith(b"\x89PNG\r\n\x1a\n"):
-        return True
-    if header[:3] == b"\xff\xd8\xff":
-        return True
-    if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
-        return True
-    return header[:6] in (b"GIF87a", b"GIF89a")
+    """True if ``header`` starts a PNG, JPEG, WebP or GIF (see :func:`image_kind`)."""
+    return image_kind(header) is not None
 
 
 async def validate_image_file(image_path: Path) -> None:
