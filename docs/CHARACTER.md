@@ -159,6 +159,24 @@ sequenceDiagram
   end
 ```
 
+## 5b. Move a character to another project or account (flow.google.com, 2026-10-16)
+
+A character belongs to one project and Flow cannot copy one, so gflow moves it through a
+plain folder — no generation on either side, no credits, no image quota:
+
+```bash
+gflow character export --project <A> --name Nora --out nora/ --profile work
+gflow character import nora/ --project <B> --profile personal   # any project, any account
+```
+
+The folder (`manifest.json` + `portrait.<ext>` [+ `body.<ext>`]) carries the name, voice,
+personality and full-size images, and **no** project, character id, link or account. Import
+validates it offline, checks the voice against the target account's live catalog, then
+rebuilds the character exactly like `create --image`. Identity carries over: a character
+imported onto a second account rendered as the same person in an `@Name` image and in a
+video. Full reference: [USAGE](USAGE.md); measurements:
+[spike 2026-10-16](superpowers/spikes/2026-10-16-migrated-character-lifecycle-wire.md).
+
 ## 6. Payloads (I/O)
 
 ### 6.1 `flow.createEntity`
@@ -269,10 +287,21 @@ both normalize to the canonical `Charon`) and sets `audioReferences[].presetVoic
 > unchanged, so `CHARACTER_RECON.md`'s older note that "the preset id is the lowercased name"
 > does **not** describe what the wire does today.
 >
-> **Still untested:** whether a *lowercase* id is also accepted (gflow never sends one — it
-> normalizes to Capitalized before the PATCH), and — separately and more importantly —
-> whether a bound voice is actually **applied to generated video audio**. Attachment to the
-> entity is proven; application at render time is not.
+> **Still untested on labs:** whether a *lowercase* id is also accepted there (gflow never
+> sends one to labs — it normalizes to Capitalized before the PATCH).
+
+> **On flow.google.com the wire is lowercase — measured 2026-10-16.** The character editor
+> sends and the project read (`Zzl0ze`) returns `aoede`, `callirrhoe`, … in `rzMKMb`'s
+> `audio_references`. gflow keeps the Capitalized name as its canonical form everywhere
+> (`gflow character show`, bundles) and converts at that one boundary
+> (`api/character.py::voice_to_wire` / `voice_from_wire`); a voice Flow offers that the
+> offline list does not know keeps its identity, capitalized.
+
+> **Attached, not proven applied ([#738](https://github.com/ffroliva/gflow-cli/issues/738)).**
+> Whether a bound voice is **applied to generated video audio** is still open. One video on
+> 2026-10-16 (a character imported onto a second account, voice `Aoede`) spoke the scripted
+> line with a median pitch of 197.5 Hz against Aoede's sample at 210.5 Hz — consistent, but
+> two other voices sit as close, so it identifies nothing. #738's A/B design is what settles it.
 >
 > **`personalityNotes` is Agent-scoped.** Flow's own character editor labels the field
 > "Character info (optional) — Describe how your character acts…" and states underneath:

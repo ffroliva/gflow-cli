@@ -326,10 +326,10 @@ import (vraisykamel) ✅, MCP export→import ✅ — plus Task 6's scenarios: t
 
 ## Task 10 — Docs
 
-- [ ] `docs/CHARACTER.md` (30 voices, files-built create, export/import recipe incl. cross-profile, voice "attached, not proven applied")
-- [ ] `docs/USAGE.md`, `docs/MCP.md`, `docs/REFERENCE_STRATEGIES.md`, `skills/gflow-cli/SKILL.md`, AGENTS.md command bullet
-- [ ] `KNOWN_ISSUES.md:50` — character create/list/show/rm ported; #639 comment drafted (Refs, not Closes)
-- [ ] `uv run python scripts/ci/generate_website_docs.py`; CHANGELOG `[Unreleased]`
+- [x] `docs/CHARACTER.md` (30 voices, files-built create, export/import recipe incl. cross-profile, voice "attached, not proven applied"; lowercase wire voice ids on flow.google.com)
+- [x] `docs/USAGE.md`, `docs/MCP.md`, `docs/REFERENCE_STRATEGIES.md`, `skills/gflow-cli/SKILL.md`, AGENTS.md command bullet, README
+- [x] `KNOWN_ISSUES.md:50` — list/show/create --image/export/import ported, `--face-prompt` and `rm` not; #639 comment drafted (Refs, not Closes) — posting awaits the user
+- [x] `uv run python scripts/ci/generate_website_docs.py`; CHANGELOG `[Unreleased]`
 
 ---
 
