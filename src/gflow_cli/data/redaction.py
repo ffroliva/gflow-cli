@@ -17,6 +17,18 @@ SENSITIVE_QUERY_KEYS = ("signature=", "x-goog-signature=", "x-goog-credential=",
 # verbatim — these patterns cover the prose case. All case-insensitive: header
 # dumps are frequently lowercased ("cookie: sapisid=...").
 _SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # flow.google.com batchexecute material, shapes measured 2026-10-16
+    # (docs/superpowers/spikes/2026-10-16-migrated-character-lifecycle-wire.md).
+    # `lh3.googleusercontent.com/asb/…` grants access by its path alone — there is
+    # no `Signature=` for the signed-query pattern below to key on.
+    (re.compile(r"https?://lh3\.googleusercontent\.com/asb/\S+", re.IGNORECASE), "<redacted:url>"),
+    # The `at` XSRF value: 20+ token chars, ':' (or '%3A' in a form body), ms timestamp.
+    (re.compile(r"[A-Za-z0-9_-]{20,}(?::|%3A)\d{13}(?!\d)", re.IGNORECASE), "<redacted:token>"),
+    # reCAPTCHA Enterprise tokens (`maseQ` carries one), then any token-alphabet run
+    # long enough to be a credential. The floor matches batchexecute._TOKEN_RE, which
+    # slices its window BEFORE matching and so can leave a fragment behind.
+    (re.compile(r"0cAF[A-Za-z0-9_-]{100,}"), "<redacted:token>"),
+    (re.compile(r"[A-Za-z0-9_-]{120,}"), "<redacted:token>"),
     (re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE), "<redacted:secret>"),
     (re.compile(r"SAPISIDHASH\s+\S+", re.IGNORECASE), "<redacted:secret>"),
     # Google auth cookie pairs — both header ("SAPISID=x") and equals forms.

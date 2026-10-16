@@ -113,9 +113,12 @@ generation time, STOP and re-run `/gflow:predict` on the import design.
 **What:** batchexecute bodies/replies never reach logs or incident bundles with secrets.
 
 **Steps / tests:**
-- [ ] red: `0cAF…` reCAPTCHA token and `at=` XSRF value are masked by the free-text redactor
-- [ ] red: a `WireFormatError` built from a `maseQ`/`Zzl0ze` head carries no token, URL signature or email
-- [ ] implement patterns in `redaction.py` / `data/redaction.py`
+- [x] red: `0cAF…` reCAPTCHA token and `at=` XSRF value are masked by the free-text redactor
+      (+ `lh3…/asb/` capability links, + any 120+ token-alphabet run; `at` shape measured first)
+- [x] red: a `WireFormatError` built from a `maseQ`/`Zzl0ze` head carries no token, URL signature or email
+      — found `_discovery_head` sliced BEFORE scrubbing (fragments survived); now scrub-then-slice
+      like `_common._redacted_snippet`
+- [x] implement patterns in `redaction.py` / `data/redaction.py`
 
 ---
 
@@ -187,6 +190,23 @@ echoed value). Rollback in the create saga goes through the host-branching clien
 - [ ] red: labs-served profile → "not ported to the labs composer yet" (28)
 - [ ] implement `upload_into_character` + client `upload_character_image`; saga branch
 - [ ] e2e: create from two files with `--voice aoede --personality …`; `show` reports both images
+
+---
+
+## Task 6b — Lift the video character-reference gate (#723), after re-measuring it
+
+**What:** `_unported_form` refuses `reference_entities` (exit 36) because `MZZa6b` was measured
+with a NULL payload in 2026-09. On 2026-10-16 one run with the gate lifted in-process returned the
+media id and completed (spike Addendum 2, 12 credits). One run is "not reproduced", not "fixed".
+
+**Steps / tests:**
+- [ ] re-measure: ≥3 entity-bound t2v runs (credits — confirm with the user first); record each
+      `MZZa6b` payload shape
+- [ ] red: a NULL `MZZa6b` payload falls through to the `jwpduf`/`as29s` status poll keyed on the
+      project instead of timing out (the fix the gate comment names) — needed whatever the re-measure says
+- [ ] red: `_unported_form` no longer refuses `reference_entities`; `migrated_can_serve` likewise
+- [ ] video `@Name` resolves through the Task 4 read path (today exit 29, catalog via retired labs)
+- [ ] e2e (`e2e_video`, opt-in): one entity-bound t2v completes with the entity attached
 
 ---
 
