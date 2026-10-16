@@ -29,8 +29,9 @@ simpler shape: no `copy`, no zip). Scenario: [SCENARIO.md](SCENARIO.md). Evidenc
 
 | Severity | Risk | Mitigation |
 |---|---|---|
-| Critical | Saga rollback reads retired labs routes → orphans on flow.google.com | Rollback through host-branching `get_character` / `delete_characters`; set the name first (Task 5) |
-| Critical | #719: upload reply lost ~1 in 4; blind retry double-binds | Re-read `Zzl0ze`, retry at most once only if unbound (Task 6) |
+| Critical | Saga rollback reads retired labs routes → orphans on flow.google.com | Rollback through host-branching `get_character` / `delete_characters`; name patched immediately after create — Flow has no name field before the first image (Task 0) |
+| Critical | #719: upload reply lost ~1 in 4; a lost reply is **still bound** (measured) | Re-read `Zzl0ze` once it reflects the last write; retry at most once, only if unbound (Task 6) |
+| High | Reads lag writes by seconds (measured) | Write outcomes come from `rzMKMb`/`maseQ` replies; decision-driving reads poll until `updated` ≥ last write |
 | Critical | Untrusted bundle: path escape, non-image, oversize, hostile text | Pure validator before any network call (Task 7) |
 | Critical | rpc bodies (`0cAF…` tokens, `at`) leak to logs / incident bundles | Redaction patterns + tests first (Task 1) |
 | High | Export leaks account identity | Manifest allowlist; no URL, email, project or entity id (Task 7) |
@@ -87,14 +88,20 @@ docs: CHARACTER.md, USAGE.md, MCP.md, REFERENCE_STRATEGIES.md, KNOWN_ISSUES.md:5
 **Files:** `scripts/dev/spike_migrated_character_upload_binding.py`; spike doc addendum.
 
 **Steps:**
-- [ ] Inventory the editor's structural anchors (new-character control, name input, personality
+- [x] Inventory the editor's structural anchors (new-character control, name input, personality
       textarea, voice picker + option rows, Upload control, delete control) — tags, ligatures, roles
-- [ ] Upload two files into one entity via the editor's own Upload; record both `maseQ` requests in
-      full; settle what `[1]` is and which ref is portrait vs body
-- [ ] Abort one upload's reply in flight (route) and re-read `Zzl0ze`: is a lost-reply upload bound?
-- [ ] Download the images from profile A, upload them into a new character on profile B, then one
-      `image t2i "@Name …"` on B (image quota) — identity carries over?
-- [ ] Append findings to the 2026-10-16 spike doc with pre-registered readings
+- [x] Upload two files into one entity via the editor's own Upload; record both `maseQ` requests in
+      full; settle what `[1]` is and which ref is portrait vs body — **`[N]` = slot index (0 portrait, 1 body)**
+- [x] Abort one upload's reply in flight (route) and re-read `Zzl0ze`: is a lost-reply upload bound?
+      — **yes, on both accounts**; and reads lag writes by seconds
+- [x] Download the images from profile A, upload them into a new character on profile B, then one
+      `image t2i "@Name …"` on B (image quota) — identity carries over? — **yes**
+- [x] Append findings to the 2026-10-16 spike doc with pre-registered readings
+
+**Gate result (2026-10-16): PASS.** See the spike doc's addendum. Corrections it forces on this
+plan are applied below: create = footer Upload (no name field before the first image); body =
+slot-preview Upload (the prompt add-menu Upload does not bind); export downloads with `=s0`; any
+decision-driving re-read waits for the last write's `updated`; bundle sha256 is bundle-only.
 
 **Gate:** if uploads are not bound on a gflow-created entity, or Flow refuses uploaded faces at
 generation time, STOP and re-run `/gflow:predict` on the import design.
@@ -173,7 +180,8 @@ echoed value). Rollback in the create saga goes through the host-branching clien
 **Steps / tests:**
 - [ ] red: `--image` XOR `--face-prompt`, `--body-image` XOR `--body-prompt`; `--model`/`--format-prompt`
       rejected with `--image` (exit 2, Click usage)
-- [ ] red: order = create → name → uploads → voice/personality
+- [ ] red: order = footer Upload creates (slot 0) → name → personality → body slot Upload (slot 1) → voice
+- [ ] red: the prompt add-menu Upload is never used for a character image (it does not bind)
 - [ ] red: lost upload reply → re-read; bound → continue; unbound → one retry; still unbound → rollback (scenario 10)
 - [ ] red: upload refused → exit 27 + rollback (13); 403 → exit 10, no retry (14)
 - [ ] red: labs-served profile → "not ported to the labs composer yet" (28)
@@ -204,7 +212,9 @@ Manifest (allowlist): `{schema_version: 1, name, voice, personality, images: [{r
 `gflow character import DIR --project P [--profile] [--name NEW] [--voice V] [--json]`.
 
 **Steps / tests:**
-- [ ] red: export re-reads `Zzl0ze` then downloads at once through the `_validate_fife_url` allowlist
+- [ ] red: export re-reads `Zzl0ze` then downloads at once, with `=s0` (bare FIFE = 288×512 preview),
+      through the `_validate_fife_url` allowlist (add `lh3.googleusercontent.com/asb/` if absent)
+- [ ] red: bundle sha256 is checked against the bundle file only — Flow re-encodes uploads
 - [ ] red: character with no image → exit 11 (30)
 - [ ] red: import validates the bundle fully before any network call; voice missing from target
       catalog → exit 11 with `--voice` hint (19); expired target session → no writes (20)

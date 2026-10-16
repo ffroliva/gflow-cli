@@ -86,3 +86,65 @@ The live catalog lists **30** voices; `src/gflow_cli/api/character.py::VOICES` h
 the entity itself — only the portrait/body *generation* still needs the editor. And a portable
 character bundle (name, voice, personality, images) can be re-created in any project on any
 profile from files alone: `C4BZMd` + `maseQ(entity)` + `rzMKMb`.
+
+---
+
+## Addendum — Task 0 of the portability plan: gflow drives it, and it carries across accounts
+
+Same day, **driven from code** (`scripts/dev/spike_migrated_character_upload_binding.py`, modes
+`inventory`, `probe`, `export`, `bind`) on two accounts Flow served from `flow.google.com`
+(profiles A and B below). Cost: uploads, patches and reads ($0) plus one image generation on B
+(image quota, 0 credits).
+
+### Editor anchors (structural; the account renders `fr`)
+
+| Control | Anchor |
+|---|---|
+| open a draft character | project header `flow-tile-view-header button[aria-haspopup='menu']:has(mat-icon:text-is('add'))` → `[role='menu'] button[role='menuitem']:has(mat-icon:text-is('account_circle'))` → navigates to `/project/<id>/character` |
+| **create** (first image) | `flow-create-character-footer button:has(mat-icon:text-is('upload'))` → native file chooser |
+| name | `flow-character-form input.name-input` (fill + Tab commits) |
+| personality | `flow-character-form textarea.personality-textarea` (fill + Tab commits) |
+| select portrait / body slot | `flow-slot-chip-button button` nth 0 / nth 1 |
+| upload into the selected slot | `flow-character-image-preview button:has(mat-icon:text-is('upload'))` (shown when the slot is empty) |
+| voice picker | `flow-character-voice-button button` first (a plain button with no voice yet; `voice-card-start-btn` once set) → `mat-dialog-container input.search-input` → `[role='option']` → `button[class*='detail-add']` |
+| delete character | `flow-character-edit-header button:has(mat-icon:text-is('delete'))` |
+
+Voice option text is `"<ligature>\n<Voice name>\n<description>"`. The name is an untranslated
+proper noun (same exemption class as the "Nano Banana" model names); match the **name line**
+exactly, never a prefix of the whole text. Search is case-insensitive.
+
+### Findings
+
+1. **The draft page has no name field.** A character comes into existence with its first image:
+   the footer Upload fires `C4BZMd` (default localized name) then `maseQ`. "Set the name first so an
+   orphan is identifiable" is therefore impossible — patch the name **immediately after** create.
+2. **`[N]` in the upload's entity binding is the slot index**: `[<entity>, [0]]` portrait (footer
+   upload), `[<entity>, [1]]` body (slot upload). Measured on both.
+3. **The prompt box's add-menu Upload does NOT bind** — its `maseQ` carries `null` where the binding
+   goes; the image becomes plain project media. Only the footer and slot-preview Uploads bind.
+4. **A lost upload reply still binds.** The page dropped `maseQ`'s answer after the server received
+   it (route `fetch` then `abort`); a later read showed the image bound, on **both** accounts. A
+   blind retry would double-bind.
+5. **Reads lag writes.** A `Zzl0ze` read taken seconds after the last write showed the entity
+   *before* its body upload and voice; a read ~1 min later was correct. The `rzMKMb` / `maseQ`
+   replies are authoritative; any read that drives a decision must wait until it reflects the last
+   write's `updated` timestamp.
+6. **Export needs `=s0`.** The media row's `lh3.googleusercontent.com/asb/…` FIFE URL returns a
+   288×512 preview bare; `=s0` (and `=d`, byte-identical) returns the 720×1280 original.
+7. **Flow re-encodes uploads**: the downloaded original is not byte-identical to the uploaded file
+   (238 567 vs 236 657 B). A bundle sha256 protects the bundle, never a round-trip comparison.
+8. **Cross-account import works and keeps identity.** Exported from A (portrait + body + `aoede` +
+   personality) → re-built in a new project on B with the anchors above → B's read shows 2 images
+   and `aoede`. `gflow image t2i "@Nora …"` on B attached the entity
+   (`migrated.character_entities_attached`) and generated the same person and companion figure.
+
+### Incidental
+
+- The `@Nora` generation echoed its prompt as `"Nora Nora standing …"` — the mention path may
+  duplicate the name in the prompt text. Belongs to #723's mention code; not this feature.
+
+### Still not measured
+
+- Custom voice creation (#826); whether the voice reaches rendered audio (#738).
+- Replacing an already-filled slot (the empty-state Upload only shows on an empty slot).
+- A labs-served account (none available here); the labs arm stays, refusing with "not ported".
