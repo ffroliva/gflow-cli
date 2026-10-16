@@ -356,12 +356,15 @@ def test_character_create_result_voice_defaults_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Voice catalog — 29 named Gemini voices
+# Voice catalog — 30 named Gemini voices
 # ---------------------------------------------------------------------------
 
 
-def test_voices_has_29_entries() -> None:
-    assert len(VOICES) == 29
+def test_voices_has_30_entries() -> None:
+    # Flow's live catalog (`Zzl0ze` slot 3) listed 30 on 2026-10-16; the offline list
+    # had 29 and was missing Enceladus. tests/api/transports/test_migrated_character.py
+    # pins the offline list against a captured live catalog.
+    assert len(VOICES) == 30
 
 
 def test_voice_sample_url_pattern() -> None:

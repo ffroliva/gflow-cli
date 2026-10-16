@@ -1321,7 +1321,7 @@ ambiguous `--name` (multiple characters share it) exits with code **11**.
 gflow character voices [--json]
 ```
 
-Lists the **29 preset Gemini voices** available for character TTS — each with a
+Lists the **30 preset Gemini voices** available for character TTS — each with a
 name, description, and sample URL. These names are what `--voice` validates
 against (case-insensitively) on `gflow character create`.
 

@@ -114,7 +114,7 @@ class TestBatchexecuteSecrets:
         assert out == "download <redacted:url> failed"
 
     def test_a_long_token_cut_by_a_head_window_is_still_scrubbed(self) -> None:
-        # batchexecute._discovery_head slices to 200 chars BEFORE its own token
+        # batchexecute.discovery_head once sliced to 200 chars BEFORE its own token
         # regex, so a token starting near the window's end survives as a fragment
         # shorter than that regex's floor. The central scrub must not depend on it.
         out = redact_error_detail("x" * 10 + " " + "A1b2_C3d4-" * 13)
