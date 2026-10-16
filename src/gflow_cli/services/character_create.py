@@ -361,3 +361,60 @@ async def character_create(
         voice=voice,
         image_paths=tuple(image_paths),
     )
+
+
+async def character_create_from_files(
+    client: FlowApiClient,
+    recorder: OperationRecorder,
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    project_id: str,
+    name: str,
+    portrait: Path,
+    body: Path | None = None,
+    voice: str | None = None,
+    personality: str | None = None,
+) -> CharacterCreateResult:
+    """Build a character from local images (flow.google.com, #639) and record it.
+
+    No resume saga: nothing is generated and nothing is billed, so a failed run is simply
+    re-run. The entity only exists once its first image does, so the operation is recorded
+    after the transport returns, with its id and name in one row (#737). A failure after
+    the create names the leftover entity in the error's remediation hint."""
+    created = await client.create_character_from_files(
+        project_id,
+        name=name,
+        portrait=portrait,
+        body=body,
+        voice=voice,
+        personality=personality,
+    )
+    row_id = recorder.record_character_started(
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        project_id=project_id,
+        entity_id=created.entity_id,
+        name=name,
+    )
+    recorder.record_character_completed(
+        row_id=row_id,
+        workflow_ids=list(created.workflow_ids),
+        primary_media_ids=list(created.media_ids),
+        voice=voice,
+        personality=personality,
+    )
+    log.info(
+        "character_create.from_files_completed",
+        entity_id=created.entity_id,
+        workflow_count=len(created.workflow_ids),
+    )
+    return CharacterCreateResult(
+        entity_id=created.entity_id,
+        project_id=project_id,
+        workflow_ids=created.workflow_ids,
+        primary_media_ids=created.media_ids,
+        name=name,
+        voice=voice,
+        image_paths=(),
+    )

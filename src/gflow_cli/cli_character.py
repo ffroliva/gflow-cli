@@ -19,7 +19,7 @@ from gflow_cli.api.character import (
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
-from gflow_cli.services.character_create import character_create
+from gflow_cli.services.character_create import character_create, character_create_from_files
 
 console = Console()
 log = structlog.get_logger(__name__)
@@ -70,7 +70,28 @@ def character() -> None:
 @character.command("create")
 @click.option("--project", "project_id", required=True, help="Flow project id.")
 @click.option("--name", required=True, help="Display name for the new character.")
-@click.option("--face-prompt", required=True, help="Prompt for the face reference image.")
+@click.option(
+    "--face-prompt",
+    default=None,
+    help="Prompt for the face reference image. Required unless --image is given.",
+)
+@click.option(
+    "--image",
+    "image",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Build the character from this local image as its portrait instead of generating "
+        "one (flow.google.com). Nothing is generated: no credits, no image quota."
+    ),
+)
+@click.option(
+    "--body-image",
+    "body_image",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Local image for the body slot; only with --image.",
+)
 @click.option(
     "--body-prompt",
     default=None,
@@ -117,10 +138,14 @@ def character() -> None:
     "accounts to the wrong route and Flow bounces them back mid-prompt.",
 )
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
+@click.pass_context
 def create(
+    ctx: click.Context,
     project_id: str,
     name: str,
-    face_prompt: str,
+    face_prompt: str | None,
+    image: Path | None,
+    body_image: Path | None,
     body_prompt: str | None,
     voice: str | None,
     personality: str | None,
@@ -135,11 +160,37 @@ def create(
     Generates face (and optionally body) reference images, then persists and
     patches the entity.  Uses the persist-before-spend saga so a crashed run
     is recoverable.
+
+    With --image (and optionally --body-image) the character is built from your
+    own files instead: uploaded through Flow's character editor, then named and
+    given the voice and personality. Nothing is generated.
     """
+    _check_create_sources(ctx, face_prompt, image, body_image, body_prompt, format_prompt)
     voice = _normalize_voice(voice)
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
     settings = get_settings()
+    if image is not None:
+        portrait = image
+        run_with_handlers(
+            lambda: _run_create_from_files(
+                profile_name=profile_name,
+                profile_dir=pdir,
+                headless=settings.headless,
+                project_id=project_id,
+                name=name,
+                portrait=portrait,
+                body=body_image,
+                voice=voice,
+                personality=personality,
+                as_json=as_json,
+                settings=settings,
+            ),
+            cli_command="character create",
+            as_json=as_json,
+        )
+        return
+    assert face_prompt is not None  # _check_create_sources guarantees one source
     run_with_handlers(
         lambda: _run_create(
             profile_name=profile_name,
@@ -160,6 +211,96 @@ def create(
         cli_command="character create",
         as_json=as_json,
     )
+
+
+def _check_create_sources(
+    ctx: click.Context,
+    face_prompt: str | None,
+    image: Path | None,
+    body_image: Path | None,
+    body_prompt: str | None,
+    format_prompt: bool,
+) -> None:
+    """Exactly one portrait source; the body source must match it; generation-only flags
+    are refused on a file-built character instead of being silently ignored."""
+    if (face_prompt is None) == (image is None):
+        raise click.UsageError("give exactly one of --face-prompt or --image")
+    if image is None:
+        if body_image is not None:
+            raise click.UsageError(
+                "--body-image needs --image (a generated face takes --body-prompt)"
+            )
+        return
+    if body_prompt is not None:
+        raise click.UsageError(
+            "a character built from --image takes --body-image, not --body-prompt"
+        )
+    explicit_model = ctx.get_parameter_source("model") is click.core.ParameterSource.COMMANDLINE
+    if format_prompt or explicit_model:
+        raise click.UsageError(
+            "--format-prompt and --model apply to generated images; --image generates nothing"
+        )
+
+
+async def _run_create_from_files(
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    headless: bool,
+    project_id: str,
+    name: str,
+    portrait: Path,
+    body: Path | None,
+    voice: str | None,
+    personality: str | None,
+    as_json: bool,
+    settings: object,
+) -> None:
+    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+        recorder = OperationRecorder.open(settings)  # type: ignore[arg-type]
+        try:
+            result = await character_create_from_files(
+                client,
+                recorder,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                project_id=project_id,
+                name=name,
+                portrait=portrait,
+                body=body,
+                voice=voice,
+                personality=personality,
+            )
+        finally:
+            recorder.close()
+    _emit_created(result, as_json=as_json)
+
+
+def _emit_created(result: CharacterCreateResult, *, as_json: bool) -> None:
+    if as_json:
+        json_output.emit(
+            {
+                "status": "ok",
+                "character": {
+                    "entity_id": result.entity_id,
+                    "project_id": result.project_id,
+                    "name": result.name,
+                    "workflow_ids": list(result.workflow_ids),
+                    "primary_media_ids": list(result.primary_media_ids),
+                    "voice": result.voice,
+                    "image_paths": [str(p) if p is not None else None for p in result.image_paths],
+                },
+            }
+        )
+        return
+    console.print(f"[bold green]Character created:[/bold green] {result.entity_id}")
+    for wf_id in result.workflow_ids:
+        console.print(f"  workflow: {wf_id}")
+    # Human-readable saved-image lines (slot 0 = face, slot 1 = body).
+    slot_labels = ("face", "body")
+    for slot, path in enumerate(result.image_paths):
+        label = slot_labels[slot] if slot < len(slot_labels) else f"slot{slot}"
+        console.print(f"  {label}: {path if path is not None else '(not saved)'}")
 
 
 async def _run_create(
@@ -211,31 +352,7 @@ async def _run_create(
             )
         finally:
             recorder.close()
-
-    if as_json:
-        json_output.emit(
-            {
-                "status": "ok",
-                "character": {
-                    "entity_id": result.entity_id,
-                    "project_id": result.project_id,
-                    "name": result.name,
-                    "workflow_ids": list(result.workflow_ids),
-                    "primary_media_ids": list(result.primary_media_ids),
-                    "voice": result.voice,
-                    "image_paths": [str(p) if p is not None else None for p in result.image_paths],
-                },
-            }
-        )
-    else:
-        console.print(f"[bold green]Character created:[/bold green] {result.entity_id}")
-        for wf_id in result.workflow_ids:
-            console.print(f"  workflow: {wf_id}")
-        # Human-readable saved-image lines (slot 0 = face, slot 1 = body).
-        slot_labels = ("face", "body")
-        for slot, path in enumerate(result.image_paths):
-            label = slot_labels[slot] if slot < len(slot_labels) else f"slot{slot}"
-            console.print(f"  {label}: {path if path is not None else '(not saved)'}")
+    _emit_created(result, as_json=as_json)
 
 
 # ---------------------------------------------------------------------------

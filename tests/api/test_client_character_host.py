@@ -249,3 +249,33 @@ async def test_a_waf_refusal_is_not_a_reason_to_switch(tmp_path: Path, editor: A
     with pytest.raises(WafRejectionError):
         await c.patch_entity(**_PATCH)
     editor.assert_not_awaited()
+
+
+# --- create_character_from_files: files are checked before any page is touched ------
+
+
+async def test_a_non_image_is_refused_before_any_page_is_used(tmp_path: Path) -> None:
+    c = FlowApiClient(profile_dir=tmp_path / "prof", settings=Settings())
+    c._checkout_page = AsyncMock()  # type: ignore[method-assign]
+    secret = tmp_path / "id_rsa"
+    secret.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as exc:
+        await c.create_character_from_files(PID, name="Nora", portrait=secret)
+    assert "id_rsa" in str(exc.value)
+    c._checkout_page.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+async def test_a_missing_body_image_is_refused_before_any_page_is_used(tmp_path: Path) -> None:
+    from PIL import Image
+
+    face = tmp_path / "face.jpg"
+    Image.new("RGB", (8, 8)).save(face)
+    c = FlowApiClient(profile_dir=tmp_path / "prof", settings=Settings())
+    c._checkout_page = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(ConfigurationError):
+        await c.create_character_from_files(
+            PID, name="Nora", portrait=face, body=tmp_path / "missing.jpg"
+        )
+    c._checkout_page.assert_not_awaited()  # type: ignore[attr-defined]

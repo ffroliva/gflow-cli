@@ -211,15 +211,21 @@ creation, so it is identifiable in Flow).
 **What:** Build a character from local files via the editor's own Upload.
 
 **Steps / tests:**
-- [ ] red: `--image` XOR `--face-prompt`, `--body-image` XOR `--body-prompt`; `--model`/`--format-prompt`
+- [x] red: `--image` XOR `--face-prompt`, `--body-image` XOR `--body-prompt`; `--model`/`--format-prompt`
       rejected with `--image` (exit 2, Click usage)
-- [ ] red: order = footer Upload creates (slot 0) → name → personality → body slot Upload (slot 1) → voice
-- [ ] red: the prompt add-menu Upload is never used for a character image (it does not bind)
-- [ ] red: lost upload reply → re-read; bound → continue; unbound → one retry; still unbound → rollback (scenario 10)
-- [ ] red: upload refused → exit 27 + rollback (13); 403 → exit 10, no retry (14)
-- [ ] red: labs-served profile → "not ported to the labs composer yet" (28)
-- [ ] implement `upload_into_character` + client `upload_character_image`; saga branch
-- [ ] e2e: create from two files with `--voice aoede --personality …`; `show` reports both images
+- [x] red: order = footer Upload creates (slot 0) → name → personality → body slot Upload (slot 1) → voice
+- [x] red: the prompt add-menu Upload is never used for a character image (it does not bind)
+- [x] red: lost upload reply → re-read; bound → continue; unbound → one retry; still unbound → rollback (scenario 10)
+- [x] red: upload refused → exit 27 + rollback (13); 403 → exit 10, no retry (14)
+- [x] red: labs-served profile → "not ported to the labs composer yet" (28)
+- [x] implement `upload_into_character` + client `upload_character_image`; saga branch
+- [x] e2e: create from two files with `--voice aoede --personality …`; `show` reports both images
+
+**Done 2026-10-16.** Live: `test_character_portability_bdd.py` scenario 1 (create from two files
+with voice + personality, read back) **2/2**, scenario 2 (MCP list of that character) 1/1.
+Labs-served host refusal is `ConfigurationError` (exit 11), wording "not ported yet". Orphan
+reporting: a failure after `C4BZMd` adds the entity id to the error's remediation hint (no
+delete). Offline coverage of the editor-driving code is by the live e2e, not by a faked page.
 
 ---
 
