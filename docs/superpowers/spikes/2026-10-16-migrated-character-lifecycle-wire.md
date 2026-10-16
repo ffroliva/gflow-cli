@@ -148,3 +148,37 @@ exactly, never a prefix of the whole text. Search is case-insensitive.
 - Custom voice creation (#826); whether the voice reaches rendered audio (#738).
 - Replacing an already-filled slot (the empty-state Upload only shows on an empty slot).
 - A labs-served account (none available here); the labs arm stays, refusing with "not ported".
+
+---
+
+## Addendum 2 — the imported character in a VIDEO (spends credits)
+
+`scripts/dev/spike_migrated_character_video.py` lifts **only** `_unported_form`'s "character
+references" refusal in-process (every other unported form still refused), raises
+`SUBMIT_REPLY_BUDGET_S` to 240 s and logs the submit reply, then runs the real CLI:
+`video t2v "<French line>" --reference-entity <Nora on B> --reference-entity-name Nora`.
+Account B, default model, 8 s. **Cost: 12 credits** (balance 152 → 140, read from the reply).
+
+| Step | Observed |
+|---|---|
+| attach | `migrated.character_entities_attached` with the requested entity id |
+| submit | `MZZa6b` reply **carried the media id** (`[null, 140, [[<media>, …]]]`); `migrated.submit_observed` status 6 at +7 s |
+| render | `jwpduf` status 2 → done; downloaded, exit 0 |
+| clip | 720×1280 H.264, 8.0 s, AAC stereo 48 kHz |
+| identity | same person, wardrobe, companion figure and setting as the portrait the character was built from |
+| speech | Whisper (fr): "Bonjour, je m'appelle Nora et je suis ravie de vous rencontrer." — the scripted line exactly |
+| voice | median F0 197.5 Hz (IQR 167–216); bound voice Aoede's sample 210.5 Hz, but Kore 210.5 and Callirrhoe 205.1 overlap — **consistent, not identifying** (#738's caveat holds; needs its A/B) |
+
+**Reading against the pre-registered table:** the first row — the observer works as is. The
+#723 diagnosis (`MZZa6b` with a NULL payload → 60 s timeout) **did not reproduce** in this run:
+1 run, so it is *not reproduced*, not *disproved*. The gate's stated reason should be re-measured
+before it is removed; if the payload is still sometimes null, the status-poll fall-through the gate
+comment describes is still the right fix.
+
+### Incidental
+
+- **The migrated video download ignores the output directory.** With no `--output`,
+  `MigratedComposer` writes `<media_id>.mp4` into the **current working directory**
+  (`migrated_composer.py:3404`, `out_dir or Path.cwd()`), while `video t2v --help` says
+  "Defaults to tmp/" and USAGE documents `$GFLOW_CLI_OUTPUT_DIR`. Not filed yet.
+- The prompt was again echoed as "Nora Nora …" (see Addendum 1); it did **not** reach the speech.
