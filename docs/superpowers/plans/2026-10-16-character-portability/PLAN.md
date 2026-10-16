@@ -144,11 +144,16 @@ editor-driving functions of Tasks 4–6 join it). `batchexecute._discovery_head`
 ## Task 3 — BDD scaffolds (red)
 
 **Steps:**
-- [ ] `tests/e2e/character_portability.feature` (`@e2e @e2e_character`) — the four browser scenarios in SCENARIO.md
-- [ ] `tests/e2e/test_character_portability_bdd.py` binding, skipping without `GFLOW_CLI_E2E_PROFILE`
-      (+ a second-profile env var for the cross-profile scenario; document it in docs/E2E_TESTING.md)
-- [ ] `tests/features/character_bundle.feature` + steps (offline) — path escape, identity allowlist
-- [ ] `tests/features/test_e2e_binding_guard.py` stays green
+- [x] `tests/features/character_portability.feature` (`@e2e @e2e_character`) — feature files live in
+      `tests/features/` (the guard scans one directory); 5 scenarios: create-from-files + read back,
+      MCP list, export→import same account, import on account B, MCP export→import
+- [x] `tests/e2e/test_character_portability_bdd.py` binding; opt-in `GFLOW_CLI_E2E_RUN_CHARACTER=1`;
+      projects created fresh by `gflow project create`; `GFLOW_CLI_E2E_PROFILE_B` documented in
+      docs/E2E_TESTING.md (with the previously undocumented RUN_CHARACTER). **Red, measured live**:
+      scenario 1 fails on `No such option '--image'` after its project create succeeded
+- [ ] `tests/features/character_bundle.feature` + steps (offline) — **moved to Task 7**: its step module
+      imports `character_bundle`, and a committed import error would break normal CI collection
+- [x] `tests/features/test_e2e_binding_guard.py` stays green
 
 ---
 
