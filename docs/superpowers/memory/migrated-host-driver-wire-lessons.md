@@ -264,9 +264,13 @@ two accounts served flow.google.com; each item below cost a run to learn.
   the entity before its last edits. Write outcomes come from the `rzMKMb`/`maseQ` replies;
   a decision-driving re-read polls (`READ_SETTLE_S`).
 - **The editor form fills ~1.5 s after it is visible**; text typed earlier is overwritten
-  and nothing commits — wait for the name to load. **After a create, the in-app
-  draft→editor switch can stall** (name never loads in 15 s, 2 of 3 imports into a busy
-  project) while a direct navigation loads in ~2 s: reload once.
+  and nothing commits — wait for the name to load. **After a create, never trust the in-app
+  draft→editor switch**: it needed a reload in 4 of 5 runs (name never loads in 15 s), and once
+  loaded the name yet never answered the edit. Always reopen the editor by direct navigation
+  (~2 s; 5/5 clean after). **And compare routes exactly:** `/project/<id>/character/<eid>`
+  starts with `/project/<id>` — a prefix check let image generation drive a character editor
+  (misread as agent-only, exit 25) and would have let a project rename type into the
+  character's title (`migrated_composer.is_at`).
 - **Voice ids are lowercase on this wire** (`aoede`); keep the Capitalized name canonical
   and convert at one boundary. Match the voice picker on the option's name LINE (an
   untranslated proper noun), never on the whole translated text.

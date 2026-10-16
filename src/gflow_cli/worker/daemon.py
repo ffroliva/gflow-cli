@@ -206,6 +206,20 @@ class FlowWorker:
                         # it (the credit-free video recovery key; harmless for images).
                         checkpoint_project_id[0] = project_flow_id
 
+                        # `characters` is the key gflow_generate_image writes (#639 option
+                        # C): each folder is reused by name or imported into this project.
+                        from gflow_cli.services import character_portability
+
+                        req = await character_portability.apply_character_bundles(
+                            client,
+                            recorder,
+                            req,
+                            project_id=project_flow_id,
+                            profile_name=task.profile_name,
+                            profile_dir=profile_dir,
+                            bundles=tuple(Path(p) for p in task.payload.get("characters", ())),
+                        )
+
                         # Resolve @-mentions and expand --tool specs (shared helper).
                         from gflow_cli.services.mentions import resolve_and_apply
 

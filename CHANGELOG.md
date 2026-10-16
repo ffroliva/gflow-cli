@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of deleting it. Editing name, voice and personality on that host goes through the
   editor too, because the REST endpoint answers 401 there. MCP twin:
   `gflow_character_create` (the file-built path; creating from prompts over MCP is still #691).
+- **`gflow image t2i|i2i --character FOLDER` generates straight from an exported character**, in
+  any project on any account: a character with the folder's name already in the project is
+  reused, otherwise the folder is imported first (free), then the character is attached like
+  `--reference-entity`. Repeatable; single-prompt only on `t2i`. MCP:
+  `gflow_generate_image(characters=[…])`, applied by the worker on the queued path.
 - **`gflow character export` / `gflow character import` move a character to another
   project or another account** through a plain folder: `manifest.json` (name, voice,
   personality) plus its images at full size, naming no project, id, link or account.

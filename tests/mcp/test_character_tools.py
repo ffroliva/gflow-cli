@@ -223,3 +223,17 @@ async def test_character_import_reports_the_rebuilt_character(tmp_path: Any) -> 
     assert result["status"] == "ok"
     assert result["character"]["entity_id"] == "new-entity"
     assert service.await_args.kwargs["voice"] == "charon"
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_generate_image_carries_character_folders_under_the_key_the_worker_reads() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_run(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {"status": "completed"}
+
+    with patch.object(mcp_tools, "_run_generation_task", fake_run):
+        await mcp_tools.gflow_generate_image(prompt="Nora reading", characters=["/b/nora"])
+
+    assert captured["payload"]["characters"] == ["/b/nora"]

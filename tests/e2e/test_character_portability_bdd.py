@@ -253,6 +253,68 @@ def _mcp_import(world: dict[str, Any], e2e_profile_dir: Path) -> None:
     assert result["status"] == "ok", result
 
 
+@when(
+    parsers.parse(
+        'the CLI generates an image on profile B from "{prompt}" with that character folder '
+        "and no project"
+    )
+)
+def _cli_generate_new_project(world: dict[str, Any], e2e_env: dict[str, str], prompt: str) -> None:
+    world["proc"] = proc = _gflow(
+        e2e_env,
+        world["target_profile"],
+        "image",
+        "t2i",
+        prompt,
+        "--character",
+        str(world["bundle"]),
+    )
+    world["generated"] = payload = _ok(proc)
+    world["target"] = payload["project_id"]
+
+
+@when(
+    parsers.parse(
+        'the CLI generates an image on profile B from "{prompt}" with that character folder '
+        "in that project"
+    )
+)
+def _cli_generate_same_project(world: dict[str, Any], e2e_env: dict[str, str], prompt: str) -> None:
+    world["proc"] = proc = _gflow(
+        e2e_env,
+        world["target_profile"],
+        "image",
+        "t2i",
+        prompt,
+        "--character",
+        str(world["bundle"]),
+        "--project",
+        world["target"],
+    )
+    world["generated"] = _ok(proc)
+
+
+@when(
+    parsers.parse(
+        'the MCP image tool generates "{prompt}" in the second project with that character folder'
+    )
+)
+def _mcp_generate(
+    world: dict[str, Any], e2e_profile_dir: Path, install_log_capture: Any, prompt: str
+) -> None:
+    del e2e_profile_dir
+    world["capture"] = install_log_capture
+    world["mcp_generated"] = asyncio.run(
+        mcp_tools.gflow_generate_image(
+            prompt=prompt,
+            project=world["target"],
+            characters=[str(world["bundle"])],
+            profile=world["target_profile"],
+            wait=True,
+        )
+    )
+
+
 # --- Then ----------------------------------------------------------------------
 
 
@@ -314,3 +376,28 @@ def _bundle_shape(world: dict[str, Any]) -> None:
     assert "https://" not in manifest
     assert world["project"] not in manifest
     assert "@" not in manifest
+
+
+@then(parsers.parse('the image is written and the project it created lists "{name}" once'))
+def _generated_and_listed_once(world: dict[str, Any], e2e_env: dict[str, str], name: str) -> None:
+    images = world["generated"]["images"]
+    assert images and all(Path(i["local_path"]).stat().st_size > 1024 for i in images), images
+    # The character must ride the generation, not merely exist in the project.
+    assert "migrated.character_entities_attached" in world["proc"].stderr
+    _listed(e2e_env, world["target_profile"], world["target"], name)  # asserts exactly one
+
+
+@then(parsers.parse('the queued image is written and the second project lists "{name}" once'))
+def _mcp_generated_and_listed_once(
+    world: dict[str, Any], e2e_env: dict[str, str], name: str
+) -> None:
+    result = world["mcp_generated"]
+    assert result["status"] == "completed", result
+    assert result["files"] and all(Path(p).stat().st_size > 1024 for p in result["files"])
+    attached = [
+        e
+        for e in world["capture"].entries
+        if e.get("event") == "migrated.character_entities_attached"
+    ]
+    assert attached, "the queued run attached no character"
+    _listed(e2e_env, world["target_profile"], world["target"], name)

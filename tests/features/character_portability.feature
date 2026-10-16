@@ -49,3 +49,21 @@ Feature: Portable characters on flow.google.com (#639)
     Given a throwaway project on profile A
     When the MCP create tool builds "Portable" from a portrait and a body image with voice "aoede" and personality "calm, precise"
     Then listing the project shows "Portable" with voice "Aoede", 2 images and personality "calm, precise"
+
+  @e2e_image
+  Scenario: Generate images directly from a character folder on another account
+    Given a throwaway project on profile A holding the character "Portable"
+    And a throwaway project on profile B
+    When the CLI exports "Portable" to a bundle folder
+    And the CLI generates an image on profile B from "Portable reading a book" with that character folder and no project
+    Then the image is written and the project it created lists "Portable" once
+    When the CLI generates an image on profile B from "Portable waving" with that character folder in that project
+    Then the image is written and the project it created lists "Portable" once
+
+  @e2e_image
+  Scenario: The MCP image tool generates from a character folder through the queue
+    Given a throwaway project on profile A holding the character "Portable"
+    And a second throwaway project on profile A
+    When the CLI exports "Portable" to a bundle folder
+    And the MCP image tool generates "Portable waving" in the second project with that character folder
+    Then the queued image is written and the second project lists "Portable" once

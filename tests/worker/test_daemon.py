@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1045,3 +1046,38 @@ async def test_a_mint_failure_reaches_an_mcp_caller_as_problem_details(
     assert not error["detail"].startswith("sha256:")
     assert "Execution context was destroyed" in error["detail"]
     assert error["retryable"] is True
+
+
+@pytest.mark.asyncio
+async def test_character_bundles_in_the_payload_are_applied_after_the_project(
+    temp_db: DataStore, tmp_path: Path
+) -> None:
+    """#639 option C over MCP: `gflow_generate_image(characters=[...])` writes
+    ``payload["characters"]``; the worker must read that exact key (the #628 class) and
+    apply the bundles to the project it resolved, before the generation."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-characters",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "Nora reading", "count": 1, "characters": [str(tmp_path / "nora")]},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="t")
+    fake_client.generate_image.return_value = FakeGeneratedImage(media_name="media-1")
+
+    async def passthrough(_client: Any, _recorder: Any, req: Any, **kw: Any) -> Any:
+        passthrough.kw = kw  # type: ignore[attr-defined]
+        return req
+
+    with (
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+        patch("gflow_cli.services.character_portability.apply_character_bundles", passthrough),
+    ):
+        await worker.process_task(task)
+
+    kw = passthrough.kw  # type: ignore[attr-defined]
+    assert kw["bundles"] == (tmp_path / "nora",)
+    assert kw["project_id"] == "project-abc"
+    worker.close()

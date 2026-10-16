@@ -100,6 +100,17 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 MIGRATED_PROJECT_URL = "https://flow.google.com/project/{project_id}"
+
+
+def is_at(url: object, target: str) -> bool:
+    """Is ``url`` ON the route ``target`` (same host and path; query ignored) — not merely
+    under it? ``/project/<id>/character/<eid>`` starts with ``/project/<id>``, and a prefix
+    test let image generation drive a character editor's prompt box (misread as an
+    agent-only account, exit 25) after an import left the page there (2026-10-16)."""
+    current, wanted = urlsplit(str(url or "")), urlsplit(target)
+    return (current.netloc, current.path.rstrip("/")) == (wanted.netloc, wanted.path.rstrip("/"))
+
+
 READY_ANCHOR = ".settings-trigger-button"
 OVERLAY = ".cdk-overlay-pane"
 #: Playwright's own visibility engine — the detached overlays Angular leaves behind are
@@ -1191,8 +1202,7 @@ class MigratedComposer:
         """Land on ``flow.google.com/project/<id>`` (direct — no labs.google visit
         needed on either kind of account) and wait for the settings trigger."""
         target = MIGRATED_PROJECT_URL.format(project_id=project_id)
-        current = str(getattr(page, "url", "") or "")
-        if not current.startswith(target):
+        if not is_at(getattr(page, "url", ""), target):
             log.info("migrated.navigate", url=target)
             await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
         await self._dismiss_dialog(page)
@@ -3689,7 +3699,7 @@ async def rename_project(
 ) -> None:
     """Rename a project through its header title on flow.google.com."""
     target = MIGRATED_PROJECT_URL.format(project_id=project_id)
-    if not str(getattr(page, "url", "") or "").startswith(target):
+    if not is_at(getattr(page, "url", ""), target):
         await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
     await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
     field = await _wait_anchor(

@@ -335,6 +335,43 @@ import (vraisykamel) ✅, MCP export→import ✅ — plus Task 6's scenarios: t
 
 ---
 
+## Task 12 — `--character FOLDER` on image generation (option C)
+
+**What:** generate directly from a character bundle in any project on any profile:
+`gflow image t2i "…" --character nora/ [--project P]`. The shared
+`services/character_portability.apply_character_bundles` validates each bundle offline,
+reuses a same-named character in the project (user decision) or imports it, and adds its
+id + name to the request's character references — then the existing `@Name` attach runs.
+Called from `cli_image._run_t2i`, `_run_i2i` and the worker's image task (MCP queue).
+Scenario rows C1–C11 (SCENARIO.md addendum). Video waits for Task 6b.
+
+**Steps / tests:**
+- [x] red: apply_character_bundles — import when absent (C1), reuse when one exists (C2),
+      refuse when ambiguous (C3), bad bundle before any Flow call (C4), dedupe with a mention (C9)
+      (C5, voice refusal, is import_character's own test)
+- [x] red: CLI `--character` (repeatable) on t2i and i2i reaches the runner; single-prompt
+      only on t2i; counted in i2i's reference budget (C6 creation path: live, below)
+- [x] red: MCP `gflow_generate_image(characters=…)` → `payload["characters"]` → the worker
+      applies it after resolving the project (C7, both sides pinned)
+- [x] implement; parity gate green (`characters` on both surfaces)
+- [x] e2e (live, sykamel → vraisykamel): CLI t2i `--character` with no project (import) and
+      again into that project (reuse, still listed once), asserting the character was
+      attached to the generation; MCP twin through the queue, same assertion
+- [x] docs: USAGE (t2i/i2i), MCP.md, CHARACTER.md, CHANGELOG, gflow-cli skill
+- [ ] C8/C10 (picker lag right after import; multi-word names) — not observed failing; the
+      e2e names are one word. Unmeasured, not claimed.
+
+**Found by this task's live runs and fixed:**
+1. `ensure_editor` / `rename_project` compared routes by PREFIX: a page left on
+   `/project/<id>/character/<eid>` passed as the project, so image generation drove the character
+   editor (misreported as agent-only, exit 25) and a rename would have typed into the
+   character's title. Now `migrated_composer.is_at` (exact host+path).
+2. One `character create` timed out on `rzMKMb` (not reproduced in 5 runs), while the in-app
+   editor after create needed a reload in 4 of 5. The create now always reopens the editor by
+   direct navigation: 5/5 clean.
+
+---
+
 ## Task 10 — Docs
 
 - [x] `docs/CHARACTER.md` (30 voices, files-built create, export/import recipe incl. cross-profile, voice "attached, not proven applied"; lowercase wire voice ids on flow.google.com)

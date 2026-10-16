@@ -136,3 +136,26 @@ Feature: Character bundle validation
 - #723 (entity `@` mention) — relied on for row 34 (image path only; video stays gated).
 - #738 (voice applied to audio) — explicitly **not** claimed (row 35).
 - #906 / PR #907 (unusual-activity / WAF) — writes are UI-driven to stay inside the app's own behaviour; verify with and without #907 if it merges first.
+
+---
+
+## Addendum — `--character FOLDER` on image generation (option C, 2026-10-16)
+
+User decisions: generate directly from a bundle in any project/account; a character already
+in the project **with the bundle's name is reused** (by name, even if it differs); images now,
+video after Task 6b. No `/gflow:predict`: no transport/auth/selector/schema change — a new
+option over services already live-verified (read, import, `@Name` attach).
+
+| # | Dim | Scenario | Severity | Expected behaviour | Test category |
+|---|---|---|---|---|---|
+| C1 | D11 | `--character nora/` and the project has no "Nora" | Critical | bundle validated offline, imported (free), its id+name added to the request's character references, image generated with it | Unit + E2E |
+| C2 | D11 | the project already has exactly one "Nora" | High | reused by name, nothing imported (user decision: even if it differs from the bundle) | Unit + E2E |
+| C3 | D11 | the project has two characters named "Nora" | High | exit 11 listing both ids — never a guess | Unit |
+| C4 | D11 | a bad bundle (path escape, sha mismatch, missing) | Critical | exit 11 before any project is created or any Flow call | Unit |
+| C5 | D11 | the bundle's voice is not offered by the target account | High | exit 11 before anything is created (import's rule) | Unit |
+| C6 | D4 | no `--project` | High | the project is created first, then the import, then the generation (one command) | Unit + E2E |
+| C7 | D13 | MCP `gflow_generate_image(characters=[...])` | Critical | the payload key the tool writes is the key the worker reads; the worker applies the bundles after resolving the project | Unit (codec round trip) + MCP E2E |
+| C8 | D9 | the just-imported character is not yet offered by the `@` picker (read lag) | High | the existing attach retries the asset search; if it still fails → exit 32 naming the character, and the orphan-free path holds (the character exists, the generation did not run) | E2E (observe) |
+| C9 | D11 | `--character` with `@Name` of the same character in the prompt | Medium | deduped by entity id (existing rule) | Unit |
+| C10 | D11 | multi-word name ("Nora from B") | Medium | attach by exact option title; unmeasured with spaces → measure live, refuse cleanly if the picker cannot find it | E2E (observe) |
+| C11 | D11 | video `--character` | — | not offered until Task 6b; the option does not exist on video commands | — |

@@ -174,7 +174,13 @@ personality and full-size images, and **no** project, character id, link or acco
 validates it offline, checks the voice against the target account's live catalog, then
 rebuilds the character exactly like `create --image`. Identity carries over: a character
 imported onto a second account rendered as the same person in an `@Name` image and in a
-video. Full reference: [USAGE](USAGE.md); measurements:
+video.
+
+To skip the separate import, point a generation straight at the folder:
+`gflow image t2i "Nora reading" --character nora/ [--project <id>] [--profile …]`
+(MCP: `gflow_generate_image(characters=[…])`). A character with the folder's name already in
+the project is **reused by name**; otherwise the folder is imported first. Images today;
+video once its character gate is lifted. Full reference: [USAGE](USAGE.md); measurements:
 [spike 2026-10-16](superpowers/spikes/2026-10-16-migrated-character-lifecycle-wire.md).
 
 ## 6. Payloads (I/O)

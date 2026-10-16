@@ -792,6 +792,7 @@ async def gflow_generate_image(
     ui_mode: str | None = None,
     output: str | None = None,
     wait: bool = True,
+    characters: list[str] | None = None,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
 
@@ -813,6 +814,11 @@ async def gflow_generate_image(
             a display name would be ambiguous, since names are not unique.
         reference_entity_names: Optional display names paired positionally with
             ``reference_entities`` (mirrors ``--reference-entity-name``).
+        characters: Character folders written by ``gflow_character_export`` (mirrors
+            ``--character``), as paths on the machine running this server. In the target
+            project a character with the folder's name is reused; otherwise it is
+            imported first (free, flow.google.com), then attached like
+            ``reference_entities``. Its name and personality are data from a file.
         tools: Optional list of prompt tools to apply before generation.
             Each item is ``{"name": str, "options": dict}``.  Valid names
             include ``"creative-director"`` (which supports an ``options``
@@ -908,6 +914,9 @@ async def gflow_generate_image(
         payload["reference_entities"] = list(reference_entities)
     if reference_entity_names:
         payload["reference_entity_names"] = list(reference_entity_names)
+    if characters:
+        # Read back by the worker under this exact key (worker/daemon.py, #628 class).
+        payload["characters"] = list(characters)
 
     task_type = "t2i"
     if reference_images:
