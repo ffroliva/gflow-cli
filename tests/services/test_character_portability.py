@@ -172,3 +172,85 @@ class TestImport:
 def test_the_manifest_written_is_json_not_python_repr(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
     json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+
+
+# --- apply_character_bundles: generate directly from a bundle (option C) -----------------
+
+
+def _req(**kw: Any) -> Any:
+    from gflow_cli.api.image import GenerateImageRequest
+
+    return GenerateImageRequest(prompt="Nora reading", **kw)
+
+
+def _apply_client(characters: list[Character]) -> MagicMock:
+    client = _import_client()
+    client.list_characters = AsyncMock(return_value=characters)
+    return client
+
+
+async def _apply(tmp_path: Path, client: Any, req: Any, *bundles: Path) -> Any:
+    return await portability.apply_character_bundles(
+        client,
+        MagicMock(),
+        req,
+        project_id="proj-b",
+        profile_name="b",
+        profile_dir=tmp_path / "profile_b",
+        bundles=bundles,
+    )
+
+
+class TestApplyCharacterBundles:
+    async def test_an_absent_character_is_imported_and_attached(
+        self, tmp_path: Path, create: AsyncMock
+    ) -> None:
+        bundle = _bundle(tmp_path)
+
+        req = await _apply(tmp_path, _apply_client([]), _req(), bundle)
+
+        create.assert_awaited_once()
+        assert req.reference_entities == ("new-entity",)
+        assert req.reference_entity_names == ("Nora",)
+
+    async def test_a_character_already_in_the_project_is_reused_by_name(
+        self, tmp_path: Path, create: AsyncMock
+    ) -> None:
+        bundle = _bundle(tmp_path)
+        existing = NORA.__class__(**{**NORA.__dict__, "project_id": "proj-b"})
+
+        req = await _apply(tmp_path, _apply_client([existing]), _req(), bundle)
+
+        create.assert_not_awaited()
+        assert req.reference_entities == (NORA.entity_id,)
+
+    async def test_two_characters_with_the_name_is_refused_not_guessed(
+        self, tmp_path: Path, create: AsyncMock
+    ) -> None:
+        bundle = _bundle(tmp_path)
+        twin = NORA.__class__(**{**NORA.__dict__, "entity_id": "other-id"})
+
+        with pytest.raises(ConfigurationError, match="other-id"):
+            await _apply(tmp_path, _apply_client([NORA, twin]), _req(), bundle)
+        create.assert_not_awaited()
+
+    async def test_a_bad_bundle_is_refused_before_flow_is_read(
+        self, tmp_path: Path, create: AsyncMock
+    ) -> None:
+        bundle = _bundle(tmp_path)
+        (bundle / "portrait.jpg").write_bytes(_jpeg((255, 0, 0)))
+        client = _apply_client([])
+
+        with pytest.raises(ConfigurationError):
+            await _apply(tmp_path, client, _req(), bundle)
+        client.list_characters.assert_not_awaited()
+
+    async def test_the_same_character_already_mentioned_is_not_attached_twice(
+        self, tmp_path: Path, create: AsyncMock
+    ) -> None:
+        bundle = _bundle(tmp_path)
+        req = _req(reference_entities=("new-entity",), reference_entity_names=("Nora",))
+
+        req = await _apply(tmp_path, _apply_client([]), req, bundle)
+
+        assert req.reference_entities == ("new-entity",)

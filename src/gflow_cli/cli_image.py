@@ -111,6 +111,7 @@ from gflow_cli.image_batch import (
 from gflow_cli.paths import image_output_path, resolve_batch_output_dir
 from gflow_cli.profile_store import account_locale_for
 from gflow_cli.services import catalog_sync
+from gflow_cli.services.character_portability import apply_character_bundles
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
@@ -163,6 +164,17 @@ def _project_and_entity_options(*, single_prompt: bool) -> Callable[[_CmdFn], _C
     project_note = " With several prompts, every prompt runs in it." if single_prompt else ""
 
     def decorator(func: _CmdFn) -> _CmdFn:
+        func = click.option(
+            "--character",
+            "characters",
+            multiple=True,
+            type=click.Path(exists=True, file_okay=False, path_type=Path),
+            help=(
+                "A character folder written by `gflow character export` (repeatable). "
+                "A character with its name already in the project is reused; otherwise "
+                "it is imported first (free). Then it is attached like --reference-entity." + note
+            ),
+        )(func)
         func = click.option(
             "--reference-entity-name",
             "reference_entity_names",
@@ -956,6 +968,7 @@ def t2i(  # NOSONAR
     project_name: str | None,
     reference_entities: tuple[str, ...],
     reference_entity_names: tuple[str, ...],
+    characters: tuple[Path, ...],
     as_json: bool,
     instructions: tuple[str, ...],
 ) -> None:
@@ -974,10 +987,11 @@ def t2i(  # NOSONAR
         msg = "--instruction is single-prompt only; remove the extra prompts."
         raise click.UsageError(msg)
 
-    if is_multi_prompt and reference_entities:
+    if is_multi_prompt and (reference_entities or characters):
         # The batch runner does not attach entities. Loop t2i one prompt at a time
         # (with --project) if every frame needs the same characters.
-        msg = "--reference-entity is single-prompt only; remove the extra prompts."
+        flag = "--reference-entity" if reference_entities else "--character"
+        msg = f"{flag} is single-prompt only; remove the extra prompts."
         raise click.UsageError(msg)
 
     if is_multi_prompt and as_json:
@@ -1037,6 +1051,7 @@ def t2i(  # NOSONAR
                 project_name=project_name,
                 as_json=as_json,
                 tool_specs=tool_specs,
+                characters=tuple(characters),
             ),
             cli_command="image t2i",
             as_json=as_json,
@@ -1414,6 +1429,7 @@ async def _run_t2i(
     project_name: str | None = None,
     as_json: bool = False,
     tool_specs: tuple[str, ...] = (),
+    characters: tuple[Path, ...] = (),
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
@@ -1429,6 +1445,15 @@ async def _run_t2i(
             effective_title = project_name or slugify_project_name(req.prompt, prefix="gflow-t2i")
             project, project_created = await _resolve_project(
                 client, project_id=project_id, title=effective_title, as_json=as_json
+            )
+            req = await apply_character_bundles(
+                client,
+                recorder,
+                req,
+                project_id=project.project_id,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                bundles=characters,
             )
 
             # Resolve @-mentions and expand --tool specs (shared helper).
@@ -1704,6 +1729,7 @@ class _I2IParams:
     model: Model
     reference_entities: tuple[str, ...]
     reference_entity_names: tuple[str, ...]
+    characters: tuple[Path, ...] = ()
     # Tool provenance (set when a --tool rewrote the prompt; recorded only).
     original_prompt: str | None = None
     tool: AppliedTool | None = None
@@ -1825,6 +1851,7 @@ def i2i(  # NOSONAR
     project_name: str | None,
     reference_entities: tuple[str, ...],
     reference_entity_names: tuple[str, ...],
+    characters: tuple[Path, ...],
     as_json: bool,
     instructions: tuple[str, ...],
     ui_mode: str | None,
@@ -1846,7 +1873,7 @@ def i2i(  # NOSONAR
     model_enum = Model.from_cli(model)
     cap = reference_cap_for(model_enum)
     # Image refs AND character entities share one per-model reference budget.
-    n_refs = len(classified_refs) + len(reference_entities)
+    n_refs = len(classified_refs) + len(reference_entities) + len(characters)
     if n_refs > cap:
         msg = f"{model_enum.value} accepts at most {cap} reference item(s); got {n_refs}"
         raise click.UsageError(msg)
@@ -1862,6 +1889,7 @@ def i2i(  # NOSONAR
         model=model_enum,
         reference_entities=tuple(reference_entities),
         reference_entity_names=tuple(reference_entity_names),
+        characters=tuple(characters),
         original_prompt=None,
         tool=None,
         instructions=(
@@ -1953,6 +1981,15 @@ async def _run_i2i(
                 tool=params.tool,
                 instructions=params.instructions,
                 ui_mode=params.ui_mode,
+            )
+            req = await apply_character_bundles(
+                client,
+                recorder,
+                req,
+                project_id=project.project_id,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                bundles=params.characters,
             )
 
             # Resolve @-mentions (entities → reference_entities, media → refs) and

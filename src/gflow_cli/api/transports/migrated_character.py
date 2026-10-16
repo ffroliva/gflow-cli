@@ -308,10 +308,10 @@ async def patch_character(
     ``rzMKMb`` echo. A field already showing the requested value is left alone: the
     editor sends nothing for an unchanged field, so waiting for a reply would time out.
     """
-    from gflow_cli.api.transports.migrated_composer import rpc_reply  # noqa: PLC0415
+    from gflow_cli.api.transports.migrated_composer import is_at, rpc_reply  # noqa: PLC0415
 
     url = CHARACTER_URL.format(project_id=project_id, entity_id=entity_id)
-    if not str(getattr(page, "url", "") or "").startswith(url):
+    if not is_at(getattr(page, "url", ""), url):
         await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
     await _wait_form_loaded(page)
 
@@ -508,24 +508,6 @@ async def _open_editor(page: Page, project_id: str, entity_id: str) -> None:
     await _wait_form_loaded(page)
 
 
-async def _wait_after_create(page: Page, project_id: str, entity_id: str) -> None:
-    """Wait for the editor the app switched to after the create to load the character.
-
-    The draft page turns into the editor in-app, without a page load. Measured
-    2026-10-16: that form usually loads its name like any other, but once it never did
-    within 15 s, while a direct navigation to the same editor loaded it in ~2 s. So a
-    stalled in-app editor is reloaded once — never more."""
-    from playwright.async_api import TimeoutError as PlaywrightTimeoutError  # noqa: PLC0415
-
-    from gflow_cli.errors import UiSelectorDriftError  # noqa: PLC0415
-
-    try:
-        await _wait_form_loaded(page)
-    except (UiSelectorDriftError, PlaywrightTimeoutError):
-        log.warning("migrated.character_editor_reloaded", entity_id=entity_id)
-        await _open_editor(page, project_id, entity_id)
-
-
 async def _upload_body(
     page: Page, project_id: str, entity_id: str, body: Path
 ) -> tuple[str, str | None]:
@@ -614,7 +596,11 @@ async def create_from_files(
             workflows.append(wf)
             media.append(mid)
         await page.wait_for_url(f"**/character/{entity_id}*", timeout=30_000)
-        await _wait_after_create(page, project_id, entity_id)
+        # Always reopen the editor by direct navigation. The in-app draft->editor switch
+        # after a create needed a reload in 4 of 5 runs (name never loaded in 15 s), and
+        # once loaded the name yet never answered the edit (rzMKMb timeout, 1 run);
+        # a direct load fills the form in ~2 s (measured 2026-10-16).
+        await _open_editor(page, project_id, entity_id)
         await patch_character(page, project_id, entity_id, name=name, personality=personality)
         if not workflows:
             refs = await _settled_refs(page, project_id, entity_id, want=1)

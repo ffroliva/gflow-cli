@@ -88,24 +88,6 @@ class TestCreateFromFilesKeepsTheOrphanId:
         assert called == []
 
 
-class TestWaitAfterCreate:
-    async def test_a_stalled_editor_is_reloaded_exactly_once(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        reloads: list[str] = []
-
-        async def stalled(_: Any) -> None:
-            raise PlaywrightTimeoutError("name field never visible")
-
-        async def reload(*_: Any) -> None:
-            reloads.append("reload")
-
-        monkeypatch.setattr(mc, "_wait_form_loaded", stalled)
-        monkeypatch.setattr(mc, "_open_editor", reload)
-        await mc._wait_after_create(_Page(), PID, EID)  # type: ignore[arg-type]
-        assert reloads == ["reload"]
-
-
 class TestUploadBody:
     async def test_a_lost_reply_that_is_bound_is_not_retried(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

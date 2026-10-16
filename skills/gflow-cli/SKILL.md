@@ -111,6 +111,8 @@ gflow character create --project <id> --name "<name>" --image <face.jpg> \
 gflow character export --project <id> (--id <character-id> | --name "<name>") --out <folder>
 gflow character import <folder> --project <id> [--profile <account>] [--name "<new>"] [--voice <id>]
                        # move a character to another project or account; $0, nothing generated
+gflow image t2i "<prompt>" --character <folder> [--project <id>] [--profile <account>]
+                       # generate straight from a character folder (reused by name, else imported)
 gflow character list --project <id>
 gflow character show <character-id> --project <id>
 gflow character rm --project <id> (--id <character-id> | --name "<name>") [--yes]   # delete (FREE)

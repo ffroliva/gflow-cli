@@ -10,6 +10,7 @@ import run one after the other, never with two profiles open at once.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING
 
 import structlog
@@ -19,10 +20,12 @@ from gflow_cli.errors import ConfigurationError
 from gflow_cli.services.character_create import character_create_from_files
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from gflow_cli.api.character import CharacterCreateResult
     from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.data.recorder import OperationRecorder
 
 log = structlog.get_logger(__name__)
@@ -106,3 +109,58 @@ async def import_character(
     )
     log.info("character.imported", entity_id=result.entity_id, project_id=project_id)
     return result
+
+
+async def apply_character_bundles(
+    client: FlowApiClient,
+    recorder: OperationRecorder,
+    req: GenerateImageRequest,
+    *,
+    project_id: str,
+    profile_name: str,
+    profile_dir: Path,
+    bundles: Sequence[Path],
+) -> GenerateImageRequest:
+    """Make each bundle's character available in ``project_id`` and attach it to ``req``.
+
+    Generate directly from a character folder, in any project on any account (#639,
+    option C). Every bundle is validated offline first; then a character already in the
+    project with the bundle's name is REUSED (user decision: by name, even if it differs
+    from the bundle), and an absent one is IMPORTED — free, nothing generated. Two
+    characters sharing the name are refused, never guessed. The character then rides the
+    request's references like ``--reference-entity`` + ``--reference-entity-name``."""
+    if not bundles:
+        return req
+    read = [read_bundle(path) for path in bundles]
+    existing = await client.list_characters(project_id)
+    entities = list(req.reference_entities)
+    names = list(req.reference_entity_names)
+    for path, bundle in zip(bundles, read, strict=True):
+        same = [c for c in existing if c.display_name == bundle.name]
+        if len(same) > 1:
+            ids = ", ".join(c.entity_id for c in same)
+            raise ConfigurationError(
+                detail=(
+                    f"project {project_id} has {len(same)} characters named {bundle.name!r} "
+                    f"({ids}); pass --reference-entity with the one you mean"
+                ),
+            )
+        if same:
+            entity_id = same[0].entity_id
+            log.info("character.bundle_reused", entity_id=entity_id, project_id=project_id)
+        else:
+            created = await import_character(
+                client,
+                recorder,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                bundle_dir=path,
+                project_id=project_id,
+            )
+            entity_id = created.entity_id
+        if entity_id not in entities:
+            entities.append(entity_id)
+            names.append(bundle.name)
+    return dataclasses.replace(
+        req, reference_entities=tuple(entities), reference_entity_names=tuple(names)
+    )

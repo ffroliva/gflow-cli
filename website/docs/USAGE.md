@@ -344,6 +344,9 @@ Options:
                             consistency (repeatable; must live in --project).
                             Single-prompt only.
   --reference-entity-name N Display name paired with --reference-entity.
+  --character FOLDER        A character folder from `gflow character export`
+                            (repeatable): reused by name if the project has it,
+                            otherwise imported first (free), then attached.
   -t, --tool NAME[:k=v]     Apply a prompt tool before generating, e.g.
                             `creative-director:style=cinema`. Repeatable; applied
                             per prompt on multi-prompt/batch. See "Prompt tools".
@@ -474,6 +477,9 @@ Options:
   --reference-entity ID     Flow CHARACTER entity id to reference (repeatable;
                             must live in --project). Counts toward the ref cap.
   --reference-entity-name N Display name paired with --reference-entity.
+  --character FOLDER        A character folder from `gflow character export`
+                            (repeatable): reused by name if the project has it,
+                            otherwise imported first (free), then attached.
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -532,6 +538,10 @@ requires at least one `--ref`.
 gflow image t2i "Aria explores a neon market, full body" \
   --project 7fa97443-… --reference-entity 8a77f8cb-… --reference-entity-name Aria \
   --model nano2 --aspect 9:16 -n 3
+
+# Straight from a character folder, in any project on any account: a character with
+# the folder's name in that project is reused; otherwise it is imported first (free)
+gflow image t2i "Nora reading in a sunlit kitchen" --character nora/ --profile personal
 
 # Several characters in one scene (each --reference-entity repeatable)
 gflow image t2i "Aria and Drako meet at the gate" --project 7fa97443-… \
