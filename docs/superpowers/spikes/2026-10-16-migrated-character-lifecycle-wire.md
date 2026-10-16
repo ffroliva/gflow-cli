@@ -182,3 +182,21 @@ comment describes is still the right fix.
   (`migrated_composer.py:3404`, `out_dir or Path.cwd()`), while `video t2v --help` says
   "Defaults to tmp/" and USAGE documents `$GFLOW_CLI_OUTPUT_DIR`. Not filed yet.
 - The prompt was again echoed as "Nora Nora …" (see Addendum 1); it did **not** reach the speech.
+
+---
+
+## Addendum 3 — the REST writes are closed; delete has an unanchorable confirm
+
+- **aisandbox REST character writes answer 401 for this account.** `client.patch_entity`
+  (`PATCH /v1/flow/entities`) and `client.delete_characters` (`POST /v1/flow:batchDeleteAssets`)
+  both raised `AisandboxAuthError` 401 "after token refresh" on profile A
+  (`scripts/dev/spike_migrated_character_rest_writes.py`). One account; whether an account that
+  still holds a labs token is served differently is unmeasured. Writes therefore go through the
+  editor, as the plan's transport C already assumed.
+- **The editor's delete asks for confirmation** in a `flow-confirmation-dialog` inside
+  `mat-dialog-container`, holding two buttons whose classes start identically
+  (`mdc-button … full-width-action-b…`), with no ligature on either. Telling confirm from cancel
+  without their translated labels was not settled (a second probe did not see the dialog mount
+  within 10 s — unmeasured, not absent). Porting `character rm` to this host needs that settled
+  first; it is out of scope for character portability, which reports an orphaned entity's id
+  instead of deleting it.
