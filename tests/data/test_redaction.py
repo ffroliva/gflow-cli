@@ -134,6 +134,22 @@ class TestBatchexecuteSecrets:
             redact_error_detail(blob)
             assert time.perf_counter() - started < 1.0
 
+    def test_the_signed_query_scrub_stays_linear_on_a_long_url_like_run(self) -> None:
+        """Council D3 (branch review 2026-10-16): the signed-query pattern was unanchored,
+        so on one long run with no whitespace every start re-scanned the run — 2.5k chars
+        0.10 s, 5k 0.47 s, 10k 1.88 s. URL-like text ('/', '.', '?') is not collapsed by
+        the token-run rule first, and discovery_head now scrubs whole replies."""
+        import time
+
+        blob = "a/b.c?d=" * 25_000  # 200 000 chars, no whitespace, no signature marker
+        started = time.perf_counter()
+        redact_error_detail(blob)
+        assert time.perf_counter() - started < 1.0
+
+    def test_a_signed_url_is_still_dropped_whole(self) -> None:
+        url = "https://flow-content.google/image/x?Expires=1&Signature=abc"
+        assert redact_error_detail(f"get {url} failed") == "get <redacted:url> failed"
+
     def test_ordinary_ids_and_timestamps_survive(self) -> None:
         text = (
             "entity 1035317b-6c80-466f-b4f4-f568900fcd8d at [1792170598, 989086000] "

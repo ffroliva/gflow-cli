@@ -279,3 +279,25 @@ async def test_a_missing_body_image_is_refused_before_any_page_is_used(tmp_path:
             PID, name="Nora", portrait=face, body=tmp_path / "missing.jpg"
         )
     c._checkout_page.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+# --- read_character_for_export: refusals before any download (council D4) ----------
+
+
+async def test_export_is_refused_when_labs_google_is_pinned(tmp_path: Path, migrated: Any) -> None:
+    c = _client(tmp_path, "labs.google", LABS_EMPTY)
+
+    with pytest.raises(ConfigurationError, match="not ported to labs.google yet"):
+        await c.read_character_for_export(PID, name="Nora")
+    migrated.assert_not_awaited()
+
+
+async def test_a_character_with_no_image_is_refused_not_exported_empty(tmp_path: Path) -> None:
+    bare = NORA.__class__(**{**NORA.__dict__, "workflow_ids": ()})
+    with patch(
+        "gflow_cli.api.transports.migrated_character.read_project",
+        new=AsyncMock(return_value=ProjectRead(characters=(bare,), voices=(), images={})),
+    ):
+        c = _client(tmp_path, "flow.google.com", LABS_EMPTY)
+        with pytest.raises(ConfigurationError, match="no image"):
+            await c.read_character_for_export(PID, name="Nora")

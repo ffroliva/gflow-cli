@@ -160,6 +160,15 @@ class TestPatchVerification:
         assert exc.value.route == "batchexecute:rzMKMb"
         assert field in str(exc.value)
 
+    @pytest.mark.parametrize(("field", "value"), [("name", "nora"), ("personality", "CALM")])
+    def test_name_and_personality_are_compared_exactly(self, field: str, value: str) -> None:
+        # Council D2/D1: only the voice id changes case on the wire; a dropped case-only
+        # rename must not read as applied.
+        from gflow_cli.api.transports.migrated_character import verify_patch
+
+        with pytest.raises(WireFormatError):
+            verify_patch(self._reply(), entity_id=_ENTITY, **{field: value})
+
     def test_an_echo_for_another_entity_is_wire_format_error(self) -> None:
         from gflow_cli.api.transports.migrated_character import verify_patch
 

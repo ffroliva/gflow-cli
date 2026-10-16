@@ -58,7 +58,7 @@ writes observed by rpcid; no replayed RPCs, no self-minted reCAPTCHA). User deci
 | 29 | D9 | export on a character whose image is a generated (not uploaded) portrait | High | same download path; the bundle does not care how the image was made | E2E |
 | 30 | D9 | export of a character with **no** image | Medium | refused, exit 11: import needs ≥1 reference image (REFERENCE_STRATEGIES.md:117) | Unit |
 | 31 | D13 | `gflow_character_export` / `gflow_character_import` | **Critical** | inline (no worker), not in `_SPEND_TOOLS`; paths are server-filesystem strings, docstring says so; same validation and errors as CLI | Unit + MCP e2e |
-| 32 | D13 | `gflow_character_create` (#691) | High | file-built create is free and exposed; prompt-generated create is spend → honours `GFLOW_MCP_NO_SPEND` | Unit |
+| 32 | D13 | `gflow_character_create` (#691) | High | file-built create is free and exposed (**done**, live ✅); prompt-generated create stays GAP #691 | Unit + MCP e2e |
 | 33 | D13 | `gflow_character_list/show` docstrings | Medium | still truthful once the migrated arm exists; `gflow_character_voices` keeps "static lookup" | Unit (docstring assertions) |
 | 34 | D9 | does the imported character keep its identity on B | High | `image t2i "@Name …"` on B attaches the entity (#723 path) and generates — image quota only | E2E (`e2e_character` + `e2e_image`) |
 | 35 | D9 | does the voice reach rendered audio | Low (here) | **not claimed**: docs say "attached, not proven applied" (#738) | — |

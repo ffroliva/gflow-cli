@@ -78,8 +78,12 @@ _SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 # Any whitespace-delimited token carrying signed-query material — covers full
 # URLs and bare "path?X-Goog-Signature=..." fragments alike.
+#
+# Anchored: a match may only START where a whitespace-delimited token starts. Unanchored,
+# every position inside one long whitespace-free run re-scanned the rest of the run —
+# quadratic (10k URL-like chars took ~2 s; council D3, 2026-10-16, the #852 class).
 _SIGNED_QUERY_TOKEN_PATTERN = re.compile(
-    r"\S*(?:signature=|x-goog-signature=|x-goog-credential=|expires=)\S*",
+    r"(?<!\S)\S*(?:signature=|x-goog-signature=|x-goog-credential=|expires=)\S*",
     re.IGNORECASE,
 )
 ERROR_DETAIL_MAX_CHARS = 500

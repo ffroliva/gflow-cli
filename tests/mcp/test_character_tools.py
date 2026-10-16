@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gflow_cli.api.character import Character
+from gflow_cli.api.character import Character, CharacterCreateResult
 from gflow_cli.mcp import tools as mcp_tools
 
 _PROJECT = "proj-1234"
@@ -156,3 +156,70 @@ async def test_character_voices_needs_no_browser_or_profile() -> None:
 
     assert result["status"] == "ok"
     assert result["count"] > 0
+
+
+# --- create (file-built), export, import: adapters over the shared services (#639, #691) ---
+
+_CREATED = CharacterCreateResult(
+    entity_id="new-entity",
+    project_id=_PROJECT,
+    workflow_ids=("w0", "w1"),
+    primary_media_ids=("m0", "m1"),
+    name="Nora",
+    voice="Aoede",
+    image_paths=(),
+)
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_create_builds_from_files_with_a_canonical_voice(tmp_path: Any) -> None:
+    ctx, _client = _client_returning()
+    service = AsyncMock(return_value=_CREATED)
+    with (
+        patch.object(mcp_tools, "FlowApiClient", return_value=ctx),
+        patch("gflow_cli.services.character_create.character_create_from_files", service),
+        patch("gflow_cli.data.recorder.OperationRecorder.open"),
+    ):
+        result = await mcp_tools.gflow_character_create(
+            project=_PROJECT, name="Nora", image=str(tmp_path / "f.jpg"), voice="aoede"
+        )
+    assert result["status"] == "ok"
+    assert result["character"]["entity_id"] == "new-entity"
+    kwargs = service.await_args.kwargs
+    assert (kwargs["voice"], kwargs["body"]) == ("Aoede", None)
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_create_refuses_an_unknown_voice_before_any_browser() -> None:
+    def explode(*_: Any, **__: Any) -> Any:
+        raise AssertionError("an unknown voice must be refused before a client opens")
+
+    with patch.object(mcp_tools, "FlowApiClient", explode):
+        result = await mcp_tools.gflow_character_create(
+            project=_PROJECT, name="Nora", image="/x.jpg", voice="NotAVoice"
+        )
+    assert result["status"] == "error"
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_export_requires_exactly_one_selector() -> None:
+    for kwargs in ({}, {"entity_id": "e", "name": "n"}):
+        result = await mcp_tools.gflow_character_export(project=_PROJECT, out="/tmp/x", **kwargs)
+        assert result["status"] == "error", kwargs
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_import_reports_the_rebuilt_character(tmp_path: Any) -> None:
+    ctx, _client = _client_returning()
+    service = AsyncMock(return_value=_CREATED)
+    with (
+        patch.object(mcp_tools, "FlowApiClient", return_value=ctx),
+        patch("gflow_cli.services.character_portability.import_character", service),
+        patch("gflow_cli.data.recorder.OperationRecorder.open"),
+    ):
+        result = await mcp_tools.gflow_character_import(
+            bundle_dir=str(tmp_path), project=_PROJECT, voice="charon"
+        )
+    assert result["status"] == "ok"
+    assert result["character"]["entity_id"] == "new-entity"
+    assert service.await_args.kwargs["voice"] == "charon"

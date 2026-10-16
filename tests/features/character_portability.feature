@@ -44,3 +44,8 @@ Feature: Portable characters on flow.google.com (#639)
     When the MCP export tool writes "Portable" to a bundle folder
     And the MCP import tool imports that bundle into the second project
     Then listing the second project shows "Portable" with voice "Aoede", 2 images and personality "calm, precise"
+
+  Scenario: The MCP create tool builds a character from local images
+    Given a throwaway project on profile A
+    When the MCP create tool builds "Portable" from a portrait and a body image with voice "aoede" and personality "calm, precise"
+    Then listing the project shows "Portable" with voice "Aoede", 2 images and personality "calm, precise"

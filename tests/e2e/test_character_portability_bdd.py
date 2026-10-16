@@ -157,6 +157,31 @@ def _cli_create(
     _create(world, e2e_env, name, voice, pers)
 
 
+@when(
+    parsers.parse(
+        'the MCP create tool builds "{name}" from a portrait and a body image with voice '
+        '"{voice}" and personality "{pers}"'
+    )
+)
+def _mcp_create(
+    world: dict[str, Any], e2e_profile_dir: Path, name: str, voice: str, pers: str
+) -> None:
+    del e2e_profile_dir  # selects the real authenticated gflow home
+    portrait, body = _images(world["tmp"])
+    result = asyncio.run(
+        mcp_tools.gflow_character_create(
+            project=world["project"],
+            name=name,
+            image=str(portrait),
+            body_image=str(body),
+            voice=voice,
+            personality=pers,
+            profile=world["profile_a"],
+        )
+    )
+    assert result["status"] == "ok", result
+
+
 @when(parsers.parse('the CLI exports "{name}" to a bundle folder'))
 def _cli_export(world: dict[str, Any], e2e_env: dict[str, str], name: str) -> None:
     world["bundle"] = world["tmp"] / "bundle"

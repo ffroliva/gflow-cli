@@ -129,8 +129,11 @@ def _decode_body(post: str | None) -> Any:
 async def _main(profile: str, control: Path, start_url: str, minutes: float) -> int:
     profile_dir = resolve_profile_dir(profile)
     control.mkdir(parents=True, exist_ok=True)
+    # Clear only this script's own control files: a mistyped --control-dir (`.`, a home
+    # folder) must never lose anything else in it.
     for f in control.iterdir():
-        f.unlink()
+        if f.is_file() and (f.name == "stop" or f.name.startswith("mark-")):
+            f.unlink()
     out = default_out_path(f"migrated_character_lifecycle_{profile}", ".jsonl")
     sink = out.open("a", encoding="utf-8")
     t0 = time.monotonic()
@@ -196,6 +199,8 @@ async def _main(profile: str, control: Path, start_url: str, minutes: float) -> 
             await asyncio.sleep(1)
             for f in sorted(control.iterdir()):
                 name = f.name
+                if not (f.is_file() and (name == "stop" or name.startswith("mark-"))):
+                    continue  # not ours: never touched
                 f.unlink()
                 if name == "stop":
                     step("stop", "requested")

@@ -7,6 +7,9 @@ Pure: no I/O beyond what a caller hands in.
 
 from __future__ import annotations
 
+# Cap matches Flow's UI upload limit (~20 MB observed in captured traffic). Checked
+# BEFORE a file is read into memory — protects this process from OOM and the remote
+# endpoint from DoS-shaped traffic.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
 
 # Extension per accepted container; every one is accepted by Flow's web UI.
