@@ -163,10 +163,15 @@ editor-driving functions of Tasks 4–6 join it). `batchexecute._discovery_head`
 navigate to the project and observe `Zzl0ze` (listener attached before `goto`, via `_rpc_reply`).
 
 **Steps / tests:**
-- [ ] red: integration with a fake page emitting a `Zzl0ze` frame → list parsed; no labs call made
-- [ ] red: labs-served arm unchanged (existing tests stay green)
-- [ ] implement in `migrated_character.read_project`; client host branch
-- [ ] e2e: `character list` / `show` on a flow.google.com-served profile (Iron Law)
+- [x] red: integration with a fake page emitting a `Zzl0ze` frame → list parsed; no labs call made
+- [x] red: labs-served arm unchanged (existing tests stay green)
+- [x] implement in `migrated_character.read_project`; client host branch (`create_project`'s
+      observed-refusal rule; `migrated_composer._rpc_reply` → public `rpc_reply`)
+- [x] e2e: `character list` / `show` on a flow.google.com-served profile (Iron Law) — CLI live
+      (6/6 characters, exit 0) and MCP live (`test_character_mcp_parity_e2e.py` 3/3); image
+      `@Name` re-run live (now resolves via the catalog, guard passed 1 char / 0 media);
+      video `@Name` now exit 36 at the gate instead of 29
+- [x] docs: KNOWN_ISSUES:50, REFERENCE_STRATEGIES flow.google.com section, CHANGELOG Fixed
 
 ---
 

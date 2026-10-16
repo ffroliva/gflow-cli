@@ -1886,7 +1886,12 @@ class FlowApiClient:
         finally:
             self._checkin_page(page)
 
-    def _labs_project_route_refused(self, exc: AuthExpiredError | WireFormatError) -> bool:
+    def _labs_project_route_refused(
+        self,
+        exc: AuthExpiredError | WireFormatError,
+        *,
+        event: str = "project.labs_route_refused",
+    ) -> bool:
         """Is this the labs project route's measured refusal, worth trying flow.google.com?
 
         Measured 2026-09-17 on four profiles, 12/12: 404 "Flow RPCs have been deprecated
@@ -1898,7 +1903,7 @@ class FlowApiClient:
         """
         refused = self.settings.flow_host == "auto" and exc.status in (401, 404)
         if refused:
-            logger.info("project.labs_route_refused", status=exc.status, issue_ref="#864")
+            logger.info(event, status=exc.status, issue_ref="#864")
         return refused
 
     async def get_credits(self) -> CreditsInfo:
@@ -3192,15 +3197,31 @@ class FlowApiClient:
     async def list_characters(self, project_id: str) -> list[Character]:
         """Return all CHARACTER entities in *project_id*.
 
-        Maps to ``GET .../trpc/flow.projectInitialData?input=…``.
+        Maps to ``GET .../trpc/flow.projectInitialData?input=…``, and to flow.google.com's
+        own ``Zzl0ze`` project read when that route refuses — the same observed-refusal
+        rule as :meth:`create_project` (see :meth:`_labs_project_route_refused`).
         Session-cookie auth.  FREE — no reCAPTCHA, no credit.
         """
-        trpc_input = json.dumps({"json": {"projectId": project_id}}, separators=(",", ":"))
-        url = f"{routes.PROJECT_INITIAL_DATA_URL}?input={quote(trpc_input, safe='')}"
-        data = await self._get_json(url, route_name="projectInitialData")
-        chars = parse_characters(_unwrap_trpc(data))
-        logger.debug("character.list_fetched", project_id=project_id, count=len(chars))
-        return chars
+        if self.settings.flow_host != "flow.google.com":
+            trpc_input = json.dumps({"json": {"projectId": project_id}}, separators=(",", ":"))
+            url = f"{routes.PROJECT_INITIAL_DATA_URL}?input={quote(trpc_input, safe='')}"
+            try:
+                data = await self._get_json(url, route_name="projectInitialData")
+            except (AuthExpiredError, WireFormatError) as exc:
+                if not self._labs_project_route_refused(exc, event="character.labs_route_refused"):
+                    raise
+            else:
+                chars = parse_characters(_unwrap_trpc(data))
+                logger.debug("character.list_fetched", project_id=project_id, count=len(chars))
+                return chars
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        page = await self._checkout_page()
+        try:
+            read = await migrated_character.read_project(page, project_id)
+        finally:
+            self._checkin_page(page)
+        return list(read.characters)
 
     async def fetch_project_listing(self, project_id: str) -> JsonObject:
         """Fetch the raw ``flow.projectInitialData`` listing for *project_id*.

@@ -3618,7 +3618,7 @@ async def _wait_anchor(
     return locator
 
 
-async def _rpc_reply(
+async def rpc_reply(
     page: Page, rpcid: str, action: Callable[[], Awaitable[None]], *, timeout_s: float
 ) -> Any:
     """Run ``action`` and return the payload of the first ``rpcid`` frame the page gets."""
@@ -3665,7 +3665,7 @@ async def create_project(page: Page, title: str, *, timeout_s: float = 30.0) -> 
         at="migrated.create_project",
         timeout_s=timeout_s,
     )
-    payload = await _rpc_reply(
+    payload = await rpc_reply(
         page, CREATE_PROJECT_RPC, lambda: button.click(timeout=15_000), timeout_s=timeout_s
     )
     reply = _as_list_any(payload)
@@ -3705,7 +3705,7 @@ async def rename_project(
         await field.fill(title)
         await field.press("Enter")
 
-    payload = await _rpc_reply(page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s)
+    payload = await rpc_reply(page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s)
     echo = _as_list_any(payload)
     echoed: object = echo[0] if echo else None
     if echoed != title:

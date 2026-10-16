@@ -28,6 +28,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now points at `--refresh` / `gflow auth renew` instead of "check your balance in Flow"; an
   account whose labs session issues no token at all is not helped by renewal, and says so.
 
+### Fixed
+
+- **`gflow character list` and `gflow character show` work on accounts Flow serves from
+  flow.google.com** (exit 7 before). Flow retired the labs read they used; on that measured
+  refusal gflow now reads the project through flow.google.com's own project read, under the
+  default `GFLOW_CLI_FLOW_HOST=auto`, and directly when the host is pinned to flow.google.com.
+  The MCP twins `gflow_character_list` / `gflow_character_show` follow. As a result, an image
+  `@Name` resolves the character by id on that host instead of by name, and a video `@Name`
+  stops at the not-yet-ported video gate (exit 36) instead of exit 29. `character create` and
+  `character rm` on that host are not ported yet (#639).
+- **The voice catalog lists 30 voices.** `Enceladus` ("Male, breathy, lower pitch") was in
+  Flow's live catalog and missing from `gflow character voices`.
+- **Log and error scrubbing covers flow.google.com's wire.** reCAPTCHA Enterprise tokens, the
+  batchexecute `at` XSRF value and `lh3.googleusercontent.com/asb/` download links are now
+  masked, and a wire-drift error no longer leaks the fragment of a token cut by its 200-char
+  window.
+
 ## [0.85.0] — 2026-10-14
 
 ### Added
