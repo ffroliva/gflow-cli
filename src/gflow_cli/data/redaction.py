@@ -29,8 +29,14 @@ _SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # `lh3.googleusercontent.com/asb/…` grants access by its path alone — there is
     # no `Signature=` for the signed-query pattern below to key on.
     (re.compile(r"https?://lh3\.googleusercontent\.com/asb/\S+", re.IGNORECASE), "<redacted:url>"),
-    # The `at` XSRF value: 20+ token chars, ':' (or '%3A' in a form body), ms timestamp.
-    (re.compile(r"[A-Za-z0-9_-]{20,}(?::|%3A)\d{13}(?!\d)", re.IGNORECASE), "<redacted:token>"),
+    # The `at` XSRF value: 28 token chars measured, ':' (or '%3A' in a form body), ms
+    # timestamp. The lookbehind lets a match START only where a token run starts, and
+    # the length is bounded: unanchored and unbounded, every position inside a long run
+    # re-scanned the run for its ':' — quadratic, minutes on a 160 KB body (#852 class).
+    (
+        re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{20,64}(?::|%3A)\d{13}(?!\d)", re.IGNORECASE),
+        "<redacted:token>",
+    ),
     # reCAPTCHA Enterprise tokens (`maseQ` carries one), then any token-alphabet run
     # long enough to be a credential. The floor matches batchexecute._TOKEN_RE, which
     # slices its window BEFORE matching and so can leave a fragment behind.
