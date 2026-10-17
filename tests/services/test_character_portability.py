@@ -271,3 +271,16 @@ class TestApplySameNameTwice:
         create.assert_awaited_once()
         assert req.reference_entities == ("new-entity",)
         assert req.reference_entity_names == ("Nora",)
+
+    async def test_reuse_matches_the_name_case_insensitively_like_the_picker(
+        self, tmp_path: Path, create: AsyncMock
+    ) -> None:
+        """CodeRabbit, PR #987: an exact compare imported "Nora" beside an existing
+        "nora", and the picker (casefold) then refused both, orphaning the import."""
+        bundle = _bundle(tmp_path)
+        lower = NORA.__class__(**{**NORA.__dict__, "display_name": "nora"})
+
+        req = await _apply(tmp_path, _apply_client([lower]), _req(), bundle)
+
+        create.assert_not_awaited()
+        assert req.reference_entities == (NORA.entity_id,)

@@ -328,8 +328,9 @@ The `create` / `list` / `show` / `voices` commands below are **shipped and
 live-verified in v0.12.0** (the user-facing reference lives in
 [USAGE § `gflow character`](USAGE.md#gflow-character)). Name-based reuse via
 `@Name` prompt mentions is **shipped** (v0.40.0, #344) on both the image and
-video paths. An explicit `--character <id>` **flag** on `gflow video`
-remains **backlog** (row marked *not yet implemented*). `gflow character rm`
+video paths. `--character FOLDER` (an exported character folder, repeatable) shipped on
+`image t2i|i2i` and `video t2v|r2v` (2026-10-17, §5b); an id-based `--character <id>` flag
+was never built — `--reference-entity` is the id form. `gflow character rm`
 is **shipped** (see the table below).
 
 | Command | Maps to |
@@ -340,7 +341,7 @@ is **shipped** (see the table below).
 | `gflow character list --project <id> [--json]` *(SHIPPED v0.12.0)* | projectInitialData → entities[CHARACTER] |
 | `gflow character show --project <id> (--id <entityId> \| --name <displayName>) [--json]` *(SHIPPED v0.12.0)* | projectInitialData (single); name collision → exit 11 with disambiguation hint |
 | `gflow character voices [--json]` *(SHIPPED v0.12.0)* | list the 30 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
-| `gflow video … --character <id>` *(repeatable → multi-ref, explicit flag)* | **not yet implemented** (Phase 3) — `referenceEntities` on `video:batchAsyncGenerateVideoReferenceImages` |
+| `gflow video … --character <id>` *(id form)* | not built — use `--reference-entity <id>`; the shipped flag takes a FOLDER: `gflow video t2v\|r2v --character <folder>` (repeatable, §5b) |
 | `gflow character rm` (`--id`/`--name`) | **Shipped v0.13.0 (#150)** — `POST flow:batchDeleteAssets` (Bearer; FREE — no reCAPTCHA/credit) |
 | `gflow image … --character <id>` *(explicit flag)* | id-based reuse **shipped** as `gflow image t2i/i2i --reference-entity <id>` (wire captured 2026-06-08, `api/image.py`) |
 | `@Name` in a t2i/i2i/video prompt | name-based mention resolution **shipped v0.40.0 (#344)** — resolves to the staged character entity, works on both image and video paths; see [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md) |

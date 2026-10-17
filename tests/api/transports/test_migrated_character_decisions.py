@@ -44,8 +44,11 @@ class _Page:
         self.url = url
         self.clicks = 0
         self.wait_url_error: Exception | None = None
+        self.editor_error: Exception | None = None  # raised by the navigation to the editor
 
     async def goto(self, url: str, **_: Any) -> None:
+        if self.editor_error and not url.endswith("/character"):
+            raise self.editor_error
         if "labs.google" not in self.url:
             self.url = url
 
@@ -66,7 +69,7 @@ class TestCreateFromFilesKeepsTheOrphanId:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         page = _Page()
-        page.wait_url_error = PlaywrightTimeoutError("Timeout 30000ms exceeded")
+        page.editor_error = PlaywrightTimeoutError("Timeout 30000ms exceeded")
 
         async def replies(*_: Any, **__: Any) -> dict[str, Any]:
             return {"C4BZMd": _create_reply()}
@@ -150,7 +153,7 @@ class TestLostCreateReply:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         page = _Page()
-        page.wait_url_error = PlaywrightTimeoutError("stop after recovery")
+        page.editor_error = PlaywrightTimeoutError("stop after recovery")
 
         async def replies(*_: Any, **__: Any) -> dict[str, Any]:
             return {"maseQ": _upload_reply(EID)}
@@ -164,7 +167,7 @@ class TestLostCreateReply:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         page = _Page()
-        page.wait_url_error = PlaywrightTimeoutError("stop after recovery")
+        page.editor_error = PlaywrightTimeoutError("stop after recovery")
 
         async def replies(*_: Any, **__: Any) -> dict[str, Any]:
             page.url = f"https://flow.google.com/project/{PID}/character/{EID}"
@@ -385,3 +388,22 @@ class TestVoiceConfirmLostReply:
         monkeypatch.setattr(mc, "VOICE_SHOWN_WAIT_S", 0.3)
         with pytest.raises(PlaywrightTimeoutError):
             await mc._pick_voice(page, EID, "Aoede", timeout_s=1)  # type: ignore[arg-type]
+
+
+class TestRouteNotFollowedAfterCreate:
+    async def test_a_page_left_on_the_draft_is_not_a_failed_create(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """CodeRabbit, PR #987: a create recovered from the upload reply can leave the page
+        on the draft, so the route wait times out. The character exists; the run goes on
+        to open its editor (where this fake stops it) instead of failing at the wait."""
+        page = _Page()
+        page.wait_url_error = PlaywrightTimeoutError("route never followed")
+        page.editor_error = PlaywrightTimeoutError("reached the editor")
+
+        async def replies(*_: Any, **__: Any) -> dict[str, Any]:
+            return {"C4BZMd": _create_reply()}
+
+        monkeypatch.setattr(mc, "_rpc_replies", replies)
+        with pytest.raises(UiSelectorDriftError, match="reached the editor"):
+            await mc.create_from_files(page, PID, name="Nora", portrait=tmp_path / "p.png")  # type: ignore[arg-type]

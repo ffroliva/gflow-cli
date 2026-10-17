@@ -63,3 +63,20 @@ def test_i2i_counts_characters_against_the_reference_budget(tmp_path: Path) -> N
     assert result.exit_code == 2
     assert "reference item" in result.output
     resolve.assert_not_called()
+
+
+def test_t2i_counts_characters_against_the_reference_cap_before_any_browser(
+    tmp_path: Path,
+) -> None:
+    """CodeRabbit, PR #987: past the cap the DTO refused only after the characters were
+    imported (exit 1). Counted up front, as i2i does, it is a usage error (exit 2)."""
+    folders = []
+    for i in range(20):
+        d = tmp_path / f"c{i}"
+        d.mkdir()
+        folders += ["--character", str(d)]
+    with patch("gflow_cli.cli_image._resolve_profile") as resolve:
+        result = _invoke("t2i", "x", *folders)
+    assert result.exit_code == 2, result.output
+    assert "reference item" in result.output
+    resolve.assert_not_called()

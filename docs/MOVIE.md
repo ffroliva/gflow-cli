@@ -202,7 +202,7 @@ clip is never silently passed off as character-consistent. The recorded
 `consistency_method` in the run state is `entity` when the entity rode (vs
 `text`).
 
-### The same trap on the migrated host (ported for images, not yet for video)
+### The same trap on the migrated host (ported for images and video t2v/r2v; `movie run` is not yet ported)
 
 The bullet above — *the inline include button attaches the character's thumbnail as a plain
 image, not the entity* — is not a labs quirk. It is how Flow's reference surfaces work, and

@@ -148,9 +148,12 @@ async def apply_character_bundles(
     names = list(req.reference_entity_names)
     done: dict[str, str] = {}  # name → entity: one name in one call is one character
     for path, bundle in zip(bundles, read, strict=True):
-        if bundle.name in done:
+        # Case-insensitive, as the `@` picker matches titles: an exact compare imported a
+        # second "Nora" beside "nora", and the picker then refused both (CodeRabbit, #987).
+        key = bundle.name.casefold()
+        if key in done:
             continue
-        same = [c for c in existing if c.display_name == bundle.name]
+        same = [c for c in existing if c.display_name.casefold() == key]
         if len(same) > 1:
             ids = ", ".join(c.entity_id for c in same)
             raise ConfigurationError(
@@ -172,7 +175,7 @@ async def apply_character_bundles(
                 project_id=project_id,
             )
             entity_id = created.entity_id
-        done[bundle.name] = entity_id
+        done[key] = entity_id
         if entity_id not in entities:
             entities.append(entity_id)
             names.append(bundle.name)

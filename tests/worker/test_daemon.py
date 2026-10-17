@@ -1107,6 +1107,7 @@ async def test_character_bundles_in_the_payload_are_applied_after_the_project(
     with (
         patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
         patch("gflow_cli.services.character_portability.apply_character_bundles", passthrough),
+        patch("gflow_cli.services.character_portability.validate_bundles"),
     ):
         await worker.process_task(task)
 
@@ -1173,4 +1174,26 @@ async def test_a_bad_character_folder_fails_the_video_task_before_any_project(
         await worker.process_task(task)
     fake_client.create_project.assert_not_awaited()
     fake_client.generate_video.assert_not_awaited()
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bad_character_folder_fails_the_image_task_before_any_project(
+    temp_db: DataStore, tmp_path: Path
+) -> None:
+    """CodeRabbit, PR #987: the image branch created the scratch project before reading
+    the folders. They are read first now, as on video."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-image-bad-folder",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "x", "count": 1, "characters": [str(tmp_path / "missing")]},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+    fake_client.create_project.assert_not_awaited()
+    fake_client.generate_image.assert_not_awaited()
     worker.close()
