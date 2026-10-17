@@ -336,3 +336,21 @@ async def test_drive_skips_mint_for_servable_request():
 
     client._mint_recaptcha_token.assert_not_awaited()  # type: ignore[attr-defined]
     assert transport.calls == 1
+
+
+@pytest.mark.asyncio()
+async def test_ui_failure_artifact_redacts_the_error_text(wip_src, tmp_path: Path):
+    """Council D3: a Playwright call log previews the element it waited on; on the
+    character editor that can be the portrait, whose lh3 `/asb/` link grants access by
+    itself. The saved error is redacted like every other persisted error detail."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = MagicMock()
+    page.url = "https://flow.google.com/project/p-1"
+    page.evaluate = AsyncMock(return_value={})
+    page.screenshot = AsyncMock(side_effect=lambda path, **_: Path(path).write_bytes(b"P"))
+    link = "https://lh3.googleusercontent.com/asb/AAbbCCddEEffGG0123456789secretcapability"
+    paths = await MigratedComposer(out_dir=tmp_path)._capture_ui_failure(  # noqa: SLF001
+        page, phase="character", selector="x", error=f'waiting for <img src="{link}">'
+    )
+    assert "secretcapability" not in paths[1].read_text(encoding="utf-8")

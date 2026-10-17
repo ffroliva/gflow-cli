@@ -636,14 +636,18 @@ class DataRepository:
         prompt_redacted: bool,
         metadata_json: dict[str, object],
     ) -> None:
-        """Update status, prompt fields, and metadata_json in a single write."""
+        """Update status and prompt fields, and MERGE ``metadata_json`` into the row's.
+
+        Merged with SQLite's ``json_patch`` (RFC 7396), not replaced: the started write
+        recorded which character this is (``entity_id``, ``name``), and replacing the
+        column on completion erased it from every successful row (#737)."""
         with self._store.transaction(immediate=True):
             self._store.conn.execute(
                 """
                 UPDATE operations
                 SET status = ?, completed_at = ?,
                     prompt = ?, prompt_hash = ?, prompt_redacted = ?,
-                    metadata_json = ?
+                    metadata_json = json_patch(COALESCE(metadata_json, '{}'), ?)
                 WHERE id = ?
                 """,
                 (

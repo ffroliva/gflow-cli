@@ -159,6 +159,32 @@ sequenceDiagram
   end
 ```
 
+## 5b. Move a character to another project or account (flow.google.com, 2026-10-16)
+
+A character belongs to one project and Flow cannot copy one, so gflow moves it through a
+plain folder — no generation on either side, no credits, no image quota:
+
+```bash
+gflow character export --project <A> --name Nora --out nora/ --profile work
+gflow character import nora/ --project <B> --profile personal   # any project, any account
+```
+
+The folder (`manifest.json` + `portrait.<ext>` [+ `body.<ext>`]) carries the name, voice,
+personality and full-size images, and **no** project, character id, link or account. Import
+validates it offline, checks the voice against the target account's live catalog, then
+rebuilds the character exactly like `create --image`. Identity carries over: a character
+imported onto a second account rendered as the same person in an `@Name` image and in a
+video.
+
+To skip the separate import, point a generation straight at the folder:
+`gflow image t2i "Nora reading" --character nora/ [--project <id>] [--profile …]`
+(MCP: `gflow_generate_image(characters=[…])`). A character with the folder's name already in
+the project is **reused by name**; otherwise the folder is imported first. The same flag
+works on `gflow video t2v` / `r2v` (MCP: `gflow_generate_video(characters=[…])`), repeatable,
+so several characters share one clip:
+`gflow video t2v "Nora and Mini chat at a cafe table" --character nora/ --character mini/ --project <id>`. Full reference: [USAGE](USAGE.md); measurements:
+[spike 2026-10-16](superpowers/spikes/2026-10-16-migrated-character-lifecycle-wire.md).
+
 ## 6. Payloads (I/O)
 
 ### 6.1 `flow.createEntity`
@@ -253,7 +279,7 @@ sequenceDiagram
 
 ## 7. Voices
 
-A preset library of **29 Gemini-TTS voices** is offered in the UI (`api/character.py::VOICES`).
+A preset library of **30 Gemini-TTS voices** is offered in the UI (`api/character.py::VOICES`; Flow's live catalog listed 30 on 2026-10-16, adding Enceladus).
 `gflow character voices [--json]` lists them — each with a short descriptor and a preview **sample URL**
 following the pattern `https://gstatic.com/aitestkitchen/voices/samples/{Name}.wav`.
 
@@ -269,10 +295,21 @@ both normalize to the canonical `Charon`) and sets `audioReferences[].presetVoic
 > unchanged, so `CHARACTER_RECON.md`'s older note that "the preset id is the lowercased name"
 > does **not** describe what the wire does today.
 >
-> **Still untested:** whether a *lowercase* id is also accepted (gflow never sends one — it
-> normalizes to Capitalized before the PATCH), and — separately and more importantly —
-> whether a bound voice is actually **applied to generated video audio**. Attachment to the
-> entity is proven; application at render time is not.
+> **Still untested on labs:** whether a *lowercase* id is also accepted there (gflow never
+> sends one to labs — it normalizes to Capitalized before the PATCH).
+
+> **On flow.google.com the wire is lowercase — measured 2026-10-16.** The character editor
+> sends and the project read (`Zzl0ze`) returns `aoede`, `callirrhoe`, … in `rzMKMb`'s
+> `audio_references`. gflow keeps the Capitalized name as its canonical form everywhere
+> (`gflow character show`, bundles) and converts at that one boundary
+> (`api/character.py::voice_to_wire` / `voice_from_wire`); a voice Flow offers that the
+> offline list does not know keeps its identity, capitalized.
+
+> **Attached, not proven applied ([#738](https://github.com/ffroliva/gflow-cli/issues/738)).**
+> Whether a bound voice is **applied to generated video audio** is still open. One video on
+> 2026-10-16 (a character imported onto a second account, voice `Aoede`) spoke the scripted
+> line with a median pitch of 197.5 Hz against Aoede's sample at 210.5 Hz — consistent, but
+> two other voices sit as close, so it identifies nothing. #738's A/B design is what settles it.
 >
 > **`personalityNotes` is Agent-scoped.** Flow's own character editor labels the field
 > "Character info (optional) — Describe how your character acts…" and states underneath:
@@ -291,17 +328,20 @@ The `create` / `list` / `show` / `voices` commands below are **shipped and
 live-verified in v0.12.0** (the user-facing reference lives in
 [USAGE § `gflow character`](USAGE.md#gflow-character)). Name-based reuse via
 `@Name` prompt mentions is **shipped** (v0.40.0, #344) on both the image and
-video paths. An explicit `--character <id>` **flag** on `gflow video`
-remains **backlog** (row marked *not yet implemented*). `gflow character rm`
+video paths. `--character FOLDER` (an exported character folder, repeatable) shipped on
+`image t2i|i2i` and `video t2v|r2v` (2026-10-17, §5b); an id-based `--character <id>` flag
+was never built — `--reference-entity` is the id form. `gflow character rm`
 is **shipped** (see the table below).
 
 | Command | Maps to |
 |---|---|
+| `gflow character export --project <id> (--id \| --name) --out <folder>` / `gflow character import <folder> --project <id> [--profile …] [--name …] [--voice …]` *(flow.google.com, 2026-10-16)* | Export: one fresh `Zzl0ze` read, then each image downloaded at full size (`=s0`) into a bundle (`manifest.json` + `portrait.<ext>` [+ `body.<ext>`], no ids or links). Import: the bundle is validated offline, the voice checked against the target account's live catalog, then the character is rebuilt with the `--image` path. Another account is another `--profile`. See [USAGE](USAGE.md). |
+| `gflow character create --project <id> --name <name> --image <file> [--body-image <file>] [--voice <Name>] [--personality …] [--profile …] [--json]` *(flow.google.com, 2026-10-16)* | No generation: the draft editor's footer Upload creates the entity with the portrait (`C4BZMd` + `maseQ`, slot 0), then the name and personality are set in the editor (`rzMKMb`), the body is uploaded into slot 1, and the voice is picked. Every step is confirmed from Flow's reply; a failure after the create names the entity instead of deleting it. Spike: [2026-10-16 lifecycle wire](superpowers/spikes/2026-10-16-migrated-character-lifecycle-wire.md). |
 | `gflow character create --project <id> --name <name> --face-prompt … [--body-prompt …] [--voice <Name>] [--personality …] [--model nano2\|nanopro] [--profile …] [--locale en-US] [--json]` *(SHIPPED v0.12.0 — shipped option names; characters have NO aspect-ratio control)* | createEntity → gen face (slot 0) → commit_workflow → optional gen body (slot 1) → commit_workflow → patch_entity, via the persist-before-spend saga (§4). `--body-prompt` is a **body/outfit DESCRIPTION** — gflow wraps it in a self-contained **front/side/back triptych** instruction and seeds it with the generated face (auto-attached as the body-mode reference), so one body generation yields all three angles. Generated images are **downloaded** to storage; the result reports each slot's local path. |
 | `gflow character list --project <id> [--json]` *(SHIPPED v0.12.0)* | projectInitialData → entities[CHARACTER] |
 | `gflow character show --project <id> (--id <entityId> \| --name <displayName>) [--json]` *(SHIPPED v0.12.0)* | projectInitialData (single); name collision → exit 11 with disambiguation hint |
-| `gflow character voices [--json]` *(SHIPPED v0.12.0)* | list the 29 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
-| `gflow video … --character <id>` *(repeatable → multi-ref, explicit flag)* | **not yet implemented** (Phase 3) — `referenceEntities` on `video:batchAsyncGenerateVideoReferenceImages` |
+| `gflow character voices [--json]` *(SHIPPED v0.12.0)* | list the 30 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
+| `gflow video … --character <id>` *(id form)* | not built — use `--reference-entity <id>`; the shipped flag takes a FOLDER: `gflow video t2v\|r2v --character <folder>` (repeatable, §5b) |
 | `gflow character rm` (`--id`/`--name`) | **Shipped v0.13.0 (#150)** — `POST flow:batchDeleteAssets` (Bearer; FREE — no reCAPTCHA/credit) |
 | `gflow image … --character <id>` *(explicit flag)* | id-based reuse **shipped** as `gflow image t2i/i2i --reference-entity <id>` (wire captured 2026-06-08, `api/image.py`) |
 | `@Name` in a t2i/i2i/video prompt | name-based mention resolution **shipped v0.40.0 (#344)** — resolves to the staged character entity, works on both image and video paths; see [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md) |

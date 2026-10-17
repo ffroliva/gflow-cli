@@ -45,6 +45,9 @@ CLI_TO_MCP: dict[str, str] = {
     "character list": "gflow_character_list",
     "character voices": "gflow_character_voices",
     "character show": "gflow_character_show",
+    "character create": "gflow_character_create",  # the file-built (--image) path
+    "character export": "gflow_character_export",
+    "character import": "gflow_character_import",
     "credits user": "gflow_get_credits",
     "credits list": "gflow_get_credits",
     "image t2i": "gflow_generate_image",
@@ -113,13 +116,6 @@ _MCP_EXEMPT: dict[str, str] = {
     ),
     "models": "informational; models are enumerated in the generate tools' descriptions",
     "run": "image-batch config runner (rows, batch:N and local-file refs) — not yet ported",
-    "character create": (
-        "GAP #691 — unported, not principled. 'Mutation' was never a reason: "
-        "gflow_generate_image spends the same per-model image quota over MCP. "
-        "The port is an adapter over services/character_create.py; what needs "
-        "deciding is worker-enqueue vs inline (#481) and whether it should honour "
-        "GFLOW_MCP_NO_SPEND"
-    ),
     "character rm": (
         "irreversible deletion of a user-owned Flow entity — deliberately CLI-only, "
         "same rule as `data prune`/`data errors prune`. The CLI gates it behind a "
@@ -251,6 +247,14 @@ _OPTION_EXEMPT: dict[str, str] = {
     "instructions apply:file": "reads a local file; the tool takes the text directly",
     "tools show:name": "coarse mapping — one MCP tool lists and shows; the name is its filter",
     "video i2v:end_image_deprecated": "deprecated alias retained for CLI compatibility only",
+    # The file-built create is ported; generating the images from prompts is not (#691):
+    # it spends image quota, and inline vs worker-enqueue (#481) and GFLOW_MCP_NO_SPEND
+    # are still undecided for it. These options only drive that generation.
+    "character create:face_prompt": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:body_prompt": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:model": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:format_prompt": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:locale": "GAP #691 — prompt-generated create not ported over MCP",
 }
 
 

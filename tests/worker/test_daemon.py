@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1045,3 +1046,121 @@ async def test_a_mint_failure_reaches_an_mcp_caller_as_problem_details(
     assert not error["detail"].startswith("sha256:")
     assert "Execution context was destroyed" in error["detail"]
     assert error["retryable"] is True
+
+
+@pytest.mark.asyncio
+async def test_character_bundles_in_the_payload_are_applied_after_the_project(
+    temp_db: DataStore, tmp_path: Path
+) -> None:
+    """#639 option C over MCP: `gflow_generate_image(characters=[...])` writes
+    ``payload["characters"]``; the worker must read that exact key (the #628 class) and
+    apply the bundles to the project it resolved, before the generation."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-characters",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "Nora reading", "count": 1, "characters": [str(tmp_path / "nora")]},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="t")
+    fake_client.generate_image.return_value = FakeGeneratedImage(media_name="media-1")
+
+    async def passthrough(_client: Any, _recorder: Any, req: Any, **kw: Any) -> Any:
+        passthrough.kw = kw  # type: ignore[attr-defined]
+        return req
+
+    with (
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+        patch("gflow_cli.services.character_portability.apply_character_bundles", passthrough),
+        patch("gflow_cli.services.character_portability.validate_bundles"),
+    ):
+        await worker.process_task(task)
+
+    kw = passthrough.kw  # type: ignore[attr-defined]
+    assert kw["bundles"] == (tmp_path / "nora",)
+    assert kw["project_id"] == "project-abc"
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_character_bundles_on_a_video_task_get_a_project_then_are_applied(
+    temp_db: DataStore, tmp_path: Path
+) -> None:
+    """#639 video: `gflow_generate_video(characters=[...])` writes ``payload["characters"]``.
+    A character is imported INTO a project, so with none named the worker creates one, then
+    applies every bundle to it before the generation — two characters, one clip."""
+    repo = QueueRepository(temp_db)
+    folders = [str(tmp_path / "nora"), str(tmp_path / "kael")]
+    task = repo.enqueue_task(
+        task_id="task-video-characters",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "Nora and Kael talk", "mode": "t2v", "characters": folders},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-v", title="t")
+    fake_client.generate_video.return_value = _completed_video_result("media-v")
+
+    async def passthrough(_client: Any, _recorder: Any, req: Any, **kw: Any) -> Any:
+        passthrough.kw = kw  # type: ignore[attr-defined]
+        return req
+
+    with (
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+        patch("gflow_cli.services.character_portability.apply_character_bundles", passthrough),
+        patch("gflow_cli.services.character_portability.validate_bundles"),
+    ):
+        await worker.process_task(task)
+
+    kw = passthrough.kw  # type: ignore[attr-defined]
+    assert kw["bundles"] == (tmp_path / "nora", tmp_path / "kael")
+    assert kw["project_id"] == "project-v"
+    assert fake_client.generate_video.await_args.kwargs["project_id"] == "project-v"
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bad_character_folder_fails_the_video_task_before_any_project(
+    temp_db: DataStore, tmp_path: Path
+) -> None:
+    """Council D7: the worker created a scratch project, THEN read the folder — a bad
+    folder left an empty project behind. It is read first now."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-video-bad-folder",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "x", "mode": "t2v", "characters": [str(tmp_path / "missing")]},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+    fake_client.create_project.assert_not_awaited()
+    fake_client.generate_video.assert_not_awaited()
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bad_character_folder_fails_the_image_task_before_any_project(
+    temp_db: DataStore, tmp_path: Path
+) -> None:
+    """CodeRabbit, PR #987: the image branch created the scratch project before reading
+    the folders. They are read first now, as on video."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-image-bad-folder",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "x", "count": 1, "characters": [str(tmp_path / "missing")]},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+    fake_client.create_project.assert_not_awaited()
+    fake_client.generate_image.assert_not_awaited()
+    worker.close()

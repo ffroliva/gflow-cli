@@ -230,12 +230,15 @@ def _url(value: Any) -> str | None:
     return value if isinstance(value, str) and value.startswith("https://") else None
 
 
-def _discovery_head(payload: Any) -> str:
+def discovery_head(payload: Any) -> str:
+    """A redacted, 200-char head of ``payload`` for a ``WireFormatError`` discovery."""
+    # Scrub the WHOLE payload, then slice: slicing first cut tokens into fragments
+    # shorter than any token pattern's floor, and those fragments survived.
     try:
-        head = json.dumps(payload)[:200]
+        text = json.dumps(payload)
     except (TypeError, ValueError):
-        head = repr(payload)[:200]
-    return redact_error_detail(_TOKEN_RE.sub("<token>", head))
+        text = repr(payload)
+    return redact_error_detail(_TOKEN_RE.sub("<token>", text))[:200]
 
 
 def generation_record(
@@ -272,7 +275,7 @@ def generation_record(
                 "a bug at https://github.com/ffroliva/gflow-cli/issues with this error."
             ),
             route=f"batchexecute:{rpcid}",
-            discovery={"rpcid": rpcid, "payload_head": _discovery_head(payload)},
+            discovery={"rpcid": rpcid, "payload_head": discovery_head(payload)},
         )
     status_cell = _as_list(_at(rec, 5, 8))
     status: Any = status_cell[0] if status_cell else None
@@ -286,6 +289,18 @@ def generation_record(
         poster_url=_url(_at(rec, 5, 10)),
         size_bytes=size if isinstance(size, int) else None,
     )
+
+
+def generation_records(rpcid: str, payload: Any) -> list[GenerationRecord]:
+    """Every generation record in a frame — a ``jwpduf`` poll can carry several clips.
+
+    Unlike :func:`generation_record`, finding none is not an error: the caller asks
+    "is there a new clip here?", and a poll about other clips answers no."""
+    records: list[GenerationRecord] = []
+    for node in _walk_lists(payload):
+        if _is_record(node):
+            records.append(generation_record(rpcid, node))
+    return records
 
 
 def image_records(rpcid: str, payload: Any) -> list[ImageGenerationRecord]:
@@ -360,6 +375,6 @@ def image_records(rpcid: str, payload: Any) -> list[ImageGenerationRecord]:
                 "([media_uuid, …, workflow_uuid, …, details-with-https-url]) in the reply"
             ),
             route=f"batchexecute:{rpcid}",
-            discovery={"rpcid": rpcid, "payload_head": _discovery_head(payload)},
+            discovery={"rpcid": rpcid, "payload_head": discovery_head(payload)},
         )
     return records

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.config import Settings
 
 # ---------------------------------------------------------------------------
 # Fixture loading
@@ -29,6 +30,7 @@ _RESP = json.loads((FIXTURES / "patch_entity_response.json").read_text())
 def _client_with_mock() -> tuple[FlowApiClient, AsyncMock]:
     """Return (client, mock) where mock captures every _patch_json call."""
     c = FlowApiClient.__new__(FlowApiClient)
+    c.settings = Settings()  # `auto`: the labs-era REST PATCH these tests pin (#639)
     c._page = None  # type: ignore[assignment]
     c._page_queue = None
     c._context = None

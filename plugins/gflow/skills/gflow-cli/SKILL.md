@@ -77,9 +77,10 @@ gflow run --config <batch.json> [--project ID]            # JSON image batch; a 
                                                           # --project (or "project" in the config) reuses an existing project
 # For accounts Flow serves flow.google.com (#639), t2i, i2i, and upscale are ported (a project is
 # created when --project is omitted, #864): i2i accepts local --ref files only, all
-# five aspects. Images take a character by name (@Name, or --reference-entity with
-# --reference-entity-name; #723). UUID references, an entity id without a name,
-# Imagen 4 (image4), image batch, and characters on video are refused there (exit 36).
+# five aspects. Images AND video (t2v/r2v) take characters by name (@Name,
+# --reference-entity with --reference-entity-name, or --character FOLDER, several per
+# clip; #723). UUID references, an entity id without a name, Imagen 4 (image4) and
+# image batch are refused there (exit 36).
 
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: omni-flash only; without --project a project is created first, on either host (#864); 10s is omni-flash-only
@@ -94,6 +95,16 @@ gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
 gflow character create --project <id> --name "<name>" --face-prompt "<prompt>" \
                        [--body-prompt "<prompt>"] [--voice <id>] [--personality "<text>"] \
                        [--model {nano2|nanopro}]
+gflow character create --project <id> --name "<name>" --image <face.jpg> \
+                       [--body-image <body.jpg>] [--voice <id>] [--personality "<text>"]
+                       # from your own files (flow.google.com): nothing generated, $0
+gflow character export --project <id> (--id <character-id> | --name "<name>") --out <folder>
+gflow character import <folder> --project <id> [--profile <account>] [--name "<new>"] [--voice <id>]
+                       # move a character to another project or account; $0, nothing generated
+gflow image t2i "<prompt>" --character <folder> [--project <id>] [--profile <account>]
+                       # generate straight from a character folder (reused by name, else imported)
+gflow video t2v "<prompt naming both>" --character <folder1> --character <folder2> [--project <id>]
+                       # several characters in one clip, the same way (t2v and r2v)
 gflow character list --project <id>
 gflow character show <character-id> --project <id>
 gflow character rm --project <id> (--id <character-id> | --name "<name>") [--yes]   # delete (FREE)
@@ -287,7 +298,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 3.5), `--model nano-pro` (Gem Pix 2), `--model nano2` (Narwhal) |
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
 | Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
-| `gflow video t2v`/`i2v`/`r2v` with an unported UUID/entity reference or model on an account served `flow.google.com` (exit 36) | Pass local files instead — migrated hosts support video t2v, local-file i2v/r2v, and image t2i/i2i (local refs, plus `@Character` mentions on images, #723) only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |
+| `gflow video t2v`/`i2v`/`r2v` with an unported UUID reference (or an entity id with no name) or model on an account served `flow.google.com` (exit 36) | Pass local files instead — migrated hosts support video t2v, local-file i2v/r2v, and image t2i/i2i (local refs, plus characters on images and t2v/r2v video, #723) only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |
 | Telling a user on `flow.google.com` whose run exits **25** to retry, switch profile or pass `--ui-mode classic` | Their account's composer is **agent-only** — no classic arm exists, so aspect/model/count are Agent-settings defaults and gflow has no driver for it (`retryable: false`, $0, pre-submit). Nothing in gflow reaches it; the Flow web UI still works ([#799](https://github.com/ffroliva/gflow-cli/issues/799)). Exit 25 on `labs.google` IS the retryable A/B cohort — check the host before advising |
 | Suggesting a native `batch` subcommand under `gflow video` | It doesn't exist — that stub never worked and was removed. Loop `gflow video t2v`/`i2v` from the shell for multi-clip runs (`gflow image batch manifest.tsv\|json` is the real, working batch command, but it's image-only) |
 

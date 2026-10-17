@@ -211,3 +211,34 @@ def test_anchors_are_structural_not_labels() -> None:
     assert "flow-projects-page" in mc.NEW_PROJECT_BUTTON
     assert "'add'" in mc.NEW_PROJECT_BUTTON or '"add"' in mc.NEW_PROJECT_BUTTON
     assert mc.PROJECT_TITLE_INPUT.startswith("flow-editable-text")
+
+
+class TestIsAt:
+    """Whether a page is ON a route — not under it (#639 option C, live 2026-10-16).
+
+    A prefix test accepted `/project/<id>/character/<eid>` as `/project/<id>`: after an
+    import left the page on a character editor, image generation drove the editor's
+    prompt box and misreported the account as agent-only (exit 25), and a project
+    rename would have typed into the CHARACTER's title field (same `flow-editable-text`).
+    """
+
+    _P = "https://flow.google.com/project/p1"
+
+    def test_the_route_itself_with_a_query_is_at_it(self) -> None:
+        from gflow_cli.api.transports.migrated_composer import is_at
+
+        assert is_at(self._P + "?pli=1", self._P)
+        assert is_at(self._P + "/", self._P)
+
+    def test_a_sub_route_is_not_at_it(self) -> None:
+        from gflow_cli.api.transports.migrated_composer import is_at
+
+        assert not is_at(self._P + "/character/e1", self._P)
+        assert not is_at(self._P + "/character", self._P)
+
+    def test_another_project_or_host_is_not_at_it(self) -> None:
+        from gflow_cli.api.transports.migrated_composer import is_at
+
+        assert not is_at("https://flow.google.com/project/p10", self._P)
+        assert not is_at("https://labs.google/project/p1", self._P)
+        assert not is_at("", self._P)
