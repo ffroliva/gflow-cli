@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An entity-bound submit that Flow queues without naming the clip is now followed through
   the app's own status poll instead of timing out. MCP:
   `gflow_generate_video(characters=[…])`. An entity id without a name still exits 36.
+- **A character lands where the prompt names it, on images and video (flow.google.com).**
+  Every character chip used to be inserted first and the whole prompt typed after them, so
+  `@Nora hands a croissant to @Mini` reached Flow as "[Nora] [Mini] Nora hands a croissant
+  to Mini". gflow now types the prompt up to each name, puts the chip there in place of the
+  name, and carries on; a character the prompt never names still goes in front. The prompt
+  Flow records reads exactly as written.
 - **`gflow character export` / `gflow character import` move a character to another
   project or another account** through a plain folder: `manifest.json` (name, voice,
   personality) plus its images at full size, naming no project, id, link or account.

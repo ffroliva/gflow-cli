@@ -521,3 +521,81 @@ def test_named_character_references_are_served_and_bare_ids_refused() -> None:
         _unported_form(_r2v(reference_entities=("ent-kael",), reference_entity_names=("Kael",)))
         is None
     )
+
+
+# --- characters land where the prompt names them (user report, 2026-10-17) ----------
+
+
+def test_each_character_is_placed_at_its_first_whole_word_mention() -> None:
+    from gflow_cli.api.transports.migrated_composer import place_mentions
+
+    placed, leading = place_mentions(
+        "Nora waves at Mini; Minion and Nora laugh", ("Mini", "Nora", "Kael")
+    )
+    assert placed == [(0, 4, "Nora"), (14, 18, "Mini")]
+    assert leading == ["Kael"]  # never named: it goes in front, as before
+
+
+async def test_a_character_chip_replaces_its_name_inside_the_prompt() -> None:
+    """User report: `@Nora waves at @Mini` put both chips at the START and appended the
+    prompt after them. Each chip must land where the prompt names it — the text before
+    it typed first, the chip replacing the name, then the rest."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeEntityPage(entities={"Nora": "ent-nora", "Mini": "ent-mini"})
+    committed = await MigratedComposer().attach_character_entities(
+        page,
+        entity_ids=("ent-nora", "ent-mini"),
+        names=("Nora", "Mini"),
+        prompt="In the cafe, Nora waves at Mini.",
+    )
+    assert committed == ("ent-nora", "ent-mini")
+    stream = [t for t in page.typed if not t.startswith("<Arrow")]
+    assert stream.index("In the cafe, ") < stream.index("Nora")
+    assert stream.index("Nora") < stream.index(" waves at ") < stream.index("Mini")
+    assert stream[-1] == "."
+    assert "In the cafe, Nora waves at Mini." not in page.typed  # never typed as a whole
+
+
+class _SpacedChipPage(FakeEntityPage):
+    """Live 2026-10-17: Flow puts a space after a committed chip (`Nora  hands`)."""
+
+    async def evaluate(self, script: str, _arg: Any = None) -> Any:
+        if "textContent" in script and "querySelector(sel)" in script:
+            return "… Nora "  # the composer text ends with the chip's own space
+        return await super().evaluate(script, _arg)
+
+
+async def test_the_space_flow_adds_after_a_chip_is_not_doubled() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _SpacedChipPage(entities={"Nora": "ent-nora", "Mini": "ent-mini"})
+    await MigratedComposer().attach_character_entities(
+        page, entity_ids=(), names=("Nora", "Mini"), prompt="A cafe. Nora hands it to Mini , ok"
+    )
+    assert "hands it to " in page.typed and " hands it to " not in page.typed
+    assert ", ok" in page.typed
+
+
+async def test_punctuation_after_a_chip_takes_back_flows_space() -> None:
+    """Live 2026-10-17: `Mini ,` — punctuation right after a name must not follow a space.
+    One Backspace, and only because the composer is seen to end with that space."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _SpacedChipPage(entities={"Mini": "ent-mini"})
+    await MigratedComposer().attach_character_entities(
+        page, entity_ids=(), names=("Mini",), prompt="Hello Mini, ok"
+    )
+    enter = page.typed.index("<Enter>")
+    assert page.typed[enter + 1 :] == ["<Backspace>", ", ok"]
+
+
+async def test_no_backspace_when_flow_added_no_space() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeEntityPage(entities={"Mini": "ent-mini"})
+    await MigratedComposer().attach_character_entities(
+        page, entity_ids=(), names=("Mini",), prompt="Hello Mini, ok"
+    )
+    enter = page.typed.index("<Enter>")
+    assert page.typed[enter + 1 :] == [", ok"]  # no Backspace after the chip

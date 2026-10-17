@@ -85,6 +85,11 @@ On an account Flow serves from `flow.google.com`, `image t2i` / `image i2i` and 
 2026-10-17 — `video t2v` / `video r2v` take a character mention (`@Name`,
 `--reference-entity` with `--reference-entity-name`, or `--character FOLDER`) through the
 composer's own `@` picker, and every chip is verified to be that character before submit.
+**Each chip lands where the prompt names the character** — `A cafe. @Nora hands a croissant
+to @Mini, smiling` types "A cafe. ", the Nora chip, " hands a croissant to ", the Mini chip,
+", smiling" — so the prompt reads as written (2026-10-17). A character attached with
+`--character` / `--reference-entity` is placed at the first time the prompt names it, with
+or without `@`; one the prompt never names goes in front.
 **Several characters can share one clip:** two characters per clip, measured on 6 of 6 clips
 (4 in a 32 s café dialogue plus both video e2e scenarios). A character given by entity id
 **without** a name has nothing to type into the picker and still exits 36. An entity-bound
