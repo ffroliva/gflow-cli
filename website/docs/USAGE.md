@@ -1355,7 +1355,7 @@ gflow character import nora/ --project <B> --profile personal
 
 The folder holds `manifest.json` (name, voice, personality, and each image's file, sha256
 and type) next to `portrait.<ext>` and an optional `body.<ext>`, downloaded at full size.
-It names **no** project, character id, link or account, so it is safe to share. `--out`
+It names **no** project, character id, link or account, but it does hold the character's full-size images, name, voice and personality: review it before sharing. `--out`
 must not exist or be empty (checked before Flow is read).
 
 `import` treats the folder as untrusted. It refuses, with exit **11** and before
