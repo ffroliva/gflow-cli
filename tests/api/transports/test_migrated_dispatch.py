@@ -581,3 +581,26 @@ async def test_run_video_types_the_prompt_with_the_characters_in_place(
         )
     assert calls == ["attach:('Nora',):In the cafe, Nora waves"]
     composer.send_prompt.assert_not_awaited()
+
+
+async def test_run_video_attaches_a_character_given_by_name_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR #987 review: `run_video` checked only the ids, so a name with no id (the `@Name`
+    form) attached nothing and the prompt went out without its character."""
+    from unittest.mock import AsyncMock
+
+    from gflow_cli.api.transports import migrated_composer as mc
+
+    composer = MagicMock()
+    composer.ensure_editor = AsyncMock()
+    composer.apply_video_settings = AsyncMock()
+    composer.attach_character_entities = AsyncMock(return_value=("ent-nora",))
+    composer.send_prompt = AsyncMock()
+    composer.submit_and_observe = AsyncMock(side_effect=RuntimeError("stop at submit"))
+    monkeypatch.setattr(mc, "MigratedComposer", lambda **_: composer)
+
+    with pytest.raises(RuntimeError, match="stop at submit"):
+        await _run(_req(prompt="Nora waves", reference_entity_names=("Nora",)))
+    composer.attach_character_entities.assert_awaited_once()
+    composer.send_prompt.assert_not_awaited()

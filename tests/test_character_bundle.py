@@ -7,6 +7,7 @@ docs/superpowers/plans/2026-10-16-character-portability/SCENARIO.md.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -116,6 +117,25 @@ class TestReadRefusals:
         with pytest.raises(ConfigurationError, match="manifest"):
             read_bundle(tmp_path / "empty")
 
+    def test_a_refusal_hints_at_the_folder_not_at_transports(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigurationError) as exc:
+            read_bundle(tmp_path)
+        hint = exc.value.remediation_hint or ""
+        assert "character export" in hint and "transport" not in hint
+
+    def test_an_oversized_manifest(self, tmp_path: Path) -> None:
+        bundle = _write(tmp_path)
+        (bundle / "manifest.json").write_text(" " * (64 * 1024 + 1), encoding="utf-8")
+        with pytest.raises(ConfigurationError, match="larger than 64 KB"):
+            read_bundle(bundle)
+
+    def test_a_deeply_nested_manifest_is_refused_not_a_crash(self, tmp_path: Path) -> None:
+        """PR #987 review: 100k `[` raised RecursionError (exit 1) instead of exit 11."""
+        bundle = _write(tmp_path)
+        (bundle / "manifest.json").write_text("[" * 60_000, encoding="utf-8")
+        with pytest.raises(ConfigurationError, match="not valid"):
+            read_bundle(bundle)
+
     def test_an_unknown_schema_version(self, tmp_path: Path) -> None:
         bundle = _write(tmp_path)
         _rewrite(bundle, schema_version=2)
@@ -128,7 +148,21 @@ class TestReadRefusals:
         data = _manifest(bundle)
         data["images"][0]["file"] = escape  # type: ignore[index]
         (bundle / "manifest.json").write_text(json.dumps(data), encoding="utf-8")
-        with pytest.raises(ConfigurationError):
+        with pytest.raises(ConfigurationError, match="bare file name"):
+            read_bundle(bundle)
+
+    def test_an_escape_to_a_real_file_with_a_matching_digest(self, tmp_path: Path) -> None:
+        """The guard, not a later check, refuses it: the file exists and its sha256
+        matches, so only the bare-file-name rule stands between it and an upload."""
+        bundle = _write(tmp_path)
+        outside = bundle.parent / "outside.jpg"
+        outside.write_bytes(_img(color=(9, 9, 9)))
+        data = _manifest(bundle)
+        entry = data["images"][0]  # type: ignore[index]
+        entry["file"] = "../outside.jpg"  # type: ignore[index]
+        entry["sha256"] = hashlib.sha256(outside.read_bytes()).hexdigest()  # type: ignore[index]
+        (bundle / "manifest.json").write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(ConfigurationError, match="bare file name"):
             read_bundle(bundle)
 
     def test_a_symlinked_image(self, tmp_path: Path) -> None:
@@ -136,7 +170,10 @@ class TestReadRefusals:
         secret = tmp_path / "secret.jpg"
         secret.write_bytes(_img())
         (bundle / "portrait.jpg").unlink()
-        (bundle / "portrait.jpg").symlink_to(secret)
+        try:
+            (bundle / "portrait.jpg").symlink_to(secret)
+        except OSError:  # Windows without the symlink privilege (WinError 1314)
+            pytest.skip("symlink creation not permitted in this environment")
         with pytest.raises(ConfigurationError, match="link"):
             read_bundle(bundle)
 

@@ -8,11 +8,12 @@
 > built **greenfield off `develop`, NOT stacked on #123** (that branch is CONFLICTING and likeness-specific;
 > see [Design decisions](#11-design-decisions-post-predict)).
 
-> **Shipped scope:** `gflow character create` + `list` + `show` + `voices` + `rm`. Name-based reuse via
-> `@Name` prompt mentions is **shipped** (v0.40.0, [#344](https://github.com/ffroliva/gflow-cli/issues/344))
-> for both `image` and `video` paths — see [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md). An explicit
-> `--character <id>` **flag** on `gflow video` (a separate, repeatable-ref delivery mechanism) remains
-> **not yet implemented** — see [Backlog](#14-backlog--not-yet-implemented).
+> **Shipped scope:** `gflow character create` (from a prompt, or `--image` from local files) + `list` +
+> `show` + `voices` + `rm` + `export` + `import` (§5b). Name-based reuse via `@Name` prompt mentions is
+> **shipped** (v0.40.0, [#344](https://github.com/ffroliva/gflow-cli/issues/344)) for both `image` and
+> `video` paths — see [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md). `--character FOLDER` (repeatable)
+> on `image t2i|i2i` and `video t2v|r2v` generates straight from an exported folder (§5b). An id-based
+> `--character <id>` flag is not built; `--reference-entity <id>` is the id form.
 
 > **Status (2026-06-02, LIVE-VERIFIED):** the create saga + character-editor UI generation are **shipped**
 > and verified end-to-end on my-profile (face + front/side/back triptych body, both reference slots bound,
@@ -170,7 +171,8 @@ gflow character import nora/ --project <B> --profile personal   # any project, a
 ```
 
 The folder (`manifest.json` + `portrait.<ext>` [+ `body.<ext>`]) carries the name, voice,
-personality and full-size images, and **no** project, character id, link or account. Import
+personality and full-size images, and **no** project, character id, link or account. That
+is the character's likeness, so review the folder before sharing it. Import
 validates it offline, checks the voice against the target account's live catalog, then
 rebuilds the character exactly like `create --image`. Identity carries over: a character
 imported onto a second account rendered as the same person in an `@Name` image and in a

@@ -897,7 +897,7 @@ async def gflow_generate_image(
             )
 
     if characters:
-        # Before anything is imported (CodeRabbit, PR #987; the CLI checks the same).
+        # Before anything is imported (the CLI checks the same).
         from gflow_cli.api.image import Model as ImageModel
         from gflow_cli.api.image import reference_cap_for
 
@@ -1667,7 +1667,9 @@ async def gflow_character_create(
         "Export a Flow CHARACTER (by entity_id or exact name) to a bundle folder: "
         "manifest.json (name, voice, personality) plus its images at full size. The "
         "bundle names no project, character id or account, so it can be imported into "
-        "any project on any profile with gflow_character_import. Spends no credits. "
+        "any project on any profile with gflow_character_import. It does hold the "
+        "character's likeness (images, name, voice, personality): review it before "
+        "sharing it. Spends no credits. "
         "`out` is a folder path on the machine running this MCP server; it must not "
         "exist or be empty. Drives a browser session (flow.google.com)."
     ),

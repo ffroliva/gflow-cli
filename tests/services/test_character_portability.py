@@ -284,3 +284,29 @@ class TestApplySameNameTwice:
 
         create.assert_not_awaited()
         assert req.reference_entities == (NORA.entity_id,)
+
+
+class TestApplyChecksEveryVoiceFirst:
+    async def test_a_later_folder_with_an_unoffered_voice_imports_nothing(
+        self, tmp_path: Path, create: AsyncMock
+    ) -> None:
+        """PR #987 review: voices were checked one import at a time, so the second folder's
+        refusal came after the first folder's character already existed."""
+        nora = _bundle(tmp_path)
+        kael = tmp_path / "kael"
+        write_bundle(
+            kael, name="Kael", voice="Nobody", personality=None, images=[("portrait", _jpeg())]
+        )
+
+        with pytest.raises(ConfigurationError, match=r"Kael \(Nobody\)"):
+            await _apply(tmp_path, _apply_client([]), _req(), nora, kael)
+        create.assert_not_awaited()
+
+    async def test_a_reused_character_is_not_held_to_its_folder_voice(
+        self, tmp_path: Path, create: AsyncMock
+    ) -> None:
+        bundle = _bundle(tmp_path, voice="Nobody")
+        client = _apply_client([NORA])
+
+        await _apply(tmp_path, client, _req(), bundle)
+        client.list_voices.assert_not_awaited()

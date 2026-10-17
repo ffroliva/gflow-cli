@@ -33,7 +33,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from gflow_cli.errors import ConfigurationError
-from gflow_cli.image_files import MAX_IMAGE_BYTES, image_extension, image_kind
+from gflow_cli.image_files import MAX_IMAGE_BYTES, image_kind
+from gflow_cli.paths import extension_from_magic
 
 SCHEMA_VERSION = 1
 MANIFEST = "manifest.json"
@@ -41,6 +42,8 @@ ROLES = ("portrait", "body")
 MAX_NAME_CHARS = 100
 MAX_PERSONALITY_CHARS = 2000
 MAX_VOICE_CHARS = 40
+#: A real manifest is well under 4 KB; the cap keeps a hostile one from being parsed at all.
+MAX_MANIFEST_BYTES = 64 * 1024
 
 _MIME = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
 # Bidi embeddings/overrides/isolates and marks, zero-width characters and BOM: invisible,
@@ -69,7 +72,15 @@ class CharacterBundle:
 
 
 def _refuse(bundle: Path, what: str) -> ConfigurationError:
-    return ConfigurationError(detail=f"character bundle {bundle}: {what}")
+    # Its own hint: ConfigurationError's default is about transport names.
+    return ConfigurationError(
+        detail=f"character bundle {bundle}: {what}",
+        remediation_hint=(
+            "A character folder is what `gflow character export` writes: manifest.json "
+            "plus portrait.<ext> and an optional body.<ext>. Re-export it, or pass an "
+            "empty or new folder to write one."
+        ),
+    )
 
 
 def _clean(text: str, *, multiline: bool) -> str:
@@ -117,7 +128,7 @@ def write_bundle(
     entries: list[dict[str, str]] = []
     files: list[tuple[str, bytes]] = []
     for role, body in images:
-        ext = image_extension(body[:12])
+        ext = extension_from_magic(body[:12])
         kind = image_kind(body[:12])
         if role not in ROLES or ext is None or kind is None:
             raise _refuse(out, f"the {role} image is not a PNG, JPEG, WebP or GIF")
@@ -183,9 +194,12 @@ def read_bundle(bundle: Path) -> CharacterBundle:
     manifest = bundle / MANIFEST
     if not manifest.is_file() or manifest.is_symlink():
         raise _refuse(bundle, f"no {MANIFEST} (is this an exported character folder?)")
+    if manifest.stat().st_size > MAX_MANIFEST_BYTES:
+        raise _refuse(bundle, f"{MANIFEST} is larger than {MAX_MANIFEST_BYTES // 1024} KB")
     try:
         data = json.loads(manifest.read_text(encoding="utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
+    except (ValueError, UnicodeDecodeError, RecursionError) as exc:
+        # RecursionError: a deeply nested array, which json.loads cannot parse.
         raise _refuse(bundle, f"{MANIFEST} is not valid UTF-8 JSON") from exc
     if not isinstance(data, dict):
         raise _refuse(bundle, f"{MANIFEST} is not an object")

@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
+from gflow_cli._cli_helpers import _exit_code_for  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api.transports import migrated_character as mc
 from gflow_cli.errors import (
     ConfigurationError,
@@ -58,6 +59,16 @@ class _Page:
     async def wait_for_url(self, *_: Any, **__: Any) -> None:
         if self.wait_url_error:
             raise self.wait_url_error
+
+
+@pytest.fixture(autouse=True)
+def _no_characters_yet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The project read before a create: an empty project unless a test says otherwise."""
+
+    async def none(*_: Any) -> set[str]:
+        return set()
+
+    monkeypatch.setattr(mc, "_character_ids", none)
 
 
 def _create_reply() -> list[Any]:
@@ -191,6 +202,65 @@ class TestLostCreateReply:
         with pytest.raises(WireFormatError, match="created no character"):
             await mc.create_from_files(_Page(), PID, name="Nora", portrait=tmp_path / "p.png")  # type: ignore[arg-type]
         assert attempts == [1, 1]
+
+
+class TestBothCreateRepliesLost:
+    """PR #987 review: with `C4BZMd` AND `maseQ` lost, a blind retry uploads the portrait
+    again and makes a second character. The project is re-read first."""
+
+    async def test_a_character_the_project_gained_is_adopted_not_recreated(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        page = _Page()
+        page.editor_error = PlaywrightTimeoutError("stop after recovery")
+        uploads: list[int] = []
+        reads = iter([{"old"}, {"old", EID}])
+
+        async def no_reply(*_: Any, **__: Any) -> dict[str, Any]:
+            uploads.append(1)
+            return {}
+
+        async def ids(*_: Any) -> set[str]:
+            return next(reads)
+
+        monkeypatch.setattr(mc, "_rpc_replies", no_reply)
+        monkeypatch.setattr(mc, "_character_ids", ids)
+        with pytest.raises(UiSelectorDriftError) as exc:  # stops at the next step, by design
+            await mc.create_from_files(page, PID, name="Nora", portrait=tmp_path / "p.png")  # type: ignore[arg-type]
+        assert uploads == [1]
+        assert EID in (exc.value.remediation_hint or "")
+
+    async def test_two_new_characters_are_refused_not_added_to(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        reads = iter([set(), {"a", "b"}])
+
+        async def no_reply(*_: Any, **__: Any) -> dict[str, Any]:
+            return {}
+
+        async def ids(*_: Any) -> set[str]:
+            return next(reads)
+
+        monkeypatch.setattr(mc, "_rpc_replies", no_reply)
+        monkeypatch.setattr(mc, "_character_ids", ids)
+        with pytest.raises(WireFormatError, match="gained 2 characters"):
+            await mc.create_from_files(_Page(), PID, name="Nora", portrait=tmp_path / "p.png")  # type: ignore[arg-type]
+
+
+class TestDriftBeforeTheCreate:
+    async def test_a_browser_timeout_before_the_create_is_drift_with_nothing_orphaned(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """PR #987 review, must-fix 4: it ended in the unhandled-error path, exit 1."""
+
+        async def chooser_timeout(*_: Any, **__: Any) -> dict[str, Any]:
+            raise PlaywrightTimeoutError("Timeout 15000ms exceeded waiting for filechooser")
+
+        monkeypatch.setattr(mc, "_rpc_replies", chooser_timeout)
+        with pytest.raises(UiSelectorDriftError, match="before the character was created") as exc:
+            await mc.create_from_files(_Page(), PID, name="Nora", portrait=tmp_path / "p.png")  # type: ignore[arg-type]
+        assert _exit_code_for(exc.value) == 23
+        assert "does not delete" not in (exc.value.remediation_hint or "")
 
 
 class _VoicePage(_Page):
@@ -407,3 +477,45 @@ class TestRouteNotFollowedAfterCreate:
         monkeypatch.setattr(mc, "_rpc_replies", replies)
         with pytest.raises(UiSelectorDriftError, match="reached the editor"):
             await mc.create_from_files(page, PID, name="Nora", portrait=tmp_path / "p.png")  # type: ignore[arg-type]
+
+
+class TestPatchDrift:
+    async def test_a_control_that_never_appears_is_drift_not_an_unhandled_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PR #987 review, must-fix 4: `patch_character` on its own (`character create`
+        without `--image`, the MCP patch) let a Playwright timeout reach exit 1."""
+
+        async def never_loads(*_: Any, **__: Any) -> None:
+            raise PlaywrightTimeoutError("Timeout 30000ms exceeded")
+
+        async def nothing(*_: Any, **__: Any) -> None:
+            return None
+
+        monkeypatch.setattr(mc, "_wait_form_loaded", never_loads)
+        monkeypatch.setattr(mc, "_clear_overlays", nothing)
+        monkeypatch.setattr(mc, "_settle", nothing)
+        with pytest.raises(UiSelectorDriftError, match="while editing the character") as exc:
+            await mc.patch_character(_Page(), PID, EID, name="Nora")  # type: ignore[arg-type]
+        assert _exit_code_for(exc.value) == 23
+
+
+class TestProjectReadRetry:
+    async def test_an_unanswered_project_load_is_reloaded_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.api.transports import migrated_composer
+        from gflow_cli.errors import TransportTimeoutError
+
+        calls: list[int] = []
+
+        async def flaky(*_: Any, **__: Any) -> Any:
+            calls.append(1)
+            if len(calls) == 1:
+                raise TransportTimeoutError(detail="no Zzl0ze within 45s")
+            return []
+
+        monkeypatch.setattr(migrated_composer, "rpc_reply", flaky)
+        monkeypatch.setattr(mc, "parse_project_read", lambda _: mc.ProjectRead((), (), {}))
+        read = await mc.read_project(_Page(), PID)  # type: ignore[arg-type]
+        assert calls == [1, 1] and read.characters == ()

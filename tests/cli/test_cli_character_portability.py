@@ -56,6 +56,26 @@ def test_export_writes_and_reports_the_bundle(tmp_path: Path) -> None:
     }
 
 
+def test_export_prints_a_bracketed_name_and_the_sharing_warning(tmp_path: Path) -> None:
+    """PR #987 review: Rich read `[Nora]` as markup and printed nothing for it."""
+    out = tmp_path / "nora"
+    bundle = CharacterBundle(
+        root=out,
+        name="[Nora]",
+        voice=None,
+        personality=None,
+        images=(BundleImage("portrait", out / "portrait.jpg", "ab" * 32, "image/jpeg"),),
+    )
+    a, b, c, d, e = _env(tmp_path)
+    with a, b, c, d, e, patch(f"{_M}.export_character", new=AsyncMock(return_value=bundle)):
+        res = CliRunner().invoke(
+            character, ["export", "--project", "p1", "--name", "[Nora]", "--out", str(out)]
+        )
+    assert res.exit_code == 0, res.output
+    assert "'[Nora]'" in res.output
+    assert "before sharing" in res.output  # Rich wraps at 80 columns
+
+
 def test_export_needs_exactly_one_of_id_or_name(tmp_path: Path) -> None:
     for args in ([], ["--id", "e1", "--name", "Nora"]):
         res = CliRunner().invoke(

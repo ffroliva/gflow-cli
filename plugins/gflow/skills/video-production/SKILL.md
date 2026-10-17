@@ -71,7 +71,7 @@ The plan changes completely with the answers. Ask, or read them from the brief; 
 | Is audio generated, added later, or discarded? | Veo always generates audio **[CONSTRAINT]** — see below |
 | Captions: none, burned-in, or a sidecar file? | burned-in needs `libass` and a timing source |
 | One location or several? How many camera angles each? | drives the plate-chaining work in `consistency.md` |
-| Recurring people? How many in frame at once? | one face-bearing reference per generation on labs.google **[CONSTRAINT]**; several characters per clip on flow.google.com **[MEASURED]** |
+| Recurring people? How many in frame at once? | one face-bearing reference per generation on labs.google **[CONSTRAINT]**; several characters per clip on flow.google.com **[CALIBRATED, 6/6 two-character clips]** |
 | A prop that must not change? | needs its own sheet with a scale anchor |
 | Aspect, total length, credit ceiling | 16:9 or 9:16; clips are 4/6/8, or 10 on omni-flash |
 | One-off, or a repeatable pipeline? | decides the production shape in `composition.md` |
@@ -85,7 +85,7 @@ Load `https://labs.google/fx/tools/flow/project/<id>` in the profile's Chrome an
 | Lands on | Lane | What runs there |
 |---|---|---|
 | `labs.google/fx/…` | **A, full** | everything |
-| `flow.google.com/project/…` | **B, partial** | `video t2v --project`, `video i2v --initial-frame <local file> --project`, **`video r2v --ref <local file> --project`** (ported in v0.70.0, #683), and **`image t2i` / `image i2i` with local `--ref` files (#639)**, and **`video extend` for ONE segment** (#882; `-n` > 1, `--scene`/`--resume-from`, `--seed` and an `--aspect` other than the source's exit 36). `character create` worked there from v0.70.0 until its labs route was retired: since 2026-10-14 it exits 7 on a profile served flow.google.com. Everything else — `image batch`, multi-segment `extend`, `scene create`, `movie run`, r2v by a media `@Name`, a character id with no name, i2v by media UUID / `@Name`, and Imagen 4 — exits 36 **[CONSTRAINT]**. Characters on `t2v` / `r2v` (`@Name`, `--reference-entity` + `--reference-entity-name`, `--character`) ARE ported (2026-10-17). A **local** `--end-frame` IS ported (start+end interpolation, #639) |
+| `flow.google.com/project/…` | **B, partial** | `video t2v --project`, `video i2v --initial-frame <local file> --project`, **`video r2v --ref <local file> --project`** (ported in v0.70.0, #683), and **`image t2i` / `image i2i` with local `--ref` files (#639)**, and **`video extend` for ONE segment** (#882; `-n` > 1, `--scene`/`--resume-from`, `--seed` and an `--aspect` other than the source's exit 36). `character create --face-prompt` worked there from v0.70.0 until its labs route was retired: since 2026-10-14 it exits 7 on a profile served flow.google.com. `character create --image` from local files, and `export` / `import` to move one between projects and accounts, work there (2026-10-17). Everything else — `image batch`, multi-segment `extend`, `scene create`, `movie run`, r2v by a media `@Name`, a character id with no name, i2v by media UUID / `@Name`, and Imagen 4 — exits 36 **[CONSTRAINT]**. Characters on `t2v` / `r2v` (`@Name`, `--reference-entity` + `--reference-entity-name`, `--character`) ARE ported (2026-10-17). A **local** `--end-frame` IS ported (start+end interpolation, #639) |
 
 Lane B grows as forms are ported, so **confirm the row rather than trusting it**: the
 maintained list is [CONFIGURATION § `GFLOW_CLI_FLOW_HOST`](https://github.com/ffroliva/gflow-cli/blob/main/docs/CONFIGURATION.md#gflow_cli_flow_host)
@@ -217,7 +217,7 @@ gflow video t2v "<prompt>" --project "$PROJECT" \
 
 One face-bearing reference per generation **[CONSTRAINT on labs.google]** — so there, in a
 two-hander, bind the person who **speaks** and carry the other in prose. **On an account
-served flow.google.com, two characters per clip worked [MEASURED, 6/6 clips, 2026-10-17]:**
+served flow.google.com, two characters per clip worked [CALIBRATED, 6/6 clips, 2026-10-17]:**
 `--character a/ --character b/` (or two `--reference-entity` + `--reference-entity-name`
 pairs) attached both, verified as character chips, and a 4-beat café dialogue kept both
 identities across every shot with each line transcribed word for word. Bind both there. Getting that backwards is what produced

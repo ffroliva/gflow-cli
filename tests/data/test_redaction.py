@@ -93,7 +93,7 @@ class TestBatchexecuteSecrets:
     """
 
     _RECAPTCHA = "0cAFcWeA" + "x1Y_-z" * 60
-    _AT = "AFabcdefgh1ijkl-2mnop34qrstuv:1792169933390"
+    _AT = "AFfakeXSRF1fake-2fake34fakefake:1000000000000"  # obviously fake
 
     def test_a_recaptcha_enterprise_token_is_scrubbed(self) -> None:
         out = redact_error_detail(f'maseQ body [null,22,[\\"{self._RECAPTCHA}\\",1]]')
@@ -103,14 +103,14 @@ class TestBatchexecuteSecrets:
     def test_the_at_xsrf_value_is_scrubbed_plain_and_url_encoded(self) -> None:
         encoded = self._AT.replace(":", "%3A")
         out = redact_error_detail(f"f.req=...&at={encoded}& and at={self._AT}")
-        assert "1792169933390" not in out
-        assert "AFabcdefgh" not in out
+        assert "1000000000000" not in out
+        assert "AFfakeXSRF" not in out
         assert out.count("<redacted:token>") == 2
 
     def test_an_asb_capability_link_is_scrubbed(self) -> None:
-        url = "https://lh3.googleusercontent.com/asb/ANqvLObwcoie5iuCcd9wlNLSE-c_AgtP"
+        url = "https://lh3.googleusercontent.com/asb/ANfakeASBlink0000-fake_0000"
         out = redact_error_detail(f"download {url}=s0 failed")
-        assert "ANqvLOb" not in out
+        assert "ANfakeASB" not in out
         assert out == "download <redacted:url> failed"
 
     def test_a_long_token_cut_by_a_head_window_is_still_scrubbed(self) -> None:

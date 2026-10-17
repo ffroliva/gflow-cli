@@ -12,9 +12,6 @@ from __future__ import annotations
 # endpoint from DoS-shaped traffic.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
 
-# Extension per accepted container; every one is accepted by Flow's web UI.
-_EXTENSIONS = {"png": ".png", "jpeg": ".jpg", "webp": ".webp", "gif": ".gif"}
-
 
 def image_kind(header: bytes) -> str | None:
     """The image container ``header`` (a file's first 12 bytes) starts, or ``None``.
@@ -39,9 +36,3 @@ def image_kind(header: bytes) -> str | None:
     if header[:6] in (b"GIF87a", b"GIF89a"):
         return "gif"
     return None
-
-
-def image_extension(header: bytes) -> str | None:
-    """The file extension for the container ``header`` starts (``.jpg`` for JPEG)."""
-    kind = image_kind(header)
-    return _EXTENSIONS[kind] if kind else None

@@ -996,7 +996,7 @@ def t2i(  # NOSONAR
         raise click.UsageError(msg)
 
     # Counted before any browser, as i2i does: past the model's cap, the DTO refused only
-    # after every absent character had been imported (CodeRabbit, PR #987).
+    # after every absent character had been imported.
     cap = reference_cap_for(Model.from_cli(model))
     n_refs = len(reference_entities) + len(characters)
     if n_refs > cap:

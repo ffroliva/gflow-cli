@@ -584,10 +584,13 @@ class FakePage:
         self.scripted_request: tuple[str | None, str] | None = (
             None  # (rpcid, body); None = bare URL
         )
+        self.goto_responses: list[tuple[str, str]] = []  # fired on navigation
 
     async def goto(self, url: str, **_: Any) -> None:
         self.gotos.append(url)
         self.url = url
+        for reply_url, text in self.goto_responses:
+            self._fire_response(FakeResponse(reply_url, text))
 
     def on(self, event: str, handler: Any) -> None:
         self._handlers[event].append(handler)
@@ -3645,10 +3648,21 @@ def _other_record(status: int) -> list[Any]:
     return rec
 
 
+def _knowing(*clips: str) -> Any:
+    """A composer whose project load listed ``clips`` (the `Zzl0ze` read, PR #987)."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    composer = MigratedComposer()
+    composer._known_clips = set(clips)  # pyright: ignore[reportPrivateUsage]
+    return composer
+
+
+OTHER_WORKFLOW = "44444444-4444-4444-8444-444444444444"
+
+
 async def test_a_queued_submit_adopts_the_new_clip_its_status_poll_names() -> None:
     """#723 Task 6b: `MZZa6b` answered `[5]` with no record while Flow ran the clip. The
     clip already pending before that reply is never adopted; the new one is."""
-    from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = FakePage()
     page.dom.prompt = "a crane"
@@ -3662,7 +3676,7 @@ async def test_a_queued_submit_adopts_the_new_clip_its_status_poll_names() -> No
         (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
     ]
     started: list[Any] = []
-    rec = await MigratedComposer().submit_and_observe(
+    rec = await _knowing().submit_and_observe(
         page, poll_timeout_s=2.0, on_started=started.append, project_id=None
     )
     assert rec.is_done and rec.media_id == MEDIA and rec.video_url == VIDEO_URL
@@ -3670,14 +3684,13 @@ async def test_a_queued_submit_adopts_the_new_clip_its_status_poll_names() -> No
 
 
 async def test_a_queued_submit_no_poll_names_is_a_timeout_that_warns_of_billing() -> None:
-    from gflow_cli.api.transports.migrated_composer import MigratedComposer
     from gflow_cli.errors import TransportTimeoutError
 
     page = FakePage()
     page.dom.prompt = "a crane"
     page.scripted_responses = [(_batch_url("MZZa6b"), _queued_frame("MZZa6b"))]
     with pytest.raises(TransportTimeoutError, match="queued") as exc:
-        await MigratedComposer().submit_and_observe(
+        await _knowing().submit_and_observe(
             page, poll_timeout_s=0.5, on_started=None, project_id=None
         )
     assert "bill twice" in (exc.value.remediation_hint or "")
@@ -3704,7 +3717,6 @@ def _foreign_project_record(status: int) -> list[Any]:
 async def test_a_queued_submit_adopts_nothing_it_cannot_prove_is_its_own(
     label: str, poll: list[Any]
 ) -> None:
-    from gflow_cli.api.transports.migrated_composer import MigratedComposer
     from gflow_cli.errors import TransportTimeoutError
 
     page = FakePage()
@@ -3715,13 +3727,12 @@ async def test_a_queued_submit_adopts_nothing_it_cannot_prove_is_its_own(
     ]
     project = "22222222-2222-4222-8222-222222222222"  # the project `_record` names
     with pytest.raises(TransportTimeoutError, match="queued"):
-        await MigratedComposer().submit_and_observe(
+        await _knowing().submit_and_observe(
             page, poll_timeout_s=0.5, on_started=None, project_id=project
         )
 
 
 async def test_a_queued_submit_in_its_project_adopts_its_running_clip() -> None:
-    from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = FakePage()
     page.dom.prompt = "a crane"
@@ -3730,10 +3741,89 @@ async def test_a_queued_submit_in_its_project_adopts_its_running_clip() -> None:
         (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[_record(2)]]])),
         (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
     ]
-    rec = await MigratedComposer().submit_and_observe(
+    rec = await _knowing().submit_and_observe(
         page,
         poll_timeout_s=2.0,
         on_started=None,
         project_id="22222222-2222-4222-8222-222222222222",
     )
     assert rec.media_id == MEDIA and rec.is_done
+
+
+async def test_a_queued_submit_never_adopts_a_clip_the_project_already_held() -> None:
+    """PR #987 review, must-fix 1: Flow's poll is a fixed 5 s timer, so often no poll
+    lands between the click and the `[5]` reply. A clip of this project still running
+    from an earlier run is then the only "fresh" record — the project load lists it."""
+    from gflow_cli.errors import TransportTimeoutError
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _queued_frame("MZZa6b")),
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[_other_record(2)]]])),
+    ]
+    project = "22222222-2222-4222-8222-222222222222"
+    with pytest.raises(TransportTimeoutError, match="queued"):
+        await _knowing(OTHER_WORKFLOW).submit_and_observe(
+            page, poll_timeout_s=0.5, on_started=None, project_id=project
+        )
+
+
+async def test_a_queued_submit_adopts_nothing_when_the_clip_list_was_missed() -> None:
+    """No project read, no baseline: the run says so at once rather than guess or wait
+    out the whole generation budget."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import TransportTimeoutError
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _queued_frame("MZZa6b")),
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[_record(2)]]])),
+    ]
+    with pytest.raises(TransportTimeoutError, match="clip list was not read"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=60.0, on_started=None, project_id=None
+        )
+
+
+async def test_an_error_envelope_other_than_code_5_is_not_a_queued_submit() -> None:
+    from gflow_cli.errors import TransportTimeoutError
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    frame = [["wrb.fr", "MZZa6b", None, None, None, [3], "generic"]]
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), ")]}'\n\n10\n" + json.dumps(frame) + "\n"),
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[_record(2)]]])),
+    ]
+    with pytest.raises(TransportTimeoutError) as exc:
+        await _knowing().submit_and_observe(
+            page, poll_timeout_s=0.5, on_started=None, project_id=None
+        )
+    assert "queued" not in exc.value.detail
+
+
+async def test_a_video_run_records_the_clips_the_project_load_lists() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage(url="https://flow.google.com/project/p1")
+    page.goto_responses = [
+        (_batch_url("Zzl0ze"), _frame("Zzl0ze", [None, [[_other_record(3)], [_record(2)]]]))
+    ]
+    composer = MigratedComposer()
+    await composer.ensure_editor(page, "p1", known_clips=True)
+    # Already on the project, and still reloaded: the list is read from the load.
+    assert page.gotos == ["https://flow.google.com/project/p1"]
+    assert composer._known_clips == {OTHER_WORKFLOW, _record(2)[0]}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_missed_project_load_reply_leaves_no_clip_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(migrated_composer, "KNOWN_CLIPS_WAIT_S", 0.05)
+    composer = MigratedComposer()
+    await composer.ensure_editor(FakePage(), "p1", known_clips=True)
+    assert composer._known_clips is None  # pyright: ignore[reportPrivateUsage]

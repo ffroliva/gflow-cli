@@ -743,7 +743,8 @@ def test_a_body_image_needs_a_portrait_image(tmp_path: Path) -> None:
 
 def test_generation_only_flags_are_refused_with_files(tmp_path: Path) -> None:
     face = _jpeg(tmp_path / "face.jpg")
-    for flags in (["--format-prompt"], ["--model", "nanopro"]):
+    # `--locale` too: accepted and silently ignored before (PR #987 review).
+    for flags in (["--format-prompt"], ["--model", "nanopro"], ["--locale", "fr"]):
         out, files_saga, _ = _invoke_files(tmp_path, "--image", str(face), *flags)
         assert out.exit_code == 2, flags  # type: ignore[attr-defined]
         files_saga.assert_not_awaited()

@@ -268,6 +268,10 @@ def _cli_video_two(world: dict[str, Any], e2e_env: dict[str, str], prompt: str) 
         world["target"],
         "--aspect",
         "16:9",
+        # Pinned: an unset model is whatever the account last picked, and on some
+        # accounts that one offers no 8 s duration (e2e run, 2026-10-18).
+        "--model",
+        "omni-flash",
         "--duration",
         "8",
         "--output",
@@ -292,6 +296,7 @@ def _mcp_video_two(
             prompt=prompt,
             mode="t2v",
             aspect="16:9",
+            model="omni_flash",  # pinned, as the CLI scenario explains
             duration=8,
             project=world["target"],
             characters=[str(b) for b in world["bundles"]],

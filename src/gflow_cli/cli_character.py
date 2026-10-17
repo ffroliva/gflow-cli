@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 import structlog
 from rich.console import Console
+from rich.markup import escape
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
@@ -166,7 +167,9 @@ def create(
     own files instead: uploaded through Flow's character editor, then named and
     given the voice and personality. Nothing is generated.
     """
-    _check_create_sources(ctx, face_prompt, image, body_image, body_prompt, format_prompt)
+    _check_create_sources(
+        ctx, face_prompt, image, body_image, body_prompt, format_prompt, locale=locale
+    )
     voice = _normalize_voice(voice)
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
@@ -221,6 +224,8 @@ def _check_create_sources(
     body_image: Path | None,
     body_prompt: str | None,
     format_prompt: bool,
+    *,
+    locale: str | None = None,
 ) -> None:
     """Exactly one portrait source; the body source must match it; generation-only flags
     are refused on a file-built character instead of being silently ignored."""
@@ -240,6 +245,10 @@ def _check_create_sources(
     if format_prompt or explicit_model:
         raise click.UsageError(
             "--format-prompt and --model apply to generated images; --image generates nothing"
+        )
+    if locale is not None:
+        raise click.UsageError(
+            "--locale applies to the generated-face editor; --image does not use it"
         )
 
 
@@ -301,7 +310,7 @@ def _emit_created(result: CharacterCreateResult, *, as_json: bool) -> None:
     slot_labels = ("face", "body")
     for slot, path in enumerate(result.image_paths):
         label = slot_labels[slot] if slot < len(slot_labels) else f"slot{slot}"
-        console.print(f"  {label}: {path if path is not None else '(not saved)'}")
+        console.print(f"  {label}: {escape(str(path)) if path is not None else '(not saved)'}")
 
 
 async def _run_create(
@@ -385,7 +394,8 @@ def export(
     """Export a character to a folder you can import into any project or account.
 
     The folder holds manifest.json (name, voice, personality) and the character's
-    images at full size. It names no project, character id or account. FREE.
+    images at full size. It names no project, character id or account, but it does
+    hold the character's likeness: review it before sharing. FREE.
     """
     if (entity_id is None) == (name is None):
         raise click.UsageError("give exactly one of --id or --name")
@@ -415,9 +425,17 @@ def export(
                 }
             )
             return
-        console.print(f"[bold green]Exported[/bold green] {bundle.name!r} to {bundle.root}")
+        # User values are escaped: Rich reads `[...]` in a name or path as markup and drops it.
+        console.print(
+            f"[bold green]Exported[/bold green] {escape(repr(bundle.name))} to "
+            f"{escape(str(bundle.root))}"
+        )
         for image in bundle.images:
-            console.print(f"  {image.role}: {image.path.name}")
+            console.print(f"  {image.role}: {escape(image.path.name)}")
+        console.print(
+            "  It holds the character's full-size images, name, voice and personality: "
+            "review it before sharing."
+        )
 
     run_with_handlers(run, cli_command="character export", as_json=as_json)
 
@@ -702,7 +720,7 @@ def _render_character_line(c: Character) -> None:
     wf_count = len(c.workflow_ids)
     voice_str = c.voice or "-"
     console.print(
-        f"[bold]{c.display_name}[/bold]  "
+        f"[bold]{escape(c.display_name)}[/bold]  "
         f"[dim]{c.entity_id}[/dim]  "
         f"voice={voice_str}  "
         f"refs={wf_count}"
@@ -710,11 +728,11 @@ def _render_character_line(c: Character) -> None:
 
 
 def _render_character_detail(c: Character) -> None:
-    console.print(f"[bold green]Character:[/bold green] [bold]{c.display_name}[/bold]")
+    console.print(f"[bold green]Character:[/bold green] [bold]{escape(c.display_name)}[/bold]")
     console.print(f"  entity_id:  {c.entity_id}")
     console.print(f"  project_id: {c.project_id}")
-    console.print(f"  voice:      {c.voice or '-'}")
-    console.print(f"  personality:{c.personality or '-'}")
+    console.print(f"  voice:      {escape(c.voice or '-')}")
+    console.print(f"  personality:{escape(c.personality or '-')}")
     console.print(f"  refs ({len(c.workflow_ids)}):")
     for wf in c.workflow_ids:
         console.print(f"    {wf}")

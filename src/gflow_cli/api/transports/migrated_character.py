@@ -28,15 +28,26 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlsplit
 
 import structlog
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.character import Character, Voice, voice_from_wire, voice_to_wire
-from gflow_cli.api.transports.batchexecute import discovery_head
+from gflow_cli.api.transports import migrated_composer
+from gflow_cli.api.transports._common import flow_host_kind
+from gflow_cli.api.transports.batchexecute import discovery_head, parse_frames
 from gflow_cli.data.redaction import scrub_secrets
-from gflow_cli.errors import TransportTimeoutError, WireFormatError
+from gflow_cli.errors import (
+    ConfigurationError,
+    GFlowError,
+    MediaUploadRejectedError,
+    ReferenceNotFoundError,
+    TransportTimeoutError,
+    UiSelectorDriftError,
+    WireFormatError,
+)
 from gflow_cli.redaction import redact_sensitive_text
 
 if TYPE_CHECKING:
@@ -102,8 +113,6 @@ def original_image_url(image: CharacterImage) -> str:
     Exact host and path, because the link comes straight off the wire: https, host
     ``lh3.googleusercontent.com``, path under ``/asb/`` (measured 2026-10-16). The bare
     link serves a 288x512 preview; ``=s0`` asks for the original."""
-    from urllib.parse import urlsplit  # noqa: PLC0415
-
     url = image.download_url or ""
     parts = urlsplit(url)
     if (
@@ -127,11 +136,7 @@ class ProjectRead:
 
 
 def _drift(payload: object, what: str) -> WireFormatError:
-    return WireFormatError(
-        detail=f"batchexecute {PROJECT_READ_RPC}: {what}",
-        route=f"batchexecute:{PROJECT_READ_RPC}",
-        discovery={"rpcid": PROJECT_READ_RPC, "payload_head": discovery_head(payload)},
-    )
+    return _drift_rpc(payload, PROJECT_READ_RPC, what)
 
 
 def _list(node: object) -> list[Any] | None:
@@ -231,17 +236,22 @@ async def read_project(page: Page, project_id: str, *, timeout_s: float = 45.0) 
     The listener is attached before the navigation starts, so a fast reply cannot be
     missed, and no reply at all is a ``TransportTimeoutError`` — never an empty read.
     """
-    from gflow_cli.api.transports.migrated_composer import (  # noqa: PLC0415 - heavy module
-        MIGRATED_PROJECT_URL,
-        rpc_reply,
-    )
-
-    url = MIGRATED_PROJECT_URL.format(project_id=project_id)
+    url = migrated_composer.MIGRATED_PROJECT_URL.format(project_id=project_id)
 
     async def navigate() -> None:
         await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
 
-    payload = await rpc_reply(page, PROJECT_READ_RPC, navigate, timeout_s=timeout_s)
+    try:
+        payload = await migrated_composer.rpc_reply(
+            page, PROJECT_READ_RPC, navigate, timeout_s=timeout_s
+        )
+    except TransportTimeoutError:
+        # Read-only, so a second load is safe. In a long maintainer e2e run (2026-10-17),
+        # two setup reads went unanswered for 45 s and the same scenarios passed on rerun.
+        log.warning("migrated.project_read_retry", project_id=project_id)
+        payload = await migrated_composer.rpc_reply(
+            page, PROJECT_READ_RPC, navigate, timeout_s=timeout_s
+        )
     read = parse_project_read(payload)
     log.info(
         "migrated.project_read",
@@ -312,11 +322,34 @@ async def patch_character(
     Each field is committed by the editor's own gesture and confirmed from its own
     ``rzMKMb`` echo. A field already showing the requested value is left alone: the
     editor sends nothing for an unchanged field, so waiting for a reply would time out.
+    A browser timeout (a control that never appeared) is selector drift, exit 23.
     """
-    from gflow_cli.api.transports.migrated_composer import is_at, rpc_reply  # noqa: PLC0415
+    try:
+        await _patch_fields(
+            page,
+            project_id,
+            entity_id,
+            name=name,
+            personality=personality,
+            voice=voice,
+            timeout_s=timeout_s,
+        )
+    except PlaywrightError as exc:
+        raise _editor_drift(exc, "while editing the character") from exc
 
+
+async def _patch_fields(
+    page: Page,
+    project_id: str,
+    entity_id: str,
+    *,
+    name: str | None,
+    personality: str | None,
+    voice: str | None,
+    timeout_s: float,
+) -> None:
     url = CHARACTER_URL.format(project_id=project_id, entity_id=entity_id)
-    if not is_at(getattr(page, "url", ""), url):
+    if not migrated_composer.is_at(getattr(page, "url", ""), url):
         await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
         await _settle(page)
     await _clear_overlays(page)
@@ -338,7 +371,9 @@ async def patch_character(
                 await box.press("Tab")
 
             try:
-                reply = await rpc_reply(page, PATCH_RPC, commit, timeout_s=timeout_s)
+                reply = await migrated_composer.rpc_reply(
+                    page, PATCH_RPC, commit, timeout_s=timeout_s
+                )
             except TransportTimeoutError:
                 # Measured on a cold profile (2026-10-17): the first edit after a create
                 # can go unanswered although the form shows the character. Reload and redo
@@ -374,9 +409,7 @@ async def _clear_overlays(page: Page) -> None:
     this after each navigation (#593); the character flows did not, and the first run of a
     session failed while every later one passed — a one-time overlay over the controls
     (2026-10-17). Best-effort, like the composer's own."""
-    from gflow_cli.api.transports.migrated_composer import clear_overlays  # noqa: PLC0415
-
-    await clear_overlays(page)
+    await migrated_composer.clear_overlays(page)
 
 
 async def _wait_form_loaded(page: Page, *, timeout_s: float = 15.0) -> None:
@@ -386,8 +419,6 @@ async def _wait_form_loaded(page: Page, *, timeout_s: float = 15.0) -> None:
     the app fills it. A value typed before that is overwritten and nothing commits. Every
     character has a name (Flow gives a new one a default), so a non-empty name is the
     loaded signal; the personality may legitimately be empty and cannot be one."""
-    from gflow_cli.errors import UiSelectorDriftError  # noqa: PLC0415
-
     box = page.locator(NAME_INPUT).first
     await box.wait_for(state="visible", timeout=30_000)
     for _ in range(int(timeout_s / 0.25)):
@@ -458,9 +489,6 @@ async def _pick_voice(page: Page, entity_id: str, voice: str, *, timeout_s: floa
     the confirm button never became actionable — a 30 s click timeout after the character
     already existed. So the confirm is clicked only once it is ENABLED, and a pick that never
     enables is redone once from a freshly opened picker."""
-    from gflow_cli.api.transports.migrated_composer import rpc_reply  # noqa: PLC0415
-    from gflow_cli.errors import ReferenceNotFoundError  # noqa: PLC0415
-
     current = await page.locator(VOICE_BUTTON).first.inner_text()
     if voice.casefold() in (line.strip().casefold() for line in current.splitlines()):
         return
@@ -489,7 +517,7 @@ async def _pick_voice(page: Page, entity_id: str, voice: str, *, timeout_s: floa
             await button.click(timeout=15_000)
 
         try:
-            reply = await rpc_reply(page, PATCH_RPC, confirm, timeout_s=timeout_s)
+            reply = await migrated_composer.rpc_reply(page, PATCH_RPC, confirm, timeout_s=timeout_s)
         except (PlaywrightError, TransportTimeoutError):
             # Measured 2026-10-17 (MCP import e2e): Flow set the voice and closed the
             # picker while the click still waited, so neither the click nor its reply
@@ -528,16 +556,23 @@ def created_entity(payload: object, *, project_id: str) -> str:
     return entity
 
 
+def _upload_fields(payload: object) -> tuple[str | None, str | None, str | None]:
+    """``(media_id, workflow_id, bound entity)`` from a ``maseQ`` reply, each or ``None``."""
+    rows = _list(payload) or []
+    media = _list(rows[0]) if rows else None
+    workflow = _list(rows[1]) if len(rows) > 1 else None
+    return (
+        _str(media[0]) if media else None,
+        _str(workflow[0]) if workflow else None,
+        _str(workflow[5]) if workflow and len(workflow) > 5 else None,
+    )
+
+
 def bound_upload(payload: object, *, entity_id: str) -> tuple[str, str]:
     """``(workflow_id, media_id)`` from a ``maseQ`` reply, refusing an upload that did not
     land in ``entity_id`` — the add-menu Upload binds nothing, and an image bound
     elsewhere is not this character's."""
-    rows = _list(payload) or []
-    media = _list(rows[0]) if rows else None
-    workflow = _list(rows[1]) if len(rows) > 1 else None
-    media_id = _str(media[0]) if media else None
-    workflow_id = _str(workflow[0]) if workflow else None
-    bound = _str(workflow[5]) if workflow and len(workflow) > 5 else None
+    media_id, workflow_id, bound = _upload_fields(payload)
     if media_id is None or workflow_id is None:
         raise _drift_rpc(payload, UPLOAD_RPC, "the reply names no media and workflow")
     if bound != entity_id:
@@ -563,8 +598,6 @@ async def _rpc_replies(
     ``maseQ`` reply dropped after the server got it was still bound). The grace exists
     because a user run waited the full 90 s for a `C4BZMd` that never came, although
     `maseQ` — which says what was created — had answered long before (2026-10-17)."""
-    from gflow_cli.api.transports.batchexecute import parse_frames  # noqa: PLC0415
-
     got: dict[str, Any] = {}
     done = asyncio.Event()
     first = asyncio.Event()
@@ -658,8 +691,6 @@ async def _upload_body(
             return refs[1], None  # bound, but the lost reply took its media id with it
         log.warning("migrated.character_upload_unbound", slot=1, attempt=attempt)
         await _open_editor(page, project_id, entity_id)
-    from gflow_cli.errors import MediaUploadRejectedError  # noqa: PLC0415
-
     raise MediaUploadRejectedError(
         detail=f"flow.google.com never bound {body.name} as the body image (2 attempts)"
     )
@@ -677,9 +708,7 @@ def _recover_created(got: dict[str, Any], url: object, project_id: str) -> str |
     the new character's editor; either proves the create. Neither means nothing was
     created (an unbound upload is plain project media)."""
     if UPLOAD_RPC in got:
-        rows = _list(got[UPLOAD_RPC]) or []
-        workflow = _list(rows[1]) if len(rows) > 1 else None
-        bound = _str(workflow[5]) if workflow and len(workflow) > 5 else None
+        _, _, bound = _upload_fields(got[UPLOAD_RPC])
         if bound is not None:
             log.warning("migrated.character_create_reply_lost", source="upload_reply")
             return bound
@@ -688,6 +717,42 @@ def _recover_created(got: dict[str, Any], url: object, project_id: str) -> str |
         log.warning("migrated.character_create_reply_lost", source="page_url")
         return match["entity"]
     return None
+
+
+def _editor_drift(exc: PlaywrightError, when: str) -> UiSelectorDriftError:
+    first_line = redact_sensitive_text(str(exc).splitlines()[0] if str(exc) else "")[:300]
+    return UiSelectorDriftError(
+        detail=(
+            f"the character editor did not respond {when} "
+            f"({type(exc).__name__}: {first_line}) (host=migrated)"
+        ),
+    )
+
+
+async def _character_ids(page: Page, project_id: str) -> set[str]:
+    return {c.entity_id for c in (await read_project(page, project_id)).characters}
+
+
+async def _created_since(page: Page, project_id: str, known: set[str]) -> str | None:
+    """The one character the project gained since ``known``, read until the settle window
+    ends (reads lag writes); ``None`` when none appeared. Two new ones are refused: which
+    is this run's cannot be told, and creating a third would not help."""
+    deadline = asyncio.get_running_loop().time() + READ_SETTLE_S
+    while True:
+        new = sorted((await _character_ids(page, project_id)) - known)
+        if len(new) == 1:
+            log.warning("migrated.character_create_reply_lost", source="project_read")
+            return new[0]
+        if len(new) > 1:
+            raise _drift_rpc(
+                None,
+                CREATE_RPC,
+                f"both create replies were lost and the project gained {len(new)} characters "
+                f"({', '.join(new)}); not creating another",
+            )
+        if asyncio.get_running_loop().time() >= deadline:
+            return None
+        await asyncio.sleep(8)
 
 
 def _head_tail(text: str, *, head: int = 300, tail: int = 1500) -> str:
@@ -719,16 +784,7 @@ async def create_from_files(
     that fails later leaves an identifiable character; then the body, then the voice.
     Nothing here deletes — a failure after the create names the entity in the error."""
 
-    from gflow_cli.api.transports._common import flow_host_kind  # noqa: PLC0415
-    from gflow_cli.errors import (  # noqa: PLC0415
-        ConfigurationError,
-        GFlowError,
-        UiSelectorDriftError,
-    )
-
-    got: dict[str, Any] = {}
-    entity_id: str | None = None
-    for attempt in (1, 2):
+    async def open_draft() -> None:
         await page.goto(
             DRAFT_URL.format(project_id=project_id), wait_until="domcontentloaded", timeout=45_000
         )
@@ -739,20 +795,36 @@ async def create_from_files(
                     "project opened on another host, where it is not ported yet (#639)"
                 ),
             )
-        await _clear_overlays(page)
-        await page.locator(FOOTER_UPLOAD).first.wait_for(state="visible", timeout=30_000)
 
-        async def create() -> None:
-            await _choose_file(page, FOOTER_UPLOAD, portrait)
+    got: dict[str, Any] = {}
+    entity_id: str | None = None
+    try:
+        await open_draft()
+        # The characters already here, so a create whose replies are BOTH lost is found
+        # by a re-read rather than repeated: a blind retry would make a second character.
+        known = await _character_ids(page, project_id)
+        for attempt in (1, 2):
+            await open_draft()
+            await _clear_overlays(page)
+            await page.locator(FOOTER_UPLOAD).first.wait_for(state="visible", timeout=30_000)
 
-        got = await _rpc_replies(page, (CREATE_RPC, UPLOAD_RPC), create, timeout_s=90)
-        if CREATE_RPC in got:
-            entity_id = created_entity(got[CREATE_RPC], project_id=project_id)
-        else:
-            entity_id = _recover_created(got, getattr(page, "url", ""), project_id)
-        if entity_id is not None:
-            break
-        log.warning("migrated.character_create_retry", attempt=attempt, project_id=project_id)
+            async def create() -> None:
+                await _choose_file(page, FOOTER_UPLOAD, portrait)
+
+            got = await _rpc_replies(page, (CREATE_RPC, UPLOAD_RPC), create, timeout_s=90)
+            if CREATE_RPC in got:
+                entity_id = created_entity(got[CREATE_RPC], project_id=project_id)
+            else:
+                entity_id = _recover_created(got, getattr(page, "url", ""), project_id)
+            if entity_id is None and not got:
+                entity_id = await _created_since(page, project_id, known)
+            if entity_id is not None:
+                break
+            log.warning("migrated.character_create_retry", attempt=attempt, project_id=project_id)
+    except PlaywrightError as exc:
+        # Before the create is proven, a browser timeout is drift with nothing to clean up;
+        # unmapped it ended as an unclassified error, exit 1.
+        raise _editor_drift(exc, "before the character was created") from exc
     if entity_id is None:
         raise _drift_rpc(
             None, CREATE_RPC, "uploading the portrait created no character (2 attempts)"
@@ -769,9 +841,9 @@ async def create_from_files(
             # Let the app finish its own move to the editor before navigating there.
             await page.wait_for_url(f"**/character/{entity_id}*", timeout=30_000)
         except PlaywrightTimeoutError:
-            # A create recovered from the upload reply can leave the page on the draft
-            # (CodeRabbit, PR #987): the character exists, and `_open_editor` navigates
-            # straight to it, so this is not a failed create.
+            # A create recovered from the upload reply can leave the page on the draft:
+            # the character exists, and `_open_editor` navigates straight to it, so this
+            # is not a failed create.
             log.info("migrated.character_route_not_followed", entity_id=entity_id)
         # Always reopen the editor by direct navigation. The in-app draft->editor switch
         # after a create needed a reload in 4 of 5 runs (name never loaded in 15 s), and
@@ -782,8 +854,6 @@ async def create_from_files(
         if not workflows:
             refs = await _settled_refs(page, project_id, entity_id, want=1)
             if not refs:
-                from gflow_cli.errors import MediaUploadRejectedError  # noqa: PLC0415
-
                 raise MediaUploadRejectedError(
                     detail=f"flow.google.com created the character but bound no {portrait.name}"
                 )
@@ -806,14 +876,9 @@ async def create_from_files(
             # Head and tail: the reason ("not enabled", "intercepts") is at the END.
             playwright=_head_tail(scrub_secrets(str(exc))),
         )
-        first_line = redact_sensitive_text(str(exc).splitlines()[0] if str(exc) else "")[:300]
-        raise UiSelectorDriftError(
-            detail=(
-                f"the character editor did not respond after the create "
-                f"({type(exc).__name__}: {first_line}) (host=migrated)"
-            ),
-            remediation_hint=_orphan_hint(entity_id, name, project_id),
-        ) from exc
+        drift = _editor_drift(exc, "after the create")
+        drift.remediation_hint = _orphan_hint(entity_id, name, project_id)
+        raise drift from exc
     except GFlowError as exc:
         exc.remediation_hint = (
             f"{_orphan_hint(entity_id, name, project_id)} {exc.remediation_hint or ''}"

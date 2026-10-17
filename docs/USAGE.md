@@ -301,8 +301,8 @@ prompts through one Flow session/project.
 > `4:3`, `1:1`, `3:4`, `9:16`), and count 1–4. Without `--project` (and without `GFLOW_CLI_PROJECT`), gflow creates a fresh project
 > there first ([#864](https://github.com/ffroliva/gflow-cli/issues/864)). The
 > migrated page owns its reCAPTCHA + `ogiZ0b` submit. Characters attach by `@Name`,
-> `--reference-entity` + `--reference-entity-name`, or `--character FOLDER`, each where the
-> prompt names it (#723). Imagen 4, Agent instructions, an entity id without a name and
+> `--reference-entity` + `--reference-entity-name`, or `--character FOLDER`. Each character is
+> attached at its first mention in the prompt (#723). Imagen 4, Agent instructions, an entity id without a name and
 > `image batch` remain unavailable on that host and fail before submit. On Flow's agent-only composer (#799), t2i runs through the agent
 > driver; see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm).
 

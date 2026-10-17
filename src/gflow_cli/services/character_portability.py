@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from gflow_cli.api.character import CharacterCreateResult
+    from gflow_cli.api.character import Character, CharacterCreateResult
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest
@@ -122,6 +122,33 @@ def validate_bundles(bundles: Sequence[Path]) -> None:
         read_bundle(path)
 
 
+async def _check_voices(
+    client: FlowApiClient,
+    project_id: str,
+    bundles: Sequence[CharacterBundle],
+    existing: Sequence[Character],
+) -> None:
+    """Refuse before the FIRST import when any folder to import names a voice this account
+    does not offer: checked one import at a time, a later folder failed after earlier ones
+    were already created, and gflow never deletes them."""
+    present = {c.display_name.casefold() for c in existing}
+    wanted = [b for b in bundles if b.voice and b.name.casefold() not in present]
+    if not wanted:
+        return
+    offered = {v.name.casefold() for v in await client.list_voices(project_id)}
+    bad = [f"{b.name} ({b.voice})" for b in wanted if (b.voice or "").casefold() not in offered]
+    if bad:
+        raise ConfigurationError(
+            detail=(
+                f"this account does not offer the voice of {', '.join(bad)}; nothing was imported"
+            ),
+            remediation_hint=(
+                "This account's LIVE voice catalog decides. Import the folder on its own with "
+                "`gflow character import DIR --voice NAME`, or edit its manifest."
+            ),
+        )
+
+
 async def apply_character_bundles(
     client: FlowApiClient,
     recorder: OperationRecorder,
@@ -144,14 +171,16 @@ async def apply_character_bundles(
         return req
     read = [read_bundle(path) for path in bundles]
     existing = await client.list_characters(project_id)
+    await _check_voices(client, project_id, read, existing)
     entities = list(req.reference_entities)
     names = list(req.reference_entity_names)
     done: dict[str, str] = {}  # name → entity: one name in one call is one character
     for path, bundle in zip(bundles, read, strict=True):
         # Case-insensitive, as the `@` picker matches titles: an exact compare imported a
-        # second "Nora" beside "nora", and the picker then refused both (CodeRabbit, #987).
+        # second "Nora" beside "nora", and the picker then refused both.
         key = bundle.name.casefold()
         if key in done:
+            log.warning("character.bundle_name_repeated", name=bundle.name, folder=str(path))
             continue
         same = [c for c in existing if c.display_name.casefold() == key]
         if len(same) > 1:

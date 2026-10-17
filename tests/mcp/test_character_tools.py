@@ -15,6 +15,7 @@ the client returns, and must never manufacture emptiness.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -236,7 +237,7 @@ async def test_generate_image_carries_character_folders_under_the_key_the_worker
     with patch.object(mcp_tools, "_run_generation_task", fake_run):
         await mcp_tools.gflow_generate_image(prompt="Nora reading", characters=["/b/nora"])
 
-    assert captured["payload"]["characters"] == ["/b/nora"]
+    assert captured["payload"]["characters"] == [str(Path("/b/nora").resolve())]
 
 
 @pytest.mark.usefixtures("_no_rate_limit")
@@ -252,7 +253,9 @@ async def test_generate_video_carries_several_character_folders_for_the_worker()
             prompt="Nora and Kael talk", characters=["/b/nora", "/b/kael"]
         )
 
-    assert captured["payload"]["characters"] == ["/b/nora", "/b/kael"]
+    assert captured["payload"]["characters"] == [
+        str(Path(p).resolve()) for p in ("/b/nora", "/b/kael")
+    ]
 
 
 @pytest.mark.usefixtures("_no_rate_limit")

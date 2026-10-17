@@ -1,9 +1,13 @@
-r"""Task 0 of the character-portability plan: what does the editor offer, and what binds? ($0)
+r"""Task 0 of the character-portability plan: what does the editor offer, and what binds?
+
+Costs no credits. ``inventory`` and ``export`` only read. ``bind`` WRITES: it creates a
+project (unless ``--project`` is given) and two characters in it, and never deletes
+them — run it on a probe profile and remove them in Flow afterwards.
 
 Plan: docs/superpowers/plans/2026-10-16-character-portability/PLAN.md, Task 0.
 Prior evidence: docs/superpowers/spikes/2026-10-16-migrated-character-lifecycle-wire.md.
 
-Mode ``inventory`` (this file's first question, read-only, $0): open an existing
+Mode ``inventory`` (this file's first question, read-only): open an existing
 character's editor on flow.google.com and record its STRUCTURE — every clickable
 control with its tag, custom-element ancestors, ligature(s), role, aria-haspopup and
 disabled state, plus every input/textarea/file input. Display text is recorded only

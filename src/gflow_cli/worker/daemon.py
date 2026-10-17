@@ -198,8 +198,8 @@ class FlowWorker:
                         project_created = False
                         from gflow_cli.services import character_portability
 
-                        # Before any project is created for them (CodeRabbit, PR #987),
-                        # as the video branch and the CLI already do.
+                        # Before any project is created for them, as the video branch
+                        # and the CLI already do.
                         image_bundles = tuple(Path(p) for p in task.payload.get("characters", ()))
                         character_portability.validate_bundles(image_bundles)
                         if project_id:
