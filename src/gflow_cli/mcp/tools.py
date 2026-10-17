@@ -740,7 +740,8 @@ def _build_video_media_inputs(
     if mode == "r2v" and not reference_images and not reference_entities:
         return None, _bad_param(
             "Missing References",
-            "r2v (reference-to-video) requires 'reference_images' or 'reference_entities'.",
+            "r2v (reference-to-video) requires 'reference_images' or 'reference_entities'; "
+            "'characters' attach on top of them. For characters alone, use mode 't2v'.",
         )
 
     media: dict[str, Any] = {}
@@ -949,7 +950,7 @@ async def gflow_generate_image(
         payload["reference_entity_names"] = list(reference_entity_names)
     if characters:
         # Read back by the worker under this exact key (worker/daemon.py, #628 class).
-        payload["characters"] = list(characters)
+        payload["characters"] = [str(Path(c).expanduser().resolve()) for c in characters]
 
     task_type = "t2i"
     if reference_images:
@@ -1108,7 +1109,8 @@ async def gflow_generate_video(  # NOSONAR
             character with the folder's name is reused; otherwise it is imported first
             (free, flow.google.com), then attached like ``reference_entities``. Name
             each one in the prompt to direct it. Without ``project`` a project is
-            created to hold them.
+            created to hold them. On 'r2v' they add to ``reference_images`` (which
+            the mode still requires, as the CLI's ``--ref``); alone, use 't2v'.
         model: Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality',
             'omni_flash' (aliases accepted, mirrors the CLI ``--model``). When
             omitted, Flow's UI default applies EXCEPT for i2v with frames,
@@ -1269,7 +1271,7 @@ async def gflow_generate_video(  # NOSONAR
         initial_frame=initial_frame,
         end_frame=end_frame,
         reference_images=reference_images,
-        reference_entities=(reference_entities or []) + list(characters or []),
+        reference_entities=reference_entities,
     )
     if media_err is not None:
         return media_err
@@ -1300,7 +1302,7 @@ async def gflow_generate_video(  # NOSONAR
                 "character references (mirrors the CLI, where i2v has no --character).",
             )
         # Read back by the worker under this exact key (worker/daemon.py, #628 class).
-        payload["characters"] = list(characters)
+        payload["characters"] = [str(Path(c).expanduser().resolve()) for c in characters]
 
     # task_type matches the mode ("t2v", "i2v", "r2v")
     result = await _run_generation_task(

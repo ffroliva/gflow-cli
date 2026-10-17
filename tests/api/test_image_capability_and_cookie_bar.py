@@ -304,3 +304,4 @@ async def test_drive_skips_mint_for_servable_request():
 
     client._mint_recaptcha_token.assert_not_awaited()  # type: ignore[attr-defined]
     assert transport.calls == 1
+

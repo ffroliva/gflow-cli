@@ -96,7 +96,7 @@ _character_option = click.option(
         "A character folder written by `gflow character export` (repeatable — several "
         "characters can share one clip). A character with its name already in the project "
         "is reused; otherwise it is imported first (free). Then it is attached like "
-        "--reference-entity; name it in the prompt to direct it."
+        "--reference-entity, where the prompt names it."
     ),
 )
 _resolution_option = click.option(
@@ -311,6 +311,10 @@ async def _generate_and_report(
     settings = get_settings()
     if output_file is not None:
         refuse_cloud_storage_for_local_file(settings.storage_uri, "-o/--output")
+    if characters:
+        from gflow_cli.services.character_portability import validate_bundles
+
+        validate_bundles(characters)  # before Flow: a bad folder leaves no scratch project
     if not as_json:
         console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     recorder = OperationRecorder.open(settings)
@@ -1628,11 +1632,15 @@ def r2v(
         if cap == 0:
             msg = f"{model} does not support R2V (reference-to-video)."
             raise click.UsageError(msg)
-        if len(refs) > cap:
-            msg = f"{model} allows at most {cap} reference image(s); got {len(refs)}."
-            raise click.UsageError(
-                msg,
+        # Characters share the per-model pool with images (the DTO counts entities too),
+        # so count them here, before any browser — as `image i2i` does (council D8).
+        n_refs = len(refs) + len(reference_entities) + len(characters)
+        if n_refs > cap:
+            msg = (
+                f"{model} allows at most {cap} reference item(s) (images + characters); "
+                f"got {n_refs}."
             )
+            raise click.UsageError(msg)
 
     profile_name = _resolve_profile(profile)
     project_id = default_project(project_id, project_name, profile_name)

@@ -254,3 +254,20 @@ class TestApplyCharacterBundles:
         req = await _apply(tmp_path, _apply_client([]), req, bundle)
 
         assert req.reference_entities == ("new-entity",)
+
+
+class TestApplySameNameTwice:
+    """Council D1: the same folder twice (or two folders with one name) imported the
+    character twice, then the picker found two exact titles and refused the run, leaving
+    two orphans. One name in one call is one character."""
+
+    async def test_the_same_folder_twice_is_imported_once(
+        self, tmp_path: Path, create: AsyncMock
+    ) -> None:
+        bundle = _bundle(tmp_path)
+
+        req = await _apply(tmp_path, _apply_client([]), _req(), bundle, bundle)
+
+        create.assert_awaited_once()
+        assert req.reference_entities == ("new-entity",)
+        assert req.reference_entity_names == ("Nora",)

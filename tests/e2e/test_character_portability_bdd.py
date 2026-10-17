@@ -12,7 +12,9 @@ measured on 2026-10-16. Only the real editor shows that its Upload still binds a
 the character, that a write commits, and that a character rebuilt on another account
 reads back the same. Plan: ``docs/superpowers/plans/2026-10-16-character-portability``.
 
-**Cost.** $0: project creates, uploads, edits and reads. Every run leaves throwaway
+**Cost.** $0 for every scenario except the two ``@e2e_video`` ones, which spend ~12 Veo
+credits per 8 s clip and run only with ``GFLOW_CLI_E2E_RUN_VIDEO=1`` (they skip before any
+setup without it); ``@e2e_image`` ones spend image quota. Every run leaves throwaway
 projects (named ``e2e portability …``) and characters on each account it touches.
 """
 
@@ -136,6 +138,7 @@ def _project_a_with(world: dict[str, Any], e2e_env: dict[str, str], name: str) -
 def _project_a_with_two(
     world: dict[str, Any], e2e_env: dict[str, str], first: str, second: str
 ) -> None:
+    _require_video()  # only the video scenarios hold two characters: skip before any setup
     world["project"] = _new_project(e2e_env, world["profile_a"])
     for name, voice in ((first, "aoede"), (second, "leda")):
         _create(world, e2e_env, name, voice, "friendly")
@@ -252,7 +255,6 @@ def _require_video() -> None:
     )
 )
 def _cli_video_two(world: dict[str, Any], e2e_env: dict[str, str], prompt: str) -> None:
-    _require_video()
     out = world["tmp"] / "clip.mp4"
     folders = [arg for b in world["bundles"] for arg in ("--character", str(b))]
     world["proc"] = proc = _gflow(
@@ -284,7 +286,6 @@ def _mcp_video_two(
     world: dict[str, Any], e2e_profile_dir: Path, install_log_capture: Any, prompt: str
 ) -> None:
     del e2e_profile_dir
-    _require_video()
     world["capture"] = install_log_capture
     world["mcp_generated"] = asyncio.run(
         mcp_tools.gflow_generate_video(
@@ -507,9 +508,20 @@ def _two_attached(events: list[dict[str, Any]], names: tuple[str, ...]) -> None:
     assert attached, "no character rode the generation"
     assert sorted(attached[-1]["names"]) == sorted(names), attached[-1]
     assert len(set(attached[-1]["entity_ids"])) == len(names), attached[-1]
+    # Each chip where the prompt names it (user report 2026-10-17): the prompt opens with
+    # text, so a chip-first layout means the characters were stuck in front again.
+    typed = [e for e in events if e.get("event") == "migrated.prompt_typed" and e.get("layout")]
+    assert typed, "no prompt layout was logged"
+    layout = typed[-1]["layout"]
+    assert layout[0].startswith("text:"), layout
+    assert layout.count("chip") == len(names), layout
+    assert all(a != b for a, b in zip(layout, layout[1:], strict=False)), layout
 
 
-@then("the video is written, both characters rode it, and that project lists each once")
+@then(
+    "the video is written, both characters rode it where the prompt names them, and that "
+    "project lists each once"
+)
 def _video_two(world: dict[str, Any], e2e_env: dict[str, str]) -> None:
     assert world["clip"].stat().st_size > 100_000
     events = [
@@ -521,7 +533,8 @@ def _video_two(world: dict[str, Any], e2e_env: dict[str, str]) -> None:
 
 
 @then(
-    "the queued video is written, both characters rode it, and the second project lists each once"
+    "the queued video is written, both characters rode it where the prompt names them, and "
+    "the second project lists each once"
 )
 def _mcp_video_two_listed(world: dict[str, Any], e2e_env: dict[str, str]) -> None:
     result = world["mcp_generated"]

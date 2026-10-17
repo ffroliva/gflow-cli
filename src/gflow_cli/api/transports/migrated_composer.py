@@ -673,8 +673,15 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     return request.model is None or request.model in VIDEO_MODEL_MENU_LABELS
 
 
+async def clear_overlays(page: Page) -> None:
+    """Dismiss the first-visit dialog and the cookie bar — the composer's own best-effort
+    dismissals, for other flow.google.com drivers (the character editor) after navigating."""
+    await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    await MigratedComposer()._dismiss_cookie_bar(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+
 #: What follows a chip without Flow's own space after it: a space, or closing punctuation.
-_CLOSES_UP = (" ", ",", ".", ";", ":", "!", "?", ")")
+_CLOSES_UP = (" ", ",", ".", ";", ":", "!", "?", ")", "'", "\u2019")  # "Nora's" too
 
 
 def place_mentions(
@@ -3255,6 +3262,12 @@ class MigratedComposer:
                         if r.workflow_id not in pending
                         and (project_id is None or r.project_id == project_id)
                     ]
+                    if queued.is_set():
+                        # A clip this submit just queued cannot already be finished: a
+                        # done or failed one is an older clip of the project (council D1).
+                        settled = [r for r in fresh if not r.is_running]
+                        pending.update(r.workflow_id for r in settled)
+                        fresh = [r for r in fresh if r.is_running]
                     if not queued.is_set():
                         pending.update(r.workflow_id for r in fresh)
                     elif len(fresh) == 1 and not submitted.done():

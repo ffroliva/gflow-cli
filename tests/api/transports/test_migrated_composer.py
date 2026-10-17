@@ -3681,3 +3681,59 @@ async def test_a_queued_submit_no_poll_names_is_a_timeout_that_warns_of_billing(
             page, poll_timeout_s=0.5, on_started=None, project_id=None
         )
     assert "bill twice" in (exc.value.remediation_hint or "")
+
+
+def _foreign_project_record(status: int) -> list[Any]:
+    rec = _other_record(status)
+    rec[1] = "77777777-7777-4777-8777-777777777777"
+    return rec
+
+
+@pytest.mark.parametrize(
+    ("label", "poll"),
+    [
+        # Council D1: an older clip of this project that finished while ours queued is
+        # not ours — a clip this submit just queued cannot already be done.
+        ("finished clip", [[_other_record(3)]]),
+        # Council D4: a running clip of ANOTHER project is never ours.
+        ("other project", [[_foreign_project_record(2)]]),
+        # Two new running clips: which one is ours is unknowable.
+        ("ambiguous", [[_other_record(2)], [_record(2)]]),
+    ],
+)
+async def test_a_queued_submit_adopts_nothing_it_cannot_prove_is_its_own(
+    label: str, poll: list[Any]
+) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import TransportTimeoutError
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _queued_frame("MZZa6b")),
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, poll])),
+    ]
+    project = "22222222-2222-4222-8222-222222222222"  # the project `_record` names
+    with pytest.raises(TransportTimeoutError, match="queued"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=0.5, on_started=None, project_id=project
+        )
+
+
+async def test_a_queued_submit_in_its_project_adopts_its_running_clip() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _queued_frame("MZZa6b")),
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[_record(2)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=None,
+        project_id="22222222-2222-4222-8222-222222222222",
+    )
+    assert rec.media_id == MEDIA and rec.is_done

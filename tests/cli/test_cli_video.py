@@ -445,7 +445,7 @@ def test_r2v_rejects_over_cap_for_veo_fast(tmp_path: Path) -> None:
     ):
         result = runner.invoke(video, args)
     assert result.exit_code == 2, result.output
-    assert "at most 3 reference image" in result.output
+    assert "at most 3 reference item" in result.output
     assert "got 4" in result.output
 
 

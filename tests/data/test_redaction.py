@@ -156,3 +156,18 @@ class TestBatchexecuteSecrets:
             "rpcid=rzMKMb status=200"
         )
         assert redact_error_detail(text) == text
+
+
+class TestScrubSecrets:
+    def test_scrubs_like_the_detail_redactor_but_keeps_the_end_of_a_long_text(self) -> None:
+        from gflow_cli.data.redaction import redact_error_detail, scrub_secrets
+
+        text = (
+            "Bearer ya29.AAAAbbbbCCCCddddEEEEffff0123456789 "
+            + "x" * 3000
+            + " <div> intercepts pointer events"
+        )
+        scrubbed = scrub_secrets(text)
+        assert "ya29." not in scrubbed
+        assert scrubbed.endswith("intercepts pointer events")
+        assert redact_error_detail(text) == scrubbed[: len(redact_error_detail(text))]

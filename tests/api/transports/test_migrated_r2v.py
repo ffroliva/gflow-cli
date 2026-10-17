@@ -599,3 +599,15 @@ async def test_no_backspace_when_flow_added_no_space() -> None:
     )
     enter = page.typed.index("<Enter>")
     assert page.typed[enter + 1 :] == [", ok"]  # no Backspace after the chip
+
+
+async def test_a_possessive_closes_up_against_the_chip() -> None:
+    """Council D1/D6: `@Nora's` must read "Nora's", not "Nora 's"."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _SpacedChipPage(entities={"Nora": "ent-nora"})
+    await MigratedComposer().attach_character_entities(
+        page, entity_ids=(), names=("Nora",), prompt="Nora's cup"
+    )
+    enter = page.typed.index("<Enter>")
+    assert page.typed[enter + 1 :] == ["<Backspace>", "'s cup"]

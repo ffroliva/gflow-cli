@@ -256,9 +256,15 @@ async def test_generate_video_carries_several_character_folders_for_the_worker()
 
 
 @pytest.mark.usefixtures("_no_rate_limit")
-async def test_generate_video_characters_alone_satisfy_r2v_and_i2v_refuses_them() -> None:
+async def test_generate_video_r2v_needs_an_image_and_i2v_refuses_characters() -> None:
+    """Council D15: the worker validates the request BEFORE characters are attached, so an
+    r2v call carrying only `characters` was accepted here and failed at claim. The CLI
+    requires `--ref` on r2v; MCP now refuses the same call up front. Characters alone: t2v."""
+    calls: list[Any] = []
+
     async def fake_run(**kwargs: Any) -> dict[str, Any]:
-        return {"status": "completed", "payload": kwargs["payload"]}
+        calls.append(kwargs)
+        return {"status": "completed"}
 
     with patch.object(mcp_tools, "_run_generation_task", fake_run):
         r2v = await mcp_tools.gflow_generate_video(
@@ -270,5 +276,6 @@ async def test_generate_video_characters_alone_satisfy_r2v_and_i2v_refuses_them(
             initial_frame="11111111-1111-4111-8111-111111111111",
             characters=["/b/nora"],
         )
-    assert r2v["status"] == "completed"
+    assert r2v["status"] != "completed" and "reference" in str(r2v).lower()
     assert i2v["status"] != "completed" and "i2v" in str(i2v)
+    assert calls == []

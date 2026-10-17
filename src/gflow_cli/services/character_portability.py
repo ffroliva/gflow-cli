@@ -115,6 +115,13 @@ async def import_character(
     return result
 
 
+def validate_bundles(bundles: Sequence[Path]) -> None:
+    """Read every bundle fully, offline, BEFORE Flow is touched: a bad folder used to surface
+    only after a scratch project had been created for it (council D7/D8)."""
+    for path in bundles:
+        read_bundle(path)
+
+
 async def apply_character_bundles(
     client: FlowApiClient,
     recorder: OperationRecorder,
@@ -139,7 +146,10 @@ async def apply_character_bundles(
     existing = await client.list_characters(project_id)
     entities = list(req.reference_entities)
     names = list(req.reference_entity_names)
+    done: dict[str, str] = {}  # name → entity: one name in one call is one character
     for path, bundle in zip(bundles, read, strict=True):
+        if bundle.name in done:
+            continue
         same = [c for c in existing if c.display_name == bundle.name]
         if len(same) > 1:
             ids = ", ".join(c.entity_id for c in same)
@@ -162,6 +172,7 @@ async def apply_character_bundles(
                 project_id=project_id,
             )
             entity_id = created.entity_id
+        done[bundle.name] = entity_id
         if entity_id not in entities:
             entities.append(entity_id)
             names.append(bundle.name)

@@ -46,7 +46,7 @@ Pre-registered reading:
      repeating it with a mark before and after
 
     uv run python scripts/dev/spike_migrated_character_lifecycle.py \
-        --profile ziyedbegmail --control-dir /tmp/charspike
+        --profile <profile> --control-dir /tmp/charspike
 """
 
 from __future__ import annotations

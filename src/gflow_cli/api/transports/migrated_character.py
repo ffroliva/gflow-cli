@@ -34,6 +34,7 @@ from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.api.character import Character, Voice, voice_from_wire, voice_to_wire
 from gflow_cli.api.transports.batchexecute import discovery_head
+from gflow_cli.data.redaction import scrub_secrets
 from gflow_cli.errors import TransportTimeoutError, WireFormatError
 from gflow_cli.redaction import redact_sensitive_text
 
@@ -372,10 +373,9 @@ async def _clear_overlays(page: Page) -> None:
     this after each navigation (#593); the character flows did not, and the first run of a
     session failed while every later one passed — a one-time overlay over the controls
     (2026-10-17). Best-effort, like the composer's own."""
-    from gflow_cli.api.transports.migrated_composer import MigratedComposer  # noqa: PLC0415
+    from gflow_cli.api.transports.migrated_composer import clear_overlays  # noqa: PLC0415
 
-    await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-    await MigratedComposer()._dismiss_cookie_bar(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    await clear_overlays(page)
 
 
 async def _wait_form_loaded(page: Page, *, timeout_s: float = 15.0) -> None:
@@ -689,16 +689,6 @@ def _recover_created(got: dict[str, Any], url: object, project_id: str) -> str |
     return None
 
 
-async def _capture_failure(page: Page, exc: BaseException) -> None:
-    from gflow_cli.api.transports.migrated_composer import MigratedComposer  # noqa: PLC0415
-    from gflow_cli.config import get_settings  # noqa: PLC0415
-
-    composer = MigratedComposer(out_dir=get_settings().output_dir)
-    await composer._capture_ui_failure(  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-        page, phase="character", selector="character editor", error=exc
-    )
-
-
 def _head_tail(text: str, *, head: int = 300, tail: int = 1500) -> str:
     return text if len(text) <= head + tail else f"{text[:head]} … {text[-tail:]}"
 
@@ -800,15 +790,13 @@ async def create_from_files(
     except PlaywrightError as exc:
         # A browser timeout is not a GFlowError, so on its own it would surface as an
         # unclassified error and lose the id of a character Flow already holds. The full
-        # call log names WHY the action waited (disabled, intercepted by …): keep it, and
-        # the page itself (screenshot + structural snapshot, no page text).
-        await _capture_failure(page, exc)
+        # call log names WHY the action waited (disabled, intercepted by …): keep it.
         log.warning(
             "migrated.character_orphaned",
             entity_id=entity_id,
             project_id=project_id,
             # Head and tail: the reason ("not enabled", "intercepts") is at the END.
-            playwright=_head_tail(redact_sensitive_text(str(exc))),
+            playwright=_head_tail(scrub_secrets(str(exc))),
         )
         first_line = redact_sensitive_text(str(exc).splitlines()[0] if str(exc) else "")[:300]
         raise UiSelectorDriftError(
@@ -819,7 +807,6 @@ async def create_from_files(
             remediation_hint=_orphan_hint(entity_id, name, project_id),
         ) from exc
     except GFlowError as exc:
-        await _capture_failure(page, exc)
         exc.remediation_hint = (
             f"{_orphan_hint(entity_id, name, project_id)} {exc.remediation_hint or ''}"
         ).strip()
