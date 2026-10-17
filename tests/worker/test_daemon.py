@@ -1114,3 +1114,40 @@ async def test_character_bundles_in_the_payload_are_applied_after_the_project(
     assert kw["bundles"] == (tmp_path / "nora",)
     assert kw["project_id"] == "project-abc"
     worker.close()
+
+
+@pytest.mark.asyncio
+async def test_character_bundles_on_a_video_task_get_a_project_then_are_applied(
+    temp_db: DataStore, tmp_path: Path
+) -> None:
+    """#639 video: `gflow_generate_video(characters=[...])` writes ``payload["characters"]``.
+    A character is imported INTO a project, so with none named the worker creates one, then
+    applies every bundle to it before the generation — two characters, one clip."""
+    repo = QueueRepository(temp_db)
+    folders = [str(tmp_path / "nora"), str(tmp_path / "kael")]
+    task = repo.enqueue_task(
+        task_id="task-video-characters",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "Nora and Kael talk", "mode": "t2v", "characters": folders},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-v", title="t")
+    fake_client.generate_video.return_value = _completed_video_result("media-v")
+
+    async def passthrough(_client: Any, _recorder: Any, req: Any, **kw: Any) -> Any:
+        passthrough.kw = kw  # type: ignore[attr-defined]
+        return req
+
+    with (
+        patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+        patch("gflow_cli.services.character_portability.apply_character_bundles", passthrough),
+    ):
+        await worker.process_task(task)
+
+    kw = passthrough.kw  # type: ignore[attr-defined]
+    assert kw["bundles"] == (tmp_path / "nora", tmp_path / "kael")
+    assert kw["project_id"] == "project-v"
+    assert fake_client.generate_video.await_args.kwargs["project_id"] == "project-v"
+    worker.close()

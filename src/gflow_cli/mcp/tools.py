@@ -1045,6 +1045,7 @@ def _build_video_payload(
         "The prompt supports @CharacterName mentions to tag saved project characters by name "
         "(resolves to referenceEntities). Reference a SAVED character via @Name; pass one-off "
         "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
+        "characters takes folders from gflow_character_export (several per clip). "
         "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
         "before spending credits if unreachable; 'agentic' is not supported for video. "
         "Returns the local file path to the generated video."
@@ -1071,6 +1072,7 @@ async def gflow_generate_video(  # NOSONAR
     ui_mode: str | None = None,
     output: str | None = None,
     wait: bool = True,
+    characters: list[str] | None = None,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
 
@@ -1100,6 +1102,13 @@ async def gflow_generate_video(  # NOSONAR
         reference_entity_names: Optional display names paired positionally with
             ``reference_entities`` (mirrors ``--reference-entity-name``); used
             only to filter the picker, the ids remain the identity.
+        characters: Character folders written by ``gflow_character_export`` (mirrors
+            ``--character`` on ``video t2v``/``r2v``; several may share one clip), as
+            paths on the machine running this server. In the target project a
+            character with the folder's name is reused; otherwise it is imported first
+            (free, flow.google.com), then attached like ``reference_entities``. Name
+            each one in the prompt to direct it. Without ``project`` a project is
+            created to hold them.
         model: Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality',
             'omni_flash' (aliases accepted, mirrors the CLI ``--model``). When
             omitted, Flow's UI default applies EXCEPT for i2v with frames,
@@ -1141,10 +1150,12 @@ async def gflow_generate_video(  # NOSONAR
             read from the server/daemon environment, not per call) the ported
             modes are 't2v'; 'i2v' with a local ``initial_frame`` with or without
             a local ``end_frame``; and 'r2v' with local ``reference_images``. A UUID
-            frame, an end frame by UUID/``@Name``, and r2v by ``ref_names`` or
-            ``reference_entities`` return the exit-36-equivalent envelope. On an
-            agent-only composer (#799) only 't2v' is ported; 'i2v' and 'r2v' return
-            that envelope too.
+            frame, an end frame by UUID/``@Name``, r2v by ``ref_names``, and a
+            ``reference_entities`` id with no paired name return the
+            exit-36-equivalent envelope. Characters attach there by name (``@Name``,
+            ``reference_entities`` + ``reference_entity_names``, or ``characters``).
+            On an agent-only composer (#799) only 't2v' is ported; 'i2v' and 'r2v'
+            return that envelope too.
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
             ``video t2v``/``i2v``; applies to every mode of this tool,
             including 'r2v'). Labs video only has a classic driver:
@@ -1258,7 +1269,7 @@ async def gflow_generate_video(  # NOSONAR
         initial_frame=initial_frame,
         end_frame=end_frame,
         reference_images=reference_images,
-        reference_entities=reference_entities,
+        reference_entities=(reference_entities or []) + list(characters or []),
     )
     if media_err is not None:
         return media_err
@@ -1281,6 +1292,15 @@ async def gflow_generate_video(  # NOSONAR
         reference_entity_names=reference_entity_names,
     )
     payload.update(media)
+    if characters:
+        if mode == "i2v":
+            return _bad_param(
+                "Unsupported characters for i2v",
+                "characters attach on 't2v' and 'r2v'; an i2v request carries no "
+                "character references (mirrors the CLI, where i2v has no --character).",
+            )
+        # Read back by the worker under this exact key (worker/daemon.py, #628 class).
+        payload["characters"] = list(characters)
 
     # task_type matches the mode ("t2v", "i2v", "r2v")
     result = await _run_generation_task(

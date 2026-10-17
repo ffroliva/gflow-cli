@@ -67,3 +67,20 @@ Feature: Portable characters on flow.google.com (#639)
     When the CLI exports "Portable" to a bundle folder
     And the MCP image tool generates "Portable waving" in the second project with that character folder
     Then the queued image is written and the second project lists "Portable" once
+
+  # Video spends Veo credits (~12 per 8 s clip): also opt in with GFLOW_CLI_E2E_RUN_VIDEO=1.
+  @e2e_video
+  Scenario: Generate a video with two characters from their folders on another account
+    Given a throwaway project on profile A holding the characters "Portable" and "Partner"
+    And a throwaway project on profile B
+    When the CLI exports "Portable" and "Partner" to bundle folders
+    And the CLI generates a video on profile B from "Portable and Partner chat at a cafe table" with both character folders in that project
+    Then the video is written, both characters rode it, and that project lists each once
+
+  @e2e_video
+  Scenario: The MCP video tool generates with two character folders through the queue
+    Given a throwaway project on profile A holding the characters "Portable" and "Partner"
+    And a second throwaway project on profile A
+    When the CLI exports "Portable" and "Partner" to bundle folders
+    And the MCP video tool generates "Portable and Partner chat at a cafe table" in the second project with both character folders
+    Then the queued video is written, both characters rode it, and the second project lists each once

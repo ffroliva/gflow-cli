@@ -319,3 +319,69 @@ class TestPatchRetry:
         page = _FieldPage(url=f"https://flow.google.com/project/{PID}/character/{EID}")
         await mc.patch_character(page, PID, EID, name="Nora")  # type: ignore[arg-type]
         assert (calls, reopened) == (["send", "send"], ["reload"])
+
+
+class _VoiceSetLocator(_VoiceLocator):
+    """After the confirm, the voice button already reads the voice."""
+
+    reads = 0
+
+    async def inner_text(self) -> str:
+        _VoiceSetLocator.reads += 1
+        return "voice_selection" if _VoiceSetLocator.reads == 1 else "aoede"
+
+
+class _VoiceSetPage(_VoicePage):
+    def locator(self, _: str) -> Any:
+        return _VoiceSetLocator(self)
+
+
+class TestVoiceConfirmLostReply:
+    """e2e 2026-10-17 (MCP import): the confirm click timed out while Flow had set the
+    voice and closed the picker — the screenshot shows `aoede` on the button. A voice the
+    editor shows is set; a run reporting failure there orphans a finished character."""
+
+    async def test_a_lost_confirm_is_accepted_when_the_button_shows_the_voice(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.api.transports import migrated_composer
+
+        _VoiceSetLocator.reads = 0
+        page = _VoiceSetPage()
+
+        async def one_hit(*_: Any, **__: Any) -> tuple[Any, list[int], int]:
+            return _VoiceLocator(page), [0], 1
+
+        async def enabled(*_: Any, **__: Any) -> bool:
+            return True
+
+        async def lost(*_: Any, **__: Any) -> Any:
+            raise PlaywrightTimeoutError("Locator.click: Timeout 15000ms exceeded.")
+
+        monkeypatch.setattr(mc, "_voice_hits", one_hit)
+        monkeypatch.setattr(mc, "_confirm_enabled", enabled)
+        monkeypatch.setattr(migrated_composer, "rpc_reply", lost)
+        await mc._pick_voice(page, EID, "Aoede", timeout_s=1)  # type: ignore[arg-type]
+
+    async def test_a_lost_confirm_with_no_voice_shown_still_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.api.transports import migrated_composer
+
+        page = _VoicePage()
+
+        async def one_hit(*_: Any, **__: Any) -> tuple[Any, list[int], int]:
+            return _VoiceLocator(page), [0], 1
+
+        async def enabled(*_: Any, **__: Any) -> bool:
+            return True
+
+        async def lost(*_: Any, **__: Any) -> Any:
+            raise PlaywrightTimeoutError("Locator.click: Timeout 15000ms exceeded.")
+
+        monkeypatch.setattr(mc, "_voice_hits", one_hit)
+        monkeypatch.setattr(mc, "_confirm_enabled", enabled)
+        monkeypatch.setattr(migrated_composer, "rpc_reply", lost)
+        monkeypatch.setattr(mc, "VOICE_SHOWN_WAIT_S", 0.3)
+        with pytest.raises(PlaywrightTimeoutError):
+            await mc._pick_voice(page, EID, "Aoede", timeout_s=1)  # type: ignore[arg-type]

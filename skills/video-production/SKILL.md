@@ -215,8 +215,12 @@ gflow video t2v "<prompt>" --project "$PROJECT" \
   --aspect 16:9 --duration 8
 ```
 
-One face-bearing reference per generation **[CONSTRAINT]** — so in a two-hander, bind the
-person who **speaks** and carry the other in prose. Getting that backwards is what produced
+One face-bearing reference per generation **[CONSTRAINT on labs.google]** — so there, in a
+two-hander, bind the person who **speaks** and carry the other in prose. **On an account
+served flow.google.com, two characters per clip worked [MEASURED, 6/6 clips, 2026-10-17]:**
+`--character a/ --character b/` (or two `--reference-entity` + `--reference-entity-name`
+pairs) attached both, verified as character chips, and a 4-beat café dialogue kept both
+identities across every shot with each line transcribed word for word. Bind both there. Getting that backwards is what produced
 the 88 Hz stranger above: the beat bound the silent actor, so the speaker fell to rung 4.
 
 **4 — expect the submit to outlive your patience, and do not read a timeout as a failure.**
@@ -225,7 +229,10 @@ daily use, so a queued job routinely outlives gflow's submit-reply budget. An
 entity-bound run can exit **9 `TransportTimeoutError`** while the video is rendering
 normally — the job is in Flow's queue and will finish. Check the project before you
 re-submit, or you will double-spend on a generation you already have. (gflow-cli #723,
-#741.)
+#741.) On flow.google.com gflow now waits through a queued submit that answers without a
+record, taking the clip from the app's own status poll; that path is unit-tested but was
+not hit live in the 6 runs of 2026-10-17 (every submit named its clip), so the advice
+stands if it does exit 9.
 
 **5 — verify the voice actually landed, relatively.** Never assert an absolute band: a
 character legitimately speaks differently in an action beat than in a quiet one, and the
@@ -360,7 +367,7 @@ Ship a review page beside the cut: the final video, and every clip with its prom
 
 | Rationalisation | Reality |
 |---|---|
-| "Both faces must stay consistent, so both entities go in" | the second entity is the 400. One entity plus a role noun beats a refused generation. |
+| "Both faces must stay consistent, so both entities go in" | on labs.google the second entity is the 400 — one entity plus a role noun beats a refused generation. On flow.google.com two characters per clip are measured to work; bind both. |
 | "The room is described in every prompt, that is enough" | without an anchored plate chain, the first new angle invents a different room. |
 | "Trim the speech so it fits 8 s" | split it across beats. The words are the deliverable. |
 | "Reverse-angle drift is unavoidable" | it is avoidable: chain the angle off the anchor plate with `i2i`. |

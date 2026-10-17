@@ -179,8 +179,10 @@ video.
 To skip the separate import, point a generation straight at the folder:
 `gflow image t2i "Nora reading" --character nora/ [--project <id>] [--profile …]`
 (MCP: `gflow_generate_image(characters=[…])`). A character with the folder's name already in
-the project is **reused by name**; otherwise the folder is imported first. Images today;
-video once its character gate is lifted. Full reference: [USAGE](USAGE.md); measurements:
+the project is **reused by name**; otherwise the folder is imported first. The same flag
+works on `gflow video t2v` / `r2v` (MCP: `gflow_generate_video(characters=[…])`), repeatable,
+so several characters share one clip:
+`gflow video t2v "Nora and Mini chat at a cafe table" --character nora/ --character mini/ --project <id>`. Full reference: [USAGE](USAGE.md); measurements:
 [spike 2026-10-16](superpowers/spikes/2026-10-16-migrated-character-lifecycle-wire.md).
 
 ## 6. Payloads (I/O)

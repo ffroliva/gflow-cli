@@ -3632,3 +3632,52 @@ async def test_upload_readback_that_proves_nothing_keeps_the_unknown_outcome(
     with patch.object(FakeFileChooser, "set_files", fail_upload):
         with pytest.raises(RpcResponseUnavailableError, match="body was unavailable"):
             await migrated_composer.MigratedComposer().upload(page, PROJ_UUID, _png(tmp_path))
+def _queued_frame(rpcid: str) -> str:
+    """The #723 entity submit reply: an envelope with a null payload and a bare `[5]`."""
+    frame = [["wrb.fr", rpcid, None, None, None, [5], "generic"]]
+    return ")]}'\n\n10\n" + json.dumps(frame) + "\n"
+
+
+def _other_record(status: int) -> list[Any]:
+    rec = _record(status)
+    rec[0] = "44444444-4444-4444-8444-444444444444"  # another clip already running
+    rec[2] = "66666666-6666-4666-8666-666666666666"
+    return rec
+
+
+async def test_a_queued_submit_adopts_the_new_clip_its_status_poll_names() -> None:
+    """#723 Task 6b: `MZZa6b` answered `[5]` with no record while Flow ran the clip. The
+    clip already pending before that reply is never adopted; the new one is."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[_other_record(2)]]])),
+        (_batch_url("MZZa6b"), _queued_frame("MZZa6b")),
+        (
+            _batch_url("jwpduf"),
+            _frame("jwpduf", [None, 881, [[_other_record(2)], [_record(2)]]]),
+        ),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    started: list[Any] = []
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=started.append, project_id=None
+    )
+    assert rec.is_done and rec.media_id == MEDIA and rec.video_url == VIDEO_URL
+    assert started and started[0].media_id == MEDIA
+
+
+async def test_a_queued_submit_no_poll_names_is_a_timeout_that_warns_of_billing() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import TransportTimeoutError
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [(_batch_url("MZZa6b"), _queued_frame("MZZa6b"))]
+    with pytest.raises(TransportTimeoutError, match="queued") as exc:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=0.5, on_started=None, project_id=None
+        )
+    assert "bill twice" in (exc.value.remediation_hint or "")

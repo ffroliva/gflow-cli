@@ -79,13 +79,17 @@ Notes:
   fails fast with a clear exit-11 message naming the Phase-3 limitation — no silent drop, no wasted
   credit.
 
-## On flow.google.com (images only, #723)
+## On flow.google.com (#723)
 
-On an account Flow serves from `flow.google.com`, `image t2i` and `image i2i` take a character
-mention (`@Name` or `--reference-entity`) through the composer's own `@` picker. **Video is
-unchanged:** video characters are still refused there — `--reference-entity` and a video `@Name`
-both exit 36 before anything is submitted (a video `@Name` used to exit 29, when the character
-catalog could not be read on that host).
+On an account Flow serves from `flow.google.com`, `image t2i` / `image i2i` and — since
+2026-10-17 — `video t2v` / `video r2v` take a character mention (`@Name`,
+`--reference-entity` with `--reference-entity-name`, or `--character FOLDER`) through the
+composer's own `@` picker, and every chip is verified to be that character before submit.
+**Several characters can share one clip:** two characters per clip, measured on 6 of 6 clips
+(4 in a 32 s café dialogue plus both video e2e scenarios). A character given by entity id
+**without** a name has nothing to type into the picker and still exits 36. An entity-bound
+video submit Flow queues can answer with no record; gflow then takes the clip from the app's
+own status poll instead of timing out on a generation that is running.
 
 - **The catalog is read on that host.** The labs catalog route is retired (401 or 404 measured);
   on that refusal `gflow character list` falls back to flow.google.com's own project read

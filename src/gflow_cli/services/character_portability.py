@@ -11,7 +11,7 @@ import run one after the other, never with two profiles open at once.
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 import structlog
 
@@ -26,9 +26,13 @@ if TYPE_CHECKING:
     from gflow_cli.api.character import CharacterCreateResult
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.video import GenerateVideoRequest
     from gflow_cli.data.recorder import OperationRecorder
 
 log = structlog.get_logger(__name__)
+
+#: An image or a video request: both carry the same `reference_entities` pair.
+Req = TypeVar("Req", "GenerateImageRequest", "GenerateVideoRequest")
 
 
 async def export_character(
@@ -114,13 +118,13 @@ async def import_character(
 async def apply_character_bundles(
     client: FlowApiClient,
     recorder: OperationRecorder,
-    req: GenerateImageRequest,
+    req: Req,
     *,
     project_id: str,
     profile_name: str,
     profile_dir: Path,
     bundles: Sequence[Path],
-) -> GenerateImageRequest:
+) -> Req:
     """Make each bundle's character available in ``project_id`` and attach it to ``req``.
 
     Generate directly from a character folder, in any project on any account (#639,

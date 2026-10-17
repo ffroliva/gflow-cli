@@ -507,20 +507,17 @@ async def test_a_character_named_without_an_id_attaches_as_an_entity() -> None:
     assert committed == ("ent-sussy",)
 
 
-def test_character_references_are_still_refused_until_a_submit_completes() -> None:
-    """The attach half is ported and proven; the submit half is not, so the gate stays.
+def test_named_character_references_are_served_and_bare_ids_refused() -> None:
+    """#723, Task 6b: the gate is lifted for characters named on the request.
 
-    `attach_character_entities` is verified live — the chip commits with the right
-    entity_id and Flow loads the character's voice — but the submit that follows produced
-    no reply in three runs. Until an entity-bound generation actually completes, refusing
-    instantly (exit 36) beats a 60-second timeout, so the gate must NOT be relaxed just
-    because the attach works. This test is the thing that stops that happening by
-    accident.
+    The attach is by name through the `@` picker, then verified as an entity chip; the
+    submit's null-payload "queued" reply is now observed through the status poll. An id
+    with no name has nothing to type, so it stays refused (exit 36) rather than dropped.
     """
     from gflow_cli.api.transports.migrated_composer import _unported_form
 
     assert _unported_form(_r2v(reference_entities=("ent-kael",))) is not None
     assert (
         _unported_form(_r2v(reference_entities=("ent-kael",), reference_entity_names=("Kael",)))
-        is not None
+        is None
     )

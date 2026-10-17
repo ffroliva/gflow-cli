@@ -291,6 +291,18 @@ def generation_record(
     )
 
 
+def generation_records(rpcid: str, payload: Any) -> list[GenerationRecord]:
+    """Every generation record in a frame — a ``jwpduf`` poll can carry several clips.
+
+    Unlike :func:`generation_record`, finding none is not an error: the caller asks
+    "is there a new clip here?", and a poll about other clips answers no."""
+    records: list[GenerationRecord] = []
+    for node in _walk_lists(payload):
+        if _is_record(node):
+            records.append(generation_record(rpcid, node))
+    return records
+
+
 def image_records(rpcid: str, payload: Any) -> list[ImageGenerationRecord]:
     """Decode every completed image in the migrated ``ogiZ0b`` payload.
 
