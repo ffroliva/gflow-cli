@@ -224,9 +224,10 @@ the character's name ranked above the character, so Enter alone can commit the i
 `_assert_entities_attached` already makes on labs.
 
 Images drive it since #979: the option whose `.asset-title` equals the name exactly is
-selected, and the chip's kind is verified before submit. The migrated **video** path still
-exits 36 on `--reference-entity` / `@Name`, so `movie run` cannot produce an
-entity-consistent scene there. Tracked in
+selected, and the chip's kind is verified before submit. Since 2026-10-17 the migrated
+**video** path does too (`video t2v` / `r2v` with `@Name`, `--reference-entity` +
+`--reference-entity-name` or `--character`); `movie run` itself is not ported to that host
+yet, so it cannot produce an entity-consistent scene there. Tracked in
 [#723](https://github.com/ffroliva/gflow-cli/issues/723) with the working gesture recorded.
 
 ### A costume change is a new character, not a variant

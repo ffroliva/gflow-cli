@@ -74,13 +74,13 @@ Feature: Portable characters on flow.google.com (#639)
     Given a throwaway project on profile A holding the characters "Portable" and "Partner"
     And a throwaway project on profile B
     When the CLI exports "Portable" and "Partner" to bundle folders
-    And the CLI generates a video on profile B from "Portable and Partner chat at a cafe table" with both character folders in that project
-    Then the video is written, both characters rode it, and that project lists each once
+    And the CLI generates a video on profile B from "At a cafe table, Portable waves at Partner" with both character folders in that project
+    Then the video is written, both characters rode it where the prompt names them, and that project lists each once
 
   @e2e_video
   Scenario: The MCP video tool generates with two character folders through the queue
     Given a throwaway project on profile A holding the characters "Portable" and "Partner"
     And a second throwaway project on profile A
     When the CLI exports "Portable" and "Partner" to bundle folders
-    And the MCP video tool generates "Portable and Partner chat at a cafe table" in the second project with both character folders
-    Then the queued video is written, both characters rode it, and the second project lists each once
+    And the MCP video tool generates "At a cafe table, Portable waves at Partner" in the second project with both character folders
+    Then the queued video is written, both characters rode it where the prompt names them, and the second project lists each once

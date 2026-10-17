@@ -94,7 +94,8 @@ or without `@`; one the prompt never names goes in front.
 (4 in a 32 s café dialogue plus both video e2e scenarios). A character given by entity id
 **without** a name has nothing to type into the picker and still exits 36. An entity-bound
 video submit Flow queues can answer with no record; gflow then takes the clip from the app's
-own status poll instead of timing out on a generation that is running.
+own status poll instead of timing out on a generation that is running (tested offline; not
+yet seen live — every live submit so far named its clip).
 
 - **The catalog is read on that host.** The labs catalog route is retired (401 or 404 measured);
   on that refusal `gflow character list` falls back to flow.google.com's own project read

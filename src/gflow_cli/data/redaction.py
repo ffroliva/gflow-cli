@@ -133,7 +133,14 @@ def redact_error_detail(detail: str) -> str:
     URLs carrying signed-query material, and truncates post-redaction as
     defense-in-depth against a scrub bypass.
     """
+    return scrub_secrets(detail)[:ERROR_DETAIL_MAX_CHARS]
+
+
+def scrub_secrets(text: str) -> str:
+    """:func:`redact_error_detail` without the length cap — for a caller that must keep the
+    END of a long text (a Playwright call log names its cause last) and trims it itself.
+    Scrub the whole text first, then trim: trimming first can cut a token into fragments
+    shorter than any pattern's floor."""
     for pattern, replacement in _SECRET_TEXT_PATTERNS:
-        detail = pattern.sub(replacement, detail)
-    detail = _SIGNED_QUERY_TOKEN_PATTERN.sub("<redacted:url>", detail)
-    return detail[:ERROR_DETAIL_MAX_CHARS]
+        text = pattern.sub(replacement, text)
+    return _SIGNED_QUERY_TOKEN_PATTERN.sub("<redacted:url>", text)

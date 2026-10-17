@@ -104,7 +104,7 @@ from gflow_cli.image_batch import (
 )
 from gflow_cli.paths import image_output_path, resolve_batch_output_dir
 from gflow_cli.services import catalog_sync
-from gflow_cli.services.character_portability import apply_character_bundles
+from gflow_cli.services.character_portability import apply_character_bundles, validate_bundles
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
@@ -165,7 +165,8 @@ def _project_and_entity_options(*, single_prompt: bool) -> Callable[[_CmdFn], _C
             help=(
                 "A character folder written by `gflow character export` (repeatable). "
                 "A character with its name already in the project is reused; otherwise "
-                "it is imported first (free). Then it is attached like --reference-entity." + note
+                "it is imported first (free). Then it is attached like --reference-entity, "
+                "where the prompt names it." + note
             ),
         )(func)
         func = click.option(
@@ -1350,6 +1351,7 @@ async def _run_t2i(
     tool_specs: tuple[str, ...] = (),
     characters: tuple[Path, ...] = (),
 ) -> None:
+    validate_bundles(characters)  # before Flow: a bad folder leaves no scratch project
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
     try:
@@ -1842,6 +1844,7 @@ async def _run_i2i(
     as_json: bool = False,
     tool_specs: tuple[str, ...] = (),
 ) -> None:
+    validate_bundles(params.characters)  # before Flow: a bad folder leaves no scratch project
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
     req: GenerateImageRequest | None = None

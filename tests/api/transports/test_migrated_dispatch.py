@@ -468,3 +468,38 @@ async def test_a_cancelled_composer_run_still_parks_inline(
         await harness["transport"].generate_video(request=_req(), project_id="p1")
     assert harness["page"].url == "about:blank"
     assert harness["transport"]._deferred_park_pending is True  # noqa: SLF001
+
+
+async def test_run_video_types_the_prompt_with_the_characters_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """User report 2026-10-17 / council D4: on video, the prompt goes to the character
+    attach (each chip where the prompt names it) and is never appended after the chips."""
+    from unittest.mock import AsyncMock
+
+    from gflow_cli.api.transports import migrated_composer as mc
+
+    calls: list[str] = []
+    composer = MagicMock()
+    composer.ensure_editor = AsyncMock()
+    composer.apply_video_settings = AsyncMock()
+
+    async def attach(*_: Any, **kw: Any) -> tuple[str, ...]:
+        calls.append(f"attach:{kw['names']}:{kw['prompt']}")
+        return ("ent-nora",)
+
+    composer.attach_character_entities = attach
+    composer.send_prompt = AsyncMock(side_effect=lambda *a, **k: calls.append("prompt"))
+    composer.submit_and_observe = AsyncMock(side_effect=RuntimeError("stop at submit"))
+    monkeypatch.setattr(mc, "MigratedComposer", lambda **_: composer)
+
+    with pytest.raises(RuntimeError, match="stop at submit"):
+        await _run(
+            _req(
+                prompt="In the cafe, Nora waves",
+                reference_entities=("ent-nora",),
+                reference_entity_names=("Nora",),
+            )
+        )
+    assert calls == ["attach:('Nora',):In the cafe, Nora waves"]
+    composer.send_prompt.assert_not_awaited()

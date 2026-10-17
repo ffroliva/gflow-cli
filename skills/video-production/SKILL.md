@@ -85,7 +85,7 @@ Load `https://labs.google/fx/tools/flow/project/<id>` in the profile's Chrome an
 | Lands on | Lane | What runs there |
 |---|---|---|
 | `labs.google/fx/…` | **A, full** | everything |
-| `flow.google.com/project/…` | **B, partial** | `video t2v --project`, `video i2v --initial-frame <local file> --project`, **`video r2v --ref <local file> --project`** (ported in v0.70.0, #683), `character create` (v0.70.0), and **`image t2i` / `image i2i` with local `--ref` files (#639)**. Everything else — `image batch`, `extend`, `scene create`, `movie run`, r2v by `@Name` or `--reference-entity`, i2v by media UUID / `@Name`, and Imagen 4 — exits 36 **[CONSTRAINT]**. A **local** `--end-frame` IS ported (start+end interpolation, #639) |
+| `flow.google.com/project/…` | **B, partial** | `video t2v --project`, `video i2v --initial-frame <local file> --project`, **`video r2v --ref <local file> --project`** (ported in v0.70.0, #683), `character create` (v0.70.0), and **`image t2i` / `image i2i` with local `--ref` files (#639)**. Everything else — `image batch`, `extend`, `scene create`, `movie run`, r2v by a media `@Name`, a character id with no name, i2v by media UUID / `@Name`, and Imagen 4 — exits 36 **[CONSTRAINT]**. Characters on `t2v` / `r2v` (`@Name`, `--reference-entity` + `--reference-entity-name`, `--character`) ARE ported (2026-10-17). A **local** `--end-frame` IS ported (start+end interpolation, #639) |
 
 Lane B grows as forms are ported, so **confirm the row rather than trusting it**: the
 maintained list is [CONFIGURATION § `GFLOW_CLI_FLOW_HOST`](../../docs/CONFIGURATION.md#gflow_cli_flow_host)
@@ -139,8 +139,8 @@ its plate carried those bars into every shot that referenced it. A rung-2 plate 
 clean by the character editor; a rung-3 plate is only as clean as the take it was cut from.
 
 **Descending a rung is a decision that gets written down**, in `production.json` next to the
-shot, naming the blocker. "I used an image" is not a record; "rung 2, because
-`--reference-entity` exits 36 on this host (#639)" is.
+shot, naming the blocker. "I used an image" is not a record; "rung 2, because the
+character's name collides with a media asset in the picker (exit 32)" is.
 
 > **Written from a run that skipped its own ladder.** On 2026-09-07 a five-shot film created
 > two real character entities and then anchored every shot on rung 2, because gflow refuses

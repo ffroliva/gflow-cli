@@ -47,7 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   submit; they exited 36 before. Two characters per clip were measured on 6 of 6 clips,
   including a 4-beat, 32 s café dialogue that kept both identities and every scripted line.
   An entity-bound submit that Flow queues without naming the clip is now followed through
-  the app's own status poll instead of timing out. MCP:
+  the app's own status poll instead of timing out (tested offline; not seen live — every
+  live submit named its clip). MCP:
   `gflow_generate_video(characters=[…])`. An entity id without a name still exits 36.
 - **A character lands where the prompt names it, on images and video (flow.google.com).**
   Every character chip used to be inserted first and the whole prompt typed after them, so
@@ -82,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default `GFLOW_CLI_FLOW_HOST=auto`, and directly when the host is pinned to flow.google.com.
   The MCP twins `gflow_character_list` / `gflow_character_show` follow. As a result, an image
   `@Name` resolves the character by id on that host instead of by name, and a video `@Name`
-  stops at the not-yet-ported video gate (exit 36) instead of exit 29. `character create
+  resolves too (it used to exit 29; video now attaches it, see Added). `character create
   --face-prompt` (generated images) and `character rm` on that host are not ported yet (#639).
 - **A successful `gflow character create` remembers which character it made** (#737). The
   completion write replaced the operation's metadata and dropped the `entity_id` and `name`

@@ -349,6 +349,10 @@ class FlowWorker:
                         # name, client.generate_video creates the project itself.
                         project_name = task.payload.get("project_name")
                         bundles = tuple(Path(p) for p in task.payload.get("characters", ()))
+                        from gflow_cli.services import character_portability
+
+                        # Before any project is created for them (council D7).
+                        character_portability.validate_bundles(bundles)
                         if project_id is None and (project_name or bundles):
                             # A character is imported INTO a project, so it needs one now.
                             created = await client.create_project(
@@ -357,8 +361,6 @@ class FlowWorker:
                             project_id = created.project_id
                         if bundles and project_id is not None:
                             # `characters`: the key gflow_generate_video writes (#639 C).
-                            from gflow_cli.services import character_portability
-
                             req = await character_portability.apply_character_bundles(
                                 client,
                                 recorder,

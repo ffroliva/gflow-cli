@@ -1110,6 +1110,7 @@ async def test_character_bundles_on_a_video_task_get_a_project_then_are_applied(
     with (
         patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
         patch("gflow_cli.services.character_portability.apply_character_bundles", passthrough),
+        patch("gflow_cli.services.character_portability.validate_bundles"),
     ):
         await worker.process_task(task)
 
@@ -1117,4 +1118,26 @@ async def test_character_bundles_on_a_video_task_get_a_project_then_are_applied(
     assert kw["bundles"] == (tmp_path / "nora", tmp_path / "kael")
     assert kw["project_id"] == "project-v"
     assert fake_client.generate_video.await_args.kwargs["project_id"] == "project-v"
+    worker.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bad_character_folder_fails_the_video_task_before_any_project(
+    temp_db: DataStore, tmp_path: Path
+) -> None:
+    """Council D7: the worker created a scratch project, THEN read the folder — a bad
+    folder left an empty project behind. It is read first now."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-video-bad-folder",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "x", "mode": "t2v", "characters": [str(tmp_path / "missing")]},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+    fake_client.create_project.assert_not_awaited()
+    fake_client.generate_video.assert_not_awaited()
     worker.close()

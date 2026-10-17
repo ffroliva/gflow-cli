@@ -1,6 +1,6 @@
 ---
 name: migrated-host-driver-wire-lessons
-description: "What the flow.google.com (migrated) driver builds got wrong and how each was pinned — poster vs mp4 URL slots, status-3-before-URL, labs redirect route 404s for migrated media ids, CSS :text-matches escaping, direct load works for unflagged accounts; plus the i2v slice-1 frame-attach lessons (late picker index, no media id in DOM, empty Frames submit goes out as t2v) and the r2v slice-2 lessons (references are @ mentions not chips, MZZa6b submit rpc, mode-less t2v model key, and a body assertion whose listener was never registered); plus #948: identify the record by structure, never a wire literal (slot 3 CAE->null), never suggest retry after a billed submit, select your record by id from multi-record replies, recover only from as29s (the Zzl0ze listing URL is unsigned; for images it is a capability link); plus the characters slice (entity created by its first image, prompt-box upload does not bind, a lost maseQ reply still binds, reads lag writes, the in-app editor can stall after create, Flow re-encodes uploads, REST character writes 401)"
+description: "What the flow.google.com (migrated) driver builds got wrong and how each was pinned — poster vs mp4 URL slots, status-3-before-URL, labs redirect route 404s for migrated media ids, CSS :text-matches escaping, direct load works for unflagged accounts; plus the i2v slice-1 frame-attach lessons (late picker index, no media id in DOM, empty Frames submit goes out as t2v) and the r2v slice-2 lessons (references are @ mentions not chips, MZZa6b submit rpc, mode-less t2v model key, and a body assertion whose listener was never registered); plus #948: identify the record by structure, never a wire literal (slot 3 CAE->null), never suggest retry after a billed submit, select your record by id from multi-record replies, recover only from as29s (the Zzl0ze listing URL is unsigned; for images it is a capability link); plus the characters slice (entity created by its first image, prompt-box upload does not bind, a lost maseQ reply still binds, reads lag writes, the in-app editor can stall after create, Flow re-encodes uploads, REST character writes 401); plus characters in generation (cold-profile first-run failures and their one-shot fixes, several characters per clip, chips placed where the prompt names them with Flow's trailing chip space, the queued null-payload fallback guarded but not seen live)"
 metadata: 
   type: project
 ---
@@ -276,3 +276,37 @@ two accounts served flow.google.com; each item below cost a run to learn.
   untranslated proper noun), never on the whole translated text.
 - **Flow re-encodes uploads:** a downloaded original is not byte-identical to the uploaded
   file, so a sha256 protects a bundle, never a round trip.
+
+## Characters in generation — cold create, video, placement (#639/#723, 2026-10-17)
+
+Live on two accounts served flow.google.com. Plan Tasks 6b and 13.
+
+- **A cold profile fails differently from a warm one.** A user's first create stalled while
+  every later run passed; copies of the profile with its site storage wiped reproduced three
+  first-run failures, each now handled once, never looped. The fixes, in order:
+  - **`C4BZMd` reply lost:** take the entity from the `maseQ` reply (slot 5) or the
+    `/character/<id>` route. If neither names one, nothing was created, so retry once.
+  - **First edit unanswered:** wait for network idle after each navigation
+    ([networkidle costs 3x, it does not hang](../spikes/2026-09-16-networkidle-costs-3x-it-does-not-hang.md),
+    capped at 10 s), clear the first-visit dialog and the cookie bar, and redo an unanswered
+    edit once after a reload.
+  - **Voice confirm never enabling:** click it only once it is enabled, and redo the pick
+    once. A confirm whose click times out while the button already shows the voice counts as
+    set (an MCP e2e saw exactly that).
+
+  After the fixes, 8/8 cold creates passed. On failure, keep the end of the Playwright call
+  log (its cause is last) and a UI capture, both redacted.
+- **Several characters in one clip work here** (6/6 two-character clips, 2026-10-17). On
+  labs one entity per generation was the constraint; do not carry that over. A character id
+  with no name still exits 36: the picker needs a name to type.
+- **Commit each chip where the prompt names it**, not all first. Chips first plus an
+  appended prompt reached Flow as `[Nora] [Mini] Nora hands … Mini`. Type up to the first
+  whole-word mention, commit the chip there in place of the name, and carry on; a character
+  the prompt never names goes in front. **Flow adds a space after a committed chip**, so drop
+  the prompt's own and take Flow's back (one Backspace, only after seeing it) before
+  punctuation or an apostrophe. Proof without logging the prompt: `migrated.prompt_typed`
+  logs a `layout` of `chip` / `text:<n>`.
+- **The null-payload queued submit (`MZZa6b` → `[5]`, no record) is guarded, not seen
+  live**: 6/6 live entity submits named their clip (not reproduced ≠ disproved). The
+  fallback adopts the first clip that is RUNNING when first seen, in this project, and not
+  already pending. A done clip is never ours, because ours was only just queued.
