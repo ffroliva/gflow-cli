@@ -673,6 +673,38 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     return request.model is None or request.model in VIDEO_MODEL_MENU_LABELS
 
 
+#: What follows a chip without Flow's own space after it: a space, or closing punctuation.
+_CLOSES_UP = (" ", ",", ".", ";", ":", "!", "?", ")")
+
+
+def place_mentions(
+    prompt: str, names: tuple[str, ...]
+) -> tuple[list[tuple[int, int, str]], list[str]]:
+    """Where each character's chip goes: ``([(start, end, name)…] by position, [unnamed])``.
+
+    A character is placed at the first whole-word, case-insensitive occurrence of its
+    name that no earlier character already took — which is where its ``@`` stood, since
+    the mention resolver keeps the name and drops only the ``@``. A character the prompt
+    never names is returned in the second list, to go in front."""
+    placed: list[tuple[int, int, str]] = []
+    leading: list[str] = []
+    for name in names:
+        pattern = re.compile(rf"(?<!\w){re.escape(name)}(?!\w)", re.IGNORECASE)
+        spot = next(
+            (
+                m
+                for m in pattern.finditer(prompt)
+                if all(m.end() <= s or m.start() >= e for s, e, _ in placed)
+            ),
+            None,
+        )
+        if spot is None:
+            leading.append(name)
+        else:
+            placed.append((spot.start(), spot.end(), name))
+    return sorted(placed), leading
+
+
 def _unported_image_form(request: GenerateImageRequest) -> str | None:
     if request.refs and request.ref_paths:
         return "existing-image references mixed with local files"
@@ -2543,8 +2575,16 @@ class MigratedComposer:
         entity_ids: tuple[str, ...],
         names: tuple[str, ...],
         clear: bool = True,
+        prompt: str | None = None,
     ) -> tuple[str, ...]:
         """Mention each character by name, then prove the chip is that ENTITY (#723).
+
+        With ``prompt``, the prompt is typed too, and each chip lands WHERE the prompt
+        names the character: the text before the name is typed, the chip replaces the
+        name (it renders that name), then the rest. A character the prompt never names
+        goes in front. Without it, chips are placed first and the caller types the prompt
+        after them — which put every character at the start, whatever the prompt said
+        (user report, 2026-10-17).
 
         The gesture is ``@``, the name, then the option TITLED exactly the name
         (:meth:`_mention_character`) — never the first option, and never a trial commit:
@@ -2571,8 +2611,11 @@ class MigratedComposer:
         # THIS call adds: media chips already on the prompt are legitimate, and clearing
         # them would silently drop references the caller asked for.
         base = len(await self.read_chips(page))
-        for i, name in enumerate(names):
-            await self._mention_character(page, name, expect_chips=base + i + 1)
+        if prompt is None:
+            for i, name in enumerate(names):
+                await self._mention_character(page, name, expect_chips=base + i + 1)
+        else:
+            await self._compose_with_mentions(page, prompt, names, base=base)
 
         chips = (await self.read_chips(page))[base:]
         not_entities = [c for c in chips if c.get("reference_type") != "entity"]
@@ -2616,7 +2659,76 @@ class MigratedComposer:
         )
         return committed
 
-    async def _mention_character(self, page: Page, name: str, *, expect_chips: int) -> None:
+    async def _compose_with_mentions(
+        self, page: Page, prompt: str, names: tuple[str, ...], *, base: int
+    ) -> None:
+        placed, leading = place_mentions(prompt, names)
+        count = base
+        for name in leading:
+            count += 1
+            await self._mention_character(page, name, expect_chips=count)
+        pos = 0
+        after_chip = bool(leading)
+        for start, end, name in [*placed, (len(prompt), len(prompt), "")]:
+            segment = prompt[pos:start]
+            if after_chip and segment[:1] in _CLOSES_UP and await self._ends_with_space(page):
+                # Flow puts a space after a committed chip (live, 2026-10-17: the recorded
+                # prompt read "Nora  hands" and "Mini ,"). A prompt space would double it,
+                # and punctuation must sit against the name: take Flow's space back. The
+                # Backspace is safe only because the composer was SEEN to end in a space.
+                if segment[:1] == " ":
+                    segment = segment[1:]
+                else:
+                    await page.keyboard.press("Backspace")
+            if segment:
+                await page.keyboard.insert_text(segment)
+            if not name:
+                break
+            count += 1
+            # No click: it would move the caret off the end of what was just typed.
+            await self._mention_character(page, name, expect_chips=count, focus=False)
+            pos, after_chip = end, True
+        log.info(
+            "migrated.prompt_typed",
+            chars=len(prompt),
+            inline_mentions=len(placed),
+            layout=await self._layout(page),
+        )
+
+    async def _layout(self, page: Page) -> list[str]:
+        """The composer in document order — ``"chip"`` or ``"text:<length>"`` — so a run's
+        log shows where each chip landed without logging the prompt itself."""
+        layout = await page.evaluate(
+            """([root, chip]) => {
+                const out = [];
+                const walk = (node) => {
+                    for (const child of node.childNodes) {
+                        if (child.nodeType === 1 && child.matches(chip)) out.push("chip");
+                        else if (child.nodeType === 3) {
+                            const n = child.textContent.trim().length;
+                            if (n) out.push("text:" + n);
+                        } else walk(child);
+                    }
+                };
+                const el = document.querySelector(root);
+                if (el) walk(el);
+                return out;
+            }""",
+            [COMPOSER, MENTION_CHIP],
+        )
+        if not isinstance(layout, list):
+            return []
+        return [x for x in cast("list[object]", layout) if isinstance(x, str)]
+
+    async def _ends_with_space(self, page: Page) -> bool:
+        text = await page.evaluate(
+            "(sel) => (document.querySelector(sel)?.textContent || '')", COMPOSER
+        )
+        return isinstance(text, str) and text[-1:] in (" ", "\u00a0")
+
+    async def _mention_character(
+        self, page: Page, name: str, *, expect_chips: int, focus: bool = True
+    ) -> None:
         """Commit the picker option TITLED exactly *name* — one gesture, nothing on trial.
 
         Measured 2026-10-13 (``scripts/dev/spike_picker_entity_marker.py``, and see
@@ -2639,7 +2751,9 @@ class MigratedComposer:
         titles: list[str] = []
         before: list[dict[str, str]] = []
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
-            before = await self._caret_to_end(page)
+            # Without focus the caret already sits after the text just typed, and a
+            # click could move it; the chips are still read for `_require_appended`.
+            before = await self._caret_to_end(page) if focus else await self.read_chips(page)
             # Real keystrokes: see `_mention_by_name`.
             await page.keyboard.type("@", delay=120)
             await page.wait_for_timeout(2200)
@@ -3740,16 +3854,18 @@ async def run_video(
         # #723: characters attach through the SAME `@` picker as media, so they go on
         # after any uploads (whose file chooser steals keyboard focus) and must not clear
         # mentions those uploads already placed.
+        # The prompt is typed with them, so each chip lands where the prompt names it.
         await composer.attach_character_entities(
             page,
             entity_ids=tuple(request.reference_entities),
             names=tuple(request.reference_entity_names),
             clear=not reference_ids,
+            prompt=request.prompt,
         )
-    # The prompt is appended whenever mentions are already in the document: clicking the
-    # composer would move the caret away from where the last one left it.
-    has_mentions = bool(request.reference_entities) or request.mode is Mode.R2V
-    await composer.send_prompt(page, request.prompt, append=has_mentions)
+    else:
+        # The prompt is appended whenever mentions are already in the document: clicking
+        # the composer would move the caret away from where the last one left it.
+        await composer.send_prompt(page, request.prompt, append=request.mode is Mode.R2V)
     if request.mode is Mode.R2V:
         attached = await composer.read_chips(page)
         if len(attached) != len(request.reference_images) + len(request.reference_entities):
@@ -3854,8 +3970,10 @@ async def run_images(
             entity_ids=tuple(request.reference_entities),
             names=tuple(request.reference_entity_names),
             clear=not reference_ids,
+            prompt=request.prompt,  # each chip where the prompt names it
         )
-    await composer.send_prompt(page, request.prompt, append=bool(reference_ids) or bool(entity_ids))
+    else:
+        await composer.send_prompt(page, request.prompt, append=bool(reference_ids))
     # The submit guard holds the body to EXACTLY these references: a lost character, or
     # any reference that is not on this list, aborts the run before Flow generates it.
     return await composer.submit_images_and_observe(
