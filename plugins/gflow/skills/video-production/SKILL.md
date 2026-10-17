@@ -71,7 +71,7 @@ The plan changes completely with the answers. Ask, or read them from the brief; 
 | Is audio generated, added later, or discarded? | Veo always generates audio **[CONSTRAINT]** — see below |
 | Captions: none, burned-in, or a sidecar file? | burned-in needs `libass` and a timing source |
 | One location or several? How many camera angles each? | drives the plate-chaining work in `consistency.md` |
-| Recurring people? How many in frame at once? | one face-bearing reference per generation **[CONSTRAINT]** |
+| Recurring people? How many in frame at once? | one face-bearing reference per generation on labs.google **[CONSTRAINT]**; several characters per clip on flow.google.com **[MEASURED]** |
 | A prop that must not change? | needs its own sheet with a scale anchor |
 | Aspect, total length, credit ceiling | 16:9 or 9:16; clips are 4/6/8, or 10 on omni-flash |
 | One-off, or a repeatable pipeline? | decides the production shape in `composition.md` |
@@ -358,7 +358,7 @@ Ship a review page beside the cut: the final video, and every clip with its prom
 - An age word anywhere near a person.
 - A sign, poster, door or garment described as carrying words.
 - A film format in the style block.
-- Two `--reference-entity` flags, or `characters = [A, B]` on one manifest scene.
+- On labs.google: two `--reference-entity` flags, or `characters = [A, B]` on one manifest scene (on flow.google.com two named characters per clip are measured to work).
 - `--duration` with no `--model`; `--ref` with `veo-quality` (it takes 0 — reach for `omni-flash`).
 - A beat over 2.5 words per second, or a line shortened "to fit".
 - Angles of one location generated as independent `t2i` calls.

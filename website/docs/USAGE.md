@@ -293,9 +293,10 @@ prompts through one Flow session/project.
 > (`nano2`, #958), Nano Banana 2 Lite (`nano2-lite`) and Nano Banana Pro (`nano-pro`), all five aspects (`16:9`,
 > `4:3`, `1:1`, `3:4`, `9:16`), and count 1–4. Without `--project`, gflow creates a fresh project
 > there first ([#864](https://github.com/ffroliva/gflow-cli/issues/864)). The
-> migrated page owns its reCAPTCHA + `ogiZ0b` submit. Imagen 4, Agent instructions,
-> character/entity references and `image batch` remain unavailable on that host and
-> fail before submit.
+> migrated page owns its reCAPTCHA + `ogiZ0b` submit. Characters attach by `@Name`,
+> `--reference-entity` + `--reference-entity-name`, or `--character FOLDER`, each where the
+> prompt names it (#723). Imagen 4, Agent instructions, an entity id without a name and
+> `image batch` remain unavailable on that host and fail before submit.
 
 ```text
 gflow image t2i PROMPT [PROMPT ...] [OPTIONS]
@@ -446,9 +447,9 @@ Generate 1–4 images by blending a text prompt with one or more reference image
 
 > **Migrated `flow.google.com` accounts (#639):** local-file `--ref` values are supported
 > and each uploaded media id is verified in the outgoing `ogiZ0b` body. Without `--project`,
-> gflow creates one there first (#864). UUID refs, `@Name` / `--reference-entity`, Agent
-> instructions and Imagen 4 remain unavailable on that host and fail
-> before submit rather than silently degrading to T2I.
+> gflow creates one there first (#864). Characters attach as on `t2i` (#723). UUID refs,
+> an entity id without a name, Agent instructions and Imagen 4 remain unavailable on that
+> host and fail before submit rather than silently degrading to T2I.
 
 ```text
 gflow image i2i PROMPT --ref PATH_OR_UUID [--ref ...] [OPTIONS]
@@ -531,8 +532,9 @@ gflow image t2i "Aria explores a neon market, full body" \
   --project 7fa97443-… --reference-entity 8a77f8cb-… --reference-entity-name Aria \
   --model nano2 --aspect 9:16 -n 3
 
-# Straight from a character folder, in any project on any account: a character with
-# the folder's name in that project is reused; otherwise it is imported first (free)
+# Straight from a character folder: a character with the folder's name in the project is
+# reused; an absent one is imported first (free) — which needs an account Flow serves from
+# flow.google.com, where building a character from files is driven
 gflow image t2i "Nora reading in a sunlit kitchen" --character nora/ --profile personal
 
 # Several characters in one scene (each --reference-entity repeatable)

@@ -865,6 +865,23 @@ async def gflow_generate_image(
                 f"Expected one of {[m.value for m in UiMode]}, got {ui_mode!r}.",
             )
 
+    if characters:
+        # Before anything is imported (CodeRabbit, PR #987; the CLI checks the same).
+        from gflow_cli.api.image import Model as ImageModel
+        from gflow_cli.api.image import reference_cap_for
+
+        try:
+            cap: int | None = reference_cap_for(ImageModel.from_cli(model))
+        except ValueError:
+            cap = None  # an unknown model is refused by the worker's own validation
+        n_refs = len(reference_images or []) + len(reference_entities or []) + len(characters)
+        if cap is not None and n_refs > cap:
+            return _bad_param(
+                "Too Many References",
+                f"{model} accepts at most {cap} reference item(s) (images + characters); "
+                f"got {n_refs}.",
+            )
+
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_image")
         return _rate_limited_envelope()

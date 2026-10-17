@@ -195,6 +195,12 @@ class FlowWorker:
                         # written, so every agent-supplied name was silently dropped (#628).
                         project_title = task.payload.get("project_name", "gflow-cli images")
                         project_created = False
+                        from gflow_cli.services import character_portability
+
+                        # Before any project is created for them (CodeRabbit, PR #987),
+                        # as the video branch and the CLI already do.
+                        image_bundles = tuple(Path(p) for p in task.payload.get("characters", ()))
+                        character_portability.validate_bundles(image_bundles)
                         if project_id:
                             project_flow_id = project_id
                             project = ProjectInfo(project_id=project_id, title=project_title)
@@ -208,8 +214,6 @@ class FlowWorker:
 
                         # `characters` is the key gflow_generate_image writes (#639 option
                         # C): each folder is reused by name or imported into this project.
-                        from gflow_cli.services import character_portability
-
                         req = await character_portability.apply_character_bundles(
                             client,
                             recorder,
@@ -217,7 +221,7 @@ class FlowWorker:
                             project_id=project_flow_id,
                             profile_name=task.profile_name,
                             profile_dir=profile_dir,
-                            bundles=tuple(Path(p) for p in task.payload.get("characters", ())),
+                            bundles=image_bundles,
                         )
 
                         # Resolve @-mentions and expand --tool specs (shared helper).

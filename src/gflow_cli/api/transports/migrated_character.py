@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.character import Character, Voice, voice_from_wire, voice_to_wire
 from gflow_cli.api.transports.batchexecute import discovery_head
@@ -777,7 +778,14 @@ async def create_from_files(
             wf, mid = bound_upload(got[UPLOAD_RPC], entity_id=entity_id)
             workflows.append(wf)
             media.append(mid)
-        await page.wait_for_url(f"**/character/{entity_id}*", timeout=30_000)
+        try:
+            # Let the app finish its own move to the editor before navigating there.
+            await page.wait_for_url(f"**/character/{entity_id}*", timeout=30_000)
+        except PlaywrightTimeoutError:
+            # A create recovered from the upload reply can leave the page on the draft
+            # (CodeRabbit, PR #987): the character exists, and `_open_editor` navigates
+            # straight to it, so this is not a failed create.
+            log.info("migrated.character_route_not_followed", entity_id=entity_id)
         # Always reopen the editor by direct navigation. The in-app draft->editor switch
         # after a create needed a reload in 4 of 5 runs (name never loaded in 15 s), and
         # once loaded the name yet never answered the edit (rzMKMb timeout, 1 run);

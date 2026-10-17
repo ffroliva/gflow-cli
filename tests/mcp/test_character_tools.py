@@ -279,3 +279,19 @@ async def test_generate_video_r2v_needs_an_image_and_i2v_refuses_characters() ->
     assert r2v["status"] != "completed" and "reference" in str(r2v).lower()
     assert i2v["status"] != "completed" and "i2v" in str(i2v)
     assert calls == []
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_generate_image_counts_characters_against_the_cap_before_queueing() -> None:
+    calls: list[Any] = []
+
+    async def fake_run(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"status": "completed"}
+
+    with patch.object(mcp_tools, "_run_generation_task", fake_run):
+        result = await mcp_tools.gflow_generate_image(
+            prompt="crowd", characters=[f"/b/c{i}" for i in range(20)]
+        )
+    assert result["status"] != "completed" and "reference item" in str(result)
+    assert calls == []

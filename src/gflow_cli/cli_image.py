@@ -981,6 +981,14 @@ def t2i(  # NOSONAR
         msg = f"{flag} is single-prompt only; remove the extra prompts."
         raise click.UsageError(msg)
 
+    # Counted before any browser, as i2i does: past the model's cap, the DTO refused only
+    # after every absent character had been imported (CodeRabbit, PR #987).
+    cap = reference_cap_for(Model.from_cli(model))
+    n_refs = len(reference_entities) + len(characters)
+    if n_refs > cap:
+        msg = f"{model} accepts at most {cap} reference item(s); got {n_refs}"
+        raise click.UsageError(msg)
+
     if is_multi_prompt and as_json:
         # --json is single-prompt only — the batch summary shape is rich-table
         # specific and a worker shells out one prompt at a time anyway.
