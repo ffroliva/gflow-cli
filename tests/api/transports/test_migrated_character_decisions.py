@@ -13,7 +13,12 @@ import pytest
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.transports import migrated_character as mc
-from gflow_cli.errors import ConfigurationError, MediaUploadRejectedError, UiSelectorDriftError
+from gflow_cli.errors import (
+    ConfigurationError,
+    MediaUploadRejectedError,
+    UiSelectorDriftError,
+    WireFormatError,
+)
 
 PID = "00000000-0000-4000-8000-000000000003"
 EID = "00000000-0000-4000-8000-000000000004"
@@ -128,3 +133,189 @@ class TestUploadBody:
         with pytest.raises(MediaUploadRejectedError):
             await mc._upload_body(_Page(), PID, EID, tmp_path / "b.jpg")  # type: ignore[arg-type]
         assert attempts == [1, 1]
+
+
+def _upload_reply(entity: str | None) -> list[Any]:
+    workflow: list[Any] = ["wf-0", None, None, ["p.png", [1], None, None, "m-0"], PID]
+    if entity is not None:
+        workflow.append(entity)
+    return [["m-0", PID, "wf-0", None, None, [[1]], [None, [], [720, 1280]]], workflow]
+
+
+class TestLostCreateReply:
+    """A user run (2026-10-17) logged `missing=['C4BZMd']` after 90 s while `maseQ` had
+    answered: the create reply was lost, not the create. Recover before failing."""
+
+    async def test_the_upload_reply_names_the_created_character(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        page = _Page()
+        page.wait_url_error = PlaywrightTimeoutError("stop after recovery")
+
+        async def replies(*_: Any, **__: Any) -> dict[str, Any]:
+            return {"maseQ": _upload_reply(EID)}
+
+        monkeypatch.setattr(mc, "_rpc_replies", replies)
+        with pytest.raises(UiSelectorDriftError) as exc:  # stops at the next step, by design
+            await mc.create_from_files(page, PID, name="Nora", portrait=tmp_path / "p.png")  # type: ignore[arg-type]
+        assert EID in (exc.value.remediation_hint or "")
+
+    async def test_the_page_url_names_the_created_character(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        page = _Page()
+        page.wait_url_error = PlaywrightTimeoutError("stop after recovery")
+
+        async def replies(*_: Any, **__: Any) -> dict[str, Any]:
+            page.url = f"https://flow.google.com/project/{PID}/character/{EID}"
+            return {}
+
+        monkeypatch.setattr(mc, "_rpc_replies", replies)
+        with pytest.raises(UiSelectorDriftError) as exc:
+            await mc.create_from_files(page, PID, name="Nora", portrait=tmp_path / "p.png")  # type: ignore[arg-type]
+        assert EID in (exc.value.remediation_hint or "")
+
+    async def test_nothing_created_is_retried_once_then_refused(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        attempts: list[int] = []
+
+        async def replies(*_: Any, **__: Any) -> dict[str, Any]:
+            attempts.append(1)
+            return {"maseQ": _upload_reply(None)}  # uploaded, but into no character
+
+        monkeypatch.setattr(mc, "_rpc_replies", replies)
+        with pytest.raises(WireFormatError, match="created no character"):
+            await mc.create_from_files(_Page(), PID, name="Nora", portrait=tmp_path / "p.png")  # type: ignore[arg-type]
+        assert attempts == [1, 1]
+
+
+class _VoicePage(_Page):
+    def __init__(self) -> None:
+        super().__init__()
+        self.keyboard = self
+        self.escapes = 0
+
+    async def press(self, _key: str) -> None:
+        self.escapes += 1
+
+    async def wait_for_timeout(self, _ms: int) -> None:
+        return None
+
+    def locator(self, _: str) -> Any:
+        return _VoiceLocator(self)
+
+
+class _VoiceLocator(_Locator):
+    def __init__(self, page: _Page) -> None:
+        super().__init__(page)
+        self.last = self
+
+    async def inner_text(self) -> str:
+        return "voice_selection"  # the add-voice button: no voice set yet
+
+    async def fill(self, _: str) -> None:
+        return None
+
+    def locator(self, _: str) -> _VoiceLocator:
+        return self
+
+    async def is_enabled(self) -> bool:
+        return True
+
+
+class TestPickVoice:
+    """Cold-profile measurement (2026-10-17, 1 in 4): the confirm never became
+    actionable. Click it only once enabled; redo the pick once."""
+
+    async def test_a_confirm_that_never_enables_is_retried_once_then_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.errors import ReferenceNotFoundError
+
+        page = _VoicePage()
+
+        async def one_hit(*_: Any, **__: Any) -> tuple[Any, list[int], int]:
+            return _VoiceLocator(page), [0], 1
+
+        async def never(*_: Any, **__: Any) -> bool:
+            return False
+
+        monkeypatch.setattr(mc, "_voice_hits", one_hit)
+        monkeypatch.setattr(mc, "_confirm_enabled", never)
+        with pytest.raises(ReferenceNotFoundError, match="2 attempts"):
+            await mc._pick_voice(page, EID, "Aoede", timeout_s=1)  # type: ignore[arg-type]
+        assert page.escapes == 2
+
+    async def test_a_confirm_that_enables_on_the_second_pick_is_confirmed_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.api.transports import migrated_composer
+
+        page = _VoicePage()
+        states = iter([False, True])
+        confirms: list[str] = []
+
+        async def one_hit(*_: Any, **__: Any) -> tuple[Any, list[int], int]:
+            return _VoiceLocator(page), [0], 1
+
+        async def enabled(*_: Any, **__: Any) -> bool:
+            return next(states)
+
+        async def reply(_page: Any, _rpc: str, action: Any, **__: Any) -> Any:
+            await action()
+            confirms.append("confirm")
+            return [[PID, EID, None, [1, "Nora", [[], [[None, "aoede"]]]]]]
+
+        monkeypatch.setattr(mc, "_voice_hits", one_hit)
+        monkeypatch.setattr(mc, "_confirm_enabled", enabled)
+        monkeypatch.setattr(migrated_composer, "rpc_reply", reply)
+        await mc._pick_voice(page, EID, "Aoede", timeout_s=1)  # type: ignore[arg-type]
+        assert confirms == ["confirm"]
+
+
+class _FieldLocator(_Locator):
+    async def input_value(self) -> str:
+        return "Personnage sans titre"
+
+    async def fill(self, _: str) -> None:
+        return None
+
+    async def press(self, _: str) -> None:
+        return None
+
+
+class _FieldPage(_Page):
+    def locator(self, _: str) -> Any:
+        return _FieldLocator(self)
+
+
+class TestPatchRetry:
+    async def test_an_unanswered_edit_is_redone_once_after_a_reload(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.api.transports import migrated_composer
+        from gflow_cli.errors import TransportTimeoutError
+
+        calls: list[str] = []
+        reopened: list[str] = []
+
+        async def reply(_page: Any, _rpc: str, action: Any, **__: Any) -> Any:
+            calls.append("send")
+            if len(calls) == 1:
+                raise TransportTimeoutError(detail="no rzMKMb in 30s")
+            await action()
+            return [[PID, EID, None, [1, "Nora", []]]]
+
+        async def reopen(*_: Any) -> None:
+            reopened.append("reload")
+
+        async def loaded(_: Any) -> None:
+            return None
+
+        monkeypatch.setattr(migrated_composer, "rpc_reply", reply)
+        monkeypatch.setattr(mc, "_open_editor", reopen)
+        monkeypatch.setattr(mc, "_wait_form_loaded", loaded)
+        page = _FieldPage(url=f"https://flow.google.com/project/{PID}/character/{EID}")
+        await mc.patch_character(page, PID, EID, name="Nora")  # type: ignore[arg-type]
+        assert (calls, reopened) == (["send", "send"], ["reload"])
