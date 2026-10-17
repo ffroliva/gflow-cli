@@ -30,10 +30,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
+from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.api.character import Character, Voice, voice_from_wire, voice_to_wire
 from gflow_cli.api.transports.batchexecute import discovery_head
-from gflow_cli.errors import WireFormatError
+from gflow_cli.errors import TransportTimeoutError, WireFormatError
 from gflow_cli.redaction import redact_sensitive_text
 
 if TYPE_CHECKING:
@@ -311,7 +312,6 @@ async def patch_character(
     editor sends nothing for an unchanged field, so waiting for a reply would time out.
     """
     from gflow_cli.api.transports.migrated_composer import is_at, rpc_reply  # noqa: PLC0415
-    from gflow_cli.errors import TransportTimeoutError  # noqa: PLC0415
 
     url = CHARACTER_URL.format(project_id=project_id, entity_id=entity_id)
     if not is_at(getattr(page, "url", ""), url):
@@ -426,6 +426,22 @@ async def _voice_hits(
     return options, hits, count
 
 
+VOICE_SHOWN_WAIT_S = 5.0
+
+
+async def _voice_shown(page: Page, voice: str) -> bool:
+    """Whether the editor's voice button names ``voice`` (as a line), within a few seconds."""
+    for _ in range(int(VOICE_SHOWN_WAIT_S / 0.25)):
+        try:
+            text = await page.locator(VOICE_BUTTON).first.inner_text()
+        except PlaywrightError:
+            text = ""
+        if voice.casefold() in (line.strip().casefold() for line in text.splitlines()):
+            return True
+        await asyncio.sleep(0.25)
+    return False
+
+
 async def _confirm_enabled(button: Any, *, timeout_s: float = 10.0) -> bool:
     for _ in range(int(timeout_s / 0.25)):
         if await button.is_enabled():
@@ -471,7 +487,17 @@ async def _pick_voice(page: Page, entity_id: str, voice: str, *, timeout_s: floa
         async def confirm(button: Any = button) -> None:
             await button.click(timeout=15_000)
 
-        reply = await rpc_reply(page, PATCH_RPC, confirm, timeout_s=timeout_s)
+        try:
+            reply = await rpc_reply(page, PATCH_RPC, confirm, timeout_s=timeout_s)
+        except (PlaywrightError, TransportTimeoutError):
+            # Measured 2026-10-17 (MCP import e2e): Flow set the voice and closed the
+            # picker while the click still waited, so neither the click nor its reply
+            # completed. The editor's voice button is Flow's own state: if it shows the
+            # voice, it is set; otherwise the original failure stands.
+            if not await _voice_shown(page, voice):
+                raise
+            log.warning("migrated.character_voice_set_without_reply", entity_id=entity_id)
+            return
         verify_patch(reply, entity_id=entity_id, voice=voice_from_wire(voice_to_wire(voice)))
         log.info("migrated.character_patched", field="voice", entity_id=entity_id)
         return
@@ -701,7 +727,6 @@ async def create_from_files(
     so the portrait upload creates it; the name is set immediately after, so anything
     that fails later leaves an identifiable character; then the body, then the voice.
     Nothing here deletes — a failure after the create names the entity in the error."""
-    from playwright.async_api import Error as PlaywrightError  # noqa: PLC0415
 
     from gflow_cli.api.transports._common import flow_host_kind  # noqa: PLC0415
     from gflow_cli.errors import (  # noqa: PLC0415

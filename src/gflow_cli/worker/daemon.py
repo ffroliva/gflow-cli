@@ -348,9 +348,26 @@ class FlowWorker:
                         # #864: as `gflow video t2v --project-name` does. Without a
                         # name, client.generate_video creates the project itself.
                         project_name = task.payload.get("project_name")
-                        if project_id is None and project_name:
-                            created = await client.create_project(title=project_name)
+                        bundles = tuple(Path(p) for p in task.payload.get("characters", ()))
+                        if project_id is None and (project_name or bundles):
+                            # A character is imported INTO a project, so it needs one now.
+                            created = await client.create_project(
+                                title=project_name or "gflow-cli video"
+                            )
                             project_id = created.project_id
+                        if bundles and project_id is not None:
+                            # `characters`: the key gflow_generate_video writes (#639 C).
+                            from gflow_cli.services import character_portability
+
+                            req = await character_portability.apply_character_bundles(
+                                client,
+                                recorder,
+                                req,
+                                project_id=project_id,
+                                profile_name=task.profile_name,
+                                profile_dir=profile_dir,
+                                bundles=bundles,
+                            )
                         # Resolve @-mentions and expand --tool specs (shared helper).
                         from gflow_cli.services.mentions import resolve_and_apply
 
@@ -390,7 +407,10 @@ class FlowWorker:
                             output_file = Path(output_file_val)
                             output_file.parent.mkdir(parents=True, exist_ok=True)
                             if result.local_path != output_file:
-                                result.local_path.replace(output_file)
+                                # shutil.move: `output` may be on another filesystem (EXDEV).
+                                import shutil
+
+                                shutil.move(result.local_path, output_file)
                                 from dataclasses import replace
 
                                 result = replace(result, local_path=output_file)

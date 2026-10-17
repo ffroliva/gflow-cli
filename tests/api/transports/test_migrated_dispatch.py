@@ -234,11 +234,11 @@ async def test_run_video_rejects_modes_not_yet_ported_with_exit_36() -> None:
     # nothing to anchor the pick on and nothing to assert on the submit body.
     with pytest.raises(FlowHostMigratedError, match="by name"):
         await _run(_req(mode=Mode.R2V, ref_names=("asset",)))
-    with pytest.raises(FlowHostMigratedError, match="character references"):
+    with pytest.raises(FlowHostMigratedError, match="entity id without a name"):
         await _run(_req(mode=Mode.R2V, reference_entities=("ent-1",)))
 
 
-async def test_run_video_refuses_character_references_on_every_mode() -> None:
+async def test_run_video_refuses_unnamed_character_references_on_every_mode() -> None:
     """#716: the refusal was behind the R2V branch, so t2v carried an entity into a
     BILLED generation that never attached it.
 
@@ -254,7 +254,7 @@ async def test_run_video_refuses_character_references_on_every_mode() -> None:
     that needed it.
     """
     for mode in (Mode.T2V, Mode.R2V):
-        with pytest.raises(FlowHostMigratedError, match="character references"):
+        with pytest.raises(FlowHostMigratedError, match="entity id without a name"):
             await _run(_req(mode=mode, reference_entities=("ent-1",)))
     # I2V is absent from that loop on purpose, and the reason is worth pinning: the DTO
     # itself refuses the combination (`_validate_i2v_symmetry`, api/video.py), so an i2v

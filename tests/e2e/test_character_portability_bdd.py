@@ -128,6 +128,20 @@ def _project_a_with(world: dict[str, Any], e2e_env: dict[str, str], name: str) -
     _ok(world["proc"])
 
 
+@given(
+    parsers.parse(
+        'a throwaway project on profile A holding the characters "{first}" and "{second}"'
+    )
+)
+def _project_a_with_two(
+    world: dict[str, Any], e2e_env: dict[str, str], first: str, second: str
+) -> None:
+    world["project"] = _new_project(e2e_env, world["profile_a"])
+    for name, voice in ((first, "aoede"), (second, "leda")):
+        _create(world, e2e_env, name, voice, "friendly")
+        _ok(world["proc"])
+
+
 @given("a second throwaway project on profile A")
 def _second_a(world: dict[str, Any], e2e_env: dict[str, str]) -> None:
     world["target"] = _new_project(e2e_env, world["profile_a"])
@@ -197,6 +211,91 @@ def _cli_export(world: dict[str, Any], e2e_env: dict[str, str], name: str) -> No
             name,
             "--out",
             str(world["bundle"]),
+        )
+    )
+
+
+@when(parsers.parse('the CLI exports "{first}" and "{second}" to bundle folders'))
+def _cli_export_two(
+    world: dict[str, Any], e2e_env: dict[str, str], first: str, second: str
+) -> None:
+    world["bundles"] = []
+    world["names"] = (first, second)
+    for name in (first, second):
+        out = world["tmp"] / f"bundle_{name}"
+        _ok(
+            _gflow(
+                e2e_env,
+                world["profile_a"],
+                "character",
+                "export",
+                "--project",
+                world["project"],
+                "--name",
+                name,
+                "--out",
+                str(out),
+            )
+        )
+        world["bundles"].append(out)
+
+
+def _require_video() -> None:
+    if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO", "").strip() != "1":
+        pytest.skip("set GFLOW_CLI_E2E_RUN_VIDEO=1 to spend Veo credits on this scenario")
+
+
+@when(
+    parsers.parse(
+        'the CLI generates a video on profile B from "{prompt}" with both character folders '
+        "in that project"
+    )
+)
+def _cli_video_two(world: dict[str, Any], e2e_env: dict[str, str], prompt: str) -> None:
+    _require_video()
+    out = world["tmp"] / "clip.mp4"
+    folders = [arg for b in world["bundles"] for arg in ("--character", str(b))]
+    world["proc"] = proc = _gflow(
+        e2e_env,
+        world["target_profile"],
+        "video",
+        "t2v",
+        prompt,
+        *folders,
+        "--project",
+        world["target"],
+        "--aspect",
+        "16:9",
+        "--duration",
+        "8",
+        "--output",
+        str(out),
+    )
+    _ok(proc)
+    world["clip"] = out
+
+
+@when(
+    parsers.parse(
+        'the MCP video tool generates "{prompt}" in the second project with both character folders'
+    )
+)
+def _mcp_video_two(
+    world: dict[str, Any], e2e_profile_dir: Path, install_log_capture: Any, prompt: str
+) -> None:
+    del e2e_profile_dir
+    _require_video()
+    world["capture"] = install_log_capture
+    world["mcp_generated"] = asyncio.run(
+        mcp_tools.gflow_generate_video(
+            prompt=prompt,
+            mode="t2v",
+            aspect="16:9",
+            duration=8,
+            project=world["target"],
+            characters=[str(b) for b in world["bundles"]],
+            profile=world["target_profile"],
+            wait=True,
         )
     )
 
@@ -401,3 +500,33 @@ def _mcp_generated_and_listed_once(
     ]
     assert attached, "the queued run attached no character"
     _listed(e2e_env, world["target_profile"], world["target"], name)
+
+
+def _two_attached(events: list[dict[str, Any]], names: tuple[str, ...]) -> None:
+    attached = [e for e in events if e.get("event") == "migrated.character_entities_attached"]
+    assert attached, "no character rode the generation"
+    assert sorted(attached[-1]["names"]) == sorted(names), attached[-1]
+    assert len(set(attached[-1]["entity_ids"])) == len(names), attached[-1]
+
+
+@then("the video is written, both characters rode it, and that project lists each once")
+def _video_two(world: dict[str, Any], e2e_env: dict[str, str]) -> None:
+    assert world["clip"].stat().st_size > 100_000
+    events = [
+        json.loads(line) for line in world["proc"].stderr.splitlines() if line.startswith("{")
+    ]
+    _two_attached(events, world["names"])
+    for name in world["names"]:
+        _listed(e2e_env, world["target_profile"], world["target"], name)
+
+
+@then(
+    "the queued video is written, both characters rode it, and the second project lists each once"
+)
+def _mcp_video_two_listed(world: dict[str, Any], e2e_env: dict[str, str]) -> None:
+    result = world["mcp_generated"]
+    assert result["status"] == "completed", result
+    assert result["files"] and all(Path(p).stat().st_size > 100_000 for p in result["files"])
+    _two_attached(world["capture"].entries, world["names"])
+    for name in world["names"]:
+        _listed(e2e_env, world["target_profile"], world["target"], name)

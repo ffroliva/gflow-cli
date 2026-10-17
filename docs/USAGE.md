@@ -708,9 +708,13 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 Generate a video from a text prompt only.
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [-o/--output]
+gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--character FOLDER]... [--out-dir] [-o/--output]
 
 Options:
+  --character FOLDER    A character folder from `gflow character export`
+                        (repeatable; several characters can share one clip):
+                        reused by name if the project has it, otherwise
+                        imported first (free), then attached. Also on `r2v`.
   --resolution [360p|720p]
                         Video resolution ('360p' or '720p', supported on omni-flash; on any other
                         model, or on the labs editor, the run stops before submit with exit 11
@@ -736,11 +740,12 @@ Options:
 > `--initial-frame` runs there too — **including with a local `--end-frame`**
 > (start+end interpolation, #639; see [`gflow video i2v`](#gflow-video-i2v)) — as does
 > `r2v` from local `--ref` files (see [`gflow video r2v`](#gflow-video-r2v)). An end frame
-> or start frame given by UUID or `@Name`, and video character references (`@Name` or
-> `--reference-entity`), are not ported to the migrated composer yet. `image t2i` and local-file `image i2i` also run on a moved
-> account, and on images a character can be tagged with `@Name` or `--reference-entity`
-> (see [REFERENCE_STRATEGIES § flow.google.com](REFERENCE_STRATEGIES.md#on-flowgooglecom-images-only-723);
-> video is unchanged); UUID/instruction/Imagen-4 image forms still exit 36. `flow.google.com` forces the migrated composer,
+> or start frame given by UUID or `@Name` is not ported to the migrated composer yet. `t2v`
+> and `r2v` take characters there — `@Name`, `--reference-entity` with
+> `--reference-entity-name`, or `--character FOLDER`, several per clip (2026-10-17). `image t2i` and local-file `image i2i` also run on a moved
+> account, and on images a character can be tagged the same ways
+> (see [REFERENCE_STRATEGIES § flow.google.com](REFERENCE_STRATEGIES.md#on-flowgooglecom-723));
+> UUID/instruction/Imagen-4 image forms and an entity id without a name still exit 36. `flow.google.com` forces the migrated composer,
 > `labs.google` switches it off — see [CONFIGURATION § GFLOW_CLI_FLOW_HOST](CONFIGURATION.md#gflow_cli_flow_host).
 
 ```bash
@@ -749,6 +754,9 @@ gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 --out-dir .
 gflow video t2v "A neon city timelapse" --model omni-flash --duration 10 --count 2
 # Apply the creative-director tool (cinematic style) before generating
 gflow video t2v "a dog surfing" --tool creative-director:style=cinematic
+# Two characters in one clip, straight from their exported folders
+gflow video t2v 'Nora says, warm: "A whole year since we sat here." Mini laughs.' \
+  --character nora/ --character mini/ --project <id> --aspect 16:9 --duration 8
 ```
 
 `-t` / `--tool` applies a prompt tool before generating — see
@@ -858,8 +866,9 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 > whose references have not all attached is refused **before** submit (exit 32), and the
 > app's own submit body must carry every uploaded media id with a reference-to-video model
 > key (exit 7 otherwise) — the failure being a full-price clip with none of your references
-> on it. References given by `@Name` or `--reference-entity` (character entities) exit 36
-> there; an unmoved account keeps the labs driver for those.
+> on it. References given by `@Name` are not ported there (exit 36); a **character** is
+> (`@Name`, `--reference-entity` + `--reference-entity-name`, or `--character FOLDER`), and an
+> unmoved account keeps the labs driver.
 >
 > **`--duration` is refused on this path (exit 11).** The host offers reference-to-video
 > only at its base 8s tier. At 4s or 6s it does not refuse — it drops the references,

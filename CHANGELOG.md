@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reused, otherwise the folder is imported first (free), then the character is attached like
   `--reference-entity`. Repeatable; single-prompt only on `t2i`. MCP:
   `gflow_generate_image(characters=[…])`, applied by the worker on the queued path.
+- **Characters in video on flow.google.com, several per clip** (#723). `gflow video t2v` and
+  `r2v` attach characters there (`@Name`, `--reference-entity` with `--reference-entity-name`,
+  or the new repeatable `--character FOLDER`), each chip verified as that character before
+  submit; they exited 36 before. Two characters per clip were measured on 6 of 6 clips,
+  including a 4-beat, 32 s café dialogue that kept both identities and every scripted line.
+  An entity-bound submit that Flow queues without naming the clip is now followed through
+  the app's own status poll instead of timing out. MCP:
+  `gflow_generate_video(characters=[…])`. An entity id without a name still exits 36.
 - **`gflow character export` / `gflow character import` move a character to another
   project or another account** through a plain folder: `manifest.json` (name, voice,
   personality) plus its images at full size, naming no project, id, link or account.
@@ -51,6 +59,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow character create --image` is reliable on a profile's first run.** A user's first
+  create waited 90 s and failed while the second identical run passed. Measured on fresh
+  profile copies, three first-run failures: Flow's create reply lost, the first edit going
+  unanswered, and the voice confirm never enabling. gflow now recovers the created character
+  from the upload reply or the page address, retries a create that made nothing once, clears
+  the first-visit dialog and cookie bar, waits for the editor to finish loading, redoes an
+  unanswered edit once, and confirms the voice only once enabled. 8/8 fresh-profile creates
+  passed afterwards.
+- **`gflow video … -o PATH` no longer fails after a finished clip when PATH is on another
+  filesystem** (a tmpfs `/tmp`, another drive): the move used a rename, which cannot cross
+  filesystems, so a billed clip ended as exit 1. The MCP `output` path had the same flaw.
 - **`gflow character list` and `gflow character show` work on accounts Flow serves from
   flow.google.com** (exit 7 before). Flow retired the labs read they used; on that measured
   refusal gflow now reads the project through flow.google.com's own project read, under the

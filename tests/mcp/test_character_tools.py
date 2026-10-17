@@ -237,3 +237,38 @@ async def test_generate_image_carries_character_folders_under_the_key_the_worker
         await mcp_tools.gflow_generate_image(prompt="Nora reading", characters=["/b/nora"])
 
     assert captured["payload"]["characters"] == ["/b/nora"]
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_generate_video_carries_several_character_folders_for_the_worker() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_run(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {"status": "completed"}
+
+    with patch.object(mcp_tools, "_run_generation_task", fake_run):
+        await mcp_tools.gflow_generate_video(
+            prompt="Nora and Kael talk", characters=["/b/nora", "/b/kael"]
+        )
+
+    assert captured["payload"]["characters"] == ["/b/nora", "/b/kael"]
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_generate_video_characters_alone_satisfy_r2v_and_i2v_refuses_them() -> None:
+    async def fake_run(**kwargs: Any) -> dict[str, Any]:
+        return {"status": "completed", "payload": kwargs["payload"]}
+
+    with patch.object(mcp_tools, "_run_generation_task", fake_run):
+        r2v = await mcp_tools.gflow_generate_video(
+            prompt="Nora", mode="r2v", characters=["/b/nora"]
+        )
+        i2v = await mcp_tools.gflow_generate_video(
+            prompt="Nora",
+            mode="i2v",
+            initial_frame="11111111-1111-4111-8111-111111111111",
+            characters=["/b/nora"],
+        )
+    assert r2v["status"] == "completed"
+    assert i2v["status"] != "completed" and "i2v" in str(i2v)

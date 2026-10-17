@@ -259,13 +259,32 @@ with a NULL payload in 2026-09. On 2026-10-16 one run with the gate lifted in-pr
 media id and completed (spike Addendum 2, 12 credits). One run is "not reproduced", not "fixed".
 
 **Steps / tests:**
-- [ ] re-measure: ≥3 entity-bound t2v runs (credits — confirm with the user first); record each
-      `MZZa6b` payload shape
-- [ ] red: a NULL `MZZa6b` payload falls through to the `jwpduf`/`as29s` status poll keyed on the
-      project instead of timing out (the fix the gate comment names) — needed whatever the re-measure says
-- [ ] red: `_unported_form` no longer refuses `reference_entities`; `migrated_can_serve` likewise
-- [ ] video `@Name` resolves through the Task 4 read path (today exit 29, catalog via retired labs)
-- [ ] e2e (`e2e_video`, opt-in): one entity-bound t2v completes with the entity attached
+- [x] re-measure: 6 entity-bound t2v runs on 2026-10-17 (user-requested café video, 4 clips, plus
+      both video e2e scenarios), each with TWO characters; every `MZZa6b` reply named the media id —
+      the NULL payload did not reproduce (6/6 named; not reproduced ≠ disproved)
+- [x] red: a NULL `MZZa6b` payload (`[5]`, no record) falls through to the app's status poll: the
+      first status record for a workflow not already pending is adopted
+      (`test_a_queued_submit_adopts_the_new_clip_its_status_poll_names`). Not hit live yet.
+- [x] red: `_unported_form` no longer refuses NAMED `reference_entities` (an id without a name is
+      still exit 36). `migrated_can_serve` keeps refusing them on purpose: it only routes an
+      account served labs, whose driver attaches characters by id.
+- [ ] video `@Name` resolves through the Task 4 read path — offline path shared with images; not
+      run live on video (the live runs used `--character`)
+- [x] e2e (`e2e_video`, opt-in): two-character t2v completes with both attached — CLI across
+      accounts and MCP through the queue (`test_character_portability_bdd.py`, 2/2 live)
+
+---
+
+## Task 13 — `--character FOLDER` on video, several per clip; create reliability (2026-10-17)
+
+- [x] `apply_character_bundles` typed for image and video requests
+- [x] `gflow video t2v|r2v --character` (repeatable), `gflow_generate_video(characters=…)`, the worker
+      reads `payload["characters"]` and creates a project when none is named; i2v refuses it
+- [x] create-from-files on a cold profile: recover a lost `C4BZMd`, retry an empty create once,
+      clear overlays, settle the editor, redo an unanswered edit once, confirm the voice only when
+      enabled, accept a voice the editor shows after a lost confirm. 8/8 cold creates.
+- [x] `-o` / MCP `output` across filesystems (`shutil.move`, was EXDEV → exit 1 on a billed clip)
+- [x] live: 32 s, 4-beat café dialogue with Nora + Mini (vraisykamel), transcripts word for word
 
 ---
 
