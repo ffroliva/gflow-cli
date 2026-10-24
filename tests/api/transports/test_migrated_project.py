@@ -642,6 +642,8 @@ async def test_create_anchor_wait_stays_at_the_selector_ceiling(
     monkeypatch.setattr(mc, "_wait_anchor", spy)
     await mc.create_project(_page_creating(title="t"), "t")  # type: ignore[arg-type]
     assert seen == [mc.ANCHOR_TIMEOUT_S] and mc.ANCHOR_TIMEOUT_S == 30.0
+
+
 class TestIsAt:
     """Whether a page is ON a route — not under it (#639 option C, live 2026-10-16).
 

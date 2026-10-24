@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow character create --image FILE [--body-image FILE]` builds a character from your
+  own images** on accounts Flow serves from flow.google.com — no generation, so no credits
+  and no image quota. gflow uploads the portrait through Flow's character editor (which is
+  what creates the character there), sets the name, uploads the body image into the body
+  slot, then sets voice and personality, confirming each step from Flow's reply. Files are
+  checked before anything is sent; a failure after the character exists names its id
+  instead of deleting it. Editing name, voice and personality on that host goes through the
+  editor too, because the REST endpoint answers 401 there. MCP twin:
+  `gflow_character_create` (the file-built path; creating from prompts over MCP is still #691).
+- **`gflow image t2i|i2i --character FOLDER` generates straight from an exported character**, in
+  any project on any account: a character with the folder's name already in the project is
+  reused, otherwise the folder is imported first (free), then the character is attached like
+  `--reference-entity`. Repeatable; single-prompt only on `t2i`. MCP:
+  `gflow_generate_image(characters=[…])`, applied by the worker on the queued path.
+- **Characters in video on flow.google.com, several per clip** (#723). `gflow video t2v` and
+  `r2v` attach characters there (`@Name`, `--reference-entity` with `--reference-entity-name`,
+  or the new repeatable `--character FOLDER`), each chip verified as that character before
+  submit; they exited 36 before. Two characters per clip were measured on 6 of 6 clips,
+  including a 4-beat, 32 s café dialogue that kept both identities and every scripted line.
+  An entity-bound submit that Flow queues without naming the clip is now followed through
+  the app's own status poll instead of timing out (tested offline; not seen live — every
+  live submit named its clip). MCP:
+  `gflow_generate_video(characters=[…])`. An entity id without a name still exits 36.
+- **A character lands where the prompt names it, on images and video (flow.google.com).**
+  Every character chip used to be inserted first and the whole prompt typed after them, so
+  `@Nora hands a croissant to @Mini` reached Flow as "[Nora] [Mini] Nora hands a croissant
+  to Mini". gflow now types the prompt up to each name, puts the chip there in place of the
+  name, and carries on; a character the prompt never names still goes in front. The prompt
+  Flow records reads exactly as written.
+- **`gflow character export` / `gflow character import` move a character to another
+  project or another account** through a plain folder: `manifest.json` (name, voice,
+  personality) plus its images at full size, naming no project, id, link or account.
+  Import validates the folder first (bare file names, no symlinks, image types, sizes,
+  sha256) and the voice against the target account's live catalog, then rebuilds the
+  character from the files — nothing generated, no credits. MCP twins:
+  `gflow_character_export`, `gflow_character_import`.
+
+### Fixed
+
+- **`gflow character create --image` is reliable on a profile's first run.** A user's first
+  create waited 90 s and failed while the second identical run passed. Measured on fresh
+  profile copies, three first-run failures: Flow's create reply lost, the first edit going
+  unanswered, and the voice confirm never enabling. gflow now recovers the created character
+  from the upload reply or the page address, retries a create that made nothing once, clears
+  the first-visit dialog and cookie bar, waits for the editor to finish loading, redoes an
+  unanswered edit once, and confirms the voice only once enabled. 8/8 fresh-profile creates
+  passed afterwards.
+- **`gflow video … -o PATH` no longer fails after a finished clip when PATH is on another
+  filesystem** (a tmpfs `/tmp`, another drive): the move used a rename, which cannot cross
+  filesystems, so a billed clip ended as exit 1. The MCP `output` path had the same flaw.
+- **`gflow character list` and `gflow character show` work on accounts Flow serves from
+  flow.google.com** (exit 7 before). Flow retired the labs read they used; on that measured
+  refusal gflow now reads the project through flow.google.com's own project read, under the
+  default `GFLOW_CLI_FLOW_HOST=auto`, and directly when the host is pinned to flow.google.com.
+  The MCP twins `gflow_character_list` / `gflow_character_show` follow. As a result, an image
+  `@Name` resolves the character by id on that host instead of by name, and a video `@Name`
+  resolves too (it used to exit 29; video now attaches it, see Added). `character create
+  --face-prompt` (generated images) and `character rm` on that host are not ported yet (#639).
+- **Image generation no longer drives a character editor.** Checking "is the page already
+  on this project?" compared URL prefixes, and a character editor's address
+  (`/project/<id>/character/<entity>`) starts with its project's. An image run after a
+  character import therefore stayed on the editor, typed into its prompt box and failed as an
+  agent-only account (exit 25). It is now an exact route comparison.
+- **A video that Flow queues without naming the clip never takes an older clip of the
+  project as its own.** gflow records the clips the project already holds when it opens the
+  editor, and adopts only one that is not on that list. If that list could not be read, the
+  run stops at once with the advice to open the project in Flow before re-running.
+- **A browser timeout in the character editor exits 23 (selector drift), not 1**, both before
+  the create (opening the draft, the file chooser) and when editing a character on its own.
+- **A create whose two replies are both lost no longer makes a second character.** gflow
+  reads the project's characters first, and on a retry adopts the one the project gained
+  instead of uploading the portrait again.
+- **The voice catalog lists 30 voices.** `Enceladus` ("Male, breathy, lower pitch") was in
+  Flow's live catalog and missing from `gflow character voices`.
+- **Log and error scrubbing covers flow.google.com's wire.** reCAPTCHA Enterprise tokens, the
+  batchexecute `at` XSRF value and `lh3.googleusercontent.com/asb/` download links are now
+  masked, and a wire-drift error no longer leaks the fragment of a token cut by its 200-char
+  window.
+
 ## [0.89.1] — 2026-10-24
 
 ### Added
@@ -502,21 +583,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   original diagnosis. The MCP twin is `gflow_get_credits(refresh=true)`. The credits 401 hint
   now points at `--refresh` / `gflow auth renew` instead of "check your balance in Flow"; an
   account whose labs session issues no token at all is not helped by renewal, and says so.
-- **`gflow character create --image FILE [--body-image FILE]` builds a character from your
-  own images** on accounts Flow serves from flow.google.com — no generation, so no credits
-  and no image quota. gflow uploads the portrait through Flow's character editor (which is
-  what creates the character there), sets the name, uploads the body image into the body
-  slot, then sets voice and personality, confirming each step from Flow's reply. Files are
-  checked before anything is sent; a failure after the character exists names its id
-  instead of deleting it. Editing name, voice and personality on that host goes through the
-  editor too, because the REST endpoint answers 401 there.
-- **`gflow character export` / `gflow character import` move a character to another
-  project or another account** through a plain folder: `manifest.json` (name, voice,
-  personality) plus its images at full size, naming no project, id, link or account.
-  Import validates the folder first (bare file names, no symlinks, image types, sizes,
-  sha256) and the voice against the target account's live catalog, then rebuilds the
-  character from the files — nothing generated, no credits. MCP twins:
-  `gflow_character_export`, `gflow_character_import`.
 
 ### Changed
 

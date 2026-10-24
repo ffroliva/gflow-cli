@@ -135,8 +135,8 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
     from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef, ProjectBrief
-    from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
     from gflow_cli.api.transports.migrated_character import CreatedCharacter
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
     from gflow_cli.api.video import (
         GenerateVideoRequest,
         VideoResult,
