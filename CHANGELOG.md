@@ -75,7 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A video that Flow queues without naming the clip never takes an older clip of the
   project as its own.** gflow records the clips the project already holds when it opens the
   editor, and adopts only one that is not on that list. If that list could not be read, the
-  run stops at once with the advice to open the project in Flow before re-running.
+  run stops at once with the advice to open the project in Flow before re-running. A clip
+  that a status poll first names between the submit click and Flow's queued reply stays
+  eligible, so the run no longer waits out its whole budget when Flow's poll beats the reply.
 - **A browser timeout in the character editor exits 23 (selector drift), not 1**, both before
   the create (opening the draft, the file chooser) and when editing a character on its own.
 - **A create whose two replies are both lost no longer makes a second character.** gflow

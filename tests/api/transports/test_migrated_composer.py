@@ -3635,6 +3635,8 @@ async def test_upload_readback_that_proves_nothing_keeps_the_unknown_outcome(
     with patch.object(FakeFileChooser, "set_files", fail_upload):
         with pytest.raises(RpcResponseUnavailableError, match="body was unavailable"):
             await migrated_composer.MigratedComposer().upload(page, PROJ_UUID, _png(tmp_path))
+
+
 def _queued_frame(rpcid: str) -> str:
     """The #723 entity submit reply: an envelope with a null payload and a bare `[5]`."""
     frame = [["wrb.fr", rpcid, None, None, None, [5], "generic"]]
@@ -3662,7 +3664,7 @@ OTHER_WORKFLOW = "44444444-4444-4444-8444-444444444444"
 
 async def test_a_queued_submit_adopts_the_new_clip_its_status_poll_names() -> None:
     """#723 Task 6b: `MZZa6b` answered `[5]` with no record while Flow ran the clip. The
-    clip already pending before that reply is never adopted; the new one is."""
+    clip the project already held is never adopted; the new one is."""
 
     page = FakePage()
     page.dom.prompt = "a crane"
@@ -3676,7 +3678,7 @@ async def test_a_queued_submit_adopts_the_new_clip_its_status_poll_names() -> No
         (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
     ]
     started: list[Any] = []
-    rec = await _knowing().submit_and_observe(
+    rec = await _knowing(OTHER_WORKFLOW).submit_and_observe(
         page, poll_timeout_s=2.0, on_started=started.append, project_id=None
     )
     assert rec.is_done and rec.media_id == MEDIA and rec.video_url == VIDEO_URL
@@ -3766,6 +3768,61 @@ async def test_a_queued_submit_never_adopts_a_clip_the_project_already_held() ->
     with pytest.raises(TransportTimeoutError, match="queued"):
         await _knowing(OTHER_WORKFLOW).submit_and_observe(
             page, poll_timeout_s=0.5, on_started=None, project_id=project
+        )
+
+
+async def test_a_queued_submit_adopts_its_clip_first_named_before_the_reply() -> None:
+    """PR #987 review (CodeRabbit): a poll can land between the click and the `[5]`
+    reply. The new clip it names may be this submit's own, so it must stay eligible —
+    excluding it left the run waiting out its budget with the clip already identified."""
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    poll = (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[_record(2)]]]))
+    page.scripted_responses = [
+        poll,
+        (_batch_url("MZZa6b"), _queued_frame("MZZa6b")),
+        poll,
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    rec = await _knowing().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=None,
+        project_id="22222222-2222-4222-8222-222222222222",
+    )
+    assert rec.media_id == MEDIA and rec.is_done
+
+
+async def test_a_queued_submit_never_adopts_a_clip_named_before_the_click() -> None:
+    """The other half of that rule: a clip a poll names BEFORE the click is not this
+    submit's, even when the project load missed it (it started after the load)."""
+    from gflow_cli.errors import TransportTimeoutError
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.dom.submit_enable_after_reads = 1  # one wait, so the poll lands before the click
+    real_on = page.on
+
+    def on_then_poll(event: str, handler: Any) -> None:
+        real_on(event, handler)
+        if event == "request":  # the observer is armed; the submit is not clicked yet
+            page._fire_response(
+                FakeResponse(
+                    _batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[_other_record(2)]]])
+                )
+            )
+
+    page.on = on_then_poll  # type: ignore[method-assign]
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _queued_frame("MZZa6b")),
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[_other_record(2)]]])),
+    ]
+    with pytest.raises(TransportTimeoutError, match="queued"):
+        await _knowing().submit_and_observe(
+            page,
+            poll_timeout_s=0.5,
+            on_started=None,
+            project_id="22222222-2222-4222-8222-222222222222",
         )
 
 

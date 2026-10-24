@@ -3220,10 +3220,13 @@ class MigratedComposer:
         # #723: an entity-bound submit Flow QUEUES answers `[5]` with a null payload — no
         # record, so no media id. Flow still runs it, and the app's own status poll then
         # names the new clip. `pending` starts with every clip the project load listed and
-        # grows with every clip a poll names BEFORE that reply, so the one adopted
-        # afterwards is new: never a clip that was already running. With no such list
-        # (`_known_clips` is None), nothing is adopted: a poll may not land between the
-        # click and the reply, and a still-running older clip would then look new.
+        # grows with every clip a poll names BEFORE the click, so the one adopted is new:
+        # never a clip that was already running. A clip first named between the click and
+        # the reply may be this submit's own, so it stays eligible and the next poll after
+        # the reply decides (PR #987 review). With no such list (`_known_clips` is None),
+        # nothing is adopted: a poll may not land between the click and the reply, and a
+        # still-running older clip would then look new.
+        clicked = asyncio.Event()
         queued = asyncio.Event()
         pending: set[str] = set(self._known_clips or ())
         can_adopt = self._known_clips is not None
@@ -3273,7 +3276,7 @@ class MigratedComposer:
                 submitted.set_exception(refusal)
                 return
             if not submitted.done() and any(
-                err.rpcid in SUBMIT_RPCS and err.code == QUEUED_CODE and not err.reasons
+                err.rpcid in submit_rpcs and err.code == QUEUED_CODE and not err.reasons
                 for err in rpc_errors(text)
             ):
                 log.warning("migrated.submit_queued_unnamed", pending=len(pending))
@@ -3314,15 +3317,17 @@ class MigratedComposer:
                         if r.workflow_id not in pending
                         and (project_id is None or r.project_id == project_id)
                     ]
-                    if queued.is_set():
-                        # A clip this submit just queued cannot already be finished: a
-                        # done or failed one is an older clip of the project (council D1).
-                        settled = [r for r in fresh if not r.is_running]
-                        pending.update(r.workflow_id for r in settled)
-                        fresh = [r for r in fresh if r.is_running]
-                    if not queued.is_set():
+                    if not clicked.is_set():
+                        # Nothing a poll names before the click can be this submit's.
                         pending.update(r.workflow_id for r in fresh)
-                    elif len(fresh) == 1 and can_adopt and not submitted.done():
+                        continue
+                    if not queued.is_set():
+                        continue
+                    # A clip this submit just queued cannot already be finished: a done
+                    # or failed one is an older clip of the project (council D1).
+                    pending.update(r.workflow_id for r in fresh if not r.is_running)
+                    fresh = [r for r in fresh if r.is_running]
+                    if len(fresh) == 1 and can_adopt and not submitted.done():
                         rec = fresh[0]
                         workflow["id"] = rec.workflow_id
                         log.info(
@@ -3382,6 +3387,7 @@ class MigratedComposer:
             deadline = time.monotonic() + poll_timeout_s
             # The credit-spending click: a bare timeout here leaves "did it submit?"
             # unanswerable, which is the worst place in this driver to lose attribution.
+            clicked.set()
             await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             log.info("migrated.submit_clicked")
             budget = min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s)
@@ -4329,9 +4335,7 @@ async def rename_project(
             ) from e
 
     try:
-        payload = await rpc_reply(
-            page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s, write=True
-        )
+        payload = await rpc_reply(page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s, write=True)
     except (RpcResponseUnavailableError, TransportTimeoutError) as original_error:
         unknown = _write_outcome_unknown(
             original_error,
