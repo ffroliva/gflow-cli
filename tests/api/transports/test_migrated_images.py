@@ -494,11 +494,12 @@ def test_a_character_image_request_keeps_the_labs_driver_on_a_labs_page() -> Non
     )
 
 
-async def test_run_images_attaches_characters_then_appends_the_prompt(
+async def test_run_images_types_the_prompt_with_the_characters_in_place(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#723: settings, then the character chips, then the prompt AFTER them; the
-    committed entity id is handed to the submit guard as the exact character set."""
+    """#723, user report 2026-10-17: the prompt goes to the attach, which types it with
+    each chip where the prompt names the character — it is never appended after the chips
+    again. The committed entity id is handed to the submit guard as the exact set."""
     from gflow_cli.api.transports import migrated_composer as mc
 
     calls: list[str] = []
@@ -507,7 +508,7 @@ async def test_run_images_attaches_characters_then_appends_the_prompt(
     composer.apply_image_settings = AsyncMock(side_effect=lambda *a, **k: calls.append("settings"))
 
     async def attach(*_: Any, **kw: Any) -> tuple[str, ...]:
-        calls.append(f"attach:{kw['names']}:{kw['clear']}")
+        calls.append(f"attach:{kw['names']}:{kw['clear']}:{kw['prompt']}")
         return ("ent-sussy",)
 
     composer.attach_character_entities = attach
@@ -518,8 +519,8 @@ async def test_run_images_attaches_characters_then_appends_the_prompt(
     request = _request(prompt="Sussy cooking", reference_entity_names=("Sussy",))
     await mc.run_images(MagicMock(url="about:blank"), request, project_id=PROJECT)
 
-    assert calls == ["editor", "settings", "attach:('Sussy',):True", "prompt"]
-    assert composer.send_prompt.await_args.kwargs["append"] is True
+    assert calls == ["editor", "settings", "attach:('Sussy',):True:Sussy cooking"]
+    composer.send_prompt.assert_not_awaited()
     kwargs = composer.submit_images_and_observe.await_args.kwargs
     assert kwargs["reference_ids"] == ()
     assert kwargs["entity_ids"] == ("ent-sussy",)

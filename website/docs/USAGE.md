@@ -300,9 +300,10 @@ prompts through one Flow session/project.
 > (`nano2`, #958), Nano Banana 2 Lite (`nano2-lite`) and Nano Banana Pro (`nano-pro`), all five aspects (`16:9`,
 > `4:3`, `1:1`, `3:4`, `9:16`), and count 1–4. Without `--project` (and without `GFLOW_CLI_PROJECT`), gflow creates a fresh project
 > there first ([#864](https://github.com/ffroliva/gflow-cli/issues/864)). The
-> migrated page owns its reCAPTCHA + `ogiZ0b` submit. Imagen 4, Agent instructions,
-> character/entity references and `image batch` remain unavailable on that host and
-> fail before submit. On Flow's agent-only composer (#799), t2i runs through the agent
+> migrated page owns its reCAPTCHA + `ogiZ0b` submit. Characters attach by `@Name`,
+> `--reference-entity` + `--reference-entity-name`, or `--character FOLDER`. Each character is
+> attached at its first mention in the prompt (#723). Imagen 4, Agent instructions, an entity id without a name and
+> `image batch` remain unavailable on that host and fail before submit. On Flow's agent-only composer (#799), t2i runs through the agent
 > driver; see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm).
 
 ```text
@@ -344,6 +345,9 @@ Options:
                             consistency (repeatable; must live in --project).
                             Single-prompt only.
   --reference-entity-name N Display name paired with --reference-entity.
+  --character FOLDER        A character folder from `gflow character export`
+                            (repeatable): reused by name if the project has it,
+                            otherwise imported first (free), then attached.
   -t, --tool NAME[:k=v]     Apply a prompt tool before generating, e.g.
                             `creative-director:style=cinema`. Repeatable; applied
                             per prompt on multi-prompt/batch. See "Prompt tools".
@@ -451,9 +455,9 @@ Generate 1–4 images by blending a text prompt with one or more reference image
 
 > **Migrated `flow.google.com` accounts (#639):** local-file `--ref` values are supported
 > and each uploaded media id is verified in the outgoing `ogiZ0b` body. Without `--project`,
-> gflow creates one there first (#864). UUID refs, `@Name` / `--reference-entity`, Agent
-> instructions and Imagen 4 remain unavailable on that host and fail
-> before submit rather than silently degrading to T2I.
+> gflow creates one there first (#864). Characters attach as on `t2i` (#723). UUID refs,
+> an entity id without a name, Agent instructions and Imagen 4 remain unavailable on that
+> host and fail before submit rather than silently degrading to T2I.
 
 ```text
 gflow image i2i PROMPT --ref PATH_OR_UUID [--ref ...] [OPTIONS]
@@ -474,6 +478,9 @@ Options:
   --reference-entity ID     Flow CHARACTER entity id to reference (repeatable;
                             must live in --project). Counts toward the ref cap.
   --reference-entity-name N Display name paired with --reference-entity.
+  --character FOLDER        A character folder from `gflow character export`
+                            (repeatable): reused by name if the project has it,
+                            otherwise imported first (free), then attached.
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -532,6 +539,11 @@ requires at least one `--ref`.
 gflow image t2i "Aria explores a neon market, full body" \
   --project 7fa97443-… --reference-entity 8a77f8cb-… --reference-entity-name Aria \
   --model nano2 --aspect 9:16 -n 3
+
+# Straight from a character folder: a character with the folder's name in the project is
+# reused; an absent one is imported first (free) — which needs an account Flow serves from
+# flow.google.com, where building a character from files is driven
+gflow image t2i "Nora reading in a sunlit kitchen" --character nora/ --profile personal
 
 # Several characters in one scene (each --reference-entity repeatable)
 gflow image t2i "Aria and Drako meet at the gate" --project 7fa97443-… \
@@ -707,9 +719,13 @@ Generate a video from a text prompt only. On Flow's agent-only composer (#799), 
 through the agent driver (one 9:16 or 16:9 clip); see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm).
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [-o/--output]
+gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--character FOLDER]... [--out-dir] [-o/--output]
 
 Options:
+  --character FOLDER    A character folder from `gflow character export`
+                        (repeatable; several characters can share one clip):
+                        reused by name if the project has it, otherwise
+                        imported first (free), then attached. Also on `r2v`.
   --resolution [360p|720p]
                         Video resolution ('360p' or '720p', supported on omni-flash; on any other
                         model, or on the labs editor, the run stops before submit with exit 11
@@ -735,14 +751,15 @@ Options:
 > `--initial-frame` runs there too — **including with a local `--end-frame`**
 > (start+end interpolation, #639; see [`gflow video i2v`](#gflow-video-i2v)) — as does
 > `r2v` from local `--ref` files (see [`gflow video r2v`](#gflow-video-r2v)). An end frame
-> or start frame given by UUID or `@Name`, and video character references (`@Name` or
-> `--reference-entity`), are not ported to the migrated composer yet. `image t2i` and local-file `image i2i` also run on a moved
-> account, and on images a character can be tagged with `@Name` or `--reference-entity`
-> (see [REFERENCE_STRATEGIES § flow.google.com](REFERENCE_STRATEGIES.md#on-flowgooglecom-images-only-723);
-> video is unchanged). An image `--ref <uuid>` is referenced in place, with no upload, when the
+> or start frame given by UUID or `@Name` is not ported to the migrated composer yet. `t2v`
+> and `r2v` take characters there — `@Name`, `--reference-entity` with
+> `--reference-entity-name`, or `--character FOLDER`, several per clip (2026-10-17). `image t2i` and local-file `image i2i` also run on a moved
+> account, and on images a character can be tagged the same ways
+> (see [REFERENCE_STRATEGIES § flow.google.com](REFERENCE_STRATEGIES.md#on-flowgooglecom-723)).
+> An image `--ref <uuid>` is referenced in place, with no upload, when the
 > local catalog records that image in the same `--project` and keeps its Flow caption
-> ([#995](https://github.com/ffroliva/gflow-cli/issues/995)); any other UUID, and instruction/Imagen-4
-> image forms, still exit 36. `flow.google.com` forces the migrated composer,
+> ([#995](https://github.com/ffroliva/gflow-cli/issues/995)); any other UUID, instruction/Imagen-4
+> image forms and an entity id without a name still exit 36. `flow.google.com` forces the migrated composer,
 > `labs.google` switches it off — see [CONFIGURATION § GFLOW_CLI_FLOW_HOST](CONFIGURATION.md#gflow_cli_flow_host).
 
 ```bash
@@ -751,6 +768,9 @@ gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 --out-dir .
 gflow video t2v "A neon city timelapse" --model omni-flash --duration 10 --count 2
 # Apply the creative-director tool (cinematic style) before generating
 gflow video t2v "a dog surfing" --tool creative-director:style=cinematic
+# Two characters in one clip, straight from their exported folders
+gflow video t2v 'Nora says, warm: "A whole year since we sat here." Mini laughs.' \
+  --character nora/ --character mini/ --project <id> --aspect 16:9 --duration 8
 ```
 
 `-t` / `--tool` applies a prompt tool before generating — see
@@ -862,8 +882,9 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 > whose references have not all attached is refused **before** submit (exit 32), and the
 > app's own submit body must carry every uploaded media id with a reference-to-video model
 > key (exit 7 otherwise) — the failure being a full-price clip with none of your references
-> on it. References given by `@Name` or `--reference-entity` (character entities) exit 36
-> there; an unmoved account keeps the labs driver for those.
+> on it. An uploaded media reference given by `@Name` is not ported there (exit 36); a **character** is
+> (`@Name`, `--reference-entity` + `--reference-entity-name`, or `--character FOLDER`), and an
+> unmoved account keeps the labs driver.
 >
 > **`--duration` is refused on this path (exit 11).** The host offers reference-to-video
 > only at its base 8s tier. At 4s or 6s it does not refuse — it drops the references,
@@ -1304,7 +1325,11 @@ gflow character create [OPTIONS]
 Options:
   --project PROJECT_ID      Flow project id.                           [required]
   --name NAME               Display name for the new character.        [required]
-  --face-prompt TEXT        Prompt for the face reference image.       [required]
+  --face-prompt TEXT        Prompt for the face reference image. Give exactly one
+                            of --face-prompt or --image.
+  --image FILE              Build the character from this local image as its
+                            portrait instead of generating one (flow.google.com).
+  --body-image FILE         Local image for the body slot; only with --image.
   --body-prompt TEXT        Body/outfit DESCRIPTION (not a full prompt). gflow
                             wraps it in a self-contained front/side/back triptych
                             instruction seeded by the generated face, so one
@@ -1332,6 +1357,74 @@ and remove a duplicate with `gflow character rm`. What *is* guaranteed is **resu
 an interrupted run**: if a create is killed mid-saga, the next run with the same name
 picks up the recorded entity instead of minting a second one, so a crash costs no extra
 quota.
+
+#### From your own images (`--image`)
+
+On an account Flow serves from flow.google.com, `--image` builds the character from local
+files instead of generating them, so it spends **no credits and no image quota**:
+
+```bash
+gflow character create --project P --name Nora \
+  --image nora-face.jpg --body-image nora-body.jpg \
+  --voice aoede --personality "calm, precise"
+```
+
+gflow uploads the portrait through Flow's character editor, which is what creates the
+character there, then sets the name, uploads the body image into the body slot, and sets
+the voice and personality. Each step is confirmed from Flow's own reply. Each file is
+checked before anything is sent: a path that does not exist is a usage error (exit **2**),
+and a file over 20 MB or that is not a JPEG, PNG, WebP or GIF exits **11** — either way
+without touching Flow. `--body-prompt`,
+`--format-prompt` and an explicit `--model` describe generation and are refused with
+`--image`.
+
+If a step fails **after** the portrait created the character, gflow does not delete it:
+the error's remediation hint names the character's id (it is named right after creation),
+so you can finish or remove it in Flow. On a project Flow serves from labs.google, `--image`
+is not ported yet and exits 11.
+
+### `gflow character export` / `gflow character import`
+
+A character belongs to one Flow project, and Flow has no way to copy one. These two
+commands move it through a plain folder, to another project or another **account**
+(another `--profile`). Nothing is generated on either side: no credits, no image quota.
+
+```text
+gflow character export --project PROJECT_ID (--id ENTITY_ID | --name NAME) --out FOLDER
+                       [--profile NAME] [--json]
+gflow character import FOLDER --project PROJECT_ID [--name NAME] [--voice VOICE]
+                       [--profile NAME] [--json]
+```
+
+```bash
+gflow character export --project <A> --name Nora --out nora/ --profile work
+gflow character import nora/ --project <B> --profile personal
+```
+
+The folder holds `manifest.json` (name, voice, personality, and each image's file, sha256
+and type) next to `portrait.<ext>` and an optional `body.<ext>`, downloaded at full size.
+It names **no** project, character id, link or account, but it does hold the character's full-size images, name, voice and personality: review it before sharing. `--out`
+must not exist or be empty (checked before Flow is read).
+
+`import` treats the folder as untrusted. It refuses, with exit **11** and before
+anything is sent, any of these:
+
+- a file name that is not a bare name inside the folder;
+- a symlink;
+- a file over 20 MB, or one that is not a JPEG, PNG, WebP or GIF;
+- a file that changed since export (sha256);
+- an unknown `schema_version`;
+- a bundle with no portrait.
+
+Control, bidi and zero-width characters are removed from the name and personality.
+`import` then checks the voice against the **target account's** live catalog, and
+refuses a voice that account does not offer (exit 11; pass `--voice`). Only after that
+does it rebuild the character with the same steps as `create --image`. `--name` and
+`--voice` override the bundle's values.
+
+The voice is **attached** to the imported character. Whether Flow applies it to
+generated audio is not proven yet
+([#738](https://github.com/ffroliva/gflow-cli/issues/738)).
 
 ### `gflow character list`
 
@@ -1369,7 +1462,7 @@ ambiguous `--name` (multiple characters share it) exits with code **11**.
 gflow character voices [--json]
 ```
 
-Lists the **29 preset Gemini voices** available for character TTS — each with a
+Lists the **30 preset Gemini voices** available for character TTS — each with a
 name, description, and sample URL. These names are what `--voice` validates
 against (case-insensitively) on `gflow character create`.
 
@@ -2180,7 +2273,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
-| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; local-file `image i2i`; and `gflow run --config` rows referencing an earlier row (`batch:N`) or a local file; `image i2i --ref <uuid>` of an image the catalog records in the same `--project` (#995); `image upscale`; `video upscale` (served here only); and single-segment `video extend`. Images may tag a character by name (`@Name`, or `--reference-entity` with `--reference-entity-name`, #723); other image UUID references, an entity id without a name, instructions, Imagen 4 and `image batch` remain unsupported. On an agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), generation is limited to `image t2i` and `video t2v` (one 9:16 or 16:9 clip). Not selector drift (23) | **Not retryable.** Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
+| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; local-file `image i2i`; and `gflow run --config` rows referencing an earlier row (`batch:N`) or a local file; `image i2i --ref <uuid>` of an image the catalog records in the same `--project` (#995); `image upscale`; `video upscale` (served here only); and single-segment `video extend`. Images and video `t2v`/`r2v` may tag characters by name (`@Name`, `--reference-entity` with `--reference-entity-name`, or `--character FOLDER`, #723); other image UUID references, an entity id without a name, instructions, Imagen 4 and `image batch` remain unsupported. On an agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), generation is limited to `image t2i` and `video t2v` (one 9:16 or 16:9 clip). Not selector drift (23) | **Not retryable.** Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
 | `37` | `InsufficientCreditsError` | The account's balance is short **for the model it asked for**, so Flow **replaced** the submit control with its `Insufficient credits warning` instead of disabling it. Short, not necessarily empty: measured 2026-09-07, an account holding **50** credits requesting `--model veo-quality` (**100**) rendered the warning. Explicitly **not** selector drift (23): reporting it as drift told users to file a frontend bug over a credit shortfall | Check the balance with `gflow credits user`, then pick a cheaper `--model` (`veo-lite` costs 10), top up, or wait for the allowance to reset. Nothing was submitted, so no credit was spent. `gflow image` draws on a separate daily quota and may still work |
 | `38` | `FlowAccountChooserError` | The post-migration hop landed on Google's account chooser and the profile's recorded account (`.gflow_account`) could not be selected automatically (row absent, click-through did not return to the editor, or `--account` mismatch) | **Not retryable**: run `gflow auth login --profile <name>` and complete the chooser manually, while signed in as the recorded account (re-run `gflow auth login` if the chooser offers a different session) |
 | `39` | `FlowAccessUnavailableError` | Flow loaded and routed to its own "you don't have access" screen (`<flow-pinhole-unavailable-screen>`): this Google account has no Flow entitlement. Detected by component, not by URL — the hop is client-side (`flow.google.com/` answers 200) and the path varies (`/unavailable`, `/u/8/unavailable`). Explicitly **not** auth expiry (3/8) and **not** selector drift (23): nothing expired and nothing drifted | **Not retryable, and signing in again cannot change it.** Flow needs an age-verified account in a supported region on a Google AI Plus/Pro/Ultra or qualifying Workspace plan — check which applies at [Google's eligibility page](https://support.google.com/flow/answer/16353333) and open https://flow.google.com in a browser on this account to confirm |

@@ -61,6 +61,7 @@ from gflow_cli.api.transports._common import (
 from gflow_cli.api.transports.batchexecute import (
     GenerationRecord,
     generation_record,
+    generation_records,
     image_records,
     parse_frames,
     rpc_errors,
@@ -107,6 +108,17 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 MIGRATED_PROJECT_URL = "https://flow.google.com/project/{project_id}"
+
+
+def is_at(url: object, target: str) -> bool:
+    """Is ``url`` ON the route ``target`` (same host and path; query ignored) — not merely
+    under it? ``/project/<id>/character/<eid>`` starts with ``/project/<id>``, and a prefix
+    test let image generation drive a character editor's prompt box (misread as an
+    agent-only account, exit 25) after an import left the page there (2026-10-16)."""
+    current, wanted = urlsplit(str(url or "")), urlsplit(target)
+    return (current.netloc, current.path.rstrip("/")) == (wanted.netloc, wanted.path.rstrip("/"))
+
+
 READY_ANCHOR = ".settings-trigger-button"
 OVERLAY = ".cdk-overlay-pane"
 #: Playwright's own visibility engine — the detached overlays Angular leaves behind are
@@ -460,6 +472,12 @@ SUBMIT_BUTTON = "the submit button (ligature 'arrow_forward')"
 
 #: The submit reply arrived 4.0–4.6 s after the click in both measured runs.
 SUBMIT_REPLY_BUDGET_S = 60.0
+#: How long a video run waits for the project load's ``Zzl0ze`` reply, which lists every
+#: clip the project already holds (13 of 13 on 2026-10-18). A queued submit adopts only a
+#: clip that is NOT on that list; without the list it adopts nothing.
+KNOWN_CLIPS_WAIT_S = 15.0
+#: The gRPC code of the null-payload reply Flow sends for a submit it queued (#723).
+QUEUED_CODE = 5
 # Angular enables the arrow_forward button ~100 ms after `insert_text` lands in the
 # composer (measured 2026-09-05, #670); checking it synchronously reads the stale state.
 SUBMIT_ENABLE_BUDGET_S = 5.0
@@ -592,43 +610,17 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
     # `prefer_migrated`, and an account Flow has already moved is routed by its URL
     # without consulting it — so that refusal is unreachable for exactly the accounts
     # that need it. This one is on the path every request takes.
-    if request.reference_entities:
-        # STILL REFUSED — but NOT because the backend rejects it. The port is half done
-        # in a narrower way than previously recorded here (#723).
+    if len(request.reference_entities) > len(request.reference_entity_names):
+        # #723, ported 2026-10-17. Characters are attached by NAME through the `@`
+        # picker and the chip is verified to carry the entity id. An id with no name has
+        # nothing to type, so it is refused here rather than dropped from a billed run.
         #
-        # What works: `attach_character_entities` drives the `@` picker, commits the
-        # chip, and verifies it carries data-reference-type="entity" with the requested
-        # id. `migrated.character_entities_attached` fires and Flow loads the
-        # character's voice sample. And the SUBMIT IS ACCEPTED: measured 2026-09-07,
-        # entity-bound submissions appear in Flow's own gallery as **Queued** and
-        # proceed. Nothing is refused server-side.
-        #
-        # What breaks is the OBSERVER, and the mechanism is exact:
-        #
-        #   MZZa6b -> [["wrb.fr","MZZa6b",null,null,null,[5],"generic"]]
-        #
-        # The submit reply carries a NULL payload, so it never names a media id and the
-        # `submitted` future in submit_and_observe never resolves. That wait is bounded
-        # by SUBMIT_REPLY_BUDGET_S (60 s), a value calibrated on runs where "the submit
-        # reply arrived 4.0-4.6 s after the click" — i.e. a plate-based generation
-        # against an idle queue. So the run times out (exit 9, TransportTimeoutError)
-        # while the job sits in Flow's queue and completes on its own.
-        #
-        # This is also what the ORIGINAL note here described as "the submit never
-        # produces a reply, three runs, 60 s each, cause unknown". Three timeouts
-        # against a queue, read as a refusal. Two later comments (including one of
-        # mine) hardened that misreading further; both were wrong.
-        #
-        # Queue latency is not incidental: Flow documents a limit of FIVE concurrent
-        # generations, and rate-limits per-minute throughput after heavy daily use, so
-        # 60 s is routinely too short in real production.
-        #
-        # THE FIX, when someone takes it: on a null submit payload, fall through to the
-        # status poll (jwpduf/as29s) keyed on the project instead of requiring the
-        # submit reply to name the media id, and make the budget configurable. The guard
-        # stays only until that lands, because today the CLI would report a timeout on a
-        # generation that is actually running — worse than an honest refusal.
-        return "character references"
+        # The gate this replaces refused every character because the entity submit can
+        # answer `MZZa6b` with a NULL payload (`[5]`, no record) while Flow queues and
+        # runs the clip; the observer then timed out on a generation that was running.
+        # `submit_and_observe` now treats that reply as "queued" and adopts the clip the
+        # app's own status poll names next (spike 2026-10-16 addendum; plan Task 6b).
+        return "a character given by entity id without a name"
     if request.mode is Mode.T2V:
         return None
     if request.mode is Mode.R2V:
@@ -681,8 +673,52 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     if _unported_form(request) is not None or not project_id:
         return False
     if request.reference_entities:
+        # Routing only: a page served labs keeps the labs driver, which attaches
+        # characters by entity id. flow.google.com drives them when Flow SERVED it.
         return False
     return request.model is None or request.model in VIDEO_MODEL_MENU_LABELS
+
+
+async def clear_overlays(page: Page) -> None:
+    """Dismiss the first-visit dialog and the cookie bar — the composer's own best-effort
+    dismissals, for other flow.google.com drivers (the character editor) after navigating."""
+    await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    await MigratedComposer()._dismiss_cookie_bar(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+
+#: What follows a chip without Flow's own space after it: a space, or closing punctuation.
+_CLOSES_UP = (" ", ",", ".", ";", ":", "!", "?", ")", "'", "\u2019")  # "Nora's" too
+
+
+def place_mentions(
+    prompt: str, names: tuple[str, ...]
+) -> tuple[list[tuple[int, int, str]], list[str]]:
+    """Where each character's chip goes: ``([(start, end, name)…] by position, [unnamed])``.
+
+    A character is placed at the first whole-word, case-insensitive occurrence of its
+    name that no earlier character already took — which is where its ``@`` stood, since
+    the mention resolver keeps the name and drops only the ``@``. A character the prompt
+    never names is returned in the second list, to go in front, in the order given.
+
+    Longer names are placed first, so "Ann" cannot take the "Ann" inside "Mary Ann"
+    whichever order the characters were passed in."""
+    placed: list[tuple[int, int, str]] = []
+    unnamed: set[str] = set()
+    for name in sorted(names, key=len, reverse=True):
+        pattern = re.compile(rf"(?<!\w){re.escape(name)}(?!\w)", re.IGNORECASE)
+        spot = next(
+            (
+                m
+                for m in pattern.finditer(prompt)
+                if all(m.end() <= s or m.start() >= e for s, e, _ in placed)
+            ),
+            None,
+        )
+        if spot is None:
+            unnamed.add(name)
+        else:
+            placed.append((spot.start(), spot.end(), name))
+    return sorted(placed), [n for n in names if n in unnamed]
 
 
 def _unported_image_form(request: GenerateImageRequest) -> str | None:
@@ -1319,6 +1355,10 @@ def _recovery_detail(page: Page, pressed: bool | None, error: Exception) -> str:
 class MigratedComposer:
     """Settings → prompt → submit → observe, against the migrated editor."""
 
+    def __init__(self) -> None:
+        # Every clip the project held when the editor loaded; None if that read was missed.
+        self._known_clips: set[str] | None = None
+
     async def _ui_failure_detail(
         self,
         page: Page,
@@ -1345,15 +1385,38 @@ class MigratedComposer:
 
     # --- readiness ------------------------------------------------------------
 
+    async def _load_known_clips(self, page: Page, project_id: str, target: str) -> None:
+        async def navigate() -> None:
+            log.info("migrated.navigate", url=target)
+            await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
+
+        try:
+            payload = await rpc_reply(page, "Zzl0ze", navigate, timeout_s=KNOWN_CLIPS_WAIT_S)
+        except TransportTimeoutError:
+            log.warning("migrated.known_clips_missed", project_id=project_id)
+            self._known_clips = None
+            return
+        self._known_clips = {r.workflow_id for r in generation_records("Zzl0ze", payload)}
+        log.info("migrated.known_clips", count=len(self._known_clips))
+
     async def ensure_editor(
-        self, page: Page, project_id: str, *, timeout_s: float = 30.0
+        self,
+        page: Page,
+        project_id: str,
+        *,
+        timeout_s: float = 30.0,
+        known_clips: bool = False,
     ) -> ComposerKind:
         """Land on ``flow.google.com/project/<id>`` (direct — no labs.google visit
         needed on either kind of account), wait for the settings trigger, and report
-        which composer is there: ``"classic"``, or #799's ``"agent_only"``."""
+        which composer is there: ``"classic"``, or #799's ``"agent_only"``.
+
+        ``known_clips`` always (re)loads the project and records the clips its ``Zzl0ze``
+        reply lists, so a queued submit can tell its own new clip from one already there."""
         target = MIGRATED_PROJECT_URL.format(project_id=project_id)
-        current = str(getattr(page, "url", "") or "")
-        if not current.startswith(target):
+        if known_clips:
+            await self._load_known_clips(page, project_id, target)
+        elif not is_at(getattr(page, "url", ""), target):
             log.info("migrated.navigate", url=target)
             await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
         await self._dismiss_dialog(page)
@@ -2556,8 +2619,16 @@ class MigratedComposer:
         entity_ids: tuple[str, ...],
         names: tuple[str, ...],
         clear: bool = True,
+        prompt: str | None = None,
     ) -> tuple[str, ...]:
         """Mention each character by name, then prove the chip is that ENTITY (#723).
+
+        With ``prompt``, the prompt is typed too, and each chip lands WHERE the prompt
+        names the character: the text before the name is typed, the chip replaces the
+        name (it renders that name), then the rest. A character the prompt never names
+        goes in front. Without it, chips are placed first and the caller types the prompt
+        after them — which put every character at the start, whatever the prompt said
+        (user report, 2026-10-17).
 
         The gesture is ``@``, the name, then the option TITLED exactly the name
         (:meth:`_mention_character`) — never the first option, and never a trial commit:
@@ -2584,8 +2655,11 @@ class MigratedComposer:
         # THIS call adds: media chips already on the prompt are legitimate, and clearing
         # them would silently drop references the caller asked for.
         base = len(await self.read_chips(page))
-        for i, name in enumerate(names):
-            await self._mention_character(page, name, expect_chips=base + i + 1)
+        if prompt is None:
+            for i, name in enumerate(names):
+                await self._mention_character(page, name, expect_chips=base + i + 1)
+        else:
+            await self._compose_with_mentions(page, prompt, names, base=base)
 
         chips = (await self.read_chips(page))[base:]
         not_entities = [c for c in chips if c.get("reference_type") != "entity"]
@@ -2629,7 +2703,86 @@ class MigratedComposer:
         )
         return committed
 
-    async def _mention_character(self, page: Page, name: str, *, expect_chips: int) -> None:
+    async def _compose_with_mentions(
+        self, page: Page, prompt: str, names: tuple[str, ...], *, base: int
+    ) -> None:
+        placed, leading = place_mentions(prompt, names)
+        count = base
+        for name in leading:
+            count += 1
+            await self._mention_character(page, name, expect_chips=count)
+        pos = 0
+        after_chip = bool(leading)
+        for start, end, name in [*placed, (len(prompt), len(prompt), "")]:
+            segment = prompt[pos:start]
+            if after_chip and segment[:1] in _CLOSES_UP and await self._ends_with_space(page):
+                # Flow puts a space after a committed chip (live, 2026-10-17: the recorded
+                # prompt read "Nora  hands" and "Mini ,"). A prompt space would double it,
+                # and punctuation must sit against the name: take Flow's space back. The
+                # Backspace is safe only because the composer was SEEN to end in a space.
+                if segment[:1] == " ":
+                    segment = segment[1:]
+                else:
+                    await page.keyboard.press("Backspace")
+            if name and segment[-1:].isspace():
+                # Live 2026-10-17: the editor drops whitespace that ENDS inserted text
+                # (a space after a newline, or a newline), so `@` stuck to the previous
+                # word, the picker never opened and the run died with "offered 0
+                # option(s)". A typed space survives: insert the text without its
+                # trailing whitespace, then type one space. A newline is not typed back:
+                # Enter in the composer can submit.
+                if segment.rstrip():
+                    await page.keyboard.insert_text(segment.rstrip())
+                await page.keyboard.type(" ", delay=80)
+            elif segment:
+                await page.keyboard.insert_text(segment)
+            if not name:
+                break
+            count += 1
+            # No click: it would move the caret off the end of what was just typed.
+            await self._mention_character(page, name, expect_chips=count, focus=False)
+            pos, after_chip = end, True
+        log.info(
+            "migrated.prompt_typed",
+            chars=len(prompt),
+            inline_mentions=len(placed),
+            layout=await self._layout(page),
+        )
+
+    async def _layout(self, page: Page) -> list[str]:
+        """The composer in document order — ``"chip"`` or ``"text:<length>"`` — so a run's
+        log shows where each chip landed without logging the prompt itself."""
+        layout = await page.evaluate(
+            """([root, chip]) => {
+                const out = [];
+                const walk = (node) => {
+                    for (const child of node.childNodes) {
+                        if (child.nodeType === 1 && child.matches(chip)) out.push("chip");
+                        else if (child.nodeType === 3) {
+                            const n = child.textContent.trim().length;
+                            if (n) out.push("text:" + n);
+                        } else walk(child);
+                    }
+                };
+                const el = document.querySelector(root);
+                if (el) walk(el);
+                return out;
+            }""",
+            [COMPOSER, MENTION_CHIP],
+        )
+        if not isinstance(layout, list):
+            return []
+        return [x for x in cast("list[object]", layout) if isinstance(x, str)]
+
+    async def _ends_with_space(self, page: Page) -> bool:
+        text = await page.evaluate(
+            "(sel) => (document.querySelector(sel)?.textContent || '')", COMPOSER
+        )
+        return isinstance(text, str) and text[-1:] in (" ", "\u00a0")
+
+    async def _mention_character(
+        self, page: Page, name: str, *, expect_chips: int, focus: bool = True
+    ) -> None:
         """Commit the picker option TITLED exactly *name* — one gesture, nothing on trial.
 
         Measured 2026-10-13 (``scripts/dev/spike_picker_entity_marker.py``, and see
@@ -2652,7 +2805,9 @@ class MigratedComposer:
         titles: list[str] = []
         before: list[dict[str, str]] = []
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
-            before = await self._caret_to_end(page)
+            # Without focus the caret already sits after the text just typed, and a
+            # click could move it; the chips are still read for `_require_appended`.
+            before = await self._caret_to_end(page) if focus else await self.read_chips(page)
             # Real keystrokes: see `_mention_by_name`.
             await page.keyboard.type("@", delay=120)
             await page.wait_for_timeout(2200)
@@ -3062,6 +3217,19 @@ class MigratedComposer:
         terminal: asyncio.Future[GenerationRecord] = loop.create_future()
         done_no_url: asyncio.Future[GenerationRecord] = loop.create_future()
         workflow: dict[str, str] = {}
+        # #723: an entity-bound submit Flow QUEUES answers `[5]` with a null payload — no
+        # record, so no media id. Flow still runs it, and the app's own status poll then
+        # names the new clip. `pending` starts with every clip the project load listed and
+        # grows with every clip a poll names BEFORE the click, so the one adopted is new:
+        # never a clip that was already running. A clip first named between the click and
+        # the reply may be this submit's own, so it stays eligible and the next poll after
+        # the reply decides (PR #987 review). With no such list (`_known_clips` is None),
+        # nothing is adopted: a poll may not land between the click and the reply, and a
+        # still-running older clip would then look new.
+        clicked = asyncio.Event()
+        queued = asyncio.Event()
+        pending: set[str] = set(self._known_clips or ())
+        can_adopt = self._known_clips is not None
 
         def _settle(rec: GenerationRecord) -> None:
             if rec.is_failed or (rec.is_done and rec.video_url):
@@ -3107,6 +3275,12 @@ class MigratedComposer:
             if refusal is not None and not submitted.done():
                 submitted.set_exception(refusal)
                 return
+            if not submitted.done() and any(
+                err.rpcid in submit_rpcs and err.code == QUEUED_CODE and not err.reasons
+                for err in rpc_errors(text)
+            ):
+                log.warning("migrated.submit_queued_unnamed", pending=len(pending))
+                queued.set()
             for rid, payload in parse_frames(text):
                 # Record the id the FRAME names, not just the URL's. The interpolation
                 # reply arrives on a bare `batchexecute` with no `rpcids` param, so a
@@ -3136,6 +3310,37 @@ class MigratedComposer:
                         continue
                     log.info("migrated.status", rpc=rid, status=rec.status, bytes=rec.size_bytes)
                     _settle(rec)
+                elif rid in STATUS_RPCS:
+                    fresh = [
+                        r
+                        for r in generation_records(rid, payload)
+                        if r.workflow_id not in pending
+                        and (project_id is None or r.project_id == project_id)
+                    ]
+                    if not clicked.is_set():
+                        # Nothing a poll names before the click can be this submit's.
+                        pending.update(r.workflow_id for r in fresh)
+                        continue
+                    if not queued.is_set():
+                        continue
+                    # A clip this submit just queued cannot already be finished: a done
+                    # or failed one is an older clip of the project (council D1).
+                    pending.update(r.workflow_id for r in fresh if not r.is_running)
+                    fresh = [r for r in fresh if r.is_running]
+                    if len(fresh) == 1 and can_adopt and not submitted.done():
+                        rec = fresh[0]
+                        workflow["id"] = rec.workflow_id
+                        log.info(
+                            "migrated.submit_adopted_from_status",
+                            rpc=rid,
+                            workflow_id=rec.workflow_id,
+                            media_id=rec.media_id,
+                        )
+                        submitted.set_result(rec)
+                        _settle(rec)
+                    elif len(fresh) > 1:
+                        # Two new clips: which one is ours is unknowable from here.
+                        log.warning("migrated.submit_status_ambiguous", fresh=len(fresh))
 
         page.on("response", on_response)
         # Every body assertion lives in `on_request`, so the listener must be armed for
@@ -3182,18 +3387,52 @@ class MigratedComposer:
             deadline = time.monotonic() + poll_timeout_s
             # The credit-spending click: a bare timeout here leaves "did it submit?"
             # unanswerable, which is the worst place in this driver to lose attribution.
+            clicked.set()
             await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             log.info("migrated.submit_clicked")
             budget = min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s)
+            # With no clip list a queued reply is final: nothing will be adopted, so say
+            # so now rather than after the reply budget.
+            unadoptable = asyncio.ensure_future(queued.wait()) if not can_adopt else None
             await asyncio.wait(
-                {submitted, route_error}, timeout=budget, return_when=asyncio.FIRST_COMPLETED
+                {submitted, route_error} | ({unadoptable} if unadoptable else set()),
+                timeout=budget,
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            if unadoptable is not None:
+                unadoptable.cancel()
+            if queued.is_set() and can_adopt and not submitted.done() and not route_error.done():
+                # Queued: the record arrives with the app's status poll, which follows
+                # Flow's queue — wait on the generation's own budget, not the reply's.
+                await asyncio.wait(
+                    {submitted, route_error},
+                    timeout=max(0.0, deadline - time.monotonic()),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
             if route_error.done():
                 # The request is inspected before its reply lands, so a wrong body is
                 # named as such and not as whatever the reply then says.
                 raise route_error.result()
             if not submitted.done():
                 seen = ", ".join(sorted(seen_submit_rpcs)) or "none"
+                if queued.is_set():
+                    why = (
+                        "and no status poll named a new one in time"
+                        if can_adopt
+                        else "and the project's clip list was not read, so a new clip "
+                        "cannot be told from an older one"
+                    )
+                    raise TransportTimeoutError(
+                        detail=(
+                            f"migrated host: Flow queued the submit without naming the clip, {why}"
+                        ),
+                        retryable=False,
+                        remediation_hint=(
+                            "The generation is likely still running and billed. Open the "
+                            "project in Flow before re-running: a blind resubmit can bill "
+                            "twice."
+                        ),
+                    )
                 raise _outcome_unknown(
                     f"migrated host: no {'/'.join(submit_rpcs)} reply within "
                     f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
@@ -3671,7 +3910,7 @@ async def run_video(
         )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
     composer = MigratedComposer()
-    if await composer.ensure_editor(page, pid) == "agent_only":
+    if await composer.ensure_editor(page, pid, known_clips=True) == "agent_only":
         return await agent.run_agent_video(
             page,
             request,
@@ -3694,23 +3933,27 @@ async def run_video(
         end_media_id = await composer.attach_end_frame(page, pid, request.end_image)
     if request.mode is Mode.R2V and request.reference_images:
         reference_ids = await composer.attach_references(page, pid, request.reference_images)
-    if request.reference_entities:
+    if request.reference_entity_names:
         # #723: characters attach through the SAME `@` picker as media, so they go on
         # after any uploads (whose file chooser steals keyboard focus) and must not clear
         # mentions those uploads already placed.
+        # The prompt is typed with them, so each chip lands where the prompt names it.
         await composer.attach_character_entities(
             page,
             entity_ids=tuple(request.reference_entities),
             names=tuple(request.reference_entity_names),
             clear=not reference_ids,
+            prompt=request.prompt,
         )
-    # The prompt is appended whenever mentions are already in the document: clicking the
-    # composer would move the caret away from where the last one left it.
-    has_mentions = bool(request.reference_entities) or request.mode is Mode.R2V
-    await composer.send_prompt(page, request.prompt, append=has_mentions)
+    else:
+        # The prompt is appended whenever mentions are already in the document: clicking
+        # the composer would move the caret away from where the last one left it.
+        await composer.send_prompt(page, request.prompt, append=request.mode is Mode.R2V)
     if request.mode is Mode.R2V:
         attached = await composer.read_chips(page)
-        if len(attached) != len(request.reference_images) + len(request.reference_entities):
+        # Every named character is one chip; `_unported_form` refuses an id with no name.
+        wanted = len(request.reference_images) + len(request.reference_entity_names)
+        if len(attached) != wanted:
             raise ReferenceNotFoundError(
                 detail=(
                     f"migrated host: {len(request.reference_images)} reference(s) requested "
@@ -3812,8 +4055,10 @@ async def run_images(
             entity_ids=tuple(request.reference_entities),
             names=tuple(request.reference_entity_names),
             clear=not reference_ids,
+            prompt=request.prompt,  # each chip where the prompt names it
         )
-    await composer.send_prompt(page, request.prompt, append=bool(reference_ids) or bool(entity_ids))
+    else:
+        await composer.send_prompt(page, request.prompt, append=bool(reference_ids))
     # The submit guard holds the body to EXACTLY these references: a lost character, or
     # any reference that is not on this list, aborts the run before Flow generates it.
     return await composer.submit_images_and_observe(
@@ -3901,7 +4146,7 @@ def _navigated_project_id(url: str, before: str) -> str | None:
     return segments[2]
 
 
-async def _rpc_reply(
+async def rpc_reply(
     page: Page,
     rpcid: str,
     action: Callable[[], Awaitable[None]],
@@ -3995,7 +4240,7 @@ async def create_project(
     before = str(page.url)
     deadline = time.monotonic() + timeout_s
     try:
-        payload = await _rpc_reply(
+        payload = await rpc_reply(
             page,
             CREATE_PROJECT_RPC,
             lambda: button.click(timeout=15_000),
@@ -4058,7 +4303,7 @@ async def rename_project(
     ``timeout_s`` bounds the rename reply; the selector wait stays at ``ANCHOR_TIMEOUT_S``.
     A lost or late reply is settled by reading the saved title back (#992, #1037)."""
     target = MIGRATED_PROJECT_URL.format(project_id=project_id)
-    if not str(getattr(page, "url", "") or "").startswith(target):
+    if not is_at(getattr(page, "url", ""), target):
         await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
     await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
     field = await _wait_anchor(
@@ -4090,9 +4335,7 @@ async def rename_project(
             ) from e
 
     try:
-        payload = await _rpc_reply(
-            page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s, write=True
-        )
+        payload = await rpc_reply(page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s, write=True)
     except (RpcResponseUnavailableError, TransportTimeoutError) as original_error:
         unknown = _write_outcome_unknown(
             original_error,
@@ -4140,7 +4383,7 @@ async def read_credits(page: Page, *, timeout_s: float = 30.0) -> CreditsInfo:
         await page.goto(MIGRATED_ROOT_URL, wait_until="domcontentloaded", timeout=45_000)
 
     try:
-        payload = await _rpc_reply(page, CREDITS_RPC, load, timeout_s=timeout_s)
+        payload = await rpc_reply(page, CREDITS_RPC, load, timeout_s=timeout_s)
     except TransportTimeoutError as e:
         if flow_landing_kind(page.url) == "public":
             # The generic /about hint says "open the project"; credits has no project.

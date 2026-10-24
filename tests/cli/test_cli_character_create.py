@@ -662,3 +662,95 @@ def test_create_format_prompt_flag_forwarded(tmp_path: Path) -> None:
     code, format_prompt = _invoke_with_format_flag(tmp_path, flag=True)
     assert code == 0
     assert format_prompt is True
+
+
+# ---------------------------------------------------------------------------
+# --image / --body-image: build a character from local files (#639)
+# ---------------------------------------------------------------------------
+
+_FILES_SAGA = "gflow_cli.cli_character.character_create_from_files"
+
+
+def _jpeg(path: Path) -> Path:
+    from PIL import Image
+
+    Image.new("RGB", (72, 128), (90, 60, 40)).save(path)
+    return path
+
+
+def _invoke_files(tmp_path: Path, *extra: str) -> tuple[object, AsyncMock, AsyncMock]:
+    settings = MagicMock(headless=True, history_prompts="hash")
+    client_cm = MagicMock()
+    client_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+    client_cm.__aexit__ = AsyncMock(return_value=False)
+    with (
+        patch(_GET_SETTINGS, return_value=settings),
+        patch(_RESOLVE_PROFILE, return_value="default"),
+        patch(_MAKE_PROVIDER_DIR, return_value=tmp_path / "profiles" / "default"),
+        patch(_CLIENT, return_value=client_cm),
+        patch(_RECORDER_OPEN, return_value=MagicMock()),
+        patch(_FILES_SAGA, new=AsyncMock(return_value=_make_result())) as files_saga,
+        patch(_SAGA, new=AsyncMock(return_value=_make_result())) as prompt_saga,
+    ):
+        out = CliRunner().invoke(
+            character, ["create", "--project", "proj-1", "--name", "Nora", *extra]
+        )
+    return out, files_saga, prompt_saga
+
+
+def test_create_from_files_routes_to_the_files_saga(tmp_path: Path) -> None:
+    face, body = _jpeg(tmp_path / "face.jpg"), _jpeg(tmp_path / "body.jpg")
+
+    out, files_saga, prompt_saga = _invoke_files(
+        tmp_path, "--image", str(face), "--body-image", str(body), "--voice", "aoede"
+    )
+
+    assert out.exit_code == 0, out.output  # type: ignore[attr-defined]
+    prompt_saga.assert_not_awaited()
+    kwargs = files_saga.await_args.kwargs
+    assert (kwargs["portrait"], kwargs["body"], kwargs["voice"]) == (face, body, "Aoede")
+
+
+def test_image_or_face_prompt_is_required(tmp_path: Path) -> None:
+    out, files_saga, prompt_saga = _invoke_files(tmp_path)
+    assert out.exit_code == 2  # type: ignore[attr-defined]
+    assert "--face-prompt or --image" in out.output  # type: ignore[attr-defined]
+    files_saga.assert_not_awaited()
+    prompt_saga.assert_not_awaited()
+
+
+def test_image_and_face_prompt_are_exclusive(tmp_path: Path) -> None:
+    face = _jpeg(tmp_path / "face.jpg")
+    out, files_saga, _ = _invoke_files(tmp_path, "--image", str(face), "--face-prompt", "a knight")
+    assert out.exit_code == 2  # type: ignore[attr-defined]
+    files_saga.assert_not_awaited()
+
+
+def test_a_body_prompt_cannot_ride_on_a_file_built_character(tmp_path: Path) -> None:
+    face = _jpeg(tmp_path / "face.jpg")
+    out, files_saga, _ = _invoke_files(tmp_path, "--image", str(face), "--body-prompt", "armor")
+    assert out.exit_code == 2  # type: ignore[attr-defined]
+    assert "--body-image" in out.output  # type: ignore[attr-defined]
+    files_saga.assert_not_awaited()
+
+
+def test_a_body_image_needs_a_portrait_image(tmp_path: Path) -> None:
+    body = _jpeg(tmp_path / "body.jpg")
+    out, files_saga, _ = _invoke_files(tmp_path, "--face-prompt", "x", "--body-image", str(body))
+    assert out.exit_code == 2  # type: ignore[attr-defined]
+    files_saga.assert_not_awaited()
+
+
+def test_generation_only_flags_are_refused_with_files(tmp_path: Path) -> None:
+    face = _jpeg(tmp_path / "face.jpg")
+    # `--locale` too: accepted and silently ignored before (PR #987 review).
+    for flags in (["--format-prompt"], ["--model", "nanopro"], ["--locale", "fr"]):
+        out, files_saga, _ = _invoke_files(tmp_path, "--image", str(face), *flags)
+        assert out.exit_code == 2, flags  # type: ignore[attr-defined]
+        files_saga.assert_not_awaited()
+
+
+def test_a_missing_image_file_is_a_usage_error(tmp_path: Path) -> None:
+    out, files_saga, _ = _invoke_files(tmp_path, "--image", str(tmp_path / "nope.jpg"))
+    assert out.exit_code == 2  # type: ignore[attr-defined]
+    files_saga.assert_not_awaited()

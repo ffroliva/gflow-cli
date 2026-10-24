@@ -87,6 +87,18 @@ _reference_entity_name_option = click.option(
     multiple=True,
     help="Display name paired with --reference-entity.",
 )
+_character_option = click.option(
+    "--character",
+    "characters",
+    multiple=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help=(
+        "A character folder written by `gflow character export` (repeatable — several "
+        "characters can share one clip). A character with its name already in the project "
+        "is reused; otherwise it is imported first (free). Then it is attached like "
+        "--reference-entity, where the prompt names it."
+    ),
+)
 _resolution_option = click.option(
     "--resolution",
     default=None,
@@ -239,7 +251,11 @@ def _relocate_single_video(item: Any, target: Path) -> Any:
     if local_p is None or not local_p.exists():
         return item
     if local_p != target:
-        local_p.replace(target)
+        # shutil.move, not Path.replace: --output may sit on another filesystem (a tmpfs
+        # /tmp), where a rename raises EXDEV after the clip was already billed.
+        import shutil
+
+        shutil.move(local_p, target)
         return replace(item, local_path=target)
     return item
 
@@ -278,6 +294,7 @@ async def _generate_and_report(
     project_id: str | None = None,
     project_name: str | None = None,
     tool_specs: tuple[str, ...] = (),
+    characters: tuple[Path, ...] = (),
 ) -> None:
     """Drive FlowApiClient for a single GenerateVideoRequest and print the
     result (or fail with a non-zero exit). Shared by t2v, i2v, and r2v.
@@ -294,6 +311,10 @@ async def _generate_and_report(
     settings = get_settings()
     if output_file is not None:
         refuse_cloud_storage_for_local_file(settings.storage_uri, "-o/--output")
+    if characters:
+        from gflow_cli.services.character_portability import validate_bundles
+
+        validate_bundles(characters)  # before Flow: a bad folder leaves no scratch project
     if not as_json:
         console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     recorder = OperationRecorder.open(settings)
@@ -303,6 +324,18 @@ async def _generate_and_report(
             if project_id is None and project_name is not None:
                 p_info = await client.create_project(title=project_name)
                 project_id = p_info.project_id
+            if characters and project_id is not None:
+                from gflow_cli.services.character_portability import apply_character_bundles
+
+                request = await apply_character_bundles(
+                    client,
+                    recorder,
+                    request,
+                    project_id=project_id,
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    bundles=characters,
+                )
 
             # Resolve @-mentions and expand --tool specs (shared helper).
             from gflow_cli.services.mentions import resolve_and_apply
@@ -432,6 +465,7 @@ async def _run_t2v(
     project_name: str | None = None,
     tool_specs: tuple[str, ...] = (),
     ui_mode: UiMode | None = None,
+    characters: tuple[Path, ...] = (),
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -462,6 +496,7 @@ async def _run_t2v(
         project_id=project_id,
         project_name=effective_title,
         tool_specs=tool_specs,
+        characters=characters,
     )
 
 
@@ -633,6 +668,7 @@ async def _run_r2v(
     project_id: str | None = None,
     project_name: str | None = None,
     tool_specs: tuple[str, ...] = (),
+    characters: tuple[Path, ...] = (),
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -663,6 +699,7 @@ async def _run_r2v(
         project_id=project_id,
         project_name=effective_title,
         tool_specs=tool_specs,
+        characters=characters,
     )
 
 
@@ -1200,6 +1237,7 @@ def video() -> None:
 # guard rejects reference entities — see _shared_gen_tail_options.
 @_reference_entity_option
 @_reference_entity_name_option
+@_character_option
 @_shared_gen_tail_options
 def t2v(
     prompt: str,
@@ -1215,6 +1253,7 @@ def t2v(
     project_name: str | None,
     reference_entities: tuple[str, ...],
     reference_entity_names: tuple[str, ...],
+    characters: tuple[Path, ...],
     out_dir: Path | None,
     output_file: Path | None,
     as_json: bool,
@@ -1246,6 +1285,7 @@ def t2v(
             project_name=project_name,
             tool_specs=tool_specs,
             ui_mode=UiMode(ui_mode) if ui_mode else None,
+            characters=tuple(characters),
         ),
         cli_command="video t2v",
         as_json=as_json,
@@ -1534,6 +1574,7 @@ def i2v(  # NOSONAR
 @_project_name_option
 @_reference_entity_option
 @_reference_entity_name_option
+@_character_option
 @click.option(
     "-o",
     "--output",
@@ -1569,6 +1610,7 @@ def r2v(
     project_name: str | None,
     reference_entities: tuple[str, ...],
     reference_entity_names: tuple[str, ...],
+    characters: tuple[Path, ...],
     output_file: Path | None,
     out_dir: Path | None,
     as_json: bool,
@@ -1590,11 +1632,15 @@ def r2v(
         if cap == 0:
             msg = f"{model} does not support R2V (reference-to-video)."
             raise click.UsageError(msg)
-        if len(refs) > cap:
-            msg = f"{model} allows at most {cap} reference image(s); got {len(refs)}."
-            raise click.UsageError(
-                msg,
+        # Characters share the per-model pool with images (the DTO counts entities too),
+        # so count them here, before any browser — as `image i2i` does (council D8).
+        n_refs = len(refs) + len(reference_entities) + len(characters)
+        if n_refs > cap:
+            msg = (
+                f"{model} allows at most {cap} reference item(s) (images + characters); "
+                f"got {n_refs}."
             )
+            raise click.UsageError(msg)
 
     profile_name = _resolve_profile(profile)
     project_id = default_project(project_id, project_name, profile_name)
@@ -1620,6 +1666,7 @@ def r2v(
             project_id=project_id,
             project_name=project_name,
             tool_specs=tool_specs,
+            characters=tuple(characters),
         ),
         cli_command="video r2v",
         as_json=as_json,

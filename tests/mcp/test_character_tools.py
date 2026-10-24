@@ -15,12 +15,13 @@ the client returns, and must never manufacture emptiness.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gflow_cli.api.character import Character
+from gflow_cli.api.character import Character, CharacterCreateResult
 from gflow_cli.mcp import tools as mcp_tools
 
 _PROJECT = "proj-1234"
@@ -156,3 +157,144 @@ async def test_character_voices_needs_no_browser_or_profile() -> None:
 
     assert result["status"] == "ok"
     assert result["count"] > 0
+
+
+# --- create (file-built), export, import: adapters over the shared services (#639, #691) ---
+
+_CREATED = CharacterCreateResult(
+    entity_id="new-entity",
+    project_id=_PROJECT,
+    workflow_ids=("w0", "w1"),
+    primary_media_ids=("m0", "m1"),
+    name="Nora",
+    voice="Aoede",
+    image_paths=(),
+)
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_create_builds_from_files_with_a_canonical_voice(tmp_path: Any) -> None:
+    ctx, _client = _client_returning()
+    service = AsyncMock(return_value=_CREATED)
+    with (
+        patch.object(mcp_tools, "FlowApiClient", return_value=ctx),
+        patch("gflow_cli.services.character_create.character_create_from_files", service),
+        patch("gflow_cli.data.recorder.OperationRecorder.open"),
+    ):
+        result = await mcp_tools.gflow_character_create(
+            project=_PROJECT, name="Nora", image=str(tmp_path / "f.jpg"), voice="aoede"
+        )
+    assert result["status"] == "ok"
+    assert result["character"]["entity_id"] == "new-entity"
+    kwargs = service.await_args.kwargs
+    assert (kwargs["voice"], kwargs["body"]) == ("Aoede", None)
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_create_refuses_an_unknown_voice_before_any_browser() -> None:
+    def explode(*_: Any, **__: Any) -> Any:
+        raise AssertionError("an unknown voice must be refused before a client opens")
+
+    with patch.object(mcp_tools, "FlowApiClient", explode):
+        result = await mcp_tools.gflow_character_create(
+            project=_PROJECT, name="Nora", image="/x.jpg", voice="NotAVoice"
+        )
+    assert result["status"] == "error"
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_export_requires_exactly_one_selector() -> None:
+    for kwargs in ({}, {"entity_id": "e", "name": "n"}):
+        result = await mcp_tools.gflow_character_export(project=_PROJECT, out="/tmp/x", **kwargs)
+        assert result["status"] == "error", kwargs
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_import_reports_the_rebuilt_character(tmp_path: Any) -> None:
+    ctx, _client = _client_returning()
+    service = AsyncMock(return_value=_CREATED)
+    with (
+        patch.object(mcp_tools, "FlowApiClient", return_value=ctx),
+        patch("gflow_cli.services.character_portability.import_character", service),
+        patch("gflow_cli.data.recorder.OperationRecorder.open"),
+    ):
+        result = await mcp_tools.gflow_character_import(
+            bundle_dir=str(tmp_path), project=_PROJECT, voice="charon"
+        )
+    assert result["status"] == "ok"
+    assert result["character"]["entity_id"] == "new-entity"
+    assert service.await_args.kwargs["voice"] == "charon"
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_generate_image_carries_character_folders_under_the_key_the_worker_reads() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_run(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {"status": "completed"}
+
+    with patch.object(mcp_tools, "_run_generation_task", fake_run):
+        await mcp_tools.gflow_generate_image(prompt="Nora reading", characters=["/b/nora"])
+
+    assert captured["payload"]["characters"] == [str(Path("/b/nora").resolve())]
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_generate_video_carries_several_character_folders_for_the_worker() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_run(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {"status": "completed"}
+
+    with patch.object(mcp_tools, "_run_generation_task", fake_run):
+        await mcp_tools.gflow_generate_video(
+            prompt="Nora and Kael talk", characters=["/b/nora", "/b/kael"]
+        )
+
+    assert captured["payload"]["characters"] == [
+        str(Path(p).resolve()) for p in ("/b/nora", "/b/kael")
+    ]
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_generate_video_r2v_needs_an_image_and_i2v_refuses_characters() -> None:
+    """Council D15: the worker validates the request BEFORE characters are attached, so an
+    r2v call carrying only `characters` was accepted here and failed at claim. The CLI
+    requires `--ref` on r2v; MCP now refuses the same call up front. Characters alone: t2v."""
+    calls: list[Any] = []
+
+    async def fake_run(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"status": "completed"}
+
+    with patch.object(mcp_tools, "_run_generation_task", fake_run):
+        r2v = await mcp_tools.gflow_generate_video(
+            prompt="Nora", mode="r2v", characters=["/b/nora"]
+        )
+        i2v = await mcp_tools.gflow_generate_video(
+            prompt="Nora",
+            mode="i2v",
+            initial_frame="11111111-1111-4111-8111-111111111111",
+            characters=["/b/nora"],
+        )
+    assert r2v["status"] != "completed" and "reference" in str(r2v).lower()
+    assert i2v["status"] != "completed" and "i2v" in str(i2v)
+    assert calls == []
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_generate_image_counts_characters_against_the_cap_before_queueing() -> None:
+    calls: list[Any] = []
+
+    async def fake_run(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"status": "completed"}
+
+    with patch.object(mcp_tools, "_run_generation_task", fake_run):
+        result = await mcp_tools.gflow_generate_image(
+            prompt="crowd", characters=[f"/b/c{i}" for i in range(20)]
+        )
+    assert result["status"] != "completed" and "reference item" in str(result)
+    assert calls == []

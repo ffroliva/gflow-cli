@@ -43,7 +43,7 @@ from gflow_cli.api._engine import (
     run_teardown_step,
 )
 from gflow_cli.api._retry import MAX_ATTEMPTS, parse_retry_after, post_with_retry
-from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
+from gflow_cli.api.character import Character, CharacterImageRequest, Voice, parse_characters
 from gflow_cli.api.dto import (
     AssetInfo,
     CreditsInfo,
@@ -115,6 +115,7 @@ from gflow_cli.errors import (
     WireFormatError,
     classify_content_safety,
 )
+from gflow_cli.image_files import MAX_IMAGE_BYTES, image_kind
 from gflow_cli.paths import adjust_key_extension, character_output_path, looks_like_video
 from gflow_cli.profile_lease import ProfileLease
 from gflow_cli.profile_store import (
@@ -134,6 +135,7 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
     from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef, ProjectBrief
+    from gflow_cli.api.transports.migrated_character import CreatedCharacter
     from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
     from gflow_cli.api.video import (
         GenerateVideoRequest,
@@ -207,11 +209,6 @@ __all__ = ["FlowApiClient", "FlowApiError"]
 
 logger = structlog.get_logger(__name__)
 
-# Cap matches Flow's UI upload limit (~20 MB observed in captured traffic). Used
-# by `upload_image` to reject oversize files BEFORE reading them into memory —
-# protects this process from OOM and the remote endpoint from DoS-shaped traffic.
-MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
-
 # Server-side concat returns the combined MP4 inline as base64 in `encodedVideo`
 # (~1.27 MB base64 per second of video). Cap before b64decode to avoid OOM on a
 # pathologically long scene; ~350 MB base64 ≈ 260 MB MP4 ≈ a ~4.5-min scene.
@@ -269,29 +266,8 @@ def _parse_iso_to_epoch(value: object) -> float:
 
 
 def _is_supported_image_header(header: bytes) -> bool:
-    """Return True if ``header`` (first 12 bytes of a file) matches a known image
-    container's magic bytes.
-
-    Allowed formats — every one is accepted by Flow's web UI:
-
-    * **PNG** — ``\\x89PNG\\r\\n\\x1a\\n``
-    * **JPEG** — bytes 0..2 are ``\\xff\\xd8\\xff``
-    * **WebP** — bytes 0..3 ``RIFF`` + bytes 8..11 ``WEBP``
-    * **GIF** — ``GIF87a`` or ``GIF89a``
-
-    Rejecting anything else is a defense-in-depth measure: combined with
-    ``resolve_path=True`` on the CLI argument it stops a symlink-laundering
-    attack (``./photo.png -> ~/.ssh/id_rsa``) at the bytes layer.
-    """
-    if len(header) < 12:
-        return False
-    if header.startswith(b"\x89PNG\r\n\x1a\n"):
-        return True
-    if header[:3] == b"\xff\xd8\xff":
-        return True
-    if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
-        return True
-    return header[:6] in (b"GIF87a", b"GIF89a")
+    """True if ``header`` starts a PNG, JPEG, WebP or GIF (see :func:`image_kind`)."""
+    return image_kind(header) is not None
 
 
 async def validate_image_file(image_path: Path) -> None:
@@ -1924,7 +1900,12 @@ class FlowApiClient:
         finally:
             self._checkin_page(page)
 
-    def _labs_project_route_refused(self, exc: AuthExpiredError | WireFormatError) -> bool:
+    def _labs_project_route_refused(
+        self,
+        exc: AuthExpiredError | WireFormatError,
+        *,
+        event: str = "project.labs_route_refused",
+    ) -> bool:
         """Is this the labs project route's measured refusal, worth trying flow.google.com?
 
         Measured 2026-09-17 on four profiles, 12/12: 404 "Flow RPCs have been deprecated
@@ -1936,7 +1917,7 @@ class FlowApiClient:
         """
         refused = self.settings.flow_host == "auto" and exc.status in (401, 404)
         if refused:
-            logger.info("project.labs_route_refused", status=exc.status, issue_ref="#864")
+            logger.info(event, status=exc.status, issue_ref="#864")
         return refused
 
     async def get_credits(self) -> CreditsInfo:
@@ -3279,15 +3260,31 @@ class FlowApiClient:
     async def list_characters(self, project_id: str) -> list[Character]:
         """Return all CHARACTER entities in *project_id*.
 
-        Maps to ``GET .../trpc/flow.projectInitialData?input=…``.
+        Maps to ``GET .../trpc/flow.projectInitialData?input=…``, and to flow.google.com's
+        own ``Zzl0ze`` project read when that route refuses — the same observed-refusal
+        rule as :meth:`create_project` (see :meth:`_labs_project_route_refused`).
         Session-cookie auth.  FREE — no reCAPTCHA, no credit.
         """
-        trpc_input = json.dumps({"json": {"projectId": project_id}}, separators=(",", ":"))
-        url = f"{routes.PROJECT_INITIAL_DATA_URL}?input={quote(trpc_input, safe='')}"
-        data = await self._get_json(url, route_name="projectInitialData")
-        chars = parse_characters(_unwrap_trpc(data))
-        logger.debug("character.list_fetched", project_id=project_id, count=len(chars))
-        return chars
+        if self.settings.flow_host != "flow.google.com":
+            trpc_input = json.dumps({"json": {"projectId": project_id}}, separators=(",", ":"))
+            url = f"{routes.PROJECT_INITIAL_DATA_URL}?input={quote(trpc_input, safe='')}"
+            try:
+                data = await self._get_json(url, route_name="projectInitialData")
+            except (AuthExpiredError, WireFormatError) as exc:
+                if not self._labs_project_route_refused(exc, event="character.labs_route_refused"):
+                    raise
+            else:
+                chars = parse_characters(_unwrap_trpc(data))
+                logger.debug("character.list_fetched", project_id=project_id, count=len(chars))
+                return chars
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        page = await self._checkout_page()
+        try:
+            read = await migrated_character.read_project(page, project_id)
+        finally:
+            self._checkin_page(page)
+        return list(read.characters)
 
     async def fetch_project_listing(self, project_id: str) -> JsonObject:
         """Fetch the raw ``flow.projectInitialData`` listing for *project_id*.
@@ -3374,26 +3371,9 @@ class FlowApiClient:
         if entity_id is None and name is None:
             msg = "Provide either entity_id or name"
             raise ValueError(msg)
-        chars = await self.list_characters(project_id)
-        if entity_id is not None:
-            match = [c for c in chars if c.entity_id == entity_id]
-        else:
-            match = [c for c in chars if c.display_name == name]
-        if not match:
-            lookup = entity_id if entity_id is not None else repr(name)
-            raise ConfigurationError(
-                detail=f"character not found: {lookup}",
-                route="projectInitialData",
-                remediation_hint="Run `gflow character list` to see available characters.",
-            )
-        if len(match) > 1:
-            ids = ", ".join(c.entity_id for c in match)
-            raise ConfigurationError(
-                detail=f"ambiguous character name {name!r} matches multiple entities: {ids}",
-                route="projectInitialData",
-                remediation_hint="Use --entity-id to select one character unambiguously.",
-            )
-        return match[0]
+        return _pick_character(
+            await self.list_characters(project_id), entity_id=entity_id, name=name
+        )
 
     async def patch_entity(
         self,
@@ -3414,6 +3394,149 @@ class FlowApiClient:
         Only the fields supplied are written; absent optional fields are omitted
         from both the request body and the ``updateMask``.
         """
+        if self.settings.flow_host != "flow.google.com":
+            try:
+                await self._patch_entity_rest(
+                    project_id=project_id,
+                    entity_id=entity_id,
+                    display_name=display_name,
+                    workflow_ids=workflow_ids,
+                    voice=voice,
+                    personality=personality,
+                )
+                return
+            except (AuthExpiredError, WireFormatError) as exc:
+                if not self._labs_project_route_refused(exc, event="character.rest_route_refused"):
+                    raise
+        # flow.google.com: aisandbox REST answers 401 for this account (measured
+        # 2026-10-16), so the editor writes it. Image references are bound by the
+        # editor's own upload, so ``workflow_ids`` has nothing to do here.
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        page = await self._checkout_page()
+        try:
+            await migrated_character.patch_character(
+                page,
+                project_id,
+                entity_id,
+                name=display_name,
+                personality=personality,
+                voice=voice,
+            )
+        finally:
+            self._checkin_page(page)
+
+    async def list_voices(self, project_id: str) -> tuple[Voice, ...]:
+        """The live voice catalog flow.google.com sends with a project read (``Zzl0ze``).
+
+        Live, not :data:`~gflow_cli.api.character.VOICES`: an account may be offered a
+        voice the offline list does not know yet, or lack one it lists."""
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        page = await self._checkout_page()
+        try:
+            read = await migrated_character.read_project(page, project_id)
+        finally:
+            self._checkin_page(page)
+        return read.voices
+
+    async def read_character_for_export(
+        self, project_id: str, *, entity_id: str | None = None, name: str | None = None
+    ) -> tuple[Character, list[tuple[str, bytes]]]:
+        """Read one character and download its images at full size, in slot order
+        (``("portrait", bytes)``, then ``("body", bytes)`` if it has one).
+
+        One fresh project read, then the downloads at once: the links in it expire.
+        Resolution by id or exact name follows :meth:`get_character`.
+        """
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        if self.settings.flow_host == "labs.google":
+            raise ConfigurationError(
+                detail="exporting a character is driven on flow.google.com; it is not "
+                "ported to labs.google yet (#639)"
+            )
+        page = await self._checkout_page()
+        try:
+            read = await migrated_character.read_project(page, project_id)
+            char = _pick_character(list(read.characters), entity_id=entity_id, name=name)
+            if not char.workflow_ids:
+                raise ConfigurationError(
+                    detail=f"character {char.display_name!r} has no image to export"
+                )
+            images: list[tuple[str, bytes]] = []
+            for role, workflow_id in zip(("portrait", "body"), char.workflow_ids, strict=False):
+                image = read.images.get(workflow_id)
+                if image is None:
+                    raise WireFormatError(
+                        detail=f"the project read lists no media for image {workflow_id}",
+                        route="batchexecute:Zzl0ze",
+                    )
+                url = migrated_character.original_image_url(image)
+                resp = await page.request.get(url, max_redirects=2, timeout=120_000)
+                if resp.status != 200:
+                    raise WireFormatError(
+                        detail=f"downloading the {role} image answered HTTP {resp.status}",
+                        status=resp.status,
+                        route="character_image_download",
+                    )
+                images.append((role, await resp.body()))
+        finally:
+            self._checkin_page(page)
+        logger.info("character.export_read", entity_id=char.entity_id, images=len(images))
+        return char, images
+
+    async def create_character_from_files(
+        self,
+        project_id: str,
+        *,
+        name: str,
+        portrait: Path,
+        body: Path | None = None,
+        voice: str | None = None,
+        personality: str | None = None,
+    ) -> CreatedCharacter:
+        """Build a character from local images on flow.google.com (#639).
+
+        Every file is checked first (exists, size, image magic bytes), so nothing leaves
+        the machine and no page is touched for a bad path. FREE — uploads and edits only.
+        """
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        for path in (portrait, body):
+            if path is None:
+                continue
+            try:
+                await validate_image_file(path)
+            except (FileNotFoundError, ValueError) as exc:
+                raise ConfigurationError(
+                    detail=f"cannot use {path.name} as a character image: {exc}"
+                ) from exc
+        page = await self._checkout_page()
+        try:
+            return await migrated_character.create_from_files(
+                page,
+                project_id,
+                name=name,
+                portrait=portrait,
+                body=body,
+                personality=personality,
+                voice=voice,
+            )
+        finally:
+            self._checkin_page(page)
+
+    async def _patch_entity_rest(
+        self,
+        *,
+        project_id: str,
+        entity_id: str,
+        display_name: str,
+        workflow_ids: list[str],
+        voice: str | None,
+        personality: str | None,
+    ) -> None:
+        """The labs-era Bearer PATCH to ``flow/entities`` (see :meth:`patch_entity`)."""
         character_info: JsonObject = {
             "imageReferences": [{"workflowId": w} for w in workflow_ids],
         }
@@ -3796,6 +3919,34 @@ def _strip_query(url: str) -> str:
     """
     parts = urlsplit(url)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _pick_character(
+    chars: list[Character], *, entity_id: str | None, name: str | None
+) -> Character:
+    """The one character matching ``entity_id``, or exactly ``name`` (case-sensitive).
+
+    Raises :class:`~gflow_cli.errors.ConfigurationError` when none matches, or when a
+    name matches several (ambiguous)."""
+    if entity_id is not None:
+        match = [c for c in chars if c.entity_id == entity_id]
+    else:
+        match = [c for c in chars if c.display_name == name]
+    if not match:
+        lookup = entity_id if entity_id is not None else repr(name)
+        raise ConfigurationError(
+            detail=f"character not found: {lookup}",
+            route="projectInitialData",
+            remediation_hint="Run `gflow character list` to see available characters.",
+        )
+    if len(match) > 1:
+        ids = ", ".join(c.entity_id for c in match)
+        raise ConfigurationError(
+            detail=f"ambiguous character name {name!r} matches multiple entities: {ids}",
+            route="projectInitialData",
+            remediation_hint="Use --entity-id to select one character unambiguously.",
+        )
+    return match[0]
 
 
 def _validate_fife_url(url: str) -> None:

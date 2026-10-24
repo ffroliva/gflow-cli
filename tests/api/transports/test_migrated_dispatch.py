@@ -312,11 +312,11 @@ async def test_run_video_rejects_modes_not_yet_ported_with_exit_36() -> None:
     # nothing to anchor the pick on and nothing to assert on the submit body.
     with pytest.raises(FlowHostMigratedError, match="by name"):
         await _run(_req(mode=Mode.R2V, ref_names=("asset",)))
-    with pytest.raises(FlowHostMigratedError, match="character references"):
+    with pytest.raises(FlowHostMigratedError, match="entity id without a name"):
         await _run(_req(mode=Mode.R2V, reference_entities=("ent-1",)))
 
 
-async def test_run_video_refuses_character_references_on_every_mode() -> None:
+async def test_run_video_refuses_unnamed_character_references_on_every_mode() -> None:
     """#716: the refusal was behind the R2V branch, so t2v carried an entity into a
     BILLED generation that never attached it.
 
@@ -332,7 +332,7 @@ async def test_run_video_refuses_character_references_on_every_mode() -> None:
     that needed it.
     """
     for mode in (Mode.T2V, Mode.R2V):
-        with pytest.raises(FlowHostMigratedError, match="character references"):
+        with pytest.raises(FlowHostMigratedError, match="entity id without a name"):
             await _run(_req(mode=mode, reference_entities=("ent-1",)))
     # I2V is absent from that loop on purpose, and the reason is worth pinning: the DTO
     # itself refuses the combination (`_validate_i2v_symmetry`, api/video.py), so an i2v
@@ -546,3 +546,61 @@ async def test_a_cancelled_composer_run_still_parks_inline(
         await harness["transport"].generate_video(request=_req(), project_id="p1")
     assert harness["page"].url == "about:blank"
     assert harness["transport"]._deferred_park_pending is True  # noqa: SLF001
+
+
+async def test_run_video_types_the_prompt_with_the_characters_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """User report 2026-10-17 / council D4: on video, the prompt goes to the character
+    attach (each chip where the prompt names it) and is never appended after the chips."""
+    from unittest.mock import AsyncMock
+
+    from gflow_cli.api.transports import migrated_composer as mc
+
+    calls: list[str] = []
+    composer = MagicMock()
+    composer.ensure_editor = AsyncMock()
+    composer.apply_video_settings = AsyncMock()
+
+    async def attach(*_: Any, **kw: Any) -> tuple[str, ...]:
+        calls.append(f"attach:{kw['names']}:{kw['prompt']}")
+        return ("ent-nora",)
+
+    composer.attach_character_entities = attach
+    composer.send_prompt = AsyncMock(side_effect=lambda *a, **k: calls.append("prompt"))
+    composer.submit_and_observe = AsyncMock(side_effect=RuntimeError("stop at submit"))
+    monkeypatch.setattr(mc, "MigratedComposer", lambda **_: composer)
+
+    with pytest.raises(RuntimeError, match="stop at submit"):
+        await _run(
+            _req(
+                prompt="In the cafe, Nora waves",
+                reference_entities=("ent-nora",),
+                reference_entity_names=("Nora",),
+            )
+        )
+    assert calls == ["attach:('Nora',):In the cafe, Nora waves"]
+    composer.send_prompt.assert_not_awaited()
+
+
+async def test_run_video_attaches_a_character_given_by_name_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR #987 review: `run_video` checked only the ids, so a name with no id (the `@Name`
+    form) attached nothing and the prompt went out without its character."""
+    from unittest.mock import AsyncMock
+
+    from gflow_cli.api.transports import migrated_composer as mc
+
+    composer = MagicMock()
+    composer.ensure_editor = AsyncMock()
+    composer.apply_video_settings = AsyncMock()
+    composer.attach_character_entities = AsyncMock(return_value=("ent-nora",))
+    composer.send_prompt = AsyncMock()
+    composer.submit_and_observe = AsyncMock(side_effect=RuntimeError("stop at submit"))
+    monkeypatch.setattr(mc, "MigratedComposer", lambda **_: composer)
+
+    with pytest.raises(RuntimeError, match="stop at submit"):
+        await _run(_req(prompt="Nora waves", reference_entity_names=("Nora",)))
+    composer.attach_character_entities.assert_awaited_once()
+    composer.send_prompt.assert_not_awaited()

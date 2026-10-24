@@ -24,6 +24,24 @@ _SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"\b([a-z][a-z0-9+.-]*://)[^\s/@:]+:[^\s/]*@", re.IGNORECASE),
         r"\1<redacted:secret>@",
     ),
+    # flow.google.com batchexecute material, shapes measured 2026-10-16
+    # (docs/superpowers/spikes/2026-10-16-migrated-character-lifecycle-wire.md).
+    # `lh3.googleusercontent.com/asb/…` grants access by its path alone — there is
+    # no `Signature=` for the signed-query pattern below to key on.
+    (re.compile(r"https?://lh3\.googleusercontent\.com/asb/\S+", re.IGNORECASE), "<redacted:url>"),
+    # The `at` XSRF value: 28 token chars measured, ':' (or '%3A' in a form body), ms
+    # timestamp. The lookbehind lets a match START only where a token run starts, and
+    # the length is bounded: unanchored and unbounded, every position inside a long run
+    # re-scanned the run for its ':' — quadratic, minutes on a 160 KB body (#852 class).
+    (
+        re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{20,64}(?::|%3A)\d{13}(?!\d)", re.IGNORECASE),
+        "<redacted:token>",
+    ),
+    # reCAPTCHA Enterprise tokens (`maseQ` carries one), then any token-alphabet run
+    # long enough to be a credential. The floor matches batchexecute._TOKEN_RE, which
+    # slices its window BEFORE matching and so can leave a fragment behind.
+    (re.compile(r"0cAF[A-Za-z0-9_-]{100,}"), "<redacted:token>"),
+    (re.compile(r"[A-Za-z0-9_-]{120,}"), "<redacted:token>"),
     (re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE), "<redacted:secret>"),
     (re.compile(r"SAPISIDHASH\s+\S+", re.IGNORECASE), "<redacted:secret>"),
     # Google auth cookie pairs — both header ("SAPISID=x") and equals forms.
@@ -60,8 +78,12 @@ _SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 # Any whitespace-delimited token carrying signed-query material — covers full
 # URLs and bare "path?X-Goog-Signature=..." fragments alike.
+#
+# Anchored: a match may only START where a whitespace-delimited token starts. Unanchored,
+# every position inside one long whitespace-free run re-scanned the rest of the run —
+# quadratic (10k URL-like chars took ~2 s; council D3, 2026-10-16, the #852 class).
 _SIGNED_QUERY_TOKEN_PATTERN = re.compile(
-    r"\S*(?:signature=|x-goog-signature=|x-goog-credential=|expires=)\S*",
+    r"(?<!\S)\S*(?:signature=|x-goog-signature=|x-goog-credential=|expires=)\S*",
     re.IGNORECASE,
 )
 ERROR_DETAIL_MAX_CHARS = 500
@@ -118,7 +140,14 @@ def redact_error_detail(detail: str) -> str:
     URLs carrying signed-query material, and truncates post-redaction as
     defense-in-depth against a scrub bypass.
     """
+    return scrub_secrets(detail)[:ERROR_DETAIL_MAX_CHARS]
+
+
+def scrub_secrets(text: str) -> str:
+    """:func:`redact_error_detail` without the length cap — for a caller that must keep the
+    END of a long text (a Playwright call log names its cause last) and trims it itself.
+    Scrub the whole text first, then trim: trimming first can cut a token into fragments
+    shorter than any pattern's floor."""
     for pattern, replacement in _SECRET_TEXT_PATTERNS:
-        detail = pattern.sub(replacement, detail)
-    detail = _SIGNED_QUERY_TOKEN_PATTERN.sub("<redacted:url>", detail)
-    return detail[:ERROR_DETAIL_MAX_CHARS]
+        text = pattern.sub(replacement, text)
+    return _SIGNED_QUERY_TOKEN_PATTERN.sub("<redacted:url>", text)

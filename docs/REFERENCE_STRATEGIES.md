@@ -79,18 +79,31 @@ Notes:
   fails fast with a clear exit-11 message naming the Phase-3 limitation — no silent drop, no wasted
   credit.
 
-## On flow.google.com (images only, #723)
+## On flow.google.com (#723)
 
-On an account Flow serves from `flow.google.com`, `image t2i` and `image i2i` take a character
-mention (`@Name` or `--reference-entity`) through the composer's own `@` picker. **Video is
-unchanged:** video characters are still refused there: `--reference-entity` exits 36, and a video `@Name` exits 29 because the character catalog cannot be read on that host.
+On an account Flow serves from `flow.google.com`, `image t2i` / `image i2i` and — since
+2026-10-17 — `video t2v` / `video r2v` take a character mention (`@Name`,
+`--reference-entity` with `--reference-entity-name`, or `--character FOLDER`) through the
+composer's own `@` picker, and every chip is verified to be that character before submit.
+**Each chip lands where the prompt names the character** — `A cafe. @Nora hands a croissant
+to @Mini, smiling` types "A cafe. ", the Nora chip, " hands a croissant to ", the Mini chip,
+", smiling" — so the prompt reads as written (2026-10-17). A character attached with
+`--character` / `--reference-entity` is placed at the first time the prompt names it, with
+or without `@`; one the prompt never names goes in front.
+**Several characters can share one clip:** two characters per clip, measured on 6 of 6 clips
+(4 in a 32 s café dialogue plus both video e2e scenarios). A character given by entity id
+**without** a name has nothing to type into the picker and still exits 36. An entity-bound
+video submit Flow queues can answer with no record; gflow then takes the clip from the app's
+own status poll instead of timing out on a generation that is running (tested offline; not
+yet seen live — every live submit so far named its clip).
 
-- **No catalog needed.** On that host `gflow character list` cannot read the catalog (its labs route
-  answers an error: 401 or 404 measured, the labs route is retired). When the character source fails, an image mention that matches no media asset
-  becomes a character **by name**: the name is the **first word after `@`**. A character
-  whose name has several words needs the catalog to resolve, so use a one-word name on that
-  host. The name stays in the prompt as plain text (`@Sussy cooks` → chip + `Sussy cooks`).
-  Media mentions resolve as before.
+- **The catalog is read on that host.** The labs catalog route is retired (401 or 404 measured);
+  on that refusal `gflow character list` falls back to flow.google.com's own project read
+  (2026-10-16), so an `@Name` resolves to the character's id there as it does on labs. If the
+  character source still fails, an image mention that matches no media asset becomes a
+  character **by name**: the name is the **first word after `@`**. A character whose name has
+  several words needs the catalog to resolve. The name stays in the prompt as plain text
+  (`@Sussy cooks` → chip + `Sussy cooks`). Media mentions resolve as before.
 - **The option titled exactly the name is picked, not the first option.** The picker
   lists characters and media in one list, and their DOM is identical apart from a translated
   subtitle. An image whose caption starts with the character's name can rank above the

@@ -71,7 +71,7 @@ The plan changes completely with the answers. Ask, or read them from the brief; 
 | Is audio generated, added later, or discarded? | Veo always generates audio **[CONSTRAINT]** — see below |
 | Captions: none, burned-in, or a sidecar file? | burned-in needs `libass` and a timing source |
 | One location or several? How many camera angles each? | drives the plate-chaining work in `consistency.md` |
-| Recurring people? How many in frame at once? | one face-bearing reference per generation **[CONSTRAINT]** |
+| Recurring people? How many in frame at once? | one face-bearing reference per generation on labs.google **[CONSTRAINT]**; several characters per clip on flow.google.com **[CALIBRATED, 6/6 two-character clips]** |
 | A prop that must not change? | needs its own sheet with a scale anchor |
 | Aspect, total length, credit ceiling | 16:9 or 9:16; clips are 4/6/8, or 10 on omni-flash |
 | One-off, or a repeatable pipeline? | decides the production shape in `composition.md` |
@@ -85,7 +85,7 @@ Load `https://labs.google/fx/tools/flow/project/<id>` in the profile's Chrome an
 | Lands on | Lane | What runs there |
 |---|---|---|
 | `labs.google/fx/…` | **A, full** | everything |
-| `flow.google.com/project/…` | **B, partial** | `video t2v --project`, `video i2v --initial-frame <local file> --project`, **`video r2v --ref <local file> --project`** (ported in v0.70.0, #683), and **`image t2i` / `image i2i` with local `--ref` files (#639)**, and **`video extend` for ONE segment** (#882; `-n` > 1, `--scene`/`--resume-from`, `--seed` and an `--aspect` other than the source's exit 36). `character create` worked there from v0.70.0 until its labs route was retired: since 2026-10-14 it exits 7 on a profile served flow.google.com. Everything else — `image batch`, multi-segment `extend`, `scene create`, `movie run`, r2v by `@Name` or `--reference-entity`, i2v by media UUID / `@Name`, and Imagen 4 — exits 36 **[CONSTRAINT]**. A **local** `--end-frame` IS ported (start+end interpolation, #639) |
+| `flow.google.com/project/…` | **B, partial** | `video t2v --project`, `video i2v --initial-frame <local file> --project`, **`video r2v --ref <local file> --project`** (ported in v0.70.0, #683), and **`image t2i` / `image i2i` with local `--ref` files (#639)**, and **`video extend` for ONE segment** (#882; `-n` > 1, `--scene`/`--resume-from`, `--seed` and an `--aspect` other than the source's exit 36). `character create --face-prompt` worked there from v0.70.0 until its labs route was retired: since 2026-10-14 it exits 7 on a profile served flow.google.com. `character create --image` from local files, and `export` / `import` to move one between projects and accounts, work there (2026-10-17). Everything else — `image batch`, multi-segment `extend`, `scene create`, `movie run`, r2v by a media `@Name`, a character id with no name, i2v by media UUID / `@Name`, and Imagen 4 — exits 36 **[CONSTRAINT]**. Characters on `t2v` / `r2v` (`@Name`, `--reference-entity` + `--reference-entity-name`, `--character`) ARE ported (2026-10-17). A **local** `--end-frame` IS ported (start+end interpolation, #639) |
 
 Lane B grows as forms are ported, so **confirm the row rather than trusting it**: the
 maintained list is [CONFIGURATION § `GFLOW_CLI_FLOW_HOST`](../../docs/CONFIGURATION.md#gflow_cli_flow_host)
@@ -139,8 +139,8 @@ its plate carried those bars into every shot that referenced it. A rung-2 plate 
 clean by the character editor; a rung-3 plate is only as clean as the take it was cut from.
 
 **Descending a rung is a decision that gets written down**, in `production.json` next to the
-shot, naming the blocker. "I used an image" is not a record; "rung 2, because
-`--reference-entity` exits 36 on this host (#639)" is.
+shot, naming the blocker. "I used an image" is not a record; "rung 2, because the
+character's name collides with a media asset in the picker (exit 32)" is.
 
 > **Written from a run that skipped its own ladder.** On 2026-09-07 a five-shot film created
 > two real character entities and then anchored every shot on rung 2, because gflow refuses
@@ -172,9 +172,10 @@ the voice.
 
 So if anyone speaks more than once, you need rung 1. Here is the whole path.
 
-**1 — pick the voice before you create anyone.** `gflow character voices` lists 29 presets.
+**1 — pick the voice before you create anyone.** `gflow character voices` lists 30 presets.
 Each has a public sample you can actually listen to, so audition rather than trust the
-descriptor — five of the 29 descriptors disagree with the measured pitch of their own sample:
+descriptor — five of the 29 descriptors measured so far disagree with the measured pitch of
+their own sample (Enceladus, in the catalog since 2026-10-16, has not been measured):
 
 ```bash
 gflow character voices --json
@@ -214,8 +215,12 @@ gflow video t2v "<prompt>" --project "$PROJECT" \
   --aspect 16:9 --duration 8
 ```
 
-One face-bearing reference per generation **[CONSTRAINT]** — so in a two-hander, bind the
-person who **speaks** and carry the other in prose. Getting that backwards is what produced
+One face-bearing reference per generation **[CONSTRAINT on labs.google]** — so there, in a
+two-hander, bind the person who **speaks** and carry the other in prose. **On an account
+served flow.google.com, two characters per clip worked [CALIBRATED, 6/6 clips, 2026-10-17]:**
+`--character a/ --character b/` (or two `--reference-entity` + `--reference-entity-name`
+pairs) attached both, verified as character chips, and a 4-beat café dialogue kept both
+identities across every shot with each line transcribed word for word. Bind both there. Getting that backwards is what produced
 the 88 Hz stranger above: the beat bound the silent actor, so the speaker fell to rung 4.
 
 **4 — expect the submit to outlive your patience, and do not read a timeout as a failure.**
@@ -224,7 +229,10 @@ daily use, so a queued job routinely outlives gflow's submit-reply budget. An
 entity-bound run can exit **9 `TransportTimeoutError`** while the video is rendering
 normally — the job is in Flow's queue and will finish. Check the project before you
 re-submit, or you will double-spend on a generation you already have. (gflow-cli #723,
-#741.)
+#741.) On flow.google.com gflow now waits through a queued submit that answers without a
+record, taking the clip from the app's own status poll; that path is unit-tested but was
+not hit live in the 6 runs of 2026-10-17 (every submit named its clip), so the advice
+stands if it does exit 9.
 
 **5 — verify the voice actually landed, relatively.** Never assert an absolute band: a
 character legitimately speaks differently in an action beat than in a quiet one, and the
@@ -350,7 +358,7 @@ Ship a review page beside the cut: the final video, and every clip with its prom
 - An age word anywhere near a person.
 - A sign, poster, door or garment described as carrying words.
 - A film format in the style block.
-- Two `--reference-entity` flags, or `characters = [A, B]` on one manifest scene.
+- On labs.google: two `--reference-entity` flags, or `characters = [A, B]` on one manifest scene (on flow.google.com two named characters per clip are measured to work).
 - `--duration` with no `--model`; `--ref` with `veo-quality` (it takes 0 — reach for `omni-flash`).
 - A beat over 2.5 words per second, or a line shortened "to fit".
 - Angles of one location generated as independent `t2i` calls.
@@ -359,7 +367,7 @@ Ship a review page beside the cut: the final video, and every clip with its prom
 
 | Rationalisation | Reality |
 |---|---|
-| "Both faces must stay consistent, so both entities go in" | the second entity is the 400. One entity plus a role noun beats a refused generation. |
+| "Both faces must stay consistent, so both entities go in" | on labs.google the second entity is the 400 — one entity plus a role noun beats a refused generation. On flow.google.com two characters per clip are measured to work; bind both. |
 | "The room is described in every prompt, that is enough" | without an anchored plate chain, the first new angle invents a different room. |
 | "Trim the speech so it fits 8 s" | split it across beats. The words are the deliverable. |
 | "Reverse-angle drift is unavoidable" | it is avoidable: chain the angle off the anchor plate with `i2i`. |

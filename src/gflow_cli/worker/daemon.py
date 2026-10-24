@@ -196,6 +196,12 @@ class FlowWorker:
                         # written, so every agent-supplied name was silently dropped (#628).
                         project_title = task.payload.get("project_name", "gflow-cli images")
                         project_created = False
+                        from gflow_cli.services import character_portability
+
+                        # Before any project is created for them, as the video branch
+                        # and the CLI already do.
+                        image_bundles = tuple(Path(p) for p in task.payload.get("characters", ()))
+                        character_portability.validate_bundles(image_bundles)
                         if project_id:
                             project_flow_id = project_id
                             project = ProjectInfo(project_id=project_id, title=project_title)
@@ -206,6 +212,18 @@ class FlowWorker:
                         # Now that the project is resolved, the observer can persist
                         # it (the credit-free video recovery key; harmless for images).
                         checkpoint_project_id[0] = project_flow_id
+
+                        # `characters` is the key gflow_generate_image writes (#639 option
+                        # C): each folder is reused by name or imported into this project.
+                        req = await character_portability.apply_character_bundles(
+                            client,
+                            recorder,
+                            req,
+                            project_id=project_flow_id,
+                            profile_name=task.profile_name,
+                            profile_dir=profile_dir,
+                            bundles=image_bundles,
+                        )
 
                         # Resolve @-mentions and expand --tool specs (shared helper).
                         from gflow_cli.services.mentions import resolve_and_apply
@@ -355,9 +373,28 @@ class FlowWorker:
                         # #864: as `gflow video t2v --project-name` does. Without a
                         # name, client.generate_video creates the project itself.
                         project_name = task.payload.get("project_name")
-                        if project_id is None and project_name:
-                            created = await client.create_project(title=project_name)
+                        bundles = tuple(Path(p) for p in task.payload.get("characters", ()))
+                        from gflow_cli.services import character_portability
+
+                        # Before any project is created for them (council D7).
+                        character_portability.validate_bundles(bundles)
+                        if project_id is None and (project_name or bundles):
+                            # A character is imported INTO a project, so it needs one now.
+                            created = await client.create_project(
+                                title=project_name or "gflow-cli video"
+                            )
                             project_id = created.project_id
+                        if bundles and project_id is not None:
+                            # `characters`: the key gflow_generate_video writes (#639 C).
+                            req = await character_portability.apply_character_bundles(
+                                client,
+                                recorder,
+                                req,
+                                project_id=project_id,
+                                profile_name=task.profile_name,
+                                profile_dir=profile_dir,
+                                bundles=bundles,
+                            )
                         # Resolve @-mentions and expand --tool specs (shared helper).
                         from gflow_cli.services.mentions import resolve_and_apply
 
@@ -397,7 +434,10 @@ class FlowWorker:
                             output_file = Path(output_file_val)
                             output_file.parent.mkdir(parents=True, exist_ok=True)
                             if result.local_path != output_file:
-                                result.local_path.replace(output_file)
+                                # shutil.move: `output` may be on another filesystem (EXDEV).
+                                import shutil
+
+                                shutil.move(result.local_path, output_file)
                                 from dataclasses import replace
 
                                 result = replace(result, local_path=output_file)
