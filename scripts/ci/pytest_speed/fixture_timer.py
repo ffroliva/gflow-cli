@@ -16,6 +16,8 @@ def pytest_addoption(parser):
 def _target(config):
     path = config.getoption("--fixture-times")
     worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker and getattr(config.option, "dist", "no") != "no":
+        return None  # the xdist controller runs no tests; only PATH.gw* hold data
     return f"{path}.{worker}" if path and worker else path
 
 

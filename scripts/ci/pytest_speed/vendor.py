@@ -35,7 +35,11 @@ def vendor(dest: Path, repo: Path | None = None) -> None:
         raise DirtyTreeError(f"{repo}: the work tree is dirty; commit or stash before vendoring")
     commit = _git(repo, "rev-parse", "HEAD")
     dest.mkdir(parents=True, exist_ok=True)
-    for source in sorted((repo / "src" / "pytest_speed").glob("*.py")):
+    sources = sorted((repo / "src" / "pytest_speed").glob("*.py"))
+    if (dest / "VERSION").exists():  # a re-vendor: drop modules the source no longer has
+        for stale in {p.name for p in dest.glob("*.py")} - {s.name for s in sources}:
+            (dest / stale).unlink()
+    for source in sources:
         shutil.copyfile(source, dest / source.name)
     version = f"commit={commit}\nsha256={tree_hash(dest)}\n"
     (dest / "VERSION").write_bytes(version.encode("utf-8"))

@@ -38,11 +38,14 @@ def _changed_files(base_dir: Path, change_dir: Path, runner) -> set[str]:
 def _one_round(side_dir: Path, run_cmd, xml: Path, lease_cmd, release_cmd, runner) -> None:
     if lease_cmd and runner(shlex.split(lease_cmd), cwd=side_dir).returncode != 0:
         raise LeaseRefused(f"lease refused: {lease_cmd}")
+    release = None
     try:
         code = runner([*run_cmd, f"--junitxml={xml}"], cwd=side_dir).returncode
     finally:
         if release_cmd:
-            runner(shlex.split(release_cmd), cwd=side_dir)
+            release = runner(shlex.split(release_cmd), cwd=side_dir)
+    if release is not None and release.returncode != 0:
+        raise LeaseRefused(f"release failed, the lease may still be held: {release_cmd}")
     if code not in (0, 1):  # 1 = tests failed, which is a normal round
         raise RunFailed(f"pytest exited {code} in {side_dir}")
 

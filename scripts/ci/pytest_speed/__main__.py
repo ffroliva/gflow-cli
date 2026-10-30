@@ -48,6 +48,19 @@ def _read_config(path: Path) -> dict:
         return tomllib.load(handle)["pytest-speed"]
 
 
+def _numbers(cfg: dict) -> tuple[float, float, float | None, bool]:
+    block = cfg.get("block", False)
+    if not isinstance(block, bool):
+        raise ValueError("block must be true or false")
+    limit = cfg.get("new_file_limit")
+    return (
+        float(cfg.get("ratio", 2.0)),
+        float(cfg.get("min_rise", 10.0)),
+        None if limit is None else float(limit),
+        block,
+    )
+
+
 def _check_command(args: argparse.Namespace) -> int:
     config_path = Path(args.config)
     cfg = _load(config_path, _read_config)
@@ -58,16 +71,16 @@ def _check_command(args: argparse.Namespace) -> int:
     approvers = cfg.get("approvers", [])
     baseline = _load(names[0], _read_baseline)
     exceptions = _load(names[1], lambda p: load_exceptions(p, approvers))
-    run = read_run(Path(args.folder), names[2])
-    ratio, min_rise = cfg.get("ratio", 2.0), cfg.get("min_rise", 10.0)
-    report = check(run, baseline, exceptions, ratio, min_rise, cfg.get("new_file_limit"))
+    ratio, min_rise, limit, block = _load(config_path, lambda _: _numbers(cfg))
+    run = _load(Path(args.folder), lambda p: read_run(p, names[2]))
+    report = check(run, baseline, exceptions, ratio, min_rise, limit)
     text = render_markdown(report)
     print(text)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
     if args.json:
         Path(args.json).write_text(json.dumps(summary_json(report), indent=2), encoding="utf-8")
-    return 1 if cfg.get("block", False) and report.flagged else 0
+    return 1 if block and report.flagged else 0
 
 
 def _refresh_command(args: argparse.Namespace) -> int:
@@ -75,7 +88,7 @@ def _refresh_command(args: argparse.Namespace) -> int:
     cfg = _load(config_path, _read_config)
     here = config_path.parent
     root, baseline_path = _load(config_path, lambda _: [here / cfg["root"], here / cfg["baseline"]])
-    run = read_run(Path(args.folder), root)
+    run = _load(Path(args.folder), lambda p: read_run(p, root))
     if not run.tests:
         print(f"{args.folder}: no mapped test cases; baseline left unchanged", file=sys.stderr)
         return 2
@@ -147,6 +160,9 @@ def _rank_command(args: argparse.Namespace) -> int:
 def _ab_command(args: argparse.Namespace) -> int:
     if args.lease_cmd and not args.release_cmd:
         print("ab: --lease-cmd needs --release-cmd, or the lease would leak", file=sys.stderr)
+        return 2
+    if args.rounds < 2:
+        print("ab: --rounds must be at least 2 to measure noise", file=sys.stderr)
         return 2
     config_path = Path(args.config)
     cfg = _load(config_path, _read_config)
