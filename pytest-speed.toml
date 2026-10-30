@@ -5,3 +5,4 @@ baseline = "tests/test_durations.json"
 exceptions = "tests/pytest_speed_exceptions.json"
 approvers = ["ffroliva"]
 block = false
+run = "uv run python -m pytest"
