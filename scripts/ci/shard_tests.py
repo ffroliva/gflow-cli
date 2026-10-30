@@ -7,10 +7,13 @@ ci.yml runs the 3.13 suite as parallel shards; root ``conftest.py`` reads
 balanced on per-file seconds recorded in ``tests/test_durations.json``; a file
 with no record (a new one) counts as the average, so it never lands at random.
 
-Refresh the record from a full run's junit report:
+Refresh the record from CI's shard reports, never a local run: Windows inflates
+some files far past their Linux time (test_cleanup.py: 242 s locally, 3 s on CI),
+which unbalances the Linux shards. From a recent develop push run (artifacts are
+kept one day):
 
-    uv run python -m pytest -n auto --junitxml=tmp/full.xml
-    uv run python scripts/ci/shard_tests.py tmp/full.xml
+    gh run download <run-id> -p 'shard-*' -D tmp/shards
+    uv run python scripts/ci/shard_tests.py tmp/shards/shard-*/pytest-report.xml
 
 A stale record only unbalances the shards — every file still runs exactly once.
 """

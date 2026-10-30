@@ -113,9 +113,12 @@ names must not change.
 The split is by whole file, balanced on the per-file seconds in
 `tests/test_durations.json`. A file without a record counts as the average, so a
 stale record only unbalances the shards; every file still runs exactly once.
-Refresh the record from a full run with `uv run python -m pytest -n auto
---junitxml=tmp/full.xml` followed by `uv run python scripts/ci/shard_tests.py
-tmp/full.xml`.
+Refresh the record from CI, not from a local run: Windows inflates some files
+far past their Linux time (`test_cleanup.py` measured 242 s locally against 3 s on
+CI), and a record taken there sent the slow shard 181 s of CI work against 86 s on
+the lightest. Download the three `shard-*` artifacts of a recent `develop` push run
+(kept one day) and pass their reports: `gh run download <run-id> -p 'shard-*' -D tmp/shards`
+then `uv run python scripts/ci/shard_tests.py tmp/shards/shard-*/pytest-report.xml`.
 
 `test (3.13)` runs with `if: always()` and checks the shard result itself.
 GitHub reports a skipped required check as passing, so an aggregate that only
