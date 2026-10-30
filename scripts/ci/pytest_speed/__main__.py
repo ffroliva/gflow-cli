@@ -150,7 +150,10 @@ def _ab_command(args: argparse.Namespace) -> int:
         return 2
     config_path = Path(args.config)
     cfg = _load(config_path, _read_config)
-    run_cmd = _load(config_path, lambda _: shlex.split(cfg["run"]))
+    run_cmd = _load(
+        config_path,
+        lambda _: shlex.split(cfg["run"]) if "run" in cfg else [sys.executable, "-m", "pytest"],
+    )
     extra = args.pytest_args[1:] if args.pytest_args[:1] == ["--"] else args.pytest_args
     if _missing_dir([args.base_dir, args.change_dir]):
         return 2
