@@ -385,11 +385,12 @@ jobs:
 
       # Report-only (watch mode): `continue-on-error` and the brace group mean nothing
       # in this step can turn the job red. Reads the shard-*/pytest-report.xml already
-      # downloaded above; no new upload.
+      # downloaded above (copied alone so the scan never sees coverage.xml or the repo); no new upload.
       - name: Speed check (report only)
         continue-on-error: true
         run: |
-          { uv run --no-sync python -m scripts.ci.pytest_speed check . --config pytest-speed.toml --out speed.md \
+          { mkdir speed-in && cp --parents shard-*/pytest-report.xml speed-in/ \
+              && uv run --no-sync python -m scripts.ci.pytest_speed check speed-in --config pytest-speed.toml --out speed.md \
               && cat speed.md >> "$GITHUB_STEP_SUMMARY"; } || echo "speed check: not run" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Focused OS matrix: ProfileLease cross-process contract (Task D2) ──────
