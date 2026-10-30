@@ -1,0 +1,7 @@
+[pytest-speed]
+module = "scripts.ci.pytest_speed"
+root = "."
+baseline = "tests/test_durations.json"
+exceptions = "tests/pytest_speed_exceptions.json"
+approvers = ["ffroliva"]
+block = false

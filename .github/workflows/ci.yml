@@ -383,6 +383,15 @@ jobs:
           path: coverage.xml
           retention-days: 1
 
+      # Report-only (watch mode): `continue-on-error` and the brace group mean nothing
+      # in this step can turn the job red. Reads the shard-*/pytest-report.xml already
+      # downloaded above; no new upload.
+      - name: Speed check (report only)
+        continue-on-error: true
+        run: |
+          { uv run --no-sync python -m scripts.ci.pytest_speed check . --config pytest-speed.toml --out speed.md \
+              && cat speed.md >> "$GITHUB_STEP_SUMMARY"; } || echo "speed check: not run" >> "$GITHUB_STEP_SUMMARY"
+
   # ── Focused OS matrix: ProfileLease cross-process contract (Task D2) ──────
   # Everything else in this file runs Ubuntu-only (the `test` job above).
   # This job exists because ProfileLease's kernel lock is genuinely

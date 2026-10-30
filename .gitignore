@@ -128,3 +128,4 @@ scripts/dev/har-spike/.npm-cache/
 
 # MCPJam bridge spike (scripts/dev/mcpjam): local npm install, never committed
 scripts/dev/mcpjam/node_modules/
+.junit/
