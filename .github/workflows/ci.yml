@@ -529,3 +529,39 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # PR decoration
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    # set in repo → Settings → Secrets
           SONAR_HOST_URL: https://sonarcloud.io
+
+  # Report-only sharpit gate (proposed with the dev wrapper; see dev/sharpit_app.py). It runs the suite under
+  # `pytest --sharpit` and uploads per-test query counts and findings. continue-on-error until the N+1 findings from
+  # the first run are triaged; then drop continue-on-error to gate on them.
+  sharpit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install deps
+        run: uv sync --frozen --extra dev
+
+      # --with adds sharpit to this run only; uv.lock and the wheel never depend on it.
+      - name: Test suite under pytest --sharpit
+        run: >-
+          uv run --no-sync --with "sharpit>=0.3.0" python -m pytest -q -n auto
+          --sharpit --sharpit-app dev.sharpit_app:app
+          --sharpit-report=sharpit-report.json --sharpit-junit=sharpit-junit.xml
+
+      - name: Upload the sharpit reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: sharpit-report
+          path: |
+            sharpit-report.json
+            sharpit-junit.xml
