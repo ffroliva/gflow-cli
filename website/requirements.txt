@@ -331,7 +331,7 @@ mkdocs-get-deps==0.2.2 \
 mkdocs-material==9.8.0 \
     --hash=sha256:19304a7263c5700428227122b3b2699aa73f432c9de8816876adaec7d7293ce3 \
     --hash=sha256:1ed4c5edaf405a3fb62e55288b8fdff592971729361548b1ffa757bf9849fb81
-    # via -r requirements.in
+    # via -r website/requirements.in
 mkdocs-material-extensions==1.3.1 \
     --hash=sha256:10c9511cea88f568257f960358a467d12b970e1f7b2c0e5fb2bb48cab1928443 \
     --hash=sha256:adff8b62700b25cb77b53358dad940f3ef973dd6db797907c49e3c2ef3ab4e31
@@ -348,9 +348,9 @@ pathspec==1.1.1 \
     --hash=sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a \
     --hash=sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189
     # via mkdocs
-platformdirs==4.13.5 \
-    --hash=sha256:05831adf87d392760f4b5c3a0a95579ab5a10b18b9b9bd43680dcb47544788a0 \
-    --hash=sha256:53d3ec4280b815c1e0b02edad7f9ee8fda1ba9c0865dd9c2e6e63849ce82fc1e
+platformdirs==4.14.0 \
+    --hash=sha256:1dadfc59a8a5d7565b3d9270ae8fa71c065595352c4277b41c11ee6c222c4b91 \
+    --hash=sha256:83f009c1e8c5fc36869b5171755b291887bd2cade7965233cdfabd23d754720b
     # via mkdocs-get-deps
 pygments==2.20.0 \
     --hash=sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f \
