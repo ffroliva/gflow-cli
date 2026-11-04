@@ -54,3 +54,19 @@ time check needs a margin, and a machine with a skewed clock must fall back to e
 - **The listing fallback on t2v.** Same cause. A later $0 read did list the clip.
 - **The reporter's real loss.** This run forced it, and the rate on t2v is unknown.
 - **The MCP path.** It reaches the same transport by reading the code; it was not run.
+
+## Follow-up: two same-prompt runs in flight
+
+`/gflow:predict` on the fix returned CAUTION from all five personas and required this first. [`spike_t2v_two_runs.py`](../../../scripts/dev/spike_t2v_two_runs.py) submitted A, then B with the identical prompt 21 s later, in one project and one page, with nothing aborted. Cost: four lite clips across two runs. The first run was void as a same-prompt test: the composer kept A's text, so B's prompt was doubled.
+
+Observed on the corrected run:
+
+- From B's submit until A finished, all 5 `jwpduf` polls named both records. The first arrived before B's own reply.
+- A was never named alone while B was active. `as29s` named A alone once A was terminal.
+- Once A left the polls, they named only B, through to its status 3.
+- `created` differed by 21 s, the gap between the submits.
+- None of the request's three client UUIDs appears in a record, in either case, so no exact key exists.
+
+Reading: second row of the script's table. While both runs are active, matching on prompt and model finds two records, so refusing on more than one match is safe here. The window is the exposure: if B's reply is lost after A has gone terminal, only B matches, which is correct, and a terminal A must not be adopted. This was one run on one page.
+
+Not measured: two separate processes on one project, or a lost reply combined with an overlap.
