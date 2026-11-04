@@ -2727,10 +2727,10 @@ class MigratedComposer:
 
         Retries like :meth:`_pick_frame_by_name` does, and for the same measured reason:
         the mention picker is backed by the same server-side asset search, which does not
-        always index a fresh upload by the first query. A miss leaves the typed ``@name``
-        in the composer as plain text, so each retry backspaces exactly what it typed
-        before querying again — and refuses to continue if that clean-up ate a chip
-        someone already attached.
+        always index a fresh upload by the first query. Enter is pressed only when the
+        picker offers something: with no picker open it submits the generation (measured
+        2026-10-13). The picker owns the query text, so Escape cancels a miss without
+        touching existing chips, and the run is refused if an attached chip disappeared.
         """
         offered: list[str] = []
         chips: list[dict[str, str]] = []
@@ -2747,8 +2747,9 @@ class MigratedComposer:
             await page.keyboard.type(name, delay=100)
             await page.wait_for_timeout(2500)
             offered = [t.strip() for t in await page.locator(PICKER_OPTION).all_text_contents()]
-            await page.keyboard.press("Enter")
-            await page.wait_for_timeout(2500)
+            if offered:
+                await page.keyboard.press("Enter")
+                await page.wait_for_timeout(2500)
             chips = await self.read_chips(page)
             if len(chips) == expect_chips:
                 _require_appended(prior, chips)
@@ -2761,10 +2762,7 @@ class MigratedComposer:
                 chips=len(chips),
                 offered=len(offered),
             )
-            if attempt == FRAME_SEARCH_ATTEMPTS:
-                break
-            for _ in range(len(name) + 1):  # the '@' and the query it opened
-                await page.keyboard.press("Backspace")
+            await page.keyboard.press("Escape")
             chips = await self.read_chips(page)
             if len(chips) < before:
                 raise ReferenceNotFoundError(
@@ -2775,6 +2773,8 @@ class MigratedComposer:
                         "built, so this run is abandoned rather than submitted"
                     ),
                 )
+            if attempt == FRAME_SEARCH_ATTEMPTS:
+                break
             await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)
         raise ReferenceNotFoundError(
             detail=(

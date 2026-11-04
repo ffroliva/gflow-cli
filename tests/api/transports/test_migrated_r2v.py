@@ -251,23 +251,34 @@ async def test_a_picker_that_misses_the_first_query_is_retried() -> None:
     page = FakeComposerPage(miss_first=1)
     await MigratedComposer()._mention_by_name(page, "me.jpg", expect_chips=1)  # noqa: SLF001
     assert page.enters == 2 and len(page.chips) == 1
-    # The failed query is backspaced out before re-querying, or the composer keeps a
-    # literal "@me.jpg" alongside the chip that eventually lands.
-    assert page.typed.count("<Backspace>") == len("me.jpg") + 1
+    # The failed query is cancelled with Escape before re-querying, or the composer keeps
+    # a literal "@me.jpg" alongside the chip that eventually lands.
+    assert page.typed.count("<Escape>") == 1
+    assert "<Backspace>" not in page.typed
+
+
+async def test_enter_is_never_pressed_when_the_picker_offers_nothing() -> None:
+    """With no picker open, Enter submits the composer: it would start a billed generation
+    with the references missing. An empty result is retried and then refused."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeComposerPage(assets=[])
+    with pytest.raises(ReferenceNotFoundError):
+        await MigratedComposer()._mention_by_name(page, "me.jpg", expect_chips=1)  # noqa: SLF001
+    assert "<Enter>" not in page.typed
 
 
 async def test_a_retry_that_would_eat_an_attached_chip_refuses_instead() -> None:
-    """Backspacing the failed query is a fixed keystroke count, and a chip is deleted by
-    one Backspace. If the clean-up takes a reference someone already attached, the prompt
-    is no longer the one that was built — abandon rather than submit a silently different
-    generation."""
+    """If cancelling the failed query takes a reference someone already attached, the
+    prompt is no longer the one that was built — abandon rather than submit a silently
+    different generation."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = FakeComposerPage(miss_first=99)
     page.chips = [{"text": "first", "entity_id": "", "reference_type": "media"}]
 
     async def eat_a_chip(_script: str, _arg: Any = None) -> Any:
-        if page.typed.count("<Backspace>"):
+        if page.typed.count("<Escape>"):
             page.chips = []
         return page.chips
 
