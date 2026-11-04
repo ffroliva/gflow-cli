@@ -442,6 +442,46 @@ def _origin_of(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}" if parts.scheme else "(unparseable)"
 
 
+async def _verify_migrated_workspace(ctx: BrowserContext, source: str) -> FlowSessionStatus | None:
+    """Read Flow's signed-in workspace after the My Account request cannot complete.
+
+    Cookie presence and HTTP 200 alone never authenticate. The real migrated app
+    must render its visible project-creation control on its own exact origin.
+    No control is clicked and no login/challenge is followed.
+    """
+    from urllib.parse import urlsplit
+
+    from gflow_cli.api.transports.migrated_composer import NEW_PROJECT_BUTTON
+
+    page = await ctx.new_page()
+    try:
+        resp = await page.goto(
+            "https://flow.google.com/", wait_until="domcontentloaded", timeout=30_000
+        )
+        if resp is None or resp.status != 200:
+            return None
+        await page.locator(NEW_PROJECT_BUTTON).first.wait_for(state="visible", timeout=30_000)
+        landed = urlsplit(page.url)
+        if (landed.scheme, landed.netloc, landed.path) != ("https", "flow.google.com", "/"):
+            return None
+        if not await page.locator(NEW_PROJECT_BUTTON).first.is_visible():
+            return None
+        account = page.locator('a[href*="SignOutOptions"]').first
+        label = await account.get_attribute("aria-label") if await account.count() else ""
+        found = find_emails(label or "")
+        logger.info("auth_migrated_workspace_verified", source=source)
+        return FlowSessionStatus(
+            outcome=FlowSessionOutcome.AUTHENTICATED,
+            user_email=found[0] if len(set(found)) == 1 else None,
+            source=source,
+        )
+    except Exception as exc:
+        logger.warning(
+            "auth_migrated_workspace_probe_error", source=source, error=type(exc).__name__
+        )
+        return None
+
+
 async def _verify_migrated_host_fallback(
     profile_dir: Path, source: str
 ) -> FlowSessionStatus | None:
@@ -492,9 +532,15 @@ async def _verify_migrated_host_fallback(
             try:
                 if not has_migrated_app_session(await ctx.cookies()):
                     return None
-                resp = await ctx.request.get(_MYACCOUNT_URL, timeout=_MIGRATED_PROBE_TIMEOUT_MS)
-                page_body = await resp.text()
-                final_url = str(resp.url)
+                try:
+                    resp = await ctx.request.get(_MYACCOUNT_URL, timeout=_MIGRATED_PROBE_TIMEOUT_MS)
+                    page_body = await resp.text()
+                    final_url = str(resp.url)
+                except Exception as exc:
+                    logger.warning(
+                        "auth_myaccount_probe_unavailable", source=source, error=type(exc).__name__
+                    )
+                    return await _verify_migrated_workspace(ctx, source)
             finally:
                 await ctx.close()
     except Exception as exc:

@@ -569,3 +569,6 @@ A: Handled by the browser during `auth login`. You'll do the MFA challenge once;
 
 **Q: How do I rotate a session?**
 A: Sign out of your Google account from the browser (any browser), then run `gflow auth login` again. The old cookies are now invalid; new ones replace them.
+
+**Q: `auth status` says the session is unverifiable, but Flow works in the browser.**
+A: On the migrated host, verification first asks My Account. If that request cannot complete, it reads `https://flow.google.com/` in the same cookie context and accepts the session only if the visible project-creation control renders on that exact origin and path. An HTML 200, saved cookies, a public landing page or an identity challenge never authenticate. The probe clicks nothing and submits nothing.
