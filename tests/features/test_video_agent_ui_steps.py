@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from click.testing import CliRunner
@@ -39,6 +39,7 @@ from gflow_cli.api.transports.drivers.agentic import (
 )
 from gflow_cli.cli import main
 from gflow_cli.errors import ContentPolicyError, FlowAgentUiError, TransportTimeoutError
+from tests.fakes import AwaitableMock as MagicMock
 
 scenarios("video_agent_ui.feature")
 

@@ -10,7 +10,7 @@ All tests use a mock Page — no live browser required.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -27,6 +27,7 @@ from gflow_cli.errors import (
     MediaAttributionError,
     TransportTimeoutError,
 )
+from tests.fakes import AwaitableMock as MagicMock
 
 # ---------------------------------------------------------------------------
 # Helpers

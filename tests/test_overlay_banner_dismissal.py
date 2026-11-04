@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -13,6 +13,7 @@ from gflow_cli.api.transports.ui_automation import (
     WELCOME_SCREEN_SELECTORS,
     UiAutomationTransport,
 )
+from tests.fakes import AwaitableMock as MagicMock
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -27,6 +28,7 @@ def _make_mock_page(
     page = MagicMock()
     page.wait_for_timeout = AsyncMock()
     page.screenshot = AsyncMock()
+    page.evaluate = AsyncMock(return_value=None)  # the block probe reads nothing
 
     if keyboard_press_raises:
         page.keyboard = MagicMock()
