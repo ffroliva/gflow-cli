@@ -562,7 +562,7 @@ def prune_cmd(dry_run: bool, profile: str | None) -> None:
             for i in range(0, len(dead_ids), chunk_size):
                 chunk = dead_ids[i : i + chunk_size]
                 placeholders = ",".join("?" * len(chunk))
-                store.conn.execute(f"DELETE FROM local_files WHERE id IN ({placeholders})", chunk)
+                store.conn.execute(f"DELETE FROM local_files WHERE id IN ({placeholders})", chunk)  # noqa: S608 - constants and ? placeholders only, values stay bound
                 pruned_count += len(chunk)
 
         click.echo(f"Pruned {pruned_count} dead local_files row(s).")
