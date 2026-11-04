@@ -530,12 +530,10 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    # set in repo → Settings → Secrets
           SONAR_HOST_URL: https://sonarcloud.io
 
-  # Report-only sharpit gate (proposed with the dev wrapper; see dev/sharpit_app.py). It runs the suite under
-  # `pytest --sharpit` and uploads per-test query counts and findings. continue-on-error until the N+1 findings from
-  # the first run are triaged; then drop continue-on-error to gate on them.
+  # Fails on N+1 queries and swallowed programming errors (see dev/sharpit_app.py). sharpit is pinned: a new release
+  # can add findings, so upgrading it is a change of its own.
   sharpit:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -553,8 +551,8 @@ jobs:
       # --with adds sharpit to this run only; uv.lock and the wheel never depend on it.
       - name: Test suite under pytest --sharpit
         run: >-
-          uv run --no-sync --with "sharpit>=0.3.0" python -m pytest -q -n auto
-          --sharpit --sharpit-app dev.sharpit_app:app
+          uv run --no-sync --with "sharpit==0.4.0" python -m pytest -q -n auto
+          --sharpit --sharpit-no-advisors
           --sharpit-report=sharpit-report.json --sharpit-junit=sharpit-junit.xml
 
       - name: Upload the sharpit reports

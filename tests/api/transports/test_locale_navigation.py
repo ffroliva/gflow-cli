@@ -37,6 +37,7 @@ class _FakePage:
         self.url = url
         self.goto = AsyncMock()
         self.wait_for_url = AsyncMock()
+        self.evaluate = AsyncMock()
 
 
 def _transport(account_locale: str | None) -> UiAutomationTransport:

@@ -98,6 +98,7 @@ class TestChromeBinaryDetection:
 
         assert "chrome.exe" in result.lower() or "Chrome" in result
 
+    @pytest.mark.sharpit(allow_swallowed=True)  # the swallow is the contract under test
     def test_resolved_chrome_binary_swallows_non_configuration_errors(self) -> None:
         """resolved_chrome_binary is exception-free by contract: a non-ConfigurationError
         from _find_chrome_binary (e.g. shutil.which raising AttributeError under an

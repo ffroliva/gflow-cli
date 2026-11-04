@@ -235,6 +235,7 @@ markers = [
     "e2e_data: verifies data-layer (SQLite) persistence — combines with e2e_image or e2e_video",
     "e2e_scene: scene/timeline compose (Add Clip) — zero credits, no reCAPTCHA",
     "e2e_character: Character entity create (face/body image-gen + entity patch) — ZERO credits; opt-in via GFLOW_CLI_E2E_RUN_CHARACTER",
+    "sharpit(allow_n_plus_one=False, allow_swallowed=False): per-test sharpit gate settings; inert without --sharpit",
     "smoke: golden-path live test (image gen — ZERO credits); opt-in via GFLOW_CLI_E2E_PROFILE",
 ]
 

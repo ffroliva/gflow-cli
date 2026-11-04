@@ -15,7 +15,7 @@ invariants tested:
 from __future__ import annotations
 
 import re
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -23,6 +23,7 @@ from gflow_cli.api.transports.drivers.classic import ClassicFlowUiDriver
 from gflow_cli.api.transports.ui_automation import (
     UiAutomationTransport,
 )
+from tests.fakes import AwaitableMock as MagicMock
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +31,7 @@ def _stub_image_mode_switch(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub _switch_to_image_mode for all batch orchestration tests in this module.
     The dedicated mode-switch tests live in test_ui_automation_image_mode.py."""
     monkeypatch.setattr(UiAutomationTransport, "_switch_to_image_mode", AsyncMock())
+    monkeypatch.setattr(UiAutomationTransport, "_select_image_model", AsyncMock())
 
 
 class _FakePage:

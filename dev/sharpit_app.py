@@ -3,11 +3,7 @@
 Not part of the wheel (hatch packages only ``src/gflow_cli``) and never imported by
 shipped code. sharpit is a dev-only dependency. Run::
 
-    uv run --with "sharpit>=0.3.0" uvicorn dev.sharpit_app:app --reload
-
-or gate a test run on it::
-
-    uv run --with "sharpit>=0.3.0" pytest --sharpit --sharpit-app dev.sharpit_app:app
+    uv run --with "sharpit==0.4.0" uvicorn dev.sharpit_app:app --reload
 """
 
 import sharpit
