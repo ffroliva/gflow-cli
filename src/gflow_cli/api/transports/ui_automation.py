@@ -3616,7 +3616,7 @@ class UiAutomationTransport(VideoGenerationMixin):
 
             # Jitter between iterations (anti-bot cadence) — not after the last.
             if idx < len(prompts) - 1:
-                await asyncio.sleep(random.uniform(*jitter_range))
+                await asyncio.sleep(random.uniform(*jitter_range))  # noqa: S311 - human-pacing jitter, not cryptography
 
         # Fail-fast: surface partial-results salvage so orchestrator can download
         # already-paid-for images before re-raising.

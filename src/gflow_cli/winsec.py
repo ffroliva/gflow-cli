@@ -43,7 +43,7 @@ def _current_user_sid() -> str:
     non-ASCII account name would break text-mode decoding — while the SID
     cell itself is always ASCII.
     """
-    out = subprocess.run(
+    out = subprocess.run(  # noqa: S603 - fixed System32 binary, argv list, no shell
         [_system32("whoami.exe"), "/user"],
         check=True,
         capture_output=True,
@@ -71,13 +71,13 @@ def restrict_dir_to_current_user(path: Path) -> bool:
     icacls = _system32("icacls.exe")
     try:
         sid = _current_user_sid()
-        subprocess.run(
+        subprocess.run(  # noqa: S603 - fixed System32 binary, argv list, no shell
             [icacls, str(path), "/inheritance:r", "/grant:r", f"*{sid}:(OI)(CI)F", "/q"],
             check=True,
             capture_output=True,
             timeout=60,
         )
-        subprocess.run(
+        subprocess.run(  # noqa: S603 - fixed System32 binary, argv list, no shell
             [icacls, str(path / "*"), "/reset", "/t", "/q"],
             check=True,
             capture_output=True,
