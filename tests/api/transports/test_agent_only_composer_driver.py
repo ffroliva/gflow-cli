@@ -976,13 +976,15 @@ async def test_a_names_only_character_routed_to_the_agent_composer_is_refused(
         return "agent_only"
 
     monkeypatch.setattr(mc.MigratedComposer, "ensure_editor", agent_only)
-    page = MagicMock(url="https://flow.google.com/project/p1")
+    monkeypatch.setattr(mc, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    page = MagicMock(url="https://flow.google.com/project/p1", reload=AsyncMock())
     with pytest.raises(FlowHostMigratedError, match="character"):
         await mc.run_images(
             page,
             image_api.GenerateImageRequest(prompt="x", reference_entity_names=("Ada",)),
             project_id="p1",
         )
+    assert page.reload.await_count == mc.AGENT_ONLY_RELOADS
     with pytest.raises(FlowHostMigratedError, match="character"):
         await mc.run_video(
             page,

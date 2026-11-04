@@ -165,6 +165,9 @@ AGENT_ONLY_EARLY_S = 5.0
 #: A positive agent-only verdict is re-asked after this long: the verdict rests on the chip's
 #: ABSENCE, and a slow mount can put the trigger in the DOM before the chip.
 AGENT_ONLY_SETTLE_S = 2.0
+#: Reloads spent looking for the classic composer when a request needs it (references).
+AGENT_ONLY_RELOADS = 3
+AGENT_ONLY_RELOAD_WAIT_S = 5.0
 #: The agent-only composer's own Agent-settings button — the thing its driver needs anyway.
 AGENT_ONLY_ANCHOR = "flow-creative-agent-prompt-box button:has(mat-icon:text-is('tune'))"
 #: What `ensure_editor` found: the classic migrated composer, or #799's agent-only one.
@@ -3897,7 +3900,20 @@ async def run_images(
             )
         )
     composer = MigratedComposer()
-    if await composer.ensure_editor(page, pid) == "agent_only":
+    kind = await composer.ensure_editor(page, pid)
+    # The agent-only composer is served intermittently to accounts that normally get the
+    # classic one (measured 2026-11-04 on an Ultra account: refused at 12:50 UTC, classic on
+    # nine loads and three real i2i runs an hour later). It cannot take references, so ask
+    # for the page again before refusing. A reload costs no credits.
+    if kind == "agent_only" and agent.unported_image(request) is not None:
+        for attempt in range(1, AGENT_ONLY_RELOADS + 1):
+            log.info("migrated.agent_only_reload", attempt=attempt, issue_ref="#799")
+            await asyncio.sleep(AGENT_ONLY_RELOAD_WAIT_S)
+            await page.reload(wait_until="domcontentloaded", timeout=45_000)
+            kind = await composer.ensure_editor(page, pid)
+            if kind == "classic":
+                break
+    if kind == "agent_only":
         return await agent.run_agent_images(page, request, project_id=pid)
     if unported is not None:
         raise refuse()
