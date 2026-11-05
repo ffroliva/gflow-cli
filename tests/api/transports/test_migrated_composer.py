@@ -3878,3 +3878,173 @@ async def test_upload_readback_that_proves_nothing_keeps_the_unknown_outcome(
     with patch.object(FakeFileChooser, "set_files", fail_upload):
         with pytest.raises(RpcResponseUnavailableError, match="body was unavailable"):
             await migrated_composer.MigratedComposer().upload(page, PROJ_UUID, _png(tmp_path))
+
+
+# --- #1141: no upload to match, so the clip is found by prompt, model and time ------------
+
+T2V_PROMPT = "a paper boat on a still pond"
+T2V_KEY = "veo_3_1_t2v_lite"
+OTHER_WF = "abababab-abab-4bab-8bab-abababababab"
+OTHER_MEDIA = "88888888-8888-4888-8888-888888888888"
+
+
+def _t2v_record(
+    status: int,
+    *,
+    created: float | None = None,
+    prompt: str = T2V_PROMPT,
+    key: str = T2V_KEY,
+    workflow: str = WF_OURS,
+    media: str = MEDIA_OURS,
+    project: str = PROJ_UUID,
+    url: str | None = None,
+) -> list[Any]:
+    """The measured record: prompt at DETAILS[1], request at DETAILS[6][1], key first."""
+    rec = _ours(status, url)
+    rec[0], rec[1], rec[2] = workflow, project, media
+    rec[5][0] = [int(time.time() if created is None else created), 0]
+    rec[5][1] = prompt
+    rec[5][6] = [None, [[key, 1]]]
+    return rec
+
+
+async def _observe_t2v(
+    responses: list[tuple[str, ...]],
+    *,
+    tab: ListingTab | None = None,
+    key: str | None = T2V_KEY,
+    poll_timeout_s: float = 2.0,
+) -> tuple[Any, int]:
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = T2V_PROMPT
+    page.scripted_request = ("YhhmEf", f"f.req=%5B%22{key}%22%5D" if key else "f.req=%5B%5D")
+    page.scripted_responses = [(_batch_url("YhhmEf"), LOST_BODY), *responses]
+    tabs = {"n": 0}
+    resolved = tab or ListingTab(None)
+
+    async def new_page() -> ListingTab:
+        tabs["n"] += 1
+        return resolved
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=poll_timeout_s,
+        on_started=None,
+        project_id=PROJ_UUID,
+        adopt_prompt=T2V_PROMPT,
+    )
+    return rec, tabs["n"]
+
+
+def _poll(*records: list[Any]) -> tuple[str, str]:
+    return (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [list(records)]]))
+
+
+def _listing(*records: list[Any]) -> str:
+    return _frame("Zzl0ze", [None, None, None, None, None, None, list(records)])
+
+
+async def test_a_t2v_clip_is_adopted_when_polls_and_listing_agree_1141() -> None:
+    rec, tabs = await _observe_t2v(
+        [
+            _poll(_t2v_record(2)),
+            (_batch_url("as29s"), _frame("as29s", _t2v_record(3, url=VIDEO_URL))),
+        ],
+        tab=ListingTab(_listing(_t2v_record(2))),
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done and tabs == 1
+
+
+async def test_a_clip_that_finished_before_the_listing_read_is_adopted_1141(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.SUBMIT_REPLY_BUDGET_S", 0.05)
+    rec, _ = await _observe_t2v([], tab=ListingTab(_listing(_t2v_record(3, url=VIDEO_URL))))
+    assert rec.workflow_id == WF_OURS and rec.is_done
+
+
+@pytest.mark.parametrize(
+    "polls,listing",
+    [
+        pytest.param(
+            [_t2v_record(2), _t2v_record(2, workflow=OTHER_WF, media=OTHER_MEDIA)],
+            None,
+            id="two-in-the-polls",
+        ),
+        pytest.param(
+            [_t2v_record(2)],
+            [_t2v_record(2), _t2v_record(2, workflow=OTHER_WF, media=OTHER_MEDIA)],
+            id="one-in-the-polls-two-in-the-listing",
+        ),
+        pytest.param([_t2v_record(2)], None, id="the-listing-did-not-answer"),
+        pytest.param([], [], id="the-listing-names-nothing"),
+        pytest.param(
+            [_t2v_record(2, created=time.time() - 120)],
+            None,
+            id="running-but-older-than-the-window",
+        ),
+    ],
+)
+async def test_every_doubt_stays_exit_9_and_never_adopts_1141(
+    polls: list[Any], listing: list[Any] | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tab = ListingTab(None if listing is None else _listing(*listing))
+    responses = [_poll(*polls)] if polls else []
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.SUBMIT_REPLY_BUDGET_S", 0.05)
+    with pytest.raises(TransportTimeoutError) as ei:
+        await _observe_t2v(responses, tab=tab)
+    assert ei.value.retryable is False
+    assert "lost" in ei.value.detail
+
+
+async def test_a_finished_older_run_of_the_same_prompt_is_not_a_candidate_1141() -> None:
+    """Terminal A next to our running B: the spike's window after A finished."""
+    older = _t2v_record(3, created=time.time() - 300, workflow=OTHER_WF, url=VIDEO_URL)
+    rec, _ = await _observe_t2v(
+        [
+            _poll(older, _t2v_record(2)),
+            (_batch_url("as29s"), _frame("as29s", _t2v_record(3, url=VIDEO_URL))),
+        ],
+        tab=ListingTab(_listing(older, _t2v_record(2))),
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done
+
+
+async def test_an_unreadable_model_key_keeps_todays_immediate_exit_9_1141() -> None:
+    with pytest.raises(TransportTimeoutError, match="unreadable") as ei:
+        await _observe_t2v([], key=None)
+    assert ei.value.retryable is False
+
+
+async def test_without_adopt_prompt_a_lost_reply_is_still_immediate_1141() -> None:
+    """`run_extend` and every caller that does not opt in keep today's behaviour."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = T2V_PROMPT
+    page.scripted_responses = [(_batch_url("YhhmEf"), LOST_BODY)]
+    with pytest.raises(TransportTimeoutError, match="unreadable"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
+def test_records_match_only_on_exact_prompt_model_and_project_1141() -> None:
+    from gflow_cli.api.transports.batchexecute import generation_records_matching
+
+    def found(rec: list[Any]) -> int:
+        return len(
+            generation_records_matching(
+                "jwpduf", [rec], project_id=PROJ_UUID, prompt=T2V_PROMPT, model_key=T2V_KEY
+            )
+        )
+
+    assert found(_t2v_record(2)) == 1
+    assert found(_t2v_record(2, prompt=T2V_PROMPT + " at dawn")) == 0
+    assert found(_t2v_record(2, key="veo_3_1_t2v")) == 0
+    assert found(_t2v_record(2, project="99999999-9999-4999-8999-999999999999")) == 0
