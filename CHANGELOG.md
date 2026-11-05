@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A text-to-video run survives a lost submit reply.** Chrome sometimes drops the reply to
+  the submit while Flow makes and bills the clip, and gflow stopped with exit 9. It now finds
+  the clip by its exact prompt and model and follows it to the end, without a second submit.
+  With more than one possible clip it still stops with exit 9, because adopting another run's
+  clip would be worse (#1141).
+
 - **A finished video is downloaded again on flow.google.com.** Flow's status replies now carry
   the clip's thumbnail link where the clip's link used to be. gflow took it for the clip, so a
   billed run failed with exit 6 and `HTTP 302`, leaving nothing on disk. It now reads the clip

@@ -652,3 +652,39 @@ async def test_the_submit_body_must_carry_the_committed_characters(
     # #1112: only this run's uploads identify the clip after a lost reply; the entity id
     # repeats in every clip that cast the character, so it must never be an adopt key.
     assert kwargs["adopt_ids"] == uploaded
+    # #1141: an r2v run has its uploads, so the prompt never becomes a key.
+    assert kwargs["adopt_prompt"] is None
+
+
+@pytest.mark.parametrize(("count", "expected"), [(1, "a kite"), (2, None)])
+async def test_only_a_single_clip_text_run_finds_its_clip_by_prompt_1141(
+    monkeypatch: pytest.MonkeyPatch, count: int, expected: str | None
+) -> None:
+    """Two clips of one run share a prompt, so a prompt match could never name one of them."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from gflow_cli.api.transports import migrated_composer as mc
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.video import GenerateVideoRequest, Mode
+
+    composer = MagicMock()
+    composer.ensure_editor = AsyncMock(return_value="classic")
+    composer.apply_video_settings = AsyncMock()
+    composer.send_prompt = AsyncMock()
+    composer.read_chips = AsyncMock(return_value=[])
+    composer.submit_and_observe = AsyncMock(
+        return_value=GenerationRecord(
+            workflow_id="wf", project_id="p1", media_id="v1", status=3, video_url="https://x"
+        )
+    )
+    monkeypatch.setattr(mc, "MigratedComposer", lambda **_: composer)
+    await mc.run_video(
+        MagicMock(url="about:blank"),
+        GenerateVideoRequest(prompt="a kite", mode=Mode.T2V, count=count),
+        project_id="p1",
+        save=MagicMock(),
+        poll_timeout_s=1.0,
+        download=False,
+        on_started=None,
+    )
+    assert composer.submit_and_observe.await_args.kwargs["adopt_prompt"] == expected
