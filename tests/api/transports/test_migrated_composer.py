@@ -4048,3 +4048,60 @@ def test_records_match_only_on_exact_prompt_model_and_project_1141() -> None:
     assert found(_t2v_record(2, prompt=T2V_PROMPT + " at dawn")) == 0
     assert found(_t2v_record(2, key="veo_3_1_t2v")) == 0
     assert found(_t2v_record(2, project="99999999-9999-4999-8999-999999999999")) == 0
+
+
+THUMBNAIL_URL = "https://lh3.googleusercontent.com/asb/token"
+
+
+def test_a_thumbnail_in_the_video_slot_is_not_a_video_url() -> None:
+    """Measured 2026-11-05: the link redirects twice and ends in a JPEG of about 20 KB."""
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    rec = generation_record("jwpduf", _ours(3, THUMBNAIL_URL), workflow_id=WF_OURS)
+    assert rec.is_done and rec.video_url is None
+
+
+async def test_a_polls_thumbnail_does_not_end_the_wait_for_the_real_url() -> None:
+    """A thumbnail must not settle the run while a later reply can still name the clip."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", _ours(2))),
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[_ours(3, THUMBNAIL_URL)]]])),
+        (_batch_url("as29s"), _frame("as29s", _ours(3, VIDEO_URL))),
+    ]
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+    )
+    assert rec.video_url == VIDEO_URL
+
+
+async def test_a_finished_clip_with_no_url_is_read_from_its_own_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#1153: no poll names the clip's URL, so a billed run reads it the way recovery does."""
+    from gflow_cli.api.transports import migrated_recover
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    asked: dict[str, str] = {}
+
+    async def read_clip(_page: Any, *, project_id: str, media_id: str) -> tuple[str, bytes]:
+        asked.update(project_id=project_id, media_id=media_id)
+        return WF_OURS, b"\0\0\0\0ftypmp42"
+
+    monkeypatch.setattr(migrated_recover, "read_clip", read_clip)
+    saved: dict[str, bytes] = {}
+
+    async def save(media_id: str, body: bytes) -> Path:
+        saved[media_id] = body
+        return tmp_path / f"{media_id}.mp4"
+
+    record = GenerationRecord(WF_OURS, PROJ_UUID, MEDIA_OURS, 3, poster_url="https://x/p.jpg")
+    path = await MigratedComposer().download(FakePage(), record, save)
+
+    assert path == tmp_path / f"{MEDIA_OURS}.mp4"
+    assert asked == {"project_id": PROJ_UUID, "media_id": MEDIA_OURS}
+    assert saved[MEDIA_OURS][4:8] == b"ftyp"

@@ -251,29 +251,62 @@ async def test_a_picker_that_misses_the_first_query_is_retried() -> None:
     page = FakeComposerPage(miss_first=1)
     await MigratedComposer()._mention_by_name(page, "me.jpg", expect_chips=1)  # noqa: SLF001
     assert page.enters == 2 and len(page.chips) == 1
-    # The failed query is backspaced out before re-querying, or the composer keeps a
-    # literal "@me.jpg" alongside the chip that eventually lands.
-    assert page.typed.count("<Backspace>") == len("me.jpg") + 1
+    # The failed query is cancelled with Escape before re-querying, or the composer keeps
+    # a literal "@me.jpg" alongside the chip that eventually lands.
+    assert page.typed.count("<Escape>") == 1
+    assert "<Backspace>" not in page.typed
+
+
+async def test_enter_is_never_pressed_when_the_picker_offers_nothing() -> None:
+    """With no picker open, Enter submits the composer: it would start a billed generation
+    with the references missing. An empty result is retried and then refused."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeComposerPage(assets=[])
+    with pytest.raises(ReferenceNotFoundError):
+        await MigratedComposer()._mention_by_name(page, "me.jpg", expect_chips=1)  # noqa: SLF001
+    assert "<Enter>" not in page.typed
 
 
 async def test_a_retry_that_would_eat_an_attached_chip_refuses_instead() -> None:
-    """Backspacing the failed query is a fixed keystroke count, and a chip is deleted by
-    one Backspace. If the clean-up takes a reference someone already attached, the prompt
-    is no longer the one that was built — abandon rather than submit a silently different
-    generation."""
+    """If cancelling the failed query takes a reference someone already attached, the
+    prompt is no longer the one that was built — abandon rather than submit a silently
+    different generation."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = FakeComposerPage(miss_first=99)
     page.chips = [{"text": "first", "entity_id": "", "reference_type": "media"}]
 
     async def eat_a_chip(_script: str, _arg: Any = None) -> Any:
-        if page.typed.count("<Backspace>"):
+        if page.typed.count("<Escape>"):
             page.chips = []
         return page.chips
 
     page.evaluate = eat_a_chip  # type: ignore[method-assign]
     with pytest.raises(ReferenceNotFoundError, match="already-attached reference"):
         await MigratedComposer()._mention_by_name(page, "second.png", expect_chips=2)  # noqa: SLF001
+
+
+async def test_the_last_attempt_also_cancels_its_query_and_checks_the_chips() -> None:
+    """The final miss must clean up too: the caller may keep the page, and a chip lost to
+    that last Escape has to be reported as lost, not as a plain miss."""
+    from gflow_cli.api.transports.migrated_composer import (
+        FRAME_SEARCH_ATTEMPTS,
+        MigratedComposer,
+    )
+
+    page = FakeComposerPage(miss_first=99)
+    page.chips = [{"text": "first", "entity_id": "", "reference_type": "media"}]
+
+    async def lose_the_chip_on_the_last_escape(_script: str, _arg: Any = None) -> Any:
+        if page.typed.count("<Escape>") == FRAME_SEARCH_ATTEMPTS:
+            page.chips = []
+        return page.chips
+
+    page.evaluate = lose_the_chip_on_the_last_escape  # type: ignore[method-assign]
+    with pytest.raises(ReferenceNotFoundError, match="already-attached reference"):
+        await MigratedComposer()._mention_by_name(page, "second.png", expect_chips=2)  # noqa: SLF001
+    assert page.typed.count("<Escape>") == FRAME_SEARCH_ATTEMPTS
 
 
 async def test_a_reference_that_does_not_attach_is_refused_before_submit() -> None:

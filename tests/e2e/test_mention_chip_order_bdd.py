@@ -10,6 +10,9 @@ Drives production ``attach_existing_references`` (the in-place reference path) o
 real composer, the way ``scripts/dev/spike_997_fourth_ref_caret.py`` measured it. On the
 pre-fix code the chips read ``1, 2, 4, 3`` (spike, 3/3). **$0**: existing images are
 mentioned in place, no submit is sent (asserted), and the composer is cleared.
+
+The miss scenario (#1143) drives ``_mention_by_name`` for a name no asset carries. Before
+that fix the same run raised a raw ``TimeoutError`` and left ``@`` in the composer.
 """
 
 from __future__ import annotations
@@ -33,11 +36,13 @@ from gflow_cli.api.transports.migrated_composer import (
     SUBMIT_RPCS,
     MigratedComposer,
 )
+from gflow_cli.errors import ReferenceNotFoundError
 
 scenarios("../features/mention_chip_order.feature")
 
 _PROJECT_ENV = "GFLOW_CLI_E2E_PROJECT"
 _MENTIONS = 4
+_NO_SUCH_ASSET = "e2e-1143-no-such-asset"
 
 #: (media id, /asb/ token) for every grid tile, in grid order.
 _GRID_JS = r"""() => [...document.querySelectorAll('img[data-media-id]')].map(e => {
@@ -73,7 +78,9 @@ async def _targets(page: Any, composer: MigratedComposer) -> list[tuple[str, str
     return out[:_MENTIONS]
 
 
-async def _drive(profile_dir: Path, project: str, world: dict[str, Any]) -> None:
+async def _drive(
+    profile_dir: Path, project: str, world: dict[str, Any], *, miss: bool = False
+) -> None:
     composer = MigratedComposer()
     async with FlowApiClient(profile_dir=profile_dir) as client:
         page = client._page  # noqa: SLF001 - the e2e drives the live page
@@ -94,14 +101,20 @@ async def _drive(profile_dir: Path, project: str, world: dict[str, Any]) -> None
         world["targets"] = targets
         if len(targets) < _MENTIONS:
             return
-        refs = tuple(ImageRef(name=m, display_name=c, in_project=True) for m, _, c in targets)
+        chosen = targets[:1] if miss else targets
+        refs = tuple(ImageRef(name=m, display_name=c, in_project=True) for m, _, c in chosen)
         try:
-            await composer.attach_existing_references(page, refs, {m: t for m, t, _ in targets})
+            await composer.attach_existing_references(page, refs, {m: t for m, t, _ in chosen})
+            if miss:
+                await composer._mention_by_name(  # noqa: SLF001 - no public path to a miss
+                    page, _NO_SUCH_ASSET, expect_chips=2
+                )
             world["error"] = None
         except Exception as exc:  # noqa: BLE001 - the outcome is the assertion
             world["error"] = exc
         finally:
             world["chips"] = [c.get("text", "") for c in await composer.read_chips(page)]
+            world["composer_text"] = await page.locator(COMPOSER).first.inner_text()
             await composer.clear_composer(page)
             world["chips_after_clear"] = len(await composer.read_chips(page))
             world["submits"] = submits
@@ -125,10 +138,20 @@ def _project(world: dict[str, Any], e2e_profile_dir: Path) -> None:
 @when("the driver mentions four of them in order without submitting")
 def _mention(world: dict[str, Any]) -> None:
     asyncio.run(_drive(world["profile_dir"], world["project"], world))
+    _skip_unless_driven(world)
+
+
+def _skip_unless_driven(world: dict[str, Any]) -> None:
     if world["kind"] != "classic":
         pytest.skip(f"project renders the {world['kind']} composer; #997 is the classic one")
     if len(world["targets"]) < _MENTIONS:
         pytest.skip(f"project has {len(world['targets'])} distinct captioned images, need 4")
+
+
+@when("the driver attaches one image and then mentions a name that matches nothing")
+def _mention_a_miss(world: dict[str, Any]) -> None:
+    asyncio.run(_drive(world["profile_dir"], world["project"], world, miss=True))
+    _skip_unless_driven(world)
 
 
 # ---------------------------------------------------------------------------- then
@@ -140,6 +163,14 @@ def _in_order(world: dict[str, Any]) -> None:
     order = [requested.index(t) + 1 if t in requested else "?" for t in world["chips"]]
     assert world["error"] is None, f"attach refused: {world['error']!r}; chip order {order}"
     assert order == list(range(1, _MENTIONS + 1)), f"chip order {order}"
+
+
+@then("the mention is refused with the chip kept and no query text left behind")
+def _refused(world: dict[str, Any]) -> None:
+    assert isinstance(world["error"], ReferenceNotFoundError), repr(world["error"])
+    assert world["chips"] == [world["targets"][0][2]], world["chips"]
+    assert "@" not in world["composer_text"], world["composer_text"]
+    assert _NO_SUCH_ASSET not in world["composer_text"], world["composer_text"]
 
 
 @then("nothing was submitted and the composer was cleared")

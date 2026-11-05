@@ -23,7 +23,11 @@ import pytest
 from playwright.async_api import Error as PlaywrightError
 from structlog.testing import capture_logs
 
-from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE, UNVERIFIED_HINT
+from gflow_cli.auth.internal_chromium import (
+    GOOGLE_REJECTED_BROWSER_ROUTE,
+    UNVERIFIED_HINT,
+    login_launch_kwargs,
+)
 from gflow_cli.auth.real_chrome import (
     GEMINI_URL,
     RealChromeStrategy,
@@ -128,6 +132,22 @@ def test_build_chrome_args_opens_flow_once() -> None:
     args = _build_chrome_args(r"C:\fake\chrome.exe", Path("prof"), headless=False)
     assert args.count(GEMINI_URL) == 1, "Flow URL must be passed exactly once"
     assert args[-1] == GEMINI_URL, "the Flow URL should be the trailing positional"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        _build_chrome_args(r"C:\fake\chrome.exe", Path("prof"), headless=False),
+        login_launch_kwargs(Path("prof"), False, channel="chrome")["args"],
+    ],
+    ids=["subprocess", "playwright"],
+)
+def test_the_login_window_never_restores_a_saved_off_screen_position(args: list[str]) -> None:
+    """Chrome saves the off-screen spot a generation run used and restores it next launch.
+
+    A person has to sign in to this window, so login states its own on-screen position.
+    """
+    assert "--window-position=0,0" in args
 
 
 def test_build_chrome_args_headless_opens_flow_once() -> None:
