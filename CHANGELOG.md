@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A finished video is downloaded again on flow.google.com.** Flow's status replies now carry
+  the clip's thumbnail link where the clip's link used to be. gflow took it for the clip, so a
+  billed run failed with exit 6 and `HTTP 302`, leaving nothing on disk. It now reads the clip
+  through the clip's own page, the same way `gflow data download` does, and checks its size.
+  A clip already stranded this way is recovered for free with
+  `gflow data download <media_id>` (#1153).
+
 - **An `@` mention that matches nothing no longer risks submitting the run.** gflow pressed
   Enter even when the picker offered nothing, and with no picker open Enter starts the
   generation. It now presses Enter only on an offered match and cancels a miss with Escape,
