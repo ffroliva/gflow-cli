@@ -1934,7 +1934,7 @@ catalog has not seen yet is recorded without one, as with `t2i --project`).
 | `prompts` | **yes** | — | 1–50 entries. |
 | `prompts[].text` | **yes** | — | 1–2000 chars. |
 | `prompts[].aspect_ratio` | no | `9:16` | `9:16` / `16:9` / `1:1` / `4:3` / `3:4`. |
-| `prompts[].model` | no | `nano2` | Any image `--model` value: `nano2`, `nano2.1`, `nano-2.1`, `nano-pro`, `nano2-lite`, `image4`, `imagen4`. |
+| `prompts[].model` | no | `nano2` | Any image `--model` value: `nano2`, `nano21`, `nano2.1`, `nano-2.1`, `nano-pro`, `nano2-lite`, `image4`, `imagen4`. |
 | `prompts[].count` | no | `1` | 1–4. |
 | `prompts[].output_filename` | no | `prompt_<index>` | Filename stem; saved as `<stem>_<image-index>.png`. |
 | `prompts[].ref` | no | — | `"batch:N"` (generate from row N's image) or a local image file. See [Referencing an earlier row](#referencing-an-earlier-row) and [Referencing a local file](#referencing-a-local-file). |
