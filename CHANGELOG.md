@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the run stops with a clean `ReferenceNotFoundError` instead of a raw timeout, attached
   references stay in place, and a retry can find the asset (#1143, thanks @L1meSn0w).
 
+- **`gflow auth login` opens on screen on a profile that has already generated.** Chrome saves
+  the off-screen generation window's position in the profile and, on the next launch, showed
+  only a sliver of the window at the screen's edge, with no setting to change it. Login now
+  sets its own position, `0,0`, on both the Playwright and the plain Chrome path.
+
 ## [0.92.1] — 2026-10-30
 
 ### Fixed
