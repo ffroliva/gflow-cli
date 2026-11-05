@@ -765,6 +765,7 @@ def _migrated_mock(
     ctx.cookies = AsyncMock(return_value=cookies)
     ctx.request = request
     ctx.close = AsyncMock()
+    ctx.add_init_script = AsyncMock()
 
     pw = MagicMock(name="pw")
     pw.chromium.launch_persistent_context = AsyncMock(return_value=ctx)
@@ -878,11 +879,39 @@ class TestMigratedHostFallback:
     async def test_a_probe_that_cannot_run_never_upgrades(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Fail-closed. A 15 s budget really did time out under browser contention."""
-        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+        """Fail-closed: My Account cannot answer and the workspace does not attest either."""
+        from gflow_cli.auth import verification
 
+        oracle = AsyncMock(return_value=None)
+        monkeypatch.setattr(verification, "_verify_migrated_workspace", oracle)
         self._patch(monkeypatch, _migrated_mock(get_side_effect=TimeoutError("slow")))
-        assert await _verify_migrated_host_fallback(tmp_path, "t") is None
+        assert await verification._verify_migrated_host_fallback(tmp_path, "t") is None
+        oracle.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_my_account_hands_off_to_the_workspace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The handoff the workspace oracle exists for, with the bot flags masked first."""
+        from gflow_cli.auth import verification
+
+        attested = verification.FlowSessionStatus(
+            outcome=verification.FlowSessionOutcome.AUTHENTICATED,
+            user_email="a@example.com",
+            source="t",
+        )
+        oracle = AsyncMock(return_value=attested)
+        monkeypatch.setattr(verification, "_verify_migrated_workspace", oracle)
+        mock_ap = _migrated_mock(get_side_effect=TimeoutError("slow"))
+        self._patch(monkeypatch, mock_ap)
+
+        assert await verification._verify_migrated_host_fallback(tmp_path, "t") is attested
+        pw = mock_ap.return_value.__aenter__.return_value
+        kwargs = pw.chromium.launch_persistent_context.await_args.kwargs
+        assert "--enable-automation" in kwargs["ignore_default_args"]
+        assert "--disable-blink-features=AutomationControlled" in kwargs["args"]
+        ctx = pw.chromium.launch_persistent_context.return_value
+        assert "webdriver" in ctx.add_init_script.await_args.args[0]
 
 
 class TestMigratedHostFallbackChannel:

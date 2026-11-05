@@ -28,6 +28,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import WireFormatError
@@ -230,6 +231,16 @@ def _url(value: Any) -> str | None:
     return value if isinstance(value, str) and value.startswith("https://") else None
 
 
+def _clip_url(value: Any) -> str | None:
+    """The clip's own URL, or ``None``. The same slot can hold its thumbnail (#1153).
+
+    Measured 2026-11-05: status replies carried ``lh3.googleusercontent.com/asb/``, which
+    redirects twice and ends in a JPEG of about 20 KB. Treated as the clip's URL, it failed
+    a billed run; with ``None`` here the download reads the clip through its own route."""
+    url = _url(value)
+    return None if url and urlsplit(url).path.startswith("/asb/") else url
+
+
 def _discovery_head(payload: Any) -> str:
     try:
         head = json.dumps(payload)[:200]
@@ -282,7 +293,7 @@ def generation_record(
         project_id=rec[1],
         media_id=rec[2],
         status=status if isinstance(status, int) else None,
-        video_url=_url(_at(rec, 7, 0, 8)),
+        video_url=_clip_url(_at(rec, 7, 0, 8)),
         poster_url=_url(_at(rec, 5, 10)),
         size_bytes=size if isinstance(size, int) else None,
     )
@@ -304,6 +315,29 @@ def generation_records_carrying(
             continue
         if any(s in wanted for s in _strings(request)):
             found.append(generation_record(rpcid, node, workflow_id=node[0]))
+    return found
+
+
+def generation_records_matching(
+    rpcid: str, payload: Any, *, project_id: str, prompt: str, model_key: str
+) -> list[tuple[GenerationRecord, int | None]]:
+    """Every (record, ``created``) of this project with exactly this prompt and model.
+
+    Finds a text-to-video clip after its submit reply was lost (#1141): no client id is
+    echoed, so these are the only keys. Exact equality on purpose: a substring would match
+    a longer prompt. ``created`` is whole seconds at ``[5][0][0]``."""
+    found: list[tuple[GenerationRecord, int | None]] = []
+    for node in _walk_lists(payload):
+        if not _is_record(node) or node[1] != project_id or _at(node, 5, 1) != prompt:
+            continue
+        if model_key in _strings(_at(node, 5, 6, 1, 0)):
+            created = _at(node, 5, 0, 0)
+            found.append(
+                (
+                    generation_record(rpcid, node, workflow_id=node[0]),
+                    created if isinstance(created, int) else None,
+                )
+            )
     return found
 
 

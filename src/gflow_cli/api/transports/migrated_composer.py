@@ -37,7 +37,7 @@ import mimetypes
 import re
 import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import unquote_plus, urlsplit
@@ -64,6 +64,7 @@ from gflow_cli.api.transports.batchexecute import (
     GenerationRecord,
     generation_record,
     generation_records_carrying,
+    generation_records_matching,
     image_records,
     parse_frames,
     rpc_errors,
@@ -248,7 +249,7 @@ PICKER_OPTION = "button.asset-item[role='option']"
 #: The `/asb/<token>` of the grid tile whose `data-media-id` is the argument (#913).
 #: The id is passed as an argument and compared in JS, never formatted into a selector.
 _GRID_TOKEN_JS = (
-    "(id) => { for (const e of document.querySelectorAll('img[data-media-id]')) {"
+    "(id) => { for (const e of document.querySelectorAll('img[data-media-id]')) {"  # noqa: S105 - not a password: a redaction marker or a JS snippet name
     " if (e.getAttribute('data-media-id') === id) {"
     " const m = (e.getAttribute('src') || '').match(/\\/asb\\/([A-Za-z0-9_-]+)/);"
     " return m ? m[1] : ''; } } return ''; }"
@@ -468,6 +469,11 @@ SUBMIT_BUTTON = "the submit button (ligature 'arrow_forward')"
 SUBMIT_REPLY_BUDGET_S = 60.0
 #: How long the lost-reply fallback waits for the project listing in its second tab.
 LISTING_READ_BUDGET_S = 30.0
+#: How far ``created`` may sit from the click when a t2v clip is found by its prompt (#1141).
+#: It reads before the click by truncation alone (spike), and a re-run takes longer than
+#: this to reach its own click. A clock running behind is undetectable here; the listing's
+#: "exactly one" check is what covers it.
+PROMPT_MATCH_MARGIN_S = 15.0
 # Angular enables the arrow_forward button ~100 ms after `insert_text` lands in the
 # composer (measured 2026-09-05, #670); checking it synchronously reads the stale state.
 SUBMIT_ENABLE_BUDGET_S = 5.0
@@ -952,6 +958,86 @@ def body_rpcid(body: str) -> str | None:
     """
     m = re.search(r'f\.req=\[\[\["([A-Za-z0-9]+)"', body or "")
     return m.group(1) if m else None
+
+
+@dataclass
+class _ClipByPrompt:
+    """Finds a t2v clip after a lost submit reply, or refuses (#1141).
+
+    Polls only collect candidates, because a per-reply decision cannot see a second
+    same-prompt run. The listing, the one global view, decides."""
+
+    project_id: str
+    prompt: str
+    model_key: str
+    clicked_at: float
+    candidates: dict[str, GenerationRecord] = field(default_factory=lambda: {})
+
+    def _in_window(self, created: int | None) -> bool:
+        if created is None:
+            return False
+        return (
+            self.clicked_at - PROMPT_MATCH_MARGIN_S
+            <= created
+            <= time.time() + PROMPT_MATCH_MARGIN_S
+        )
+
+    def _is_older(self, created: int | None) -> bool:
+        return created is not None and created < self.clicked_at - PROMPT_MATCH_MARGIN_S
+
+    def _matches(self, rid: str, payload: Any) -> list[tuple[GenerationRecord, int | None]]:
+        return generation_records_matching(
+            rid,
+            payload,
+            project_id=self.project_id,
+            prompt=self.prompt,
+            model_key=self.model_key,
+        )
+
+    def _refusal(self, reason: str) -> TransportTimeoutError:
+        log.warning("migrated.video_recovery_refused", reason=reason)
+        return _outcome_unknown(
+            f"migrated host: the submit reply body was lost and {reason}, so this run cannot "
+            f"tell its clip from another one; it may still finish in "
+            f"{MIGRATED_PROJECT_URL.format(project_id=self.project_id)}"
+        )
+
+    def note_poll(self, rid: str, payload: Any) -> TransportTimeoutError | None:
+        """Collect running matches. A finished one is another run's, not a candidate."""
+        for rec, created in self._matches(rid, payload):
+            if rec.workflow_id in self.candidates:
+                # A clip can finish during the listing read, and no poll names it again.
+                self.candidates[rec.workflow_id] = rec
+                continue
+            if not rec.is_running:
+                continue
+            if not self._in_window(created):
+                return self._refusal(f"running clip {rec.media_id} is older than this run")
+            self.candidates[rec.workflow_id] = rec
+        return None
+
+    def decide(self, listing: Any | None) -> GenerationRecord:
+        """The one clip, or the refusal. A listing that did not answer proves nothing."""
+        if listing is None:
+            raise self._refusal("the project listing did not answer")
+        listed: set[str] = set()
+        for rec, created in self._matches(LISTING_RPC, listing):
+            if self._in_window(created):
+                listed.add(rec.workflow_id)
+                seen = self.candidates.get(rec.workflow_id)
+                if seen is None or seen.is_running:
+                    self.candidates[rec.workflow_id] = rec
+            elif rec.is_running or not self._is_older(created):
+                # Newer than the clock allows means the clock is behind, so the window
+                # cannot be trusted to have excluded an older finished clip.
+                raise self._refusal(f"clip {rec.media_id} falls outside this run's window")
+        if len(self.candidates) != 1:
+            ids = ", ".join(sorted(r.media_id for r in self.candidates.values()))
+            raise self._refusal(f"{len(self.candidates)} clips match its prompt ({ids})")
+        ((workflow_id, rec),) = self.candidates.items()
+        if workflow_id not in listed:
+            raise self._refusal(f"the project listing does not name clip {rec.media_id}")
+        return rec
 
 
 def _unreadable_rpc_error(rpcid: str, *, location: str) -> RpcResponseUnavailableError:
@@ -2727,10 +2813,11 @@ class MigratedComposer:
 
         Retries like :meth:`_pick_frame_by_name` does, and for the same measured reason:
         the mention picker is backed by the same server-side asset search, which does not
-        always index a fresh upload by the first query. A miss leaves the typed ``@name``
-        in the composer as plain text, so each retry backspaces exactly what it typed
-        before querying again — and refuses to continue if that clean-up ate a chip
-        someone already attached.
+        always index a fresh upload by the first query. Enter is pressed only when the
+        picker offers something: with no picker open it submits the generation (see
+        docs/superpowers/spikes/2026-11-04-external-prs-1142-1145.md). The picker owns the
+        query text, so Escape cancels a miss without touching existing chips, and the run
+        is refused if an attached chip disappeared.
         """
         offered: list[str] = []
         chips: list[dict[str, str]] = []
@@ -2747,8 +2834,9 @@ class MigratedComposer:
             await page.keyboard.type(name, delay=100)
             await page.wait_for_timeout(2500)
             offered = [t.strip() for t in await page.locator(PICKER_OPTION).all_text_contents()]
-            await page.keyboard.press("Enter")
-            await page.wait_for_timeout(2500)
+            if offered:
+                await page.keyboard.press("Enter")
+                await page.wait_for_timeout(2500)
             chips = await self.read_chips(page)
             if len(chips) == expect_chips:
                 _require_appended(prior, chips)
@@ -2761,10 +2849,7 @@ class MigratedComposer:
                 chips=len(chips),
                 offered=len(offered),
             )
-            if attempt == FRAME_SEARCH_ATTEMPTS:
-                break
-            for _ in range(len(name) + 1):  # the '@' and the query it opened
-                await page.keyboard.press("Backspace")
+            await page.keyboard.press("Escape")
             chips = await self.read_chips(page)
             if len(chips) < before:
                 raise ReferenceNotFoundError(
@@ -2775,6 +2860,8 @@ class MigratedComposer:
                         "built, so this run is abandoned rather than submitted"
                     ),
                 )
+            if attempt == FRAME_SEARCH_ATTEMPTS:
+                break
             await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)
         raise ReferenceNotFoundError(
             detail=(
@@ -2965,6 +3052,7 @@ class MigratedComposer:
         submit_selector: str | None = None,
         request_check: Callable[[str, str], GFlowError | None] | None = None,
         adopt_ids: tuple[str, ...] = (),
+        adopt_prompt: str | None = None,
     ) -> GenerationRecord:
         """Click submit, then read the page's own submit / ``jwpduf`` / ``as29s``
         replies until the record is terminal. Fires ``on_started`` as soon as the
@@ -2985,12 +3073,21 @@ class MigratedComposer:
         ``adopt_ids`` are media ids this run uploaded. When Chrome loses the submit reply
         body (#1112), the status poll whose record carries one of them is adopted as the
         submit; each upload is a run-unique copy (18 of 18 distinct reference ids in the
-        2026-10-27 spike), so an older clip does not carry it."""
+        2026-10-27 spike), so an older clip does not carry it.
+
+        ``adopt_prompt`` does the same job when nothing was uploaded (t2v, one clip, #1141):
+        see :class:`_ClipByPrompt`. A caller that passes neither keeps the immediate exit 9."""
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
         route_error: asyncio.Future[GFlowError] = loop.create_future()
         # (request, rpcid) of each submit sent, to place a reply that names no rpcid.
         submit_requests: list[tuple[Any, str]] = []
+        submit_key: dict[str, str] = {}
+        clicked_at = 0.0
+        by_prompt: _ClipByPrompt | None = None
+        # Set when a candidate finishes: the listing does not name a clip still generating
+        # (measured 2026-11-05, answered in 3 s without it, twice).
+        candidate_seen: asyncio.Future[None] = loop.create_future()
 
         def on_request(request: Any) -> None:
             url = str(getattr(request, "url", ""))
@@ -3016,6 +3113,9 @@ class MigratedComposer:
                     return
             if rpcid in submit_rpcs:
                 submit_requests.append((request, rpcid))
+                # The prompt comes first in the body, and a prompt can read like a key.
+                if key := MODEL_KEY.search(body.replace(adopt_prompt or "", "")):
+                    submit_key["key"] = key.group(0)
                 if rpcid == INTERPOLATION_SUBMIT_RPC:
                     problem = _interpolation_body_problem(
                         body, rpcid, expect_media_id, expect_end_media_id
@@ -3079,18 +3179,38 @@ class MigratedComposer:
                 )
             elif matches:
                 (rec,) = matches.values()
-                workflow["id"] = rec.workflow_id
-                log.info(
-                    "migrated.video_adopted_from_listing"
-                    if rid == LISTING_RPC
-                    else "migrated.video_adopted_from_status",
-                    rpc=rid,
-                    workflow_id=rec.workflow_id,
-                    media_id=rec.media_id,
-                    status=rec.status,
-                )
-                submitted.set_result(rec)
-                _settle(rec)
+                _accept(rid, rec)
+
+        def _accept(rid: str, rec: GenerationRecord) -> None:
+            workflow["id"] = rec.workflow_id
+            log.info(
+                "migrated.video_adopted_from_listing"
+                if rid == LISTING_RPC
+                else "migrated.video_adopted_from_status",
+                rpc=rid,
+                workflow_id=rec.workflow_id,
+                media_id=rec.media_id,
+                status=rec.status,
+            )
+            submitted.set_result(rec)
+            _settle(rec)
+
+        def _note_poll(rid: str, payload: Any) -> None:
+            assert by_prompt is not None  # noqa: S101 - set in the same branch as `lost`
+            refusal = by_prompt.note_poll(rid, payload)
+            if refusal is not None:
+                submitted.set_exception(refusal)
+            elif not candidate_seen.done() and any(
+                not rec.is_running for rec in by_prompt.candidates.values()
+            ):
+                candidate_seen.set_result(None)
+
+        def _decide_by_prompt(listing: Any | None) -> None:
+            assert by_prompt is not None  # noqa: S101 - set in the same branch as `lost`
+            try:
+                _accept(LISTING_RPC, by_prompt.decide(listing))
+            except TransportTimeoutError as refusal:
+                submitted.set_exception(refusal)
 
         # Every batchexecute rpcid seen while waiting for the submit reply. A
         # start+end submit may answer on an rpcid this observer does not watch;
@@ -3124,7 +3244,12 @@ class MigratedComposer:
                 )
                 if sub is None or submitted.done():
                     return
-                if adopt_ids:
+                if adopt_prompt is not None and project_id and "key" in submit_key:
+                    nonlocal by_prompt
+                    by_prompt = _ClipByPrompt(
+                        project_id, adopt_prompt, submit_key["key"], clicked_at
+                    )
+                if adopt_ids or by_prompt is not None:
                     lost["rpc"] = sub
                     log.warning(
                         "migrated.video_submit_reply_lost",
@@ -3168,7 +3293,10 @@ class MigratedComposer:
                     submitted.set_result(rec)
                     _settle(rec)
                 elif rid in STATUS_RPCS and lost and not workflow and not submitted.done():
-                    _adopt(rid, payload)
+                    if by_prompt is not None:
+                        _note_poll(rid, payload)
+                    else:
+                        _adopt(rid, payload)
                 elif rid in STATUS_RPCS and workflow:
                     try:
                         rec = generation_record(rid, payload, workflow_id=workflow["id"])
@@ -3220,14 +3348,23 @@ class MigratedComposer:
                     )
                 await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
             deadline = time.monotonic() + poll_timeout_s
+            clicked_at = time.time()
             # The credit-spending click: a bare timeout here leaves "did it submit?"
             # unanswerable, which is the worst place in this driver to lose attribution.
             await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             log.info("migrated.submit_clicked")
             budget = min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s)
             await asyncio.wait(
-                {submitted, route_error}, timeout=budget, return_when=asyncio.FIRST_COMPLETED
+                {submitted, route_error, candidate_seen},
+                timeout=budget,
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            if by_prompt is not None and by_prompt.candidates and not submitted.done():
+                await asyncio.wait(
+                    {submitted, route_error, candidate_seen},
+                    timeout=max(0.0, deadline - time.monotonic()),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
             if lost and not submitted.done() and not route_error.done() and project_id:
                 # No poll named it (their bodies can be lost too): the project listing,
                 # read in a tab opened only now, after the upload's file chooser is done.
@@ -3236,7 +3373,9 @@ class MigratedComposer:
                     project_id,
                     budget_s=max(0.0, min(LISTING_READ_BUDGET_S, deadline - time.monotonic())),
                 )
-                if listing is not None and not submitted.done():
+                if by_prompt is not None and not submitted.done():
+                    _decide_by_prompt(listing)
+                elif listing is not None and not submitted.done():
                     _adopt(LISTING_RPC, listing)
             if lost and not submitted.done() and not route_error.done():
                 # The clip is being made; a status poll may still name it before the deadline.
@@ -3642,7 +3781,7 @@ class MigratedComposer:
         try:
             return await asyncio.wait_for(terminal, timeout=grace)
         except TimeoutError:
-            log.warning("migrated.result_url_not_observed", grace_s=grace)
+            log.info("migrated.result_url_not_observed", grace_s=grace)
             return done_no_url.result()
 
     # --- download ---------------------------------------------------------------
@@ -3709,25 +3848,46 @@ class MigratedComposer:
             route="batchexecute:as29s",
         )
 
+    @staticmethod
+    async def clip_bytes(page: Page, record: GenerationRecord) -> bytes:
+        """The bytes of a finished, billed clip, from whichever source it has.
+
+        A failed route read ends in the free recovery: this clip is billed, so advice to
+        re-run would bill it again (#941). The clip's route replaces the page, so only a
+        caller that has finished with the page may reach this."""
+        if record.video_url:
+            return await MigratedComposer.fetch_mp4(page, record)
+        from gflow_cli.api.transports import migrated_recover  # noqa: PLC0415 - cycle
+
+        try:
+            _, body = await migrated_recover.read_clip(
+                page, project_id=record.project_id, media_id=record.media_id
+            )
+        except (GFlowError, PlaywrightError, TimeoutError) as exc:
+            raise MediaDownloadError(
+                media_id=record.media_id,
+                detail=(
+                    "migrated host: the clip finished but could not be read from its own "
+                    f"route ({type(exc).__name__})"
+                ),
+                route="flow-content.google",
+                remediation_hint=recoverable_clip_hint(record.media_id),
+                retryable=False,
+            ) from exc
+        return body
+
     async def download(
         self,
         page: Page,
         record: GenerationRecord,
         save: ClipSaver,
     ) -> Path | None:
-        """The clip from its signed CDN URL, stored by ``save``. The labs
-        ``media.getMediaUrlRedirect`` route answers 404 for a migrated media id
-        (measured 2026-09-05), so there is no second source: a record with no URL is a
-        wire-format failure."""
-        if not record.video_url and not record.poster_url:
-            raise WireFormatError(
-                detail=(
-                    "migrated host: the generation finished but no signed media URL was "
-                    f"observed within the {RESULT_URL_GRACE_S:.0f}s grace"
-                ),
-                route="batchexecute:as29s",
-            )
-        body = await self.fetch_mp4(page, record)
+        """The clip from its signed URL, stored by ``save``.
+
+        With no clip URL on the record, its own route supplies one (#1153): since
+        2026-11-05 no status reply in the run was seen to name the clip. The labs
+        ``media.getMediaUrlRedirect`` route answers 404 for a migrated media id."""
+        body = await self.clip_bytes(page, record)
         path = await save(record.media_id, body)
         log.info("migrated.download", path=str(path), bytes=len(body))
         return path
@@ -3842,6 +4002,8 @@ async def run_video(
         # Only ids uploaded by THIS run identify its clip after a lost reply (#1112);
         # a character's entity id repeats in every clip that cast it.
         adopt_ids=tuple(i for i in (media_id, end_media_id) if i) + reference_ids,
+        # Nothing uploaded, so nothing run-unique: found by prompt and model instead (#1141).
+        adopt_prompt=(request.prompt if request.mode is Mode.T2V and request.count == 1 else None),
     )
     status = VideoStatus(
         media_id=record.media_id,

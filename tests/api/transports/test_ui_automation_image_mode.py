@@ -10,7 +10,7 @@ otherwise an account whose last-used mode was Video silently routes
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -21,6 +21,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     MODE_SWITCH_TRIGGER_SELECTORS,
 )
 from gflow_cli.errors import UiSelectorDriftError
+from tests.fakes import AwaitableMock as MagicMock
 
 
 def _cascade_page(visible: set[str]) -> MagicMock:

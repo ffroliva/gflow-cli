@@ -23,7 +23,11 @@ import pytest
 from playwright.async_api import Error as PlaywrightError
 from structlog.testing import capture_logs
 
-from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE, UNVERIFIED_HINT
+from gflow_cli.auth.internal_chromium import (
+    GOOGLE_REJECTED_BROWSER_ROUTE,
+    UNVERIFIED_HINT,
+    login_launch_kwargs,
+)
 from gflow_cli.auth.real_chrome import (
     GEMINI_URL,
     RealChromeStrategy,
@@ -128,6 +132,22 @@ def test_build_chrome_args_opens_flow_once() -> None:
     args = _build_chrome_args(r"C:\fake\chrome.exe", Path("prof"), headless=False)
     assert args.count(GEMINI_URL) == 1, "Flow URL must be passed exactly once"
     assert args[-1] == GEMINI_URL, "the Flow URL should be the trailing positional"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        _build_chrome_args(r"C:\fake\chrome.exe", Path("prof"), headless=False),
+        login_launch_kwargs(Path("prof"), False, channel="chrome")["args"],
+    ],
+    ids=["subprocess", "playwright"],
+)
+def test_the_login_window_never_restores_a_saved_off_screen_position(args: list[str]) -> None:
+    """Chrome saves the off-screen spot a generation run used and restores it next launch.
+
+    A person has to sign in to this window, so login states its own on-screen position.
+    """
+    assert "--window-position=0,0" in args
 
 
 def test_build_chrome_args_headless_opens_flow_once() -> None:
@@ -864,3 +884,17 @@ def test_login_instructions_say_gflow_closes_chrome(capsys: pytest.CaptureFixtur
 
 def test_google_session_only_hint_drops_close_chrome() -> None:
     assert "before closing Chrome" not in UNVERIFIED_HINT[FlowSessionOutcome.GOOGLE_SESSION_ONLY]
+
+
+@pytest.mark.asyncio
+async def test_a_verified_login_without_an_address_does_not_crash(tmp_path: Path) -> None:
+    """Both oracles may authenticate with no readable address; login must still finish."""
+    from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
+
+    status = FlowSessionStatus(
+        outcome=FlowSessionOutcome.AUTHENTICATED, user_email=None, source="chrome"
+    )
+    with patch("gflow_cli.auth.real_chrome.verify_flow_profile", AsyncMock(return_value=status)):
+        await RealChromeStrategy()._verify_and_record(tmp_path)
+    assert (tmp_path / ".gflow_browser_strategy").read_text(encoding="utf-8") == "chrome"
+    assert not (tmp_path / ".gflow_account").exists()

@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.93.0] — 2026-11-05
+
+### Added
+
+- **`nano21` is accepted as an image model alias** for Nano Banana 2.1, alongside `nano2.1`
+  and `nano-2.1`, on the CLI, in manifests and in `gflow run` configs (#1145, thanks @L1meSn0w).
+
+### Fixed
+
+- **A one-clip text-to-video run survives a lost submit reply.** Chrome sometimes drops the
+  reply to the submit while Flow makes and bills the clip, and gflow stopped with exit 9. It now
+  finds the clip by its exact prompt and model and follows it to the end, without a second
+  submit. With `--count` above 1, or when the project listing cannot name exactly one clip, it
+  still stops with exit 9, because adopting another run's clip would be worse (#1141).
+
+- **A finished text-to-video clip is downloaded again on flow.google.com.** Flow's status replies
+  now carry the clip's thumbnail link where the clip's link used to be. gflow took it for the clip, so a
+  billed run failed with exit 6 and `HTTP 302`, leaving nothing on disk. It now reads the clip
+  through the clip's own page, the same way `gflow data download` does, and checks its size.
+  A clip already stranded this way is recovered for free with
+  `gflow data download <media_id>` (#1153).
+
+- **An `@` mention that matches nothing no longer risks submitting the run.** gflow pressed
+  Enter even when the picker offered nothing, and with no picker open Enter starts the
+  generation. It now presses Enter only on an offered match and cancels a miss with Escape,
+  so the run stops with a clean `ReferenceNotFoundError` instead of a raw timeout, attached
+  references stay in place, and a retry can find the asset (#1143, thanks @L1meSn0w).
+
+- **`gflow auth login` opens on screen on a profile that has already generated.** Chrome saves
+  the off-screen generation window's position in the profile and, on the next launch, showed
+  only a sliver of the window at the screen's edge, with no setting to change it. Login now
+  sets its own position, `0,0`, on both the Playwright and the plain Chrome path.
+
+- **`auth status` and `auth login` survive a My Account request that cannot complete.** On
+  flow.google.com, gflow now reads Flow's signed-in workspace in that case and accepts the
+  session only if the project-creation control renders. The probe can now take up to about
+  2 minutes on a slow network (#1144, thanks @L1meSn0w).
+- **`auth login` no longer crashes when no account address can be read.** A verified login
+  without one finished with an `AssertionError`. It now succeeds and removes any old recorded
+  account, so `--account` and the chooser fail closed.
+
+### Security
+
+- `oauthlib` is locked at 4.0.1 for CVE-2026-49272. It reaches installs through the `gcs` extra,
+  which `uv.lock` does not bind for pip users.
+
 ## [0.92.1] — 2026-10-30
 
 ### Fixed
@@ -6787,7 +6833,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.92.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.93.0...HEAD
+[0.93.0]: https://github.com/ffroliva/gflow-cli/compare/v0.92.1...v0.93.0
 [0.92.1]: https://github.com/ffroliva/gflow-cli/compare/v0.92.0...v0.92.1
 [0.92.0]: https://github.com/ffroliva/gflow-cli/compare/v0.91.0...v0.92.0
 [0.91.0]: https://github.com/ffroliva/gflow-cli/compare/v0.90.0...v0.91.0

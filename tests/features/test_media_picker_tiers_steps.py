@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
@@ -17,6 +17,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     PICKER_SEARCH_INPUT,
     VideoGenerationMixin,
 )
+from tests.fakes import AwaitableMock as MagicMock
 
 scenarios("media_picker_tiers.feature")
 

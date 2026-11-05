@@ -66,4 +66,11 @@ code; PROJECT_STATUS names the hint fix. 2 Tier 3 deferred: the hint still omits
 
 ## Post-tag evidence
 
-Filled after the tag push: the `Release` workflow run, the PyPI version, and the GitHub Release.
+| Check | Result |
+|---|---|
+| Signed tag | `v0.92.1`, SSH-signed (`git cat-file -p v0.92.1` carries one `BEGIN SSH SIGNATURE`) |
+| `Release` workflow | run 41128416699, success |
+| GitHub Release | `v0.92.1`, published 2026-10-30T21:07:03Z, not a prerelease |
+| PyPI | `pip index versions gflow-cli` lists 0.92.1 as the latest |
+| Release PR | #1133 merged into `main` (merge commit `9007b1c7`); SonarCloud gate OK, 0 new issues |
+| Back-merge | `main` into `develop` as `e49cb1e5`; `main` is 0 commits ahead of `develop` |

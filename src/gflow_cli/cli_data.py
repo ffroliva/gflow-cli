@@ -352,10 +352,9 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:
 def download(media_id: str, out_dir: Path | None, profile: str | None, as_json: bool) -> None:
     """Fetch an already-generated video from Flow by its media ID.
 
-    For a generation that finished and was billed but whose download failed — the
-    migrated host's 20s URL grace expiring leaves exactly this state, with the clip in
-    the project and `local_path: null` in the catalog. Recovering it costs nothing; the
-    generation was already paid for.
+    For a generation that finished and was billed but whose download failed, which leaves
+    the clip in the project and `local_path: null` in the catalog. Recovering it costs
+    nothing; the generation was already paid for.
 
     Opens the clip's own route, takes the signed URL Flow reports for it, and verifies
     the bytes against the size Flow records before writing. Also writes the
@@ -562,7 +561,7 @@ def prune_cmd(dry_run: bool, profile: str | None) -> None:
             for i in range(0, len(dead_ids), chunk_size):
                 chunk = dead_ids[i : i + chunk_size]
                 placeholders = ",".join("?" * len(chunk))
-                store.conn.execute(f"DELETE FROM local_files WHERE id IN ({placeholders})", chunk)
+                store.conn.execute(f"DELETE FROM local_files WHERE id IN ({placeholders})", chunk)  # noqa: S608 - constants and ? placeholders only, values stay bound
                 pruned_count += len(chunk)
 
         click.echo(f"Pruned {pruned_count} dead local_files row(s).")

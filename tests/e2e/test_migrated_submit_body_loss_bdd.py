@@ -20,8 +20,11 @@ still proves nothing re-submitted.
 the CLI (in-process, so the patched ``Response.text`` reaches it) and the MCP tool; each
 counts the submit replies the observer read, so a second submit would show as two.
 
-**Cost.** Image: one image of daily quota, zero credits. Video: one Veo lite clip at the
-default length, plus one r2v clip per surface row.
+**A text-to-video clip is followed too (#1141).** Nothing was uploaded, so it is found by
+prompt and model, and the project listing confirms it is the only one.
+
+**Cost.** Image: one image of daily quota, zero credits. Video: one Veo lite clip per
+text-to-video row and one r2v clip per surface row.
 """
 
 from __future__ import annotations
@@ -39,8 +42,6 @@ from pytest_bdd import given, scenarios, then, when
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.transports import migrated_composer as mc
-from gflow_cli.api.video import GenerateVideoRequest, Mode, VideoModel
-from gflow_cli.errors import TransportTimeoutError, is_retryable
 
 scenarios("../features/migrated_submit_body_loss.feature")
 scenarios("../features/migrated_video_submit_body_loss.feature")
@@ -172,43 +173,11 @@ def _armed_video(world: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None
     _lose_first_body(world, monkeypatch, mc.SUBMIT_RPCS)
 
 
-@when("gflow generates a lite clip on the migrated host")
-def _generate_video(world: dict[str, Any], tmp_path: Path) -> None:
-    _run_counting(
-        world,
-        mc.SUBMIT_RPCS,
-        lambda client: client.generate_video(
-            req=GenerateVideoRequest(
-                prompt="a paper boat drifting on a calm pond, static camera",
-                mode=Mode.T2V,
-                # No duration: which lengths Flow offers is account-dependent (4 s is not
-                # offered for lite on every account), and the default is what users get.
-                model=VideoModel.VEO_3_1_LITE,
-            ),
-            out_dir=tmp_path,
-        ),
-    )
-
-
-@then("exactly one video submit reached Flow")
-def _one_video_submit(world: dict[str, Any]) -> None:
-    _assert_one_submit(world)
-
-
 @then("gflow returns the one image the submit made, downloadable")
 def _recovered(world: dict[str, Any]) -> None:
     assert "error" not in world, repr(world.get("error"))
     path: Path = world["result"]
     assert path.stat().st_size > 1000, path.stat().st_size
-
-
-@then("gflow reports a timeout that is not retryable and says to check the project")
-def _reported(world: dict[str, Any]) -> None:
-    err = world.get("error")
-    assert isinstance(err, TransportTimeoutError), repr(err)
-    assert not is_retryable(err)
-    assert "unreadable" in err.detail
-    assert "project" in err.remediation_hint
 
 
 _R2V_PROMPT = "a blue card propped on a wooden jetty at dusk, static camera"
@@ -226,6 +195,51 @@ def real_home(monkeypatch: pytest.MonkeyPatch) -> Any:
     reset_settings()
     yield home
     reset_settings()
+
+
+_T2V_PROMPT = "a paper boat drifting on a calm pond, static camera"
+
+
+@when("the CLI generates a lite text-to-video clip")
+def _cli_t2v(world: dict[str, Any], tmp_path: Path, real_home: Path) -> None:
+    from click.testing import CliRunner
+
+    from gflow_cli.cli_video import video
+
+    del real_home
+    out = tmp_path / "cli"
+    world["out"] = out
+    result = CliRunner().invoke(
+        video,
+        [
+            "t2v",
+            _T2V_PROMPT,
+            "--model",
+            "veo-lite",
+            "--out-dir",
+            str(out),
+            "--profile",
+            os.environ["GFLOW_CLI_E2E_PROFILE"].strip(),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+
+@when("the MCP video tool generates a lite text-to-video clip")
+def _mcp_t2v(world: dict[str, Any]) -> None:
+    from gflow_cli.mcp import tools as mcp_tools
+
+    result = asyncio.run(
+        mcp_tools.gflow_generate_video(
+            prompt=_T2V_PROMPT,
+            mode="t2v",
+            model="lite",
+            profile=os.environ["GFLOW_CLI_E2E_PROFILE"].strip(),
+            wait=True,
+        )
+    )
+    assert result["status"] == "completed", result
+    world["files"] = [Path(p) for p in result["files"]]
 
 
 @when("the CLI generates an r2v clip from a local reference image")

@@ -24,6 +24,7 @@ from .verification import (
     FlowSessionOutcome,
     evaluate_session_response,
     has_migrated_app_session,
+    record_account,
     verify_flow_profile,
 )
 
@@ -121,6 +122,8 @@ def login_launch_kwargs(
         "args": [
             "--disable-blink-features=AutomationControlled",
             "--window-size=1920,1080",
+            # Chrome restores the off-screen spot a generation run saved in the profile.
+            "--window-position=0,0",
             # Load-bearing beyond auth: keeps the profile off the macOS
             # keychain, which api/client.py also depends on (#222).
             "--password-store=basic",
@@ -492,5 +495,4 @@ class InternalChromiumStrategy(AuthStrategy):
                 UNVERIFIED_MESSAGE[status.outcome],
                 remediation_hint=UNVERIFIED_HINT[status.outcome],
             )
-        if status.user_email:
-            (profile_dir / ".gflow_account").write_text(status.user_email, encoding="utf-8")
+        record_account(profile_dir, status.user_email)

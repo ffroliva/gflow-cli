@@ -4,6 +4,25 @@
 
 ## Current release
 
+**v0.93.0 — alpha.** Video delivery on flow.google.com works again.
+
+**A finished video reaches disk (#1153).** On text-to-video, Flow's status replies now carry the
+clip's thumbnail link where the clip's link was, so a billed run failed with exit 6 and nothing on
+disk. A run now reads the clip through its own page, with the size and `ftyp` checks that
+`gflow data download` already had, and any failure there names that free recovery.
+
+**A lost submit reply on a one-clip text-to-video run no longer ends it (#1141).** The run finds
+its clip by exact prompt and model, the project listing must name exactly one once it finishes,
+and anything less certain stays exit 9.
+
+**Also:** `auth login` opens on screen on a profile that has generated, sign-in checks survive
+a My Account request that cannot complete (#1144), an `@` mention that matches nothing no
+longer risks a submit (#1143), and `nano21` is an image model alias (#1145).
+
+Full ledger: [LIVE_VERIFICATION_v0.93.0](LIVE_VERIFICATION_v0.93.0.md).
+
+<details><summary>v0.92.1 — MCP generate-tool schema</summary>
+
 **v0.92.1 — alpha.** A patch for MCP agents: the generate tools' schema now says how to
 pass prompt tools and saved characters.
 
@@ -16,6 +35,8 @@ sent without its name in 4 of 5 runs, and in 0 of 5 once the schema said so. The
 `flow-host-migrated` remediation hint no longer says video takes no character.
 
 Full ledger: [LIVE_VERIFICATION_v0.92.1](LIVE_VERIFICATION_v0.92.1.md).
+
+</details>
 
 <details><summary>v0.92.0 — MCP output confined to the output dir, cross-filesystem -o</summary>
 
@@ -720,6 +741,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| A finished video is read through its own route after status replies began carrying a thumbnail link (#1153); a lost t2v submit reply is recovered (#1141) | ✅ done (v0.93.0) |
 | MCP `output` / `out_dir` confined to the output dir, `profile` a plain name (GHSA-hqfj-4jww-76f2); cross-filesystem `-o` (#1114) | ✅ done (v0.92.0) |
 | MCP generate-tool schema states the `tools` item shape and the id + name pairing for saved characters (#1121) | ✅ done (v0.92.1) |
 | MCP `wait=false` runs (#1097); `tasks/get` and `tasks/cancel` follow SEP-2663 (#1102); agent-only credit confirmation read before approval (#988); r2v with a character on flow.google.com (#723); a lost video submit reply followed to its clip (#1112) | ✅ done (v0.91.0) |

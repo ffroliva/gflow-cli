@@ -17,7 +17,7 @@ import inspect
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 import structlog
@@ -47,6 +47,7 @@ from gflow_cli.errors import (
     UiSelectorDriftError,
     WafRejectionError,
 )
+from tests.fakes import AwaitableMock as MagicMock
 
 # ---------------------------------------------------------------------------
 # Async helpers shared across units
@@ -1204,6 +1205,7 @@ class TestGenerateImages:
         """Stub _switch_to_image_mode for orchestration tests in this class.
         The dedicated mode-switch tests live in test_ui_automation_image_mode.py."""
         monkeypatch.setattr(UiAutomationTransport, "_switch_to_image_mode", AsyncMock())
+        monkeypatch.setattr(UiAutomationTransport, "_select_image_model", AsyncMock())
 
     @pytest.mark.asyncio
     async def test_happy_path_returns_generated_images(self) -> None:
@@ -1556,6 +1558,7 @@ class TestImageEntityBackstop:
         """Same orchestration stub as TestGenerateImages — mode-switch coverage
         lives in test_ui_automation_image_mode.py."""
         monkeypatch.setattr(UiAutomationTransport, "_switch_to_image_mode", AsyncMock())
+        monkeypatch.setattr(UiAutomationTransport, "_select_image_model", AsyncMock())
 
     def test_entity_ids_extracted_from_request_body(self) -> None:
         from gflow_cli.api.transports.ui_automation import _entity_ids_from_request_body
@@ -1785,6 +1788,7 @@ def _make_overlay_page(
     When ``close_button_visible=True`` a close-button locator is also visible.
     """
     page = MagicMock()
+    page.evaluate = AsyncMock(return_value=None)  # the block probe reads nothing
     page.wait_for_timeout = AsyncMock()
     page.screenshot = AsyncMock()
 

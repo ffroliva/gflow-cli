@@ -186,6 +186,8 @@ def test_guard_raises_on_macos_when_chrome_strategy_downgrades(
         client._log_and_guard_launch({"channel": None})  # noqa: SLF001
 
 
+# Faking win32 on Linux breaks shutil.which; resolved_chrome_binary swallows that by contract.
+@pytest.mark.sharpit(allow_swallowed=True)
 def test_guard_warns_not_raises_off_macos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Same downgrade off macOS is non-fatal (e.g. Windows DPAPI cookie key is
     per-user, so bundled Chromium can still decrypt) — must not raise, but MUST

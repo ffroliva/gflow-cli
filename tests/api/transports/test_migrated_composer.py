@@ -12,6 +12,7 @@ CSS shapes — the composer must not grow new ones without a test here.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 import time
@@ -35,6 +36,7 @@ from gflow_cli.errors import (
     ConfigurationError,
     FlowHostMigratedError,
     InsufficientCreditsError,
+    MediaDownloadError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
     TransportTimeoutError,
@@ -3878,3 +3880,329 @@ async def test_upload_readback_that_proves_nothing_keeps_the_unknown_outcome(
     with patch.object(FakeFileChooser, "set_files", fail_upload):
         with pytest.raises(RpcResponseUnavailableError, match="body was unavailable"):
             await migrated_composer.MigratedComposer().upload(page, PROJ_UUID, _png(tmp_path))
+
+
+# --- #1141: no upload to match, so the clip is found by prompt, model and time ------------
+
+T2V_PROMPT = "a paper boat on a still pond"
+T2V_KEY = "veo_3_1_t2v_lite"
+OTHER_WF = "abababab-abab-4bab-8bab-abababababab"
+OTHER_MEDIA = "88888888-8888-4888-8888-888888888888"
+
+
+def _t2v_record(
+    status: int,
+    *,
+    created: float | None = None,
+    prompt: str = T2V_PROMPT,
+    key: str = T2V_KEY,
+    workflow: str = WF_OURS,
+    media: str = MEDIA_OURS,
+    project: str = PROJ_UUID,
+    url: str | None = None,
+) -> list[Any]:
+    """The measured record: prompt at DETAILS[1], request at DETAILS[6][1], key first."""
+    rec = _ours(status, url)
+    rec[0], rec[1], rec[2] = workflow, project, media
+    rec[5][0] = [int(time.time() if created is None else created), 0]
+    rec[5][1] = prompt
+    rec[5][6] = [None, [[key, 1]]]
+    return rec
+
+
+async def _observe_t2v(
+    responses: list[tuple[str, ...]],
+    *,
+    tab: ListingTab | None = None,
+    key: str | None = T2V_KEY,
+    poll_timeout_s: float = 2.0,
+) -> tuple[Any, int]:
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = T2V_PROMPT
+    page.scripted_request = ("YhhmEf", f"f.req=%5B%22{key}%22%5D" if key else "f.req=%5B%5D")
+    page.scripted_responses = [(_batch_url("YhhmEf"), LOST_BODY), *responses]
+    tabs = {"n": 0}
+    resolved = tab or ListingTab(None)
+
+    async def new_page() -> ListingTab:
+        tabs["n"] += 1
+        return resolved
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=poll_timeout_s,
+        on_started=None,
+        project_id=PROJ_UUID,
+        adopt_prompt=T2V_PROMPT,
+    )
+    return rec, tabs["n"]
+
+
+def _poll(*records: list[Any]) -> tuple[str, str]:
+    return (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [list(records)]]))
+
+
+def _listing(*records: list[Any]) -> str:
+    return _frame("Zzl0ze", [None, None, None, None, None, None, list(records)])
+
+
+async def test_a_t2v_clip_is_adopted_when_polls_and_listing_agree_1141() -> None:
+    rec, tabs = await _observe_t2v(
+        [
+            _poll(_t2v_record(2)),
+            (_batch_url("as29s"), _frame("as29s", _t2v_record(3, url=VIDEO_URL))),
+        ],
+        tab=ListingTab(_listing(_t2v_record(2))),
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done and tabs == 1
+
+
+async def test_a_clip_that_finished_before_the_listing_read_is_adopted_1141(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.SUBMIT_REPLY_BUDGET_S", 0.05)
+    rec, _ = await _observe_t2v([], tab=ListingTab(_listing(_t2v_record(3, url=VIDEO_URL))))
+    assert rec.workflow_id == WF_OURS and rec.is_done
+
+
+@pytest.mark.parametrize(
+    "polls,listing",
+    [
+        pytest.param(
+            [_t2v_record(2), _t2v_record(2, workflow=OTHER_WF, media=OTHER_MEDIA)],
+            None,
+            id="two-in-the-polls",
+        ),
+        pytest.param(
+            [_t2v_record(2)],
+            [_t2v_record(2), _t2v_record(2, workflow=OTHER_WF, media=OTHER_MEDIA)],
+            id="one-in-the-polls-two-in-the-listing",
+        ),
+        pytest.param([_t2v_record(2)], None, id="the-listing-did-not-answer"),
+        pytest.param([], [], id="the-listing-names-nothing"),
+        pytest.param(
+            [],
+            [_t2v_record(3, created=time.time() + 86_400, url=VIDEO_URL)],
+            id="a-done-clip-newer-than-the-clock-allows",
+        ),
+        pytest.param(
+            [_t2v_record(2, created=time.time() - 120)],
+            None,
+            id="running-but-older-than-the-window",
+        ),
+    ],
+)
+async def test_every_doubt_stays_exit_9_and_never_adopts_1141(
+    polls: list[Any],
+    listing: list[Any] | None,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: Any,
+) -> None:
+    tab = ListingTab(None if listing is None else _listing(*listing))
+    responses = [_poll(*polls)] if polls else []
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.SUBMIT_REPLY_BUDGET_S", 0.05)
+    with pytest.raises(TransportTimeoutError) as ei:
+        await _observe_t2v(responses, tab=tab)
+    assert ei.value.retryable is False
+    assert "lost" in ei.value.detail
+    # A prompt is user content: ids and counts only, in the error and in the log.
+    assert T2V_PROMPT not in ei.value.detail
+    assert T2V_PROMPT not in repr(install_log_capture.entries)
+
+
+async def test_a_finished_older_run_of_the_same_prompt_is_not_a_candidate_1141() -> None:
+    """Terminal A next to our running B: the spike's window after A finished."""
+    older = _t2v_record(3, created=time.time() - 300, workflow=OTHER_WF, url=VIDEO_URL)
+    rec, _ = await _observe_t2v(
+        [
+            _poll(older, _t2v_record(2)),
+            (_batch_url("as29s"), _frame("as29s", _t2v_record(3, url=VIDEO_URL))),
+        ],
+        tab=ListingTab(_listing(older, _t2v_record(2))),
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done
+
+
+async def test_an_unreadable_model_key_keeps_todays_immediate_exit_9_1141() -> None:
+    with pytest.raises(TransportTimeoutError, match="unreadable") as ei:
+        await _observe_t2v([], key=None)
+    assert ei.value.retryable is False
+
+
+async def test_without_adopt_prompt_a_lost_reply_is_still_immediate_1141() -> None:
+    """`run_extend` and every caller that does not opt in keep today's behaviour."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = T2V_PROMPT
+    page.scripted_responses = [(_batch_url("YhhmEf"), LOST_BODY)]
+    with pytest.raises(TransportTimeoutError, match="unreadable"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
+def test_records_match_only_on_exact_prompt_model_and_project_1141() -> None:
+    from gflow_cli.api.transports.batchexecute import generation_records_matching
+
+    def found(rec: list[Any]) -> int:
+        return len(
+            generation_records_matching(
+                "jwpduf", [rec], project_id=PROJ_UUID, prompt=T2V_PROMPT, model_key=T2V_KEY
+            )
+        )
+
+    assert found(_t2v_record(2)) == 1
+    assert found(_t2v_record(2, prompt=T2V_PROMPT + " at dawn")) == 0
+    assert found(_t2v_record(2, key="veo_3_1_t2v")) == 0
+    assert found(_t2v_record(2, project="99999999-9999-4999-8999-999999999999")) == 0
+
+
+THUMBNAIL_URL = "https://lh3.googleusercontent.com/asb/token"
+
+
+def test_a_thumbnail_in_the_video_slot_is_not_a_video_url() -> None:
+    """Measured 2026-11-05: the link redirects twice and ends in a JPEG of about 20 KB."""
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    rec = generation_record("jwpduf", _ours(3, THUMBNAIL_URL), workflow_id=WF_OURS)
+    assert rec.is_done and rec.video_url is None
+
+
+async def test_a_polls_thumbnail_does_not_end_the_wait_for_the_real_url() -> None:
+    """A thumbnail must not settle the run while a later reply can still name the clip."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", _ours(2))),
+        (_batch_url("jwpduf"), _frame("jwpduf", [None, 881, [[_ours(3, THUMBNAIL_URL)]]])),
+        (_batch_url("as29s"), _frame("as29s", _ours(3, VIDEO_URL))),
+    ]
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+    )
+    assert rec.video_url == VIDEO_URL
+
+
+async def test_a_finished_clip_with_no_url_is_read_from_its_own_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#1153: no poll names the clip's URL, so a billed run reads it the way recovery does."""
+    from gflow_cli.api.transports import migrated_recover
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    asked: dict[str, str] = {}
+
+    async def read_clip(_page: Any, *, project_id: str, media_id: str) -> tuple[str, bytes]:
+        asked.update(project_id=project_id, media_id=media_id)
+        return WF_OURS, b"\0\0\0\0ftypmp42"
+
+    monkeypatch.setattr(migrated_recover, "read_clip", read_clip)
+    saved: dict[str, bytes] = {}
+
+    async def save(media_id: str, body: bytes) -> Path:
+        saved[media_id] = body
+        return tmp_path / f"{media_id}.mp4"
+
+    record = GenerationRecord(WF_OURS, PROJ_UUID, MEDIA_OURS, 3, poster_url="https://x/p.jpg")
+    path = await MigratedComposer().download(FakePage(), record, save)
+
+    assert path == tmp_path / f"{MEDIA_OURS}.mp4"
+    assert asked == {"project_id": PROJ_UUID, "media_id": MEDIA_OURS}
+    assert saved[MEDIA_OURS][4:8] == b"ftyp"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        WireFormatError(detail="no signed URL", route="batchexecute:as29s"),
+        RealPlaywrightTimeoutError("goto timed out"),
+    ],
+    ids=["no-url", "navigation-timeout"],
+)
+async def test_a_billed_clip_that_cannot_be_read_says_recover_it_never_re_run(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    """Advice to re-run bills a second time (#941), so every failure names the free route."""
+    from gflow_cli.api.transports import migrated_recover
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    async def read_clip(_page: Any, *, project_id: str, media_id: str) -> tuple[str, bytes]:
+        raise failure
+
+    monkeypatch.setattr(migrated_recover, "read_clip", read_clip)
+    record = GenerationRecord(WF_OURS, PROJ_UUID, MEDIA_OURS, 3)
+    with pytest.raises(MediaDownloadError) as ei:
+        await MigratedComposer.clip_bytes(FakePage(), record)
+    assert ei.value.retryable is False and ei.value.media_id == MEDIA_OURS
+    assert f"gflow data download {MEDIA_OURS}" in ei.value.remediation_hint
+    assert "Do not re-generate" in ei.value.remediation_hint
+
+
+def test_an_asb_preview_is_not_a_clip_on_any_host() -> None:
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    url = "https://flow.google.com/asb/token"
+    assert generation_record("jwpduf", _ours(3, url), workflow_id=WF_OURS).video_url is None
+
+
+def test_extend_reads_its_clip_through_the_same_seam_as_download() -> None:
+    """`run_extend` once called `fetch_mp4` directly and so missed the route read (#1153)."""
+    from gflow_cli.api.transports import migrated_extend
+
+    source = inspect.getsource(migrated_extend.run_extend)
+    assert "clip_bytes(page, record)" in source and "fetch_mp4" not in source
+
+
+async def test_a_model_like_word_in_the_prompt_is_not_taken_for_the_key_1141(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prompt precedes the key in the submit body."""
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.SUBMIT_REPLY_BUDGET_S", 0.05)
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    prompt = "a poster that reads veo_3"
+    page = FakePage()
+    page.dom.prompt = prompt
+    page.scripted_request = ("YhhmEf", f"f.req=%5B%22{prompt}%22,%22{T2V_KEY}%22%5D")
+    page.scripted_responses = [(_batch_url("YhhmEf"), LOST_BODY)]
+    tab = ListingTab(_listing(_t2v_record(3, prompt=prompt, url=VIDEO_URL)))
+
+    async def new_page() -> ListingTab:
+        return tab
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ_UUID, adopt_prompt=prompt
+    )
+    assert rec.workflow_id == WF_OURS
+
+
+async def test_a_clip_the_listing_does_not_name_is_never_adopted_1141() -> None:
+    """A poll alone is not enough, even once the clip has finished."""
+    with pytest.raises(TransportTimeoutError, match="does not name") as ei:
+        await _observe_t2v(
+            [_poll(_t2v_record(2)), _poll(_t2v_record(3, url=VIDEO_URL))],
+            tab=ListingTab(_listing()),
+        )
+    assert ei.value.retryable is False
+
+
+async def test_the_listing_is_read_only_after_a_candidate_finishes_1141() -> None:
+    """It answers without a clip still generating, which would refuse every run."""
+    rec, tabs = await _observe_t2v(
+        [_poll(_t2v_record(2)), _poll(_t2v_record(3, url=VIDEO_URL))],
+        tab=ListingTab(_listing(_t2v_record(3, url=VIDEO_URL))),
+    )
+    assert rec.is_done and rec.workflow_id == WF_OURS and tabs == 1

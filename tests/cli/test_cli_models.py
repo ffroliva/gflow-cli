@@ -64,7 +64,7 @@ def test_catalog_aliases_are_all_gen_command_accepted() -> None:
 
     # The previously-broken defaults now resolve to accepted aliases.
     by_img = {m["name"]: m for m in catalog["image"]["models"]}
-    assert by_img["NARWHAL"]["aliases"] == ["nano2", "nano2.1", "nano-2.1"]
+    assert by_img["NARWHAL"]["aliases"] == ["nano2", "nano21", "nano2.1", "nano-2.1"]
     by_vid = {m["name"]: m for m in catalog["video"]["models"]}
     assert by_vid["omni_flash"]["aliases"] == ["omni-flash"]
 
@@ -117,6 +117,6 @@ def test_nano_2_1_spellings_select_the_nano2_tier() -> None:
     from gflow_cli.api.image import Model
     from gflow_cli.image_batch import ALLOWED_MODELS
 
-    for alias in ("nano2.1", "nano-2.1"):
+    for alias in ("nano21", "nano2.1", "nano-2.1"):
         assert alias in ALLOWED_MODELS
         assert Model.from_cli(alias) is Model.NARWHAL
