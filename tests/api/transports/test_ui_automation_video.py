@@ -8,7 +8,7 @@ import itertools
 import json
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import structlog
@@ -40,6 +40,7 @@ from gflow_cli.errors import (
     UiSelectorDriftError,
     WireFormatError,
 )
+from tests.fakes import AwaitableMock as MagicMock
 
 
 def _make_listener_page() -> tuple[MagicMock, list]:
@@ -55,6 +56,7 @@ def _make_response(*, url: str, status: int = 200, body: dict | None = None) -> 
     resp = MagicMock()
     resp.url = url
     resp.status = status
+    resp.request.post_data = None
     resp.json = AsyncMock(return_value=body if body is not None else {"media": []})
     return resp
 

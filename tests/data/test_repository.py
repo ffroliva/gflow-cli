@@ -392,6 +392,7 @@ def test_seed_read_api_resolves_by_path_latest_project_and_candidate(tmp_path: P
         assert repo.candidate_image_exists("default", "media-latest") is True
 
 
+@pytest.mark.sharpit(allow_n_plus_one=True)  # one lookup per id kind, on purpose
 def test_get_asset_by_any_id_resolves_media_workflow_and_asset_ids(tmp_path: Path) -> None:
     """PR #237: UUID→asset resolution must work for every id kind and hydrate
     the fields the MCP display-name lookup relies on (flow_workflow_id,

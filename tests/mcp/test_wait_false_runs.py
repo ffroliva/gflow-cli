@@ -218,6 +218,7 @@ async def test_cancel_after_submit_leaves_the_row_indeterminate(
     assert reply["task_id"] not in tasks_extension.DETACHED
 
 
+@pytest.mark.sharpit(allow_n_plus_one=True)  # polls a row until its state changes
 async def test_cancel_of_a_row_nobody_runs_fails_only_a_pending_row(db: DataStore) -> None:
     repo = QueueRepository(db)
     repo.enqueue_task(task_id="p", profile_name="default", task_type="t2i", payload={})
@@ -308,6 +309,7 @@ async def test_an_expired_session_fails_the_row_and_tasks_get_says_why(
     assert error["type"].endswith("/auth-expired") and error["exit_code"] == 3, error
 
 
+@pytest.mark.sharpit(allow_n_plus_one=True)  # polls a row until its state changes
 async def test_cancel_of_a_finished_job_reports_it_as_finished(
     db: DataStore, wired: dict[str, Any]
 ) -> None:
@@ -368,6 +370,7 @@ async def test_a_job_cancelled_before_its_first_step_still_settles_its_row(
     assert _status(db, reply["task_id"]) == "failed"
 
 
+@pytest.mark.sharpit(allow_n_plus_one=True)  # polls a row until its state changes
 async def test_a_cancelled_job_stays_cancelled_in_tasks_get(
     db: DataStore, wired: dict[str, Any]
 ) -> None:

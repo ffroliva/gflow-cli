@@ -248,7 +248,7 @@ PICKER_OPTION = "button.asset-item[role='option']"
 #: The `/asb/<token>` of the grid tile whose `data-media-id` is the argument (#913).
 #: The id is passed as an argument and compared in JS, never formatted into a selector.
 _GRID_TOKEN_JS = (
-    "(id) => { for (const e of document.querySelectorAll('img[data-media-id]')) {"
+    "(id) => { for (const e of document.querySelectorAll('img[data-media-id]')) {"  # noqa: S105 - not a password: a redaction marker or a JS snippet name
     " if (e.getAttribute('data-media-id') === id) {"
     " const m = (e.getAttribute('src') || '').match(/\\/asb\\/([A-Za-z0-9_-]+)/);"
     " return m ? m[1] : ''; } } return ''; }"

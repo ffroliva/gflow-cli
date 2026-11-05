@@ -331,5 +331,5 @@ class SapisidhashTransport:
         """
         import httpx  # lazy import
 
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with httpx.AsyncClient(timeout=None) as client:  # noqa: S113 - wall-clock guard is the caller's, see the docstring
             return await client.post(url, headers=headers, content=content)
