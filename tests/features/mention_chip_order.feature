@@ -19,3 +19,11 @@ Feature: Mention chips land in the order they were requested (#997)
     When the driver mentions four of them in order without submitting
     Then the prompt's chips read in the order they were requested
     And nothing was submitted and the composer was cleared
+
+  # #1143: with no picker open Enter submits, so a miss must never press it, and Escape
+  # is what removes the typed query (2026-11-04 spike). Only a real picker can show that.
+  Scenario: a mention that matches nothing is refused and leaves the attached chip alone
+    Given a flow.google.com project holding at least four captioned images
+    When the driver attaches one image and then mentions a name that matches nothing
+    Then the mention is refused with the chip kept and no query text left behind
+    And nothing was submitted and the composer was cleared

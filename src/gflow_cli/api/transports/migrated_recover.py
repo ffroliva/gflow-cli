@@ -1,10 +1,8 @@
 """Recover a clip that finished and billed but whose download failed (#865, #871).
 
-When the migrated composer's 20 s URL grace expires, the generation has already
-happened and the credit is already spent, but no signed media URL was ever observed —
-so the run raises ``WireFormatError`` (exit 7) and the asset is left in the project with
-``local_path: null``. Until now the only recovery the CLI offered was to pay for the
-generation again.
+A finished, billed clip can reach no file: its download fails, or the run ends before it.
+The asset is then left in the project with ``local_path: null``. Since #1153 a normal run
+uses this same route, through :func:`read_clip`, whenever its record names no clip URL.
 
 The retrieval path measured on 2026-09-17 (see
 ``docs/superpowers/spikes/2026-09-17-stranded-clip-recovery.md``):
@@ -194,6 +192,23 @@ async def _fetch_verified(page: Page, *, url: str, expected: int | None, media_i
     return body
 
 
+async def read_clip(
+    page: Page, *, project_id: str, media_id: str, wait_s: float = SIGNED_URL_WAIT_S
+) -> tuple[str, bytes]:
+    """(workflow id, verified bytes) of a finished clip, read through its own route.
+
+    The route replaces the page, so only call this once the generation is over. Raises
+    :class:`WireFormatError` when no signed URL comes or the bytes are not the asset.
+    """
+    found = await _await_signed_record(
+        page, media_id=media_id, project_id=project_id, wait_s=wait_s
+    )
+    body = await _fetch_verified(
+        page, url=str(found["url"]), expected=found.get("size"), media_id=media_id
+    )
+    return str(found["workflow_id"]), body
+
+
 async def recover_clip(
     page: Page,
     *,
@@ -209,17 +224,13 @@ async def recover_clip(
     or when the bytes it serves are not the recorded asset.
     """
     validate_job_id(media_id)  # it becomes the filename below (#1004)
-    found = await _await_signed_record(
-        page, media_id=media_id, project_id=project_id, wait_s=wait_s
-    )
-    body = await _fetch_verified(
-        page, url=str(found["url"]), expected=found.get("size"), media_id=media_id
+    workflow_id, body = await read_clip(
+        page, project_id=project_id, media_id=media_id, wait_s=wait_s
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{media_id}.mp4"
     path.write_bytes(body)
-    workflow_id = str(found["workflow_id"])
     log.info(
         "migrated.recover_download",
         media_id=media_id,

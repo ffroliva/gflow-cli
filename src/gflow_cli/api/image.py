@@ -139,6 +139,7 @@ _MODEL_FROM_CLI: Mapping[str, Model] = MappingProxyType(
         # carries NARWHAL (last seen there as Nano Banana 2)
         "narwhal": Model.NARWHAL,
         "nano2": Model.NARWHAL,
+        "nano21": Model.NARWHAL,
         "nano2.1": Model.NARWHAL,
         "nano-2.1": Model.NARWHAL,
         "nano-banana-2": Model.NARWHAL,

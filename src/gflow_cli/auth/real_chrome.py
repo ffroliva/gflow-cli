@@ -66,6 +66,7 @@ def _build_chrome_args(
         "--no-first-run",
         "--no-default-browser-check",
         "--window-size=1920,1080",  # match the generation viewport (#315 consistency)
+        "--window-position=0,0",  # a saved off-screen position would hide the sign-in
         "--password-store=basic",
         # No --remote-debugging-port: zero automation surface.
     ]

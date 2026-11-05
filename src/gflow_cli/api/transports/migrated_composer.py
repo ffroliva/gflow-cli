@@ -2727,10 +2727,11 @@ class MigratedComposer:
 
         Retries like :meth:`_pick_frame_by_name` does, and for the same measured reason:
         the mention picker is backed by the same server-side asset search, which does not
-        always index a fresh upload by the first query. A miss leaves the typed ``@name``
-        in the composer as plain text, so each retry backspaces exactly what it typed
-        before querying again — and refuses to continue if that clean-up ate a chip
-        someone already attached.
+        always index a fresh upload by the first query. Enter is pressed only when the
+        picker offers something: with no picker open it submits the generation (see
+        docs/superpowers/spikes/2026-11-04-external-prs-1142-1145.md). The picker owns the
+        query text, so Escape cancels a miss without touching existing chips, and the run
+        is refused if an attached chip disappeared.
         """
         offered: list[str] = []
         chips: list[dict[str, str]] = []
@@ -2747,8 +2748,9 @@ class MigratedComposer:
             await page.keyboard.type(name, delay=100)
             await page.wait_for_timeout(2500)
             offered = [t.strip() for t in await page.locator(PICKER_OPTION).all_text_contents()]
-            await page.keyboard.press("Enter")
-            await page.wait_for_timeout(2500)
+            if offered:
+                await page.keyboard.press("Enter")
+                await page.wait_for_timeout(2500)
             chips = await self.read_chips(page)
             if len(chips) == expect_chips:
                 _require_appended(prior, chips)
@@ -2761,10 +2763,7 @@ class MigratedComposer:
                 chips=len(chips),
                 offered=len(offered),
             )
-            if attempt == FRAME_SEARCH_ATTEMPTS:
-                break
-            for _ in range(len(name) + 1):  # the '@' and the query it opened
-                await page.keyboard.press("Backspace")
+            await page.keyboard.press("Escape")
             chips = await self.read_chips(page)
             if len(chips) < before:
                 raise ReferenceNotFoundError(
@@ -2775,6 +2774,8 @@ class MigratedComposer:
                         "built, so this run is abandoned rather than submitted"
                     ),
                 )
+            if attempt == FRAME_SEARCH_ATTEMPTS:
+                break
             await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)
         raise ReferenceNotFoundError(
             detail=(
@@ -3642,7 +3643,7 @@ class MigratedComposer:
         try:
             return await asyncio.wait_for(terminal, timeout=grace)
         except TimeoutError:
-            log.warning("migrated.result_url_not_observed", grace_s=grace)
+            log.info("migrated.result_url_not_observed", grace_s=grace)
             return done_no_url.result()
 
     # --- download ---------------------------------------------------------------
@@ -3709,25 +3710,46 @@ class MigratedComposer:
             route="batchexecute:as29s",
         )
 
+    @staticmethod
+    async def clip_bytes(page: Page, record: GenerationRecord) -> bytes:
+        """The bytes of a finished, billed clip, from whichever source it has.
+
+        Every failure ends in the free recovery: this clip is billed, so advice to re-run
+        would bill it again (#941). The clip's route replaces the page, so only a caller
+        that has finished with the page may reach this."""
+        if record.video_url:
+            return await MigratedComposer.fetch_mp4(page, record)
+        from gflow_cli.api.transports import migrated_recover  # noqa: PLC0415 - cycle
+
+        try:
+            _, body = await migrated_recover.read_clip(
+                page, project_id=record.project_id, media_id=record.media_id
+            )
+        except (GFlowError, PlaywrightError, TimeoutError) as exc:
+            raise MediaDownloadError(
+                media_id=record.media_id,
+                detail=(
+                    "migrated host: the clip finished but could not be read from its own "
+                    f"route ({type(exc).__name__})"
+                ),
+                route="flow-content.google",
+                remediation_hint=recoverable_clip_hint(record.media_id),
+                retryable=False,
+            ) from exc
+        return body
+
     async def download(
         self,
         page: Page,
         record: GenerationRecord,
         save: ClipSaver,
     ) -> Path | None:
-        """The clip from its signed CDN URL, stored by ``save``. The labs
-        ``media.getMediaUrlRedirect`` route answers 404 for a migrated media id
-        (measured 2026-09-05), so there is no second source: a record with no URL is a
-        wire-format failure."""
-        if not record.video_url and not record.poster_url:
-            raise WireFormatError(
-                detail=(
-                    "migrated host: the generation finished but no signed media URL was "
-                    f"observed within the {RESULT_URL_GRACE_S:.0f}s grace"
-                ),
-                route="batchexecute:as29s",
-            )
-        body = await self.fetch_mp4(page, record)
+        """The clip from its signed URL, stored by ``save``.
+
+        With no clip URL on the record, its own route supplies one (#1153): since
+        2026-11-05 no status reply in the run was seen to name the clip. The labs
+        ``media.getMediaUrlRedirect`` route answers 404 for a migrated media id."""
+        body = await self.clip_bytes(page, record)
         path = await save(record.media_id, body)
         log.info("migrated.download", path=str(path), bytes=len(body))
         return path

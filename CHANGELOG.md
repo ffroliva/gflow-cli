@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`nano21` is accepted as an image model alias** for Nano Banana 2.1, alongside `nano2.1`
+  and `nano-2.1`, on the CLI, in manifests and in `gflow run` configs (#1145, thanks @L1meSn0w).
+
 ### Fixed
+
+- **A finished video is downloaded again on flow.google.com.** Flow's status replies now carry
+  the clip's thumbnail link where the clip's link used to be. gflow took it for the clip, so a
+  billed run failed with exit 6 and `HTTP 302`, leaving nothing on disk. It now reads the clip
+  through the clip's own page, the same way `gflow data download` does, and checks its size.
+  A clip already stranded this way is recovered for free with
+  `gflow data download <media_id>` (#1153).
+
+- **An `@` mention that matches nothing no longer risks submitting the run.** gflow pressed
+  Enter even when the picker offered nothing, and with no picker open Enter starts the
+  generation. It now presses Enter only on an offered match and cancels a miss with Escape,
+  so the run stops with a clean `ReferenceNotFoundError` instead of a raw timeout, attached
+  references stay in place, and a retry can find the asset (#1143, thanks @L1meSn0w).
+
+- **`gflow auth login` opens on screen on a profile that has already generated.** Chrome saves
+  the off-screen generation window's position in the profile and, on the next launch, showed
+  only a sliver of the window at the screen's edge, with no setting to change it. Login now
+  sets its own position, `0,0`, on both the Playwright and the plain Chrome path.
 
 - **`auth status` and `auth login` survive a My Account request that cannot complete.** On
   flow.google.com, gflow now reads Flow's signed-in workspace in that case and accepts the
