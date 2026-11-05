@@ -3985,6 +3985,12 @@ async def test_a_clip_that_finished_before_the_listing_read_is_adopted_1141(
         ),
         pytest.param([_t2v_record(2)], None, id="the-listing-did-not-answer"),
         pytest.param([], [], id="the-listing-names-nothing"),
+        pytest.param([_t2v_record(2)], [], id="a-poll-names-a-clip-the-listing-does-not"),
+        pytest.param(
+            [],
+            [_t2v_record(3, created=time.time() + 120, url=VIDEO_URL)],
+            id="a-done-clip-newer-than-the-clock-allows",
+        ),
         pytest.param(
             [_t2v_record(2, created=time.time() - 120)],
             None,
@@ -3993,7 +3999,10 @@ async def test_a_clip_that_finished_before_the_listing_read_is_adopted_1141(
     ],
 )
 async def test_every_doubt_stays_exit_9_and_never_adopts_1141(
-    polls: list[Any], listing: list[Any] | None, monkeypatch: pytest.MonkeyPatch
+    polls: list[Any],
+    listing: list[Any] | None,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: Any,
 ) -> None:
     tab = ListingTab(None if listing is None else _listing(*listing))
     responses = [_poll(*polls)] if polls else []
@@ -4002,6 +4011,9 @@ async def test_every_doubt_stays_exit_9_and_never_adopts_1141(
         await _observe_t2v(responses, tab=tab)
     assert ei.value.retryable is False
     assert "lost" in ei.value.detail
+    # A prompt is user content: ids and counts only, in the error and in the log.
+    assert T2V_PROMPT not in ei.value.detail
+    assert T2V_PROMPT not in repr(install_log_capture.entries)
 
 
 async def test_a_finished_older_run_of_the_same_prompt_is_not_a_candidate_1141() -> None:
@@ -4150,3 +4162,29 @@ def test_extend_reads_its_clip_through_the_same_seam_as_download() -> None:
 
     source = inspect.getsource(migrated_extend.run_extend)
     assert "clip_bytes(page, record)" in source and "fetch_mp4" not in source
+
+
+async def test_a_model_like_word_in_the_prompt_is_not_taken_for_the_key_1141(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prompt precedes the key in the submit body."""
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.SUBMIT_REPLY_BUDGET_S", 0.05)
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    prompt = "a poster that reads veo_3"
+    page = FakePage()
+    page.dom.prompt = prompt
+    page.scripted_request = ("YhhmEf", f"f.req=%5B%22{prompt}%22,%22{T2V_KEY}%22%5D")
+    page.scripted_responses = [(_batch_url("YhhmEf"), LOST_BODY)]
+    tab = ListingTab(_listing(_t2v_record(3, prompt=prompt, url=VIDEO_URL)))
+
+    async def new_page() -> ListingTab:
+        return tab
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ_UUID, adopt_prompt=prompt
+    )
+    assert rec.workflow_id == WF_OURS

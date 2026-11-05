@@ -982,6 +982,9 @@ class _ClipByPrompt:
             <= time.time() + PROMPT_MATCH_MARGIN_S
         )
 
+    def _is_older(self, created: int | None) -> bool:
+        return created is not None and created < self.clicked_at - PROMPT_MATCH_MARGIN_S
+
     def _matches(self, rid: str, payload: Any) -> list[tuple[GenerationRecord, int | None]]:
         return generation_records_matching(
             rid,
@@ -1017,17 +1020,24 @@ class _ClipByPrompt:
         """The one clip, or the refusal. A listing that did not answer proves nothing."""
         if listing is None:
             raise self._refusal("the project listing did not answer")
+        listed: set[str] = set()
         for rec, created in self._matches(LISTING_RPC, listing):
             if self._in_window(created):
+                listed.add(rec.workflow_id)
                 seen = self.candidates.get(rec.workflow_id)
                 if seen is None or seen.is_running:
                     self.candidates[rec.workflow_id] = rec
-            elif rec.is_running:
-                raise self._refusal(f"running clip {rec.media_id} is older than this run")
+            elif rec.is_running or not self._is_older(created):
+                # Newer than the clock allows means the clock is behind, so the window
+                # cannot be trusted to have excluded an older finished clip.
+                raise self._refusal(f"clip {rec.media_id} falls outside this run's window")
         if len(self.candidates) != 1:
             ids = ", ".join(sorted(r.media_id for r in self.candidates.values()))
             raise self._refusal(f"{len(self.candidates)} clips match its prompt ({ids})")
-        return next(iter(self.candidates.values()))
+        ((workflow_id, rec),) = self.candidates.items()
+        if workflow_id not in listed:
+            raise self._refusal(f"the project listing does not name clip {rec.media_id}")
+        return rec
 
 
 def _unreadable_rpc_error(rpcid: str, *, location: str) -> RpcResponseUnavailableError:
@@ -3102,7 +3112,8 @@ class MigratedComposer:
                     return
             if rpcid in submit_rpcs:
                 submit_requests.append((request, rpcid))
-                if key := MODEL_KEY.search(body):
+                # The prompt comes first in the body, and a prompt can read like a key.
+                if key := MODEL_KEY.search(body.replace(adopt_prompt or "", "")):
                     submit_key["key"] = key.group(0)
                 if rpcid == INTERPOLATION_SUBMIT_RPC:
                     problem = _interpolation_body_problem(

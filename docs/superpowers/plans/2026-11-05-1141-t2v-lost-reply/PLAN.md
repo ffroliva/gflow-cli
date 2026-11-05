@@ -23,10 +23,10 @@ A clock running behind is undetectable. The listing check is what covers it.
 
 ## Tasks
 
-- [ ] 1. `generation_records_matching` in `batchexecute.py`: strict match, unit tests for rows 9, 10.
-- [ ] 2. Failing `_observe_lost` cases for rows 1-8, 11, 13, 14.
-- [ ] 3. `submit_and_observe`: capture the key, collect candidates, decide at the listing.
-- [ ] 4. `run_video` passes `adopt_prompt`; test rows 12 and 15.
-- [ ] 5. Docs and CHANGELOG. KNOWN_ISSUES if an entry names this failure.
-- [ ] 6. MCP: no task needed. Same `run_video`, no parameter added (scenario row 16); state it in the PR.
-- [ ] 7. `/gflow:check`, council, then the paid e2e on the final tree: forced loss, one lite clip.
+- [x] 1. `generation_records_matching` in `batchexecute.py`: strict match, unit tests for rows 9, 10.
+- [x] 2. Failing `_observe_lost` cases for rows 1-8, 11, 13, 14.
+- [x] 3. `submit_and_observe`: capture the key, collect candidates, decide at the listing.
+- [x] 4. `run_video` passes `adopt_prompt`; test rows 12 and 15.
+- [x] 5. Docs and CHANGELOG. KNOWN_ISSUES if an entry names this failure.
+- [x] 6. MCP: no task needed. Same `run_video`, no parameter added (scenario row 16); state it in the PR.
+- [x] 7. `/gflow:check`, council, then the paid e2e on the final tree: forced loss, one lite clip.
