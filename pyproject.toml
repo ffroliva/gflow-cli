@@ -190,10 +190,16 @@ target-version = "py311"
 # T20 (flake8-print) bans builtin `print()` in src/ — AGENTS.md mandates structlog
 # only. `console.print()` (rich) is an attribute call and is unaffected. Tests and
 # CLI scripts legitimately print, so they are exempted via per-file-ignores below.
-select = ["E", "F", "W", "I", "B", "UP", "N", "T20"]
+# S (flake8-bandit) is the security lint. Three rules are off because they flag a house
+# idiom, not a risk: S101 asserts narrow Optional for pyright, and S110/S112 are the
+# best-effort DOM probes the transports are built on. A real false positive elsewhere
+# gets a line-level `# noqa: Sxxx - <why>`, so the rule still guards new code.
+select = ["E", "F", "W", "I", "B", "UP", "N", "T20", "S"]
+ignore = ["S101", "S110", "S112"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["T20"]
+# Tests hold fake credentials and fixed paths, hash fixtures, and shell out to `gflow`.
+"tests/**" = ["T20", "S105", "S106", "S107", "S108", "S324", "S603", "S607", "S608"]
 "scripts/**" = ["T20"]
 "eval/**" = ["T20"]
 # skills/ ships runnable helper tools alongside each SKILL.md; a CLI helper prints.
@@ -235,6 +241,7 @@ markers = [
     "e2e_data: verifies data-layer (SQLite) persistence — combines with e2e_image or e2e_video",
     "e2e_scene: scene/timeline compose (Add Clip) — zero credits, no reCAPTCHA",
     "e2e_character: Character entity create (face/body image-gen + entity patch) — ZERO credits; opt-in via GFLOW_CLI_E2E_RUN_CHARACTER",
+    "sharpit(allow_n_plus_one=False, allow_swallowed=False): per-test sharpit gate settings; inert without --sharpit",
     "smoke: golden-path live test (image gen — ZERO credits); opt-in via GFLOW_CLI_E2E_PROFILE",
 ]
 

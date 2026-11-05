@@ -411,7 +411,7 @@ class DataRepository:
             FROM assets
             WHERE {" AND ".join(clauses)}
             ORDER BY created_at ASC, id ASC
-            """,
+            """,  # noqa: S608 - constants and ? placeholders only, values stay bound
             params,
         ).fetchall()
         grouped: dict[str, list[str]] = {}
@@ -435,7 +435,7 @@ class DataRepository:
             SELECT {_ASSET_LOOKUP_COLUMNS}
             FROM assets
             WHERE profile_name = ? AND flow_media_id = ?
-            """,
+            """,  # noqa: S608 - constants and ? placeholders only, values stay bound
             (profile_name, flow_media_id),
         ).fetchone()
         if row is None:
@@ -454,7 +454,7 @@ class DataRepository:
             WHERE profile_name = ? AND (flow_media_id = ? OR flow_workflow_id = ? OR id = ?)
             ORDER BY created_at DESC
             LIMIT 1
-            """,
+            """,  # noqa: S608 - constants and ? placeholders only, values stay bound
             (profile_name, ref_id, ref_id, ref_id),
         ).fetchone()
         if row is None:
@@ -475,7 +475,7 @@ class DataRepository:
             FROM assets
             WHERE flow_media_id = ?
             ORDER BY profile_name ASC, id ASC
-            """,
+            """,  # noqa: S608 - constants and ? placeholders only, values stay bound
             (flow_media_id,),
         ).fetchall()
         return [self._hydrate_asset_lookup(row) for row in rows]
@@ -615,11 +615,11 @@ class DataRepository:
                 chunk = stale_ids[i : i + chunk_size]
                 placeholders = ",".join("?" * len(chunk))
                 self._store.conn.execute(
-                    f"DELETE FROM operation_assets WHERE operation_id IN ({placeholders})",
+                    f"DELETE FROM operation_assets WHERE operation_id IN ({placeholders})",  # noqa: S608 - constants and ? placeholders only, values stay bound
                     chunk,
                 )
                 self._store.conn.execute(
-                    f"DELETE FROM operations WHERE id IN ({placeholders})",
+                    f"DELETE FROM operations WHERE id IN ({placeholders})",  # noqa: S608 - constants and ? placeholders only, values stay bound
                     chunk,
                 )
         return len(stale_ids)
@@ -1111,7 +1111,7 @@ class DataRepository:
             WHERE {where}
             ORDER BY a.created_at DESC, a.id DESC
             LIMIT 1
-        """
+        """  # noqa: S608 - constants and ? placeholders only, values stay bound
         row = self._store.conn.execute(
             sql,
             [OperationAssetRole.OUTPUT.value, *params],

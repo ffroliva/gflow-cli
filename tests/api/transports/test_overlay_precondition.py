@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -26,6 +26,7 @@ from gflow_cli.api.transports.ui_automation import (
     OVERLAY_CLOSE_BUTTON_SELECTORS,
     UiAutomationTransport,
 )
+from tests.fakes import AwaitableMock as MagicMock
 
 if TYPE_CHECKING:  # pragma: no cover
     from playwright.async_api import Page

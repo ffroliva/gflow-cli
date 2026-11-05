@@ -32,16 +32,31 @@ Pre-registered readings (written 2026-10-27, before the run):
 | neither identifies it | — | keep exit 9; recovery needs another source |
 | matched id != ground truth | — | the matching rule is wrong; fix it before anything ships |
 | gflow did not exit 9 | — | the ablation did not engage; the run settles nothing |
+
+**t2v arm (#1141, readings written 2026-11-04, before the run).** The same command with
+``video t2v "<unique prompt>" --project <uuid> --model veo-lite`` costs one lite clip. No
+upload exists, so ``refs`` stays empty and three other keys are measured instead:
+
+| observation | reading |
+|---|---|
+| a client uuid from the submit request is echoed in our record (``client_uuid_echo``) | exact key: match on it, the prompt is not needed |
+| no echo; polls name exactly one in-flight record with our prompt, created after the click | match prompt + created-after-click; refuse on more than one |
+| no echo; our record's ``created`` precedes the local click time by more than the skew seen | a clock comparison is unsafe; a pre-submit listing baseline is required |
+| polls never name it; the listing does | listing fallback carries t2v, polls cannot |
+| neither names it | keep exit 9, recovery needs another source |
+| a matched media id differs from what the listing finally shows as new | the rule is wrong; ship nothing |
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
@@ -58,6 +73,7 @@ VIDEO_SUBMIT = {"MZZa6b", "YhhmEf", "eb1hJf", "nprQif"}
 LISTING = "Zzl0ze"
 WATCH_S = 420.0
 RELOAD_EVERY_S = 20.0
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 T0 = time.monotonic()
 report: dict[str, Any] = {"events": [], "truth": None, "baseline": [], "listing": {}}
@@ -89,6 +105,8 @@ def _row(rec: list[Any]) -> dict[str, Any]:
         "media_id": rec[2],
         "status": _at(rec, 5, 8, 0),
         "created": _at(rec, 5, 0, 0),
+        "prompt": _at(rec, 5, 1),
+        "model": _at(rec, 5, 6, 1, 0),
         "refs": [r[2] for r in refs if isinstance(r, list) and len(r) > 2],
         "entities": [e[0] for e in (_at(rec, 5, 6, 1, 8) or []) if isinstance(e, list)],
     }
@@ -107,6 +125,7 @@ async def _lossy_text(self: Response) -> str:
 
 async def _probe(page: Any) -> None:
     """Status side on the generating page; runs alongside gflow's own listener."""
+    client_uuids: set[str] = set()
 
     async def on_response(resp: Response) -> None:
         if "batchexecute" not in resp.url:
@@ -120,7 +139,12 @@ async def _probe(page: Any) -> None:
         if rid == mc.UPLOAD_RPC:
             ev("upload", media_id=mc._first_uuid(text))  # noqa: SLF001
         for frid, payload in parse_frames(text):
-            rows = [_row(r) for r in _records(payload)]
+            found = _records(payload)
+            rows = [_row(r) for r in found]
+            for rec in found:
+                echoed = client_uuids & set(UUID_RE.findall(json.dumps(rec)))
+                if echoed:
+                    ev("client_uuid_echo", rpc=frid, media_id=rec[2], uuids=sorted(echoed))
             if frid in VIDEO_SUBMIT and rows:
                 report["truth"] = rows[0]
                 ev("truth_submit_reply", rpc=frid, **rows[0])
@@ -129,7 +153,13 @@ async def _probe(page: Any) -> None:
 
     def on_request(req: Any) -> None:
         if _rpc(req.url) in VIDEO_SUBMIT:
-            ev("submit_sent", rpc=_rpc(req.url))
+            client_uuids.update(UUID_RE.findall(unquote(req.post_data or "")))
+            ev(
+                "submit_sent",
+                rpc=_rpc(req.url),
+                wall=time.time(),
+                client_uuids=sorted(client_uuids),
+            )
 
     page.on("response", on_response)
     page.on("request", on_request)
@@ -194,7 +224,12 @@ async def _run_video(page: Any, request: Any, *, project_id: str | None, **kw: A
 async def _watch(page2: Any, project_id: str, base: set[str]) -> None:
     deadline = time.monotonic() + WATCH_S
     while time.monotonic() < deadline:
-        new = [r for r in await _listing(page2, project_id) if r["media_id"] not in base]
+        try:
+            rows = await _listing(page2, project_id)
+        except TimeoutError:  # one missed listing must not end the watch (#1141 run)
+            ev("listing_timeout")
+            continue
+        new = [r for r in rows if r["media_id"] not in base]
         report["listing"][str(now())] = new
         ev("listing", new=[(r["media_id"], r["status"]) for r in new])
         if new and all(r["status"] in (3, 4) for r in new) and _status_terminal(base):
