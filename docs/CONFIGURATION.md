@@ -387,6 +387,9 @@ headed, so Flow and reCAPTCHA see exactly the same browser.
 | `0,0`, `1920,0`, … | the window opens there: watch a run, or park it on a second monitor |
 | empty (`GFLOW_CLI_BROWSER_WINDOW_POSITION=`) | Chrome's own placement, the behaviour before this setting existed |
 
+**Login is not affected.** `gflow auth login` always opens at `0,0`, whatever this is set
+to and whatever position the profile saved from an earlier off-screen run.
+
 **When to bring it back on-screen:** to watch a run, debug a step, or record a demo.
 
 **Not for a screen that needs a person.** If a run stops on an account chooser, a Google
