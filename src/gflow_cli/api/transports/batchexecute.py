@@ -318,6 +318,29 @@ def generation_records_carrying(
     return found
 
 
+def generation_records_matching(
+    rpcid: str, payload: Any, *, project_id: str, prompt: str, model_key: str
+) -> list[tuple[GenerationRecord, int | None]]:
+    """Every (record, ``created``) of this project with exactly this prompt and model.
+
+    Finds a text-to-video clip after its submit reply was lost (#1141): no client id is
+    echoed, so these are the only keys. Exact equality on purpose: a substring would match
+    a longer prompt. ``created`` is whole seconds at ``[5][0][0]``."""
+    found: list[tuple[GenerationRecord, int | None]] = []
+    for node in _walk_lists(payload):
+        if not _is_record(node) or node[1] != project_id or _at(node, 5, 1) != prompt:
+            continue
+        if model_key in _strings(_at(node, 5, 6, 1, 0)):
+            created = _at(node, 5, 0, 0)
+            found.append(
+                (
+                    generation_record(rpcid, node, workflow_id=node[0]),
+                    created if isinstance(created, int) else None,
+                )
+            )
+    return found
+
+
 def image_records(rpcid: str, payload: Any) -> list[ImageGenerationRecord]:
     """Decode every completed image in the migrated ``ogiZ0b`` payload.
 
