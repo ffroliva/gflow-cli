@@ -33,7 +33,7 @@
 ### Google account email
 
 - **Location:** `$GFLOW_CLI_HOME/profile_<name>/.gflow_account` — one file per profile, plaintext UTF-8.
-- **Content:** The verified email address of the signed-in Google account (e.g. `you@gmail.com`). Written once per `gflow auth login` by both auth strategies.
+- **Content:** The verified email address of the signed-in Google account (e.g. `you@gmail.com`). Written by `gflow auth login` on both auth strategies when an address can be read; a login that reads none removes any old file.
 - **Sensitivity:** Low. The email is already visible to any process that can read Chromium cookies; it is not a credential. No passwords, tokens, or session artefacts are stored in this file.
 - **Access:** Same OS file permissions as the profile dir (`chmod 0700` on POSIX). Visible only to the current user.
 

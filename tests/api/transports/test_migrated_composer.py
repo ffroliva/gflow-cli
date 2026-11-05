@@ -3987,7 +3987,7 @@ async def test_a_clip_that_finished_before_the_listing_read_is_adopted_1141(
         pytest.param([], [], id="the-listing-names-nothing"),
         pytest.param(
             [],
-            [_t2v_record(3, created=time.time() + 120, url=VIDEO_URL)],
+            [_t2v_record(3, created=time.time() + 86_400, url=VIDEO_URL)],
             id="a-done-clip-newer-than-the-clock-allows",
         ),
         pytest.param(

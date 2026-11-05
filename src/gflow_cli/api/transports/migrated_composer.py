@@ -3852,9 +3852,9 @@ class MigratedComposer:
     async def clip_bytes(page: Page, record: GenerationRecord) -> bytes:
         """The bytes of a finished, billed clip, from whichever source it has.
 
-        Every failure ends in the free recovery: this clip is billed, so advice to re-run
-        would bill it again (#941). The clip's route replaces the page, so only a caller
-        that has finished with the page may reach this."""
+        A failed route read ends in the free recovery: this clip is billed, so advice to
+        re-run would bill it again (#941). The clip's route replaces the page, so only a
+        caller that has finished with the page may reach this."""
         if record.video_url:
             return await MigratedComposer.fetch_mp4(page, record)
         from gflow_cli.api.transports import migrated_recover  # noqa: PLC0415 - cycle
