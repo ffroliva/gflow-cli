@@ -2728,9 +2728,10 @@ class MigratedComposer:
         Retries like :meth:`_pick_frame_by_name` does, and for the same measured reason:
         the mention picker is backed by the same server-side asset search, which does not
         always index a fresh upload by the first query. Enter is pressed only when the
-        picker offers something: with no picker open it submits the generation (measured
-        2026-10-13). The picker owns the query text, so Escape cancels a miss without
-        touching existing chips, and the run is refused if an attached chip disappeared.
+        picker offers something: with no picker open it submits the generation (see
+        docs/superpowers/spikes/2026-11-04-external-prs-1142-1145.md). The picker owns the
+        query text, so Escape cancels a miss without touching existing chips, and the run
+        is refused if an attached chip disappeared.
         """
         offered: list[str] = []
         chips: list[dict[str, str]] = []

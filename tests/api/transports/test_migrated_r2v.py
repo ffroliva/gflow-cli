@@ -287,6 +287,28 @@ async def test_a_retry_that_would_eat_an_attached_chip_refuses_instead() -> None
         await MigratedComposer()._mention_by_name(page, "second.png", expect_chips=2)  # noqa: SLF001
 
 
+async def test_the_last_attempt_also_cancels_its_query_and_checks_the_chips() -> None:
+    """The final miss must clean up too: the caller may keep the page, and a chip lost to
+    that last Escape has to be reported as lost, not as a plain miss."""
+    from gflow_cli.api.transports.migrated_composer import (
+        FRAME_SEARCH_ATTEMPTS,
+        MigratedComposer,
+    )
+
+    page = FakeComposerPage(miss_first=99)
+    page.chips = [{"text": "first", "entity_id": "", "reference_type": "media"}]
+
+    async def lose_the_chip_on_the_last_escape(_script: str, _arg: Any = None) -> Any:
+        if page.typed.count("<Escape>") == FRAME_SEARCH_ATTEMPTS:
+            page.chips = []
+        return page.chips
+
+    page.evaluate = lose_the_chip_on_the_last_escape  # type: ignore[method-assign]
+    with pytest.raises(ReferenceNotFoundError, match="already-attached reference"):
+        await MigratedComposer()._mention_by_name(page, "second.png", expect_chips=2)  # noqa: SLF001
+    assert page.typed.count("<Escape>") == FRAME_SEARCH_ATTEMPTS
+
+
 async def test_a_reference_that_does_not_attach_is_refused_before_submit() -> None:
     """The picker silently inserting nothing is the failure mode that would otherwise
     generate — and bill — a clip with none of the user's references on it."""
