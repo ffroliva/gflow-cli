@@ -121,6 +121,8 @@ def login_launch_kwargs(
         "args": [
             "--disable-blink-features=AutomationControlled",
             "--window-size=1920,1080",
+            # Chrome restores the off-screen spot a generation run saved in the profile.
+            "--window-position=0,0",
             # Load-bearing beyond auth: keeps the profile off the macOS
             # keychain, which api/client.py also depends on (#222).
             "--password-store=basic",
