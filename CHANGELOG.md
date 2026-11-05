@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`nano21` is accepted as an image model alias** for Nano Banana 2.1, alongside `nano2.1`
+  and `nano-2.1`, on the CLI, in manifests and in `gflow run` configs (#1145, thanks @L1meSn0w).
+
 ### Fixed
 
 - **An `@` mention that matches nothing no longer risks submitting the run.** gflow pressed

@@ -325,7 +325,7 @@ Options:
                             to disable. Widen (e.g. 10-30) if runs hit WAF
                             403s. [default: 0.5-1.5; GFLOW_CLI_JITTER_RANGE
                             overrides the default]
-  --model [nano2|nano2.1|nano-2.1|nano-pro|nano2-lite|image4|imagen4]
+  --model [nano2|nano21|nano2.1|nano-2.1|nano-pro|nano2-lite|image4|imagen4]
                             Image model alias.                [default: nano2]
   --aspect [9:16|16:9|1:1|4:3|3:4]
                             Aspect ratio.                     [default: 9:16]
@@ -361,7 +361,7 @@ Options:
 
 | Alias | Backing model | Notes |
 |---|---|---|
-| `nano2` (also `nano2.1`, `nano-2.1`) | Nano Banana 2 (`NARWHAL`) | Default. Fast, balanced quality. On `flow.google.com` Flow now offers Nano Banana 2.1 (wire `BELUGA`) in its place, and `nano2` selects it (#958). The `2.1` spellings select the same tier (#1038); a labs request for that tier carries `NARWHAL` (last seen there as Nano Banana 2). |
+| `nano2` (also `nano21`, `nano2.1`, `nano-2.1`) | Nano Banana 2 (`NARWHAL`) | Default. Fast, balanced quality. On `flow.google.com` Flow now offers Nano Banana 2.1 (wire `BELUGA`) in its place, and `nano2` selects it (#958). The `2.1` spellings select the same tier (#1038); a labs request for that tier carries `NARWHAL` (last seen there as Nano Banana 2). |
 | `nano-pro` | Nano Banana Pro (`GEM_PIX_2`) | Higher quality, slower. |
 | `nano2-lite` | Nano Banana 2 Lite (`HARBOR_SEAL`) | Lightweight Nano Banana 2 variant. Its i2i reference cap is a provisional 3 and its daily quota is unmeasured (#787). |
 | `image4` | Imagen 4 (`IMAGEN_3_5`) | Photoreal-leaning Imagen variant. No longer in Flow's model menu (absent since 2026-08-26), and the flow.google.com composer refuses it before submit. |
@@ -463,7 +463,7 @@ Arguments:
 
 Options:
   --ref PATH_OR_UUID        Reference image. Repeat for multiple. [required]
-  --model [nano2|nano2.1|nano-2.1|nano-pro|nano2-lite|image4|imagen4]
+  --model [nano2|nano21|nano2.1|nano-2.1|nano-pro|nano2-lite|image4|imagen4]
                             Image model alias.                [default: nano2]
   --aspect [9:16|16:9|1:1|4:3|3:4]
                             Aspect ratio.                     [default: 9:16]
@@ -1934,7 +1934,7 @@ catalog has not seen yet is recorded without one, as with `t2i --project`).
 | `prompts` | **yes** | — | 1–50 entries. |
 | `prompts[].text` | **yes** | — | 1–2000 chars. |
 | `prompts[].aspect_ratio` | no | `9:16` | `9:16` / `16:9` / `1:1` / `4:3` / `3:4`. |
-| `prompts[].model` | no | `nano2` | Any image `--model` value: `nano2`, `nano2.1`, `nano-2.1`, `nano-pro`, `nano2-lite`, `image4`, `imagen4`. |
+| `prompts[].model` | no | `nano2` | Any image `--model` value: `nano2`, `nano21`, `nano2.1`, `nano-2.1`, `nano-pro`, `nano2-lite`, `image4`, `imagen4`. |
 | `prompts[].count` | no | `1` | 1–4. |
 | `prompts[].output_filename` | no | `prompt_<index>` | Filename stem; saved as `<stem>_<image-index>.png`. |
 | `prompts[].ref` | no | — | `"batch:N"` (generate from row N's image) or a local image file. See [Referencing an earlier row](#referencing-an-earlier-row) and [Referencing a local file](#referencing-a-local-file). |

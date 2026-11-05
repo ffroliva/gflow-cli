@@ -78,6 +78,7 @@ def _prompt_hash(text: str) -> str:
 ALLOWED_ASPECT_RATIOS: tuple[str, ...] = ("9:16", "16:9", "1:1", "4:3", "3:4")
 ALLOWED_MODELS: tuple[str, ...] = (
     "nano2",
+    "nano21",
     "nano2.1",
     "nano-2.1",
     "nano-pro",
