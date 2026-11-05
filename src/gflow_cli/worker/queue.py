@@ -140,7 +140,7 @@ class QueueRepository:
 
     def get_task(self, task_id: str) -> QueueTask | None:
         row = self._store.conn.execute(
-            f"SELECT {_TASK_COLUMNS} FROM generation_queue WHERE task_id = ?",
+            f"SELECT {_TASK_COLUMNS} FROM generation_queue WHERE task_id = ?",  # noqa: S608 - constants and ? placeholders only, values stay bound
             (task_id,),
         ).fetchone()
         return _row_to_task(row) if row is not None else None
@@ -156,7 +156,7 @@ class QueueRepository:
             SELECT {_TASK_COLUMNS} FROM generation_queue
             WHERE profile_name = ? AND status = 'processing'
             ORDER BY created_at ASC
-            """,
+            """,  # noqa: S608 - constants and ? placeholders only, values stay bound
             (profile_name,),
         ).fetchall()
         return [_row_to_task(row) for row in rows]
@@ -178,7 +178,7 @@ class QueueRepository:
                 WHERE profile_name = ? AND status = 'pending'
                 ORDER BY created_at ASC
                 LIMIT 1
-                """,
+                """,  # noqa: S608 - constants and ? placeholders only, values stay bound
                 (profile_name,),
             ).fetchone()
             if row is None:
@@ -191,7 +191,7 @@ class QueueRepository:
         ``None`` if the task is missing, not pending, or invalid."""
         with self._store.transaction(immediate=True):
             row = self._store.conn.execute(
-                f"SELECT {_TASK_COLUMNS} FROM generation_queue "
+                f"SELECT {_TASK_COLUMNS} FROM generation_queue "  # noqa: S608 - constants and ? placeholders only, values stay bound
                 "WHERE task_id = ? AND status = 'pending'",
                 (task_id,),
             ).fetchone()
@@ -231,7 +231,7 @@ class QueueRepository:
             (claimant, now, now, task_id),
         )
         claimed = self._store.conn.execute(
-            f"SELECT {_TASK_COLUMNS} FROM generation_queue WHERE task_id = ?",
+            f"SELECT {_TASK_COLUMNS} FROM generation_queue WHERE task_id = ?",  # noqa: S608 - constants and ? placeholders only, values stay bound
             (task_id,),
         ).fetchone()
         return _row_to_task(claimed, decoded=decoded)
@@ -307,7 +307,7 @@ class QueueRepository:
                         flow_media_id = COALESCE(?, flow_media_id),
                         error_json = COALESCE(?, error_json),
                         updated_at = ?
-                    WHERE task_id = ?"""
+                    WHERE task_id = ?"""  # noqa: S608 - constants and ? placeholders only, values stay bound
                     + guard,
                     (status, flow_media_id, error_str, now, task_id, *only_from),
                 )

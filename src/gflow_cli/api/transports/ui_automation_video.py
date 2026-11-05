@@ -1974,7 +1974,7 @@ class VideoGenerationMixin:
         search_input = page.locator(PICKER_SEARCH_INPUT)
         # Human-like typing jitter to dodge WAF bot heuristics — not a security
         # context, so a plain PRNG is fine.
-        await search_input.press_sequentially(name, delay=random.randint(10, 50))  # NOSONAR
+        await search_input.press_sequentially(name, delay=random.randint(10, 50))  # NOSONAR  # noqa: S311 - human-pacing jitter, not cryptography
         await page.wait_for_timeout(600)
 
         # Text match — apostrophes in the display name would break a
@@ -2388,7 +2388,7 @@ class VideoGenerationMixin:
             return False  # no search box (older / #174 full-page cohort) → upload
         await search.fill("")
         # Human-like typing jitter to dodge WAF heuristics — not security.
-        await search.press_sequentially(filename, delay=random.randint(10, 50))  # NOSONAR
+        await search.press_sequentially(filename, delay=random.randint(10, 50))  # NOSONAR  # noqa: S311 - human-pacing jitter, not cryptography
         await page.wait_for_timeout(600)
 
         # Match the tile by its image ALT (= the exact filename, locale-invariant).
@@ -3126,7 +3126,7 @@ class VideoGenerationMixin:
             return None
         await search.fill("")
         # Human-like typing jitter to dodge WAF heuristics — not security.
-        await search.press_sequentially(term, delay=random.randint(10, 50))  # NOSONAR
+        await search.press_sequentially(term, delay=random.randint(10, 50))  # NOSONAR  # noqa: S311 - human-pacing jitter, not cryptography
         await page.wait_for_timeout(800)
         rendered = await VideoGenerationMixin._picker_grid_fingerprint(page)
         found = True

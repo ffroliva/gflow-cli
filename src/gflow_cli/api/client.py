@@ -4158,4 +4158,4 @@ def _redact_in_client_context(client_context: Any) -> None:
     if isinstance(recaptcha, dict):
         recaptcha_dict = cast("JsonObject", recaptcha)
         if "token" in recaptcha_dict:
-            recaptcha_dict["token"] = "<redacted>"
+            recaptcha_dict["token"] = "<redacted>"  # noqa: S105 - not a password: a redaction marker or a JS snippet name

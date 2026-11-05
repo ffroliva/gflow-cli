@@ -14,7 +14,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -25,6 +25,7 @@ from gflow_cli.api.transports.ui_automation import (
     UiAutomationTransport,
 )
 from gflow_cli.errors import FlowAppError
+from tests.fakes import AwaitableMock as MagicMock
 
 # ---------------------------------------------------------------------------
 # Helpers / shared fakes
