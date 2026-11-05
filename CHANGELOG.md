@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`nano21` is accepted as an image model alias** for Nano Banana 2.1, alongside `nano2.1`
+  and `nano-2.1`, on the CLI, in manifests and in `gflow run` configs (#1145, thanks @L1meSn0w).
+
 ### Fixed
+
+- **An `@` mention that matches nothing no longer risks submitting the run.** gflow pressed
+  Enter even when the picker offered nothing, and with no picker open Enter starts the
+  generation. It now presses Enter only on an offered match and cancels a miss with Escape,
+  so the run stops with a clean `ReferenceNotFoundError` instead of a raw timeout, attached
+  references stay in place, and a retry can find the asset (#1143, thanks @L1meSn0w).
 
 - **`gflow auth login` opens on screen on a profile that has already generated.** Chrome saves
   the off-screen generation window's position in the profile and, on the next launch, showed
