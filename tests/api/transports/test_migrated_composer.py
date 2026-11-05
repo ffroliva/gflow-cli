@@ -3985,7 +3985,6 @@ async def test_a_clip_that_finished_before_the_listing_read_is_adopted_1141(
         ),
         pytest.param([_t2v_record(2)], None, id="the-listing-did-not-answer"),
         pytest.param([], [], id="the-listing-names-nothing"),
-        pytest.param([_t2v_record(2)], [], id="a-poll-names-a-clip-the-listing-does-not"),
         pytest.param(
             [],
             [_t2v_record(3, created=time.time() + 120, url=VIDEO_URL)],
@@ -4188,3 +4187,22 @@ async def test_a_model_like_word_in_the_prompt_is_not_taken_for_the_key_1141(
         page, poll_timeout_s=2.0, on_started=None, project_id=PROJ_UUID, adopt_prompt=prompt
     )
     assert rec.workflow_id == WF_OURS
+
+
+async def test_a_clip_the_listing_does_not_name_is_never_adopted_1141() -> None:
+    """A poll alone is not enough, even once the clip has finished."""
+    with pytest.raises(TransportTimeoutError, match="does not name") as ei:
+        await _observe_t2v(
+            [_poll(_t2v_record(2)), _poll(_t2v_record(3, url=VIDEO_URL))],
+            tab=ListingTab(_listing()),
+        )
+    assert ei.value.retryable is False
+
+
+async def test_the_listing_is_read_only_after_a_candidate_finishes_1141() -> None:
+    """It answers without a clip still generating, which would refuse every run."""
+    rec, tabs = await _observe_t2v(
+        [_poll(_t2v_record(2)), _poll(_t2v_record(3, url=VIDEO_URL))],
+        tab=ListingTab(_listing(_t2v_record(3, url=VIDEO_URL))),
+    )
+    assert rec.is_done and rec.workflow_id == WF_OURS and tabs == 1

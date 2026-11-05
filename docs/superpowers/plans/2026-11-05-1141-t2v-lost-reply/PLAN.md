@@ -13,7 +13,7 @@ exit 9 while Flow bills and finishes it. Never adopt a clip that may be someone 
 | Opt-in | New keyword `adopt_prompt` on `submit_and_observe`, passed only by `run_video` for t2v with `count == 1` | `run_extend` must keep its immediate exit 9 |
 | Identity | Exact `[5][1]` prompt, exact `[5][6][1][0]` model key taken from the outgoing body, `[1]` equal to `project_id` | No client id is echoed (spike) |
 | Polls | Collect candidates, never adopt. Only `rec.is_running` counts | Ambiguity is judged across everything seen |
-| Listing | Required. Read as soon as a poll names a candidate, or at the 60 s budget. Any status counts if prompt, model and window match, so a clip that already finished is found | It is the only global view |
+| Listing | Required, and it must name the clip. Read once a candidate finishes, or at the 60 s budget if no poll named one. It does not name a clip still generating (measured twice) | It is the only global view |
 | Listing unavailable | Exit 9 | Bounds the generate-lock hold to about 90 s |
 | Time window | `created` from 15 s before the click up to now | `created` is whole seconds and precedes the click (spike); a re-run takes longer than 15 s to reach its click |
 | Outside the window | A matching running record raises exit 9 at once | It may be another run of the same prompt |

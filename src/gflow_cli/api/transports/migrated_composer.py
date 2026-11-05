@@ -3085,7 +3085,8 @@ class MigratedComposer:
         submit_key: dict[str, str] = {}
         clicked_at = 0.0
         by_prompt: _ClipByPrompt | None = None
-        # Set by the first poll naming a candidate, so the listing need not wait out the budget.
+        # Set when a candidate finishes: the listing does not name a clip still generating
+        # (measured 2026-11-05, answered in 3 s without it, twice).
         candidate_seen: asyncio.Future[None] = loop.create_future()
 
         def on_request(request: Any) -> None:
@@ -3199,7 +3200,9 @@ class MigratedComposer:
             refusal = by_prompt.note_poll(rid, payload)
             if refusal is not None:
                 submitted.set_exception(refusal)
-            elif by_prompt.candidates and not candidate_seen.done():
+            elif not candidate_seen.done() and any(
+                not rec.is_running for rec in by_prompt.candidates.values()
+            ):
                 candidate_seen.set_result(None)
 
         def _decide_by_prompt(listing: Any | None) -> None:
@@ -3356,6 +3359,12 @@ class MigratedComposer:
                 timeout=budget,
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            if by_prompt is not None and by_prompt.candidates and not submitted.done():
+                await asyncio.wait(
+                    {submitted, route_error, candidate_seen},
+                    timeout=max(0.0, deadline - time.monotonic()),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
             if lost and not submitted.done() and not route_error.done() and project_id:
                 # No poll named it (their bodies can be lost too): the project listing,
                 # read in a tab opened only now, after the upload's file chooser is done.
