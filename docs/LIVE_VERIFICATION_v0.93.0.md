@@ -87,4 +87,9 @@ extend rows. Left as issues: the billed `fetch_mp4` wire error's hint, and `exte
 
 ## Post-tag evidence
 
-Filled in after the tag.
+| Check | Result |
+|---|---|
+| Signed tag | `v0.93.0`, SSH-signed (`git cat-file -p v0.93.0` carries one `BEGIN SSH SIGNATURE`) |
+| `Release` workflow | run 42121348019, success |
+| GitHub Release | `v0.93.0`, published 2026-11-05T22:26:05Z, not a prerelease |
+| PyPI | `pip index versions gflow-cli --no-cache-dir` lists 0.93.0 as the latest |
