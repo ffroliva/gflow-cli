@@ -263,7 +263,7 @@ drift (`RED`); session now dead ⇒ genuine rot (`AUTH-EXPIRED`). The first live
 proved why this matters: an `AuthExpiredError` on `project.createProject`
 *looked* exactly like session rot, but the session verified clean seconds later —
 so it was a real divergence between two auth surfaces, and a name-matching
-classifier would have buried it. The extra probe costs ~45s and only runs after a
+classifier would have buried it. The extra probe costs up to ~2 min and only runs after a
 failure.
 
 > The route is `labs.google/fx/api/trpc/project.createProject` — the NextAuth

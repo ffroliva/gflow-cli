@@ -96,7 +96,8 @@ profile_ffroliva/
 ```
 
 `.gflow_account` contains the plain email address (`ffroliva@gmail.com`) and is
-written by `gflow auth login` immediately after the session is verified. It is the
+written by `gflow auth login` immediately after the session is verified. If no address can
+be read from a verified session, the login still succeeds and any old file is removed. It is the
 source of truth for "which Google account is this profile signed into?", surfaced by
 `gflow auth list` and `profile_store.list_profiles()`.
 
@@ -269,7 +270,7 @@ use another `--profile` ([#984](https://github.com/ffroliva/gflow-cli/issues/984
 
 ### `gflow auth status`
 
-Reports where the profile lives, then **proves the session**: it probes the Flow session endpoint with the profile's cookies (no browser, no credits) and exits `0` only when the session is verified — `1` otherwise. Handy for scripts: `gflow auth status && gflow run ...`.
+Reports where the profile lives, then **proves the session**: it probes the session with the profile's cookies (no credits; on flow.google.com this opens a short-lived headless browser) and exits `0` only when the session is verified — `1` otherwise. Handy for scripts: `gflow auth status && gflow run ...`.
 
 ```bash
 $ gflow auth status
@@ -334,7 +335,8 @@ Profiles in /home/you/.local/share/gflow-cli
 
 The **Google account** column shows the email address from `.gflow_account`. Profiles
 created before develop post-v0.9.1 (before this feature shipped) will show `unknown`
-until `gflow auth login` is re-run against them — the file is written on every login.
+until `gflow auth login` is re-run against them — every login that can read an address
+writes the file.
 
 `--json` includes `google_account` per entry:
 

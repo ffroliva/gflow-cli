@@ -2006,9 +2006,9 @@ async def gflow_list_projects(
     description=(
         "Non-interactive, credit-free Flow session probe (#497). Call this "
         "BEFORE a generation tool to fail fast on expired auth, before a long "
-        "blocking generation call. Never starts an interactive login flow; may boot a "
-        "short-lived headless browser only if cookie decryption requires the "
-        "Playwright fallback. May take up to ~2 min on a slow network."
+        "blocking generation call. Never starts an interactive login flow. May boot a "
+        "short-lived headless browser, which on flow.google.com is the usual path, and "
+        "may take up to ~2 min on a slow network."
     ),
 )
 @_guarded

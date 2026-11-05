@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.93.0] — 2026-11-05
+
 ### Added
 
 - **`nano21` is accepted as an image model alias** for Nano Banana 2.1, alongside `nano2.1`
@@ -14,14 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A text-to-video run survives a lost submit reply.** Chrome sometimes drops the reply to
-  the submit while Flow makes and bills the clip, and gflow stopped with exit 9. It now finds
-  the clip by its exact prompt and model and follows it to the end, without a second submit.
-  With more than one possible clip it still stops with exit 9, because adopting another run's
-  clip would be worse (#1141).
+- **A one-clip text-to-video run survives a lost submit reply.** Chrome sometimes drops the
+  reply to the submit while Flow makes and bills the clip, and gflow stopped with exit 9. It now
+  finds the clip by its exact prompt and model and follows it to the end, without a second
+  submit. With `--count` above 1, or when the project listing cannot name exactly one clip, it
+  still stops with exit 9, because adopting another run's clip would be worse (#1141).
 
-- **A finished video is downloaded again on flow.google.com.** Flow's status replies now carry
-  the clip's thumbnail link where the clip's link used to be. gflow took it for the clip, so a
+- **A finished text-to-video clip is downloaded again on flow.google.com.** Flow's status replies
+  now carry the clip's thumbnail link where the clip's link used to be. gflow took it for the clip, so a
   billed run failed with exit 6 and `HTTP 302`, leaving nothing on disk. It now reads the clip
   through the clip's own page, the same way `gflow data download` does, and checks its size.
   A clip already stranded this way is recovered for free with
@@ -45,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`auth login` no longer crashes when no account address can be read.** A verified login
   without one finished with an `AssertionError`. It now succeeds and removes any old recorded
   account, so `--account` and the chooser fail closed.
+
+### Security
+
+- `oauthlib` is locked at 4.0.1 for CVE-2026-49272. It reaches installs through the `gcs` extra,
+  which `uv.lock` does not bind for pip users.
 
 ## [0.92.1] — 2026-10-30
 
@@ -6826,7 +6833,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.92.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.93.0...HEAD
+[0.93.0]: https://github.com/ffroliva/gflow-cli/compare/v0.92.1...v0.93.0
 [0.92.1]: https://github.com/ffroliva/gflow-cli/compare/v0.92.0...v0.92.1
 [0.92.0]: https://github.com/ffroliva/gflow-cli/compare/v0.91.0...v0.92.0
 [0.91.0]: https://github.com/ffroliva/gflow-cli/compare/v0.90.0...v0.91.0
