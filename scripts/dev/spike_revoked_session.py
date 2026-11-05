@@ -29,7 +29,9 @@ from gflow_cli.auth.strategies import async_playwright
 from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.profile_lease import ProfileLease
 
-_SKIP = shutil.ignore_patterns("Singleton*", "lockfile", "*.lock", "Cache", "Code Cache", "GPUCache")
+_SKIP = shutil.ignore_patterns(
+    "Singleton*", "lockfile", "*.lock", "Cache", "Code Cache", "GPUCache"
+)
 
 
 async def sign_out(profile: str) -> None:
