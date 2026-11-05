@@ -3643,7 +3643,7 @@ class MigratedComposer:
         try:
             return await asyncio.wait_for(terminal, timeout=grace)
         except TimeoutError:
-            log.warning("migrated.result_url_not_observed", grace_s=grace)
+            log.info("migrated.result_url_not_observed", grace_s=grace)
             return done_no_url.result()
 
     # --- download ---------------------------------------------------------------
@@ -3710,6 +3710,34 @@ class MigratedComposer:
             route="batchexecute:as29s",
         )
 
+    @staticmethod
+    async def clip_bytes(page: Page, record: GenerationRecord) -> bytes:
+        """The bytes of a finished, billed clip, from whichever source it has.
+
+        Every failure ends in the free recovery: this clip is billed, so advice to re-run
+        would bill it again (#941). The clip's route replaces the page, so only a caller
+        that has finished with the page may reach this."""
+        if record.video_url:
+            return await MigratedComposer.fetch_mp4(page, record)
+        from gflow_cli.api.transports import migrated_recover  # noqa: PLC0415 - cycle
+
+        try:
+            _, body = await migrated_recover.read_clip(
+                page, project_id=record.project_id, media_id=record.media_id
+            )
+        except (GFlowError, PlaywrightError, TimeoutError) as exc:
+            raise MediaDownloadError(
+                media_id=record.media_id,
+                detail=(
+                    "migrated host: the clip finished but could not be read from its own "
+                    f"route ({type(exc).__name__})"
+                ),
+                route="flow-content.google",
+                remediation_hint=recoverable_clip_hint(record.media_id),
+                retryable=False,
+            ) from exc
+        return body
+
     async def download(
         self,
         page: Page,
@@ -3721,14 +3749,7 @@ class MigratedComposer:
         With no clip URL on the record, its own route supplies one (#1153): since
         2026-11-05 no status reply in the run was seen to name the clip. The labs
         ``media.getMediaUrlRedirect`` route answers 404 for a migrated media id."""
-        if record.video_url:
-            body = await self.fetch_mp4(page, record)
-        else:
-            from gflow_cli.api.transports import migrated_recover  # noqa: PLC0415 - cycle
-
-            _, body = await migrated_recover.read_clip(
-                page, project_id=record.project_id, media_id=record.media_id
-            )
+        body = await self.clip_bytes(page, record)
         path = await save(record.media_id, body)
         log.info("migrated.download", path=str(path), bytes=len(body))
         return path

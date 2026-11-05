@@ -1,10 +1,8 @@
 """Recover a clip that finished and billed but whose download failed (#865, #871).
 
-When the migrated composer's 20 s URL grace expires, the generation has already
-happened and the credit is already spent, but no signed media URL was ever observed —
-so the run raises ``WireFormatError`` (exit 7) and the asset is left in the project with
-``local_path: null``. Until now the only recovery the CLI offered was to pay for the
-generation again.
+A finished, billed clip can reach no file: its download fails, or the run ends before it.
+The asset is then left in the project with ``local_path: null``. Since #1153 a normal run
+uses this same route, through :func:`read_clip`, whenever its record names no clip URL.
 
 The retrieval path measured on 2026-09-17 (see
 ``docs/superpowers/spikes/2026-09-17-stranded-clip-recovery.md``):

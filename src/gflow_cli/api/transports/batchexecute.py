@@ -35,7 +35,6 @@ from gflow_cli.errors import WireFormatError
 
 _XSSI_PREFIX = ")]}'"
 _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
-_THUMBNAIL_HOST = "lh3.googleusercontent.com"
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-]{120,}")
 
 STATUS_RUNNING = 2
@@ -239,7 +238,7 @@ def _clip_url(value: Any) -> str | None:
     redirects twice and ends in a JPEG of about 20 KB. Treated as the clip's URL, it failed
     a billed run; with ``None`` here the download reads the clip through its own route."""
     url = _url(value)
-    return None if url and urlsplit(url).hostname == _THUMBNAIL_HOST else url
+    return None if url and urlsplit(url).path.startswith("/asb/") else url
 
 
 def _discovery_head(payload: Any) -> str:
