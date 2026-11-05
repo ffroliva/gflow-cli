@@ -373,7 +373,7 @@ def auth_status(profile: str | None) -> None:
     # it (issue #471). Fail-closed: only a verified session exits 0.
     from gflow_cli.auth import verification
 
-    console.print("[dim]Probing Flow session (may take up to ~45s on a slow network)...[/dim]")
+    console.print("[dim]Probing Flow session (may take up to ~2 min on a slow network)...[/dim]")
     status_result = asyncio.run(
         verification.verify_flow_profile(auth_mod.profile_dir(name), source="status")
     )

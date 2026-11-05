@@ -864,3 +864,17 @@ def test_login_instructions_say_gflow_closes_chrome(capsys: pytest.CaptureFixtur
 
 def test_google_session_only_hint_drops_close_chrome() -> None:
     assert "before closing Chrome" not in UNVERIFIED_HINT[FlowSessionOutcome.GOOGLE_SESSION_ONLY]
+
+
+@pytest.mark.asyncio
+async def test_a_verified_login_without_an_address_does_not_crash(tmp_path: Path) -> None:
+    """Both oracles may authenticate with no readable address; login must still finish."""
+    from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
+
+    status = FlowSessionStatus(
+        outcome=FlowSessionOutcome.AUTHENTICATED, user_email=None, source="chrome"
+    )
+    with patch("gflow_cli.auth.real_chrome.verify_flow_profile", AsyncMock(return_value=status)):
+        await RealChromeStrategy()._verify_and_record(tmp_path)
+    assert (tmp_path / ".gflow_browser_strategy").read_text(encoding="utf-8") == "chrome"
+    assert not (tmp_path / ".gflow_account").exists()

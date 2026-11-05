@@ -354,9 +354,9 @@ async def verify_flow_session(
     return result
 
 
-#: The migrated-host fallback probe. `myaccount` is the oracle because it is
-#: server-side: a revoked session is redirected off it, which a client-rendered page
-#: cannot attest to.
+#: The migrated-host fallback probe. `myaccount` is the first oracle because it is
+#: server-side: a revoked session is redirected off it. Only when that request cannot
+#: complete does `_verify_migrated_workspace` read Flow's rendered workspace instead.
 _MYACCOUNT_ORIGIN = "https://myaccount.google.com"
 #: Any domain, not just gmail.com — an `@gmail.com`-only pattern declined every
 #: Google Workspace account (dev@axelate.io, user@mycompany.com, user@googlemail.com
@@ -442,6 +442,19 @@ def _origin_of(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}" if parts.scheme else "(unparseable)"
 
 
+def record_account(profile_dir: Path, email: str | None) -> None:
+    """Keep `.gflow_account` true after a verified login.
+
+    With no readable address the old file goes, so `--account` and the account chooser
+    fail closed rather than act on the account signed in before.
+    """
+    account_file = profile_dir / ".gflow_account"
+    if email:
+        account_file.write_text(email, encoding="utf-8")
+    else:
+        account_file.unlink(missing_ok=True)
+
+
 async def _verify_migrated_workspace(ctx: BrowserContext, source: str) -> FlowSessionStatus | None:
     """Read Flow's signed-in workspace after the My Account request cannot complete.
 
@@ -498,9 +511,11 @@ async def _verify_migrated_host_fallback(
 
     Fail-closed: upgrades GOOGLE_SESSION_ONLY to AUTHENTICATED only when BOTH
     the .google.com SSO cookie (SAPISID) AND the flow.google.com app session
-    cookie (__Secure-OSID/OSID) are present, AND the account email resolves
-    from myaccount.google.com. Anything else returns None (caller keeps the
-    original outcome). Never touches other outcomes.
+    cookie (__Secure-OSID/OSID) are present, AND either the request stays on
+    myaccount.google.com or, if that request cannot complete,
+    ``_verify_migrated_workspace`` attests the workspace. Anything else returns
+    None (caller keeps the original outcome). Never touches other outcomes.
+    The email is a label, not the decision, so either path can return it as None.
 
     The profile is opened with the engine that owns it — ``channel_for_profile``,
     the same resolver generation uses — not a hard-coded ``channel="chrome"``.
@@ -526,7 +541,13 @@ async def _verify_migrated_host_fallback(
                 user_data_dir=str(profile_dir),
                 channel=channel,
                 headless=True,
-                args=["--password-store=basic"],
+                # Same flags as renew.py: the workspace read below visits Flow itself.
+                ignore_default_args=["--enable-automation", "--no-sandbox"],
+                args=[
+                    "--password-store=basic",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                ],
                 **browser_proxy_kwargs(get_settings().browser_proxy),
             )
             try:
@@ -539,6 +560,9 @@ async def _verify_migrated_host_fallback(
                 except Exception as exc:
                     logger.warning(
                         "auth_myaccount_probe_unavailable", source=source, error=type(exc).__name__
+                    )
+                    await ctx.add_init_script(
+                        "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
                     )
                     return await _verify_migrated_workspace(ctx, source)
             finally:

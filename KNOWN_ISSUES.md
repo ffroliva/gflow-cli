@@ -1579,7 +1579,8 @@ without cookies ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023),
 [spike](docs/superpowers/spikes/2026-10-22-labs-session-oracle-gone.md)). A 410 is now
 read as "no labs session": a profile without Google cookies is `NO_SESSION`, and one with
 them is checked by the server-attested migrated-host probe (#791), which needs the Google
-SSO and flow.google.com session cookies, then reads `myaccount.google.com`. **Still open:**
+SSO and flow.google.com session cookies, then reads `myaccount.google.com` (or, only if that
+request cannot complete, Flow's rendered workspace). **Still open:**
 some access-token consumers that read the same URL are not ported. `gflow credits` is
 (#795: it reads flow.google.com's own balance reply). A login with `--browser internal` (bundled
 Chromium, also what `--browser auto` picks when Chrome is missing) runs the same on-disk
