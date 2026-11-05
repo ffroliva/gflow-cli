@@ -27,13 +27,14 @@ import sys
 from gflow_cli.auth import profile_dir
 from gflow_cli.auth.strategies import async_playwright
 from gflow_cli.browser_manager import channel_for_profile
+from gflow_cli.profile_lease import ProfileLease
 
 _SKIP = shutil.ignore_patterns("Singleton*", "lockfile", "*.lock", "Cache", "Code Cache", "GPUCache")
 
 
 async def sign_out(profile: str) -> None:
     path = profile_dir(profile)
-    async with async_playwright() as pw:
+    async with ProfileLease(path), async_playwright() as pw:
         ctx = await pw.chromium.launch_persistent_context(
             str(path),
             channel=channel_for_profile(path),
