@@ -69,6 +69,11 @@ git diff origin/develop -- <path/to/file>
 variations** of the change — not one happy-path call. A change touching a generation code
 path is default-in-scope; skipping this gate requires a named reason, not silence.
 
+**0. One plain generation, whatever changed.** On a release, run `gflow video t2v` with nothing
+injected and open the file on disk. A live check of the changed feature cannot see a surface that
+broke on its own: Flow changed what a status reply carries, every video billed and then failed, and
+#1153 was found only by accident while testing a fault-injected path.
+
 **1. Define the live matrix.** Before running anything, name explicitly:
    - Which command(s) does the change touch?
    - Which variations actually exercise it? (E.g. for a mention-resolution fix: a character
