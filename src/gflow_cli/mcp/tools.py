@@ -2008,7 +2008,7 @@ async def gflow_list_projects(
         "BEFORE a generation tool to fail fast on expired auth, before a long "
         "blocking generation call. Never starts an interactive login flow; may boot a "
         "short-lived headless browser only if cookie decryption requires the "
-        "Playwright fallback. May take up to ~45s on a slow network."
+        "Playwright fallback. May take up to ~2 min on a slow network."
     ),
 )
 @_guarded

@@ -30,7 +30,7 @@ from .internal_chromium import (
     login_launch_kwargs,
     poll_session_until_authenticated,
 )
-from .verification import verify_flow_profile
+from .verification import record_account, verify_flow_profile
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -496,11 +496,9 @@ class RealChromeStrategy(AuthStrategy):
                 user_email=status.user_email,
                 probe="on_disk",
             )
-            # Marker read by browser_manager.channel_for_profile so FlowApiClient
-            # selects the system Chrome channel. Load-bearing — must persist here.
-            assert status.user_email, "AUTHENTICATED outcome must carry a non-empty user_email"
-            (profile_dir / ".gflow_account").write_text(status.user_email, encoding="utf-8")
-            _console.print(f"[green][OK] Flow session verified ({status.user_email}).[/green]")
+            record_account(profile_dir, status.user_email)
+            who = f" ({status.user_email})" if status.user_email else ""
+            _console.print(f"[green][OK] Flow session verified{who}.[/green]")
         else:
             logger.warning(
                 "auth_flow_session_unverified",

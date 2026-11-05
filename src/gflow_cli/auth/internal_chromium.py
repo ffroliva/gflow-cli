@@ -24,6 +24,7 @@ from .verification import (
     FlowSessionOutcome,
     evaluate_session_response,
     has_migrated_app_session,
+    record_account,
     verify_flow_profile,
 )
 
@@ -494,5 +495,4 @@ class InternalChromiumStrategy(AuthStrategy):
                 UNVERIFIED_MESSAGE[status.outcome],
                 remediation_hint=UNVERIFIED_HINT[status.outcome],
             )
-        if status.user_email:
-            (profile_dir / ".gflow_account").write_text(status.user_email, encoding="utf-8")
+        record_account(profile_dir, status.user_email)
