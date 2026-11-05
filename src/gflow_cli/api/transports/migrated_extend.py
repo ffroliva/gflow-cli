@@ -559,7 +559,7 @@ async def run_extend(  # noqa: PLR0913
             log.debug("migrated_extend.unroute_failed", error=type(exc).__name__)
     url = str(page.url)
     scene_id = url.split("/scene/", 1)[1].split("?")[0] if "/scene/" in url else None
-    video = await MigratedComposer.fetch_mp4(page, record) if record.is_done else None
+    video = await MigratedComposer.clip_bytes(page, record) if record.is_done else None
     return ExtendOutcome(
         record=record,
         video=video,

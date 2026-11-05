@@ -1474,11 +1474,10 @@ generation succeeded but its download did not.
 > immediately with exit 11 and a message saying so — it does not open a browser or wait.
 > Tracked in [#877](https://github.com/ffroliva/gflow-cli/issues/877).
 
-That case is real and costs money: on `flow.google.com` a generation whose signed media
-URL is not observed within the grace window exits 7 (`WireFormatError`) **after the
-credit has been spent**. The clip is in the Flow project, the catalog has a row for it,
-and before this command there was no way to fetch it — the only recovery the CLI offered
-was to run the generation again and pay a second time.
+That case is real and costs money: on `flow.google.com` a generation can finish and bill
+while its download fails, which exits 6 (`MediaDownloadError`) **after the credit has been
+spent**. The clip is in the Flow project and the catalog has a row for it, so this command
+fetches it without a second generation.
 
 Recovering costs **nothing**. The asset was already billed.
 

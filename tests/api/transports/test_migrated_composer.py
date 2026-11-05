@@ -12,6 +12,7 @@ CSS shapes — the composer must not grow new ones without a test here.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 import time
@@ -35,6 +36,7 @@ from gflow_cli.errors import (
     ConfigurationError,
     FlowHostMigratedError,
     InsufficientCreditsError,
+    MediaDownloadError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
     TransportTimeoutError,
@@ -4105,3 +4107,46 @@ async def test_a_finished_clip_with_no_url_is_read_from_its_own_route(
     assert path == tmp_path / f"{MEDIA_OURS}.mp4"
     assert asked == {"project_id": PROJ_UUID, "media_id": MEDIA_OURS}
     assert saved[MEDIA_OURS][4:8] == b"ftyp"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        WireFormatError(detail="no signed URL", route="batchexecute:as29s"),
+        RealPlaywrightTimeoutError("goto timed out"),
+    ],
+    ids=["no-url", "navigation-timeout"],
+)
+async def test_a_billed_clip_that_cannot_be_read_says_recover_it_never_re_run(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    """Advice to re-run bills a second time (#941), so every failure names the free route."""
+    from gflow_cli.api.transports import migrated_recover
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    async def read_clip(_page: Any, *, project_id: str, media_id: str) -> tuple[str, bytes]:
+        raise failure
+
+    monkeypatch.setattr(migrated_recover, "read_clip", read_clip)
+    record = GenerationRecord(WF_OURS, PROJ_UUID, MEDIA_OURS, 3)
+    with pytest.raises(MediaDownloadError) as ei:
+        await MigratedComposer.clip_bytes(FakePage(), record)
+    assert ei.value.retryable is False and ei.value.media_id == MEDIA_OURS
+    assert f"gflow data download {MEDIA_OURS}" in ei.value.remediation_hint
+    assert "Do not re-generate" in ei.value.remediation_hint
+
+
+def test_an_asb_preview_is_not_a_clip_on_any_host() -> None:
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    url = "https://flow.google.com/asb/token"
+    assert generation_record("jwpduf", _ours(3, url), workflow_id=WF_OURS).video_url is None
+
+
+def test_extend_reads_its_clip_through_the_same_seam_as_download() -> None:
+    """`run_extend` once called `fetch_mp4` directly and so missed the route read (#1153)."""
+    from gflow_cli.api.transports import migrated_extend
+
+    source = inspect.getsource(migrated_extend.run_extend)
+    assert "clip_bytes(page, record)" in source and "fetch_mp4" not in source
