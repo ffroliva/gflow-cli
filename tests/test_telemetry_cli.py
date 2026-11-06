@@ -341,5 +341,44 @@ def test_handled_crash_is_counted_on_both_arms(_tele_env: Path) -> None:
     assert any(r[2] == "crash" and r[1] == "cli" for r in _rows(_tele_env))
 
 
+def test_unguarded_command_crash_records_fingerprint(_tele_env: Path) -> None:
+    failure = RuntimeError("secret C:\\Users\\jane")
+
+    @click.group(cls=telemetry.CountingGroup, name="probe")
+    def probe() -> None:
+        pass
+
+    @probe.command()
+    def fail() -> None:
+        raise failure
+
+    result = CliRunner().invoke(probe, ["fail"])
+    assert result.exception is failure
+    crash_rows = [r for r in _rows(_tele_env) if r[1] == "cli" and r[2] == "crash"]
+    assert len(crash_rows) == 1
+    key = crash_rows[0][3]
+    assert key.startswith("RuntimeError <- ")
+    assert "secret" not in key
+    assert "jane" not in key
+    assert "\\" not in key
+
+
+def test_handled_crash_is_not_double_counted(_tele_env: Path) -> None:
+    from gflow_cli._cli_helpers import run_with_handlers
+
+    @click.group(cls=telemetry.CountingGroup, name="probe")
+    def probe() -> None:
+        pass
+
+    @probe.command()
+    def fail() -> None:
+        run_with_handlers(lambda: _raise_runtime_error(), cli_command="probe fail")
+
+    result = CliRunner().invoke(probe, ["fail"])
+    assert result.exit_code == 1
+    crash_rows = [r for r in _rows(_tele_env) if r[1] == "cli" and r[2] == "crash"]
+    assert len(crash_rows) == 1
+
+
 def _raise_runtime_error() -> object:
     raise RuntimeError("secret prompt")

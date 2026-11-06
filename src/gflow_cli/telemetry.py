@@ -331,6 +331,13 @@ class CountingGroup(click.Group):
         except KeyboardInterrupt:
             outcome = "130"
             raise
+        except Exception as exc:
+            outcome = "1"
+            try:
+                record_crash("cli", exc)
+            except Exception:
+                pass
+            raise
         except BaseException:
             outcome = "1"
             raise
