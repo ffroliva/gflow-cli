@@ -44,7 +44,13 @@ async def test_mcp_twin_matches_cli_json(
     assert cli_result.exit_code == 0, cli_result.output
     cli_json = json.loads(cli_result.output)
 
-    assert mcp_result == cli_json
+    mcp_result = await tools.gflow_usage_stats()
+    expected = dict(cli_json)
+    expected["commands"] = sorted(
+        [*cli_json["commands"], {"surface": "cli", "command": "data stats", "n": 1}],
+        key=lambda row: (row["surface"], row["command"]),
+    )
+    assert mcp_result == expected
     telemetry.killed.cache_clear()
 
 

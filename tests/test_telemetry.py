@@ -263,6 +263,18 @@ def test_transition_within_30_minutes_counts_a_pair(tmp_home: Path) -> None:
     assert _rows(tmp_home)[("transition", "image t2i -> video i2v")] == 1
 
 
+def test_mcp_transition_within_30_minutes_counts_a_pair(tmp_home: Path) -> None:
+    telemetry.record("mcp", "gflow_a", [], "0", 1.0)
+    telemetry.record("mcp", "gflow_b", [], "0", 1.0)
+    assert _rows(tmp_home)[("transition", "gflow_a -> gflow_b")] == 1
+
+
+def test_transition_between_surfaces_counts_nothing(tmp_home: Path) -> None:
+    telemetry.record("mcp", "gflow_x", [], "0", 1.0)
+    telemetry.record("cli", "mcp run", [], "0", 1.0)
+    assert not [key for key in _rows(tmp_home) if key[0] == "transition"]
+
+
 def test_transition_after_30_minutes_counts_nothing(tmp_home: Path) -> None:
     telemetry.record("cli", "image t2i", [], "0", 1.0)
     stale = (datetime.now(UTC) - timedelta(minutes=31)).timestamp()
