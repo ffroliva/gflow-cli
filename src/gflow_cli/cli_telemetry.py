@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import NoReturn
 
 import click
 
@@ -48,6 +49,14 @@ def status_cmd(as_json: bool) -> None:
     click.echo(f"Upload: {'on' if upload_reason is None else f'off ({upload_reason})'}")
 
 
+def _fail(detail: str) -> NoReturn:
+    """The one loud telemetry failure: a choice that could not be saved (exit 11)."""
+    from gflow_cli.errors import ConfigurationError
+
+    click.echo(f"{ConfigurationError.title}: {detail}", err=True)
+    sys.exit(11)
+
+
 @telemetry.command("on")
 def on_cmd() -> None:
     """Allow weekly usage uploads after the interactive usage notice."""
@@ -56,8 +65,7 @@ def on_cmd() -> None:
     try:
         telemetry_mod.set_opted_out(False)
     except ConfigurationError as exc:
-        click.echo(f"{ConfigurationError.title}: {exc.detail or exc}", err=True)
-        sys.exit(11)
+        _fail(str(exc.detail or exc))
     if switch := telemetry_mod.killed():
         click.echo(f"Telemetry is still off because {switch} is set.", err=True)
     if not telemetry_mod.notice_seen():
@@ -77,8 +85,7 @@ def off_cmd(delete: bool) -> None:
     try:
         telemetry_mod.set_opted_out(True)
     except ConfigurationError as exc:
-        click.echo(f"{ConfigurationError.title}: {exc.detail or exc}", err=True)
-        sys.exit(11)
+        _fail(str(exc.detail or exc))
     click.echo(
         "Usage telemetry is off. Nothing will be counted or sent from this machine.", err=True
     )
@@ -93,9 +100,7 @@ def off_cmd(delete: bool) -> None:
             ):
                 path.unlink(missing_ok=True)
         except OSError as exc:
-            raise ConfigurationError(
-                detail=f"Could not delete local usage data at {path}: {exc}"
-            ) from exc
+            _fail(f"Could not delete local usage data at {path}: {exc}")
         click.echo(
             "Local usage data deleted. The server holds no per-install data, so there is nothing "
             "to delete remotely.",

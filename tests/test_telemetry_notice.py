@@ -220,6 +220,28 @@ def test_off_that_cannot_write_exits_11_and_says_so(
     assert str(blocker / "home" / "telemetry.off") in result.output
 
 
+def test_off_delete_that_cannot_delete_exits_11_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "telemetry.db").write_bytes(b"x")
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
+    real_unlink = Path.unlink
+
+    def locked(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "telemetry.db":
+            raise PermissionError("locked")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", locked)
+    result = CliRunner().invoke(main, ["telemetry", "off", "--delete"])
+    assert result.exit_code == 11
+    assert str(home / "telemetry.db") in result.output
+    assert "Traceback" not in result.output
+    assert (home / "telemetry.off").exists()  # the opt-out itself still persisted
+
+
 def test_no_writer_can_undo_off() -> None:
     source = Path(telemetry.__file__).read_text(encoding="utf-8")
     lines = [

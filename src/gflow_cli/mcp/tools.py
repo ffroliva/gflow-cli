@@ -2087,7 +2087,9 @@ async def gflow_list_projects(
     description=(
         "Summarize local gflow-cli usage statistics over the last N weeks. "
         "Returns command invocation counts from local telemetry (when enabled) "
-        "and generation counts from the local catalog."
+        "and generation counts from the local catalog. Like every gflow tool call, it may "
+        "start the weekly background upload of usage totals when one is due (only on machines "
+        "where a person has seen the usage notice; see the telemetry block's upload state)."
     ),
 )
 @_guarded
