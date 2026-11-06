@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 import time
-from collections.abc import Iterable
+import traceback
+from collections.abc import Iterable, Sequence
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -20,6 +22,7 @@ from functools import cache
 from pathlib import Path
 from typing import Literal
 
+import click
 import structlog
 from dotenv import dotenv_values
 
@@ -161,6 +164,165 @@ def record(
             con.execute("DELETE FROM counters WHERE week < ?", (cutoff,))
     except Exception as exc:  # noqa: BLE001 - telemetry must never affect a command
         _debug("telemetry_record_failed", error=type(exc).__name__)
+
+
+def record_crash(
+    surface: Literal["cli", "mcp"], exc: BaseException, *, fingerprint: str | None = None
+) -> None:
+    """Count a privacy-safe crash fingerprint without affecting the caller."""
+    try:
+        key = fingerprint if fingerprint is not None else crash_key(exc)
+        if killed() or opted_out():
+            return
+        home = _resolve_home()
+        home.mkdir(parents=True, exist_ok=True)
+        with closing(_connect(home)) as con, con:
+            con.execute(
+                "INSERT INTO counters VALUES (?, ?, 'crash', ?, 1)"
+                " ON CONFLICT(week, surface, kind, key) DO UPDATE SET n = n + 1",
+                (iso_week(), surface, key),
+            )
+    except Exception as failure:  # noqa: BLE001
+        _debug("telemetry_crash_failed", error=type(failure).__name__)
+
+
+def crash_key(exc: BaseException) -> str:
+    """Fingerprint exception type and safe gflow_cli frame names only."""
+    cause = exc.__cause__ or (exc.__context__ if not exc.__suppress_context__ else None)
+    head = type(exc).__name__ + (f" from {type(cause).__name__}" if cause else "")
+    tokens: list[str] = []
+    third_party: str | None = None
+    ours = 0
+    frames = list(traceback.walk_tb(exc.__traceback__))
+    for frame, _ in reversed(frames):
+        module = frame.f_globals.get("__name__")
+        if not isinstance(module, str) or module.startswith("<") or module == "__main__":
+            continue
+        top = module.partition(".")[0]
+        if top in sys.stdlib_module_names:
+            continue
+        if module == "gflow_cli" or module.startswith("gflow_cli."):
+            if third_party:
+                tokens.append(f"<{third_party}>")
+                third_party = None
+            name = module.removeprefix("gflow_cli.") if module != "gflow_cli" else "gflow_cli"
+            tokens.append(f"{name}:{frame.f_code.co_qualname}")
+            ours += 1
+            if ours == 3:
+                break
+        else:
+            third_party = third_party or top
+    if third_party:
+        tokens.append(f"<{third_party}>")
+    return (f"{head} <- {' <- '.join(tokens)}" if ours else f"{head} at other")[:200]
+
+
+def leaf_and_flags(root: click.Group, argv: Sequence[str]) -> tuple[str, list[str]]:
+    """Resolve Click's command path and retain only registered leaf option names."""
+    group: click.Group = root
+    leaf: click.Command = root
+    path: list[str] = []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--":
+            break
+        if arg.startswith("-"):
+            option = next(
+                (
+                    p
+                    for p in group.params
+                    if isinstance(p, click.Option) and arg.split("=", 1)[0] in p.opts
+                ),
+                None,
+            )
+            if option and option.nargs and "=" not in arg:
+                index += option.nargs
+            index += 1
+            continue
+        command = group.commands.get(arg)
+        if command is None:
+            break
+        path.append(arg)
+        index += 1
+        if not isinstance(command, click.Group):
+            leaf = command
+            break
+        group = command
+        leaf = group
+    else:
+        leaf = group
+    if not path:
+        command_name = "gflow" if root.name in (None, "main") else root.name
+        leaf = root
+    else:
+        command_name = " ".join(path)
+    options = [p for p in leaf.params if isinstance(p, click.Option)]
+    aliases = {
+        name: next((o for o in opt.opts if o.startswith("--")), opt.opts[0])
+        for opt in options
+        for name in opt.opts + opt.secondary_opts
+    }
+    flags: list[str] = []
+    for arg in argv:
+        if arg == "--":
+            break
+        name = arg.split("=", 1)[0]
+        if name in aliases and aliases[name] not in flags:
+            flags.append(aliases[name])
+    return command_name, flags
+
+
+class CountingGroup(click.Group):
+    """Click root group that records command names and registered flag names."""
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        ctx.meta["telemetry_argv"] = list(args)
+        return super().parse_args(ctx, args)
+
+    def invoke(self, ctx: click.Context) -> object:
+        argv = ctx.meta.get("telemetry_argv", [])
+        command, flags = leaf_and_flags(self, argv)
+        started = time.monotonic()
+        outcome = "0"
+        try:
+            return super().invoke(ctx)
+        except SystemExit as exc:
+            outcome = (
+                str(exc.code) if isinstance(exc.code, int) else "0" if exc.code is None else "1"
+            )
+            raise
+        except click.exceptions.Exit as exc:
+            outcome = str(exc.exit_code)
+            raise
+        except click.ClickException as exc:
+            outcome = str(exc.exit_code)
+            raise
+        except click.Abort:
+            outcome = "1"
+            raise
+        except KeyboardInterrupt:
+            outcome = "130"
+            raise
+        except BaseException:
+            outcome = "1"
+            raise
+        finally:
+            try:
+                help_opts = set(ctx.help_option_names)
+                current: click.Command = self
+                for arg in argv:
+                    if arg == "--":
+                        break
+                    if isinstance(current, click.Group):
+                        current = current.commands.get(arg, current)
+                        help_opts.update(current.context_settings.get("help_option_names", ()))
+                if not any(
+                    a in help_opts for a in argv[: argv.index("--") if "--" in argv else len(argv)]
+                ):
+                    record("cli", command, flags, outcome, time.monotonic() - started)
+            except Exception:
+                pass
 
 
 def read_counters(weeks: int | None = None) -> list[Counter]:

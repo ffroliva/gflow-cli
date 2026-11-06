@@ -776,6 +776,7 @@ def build_manifest(
     artifact_status: dict[str, str],
     har_state: str,
     suppressed_count: int,
+    fingerprint: str | None = None,
 ) -> dict[str, object]:
     """Assemble ``manifest.json`` from an explicit allowlist (§5.1).
 
@@ -783,7 +784,7 @@ def build_manifest(
     ``Settings.model_dump()``, which would serialize API keys, daemon tokens,
     storage URIs, profile paths, and HAR paths (S01).
     """
-    return {
+    manifest: dict[str, object] = {
         "schema": "gflow-incident-v1",
         "incident_id": incident_id,
         "created_utc": created_utc,
@@ -811,6 +812,9 @@ def build_manifest(
         "suppressed_count": suppressed_count,
         "notice": _MANIFEST_NOTICE,
     }
+    if fingerprint is not None:
+        manifest["fingerprint"] = fingerprint
+    return manifest
 
 
 def render_report(manifest: dict[str, object]) -> bytes:
@@ -903,6 +907,7 @@ class _StagedBundle:
     artifacts: dict[str, str]
     artifact_status: dict[str, str]
     created_utc: str
+    fingerprint: str | None = None
     suppressed: int = 0
     finalized: bool = False
 
@@ -1335,6 +1340,12 @@ class IncidentRecorder:
 
         exc_class = type(exc).__name__
         problem_type = str(getattr(exc, "problem_type", "unexpected"))
+        try:
+            from gflow_cli.telemetry import crash_key
+
+            fingerprint = crash_key(exc)
+        except Exception:
+            fingerprint = None
         exit_code = exit_code_for(exc) if isinstance(exc, GFlowError) else 1
         retryable = is_retryable(exc) if isinstance(exc, GFlowError) else False
         created_utc = datetime.now(UTC).isoformat()
@@ -1364,6 +1375,7 @@ class IncidentRecorder:
                 artifact_status=status,
                 har_state="pending",
                 suppressed_count=0,
+                fingerprint=fingerprint,
             )
             bundle.write_artifact("report.md", render_report(report_manifest))
             artifacts["report.md"] = "report"
@@ -1397,6 +1409,7 @@ class IncidentRecorder:
             artifacts=artifacts,
             artifact_status=status,
             created_utc=created_utc,
+            fingerprint=fingerprint,
         )
 
     @staticmethod
@@ -1521,6 +1534,7 @@ class IncidentRecorder:
             artifact_status=staged.artifact_status,
             har_state=har_state,
             suppressed_count=staged.suppressed,
+            fingerprint=staged.fingerprint,
         )
 
     # Structural validation is module-level (validate_structural_dom) so the
