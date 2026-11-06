@@ -90,9 +90,10 @@ For exact switch status, run `gflow telemetry status`. The `gflow telemetry on` 
 are CLI-only by design; MCP exposes local statistics through `gflow_usage_stats` but does not expose
 an opt-out command.
 
-The uploader code is public at
-[github.com/ffroliva/gflow-telemetry-endpoint](https://github.com/ffroliva/gflow-telemetry-endpoint).
-Its report endpoint is `https://gflow-telemetry.ffroliva.workers.dev/v1/report`.
+The server that receives reports is public at
+[github.com/ffroliva/gflow-telemetry-endpoint](https://github.com/ffroliva/gflow-telemetry-endpoint),
+so what it stores can be checked. The client sends to `https://gflow-telemetry.ffroliva.workers.dev/v1/report`;
+the sender is `src/gflow_cli/telemetry_upload.py` in this repository.
 
 ## Notice
 
