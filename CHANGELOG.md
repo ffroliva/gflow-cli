@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Local usage telemetry commands `gflow telemetry status` and `gflow telemetry show`**
+  displaying local counter storage and payload report (#1164).
+
 ## [0.93.0] — 2026-11-05
 
 ### Added

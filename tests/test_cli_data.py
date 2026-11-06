@@ -530,7 +530,9 @@ def test_cli_stats_json_has_commands_and_generations(
 
     data = json.loads(result.output)
     assert data["weeks"] == 12
-    assert data["telemetry"] == {"state": "on", "switch": None}
+    assert data["telemetry"]["state"] == "on"
+    assert data["telemetry"]["switch"] is None
+    assert "report" in data["telemetry"]
 
     # Commands sorted by n desc then command
     cmds = data["commands"]
@@ -586,7 +588,9 @@ def test_cli_stats_when_killed_says_counters_are_off(
     result_json = CliRunner().invoke(main, ["data", "stats", "--json"])
     assert result_json.exit_code == 0, result_json.output
     data = json.loads(result_json.output)
-    assert data["telemetry"] == {"state": "off", "switch": "GFLOW_CLI_TELEMETRY"}
+    assert data["telemetry"]["state"] == "off"
+    assert data["telemetry"]["switch"] == "GFLOW_CLI_TELEMETRY"
+    assert "report" in data["telemetry"]
     assert data["commands"] is None  # Off must never read as zero usage
     telemetry.killed.cache_clear()
 

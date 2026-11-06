@@ -148,6 +148,8 @@ _MCP_EXEMPT: dict[str, str] = {
     "data media": "local catalog maintenance — not yet ported",
     "data prune": "destructive local cleanup — deliberately CLI-only",
     "data sync": "browser-driving reconciliation; MCP exposure deferred (#543)",
+    "telemetry status": "same state and report returned by gflow_usage_stats",
+    "telemetry show": "same state and report returned by gflow_usage_stats",
     "doctor": "interactive diagnostic; MCP tool deferred (#542)",
     "image batch": "batch pipelines — not yet ported",
     "image upload": "asset upload — covered indirectly by reference_images paths",

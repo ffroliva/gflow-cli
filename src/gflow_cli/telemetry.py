@@ -10,6 +10,8 @@ No connection is cached: a long-lived MCP server would otherwise pin the WAL.
 from __future__ import annotations
 
 import os
+import platform
+import secrets
 import sqlite3
 import sys
 import time
@@ -20,13 +22,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlsplit
 
 import click
 import structlog
 from dotenv import dotenv_values
 
+from gflow_cli import __version__
 from gflow_cli.config import _env_files, _resolve_home  # pyright: ignore[reportPrivateUsage]
+
+if TYPE_CHECKING:
+    from gflow_cli.tools.spec import ToolSpec
 
 log = structlog.get_logger(__name__)
 
@@ -40,6 +47,7 @@ def _debug(event: str, **kw: str) -> None:
 
 _RETAIN_WEEKS = 53
 _TRANSITION_WINDOW_S = 30 * 60
+SCHEMA = 1
 
 
 @dataclass(frozen=True)
@@ -100,6 +108,15 @@ def opted_out() -> bool:
         return True
 
 
+def state() -> tuple[Literal["on", "off"], str | None]:
+    """Return the telemetry state and the switch currently disabling it, if any."""
+    if switch := killed():
+        return "off", switch
+    if opted_out():
+        return "off", "telemetry.off"
+    return "on", None
+
+
 def _bucket(seconds: float) -> str:
     if seconds < 10:
         return "<10s"
@@ -119,6 +136,10 @@ def _connect(home: Path) -> sqlite3.Connection:
             " n INTEGER, PRIMARY KEY (week, surface, kind, key))"
         )
         con.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS reports ("
+            "week TEXT PRIMARY KEY, report_id TEXT NOT NULL, due_at TEXT, sent_at TEXT)"
+        )
     except BaseException:
         con.close()  # a leaked handle pins the file on Windows
         raise
@@ -356,3 +377,309 @@ def read_counters(weeks: int | None = None) -> list[Counter]:
     except Exception as exc:  # noqa: BLE001
         _debug("telemetry_read_failed", error=type(exc).__name__)
         return []
+
+
+def report_id_for(week: str) -> str:
+    """Return the stable random report_id for ``week``, creating one if needed."""
+    try:
+        home = _resolve_home()
+        home.mkdir(parents=True, exist_ok=True)
+        with closing(_connect(home)) as con, con:
+            row = con.execute("SELECT report_id FROM reports WHERE week = ?", (week,)).fetchone()
+            if row is not None:
+                return str(row[0])
+            rid = secrets.token_urlsafe(16)
+            con.execute(
+                "INSERT OR IGNORE INTO reports (week, report_id, due_at, sent_at)"
+                " VALUES (?, ?, NULL, NULL)",
+                (week, rid),
+            )
+            row = con.execute("SELECT report_id FROM reports WHERE week = ?", (week,)).fetchone()
+            return str(row[0]) if row is not None else rid
+    except Exception as exc:  # noqa: BLE001
+        _debug("telemetry_report_id_failed", error=type(exc).__name__)
+        return secrets.token_urlsafe(16)
+
+
+def stored_report_id(week: str) -> str | None:
+    """Return only a report ID known to be persisted, for upload deduplication."""
+    try:
+        home = _resolve_home()
+        if not (home / "telemetry.db").exists():
+            return None
+        with closing(_connect(home)) as con:
+            row = con.execute("SELECT report_id FROM reports WHERE week = ?", (week,)).fetchone()
+            return str(row[0]) if row is not None else None
+    except Exception as exc:  # noqa: BLE001
+        _debug("telemetry_stored_report_id_failed", error=type(exc).__name__)
+        return None
+
+
+def record_tool(spec: ToolSpec, expanded: bool) -> None:
+    """Count prompt-tool usage without affecting the caller."""
+    try:
+        if killed() or opted_out():
+            return
+        from gflow_cli.tools.loader import load_builtin_tools
+
+        builtins = load_builtin_tools()
+        name = spec.name if builtins.get(spec.name) == spec else "custom"
+        status = "expanded" if expanded else "unchanged"
+        key = f"{name} {status}"
+        home = _resolve_home()
+        home.mkdir(parents=True, exist_ok=True)
+        with closing(_connect(home)) as con, con:
+            con.execute(
+                "INSERT INTO counters VALUES (?, 'any', 'tool', ?, 1)"
+                " ON CONFLICT(week, surface, kind, key) DO UPDATE SET n = n + 1",
+                (iso_week(), key),
+            )
+    except Exception as exc:  # noqa: BLE001
+        _debug("telemetry_tool_failed", error=type(exc).__name__)
+
+
+def _detect_os() -> str:
+    sys_name = platform.system()
+    if sys_name == "Windows":
+        return "windows"
+    if sys_name == "Linux":
+        return "linux"
+    if sys_name == "Darwin":
+        return "darwin"
+    return "other"
+
+
+def _detect_arch() -> str:
+    mach = platform.machine().lower()
+    if mach in ("amd64", "x86_64"):
+        return "x86_64"
+    if mach in ("arm64", "aarch64"):
+        return "arm64"
+    return "other"
+
+
+def _detect_installer() -> str:
+    try:
+        from gflow_cli.update_check import installer
+
+        inst = installer()
+        if inst is not None and inst.name in ("uv", "pipx", "pip"):
+            return inst.name
+        return "other"
+    except Exception:
+        return "other"
+
+
+def _detect_install_age(home: Path) -> str:
+    try:
+        if not (home / "telemetry.db").exists():
+            return "<1w"
+        with closing(_connect(home)) as con:
+            row = con.execute("SELECT value FROM meta WHERE key = 'first_seen'").fetchone()
+            if row and row[0]:
+                first_date = datetime.fromisoformat(row[0]).date()
+                days = (datetime.now(UTC).date() - first_date).days
+                if days < 7:
+                    return "<1w"
+                if days < 30:
+                    return "<1m"
+                if days < 180:
+                    return "<6m"
+                return "6m+"
+    except Exception:
+        pass
+    return "<1w"
+
+
+def _detect_storage() -> str:
+    try:
+        from gflow_cli.config import get_settings
+
+        uri = get_settings().storage_uri
+        if not uri:
+            return "local"
+        scheme = urlsplit(uri).scheme.lower()
+        if not scheme:
+            return "local"
+        if scheme == "s3":
+            return "s3"
+        if scheme in ("gs", "gcs"):
+            return "gcs"
+        return "other"
+    except Exception:
+        return "other"
+
+
+def _catalog_db_path() -> Path:
+    if env := os.environ.get("GFLOW_CLI_DB_PATH"):
+        return Path(env)
+    try:
+        from gflow_cli.config import get_settings
+
+        return get_settings().resolved_db_path()
+    except Exception:
+        from gflow_cli import paths
+
+        return paths.database_path(_resolve_home())
+
+
+def build_report(week: str) -> dict[str, object]:
+    """Assemble the weekly usage report for ``week`` field by field (#1164)."""
+    home = _resolve_home()
+
+    commands: dict[str, dict[str, int]] = {}
+    flags: dict[str, dict[str, dict[str, int]]] = {}
+    exits: dict[str, dict[str, dict[str, int]]] = {}
+    durations: dict[str, dict[str, dict[str, int]]] = {}
+    transitions: dict[str, int] = {}
+    crashes: dict[str, dict[str, int]] = {}
+    mcp_clients: dict[str, int] = {}
+    tools: dict[str, dict[str, int]] = {}
+    nested_targets: dict[str, dict[str, Any]] = {
+        "flag": flags,
+        "exit": exits,
+        "duration": durations,
+        "tool": tools,
+    }
+
+    def _add(target: dict[str, Any], path: tuple[str, ...], n: int) -> None:
+        cursor = target
+        for key_part in path[:-1]:
+            cursor = cursor.setdefault(key_part, {})
+        leaf = path[-1]
+        cursor[leaf] = cursor.get(leaf, 0) + n
+
+    try:
+        if (home / "telemetry.db").exists():
+            with closing(_connect(home)) as con:
+                rows = con.execute(
+                    "SELECT surface, kind, key, n FROM counters WHERE week = ?", (week,)
+                ).fetchall()
+                for surface, kind, key, n in rows:
+                    if "|" in key or "|" in surface:
+                        continue
+                    if kind == "command":
+                        _add(commands, (surface, key), n)
+                    elif kind in nested_targets and " " in key:
+                        name, value = key.rsplit(" ", 1)
+                        if "|" in name or "|" in value:
+                            continue
+                        path = (name, value) if kind == "tool" else (surface, name, value)
+                        _add(nested_targets[kind], path, n)
+                    elif kind == "transition":
+                        transitions[key] = transitions.get(key, 0) + n
+                    elif kind == "crash":
+                        crashes.setdefault(surface, {})[key] = (
+                            crashes.setdefault(surface, {}).get(key, 0) + n
+                        )
+                    elif kind == "client":
+                        mcp_clients[key] = mcp_clients.get(key, 0) + n
+    except Exception as exc:  # noqa: BLE001
+        _debug("telemetry_report_counters_failed", error=type(exc).__name__)
+
+    models: dict[str, int] = {}
+    modes: dict[str, int] = {}
+    aspects: dict[str, int] = {}
+    outcomes: dict[str, int] = {}
+
+    cat_path = _catalog_db_path()
+    if cat_path.is_file():
+        try:
+            from gflow_cli.api.image import (
+                Aspect as ImageAspect,
+            )
+            from gflow_cli.api.image import (
+                Model as ImageModel,
+            )
+            from gflow_cli.api.image import (
+                aspect_choices as image_aspect_choices,
+            )
+            from gflow_cli.api.video import Aspect as VideoAspect
+            from gflow_cli.api.video import VideoModel
+            from gflow_cli.data.models import OperationKind, OperationStatus
+            from gflow_cli.data.store import DataStore
+
+            known_models = {m.value for m in ImageModel} | {m.value for m in VideoModel}
+            known_modes = {k.value for k in OperationKind}
+            known_outcomes = {s.value for s in OperationStatus}
+            known_aspects = (
+                {a.value for a in ImageAspect}
+                | set(image_aspect_choices().keys())
+                | {a.value for a in VideoAspect}
+                | {a.wire() for a in VideoAspect}
+            )
+            year, week_number = (int(part) for part in week.split("-W"))
+            week_start = datetime.fromisocalendar(year, week_number, 1).replace(tzinfo=UTC)
+            week_end = week_start + timedelta(days=7)
+
+            with DataStore.open_readonly(cat_path) as store:
+                op_rows = store.conn.execute(
+                    "SELECT model, mode, aspect_ratio, status, started_at FROM operations "
+                    "WHERE started_at >= ? AND started_at < ?",
+                    (week_start.isoformat(), week_end.isoformat()),
+                ).fetchall()
+                for op in op_rows:
+                    started_at = op["started_at"]
+                    if not started_at:
+                        continue
+                    try:
+                        op_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                        if iso_week(op_dt) != week:
+                            continue
+                    except Exception:
+                        continue
+
+                    # mode
+                    op_mode = op["mode"]
+                    mode_key = op_mode if op_mode in known_modes else "other"
+                    if "|" not in mode_key:
+                        modes[mode_key] = modes.get(mode_key, 0) + 1
+
+                    # outcome
+                    op_status = op["status"]
+                    outcome_key = op_status if op_status in known_outcomes else "other"
+                    if "|" not in outcome_key:
+                        outcomes[outcome_key] = outcomes.get(outcome_key, 0) + 1
+
+                    # model (if set)
+                    op_model = op["model"]
+                    if op_model:
+                        model_key = op_model if op_model in known_models else "other"
+                        if "|" not in model_key:
+                            models[model_key] = models.get(model_key, 0) + 1
+
+                    # aspect_ratio (if set)
+                    op_aspect = op["aspect_ratio"]
+                    if op_aspect:
+                        aspect_key = op_aspect if op_aspect in known_aspects else "other"
+                        if "|" not in aspect_key:
+                            aspects[aspect_key] = aspects.get(aspect_key, 0) + 1
+        except Exception as exc:  # noqa: BLE001
+            _debug("telemetry_report_catalog_failed", error=type(exc).__name__)
+
+    return {
+        "schema": SCHEMA,
+        "report_id": (
+            secrets.token_urlsafe(16) if killed() or opted_out() else report_id_for(week)
+        ),
+        "week": week,
+        "version": __version__,
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "os": _detect_os(),
+        "arch": _detect_arch(),
+        "installer": _detect_installer(),
+        "install_age": _detect_install_age(home),
+        "storage": _detect_storage(),
+        "commands": commands,
+        "flags": flags,
+        "exits": exits,
+        "durations": durations,
+        "transitions": transitions,
+        "models": models,
+        "modes": modes,
+        "aspects": aspects,
+        "outcomes": outcomes,
+        "mcp_clients": mcp_clients,
+        "crashes": crashes,
+        "tools": tools,
+    }

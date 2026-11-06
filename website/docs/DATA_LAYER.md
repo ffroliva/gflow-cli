@@ -606,6 +606,7 @@ Live tests (`@pytest.mark.live`) and E2E tests (`@pytest.mark.e2e`) are opt-in a
 - **`gflow data import` / `gflow data repair`** — backfill rows from existing output folders.
 - **`gflow data ls` / `gflow data show <operation_id>`** — richer browsing without leaving the terminal.
 - **Cost tracking** — once enough operation metadata is reliable, surface "credits spent this month" per profile / model / aspect.
+- **Local usage counters** — stored separately from the catalog in `<GFLOW_CLI_HOME>/telemetry.db` so metrics never sit in a database holding prompts. See [`TELEMETRY.md`](TELEMETRY.md).
 - **Postgres / Supabase adapter** — for users running gflow on shared workers or wanting cross-machine sync. The repository surface is already designed for this swap.
 - **`gflow data export`** (full catalog → JSON / Parquet) — the failed-operation slice shipped as `gflow data errors export` (JSONL, #345); a full-catalog / Parquet dump for downstream analytics is still open.
 
@@ -618,5 +619,6 @@ These are tracked in [`PLAN.md`](../PLAN.md) under the data-layer phase backlog.
 - [`CONFIGURATION.md`](CONFIGURATION.md) — env-var reference.
 - [`EXTERNAL_STORAGE.md`](EXTERNAL_STORAGE.md) — S3, MinIO, and GCS output configuration.
 - [`USAGE.md`](USAGE.md) — `gflow data media` command reference.
+- [`TELEMETRY.md`](TELEMETRY.md) — local usage counters and telemetry.db design.
 - [`SECURITY.md`](SECURITY.md) — threat model for stored prompts and metadata.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — how `gflow_cli.data` fits into the modular monolith.

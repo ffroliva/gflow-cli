@@ -31,6 +31,7 @@ from gflow_cli.cli_movie import movie as _movie_group
 from gflow_cli.cli_project import project as _project_group
 from gflow_cli.cli_run import run as _run_command
 from gflow_cli.cli_scene import scene as _scene_group
+from gflow_cli.cli_telemetry import telemetry as _telemetry_group
 from gflow_cli.cli_tools import tools as _tools_group
 from gflow_cli.cli_update import update as _update_command
 from gflow_cli.cli_video import video as _video_group
@@ -637,6 +638,7 @@ main.add_command(_instructions_group)
 main.add_command(_run_command)
 main.add_command(_models_command)
 main.add_command(_scene_group)
+main.add_command(_telemetry_group)
 main.add_command(_tools_group)
 
 
