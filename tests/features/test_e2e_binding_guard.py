@@ -42,6 +42,7 @@ _COST_MARKERS = frozenset(
         "e2e_data",
         "e2e_scene",
         "e2e_character",
+        "e2e_telemetry",
     }
 )
 

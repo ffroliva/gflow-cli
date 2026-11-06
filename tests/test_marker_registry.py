@@ -32,7 +32,16 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _COST_SUB_MARKERS: frozenset[str] = frozenset(
-    {"e2e_auth", "e2e_image", "e2e_video", "e2e_batch", "e2e_data", "e2e_scene", "e2e_character"}
+    {
+        "e2e_auth",
+        "e2e_image",
+        "e2e_video",
+        "e2e_batch",
+        "e2e_data",
+        "e2e_scene",
+        "e2e_character",
+        "e2e_telemetry",
+    }
 )
 
 _E2E_TEST_DIR = pathlib.Path(__file__).parent / "e2e"
