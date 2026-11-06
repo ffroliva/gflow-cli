@@ -498,17 +498,14 @@ def report_id_for(week: str) -> str:
         home = _resolve_home()
         home.mkdir(parents=True, exist_ok=True)
         with closing(_connect(home)) as con, con:
-            row = con.execute("SELECT report_id FROM reports WHERE week = ?", (week,)).fetchone()
-            if row is not None:
-                return str(row[0])
-            rid = secrets.token_urlsafe(16)
+            # Insert-if-absent, then one read: an existing week keeps its id.
             con.execute(
                 "INSERT OR IGNORE INTO reports (week, report_id, due_at, sent_at)"
                 " VALUES (?, ?, NULL, NULL)",
-                (week, rid),
+                (week, secrets.token_urlsafe(16)),
             )
             row = con.execute("SELECT report_id FROM reports WHERE week = ?", (week,)).fetchone()
-            return str(row[0]) if row is not None else rid
+            return str(row[0])
     except Exception as exc:  # noqa: BLE001
         _debug("telemetry_report_id_failed", error=type(exc).__name__)
         return secrets.token_urlsafe(16)
