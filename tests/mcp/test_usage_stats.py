@@ -38,11 +38,12 @@ async def test_mcp_twin_matches_cli_json(
     telemetry.record("cli", "image t2i", [], "0", 1.0)
     telemetry.record("mcp", "video t2v", [], "0", 2.0)
 
+    mcp_result = await tools.gflow_usage_stats()
+
     cli_result = CliRunner().invoke(main, ["data", "stats", "--json"])
     assert cli_result.exit_code == 0, cli_result.output
     cli_json = json.loads(cli_result.output)
 
-    mcp_result = await tools.gflow_usage_stats()
     assert mcp_result == cli_json
     telemetry.killed.cache_clear()
 
@@ -55,7 +56,9 @@ async def test_mcp_when_killed_says_counters_are_off(monkeypatch: pytest.MonkeyP
     telemetry.killed.cache_clear()
 
     mcp_result = await tools.gflow_usage_stats()
-    assert mcp_result["telemetry"] == {"state": "off", "switch": "GFLOW_CLI_TELEMETRY"}
+    assert mcp_result["telemetry"]["state"] == "off"
+    assert mcp_result["telemetry"]["switch"] == "GFLOW_CLI_TELEMETRY"
+    assert "report" in mcp_result["telemetry"]
     assert mcp_result["commands"] is None  # never reads as zero usage
     telemetry.killed.cache_clear()
 

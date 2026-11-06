@@ -529,11 +529,23 @@ def collect_usage_stats(weeks: int, db_path: Path | None = None) -> dict[str, An
     # 1. Telemetry state
     kill_switch = telemetry.killed()
     if kill_switch is not None:
-        telemetry_info = {"state": "off", "switch": kill_switch}
+        telemetry_info = {
+            "state": "off",
+            "switch": kill_switch,
+            "report": telemetry.build_report(telemetry.iso_week()),
+        }
     elif telemetry.opted_out():
-        telemetry_info = {"state": "off", "switch": "telemetry.off"}
+        telemetry_info = {
+            "state": "off",
+            "switch": "telemetry.off",
+            "report": telemetry.build_report(telemetry.iso_week()),
+        }
     else:
-        telemetry_info = {"state": "on", "switch": None}
+        telemetry_info = {
+            "state": "on",
+            "switch": None,
+            "report": telemetry.build_report(telemetry.iso_week()),
+        }
 
     # 2. Commands: null when off, or list sorted by n desc then command
     if telemetry_info["state"] == "off":
