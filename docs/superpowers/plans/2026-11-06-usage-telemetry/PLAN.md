@@ -38,19 +38,22 @@
 
 | Step | What | Gate |
 |---|---|---|
-| 0 | Public RFC and poll | **Maintainer's explicit go** |
-| PR 1 | Tasks 1-5, local only | RFC window closed, stop threshold not reached |
+| 0 | Public design announcement | **Maintainer's explicit go** (owner decision 2026-11-06: no poll, no stop threshold) |
+| PR 1 | Tasks 1-5, local only | Announcement posted; comments read and answered |
 | PR 2 | Tasks 6-9, notice and upload | Counsel's review, EU answer, endpoint live, one release after PR 1 |
 
 ---
 
-### Task 0: Public RFC
+### Task 0: Public design announcement
 
-**Files:** none. Drafted in the scratchpad.
+**Files:** `RFC.md` next to this plan (the issue body).
 
-- [ ] **Step 1:** Draft from the spec: Why, the industry table, payload, never-list, the `SECURITY.md` change, what happens to weeks counted before the notice.
-- [ ] **Step 2:** Maintainer sets a numeric stop threshold for the poll, in advance, and reads the draft.
-- [ ] **Step 3:** On the maintainer's explicit go, post the issue and a Discussions poll, and link both from release notes.
+The direction is the owner's decision (2026-11-06), so there is no poll and no stop threshold. The
+issue announces the design before code lands and takes comments on what is collected.
+
+- [x] **Step 1:** Draft from the spec: Why, the industry table, payload, never-list, the `SECURITY.md` change, what happens to weeks counted before the notice.
+- [ ] **Step 2:** Maintainer reads the draft.
+- [ ] **Step 3:** On the maintainer's explicit go, post the issue and link it from release notes.
 - [ ] **Step 4:** Link the public issue from `ffroliva/oss-ops#1`. Use the public number in every later commit.
 
 ---

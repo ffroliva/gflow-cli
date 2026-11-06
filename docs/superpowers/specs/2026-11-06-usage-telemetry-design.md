@@ -110,11 +110,18 @@ still get only the opaque incident reference.
 **Transitions.** `meta` holds the previous command name and time. A next command within 30 minutes
 increments `previous -> next`. The pair is only ever a weekly total.
 
-**Notice.** Printed once per version to stderr when stderr is a TTY: at the first interactive command,
-after "Session saved" in `gflow auth login`, and in `gflow mcp setup`. Never for `gflow telemetry`.
-Nothing is sent on the run that shows it. **No notice shown on this machine means no upload**, so CI,
-containers and piped-only use stay silent. A new version re-shows it, and upload waits until it has
-been seen. Never a prompt.
+**Notice.** Printed once per `NOTICE_VERSION` (not per gflow release) to stderr when stderr is a TTY:
+at the first interactive command, after "Session saved" in `gflow auth login`, and in `gflow mcp
+setup`. Never for `gflow telemetry`. Nothing is sent on the run that shows it. **No notice shown on
+this machine means no upload**, so CI, containers and piped-only use stay silent. `NOTICE_VERSION`
+is bumped only when what is collected changes; then the notice re-shows and upload waits until it
+has been seen. Never a prompt, never a wait, so it cannot block an agent.
+
+**Agentic use.** Most use is through MCP or an agent's shell, where stderr is not a TTY and the
+notice never prints. That is safe: such machines simply do not upload until a person sees the
+notice. Nearly every install still reaches it, because `gflow auth login` is interactive and every
+install needs it once to save a profile. A release that does not change the payload never pauses
+uploads.
 
 **Opt-out.** `gflow telemetry off` stops counting and upload, and a running MCP server honours it.
 `off --delete` also wipes local data. Remote deletion is impossible because nothing per-install is
@@ -247,7 +254,7 @@ differ, and that is stated too.
 
 ## Gates
 
-Public RFC before any code, with a public poll and a stop threshold set in advance, because an issue
-alone reaches few people. PR 1 is local only: no notice, no network. It ships as a one-release public
+A public design announcement before any code. The direction is the owner's decision (2026-11-06), so
+there is no poll or stop threshold; the issue takes comments on what is collected. PR 1 is local only: no notice, no network. It ships as a one-release public
 preview of `gflow telemetry show`. Notice, `on`, `off` and upload land together in PR 2, after legal
 review and with a live endpoint.

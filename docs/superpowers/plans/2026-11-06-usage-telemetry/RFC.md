@@ -1,15 +1,13 @@
 <!--
-Draft body for the public RFC issue (plan Task 0). Not posted.
-Before posting: the maintainer sets STOP_THRESHOLD and POLL_CLOSE_DATE, reads the whole text, and
-gives an explicit go. Then post this as an issue, open the Discussions poll, and link both from the
-next release notes.
+Draft body for the public design announcement issue (plan Task 0). Not posted.
+Before posting: the maintainer reads the whole text and gives an explicit go. Then post it as an
+issue and link it from the next release notes.
 -->
 
-# RFC: anonymous weekly usage totals for gflow-cli
+# Planned: anonymous weekly usage totals for gflow-cli
 
-**Status:** open for comment until **POLL_CLOSE_DATE**. Nothing described here has been built yet.
-**Vote:** [Discussions poll](POLL_URL). If **STOP_THRESHOLD** of voters are against default-on upload,
-it does not ship default-on.
+**Status:** planned, nothing built yet. This announces the design before any code lands, so you know
+exactly what will be counted and how to turn it off. Comments on what is collected are welcome.
 
 ## The short version
 
@@ -19,7 +17,7 @@ no account, no ID, no prompts, no file names. You would see a notice before anyt
 command turns it off for good.
 
 This changes a promise we make today. [`SECURITY.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/SECURITY.md) says "We don't ship
-telemetry". That sentence would change, and this issue is where we ask first.
+telemetry". That sentence will change, and this issue announces it before it does.
 
 ## Why
 
@@ -47,8 +45,10 @@ the others.
    machine. Nothing leaves it. `gflow data stats` and `gflow telemetry show` print what is counted.
    This ships first, as a preview you can inspect.
 2. **Weekly upload**, at least one release later, and only after legal review:
-   - A notice is printed once per version, the first time you use gflow interactively. **Nothing is
-     sent on that run**, and counts from before the notice are never sent.
+   - A notice is printed **once**, the first time you use gflow in a terminal (usually right after
+     `gflow auth login`). It is shown again only if what we collect changes, never on ordinary
+     updates. It is never a question and never waits, so agents and MCP clients are not blocked.
+     **Nothing is sent on that run**, and counts from before the notice are never sent.
    - Once a week, at a random moment, one small report goes to an endpoint we run on Cloudflare,
      with the data stored in the EU.
    - The endpoint adds the report to weekly totals and **throws the report away**. It never stores
@@ -109,8 +109,7 @@ bound and how it was estimated.
 - **Sharing totals with sponsors.** We are checking that this fits the legal basis above. If it does
   not, either the sharing or the default changes.
 
-## Tell us
+## Comments
 
-- Vote in the [poll](POLL_URL).
-- Comment here: what is missing, what worries you, what you would never want sent.
-- If you would only accept this as opt-in, say so. That is a real option.
+Tell us here if a field worries you, if something is missing from the "never sent" list, or if you
+see a way a value could identify you. Those comments shape the final list.
