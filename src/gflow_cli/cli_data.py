@@ -631,7 +631,12 @@ def _emit_stats(payload: dict[str, Any], as_json: bool) -> None:
     show_default=True,
     help="Number of weeks to summarize (1..53).",
 )
-@_JSON_OPT
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit one JSON object instead of tables.",
+)
 @_guard
 def stats_cmd(weeks: int, as_json: bool) -> None:
     """Summarize local usage from counters and catalog (#1164)."""

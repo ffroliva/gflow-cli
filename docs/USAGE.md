@@ -1665,14 +1665,14 @@ to schedule or re-run after a partial failure.
 
 ## `gflow data stats`
 
-Summarize local usage statistics over the last N weeks (default: 12). Shipped in v0.92.0 (#1164).
+Summarize local usage statistics over the last N weeks (default: 12). Unreleased (#1164).
 
 ```text
 gflow data stats [--weeks N] [--json]
 
 Options:
   --weeks INTEGER RANGE  Number of weeks to summarize (1..53). [default: 12]
-  --json                 Emit machine-readable JSON summary instead of tables.
+  --json                 Emit one JSON object instead of tables.
 ```
 
 Displays:

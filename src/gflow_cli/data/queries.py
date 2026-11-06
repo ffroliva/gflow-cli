@@ -684,8 +684,12 @@ def usage_stats(*, db_path: Path, weeks: int) -> list[UsageRow]:
         return []
 
     cutoff = (datetime.now(UTC) - timedelta(weeks=weeks)).isoformat()
-    with _safe_db(db_path) as conn:
-        rows = conn.execute(_USAGE_STATS_SQL, {"cutoff": cutoff}).fetchall()
+    with DataStore.open_readonly(db_path) as store:
+        try:
+            rows = store.conn.execute(_USAGE_STATS_SQL, {"cutoff": cutoff}).fetchall()
+        except sqlite3.Error as exc:
+            msg = f"Catalog query failed: {exc}"
+            raise DataStoreError(msg) from exc
 
     return [
         UsageRow(

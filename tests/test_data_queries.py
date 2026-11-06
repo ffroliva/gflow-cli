@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -35,6 +37,7 @@ from gflow_cli.data.queries import (
 )
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
+from gflow_cli.errors import DataStoreError
 from tests.fixtures.seeded_catalog import build_seeded_catalog
 
 
@@ -881,3 +884,47 @@ def test_usage_stats_missing_db_returns_empty_and_does_not_create(tmp_path: Path
     rows = usage_stats(db_path=missing, weeks=12)
     assert rows == []
     assert not missing.exists()
+
+
+def test_usage_stats_reads_catalog_strictly_readonly(tmp_path: Path) -> None:
+    db = tmp_path / "seeded.db"
+    store, _repo = build_seeded_catalog(db)
+    store.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    store.close()
+
+    # Drop newest migration + lower user_version so an open() path would mutate the DB
+    with sqlite3.connect(db) as conn:
+        row = conn.execute(
+            "SELECT version FROM schema_migrations ORDER BY CAST(version AS INTEGER) DESC LIMIT 1"
+        ).fetchone()
+        conn.execute("DELETE FROM schema_migrations WHERE version = ?", (row[0],))
+        stale_version = int(row[0]) - 1
+        conn.execute(f"PRAGMA user_version = {stale_version}")
+        conn.commit()
+
+    time.sleep(0.02)
+    before_bytes = db.read_bytes()
+    before_checksum = hashlib.sha256(before_bytes).hexdigest()
+    before_mtime = db.stat().st_mtime_ns
+
+    rows = usage_stats(db_path=db, weeks=4)
+    assert len(rows) > 0
+
+    after_bytes = db.read_bytes()
+    after_checksum = hashlib.sha256(after_bytes).hexdigest()
+    after_mtime = db.stat().st_mtime_ns
+
+    with sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True) as conn:
+        after_version = conn.execute("PRAGMA user_version").fetchone()[0]
+
+    assert after_checksum == before_checksum
+    assert after_bytes == before_bytes
+    assert after_mtime == before_mtime
+    assert after_version == stale_version
+
+
+def test_usage_stats_unreadable_db_raises_datastore_error(tmp_path: Path) -> None:
+    bad = tmp_path / "corrupt.db"
+    bad.write_bytes(b"not a valid sqlite database header")
+    with pytest.raises(DataStoreError):
+        usage_stats(db_path=bad, weeks=4)

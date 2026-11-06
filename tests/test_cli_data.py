@@ -601,3 +601,15 @@ def test_cli_stats_invalid_weeks(seeded_db: Path) -> None:
 
     res_54 = CliRunner().invoke(main, ["data", "stats", "--weeks", "54"])
     assert res_54.exit_code == 2
+
+
+def test_cli_data_stats_help_json_option_text() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["data", "stats", "--help"])
+    assert result.exit_code == 0
+    assert "Emit one JSON object instead of tables." in result.output
+    assert "Emit JSONL instead of a Rich table." not in result.output
+
+    list_result = runner.invoke(main, ["data", "list", "projects", "--help"])
+    assert list_result.exit_code == 0
+    assert "Emit JSONL instead of a Rich table." in list_result.output
