@@ -244,11 +244,13 @@ def test_third_party_run_collapses_to_one_marker() -> None:
     raise_site = package_globals["raise_site"]
     wrapper = package_globals["wrapper"]
     inner = FunctionType(
-        compile("def inner():\n    raise_site()", "test", "exec").co_consts[0],
+        # "<...>" filenames are never measured by coverage; a plain name made CI's
+        # `coverage combine` fail with "No source for code: .../tmp/pytest/.../test".
+        compile("def inner():\n    raise_site()", "<synthetic>", "exec").co_consts[0],
         {"__name__": "gflow_cli.middle", "raise_site": raise_site},
     )
     outer = FunctionType(
-        compile("def outer():\n    wrapper(inner)", "test", "exec").co_consts[0],
+        compile("def outer():\n    wrapper(inner)", "<synthetic>", "exec").co_consts[0],
         {"__name__": "gflow_cli.outer", "wrapper": wrapper, "inner": inner},
     )
     try:
