@@ -61,6 +61,7 @@ CLI_TO_MCP: dict[str, str] = {
     # recover an asset the user already paid for. An agent whose generation died at the
     # download is stranded exactly as a CLI user is, so this one is NOT exempt (#865).
     "data download": "gflow_download_media",
+    "data stats": "gflow_usage_stats",
     "image upscale": "gflow_upscale_image",
     "video upscale": "gflow_upscale_video",
     "project list": "gflow_list_projects",

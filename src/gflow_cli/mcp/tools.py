@@ -41,6 +41,7 @@ from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.image_upscale import TargetResolution
 from gflow_cli.api.video import VIDEO_DURATION_CHOICES, is_media_uuid
 from gflow_cli.auth import verification
+from gflow_cli.cli_data import collect_usage_stats
 from gflow_cli.cli_image import lookup_project_in_catalog
 from gflow_cli.cli_instructions import classify_refs
 from gflow_cli.config import UiMode, get_settings
@@ -2002,6 +2003,30 @@ async def gflow_list_projects(
 
 
 @server.tool(
+    name="gflow_usage_stats",
+    description=(
+        "Summarize local gflow-cli usage statistics over the last N weeks. "
+        "Returns command invocation counts from local telemetry (when enabled) "
+        "and generation counts from the local catalog."
+    ),
+)
+@_guarded
+async def gflow_usage_stats(weeks: int = 12) -> dict[str, Any]:
+    """Return local usage statistics for the last ``weeks`` weeks (#1164).
+
+    Args:
+        weeks: Number of ISO weeks to summarize (1..53, default 12).
+
+    Returns:
+        Dict with 'weeks', 'commands', 'generations', and 'telemetry' status.
+    """
+    log.info("mcp.tool.usage_stats", weeks=weeks)
+    if weeks < 1 or weeks > 53:
+        return _bad_param("Invalid Weeks", f"weeks must be in 1..53; got {weeks}")
+    return await asyncio.to_thread(collect_usage_stats, weeks)
+
+
+@server.tool(
     name="gflow_auth_status",
     description=(
         "Non-interactive, credit-free Flow session probe (#497). Call this "
@@ -2508,6 +2533,7 @@ __all__ = [
     "gflow_list_tools",
     "gflow_list_models",
     "gflow_list_projects",
+    "gflow_usage_stats",
     "gflow_download_media",
     "gflow_upscale_image",
     "gflow_upscale_video",

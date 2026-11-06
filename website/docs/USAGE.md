@@ -1663,6 +1663,25 @@ Sync is **idempotent**: a second run over an already-reconciled catalog visits
 nothing, writes nothing, and leaves every row's metadata byte-identical — safe
 to schedule or re-run after a partial failure.
 
+## `gflow data stats`
+
+Summarize local usage statistics over the last N weeks (default: 12). Shipped in v0.92.0 (#1164).
+
+```text
+gflow data stats [--weeks N] [--json]
+
+Options:
+  --weeks INTEGER RANGE  Number of weeks to summarize (1..53). [default: 12]
+  --json                 Emit machine-readable JSON summary instead of tables.
+```
+
+Displays:
+1. **Top commands**: Invocation counts across CLI and MCP surfaces from local weekly telemetry counters (kept in `<home>/telemetry.db`). When telemetry is disabled or killed, reports that usage counters are off and names the switch in force.
+2. **Generations**: Aggregated generation operations from the local catalog grouped by command, model, status, and month.
+3. **Telemetry state**: The current telemetry state (`on` or `off`) and active kill switch, if any.
+
+Spends no credits and makes no network requests. Both `--json` and its MCP twin tool `gflow_usage_stats` emit the same structured output.
+
 ## `gflow doctor`
 
 Read-only pre-flight diagnostics over the local catalog, database, and
