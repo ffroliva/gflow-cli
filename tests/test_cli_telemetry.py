@@ -293,6 +293,11 @@ def test_telemetry_state_is_shared_by_status_and_usage_stats(
     assert collect_usage_stats(weeks=12)["telemetry"]["switch"] == "test-switch"
 
 
+def test_state_keeps_telemetry_off_switch_label(_tele_env: Path) -> None:
+    (_tele_env / "telemetry.off").write_text("", encoding="utf-8")
+    assert telemetry.state() == ("off", "telemetry.off")
+
+
 def test_report_catalog_query_is_bounded_to_iso_week(
     empty_catalog_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

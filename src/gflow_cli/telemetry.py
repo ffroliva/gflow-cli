@@ -219,7 +219,7 @@ def state() -> tuple[Literal["on", "off"], str | None]:
     if switch := killed():
         return "off", switch
     if opted_out():
-        return "off", "telemetry off"
+        return "off", "telemetry.off"
     return "on", None
 
 
