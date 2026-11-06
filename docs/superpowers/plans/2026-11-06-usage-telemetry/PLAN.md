@@ -52,9 +52,9 @@ The direction is the owner's decision (2026-11-06), so there is no poll and no s
 issue announces the design before code lands and takes comments on what is collected.
 
 - [x] **Step 1:** Draft from the spec: Why, the industry table, payload, never-list, the `SECURITY.md` change, what happens to weeks counted before the notice.
-- [ ] **Step 2:** Maintainer reads the draft.
-- [ ] **Step 3:** On the maintainer's explicit go, post the issue and link it from release notes.
-- [ ] **Step 4:** Link the public issue from `ffroliva/oss-ops#1`. Use the public number in every later commit.
+- [x] **Step 2:** Maintainer reads the draft.
+- [x] **Step 3:** On the maintainer's explicit go, post the issue: **#1164** (2026-11-06). Link it from the next release notes.
+- [x] **Step 4:** Link the public issue from `ffroliva/oss-ops#1` (done). Use `#1164` in every later commit.
 
 ---
 
