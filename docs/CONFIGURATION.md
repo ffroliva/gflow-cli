@@ -321,9 +321,9 @@ Until the #1041 fix this setting was ignored and every command logged at `INFO` 
 
 ### `GFLOW_CLI_TELEMETRY` and `DO_NOT_TRACK`
 
-**What:** Kill switches for the local usage counters (#1164): which commands and flags are used, exit codes and coarse duration buckets, stored weekly in `<GFLOW_CLI_HOME>/telemetry.db`. No prompts, paths, account data or identifiers are recorded.
+**What:** Kill switches for local weekly usage counters and their uploads (#1164). Counters include command and flag names, exit codes and coarse duration buckets in `<GFLOW_CLI_HOME>/telemetry.db`; reports are uploaded weekly only after the interactive notice. No prompts, paths, account data or install identifiers are recorded.
 **Values:** `GFLOW_CLI_TELEMETRY` counts only when unset or one of `1` / `true` / `on` (case-insensitive); any other value, including a typo, turns it off. `DO_NOT_TRACK` turns it off when set to anything except empty, `0` or `false`.
-**Where honoured:** the process environment, `<GFLOW_CLI_HOME>/.env` and the working-directory `.env`. Any one of them can turn counting off; none can turn it back on. The result is read once per process.
+**Where honoured:** the process environment, `<GFLOW_CLI_HOME>/.env` and the working-directory `.env`. Any one of them stops counting and uploads; none can turn telemetry back on. See [the usage data notice](TELEMETRY.md).
 **Never fails a command:** an invalid value is not a configuration error (it does not exit 11).
 
 ### `GFLOW_CLI_LEASE_WAIT_SECONDS`
