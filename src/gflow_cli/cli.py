@@ -17,7 +17,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from gflow_cli import __version__, profile_store
+from gflow_cli import __version__, profile_store, telemetry
 from gflow_cli import auth as auth_mod
 from gflow_cli.cli_character import character as _character_group
 from gflow_cli.cli_credits import credits as _credits_group
@@ -129,7 +129,7 @@ def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
     )
 
 
-@click.group()
+@click.group(cls=telemetry.CountingGroup)
 @click.version_option(__version__, "-V", "--version")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging.")
 @click.pass_context

@@ -176,11 +176,16 @@ def emit_unhandled_event(
     local.
     """
     tb_bytes = "".join(traceback.format_tb(exc.__traceback__)).encode("utf-8", errors="replace")
+    from gflow_cli.telemetry import crash_key, record_crash
+
+    fingerprint = crash_key(exc)
+    record_crash("cli", exc)
     logger.error(
         "error_unhandled",
         exception_class=type(exc).__name__,
         message_hash=exception_message_hash(exc),
         stack_hash=hashlib.sha256(tb_bytes).hexdigest(),
+        fingerprint=fingerprint,
         cli_command=cli_command,
     )
 
