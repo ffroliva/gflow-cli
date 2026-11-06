@@ -48,6 +48,17 @@ def _debug(event: str, **kw: str) -> None:
 _RETAIN_WEEKS = 53
 _TRANSITION_WINDOW_S = 30 * 60
 SCHEMA = 1
+NOTICE_VERSION = 1
+NOTICE_TEXT = (
+    "gflow sends weekly usage totals to improve it, and we share overall figures publicly and "
+    "with\n"
+    "sponsors. Commands, flag names, models, error codes, and your country as a total. No ID, "
+    "prompts,\n"
+    "paths or account details. Each report is added to totals and discarded.\n"
+    "Turn it off: gflow telemetry off, or set GFLOW_CLI_TELEMETRY=0\n"
+    "See exactly what is sent: gflow telemetry show. Full notice: gflow docs TELEMETRY"
+)
+_NOTICE_SHOWN_THIS_RUN = False
 
 
 @dataclass(frozen=True)
@@ -108,12 +119,107 @@ def opted_out() -> bool:
         return True
 
 
+def set_opted_out(value: bool) -> None:
+    """Persist the user's choice independently of the best-effort counter store."""
+    from gflow_cli.errors import ConfigurationError
+
+    path = _resolve_home() / "telemetry.off"
+    try:
+        if value:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+        else:
+            path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise ConfigurationError(
+            detail=f"Could not write telemetry preference at {path}: {exc}"
+        ) from exc
+
+
+def _meta() -> dict[str, str]:
+    home = _resolve_home()
+    db_path = home / "telemetry.db"
+    if not db_path.exists():
+        return {}
+    with closing(sqlite3.connect(db_path, timeout=0.2)) as con:
+        return dict(con.execute("SELECT key, value FROM meta"))
+
+
+def upload_disabled_reason() -> str | None:
+    """Return the first reason weekly uploads are disabled, failing closed on read errors."""
+    try:
+        if switch := killed():
+            return f"killed: {switch}"
+        if opted_out():
+            return "telemetry off"
+        from gflow_cli import update_check
+
+        if update_check._in_ci():  # pyright: ignore[reportPrivateUsage]
+            return "CI"
+        if not update_check._installed_from_index():  # pyright: ignore[reportPrivateUsage]
+            return "not installed from a package index"
+        meta = _meta()
+        if meta.get("upload_disabled") == "1":
+            return "server stopped uploads"
+        if meta.get("notice_seen_version") != str(NOTICE_VERSION):
+            return "notice not shown yet"
+        return None
+    except Exception:  # noqa: BLE001 - any uncertain upload state stays off
+        return "local usage state unavailable"
+
+
+def uploads_enabled() -> bool:
+    """Whether upload conditions are satisfied; any uncertainty disables uploads."""
+    return upload_disabled_reason() is None
+
+
+def notice_seen() -> bool:
+    """Whether the current notice version is recorded locally."""
+    try:
+        return _meta().get("notice_seen_version") == str(NOTICE_VERSION)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def maybe_show_notice() -> bool:
+    """Show and persist the one-time notice only in an interactive, opted-in run."""
+    global _NOTICE_SHOWN_THIS_RUN
+    try:
+        if not sys.stderr.isatty() or _NOTICE_SHOWN_THIS_RUN or killed() or opted_out():
+            return False
+        from gflow_cli import update_check
+
+        if (
+            update_check._in_ci()  # pyright: ignore[reportPrivateUsage]
+            or _meta().get("notice_seen_version") == str(NOTICE_VERSION)
+        ):
+            return False
+        click.echo(NOTICE_TEXT, err=True)
+        _NOTICE_SHOWN_THIS_RUN = True  # pyright: ignore[reportConstantRedefinition]
+        try:
+            home = _resolve_home()
+            home.mkdir(parents=True, exist_ok=True)
+            with closing(_connect(home)) as con, con:
+                con.executemany(
+                    "INSERT OR REPLACE INTO meta VALUES (?, ?)",
+                    [
+                        ("notice_seen_version", str(NOTICE_VERSION)),
+                        ("notice_seen_at", datetime.now(UTC).isoformat()),
+                    ],
+                )
+        except Exception:  # noqa: BLE001 - a failed write only makes the notice repeat next run
+            pass
+        return True
+    except Exception:  # noqa: BLE001 - the notice must never affect a command
+        return False
+
+
 def state() -> tuple[Literal["on", "off"], str | None]:
     """Return the telemetry state and the switch currently disabling it, if any."""
     if switch := killed():
         return "off", switch
     if opted_out():
-        return "off", "telemetry.off"
+        return "off", "telemetry off"
     return "on", None
 
 

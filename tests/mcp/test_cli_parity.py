@@ -150,6 +150,8 @@ _MCP_EXEMPT: dict[str, str] = {
     "data sync": "browser-driving reconciliation; MCP exposure deferred (#543)",
     "telemetry status": "same state and report returned by gflow_usage_stats",
     "telemetry show": "same state and report returned by gflow_usage_stats",
+    "telemetry on": "a person's choice about their own machine; an agent should not change it",
+    "telemetry off": "a person's choice about their own machine; an agent should not change it",
     "doctor": "interactive diagnostic; MCP tool deferred (#542)",
     "image batch": "batch pipelines — not yet ported",
     "image upload": "asset upload — covered indirectly by reference_images paths",

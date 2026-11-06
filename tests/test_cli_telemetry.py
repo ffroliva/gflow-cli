@@ -435,10 +435,7 @@ def test_status_names_the_kill_switch_in_force(
     res_none = runner.invoke(main, ["telemetry", "status"])
     assert res_none.exit_code == 0
     assert "none" in res_none.output.lower() or "active" in res_none.output.lower()
-    assert (
-        "Nothing is uploaded: this version keeps usage counters on this machine only."
-        in res_none.output
-    )
+    assert "Upload: off (not installed from a package index)" in res_none.output
 
     # 2. DO_NOT_TRACK
     monkeypatch.setenv("DO_NOT_TRACK", "1")
@@ -446,10 +443,7 @@ def test_status_names_the_kill_switch_in_force(
     res_dnt = runner.invoke(main, ["telemetry", "status"])
     assert res_dnt.exit_code == 0
     assert "DO_NOT_TRACK" in res_dnt.output
-    assert (
-        "Nothing is uploaded: this version keeps usage counters on this machine only."
-        in res_dnt.output
-    )
+    assert "Upload: off (killed: DO_NOT_TRACK)" in res_dnt.output
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
     telemetry.killed.cache_clear()
 
@@ -459,10 +453,7 @@ def test_status_names_the_kill_switch_in_force(
     res_env = runner.invoke(main, ["telemetry", "status"])
     assert res_env.exit_code == 0
     assert "GFLOW_CLI_TELEMETRY" in res_env.output
-    assert (
-        "Nothing is uploaded: this version keeps usage counters on this machine only."
-        in res_env.output
-    )
+    assert "Upload: off (killed: GFLOW_CLI_TELEMETRY)" in res_env.output
     monkeypatch.delenv("GFLOW_CLI_TELEMETRY", raising=False)
     telemetry.killed.cache_clear()
 
@@ -471,11 +462,8 @@ def test_status_names_the_kill_switch_in_force(
     (home / "telemetry.off").write_text("", encoding="utf-8")
     res_off = runner.invoke(main, ["telemetry", "status"])
     assert res_off.exit_code == 0
-    assert "telemetry.off" in res_off.output
-    assert (
-        "Nothing is uploaded: this version keeps usage counters on this machine only."
-        in res_off.output
-    )
+    assert "telemetry off" in res_off.output
+    assert "Upload: off (telemetry off)" in res_off.output
 
 
 def test_status_json_mirrors_telemetry_block() -> None:
@@ -485,6 +473,8 @@ def test_status_json_mirrors_telemetry_block() -> None:
     data = json.loads(result.output)
     assert "state" in data
     assert "switch" in data
+    assert "upload" in data
+    assert set(data["upload"]) == {"enabled", "reason"}
     assert "report" in data
     assert set(data["report"].keys()) == ALLOWED
 
