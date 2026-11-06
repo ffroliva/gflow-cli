@@ -13,7 +13,7 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from urllib.request import HTTPRedirectHandler
 
-from gflow_cli import telemetry
+from gflow_cli import __version__, telemetry
 from gflow_cli.config import _resolve_home  # pyright: ignore[reportPrivateUsage]
 
 _ENDPOINT = "https://gflow-telemetry.ffroliva.workers.dev/v1/report"
@@ -161,7 +161,9 @@ def send(week: str, *, endpoint: str = _ENDPOINT) -> None:
         request = urllib.request.Request(  # noqa: S310
             endpoint,
             data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json"},
+            # Cloudflare's edge rejects the default "Python-urllib" agent with 403 (error 1010).
+            # The version is already in the report, so naming it here adds nothing new.
+            headers={"Content-Type": "application/json", "User-Agent": f"gflow-cli/{__version__}"},
             method="POST",
         )
         opener = urllib.request.build_opener(_NoRedirect)

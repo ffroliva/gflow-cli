@@ -230,6 +230,38 @@ def test_204_marks_sent_and_keeps_rows(_home: Path) -> None:
     assert any(row.week == week for row in telemetry.read_counters())
 
 
+def test_request_names_gflow_as_its_user_agent(_home: Path) -> None:
+    # Cloudflare's edge answers 403 (error 1010) to the default "Python-urllib/3.x" agent, so a
+    # report sent without our own agent never reaches the Worker (found by the live e2e).
+    from gflow_cli import __version__, telemetry_upload
+
+    agents: list[str | None] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            agents.append(self.headers.get("User-Agent"))
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *_: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    week = _week_id(_week_start())
+    _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
+    try:
+        telemetry_upload.send(week, endpoint=f"http://127.0.0.1:{server.server_port}/report")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+    assert agents == [f"gflow-cli/{__version__}"]
+
+
 @pytest.mark.parametrize("status", [400, 413])
 def test_rejected_report_is_dropped_not_retried(status: int, _home: Path) -> None:
     from gflow_cli import telemetry_upload
