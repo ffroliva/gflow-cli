@@ -39,12 +39,31 @@ def _next_due_week(now: datetime, con: sqlite3.Connection) -> str | None:
     notice_at = datetime.fromisoformat(notice)
     if notice_at.tzinfo is None:
         notice_at = notice_at.replace(tzinfo=UTC)
-    weeks = [row[0] for row in con.execute("SELECT DISTINCT week FROM counters ORDER BY week")]
+    weeks = [str(row[0]) for row in con.execute("SELECT DISTINCT week FROM counters ORDER BY week")]
+    eligible: list[tuple[str, datetime]] = []
     for week in weeks:
         start = _week_start(week)
         end = start + _DAY * 7
         if start <= notice_at or end > now:
             continue
+        eligible.append((week, end))
+        row = con.execute("SELECT due_at FROM reports WHERE week = ?", (week,)).fetchone()
+        if row is None:
+            con.execute(
+                "INSERT INTO reports (week, report_id, due_at) VALUES (?, ?, ?)",
+                (
+                    week,
+                    secrets.token_urlsafe(16),
+                    (end + timedelta(seconds=secrets.randbelow(_WEEK_SECONDS + 1))).isoformat(),
+                ),
+            )
+        elif row[0] is None:
+            due_at = end + timedelta(seconds=secrets.randbelow(_WEEK_SECONDS + 1))
+            con.execute(
+                "UPDATE reports SET due_at = ? WHERE week = ? AND due_at IS NULL",
+                (due_at.isoformat(), week),
+            )
+    for week, _ in eligible:
         row = con.execute("SELECT due_at, sent_at FROM reports WHERE week = ?", (week,)).fetchone()
         due_at = datetime.fromisoformat(row[0]) if row and row[0] else None
         if row is None or row[1] is not None or due_at is None or now < due_at:
@@ -56,44 +75,14 @@ def _next_due_week(now: datetime, con: sqlite3.Connection) -> str | None:
     return None
 
 
-def _initialize_due_dates(now: datetime) -> None:
-    home = _resolve_home()
-    if not (home / "telemetry.db").exists():
-        return
-    with closing(telemetry._connect(home)) as con:  # pyright: ignore[reportPrivateUsage]
-        meta = dict(con.execute("SELECT key, value FROM meta"))
-        notice = meta.get("notice_seen_at")
-        if not notice:
-            return
-        notice_at = datetime.fromisoformat(notice)
-        if notice_at.tzinfo is None:
-            notice_at = notice_at.replace(tzinfo=UTC)
-        weeks = [row[0] for row in con.execute("SELECT DISTINCT week FROM counters ORDER BY week")]
-    for week in weeks:
-        start = _week_start(week)
-        end = start + _DAY * 7
-        if start <= notice_at or end > now:
-            continue
-        if telemetry.stored_report_id(week) is None:
-            telemetry.report_id_for(week)
-        with closing(telemetry._connect(home)) as con, con:  # pyright: ignore[reportPrivateUsage]
-            row = con.execute("SELECT due_at FROM reports WHERE week = ?", (week,)).fetchone()
-            if row is not None and row[0] is None:
-                due_at = end + timedelta(seconds=secrets.randbelow(_WEEK_SECONDS + 1))
-                con.execute(
-                    "UPDATE reports SET due_at = ? WHERE week = ? AND due_at IS NULL",
-                    (due_at.isoformat(), week),
-                )
-
-
 def next_due_week(now: datetime) -> str | None:
     """Return the oldest completed, noticed and due week with counters."""
     try:
         home = _resolve_home()
         if not (home / "telemetry.db").exists():
             return None
-        _initialize_due_dates(now)
         with closing(telemetry._connect(home)) as con, con:  # pyright: ignore[reportPrivateUsage]
+            con.execute("BEGIN IMMEDIATE")
             return _next_due_week(now, con)
     except Exception:
         return None
@@ -114,8 +103,6 @@ def maybe_upload() -> None:
         if not (home / "telemetry.db").exists():
             return
         now = datetime.now(UTC)
-        if next_due_week(now) is None:
-            return
         with closing(telemetry._connect(home)) as con, con:  # pyright: ignore[reportPrivateUsage]
             con.execute("BEGIN IMMEDIATE")
             meta = dict(con.execute("SELECT key, value FROM meta"))
@@ -165,7 +152,11 @@ def maybe_upload() -> None:
 def send(week: str, *, endpoint: str = _ENDPOINT) -> None:
     """POST exactly the allow-listed report and apply the endpoint's reply."""
     try:
+        report_id = telemetry.stored_report_id(week)
+        if report_id is None:
+            return
         body = telemetry.build_report(week)
+        body["report_id"] = report_id
         # The URL is fixed in production; endpoint injection is only for loopback tests.
         request = urllib.request.Request(  # noqa: S310
             endpoint,

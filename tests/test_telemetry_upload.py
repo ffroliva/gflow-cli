@@ -467,3 +467,52 @@ def test_send_body_equals_build_report_for_same_week(_home: Path) -> None:
     with _server() as (endpoint, bodies, _):
         telemetry_upload.send(week, endpoint=endpoint)
     assert json.loads(bodies[0]) == expected
+
+
+def test_send_without_stored_report_id_keeps_week(_home: Path) -> None:
+    from gflow_cli import telemetry_upload
+
+    week = _week_id(_week_start())
+    _seed_week(_home, week)
+    with _server() as (endpoint, bodies, _):
+        telemetry_upload.send(week, endpoint=endpoint)
+    assert bodies == []
+    assert _report(_home, week) is None
+
+
+def test_recent_attempt_does_not_open_per_week_connections(
+    monkeypatch: pytest.MonkeyPatch, _home: Path
+) -> None:
+    from gflow_cli import telemetry_upload, update_check
+
+    monkeypatch.setattr(update_check, "_installed_from_index", lambda: True)
+    monkeypatch.setattr(telemetry, "_NOTICE_SHOWN_THIS_RUN", False)
+    popen = Mock()
+    monkeypatch.setattr(telemetry_upload.subprocess, "Popen", popen)
+    now = datetime.now(UTC)
+    notice_at = now - timedelta(weeks=60)
+    for weeks_ago in range(1, 53):
+        start = _week_start(weeks_ago)
+        _seed_week(
+            _home,
+            _week_id(start),
+            start=start,
+            notice_at=notice_at,
+        )
+    with closing(telemetry._connect(_home)) as con, con:  # pyright: ignore[reportPrivateUsage]
+        con.execute(
+            "INSERT OR REPLACE INTO meta VALUES ('last_attempt', ?)",
+            (now.isoformat(),),
+        )
+
+    connect = sqlite3.connect
+    calls = 0
+
+    def count_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        nonlocal calls
+        calls += 1
+        return connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", count_connect)
+    telemetry_upload.maybe_upload()
+    assert calls <= 2
