@@ -166,10 +166,12 @@ def record(
         _debug("telemetry_record_failed", error=type(exc).__name__)
 
 
-def record_crash(surface: Literal["cli", "mcp"], exc: BaseException) -> None:
+def record_crash(
+    surface: Literal["cli", "mcp"], exc: BaseException, *, fingerprint: str | None = None
+) -> None:
     """Count a privacy-safe crash fingerprint without affecting the caller."""
     try:
-        key = crash_key(exc)
+        key = fingerprint if fingerprint is not None else crash_key(exc)
         if killed() or opted_out():
             return
         home = _resolve_home()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -49,6 +51,18 @@ def _route_four() -> None:
 
 def _no_project_frame() -> None:
     raise ValueError("secret prompt C:\\Users\\jane")
+
+
+def _shared_failure() -> None:
+    raise ValueError("shared")
+
+
+def _caller_one() -> None:
+    _shared_failure()
+
+
+def _caller_two() -> None:
+    _shared_failure()
 
 
 def test_leaf_walks_groups() -> None:
@@ -114,6 +128,37 @@ def test_invocation_outcomes_are_counted(
     assert any(row[2:4] == ("exit", f"fail {outcome}") for row in _rows(_tele_env))
 
 
+def test_unhandled_exception_records_1_and_propagates(_tele_env: Path) -> None:
+    failure = RuntimeError("secret")
+
+    @click.group(cls=telemetry.CountingGroup, name="probe")
+    def probe() -> None:
+        pass
+
+    @probe.command()
+    def fail() -> None:
+        raise failure
+
+    result = CliRunner().invoke(probe, ["fail"])
+    assert result.exception is failure
+    assert any(row[2:4] == ("exit", "fail 1") for row in _rows(_tele_env))
+
+
+def test_bad_config_exit_11_is_still_recorded(
+    _tele_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_BROWSER_PROXY", "http://:pw@h:1")
+    reset_settings()
+    try:
+        result = CliRunner().invoke(main, ["doctor"])
+    finally:
+        reset_settings()
+    assert result.exit_code == 11
+    assert any(row[2:4] == ("exit", "doctor 11") for row in _rows(_tele_env))
+
+
 def test_json_stdout_identical_with_telemetry_on_and_killed(
     _tele_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -174,24 +219,115 @@ def test_crash_key_names_cause_class() -> None:
     assert key == "ValueError from OSError at other"
 
 
-def test_incident_bundle_holds_the_same_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
-    from gflow_cli import observability
+def test_crash_key_separates_two_routes_into_one_function() -> None:
+    shared = FunctionType(_shared_failure.__code__, {})
+    callers = {f.__name__: FunctionType(f.__code__, {}) for f in (_caller_one, _caller_two)}
+    globals_map = {"__name__": "gflow_cli.routes", "_shared_failure": shared, **callers}
+    for function in (shared, *callers.values()):
+        function.__globals__.update(globals_map)
+    keys = []
+    for name in ("_caller_one", "_caller_two"):
+        try:
+            callers[name]()
+        except ValueError as exc:
+            keys.append(telemetry.crash_key(exc))
+    assert keys[0] != keys[1]
+    assert all("routes:_shared_failure" in key for key in keys)
 
-    events: list[dict[str, object]] = []
 
-    class Logger:
-        def error(self, event: str, **kwargs: object) -> None:
-            events.append({"event": event, **kwargs})
+def test_third_party_run_collapses_to_one_marker() -> None:
+    package_globals: dict[str, object] = {"__name__": "playwright._impl.x"}
+    exec(  # noqa: S102 - synthetic third-party frames are required by this regression test
+        "def raise_site():\n    raise RuntimeError('secret')\ndef wrapper(fn):\n    fn()\n",
+        package_globals,
+    )
+    raise_site = package_globals["raise_site"]
+    wrapper = package_globals["wrapper"]
+    inner = FunctionType(
+        compile("def inner():\n    raise_site()", "test", "exec").co_consts[0],
+        {"__name__": "gflow_cli.middle", "raise_site": raise_site},
+    )
+    outer = FunctionType(
+        compile("def outer():\n    wrapper(inner)", "test", "exec").co_consts[0],
+        {"__name__": "gflow_cli.outer", "wrapper": wrapper, "inner": inner},
+    )
+    try:
+        outer()
+    except RuntimeError as exc:
+        key = telemetry.crash_key(exc)
+    assert key.count("<playwright>") == 2
+
+
+def test_stdlib_and_exec_frames_are_dropped() -> None:
+    def raise_from_json(_: object) -> object:
+        raise RuntimeError("secret")
 
     try:
-        raise RuntimeError("secret")
+        import json as json_module
+
+        json_module.loads("{}", object_hook=raise_from_json)
     except RuntimeError as exc:
-        fingerprint = telemetry.crash_key(exc)
-        monkeypatch.setattr(
-            observability, "_incident_manifest", lambda *a, **k: None, raising=False
-        )
-        observability.emit_unhandled_event(Logger(), exc, cli_command="x")  # type: ignore[arg-type]
-    assert events and events[0].get("fingerprint") == fingerprint
+        assert telemetry.crash_key(exc) == "RuntimeError at other"
+
+    exec_globals: dict[str, object] = {"__name__": "<string>"}
+    exec("def fail():\n    raise ValueError('secret')", exec_globals)  # noqa: S102
+    try:
+        exec_globals["fail"]()  # type: ignore[operator]
+    except ValueError as exc:
+        assert telemetry.crash_key(exc) == "ValueError at other"
+
+
+def test_crash_with_no_gflow_frame_is_other() -> None:
+    try:
+        raise ValueError("secret")
+    except ValueError as exc:
+        assert telemetry.crash_key(exc) == "ValueError at other"
+
+
+def test_incident_bundle_holds_the_same_fingerprint(_tele_env: Path) -> None:
+    from gflow_cli.config import Settings
+    from gflow_cli.diagnostics import IncidentRecorder
+
+    failure = RuntimeError("secret exception message")
+    try:
+        raise failure
+    except RuntimeError as exc:
+        expected = telemetry.crash_key(exc)
+        recorder = IncidentRecorder(Settings(home=_tele_env))
+        ref = asyncio.run(recorder.capture_metadata_only(exc, phase="test"))
+        assert ref is not None and ref.path is not None
+        asyncio.run(recorder.finalize_all(close_ok=True))
+    manifest = json.loads((ref.path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["fingerprint"] == expected
+    assert "secret exception message" not in manifest["fingerprint"]
+
+
+def test_crash_reporting_never_changes_the_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from structlog.testing import capture_logs
+
+    from gflow_cli import telemetry
+    from gflow_cli._cli_helpers import run_with_handlers
+
+    crash_key = telemetry.crash_key
+    monkeypatch.setattr(telemetry, "crash_key", lambda _: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(telemetry, "record_crash", lambda *_: (_ for _ in ()).throw(RuntimeError()))
+    with capture_logs() as events, pytest.raises(SystemExit) as result:
+        run_with_handlers(lambda: _raise_runtime_error(), cli_command="video t2v")
+    assert result.value.code == 1
+    assert any(event["event"] == "error_unhandled" for event in events)
+
+    monkeypatch.setattr(telemetry, "crash_key", crash_key)
+    monkeypatch.setattr(
+        telemetry,
+        "record_crash",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError()),
+    )
+    with capture_logs() as events, pytest.raises(SystemExit) as result:
+        run_with_handlers(lambda: _raise_runtime_error(), cli_command="video t2v")
+    assert result.value.code == 1
+    assert any(event["event"] == "error_unhandled" for event in events)
 
 
 def test_handled_crash_is_counted_on_both_arms(_tele_env: Path) -> None:
