@@ -73,7 +73,7 @@ a field means a new public release.
 | Which command followed which | `image t2i -> video i2v`: 3 |
 | Models, modes, aspect ratios | names gflow knows; anything else is `other` |
 | MCP client | the client's name from a fixed list of well-known clients; anything else is `other` |
-| Unexpected crashes | error type and where in gflow's code: `TimeoutError at api.client:post` |
+| Unexpected crashes | a fingerprint: the error type and the last three gflow functions it passed through, by name only: `TimeoutError <- <playwright> <- api.client:FlowApiClient.upload_reference <- cli_video:t2v`. Never the error message, file paths, or values |
 | Prompt tools | packaged tool name and whether it changed the prompt; your own tools count as `custom` |
 
 The endpoint also counts the **country** a report came from (Cloudflare provides it). It is a total,

@@ -159,10 +159,16 @@ def test_help_records_nothing(): ...            # gflow video t2v --help
 def test_bad_config_exit_11_is_still_recorded(): ...
 def test_runner_args_are_used_not_sys_argv(): ...
 def test_json_stdout_identical_with_telemetry_on_and_killed(): ...  # gflow data list projects --json
-def test_crash_key_is_class_and_innermost_gflow_frame(): ...
-    # raised from gflow_cli.api.client.post: "ValueError at api.client:post"
-def test_crash_key_never_holds_the_message(): ...   # message "secret prompt C:\\Users\\jane" is absent
+def test_crash_key_is_class_and_innermost_three_gflow_frames(): ...
+    # 4 nested gflow functions: only the innermost 3, innermost first, as module:qualname
+def test_crash_key_separates_two_routes_into_one_function(): ...  # same leaf, different callers
+def test_crash_key_names_the_cause_class(): ...    # raise X from Y -> "X from Y <- ..."
+def test_third_party_run_collapses_to_one_marker(): ...  # several playwright frames -> one "<playwright>"
+def test_stdlib_and_exec_frames_are_dropped(): ...
+def test_crash_key_never_holds_message_path_or_lineno(): ...  # "secret prompt C:\\Users\\jane", no digits from lineno
+def test_crash_key_is_capped_at_200_chars(): ...
 def test_crash_with_no_gflow_frame_is_other(): ...  # "ValueError at other"
+def test_incident_bundle_holds_the_same_fingerprint(): ...
 def test_handled_crash_is_counted_on_both_arms(): ...  # run_with_handlers, with and without --json
 def test_crash_reporting_never_changes_the_exit_code(): ...  # record_crash raising leaves exit 1
 ```
@@ -174,7 +180,7 @@ Expected: FAIL, `ImportError: leaf_and_flags`
 
 - [ ] **Step 3: Implement**
 
-`CountingGroup.parse_args` stores `list(args)` in `ctx.meta["telemetry_argv"]` before calling `super()`. `CountingGroup.invoke` wraps `super().invoke(ctx)`, derives the outcome from `SystemExit`, `click.exceptions.Exit`, `click.ClickException.exit_code`, `click.Abort` (`"1"`), `KeyboardInterrupt` (`"130"`) and any other `BaseException` (`"1"`), re-raises each untouched, and calls `record` in `finally`, skipping it when `--help` is in the argv before a `--`. `leaf_and_flags` keeps a flag only if it is in the leaf's `params` opts. Crashes never reach `invoke` as exceptions, because `run_with_handlers` turns them into `SystemExit(1)`, so call `record_crash("cli", exc)` from `emit_unhandled_event` (`observability.py:165`), which both arms pass through (`_cli_helpers.py:379`, `:457`). `crash_key` walks the traceback for the innermost frame whose module starts with `gflow_cli`, strips that prefix, and caps the key at 120 characters. It never reads `str(exc)`.
+`CountingGroup.parse_args` stores `list(args)` in `ctx.meta["telemetry_argv"]` before calling `super()`. `CountingGroup.invoke` wraps `super().invoke(ctx)`, derives the outcome from `SystemExit`, `click.exceptions.Exit`, `click.ClickException.exit_code`, `click.Abort` (`"1"`), `KeyboardInterrupt` (`"130"`) and any other `BaseException` (`"1"`), re-raises each untouched, and calls `record` in `finally`, skipping it when `--help` is in the argv before a `--`. `leaf_and_flags` keeps a flag only if it is in the leaf's `params` opts. Crashes never reach `invoke` as exceptions, because `run_with_handlers` turns them into `SystemExit(1)`, so call `record_crash("cli", exc)` from `emit_unhandled_event` (`observability.py:165`), which both arms pass through (`_cli_helpers.py:379`, `:457`). `crash_key` follows the spec's "The fingerprint": `traceback.walk_tb`, module from `f_globals["__name__"]`, name from `f_code.co_qualname`; keep the innermost three `gflow_cli` frames (prefix stripped), collapse each run of third-party frames to `<package>`, drop stdlib (`sys.stdlib_module_names`) and module-less frames, prepend `Class` or `Class from CauseClass`, cap at 200 characters. It never reads `str(exc)`, locals, filenames or line numbers. Add the same key to the incident bundle `emit_unhandled_event` already writes.
 
 - [ ] **Step 4: Run them, plus the CLI suite**
 

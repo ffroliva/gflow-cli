@@ -97,12 +97,30 @@ stalled the event loop for about 300 ms when measured.
 **Names only, by construction.** The CLI hook walks the arguments Click received against the Click
 tree and keeps only names that exist in that tree. A positional prompt cannot become a key.
 
-**Bug data has three levels.** Default-on, in the weekly totals: exit codes per command, and a crash
-location for unexpected errors, such as `TimeoutError at api.transports.ui_automation:submit`. That
-key holds only the exception class and the innermost frame inside `gflow_cli`, as Go's stack counters
-do. Local only: incident bundles, unchanged and never uploaded. Person-initiated: `gflow feedback`.
-Exception messages, stack traces and logs are never sent automatically, because they can hold prompts
-and paths.
+**Bug data has three levels.** Default-on, in the weekly totals: exit codes per command (known errors
+already carry a stable class and exit code), and a **crash fingerprint** for unexpected errors, such as
+`TimeoutError <- <playwright> <- api.transports.ui_automation:UiAutomationTransport.upload_reference <- api.client:FlowApiClient.upload_reference`.
+Local only: incident bundles, unchanged and never uploaded, plus the same fingerprint so a later
+`gflow feedback` report can be matched to its total. Person-initiated: `gflow feedback`. Exception
+messages, stack traces and logs are never sent automatically, because they can hold prompts and paths.
+
+**The fingerprint**, as Go's stack counters and the .NET SDK do: names from our own published code,
+never values.
+
+- The exception's class, plus `from <class>` for its `__cause__` or `__context__`, class names only.
+- The **innermost three frames inside `gflow_cli`**, as `module:qualname` with the `gflow_cli.`
+  prefix stripped, innermost first. Three, not one, so two bugs that end in the same function by
+  different routes stay apart.
+- A run of third-party frames, wherever it sits in that span (including where the error was raised),
+  collapses to one `<package>` marker (`<playwright>`).
+  Standard-library frames and frames with no real module (`<string>`, `exec`) are dropped.
+- Built from frame objects (`traceback.walk_tb`, `f_globals["__name__"]`, `f_code.co_qualname`),
+  never by parsing traceback text. Never reads `str(exc)`, locals, file paths or line numbers; the
+  report's `version` is enough to find the function. Capped at 200 characters.
+- No `gflow_cli` frame at all gives `<class> at other`.
+
+The price is more distinct keys than a single frame, so more rows per report. A refactor changes
+the key between versions, which `version` already separates.
 
 **Automated runs.** Reporting never prompts, never waits, and never changes an exit code. MCP clients
 still get only the opaque incident reference.
@@ -180,7 +198,7 @@ be retrofitted. The allow-list is never changed remotely; a new field is a publi
 | `transitions` | `{"image t2i -> video i2v": 3}` |
 | `models`, `modes`, `aspects`, `outcomes` | from the catalog, opened read-only, so what actually ran. Values outside the known enums become `other` |
 | `mcp_clients` | known names from the MCP `clientInfo`; anything else becomes `other` |
-| `crashes` | keyed by surface: `{"cli": {"TimeoutError at api.client:post": 1}}` |
+| `crashes` | fingerprints keyed by surface: `{"cli": {"TimeoutError <- <playwright> <- api.client:FlowApiClient.upload_reference <- cli_video:t2v": 1}}` |
 | `tools` | prompt tool use, by name and result: `{"prompt-architect": {"expanded": 3, "unchanged": 1}}`. Only unmodified packaged tools keep their name; every "My Tools" entry, including one that shadows a packaged name, counts as `custom` |
 
 Every value is a name in our own code, a bucket, or a count. Built field by field, never by filtering.
