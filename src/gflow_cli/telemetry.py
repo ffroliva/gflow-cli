@@ -146,7 +146,11 @@ def record(
         with closing(_connect(home)) as con, con:
             meta = dict(con.execute("SELECT key, value FROM meta"))
             prev = meta.get("prev_command")
-            if prev and now.timestamp() - float(meta.get("prev_time", 0)) <= _TRANSITION_WINDOW_S:
+            if (
+                prev
+                and meta.get("prev_surface") == surface
+                and now.timestamp() - float(meta.get("prev_time", 0)) <= _TRANSITION_WINDOW_S
+            ):
                 keys.append(("transition", f"{prev} -> {command}"))
             con.executemany(
                 "INSERT INTO counters VALUES (?, ?, ?, ?, 1)"
@@ -155,7 +159,11 @@ def record(
             )
             con.executemany(
                 "INSERT OR REPLACE INTO meta VALUES (?, ?)",
-                [("prev_command", command), ("prev_time", str(time.time()))],
+                [
+                    ("prev_command", command),
+                    ("prev_surface", surface),
+                    ("prev_time", str(time.time())),
+                ],
             )
             con.execute(
                 "INSERT OR IGNORE INTO meta VALUES ('first_seen', ?)", (now.date().isoformat(),)
@@ -166,22 +174,29 @@ def record(
         _debug("telemetry_record_failed", error=type(exc).__name__)
 
 
-def record_crash(
-    surface: Literal["cli", "mcp"], exc: BaseException, *, fingerprint: str | None = None
-) -> None:
-    """Count a privacy-safe crash fingerprint without affecting the caller."""
+def record_counter(surface: Literal["cli", "mcp"], kind: str, key: str) -> None:
+    """Count one extra weekly value (for example an MCP client or crash)."""
     try:
-        key = fingerprint if fingerprint is not None else crash_key(exc)
         if killed() or opted_out():
             return
         home = _resolve_home()
         home.mkdir(parents=True, exist_ok=True)
         with closing(_connect(home)) as con, con:
             con.execute(
-                "INSERT INTO counters VALUES (?, ?, 'crash', ?, 1)"
+                "INSERT INTO counters VALUES (?, ?, ?, ?, 1)"
                 " ON CONFLICT(week, surface, kind, key) DO UPDATE SET n = n + 1",
-                (iso_week(), surface, key),
+                (iso_week(), surface, kind, key),
             )
+    except Exception as failure:  # noqa: BLE001
+        _debug("telemetry_counter_failed", error=type(failure).__name__)
+
+
+def record_crash(
+    surface: Literal["cli", "mcp"], exc: BaseException, *, fingerprint: str | None = None
+) -> None:
+    """Count a privacy-safe crash fingerprint without affecting the caller."""
+    try:
+        record_counter(surface, "crash", fingerprint if fingerprint is not None else crash_key(exc))
     except Exception as failure:  # noqa: BLE001
         _debug("telemetry_crash_failed", error=type(failure).__name__)
 
