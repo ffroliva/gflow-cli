@@ -39,34 +39,36 @@ def _next_due_week(now: datetime, con: sqlite3.Connection) -> str | None:
     notice_at = datetime.fromisoformat(notice)
     if notice_at.tzinfo is None:
         notice_at = notice_at.replace(tzinfo=UTC)
-    weeks = [str(row[0]) for row in con.execute("SELECT DISTINCT week FROM counters ORDER BY week")]
-    eligible: list[tuple[str, datetime]] = []
-    for week in weeks:
+    rows = con.execute(
+        "SELECT DISTINCT counters.week, reports.report_id, reports.due_at, reports.sent_at "
+        "FROM counters LEFT JOIN reports ON reports.week = counters.week "
+        "ORDER BY counters.week"
+    ).fetchall()
+    eligible: list[tuple[str, str | None, str | None]] = []
+    inserts: list[tuple[str, str, str]] = []
+    updates: list[tuple[str, str]] = []
+    for raw_week, report_id, raw_due_at, sent_at in rows:
+        week = str(raw_week)
         start = _week_start(week)
         end = start + _DAY * 7
         if start <= notice_at or end > now:
             continue
-        eligible.append((week, end))
-        row = con.execute("SELECT due_at FROM reports WHERE week = ?", (week,)).fetchone()
-        if row is None:
-            con.execute(
-                "INSERT INTO reports (week, report_id, due_at) VALUES (?, ?, ?)",
-                (
-                    week,
-                    secrets.token_urlsafe(16),
-                    (end + timedelta(seconds=secrets.randbelow(_WEEK_SECONDS + 1))).isoformat(),
-                ),
-            )
-        elif row[0] is None:
-            due_at = end + timedelta(seconds=secrets.randbelow(_WEEK_SECONDS + 1))
-            con.execute(
-                "UPDATE reports SET due_at = ? WHERE week = ? AND due_at IS NULL",
-                (due_at.isoformat(), week),
-            )
-    for week, _ in eligible:
-        row = con.execute("SELECT due_at, sent_at FROM reports WHERE week = ?", (week,)).fetchone()
-        due_at = datetime.fromisoformat(row[0]) if row and row[0] else None
-        if row is None or row[1] is not None or due_at is None or now < due_at:
+        if raw_due_at is None:
+            due_at = (end + timedelta(seconds=secrets.randbelow(_WEEK_SECONDS + 1))).isoformat()
+            if report_id is None:
+                inserts.append((week, secrets.token_urlsafe(16), due_at))
+            else:
+                updates.append((due_at, week))
+        else:
+            due_at = str(raw_due_at)
+        eligible.append((week, str(sent_at) if sent_at is not None else None, due_at))
+    con.executemany(
+        "INSERT OR IGNORE INTO reports (week, report_id, due_at) VALUES (?, ?, ?)", inserts
+    )
+    con.executemany("UPDATE reports SET due_at = ? WHERE week = ? AND due_at IS NULL", updates)
+    for week, sent_at, raw_due_at in eligible:
+        due_at = datetime.fromisoformat(raw_due_at) if raw_due_at else None
+        if sent_at is not None or due_at is None or now < due_at:
             continue
         retry = meta.get(f"retry_after:{week}")
         if retry and now < datetime.fromisoformat(retry):
