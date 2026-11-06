@@ -336,6 +336,7 @@ def test_body_is_never_read(monkeypatch: pytest.MonkeyPatch, _home: Path) -> Non
     assert _report(_home, week)[2] is not None
 
 
+@pytest.mark.sharpit(allow_n_plus_one=True)  # eight daily attempts in one test, one read each
 def test_two_months_offline_sends_each_week_once(_home: Path) -> None:
     from gflow_cli import telemetry_upload
 
