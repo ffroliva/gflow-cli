@@ -636,3 +636,64 @@ def list_project_media_assets(*, db_path: Path, project_id: str) -> list[dict[st
             }
         )
     return results
+
+
+# ─── UsageRow + usage_stats (Task 4, #1164) ───────────────────────────────────
+
+
+@dataclass(frozen=True)
+class UsageRow:
+    """Aggregated generation counts from the operations catalog."""
+
+    command: str
+    model: str | None
+    status: str
+    month: str
+    n: int
+
+
+_USAGE_STATS_SQL = """
+    SELECT
+        COALESCE(o.command, o.mode) AS command,
+        o.model                     AS model,
+        o.status                    AS status,
+        substr(o.started_at, 1, 7)  AS month,
+        COUNT(*)                    AS n
+    FROM operations o
+    WHERE o.started_at >= :cutoff
+    GROUP BY command, model, status, month
+    ORDER BY month DESC, n DESC, command ASC
+"""
+
+
+def usage_stats(*, db_path: Path, weeks: int) -> list[UsageRow]:
+    """Return generation counts grouped by command, model, status, and month (#1164).
+
+    Restricted to operations started within the last ``weeks`` weeks.
+    Selects only command/mode, model, status, and started_at (never prompt or path columns).
+    Returns [] if ``db_path`` does not exist on disk, without creating it.
+
+    Args:
+        db_path: Path to the SQLite catalog file.
+        weeks: Number of weeks into the past to query.
+
+    Returns:
+        List of :class:`UsageRow` instances.
+    """
+    if not db_path.exists():
+        return []
+
+    cutoff = (datetime.now(UTC) - timedelta(weeks=weeks)).isoformat()
+    with _safe_db(db_path) as conn:
+        rows = conn.execute(_USAGE_STATS_SQL, {"cutoff": cutoff}).fetchall()
+
+    return [
+        UsageRow(
+            command=str(row["command"]),
+            model=str(row["model"]) if row["model"] is not None else None,
+            status=str(row["status"]),
+            month=str(row["month"]),
+            n=int(row["n"]),
+        )
+        for row in rows
+    ]

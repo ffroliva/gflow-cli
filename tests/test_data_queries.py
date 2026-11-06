@@ -24,12 +24,14 @@ from gflow_cli.data.queries import (
     _LIST_IMAGES_SQL,
     _LIST_VIDEOS_ALL_COPIES_SQL,
     _LIST_VIDEOS_SQL,
+    UsageRow,
     get_asset_prompt,
     list_images,
     list_profiles,
     list_project_media_assets,
     list_projects,
     list_videos,
+    usage_stats,
 )
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
@@ -724,3 +726,158 @@ def test_get_asset_prompt_by_media_id(seeded: Path) -> None:
 
 def test_get_asset_prompt_unknown_media_returns_none(seeded: Path) -> None:
     assert get_asset_prompt(db_path=seeded, media_id="no-such-media") is None
+
+
+# ---------------------------------------------------------------------------
+# usage_stats — Task 4 (#1164)
+# ---------------------------------------------------------------------------
+
+
+def test_usage_stats_groups_by_command_model_status_month(tmp_path: Path) -> None:
+
+    db = tmp_path / "stats_test.db"
+    store = DataStore.open(db)
+    repo = DataRepository(store)
+
+    repo.upsert_profile(name="alice", profile_dir=Path("/home/alice"))
+    now = datetime.now(UTC)
+    cur_month = now.strftime("%Y-%m")
+
+    # Op 1: image t2i, imagen-3.0, succeeded, now
+    repo.insert_operation(
+        OperationRecord(
+            id=str(uuid.uuid4()),
+            profile_name="alice",
+            flow_project_id=None,
+            command="image t2i",
+            mode=OperationKind.T2I,
+            status=OperationStatus.SUCCEEDED,
+            flow_operation_id=None,
+            flow_batch_id=None,
+            prompt="prompt 1",
+            prompt_hash=None,
+            prompt_redacted=False,
+            model="imagen-3.0-generate-002",
+            aspect_ratio="16:9",
+            error_type=None,
+            error_detail=None,
+            started_at=now.isoformat(),
+        )
+    )
+    # Op 2: same command, model, status, month
+    repo.insert_operation(
+        OperationRecord(
+            id=str(uuid.uuid4()),
+            profile_name="alice",
+            flow_project_id=None,
+            command="image t2i",
+            mode=OperationKind.T2I,
+            status=OperationStatus.SUCCEEDED,
+            flow_operation_id=None,
+            flow_batch_id=None,
+            prompt="prompt 2",
+            prompt_hash=None,
+            prompt_redacted=False,
+            model="imagen-3.0-generate-002",
+            aspect_ratio="16:9",
+            error_type=None,
+            error_detail=None,
+            started_at=(now - timedelta(days=1)).isoformat(),
+        )
+    )
+    # Op 3: video t2v, veo-2.0, failed
+    repo.insert_operation(
+        OperationRecord(
+            id=str(uuid.uuid4()),
+            profile_name="alice",
+            flow_project_id=None,
+            command="video t2v",
+            mode=OperationKind.T2V,
+            status=OperationStatus.FAILED,
+            flow_operation_id=None,
+            flow_batch_id=None,
+            prompt="video prompt",
+            prompt_hash=None,
+            prompt_redacted=False,
+            model="veo-2.0",
+            aspect_ratio="16:9",
+            error_type="waf-rejection",
+            error_detail=None,
+            started_at=(now - timedelta(days=2)).isoformat(),
+        )
+    )
+    # Op 4: out of window (20 weeks ago)
+    repo.insert_operation(
+        OperationRecord(
+            id=str(uuid.uuid4()),
+            profile_name="alice",
+            flow_project_id=None,
+            command="image t2i",
+            mode=OperationKind.T2I,
+            status=OperationStatus.SUCCEEDED,
+            flow_operation_id=None,
+            flow_batch_id=None,
+            prompt="old prompt",
+            prompt_hash=None,
+            prompt_redacted=False,
+            model="imagen-3.0-generate-002",
+            aspect_ratio="16:9",
+            error_type=None,
+            error_detail=None,
+            started_at=(now - timedelta(weeks=20)).isoformat(),
+        )
+    )
+    store.close()
+
+    rows = usage_stats(db_path=db, weeks=4)
+    assert len(rows) == 2
+
+    # Verify grouping
+    row_map = {(r.command, r.model, r.status, r.month): r.n for r in rows}
+    assert row_map[("image t2i", "imagen-3.0-generate-002", "succeeded", cur_month)] == 2
+    assert row_map[("video t2v", "veo-2.0", "failed", cur_month)] == 1
+
+
+def test_usage_stats_never_selects_prompt_columns(tmp_path: Path) -> None:
+    import dataclasses
+
+    db = tmp_path / "stats_privacy.db"
+    store = DataStore.open(db)
+    repo = DataRepository(store)
+    repo.upsert_profile(name="alice", profile_dir=Path("/home/alice"))
+
+    secret_prompt = "SUPER_SECRET_USER_PROMPT_NEVER_LEAK"
+    repo.insert_operation(
+        OperationRecord(
+            id=str(uuid.uuid4()),
+            profile_name="alice",
+            flow_project_id=None,
+            command="image t2i",
+            mode=OperationKind.T2I,
+            status=OperationStatus.SUCCEEDED,
+            flow_operation_id=None,
+            flow_batch_id=None,
+            prompt=secret_prompt,
+            prompt_hash=None,
+            prompt_redacted=False,
+            model="imagen-3.0",
+            aspect_ratio="16:9",
+            error_type=None,
+            error_detail=None,
+            started_at=datetime.now(UTC).isoformat(),
+        )
+    )
+    store.close()
+
+    assert "prompt" not in {f.name for f in dataclasses.fields(UsageRow)}
+    rows = usage_stats(db_path=db, weeks=12)
+    assert len(rows) == 1
+    assert secret_prompt not in str(rows[0])
+
+
+def test_usage_stats_missing_db_returns_empty_and_does_not_create(tmp_path: Path) -> None:
+    missing = tmp_path / "nonexistent.db"
+    assert not missing.exists()
+    rows = usage_stats(db_path=missing, weeks=12)
+    assert rows == []
+    assert not missing.exists()
