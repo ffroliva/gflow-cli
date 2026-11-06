@@ -329,6 +329,7 @@ KNOWN_MCP_CLIENTS = frozenset(
     {
         "codex-mcp-client",  # observed with Codex 0.166.0 on 2026-11-06
         "claude-code",  # observed with Claude Code 2.1.319 on 2026-11-06
+        "mcp",  # SDK default: mcp/client/session.py:67; observed with ClientSession on 2026-11-06
     }
 )
 

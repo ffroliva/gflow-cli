@@ -207,6 +207,7 @@ async def test_a_running_server_honours_off(
     [
         ("codex-mcp-client", "codex-mcp-client"),
         ("claude-code", "claude-code"),
+        ("mcp", "mcp"),
         ("unobserved-client", "other"),
     ],
 )

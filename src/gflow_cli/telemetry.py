@@ -146,7 +146,11 @@ def record(
         with closing(_connect(home)) as con, con:
             meta = dict(con.execute("SELECT key, value FROM meta"))
             prev = meta.get("prev_command")
-            if prev and now.timestamp() - float(meta.get("prev_time", 0)) <= _TRANSITION_WINDOW_S:
+            if (
+                prev
+                and meta.get("prev_surface") == surface
+                and now.timestamp() - float(meta.get("prev_time", 0)) <= _TRANSITION_WINDOW_S
+            ):
                 keys.append(("transition", f"{prev} -> {command}"))
             con.executemany(
                 "INSERT INTO counters VALUES (?, ?, ?, ?, 1)"
@@ -155,7 +159,11 @@ def record(
             )
             con.executemany(
                 "INSERT OR REPLACE INTO meta VALUES (?, ?)",
-                [("prev_command", command), ("prev_time", str(time.time()))],
+                [
+                    ("prev_command", command),
+                    ("prev_surface", surface),
+                    ("prev_time", str(time.time())),
+                ],
             )
             con.execute(
                 "INSERT OR IGNORE INTO meta VALUES ('first_seen', ?)", (now.date().isoformat(),)
