@@ -35,7 +35,7 @@ from mcp.server.mcpserver.context import Context
 from pydantic import Field
 
 from gflow_cli import auth as auth_mod
-from gflow_cli import telemetry
+from gflow_cli import telemetry, telemetry_upload
 from gflow_cli._cli_helpers import _FLOW_ID_RE, _exit_code_for, default_project  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
@@ -290,14 +290,14 @@ def _guarded(
             # A kill-switch no-op does not need a worker-thread handoff.
             if not disabled:
                 try:
-                    await asyncio.to_thread(
-                        telemetry.record,
-                        "mcp",
-                        fn.__name__,
-                        (),
-                        outcome,
-                        time.monotonic() - started,
-                    )
+
+                    def record_and_maybe_upload() -> None:
+                        telemetry.record(
+                            "mcp", fn.__name__, (), outcome, time.monotonic() - started
+                        )
+                        telemetry_upload.maybe_upload()
+
+                    await asyncio.to_thread(record_and_maybe_upload)
                 except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
                     pass
                 try:

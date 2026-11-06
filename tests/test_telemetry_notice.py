@@ -228,7 +228,13 @@ def test_no_writer_can_undo_off() -> None:
     assert lines
     for line_no, _line in lines:
         preceding = "\n".join(source.splitlines()[:line_no])
-        assert "def opted_out" in preceding[-300:] or "def set_opted_out" in preceding[-300:]
+        assert (
+            "def opted_out" in preceding[-300:]
+            or "def set_opted_out" in preceding[-300:]
+            or (
+                'return "off", "telemetry.off"' == _line.strip() and "def state" in preceding[-300:]
+            )
+        )
 
 
 def test_off_delete_wipes_local_data_and_says_remote_holds_nothing_per_install() -> None:

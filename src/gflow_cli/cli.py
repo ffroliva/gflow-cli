@@ -17,7 +17,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from gflow_cli import __version__, profile_store, telemetry
+from gflow_cli import __version__, profile_store, telemetry, telemetry_upload
 from gflow_cli import auth as auth_mod
 from gflow_cli.cli_character import character as _character_group
 from gflow_cli.cli_credits import credits as _credits_group
@@ -196,6 +196,7 @@ def main(ctx: click.Context, verbose: bool) -> None:
         _print_update_notice(update_notice)
     if ctx.invoked_subcommand and ctx.invoked_subcommand != "telemetry":
         telemetry.maybe_show_notice()
+        telemetry_upload.maybe_upload()
     ctx.ensure_object(dict)
 
 
