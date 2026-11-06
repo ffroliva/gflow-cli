@@ -258,10 +258,10 @@ differ, and that is stated too.
 ## Open decisions
 
 1. **Central store: decided 2026-11-06.** Cloudflare Worker + D1, created with `--jurisdiction=eu`.
-   **Created 2026-11-06:** D1 `gflow-telemetry`, id `4dd3ffe8-e5cb-4ed6-95c0-60a817c893ee`,
-   `jurisdiction: eu`, region EEUR, empty. Cloudflare account `ffroliva` (`6e84ee0d4c899e5b5fa648302e0bfba9`,
-   login ffroliva@gmail.com). The same login also reaches another account, so every wrangler call
-   pins `CLOUDFLARE_ACCOUNT_ID`, and the Worker's `wrangler.toml` must set `account_id`.
+   **Created 2026-11-06:** D1 `gflow-telemetry`, `jurisdiction: eu`, region EEUR. Every wrangler
+   call pins `CLOUDFLARE_ACCOUNT_ID`, and the Worker's `wrangler.toml` sets `account_id`. The
+   Worker lives in the public repo
+   [ffroliva/gflow-telemetry-endpoint](https://github.com/ffroliva/gflow-telemetry-endpoint).
 2. **EU users:** for counsel. Default-on for all, or a consent prompt where the machine's timezone is
    in the EU. Not built until decided.
 3. **Data controller:** who the notice names.
