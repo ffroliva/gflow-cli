@@ -31,10 +31,12 @@ from typing import Annotated, Any, cast
 
 import click
 import structlog
+from mcp.server.mcpserver.context import Context
 from pydantic import Field
 
 from gflow_cli import auth as auth_mod
-from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project
+from gflow_cli import telemetry
+from gflow_cli._cli_helpers import _FLOW_ID_RE, _exit_code_for, default_project  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
@@ -259,18 +261,95 @@ def _guarded(
     never reach the client via the framework's default str(exc) path."""
 
     @functools.wraps(fn)
-    async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    async def wrapper(
+        *args: Any, ctx: Context[Any, Any] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        started = time.monotonic()
+        outcome = "1"
+        crash: Exception | None = None
         try:
-            return await fn(*args, **kwargs)
-        except GFlowError as exc:
-            log.error("mcp.tool.gflow_error", tool=fn.__name__, error=str(exc))
-            return _error_payload(_gflow_error_dict(exc))
-        except Exception as exc:  # noqa: BLE001 — the funnel IS the handler
-            log.exception("mcp.tool.unexpected_error", tool=fn.__name__, exc_info=exc)
-            return _error_payload(_masked_unexpected_dict(exc))
+            try:
+                result = await fn(*args, **kwargs)
+            except GFlowError as exc:
+                outcome = str(_exit_code_for(exc))
+                log.error("mcp.tool.gflow_error", tool=fn.__name__, error=str(exc))
+                result = _error_payload(_gflow_error_dict(exc))
+            except Exception as exc:  # noqa: BLE001 — the funnel IS the handler
+                outcome = "1"
+                crash = exc
+                log.exception("mcp.tool.unexpected_error", tool=fn.__name__, exc_info=exc)
+                result = _error_payload(_masked_unexpected_dict(exc))
+            else:
+                outcome = outcome_of(result)
+            return result
+        finally:
+            try:
+                disabled = telemetry.killed()
+            except Exception:  # noqa: BLE001 — a kill-switch read must not fail the tool
+                disabled = False
+            # A kill-switch no-op does not need a worker-thread handoff.
+            if not disabled:
+                try:
+                    await asyncio.to_thread(
+                        telemetry.record,
+                        "mcp",
+                        fn.__name__,
+                        (),
+                        outcome,
+                        time.monotonic() - started,
+                    )
+                except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
+                    pass
+                try:
+                    params = ctx.request_context.session.client_params if ctx is not None else None
+                    client_name = params.client_info.name if params is not None else None
+                except Exception:  # noqa: BLE001 — metadata may be absent outside a request
+                    client_name = None
+                if client_name is not None:
+                    try:
+                        await asyncio.to_thread(
+                            telemetry.record_counter, "mcp", "client", client_key(client_name)
+                        )
+                    except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
+                        pass
+                if crash is not None:
+                    try:
+                        await asyncio.to_thread(telemetry.record_crash, "mcp", crash)
+                    except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
+                        pass
 
+    # MCP's installed SDK discovers context from annotations and injects it without
+    # adding it to the public tool schema; functools.wraps preserves each tool's schema.
+    wrapper.__annotations__["ctx"] = Context
     wrapper.__gflow_guarded__ = True  # type: ignore[attr-defined]
     return wrapper
+
+
+KNOWN_MCP_CLIENTS = frozenset(
+    {
+        "codex-mcp-client",  # observed with Codex 0.166.0 on 2026-11-06
+        "claude-code",  # observed with Claude Code 2.1.319 on 2026-11-06
+    }
+)
+
+
+def client_key(name: str | None) -> str:
+    """Keep known MCP client names; group every other supplied name together."""
+    return name if name in KNOWN_MCP_CLIENTS else "other"
+
+
+def outcome_of(result: dict[str, Any]) -> str:
+    """Return the stable telemetry outcome for an MCP result envelope."""
+    status = result.get("status")
+    if status == "pending":
+        return "queued"
+    if status in {"error", "failed", "rate_limited", "invalid_tools"}:
+        error = result.get("error")
+        code: Any = result.get("exit_code")
+        if code is None and isinstance(error, dict):
+            code = cast(dict[str, Any], error).get("exit_code")
+        return str(code) if code is not None else "error"
+    return "0"
 
 
 def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:

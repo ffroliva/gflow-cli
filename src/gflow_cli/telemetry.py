@@ -166,22 +166,29 @@ def record(
         _debug("telemetry_record_failed", error=type(exc).__name__)
 
 
-def record_crash(
-    surface: Literal["cli", "mcp"], exc: BaseException, *, fingerprint: str | None = None
-) -> None:
-    """Count a privacy-safe crash fingerprint without affecting the caller."""
+def record_counter(surface: Literal["cli", "mcp"], kind: str, key: str) -> None:
+    """Count one extra weekly value (for example an MCP client or crash)."""
     try:
-        key = fingerprint if fingerprint is not None else crash_key(exc)
         if killed() or opted_out():
             return
         home = _resolve_home()
         home.mkdir(parents=True, exist_ok=True)
         with closing(_connect(home)) as con, con:
             con.execute(
-                "INSERT INTO counters VALUES (?, ?, 'crash', ?, 1)"
+                "INSERT INTO counters VALUES (?, ?, ?, ?, 1)"
                 " ON CONFLICT(week, surface, kind, key) DO UPDATE SET n = n + 1",
-                (iso_week(), surface, key),
+                (iso_week(), surface, kind, key),
             )
+    except Exception as failure:  # noqa: BLE001
+        _debug("telemetry_counter_failed", error=type(failure).__name__)
+
+
+def record_crash(
+    surface: Literal["cli", "mcp"], exc: BaseException, *, fingerprint: str | None = None
+) -> None:
+    """Count a privacy-safe crash fingerprint without affecting the caller."""
+    try:
+        record_counter(surface, "crash", fingerprint if fingerprint is not None else crash_key(exc))
     except Exception as failure:  # noqa: BLE001
         _debug("telemetry_crash_failed", error=type(failure).__name__)
 
