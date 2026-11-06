@@ -170,21 +170,74 @@ _WORKER = (
 )
 
 
+def _run(code: str) -> subprocess.Popen[bytes]:
+    return subprocess.Popen(
+        [sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+
+
 def test_contention_is_lossy_and_silent(tmp_home: Path) -> None:
-    procs = [
-        subprocess.Popen(
-            [sys.executable, "-c", _WORKER],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        for _ in range(4)
-    ]
+    procs = [_run(_WORKER) for _ in range(4)]
     for p in procs:
         out, err = p.communicate(timeout=60)
         assert p.returncode == 0
         assert out == b""
         assert err == b""
     assert 0 < _rows(tmp_home)[("command", "video t2v")] <= 200
+
+
+def test_forced_lock_is_silent_and_drops_the_record(tmp_home: Path) -> None:
+    telemetry.record("cli", "seed", [], "0", 1.0)  # create the db
+    holder = sqlite3.connect(tmp_home / "telemetry.db", isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")  # writer lock held for the whole subprocess run
+    try:
+        code = (
+            "import sys\nfrom gflow_cli import telemetry\n"
+            "r = telemetry.record('cli', 'locked', [], '0', 1.0)\n"
+            "sys.exit(0 if r is None else 3)\n"
+        )
+        out, err = _run(code).communicate(timeout=60)
+    finally:
+        holder.rollback()
+        holder.close()
+    assert out == b""
+    assert b"database is locked" not in err
+    assert ("command", "locked") not in _rows(tmp_home)
+
+
+def test_forced_lock_exit_zero_and_stdout_empty_even_with_unconfigured_structlog(
+    tmp_home: Path,
+) -> None:
+    telemetry.record("cli", "seed", [], "0", 1.0)
+    holder = sqlite3.connect(tmp_home / "telemetry.db", isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        proc = _run("from gflow_cli import telemetry; telemetry.record('cli','x',[],'0',1.0)")
+        out, err = proc.communicate(timeout=60)
+    finally:
+        holder.rollback()
+        holder.close()
+    assert proc.returncode == 0
+    assert out == b""
+    assert b"database is locked" not in err
+
+
+def test_non_utf8_dotenv_never_raises(tmp_home: Path) -> None:
+    Path(".env").write_bytes(b"X=\xff\n")
+    telemetry.killed.cache_clear()
+    assert telemetry.killed() is None
+    assert telemetry.opted_out() in (True, False)  # must not raise
+    assert telemetry.record("cli", "x", [], "0", 1.0) is None
+
+
+def test_opted_out_fails_closed_when_home_cannot_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom() -> Path:
+        raise RuntimeError("no home")
+
+    monkeypatch.setattr(telemetry, "_resolve_home", boom)
+    assert telemetry.opted_out() is True
 
 
 def test_rows_older_than_53_weeks_are_pruned(tmp_home: Path) -> None:

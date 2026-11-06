@@ -27,6 +27,14 @@ from gflow_cli.config import _env_files, _resolve_home  # pyright: ignore[report
 
 log = structlog.get_logger(__name__)
 
+
+def _debug(event: str, **kw: str) -> None:
+    # Unconfigured structlog prints to STDOUT (PrintLogger); observability.configure_logging
+    # routes to stderr. Log only once configured, so stdout (MCP stdio, --json) stays clean.
+    if structlog.is_configured():
+        log.debug(event, **kw)
+
+
 _RETAIN_WEEKS = 53
 _TRANSITION_WINDOW_S = 30 * 60
 
@@ -51,11 +59,11 @@ def iso_week(now: datetime | None = None) -> str:
 
 def _env_sources() -> list[dict[str, str | None]]:
     sources: list[dict[str, str | None]] = [dict(os.environ)]
-    for path in _env_files():
-        try:
+    try:  # unreadable or non-UTF-8 .env (also inside _resolve_home): cannot switch anything
+        for path in _env_files():
             sources.append(dict(dotenv_values(path)))
-        except OSError:
-            continue
+    except (OSError, ValueError):
+        pass
     return sources
 
 
@@ -79,8 +87,14 @@ def killed() -> str | None:
 
 
 def opted_out() -> bool:
-    """Not cached: a running MCP server must notice ``gflow telemetry off``."""
-    return (_resolve_home() / "telemetry.off").exists()
+    """Not cached: a running MCP server must notice ``gflow telemetry off``.
+
+    Fails closed: when the state cannot be read we cannot tell, so nothing is counted.
+    """
+    try:
+        return (_resolve_home() / "telemetry.off").exists()
+    except Exception:  # noqa: BLE001
+        return True
 
 
 def _bucket(seconds: float) -> str:
@@ -95,12 +109,16 @@ def _bucket(seconds: float) -> str:
 
 def _connect(home: Path) -> sqlite3.Connection:
     con = sqlite3.connect(home / "telemetry.db", timeout=0.2)
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute(
-        "CREATE TABLE IF NOT EXISTS counters (week TEXT, surface TEXT, kind TEXT, key TEXT,"
-        " n INTEGER, PRIMARY KEY (week, surface, kind, key))"
-    )
-    con.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS counters (week TEXT, surface TEXT, kind TEXT, key TEXT,"
+            " n INTEGER, PRIMARY KEY (week, surface, kind, key))"
+        )
+        con.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    except BaseException:
+        con.close()  # a leaked handle pins the file on Windows
+        raise
     return con
 
 
@@ -128,7 +146,8 @@ def record(
             if prev and now.timestamp() - float(meta.get("prev_time", 0)) <= _TRANSITION_WINDOW_S:
                 keys.append(("transition", f"{prev} -> {command}"))
             con.executemany(
-                "INSERT INTO counters VALUES (?, ?, ?, ?, 1) ON CONFLICT DO UPDATE SET n = n + 1",
+                "INSERT INTO counters VALUES (?, ?, ?, ?, 1)"
+                " ON CONFLICT(week, surface, kind, key) DO UPDATE SET n = n + 1",
                 [(week, surface, kind, key) for kind, key in keys],
             )
             con.executemany(
@@ -141,7 +160,7 @@ def record(
             cutoff = iso_week(now - timedelta(weeks=_RETAIN_WEEKS))
             con.execute("DELETE FROM counters WHERE week < ?", (cutoff,))
     except Exception as exc:  # noqa: BLE001 - telemetry must never affect a command
-        log.debug("telemetry_record_failed", error=type(exc).__name__)
+        _debug("telemetry_record_failed", error=type(exc).__name__)
 
 
 def read_counters(weeks: int | None = None) -> list[Counter]:
@@ -158,5 +177,5 @@ def read_counters(weeks: int | None = None) -> list[Counter]:
         with closing(_connect(home)) as con:
             return [Counter(*row) for row in con.execute(sql + " ORDER BY week, kind, key", args)]
     except Exception as exc:  # noqa: BLE001
-        log.debug("telemetry_read_failed", error=type(exc).__name__)
+        _debug("telemetry_read_failed", error=type(exc).__name__)
         return []
