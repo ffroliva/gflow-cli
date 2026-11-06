@@ -258,8 +258,60 @@ def test_report_id_is_stable_within_a_week_and_differs_across_weeks() -> None:
 
     assert id1 == id2
     assert id1 != id3
+    assert telemetry.stored_report_id("2026-W44") == id1
     assert len(id1) == 22
     assert re.match(r"^[A-Za-z0-9_-]+$", id1)
+
+
+def test_off_reports_do_not_create_telemetry_db_or_stored_report_id(
+    monkeypatch: pytest.MonkeyPatch, _tele_env: Path
+) -> None:
+    from gflow_cli.cli_data import collect_usage_stats
+
+    monkeypatch.setenv("DO_NOT_TRACK", "1")
+    telemetry.killed.cache_clear()
+    home = _tele_env
+    result = CliRunner().invoke(main, ["telemetry", "show"])
+    assert result.exit_code == 0, result.output
+    assert not (home / "telemetry.db").exists()
+
+    collect_usage_stats(weeks=12)
+    assert not (home / "telemetry.db").exists()
+    assert telemetry.stored_report_id(telemetry.iso_week()) is None
+
+
+def test_telemetry_state_is_shared_by_status_and_usage_stats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.cli_data import collect_usage_stats
+
+    monkeypatch.setattr(telemetry, "state", lambda: ("off", "test-switch"))
+
+    status = CliRunner().invoke(main, ["telemetry", "status", "--json"])
+    assert status.exit_code == 0, status.output
+    assert json.loads(status.output)["switch"] == "test-switch"
+    assert collect_usage_stats(weeks=12)["telemetry"]["switch"] == "test-switch"
+
+
+def test_report_catalog_query_is_bounded_to_iso_week(
+    empty_catalog_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    statements: list[str] = []
+    original_open = DataStore.open_readonly
+
+    def traced_open(db_path: Path) -> DataStore:
+        store = original_open(db_path)
+        store.conn.set_trace_callback(statements.append)
+        return store
+
+    monkeypatch.setattr(DataStore, "open_readonly", staticmethod(traced_open))
+    week = telemetry.iso_week()
+
+    telemetry.build_report(week)
+
+    operation_query = next(sql for sql in statements if "FROM operations" in sql)
+    assert "started_at >=" in operation_query
+    assert "started_at <" in operation_query
 
 
 def test_packaged_tool_keeps_its_name_with_expanded_and_unchanged_counts() -> None:

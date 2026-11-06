@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
 
 import click
@@ -106,6 +106,15 @@ def opted_out() -> bool:
         return (_resolve_home() / "telemetry.off").exists()
     except Exception:  # noqa: BLE001
         return True
+
+
+def state() -> tuple[Literal["on", "off"], str | None]:
+    """Return the telemetry state and the switch currently disabling it, if any."""
+    if switch := killed():
+        return "off", switch
+    if opted_out():
+        return "off", "telemetry.off"
+    return "on", None
 
 
 def _bucket(seconds: float) -> str:
@@ -392,6 +401,20 @@ def report_id_for(week: str) -> str:
         return secrets.token_urlsafe(16)
 
 
+def stored_report_id(week: str) -> str | None:
+    """Return only a report ID known to be persisted, for upload deduplication."""
+    try:
+        home = _resolve_home()
+        if not (home / "telemetry.db").exists():
+            return None
+        with closing(_connect(home)) as con:
+            row = con.execute("SELECT report_id FROM reports WHERE week = ?", (week,)).fetchone()
+            return str(row[0]) if row is not None else None
+    except Exception as exc:  # noqa: BLE001
+        _debug("telemetry_stored_report_id_failed", error=type(exc).__name__)
+        return None
+
+
 def record_tool(spec: ToolSpec, expanded: bool) -> None:
     """Count prompt-tool usage without affecting the caller."""
     try:
@@ -512,6 +535,19 @@ def build_report(week: str) -> dict[str, object]:
     crashes: dict[str, dict[str, int]] = {}
     mcp_clients: dict[str, int] = {}
     tools: dict[str, dict[str, int]] = {}
+    nested_targets: dict[str, dict[str, Any]] = {
+        "flag": flags,
+        "exit": exits,
+        "duration": durations,
+        "tool": tools,
+    }
+
+    def _add(target: dict[str, Any], path: tuple[str, ...], n: int) -> None:
+        cursor = target
+        for key_part in path[:-1]:
+            cursor = cursor.setdefault(key_part, {})
+        leaf = path[-1]
+        cursor[leaf] = cursor.get(leaf, 0) + n
 
     try:
         if (home / "telemetry.db").exists():
@@ -523,30 +559,13 @@ def build_report(week: str) -> dict[str, object]:
                     if "|" in key or "|" in surface:
                         continue
                     if kind == "command":
-                        commands.setdefault(surface, {})[key] = (
-                            commands.setdefault(surface, {}).get(key, 0) + n
-                        )
-                    elif kind == "flag" and " " in key:
-                        cmd, flg = key.rsplit(" ", 1)
-                        if "|" in cmd or "|" in flg:
+                        _add(commands, (surface, key), n)
+                    elif kind in nested_targets and " " in key:
+                        name, value = key.rsplit(" ", 1)
+                        if "|" in name or "|" in value:
                             continue
-                        flags.setdefault(surface, {}).setdefault(cmd, {})[flg] = (
-                            flags.setdefault(surface, {}).setdefault(cmd, {}).get(flg, 0) + n
-                        )
-                    elif kind == "exit" and " " in key:
-                        cmd, code = key.rsplit(" ", 1)
-                        if "|" in cmd or "|" in code:
-                            continue
-                        exits.setdefault(surface, {}).setdefault(cmd, {})[code] = (
-                            exits.setdefault(surface, {}).setdefault(cmd, {}).get(code, 0) + n
-                        )
-                    elif kind == "duration" and " " in key:
-                        cmd, bucket = key.rsplit(" ", 1)
-                        if "|" in cmd or "|" in bucket:
-                            continue
-                        durations.setdefault(surface, {}).setdefault(cmd, {})[bucket] = (
-                            durations.setdefault(surface, {}).setdefault(cmd, {}).get(bucket, 0) + n
-                        )
+                        path = (name, value) if kind == "tool" else (surface, name, value)
+                        _add(nested_targets[kind], path, n)
                     elif kind == "transition":
                         transitions[key] = transitions.get(key, 0) + n
                     elif kind == "crash":
@@ -555,13 +574,6 @@ def build_report(week: str) -> dict[str, object]:
                         )
                     elif kind == "client":
                         mcp_clients[key] = mcp_clients.get(key, 0) + n
-                    elif kind == "tool" and " " in key:
-                        tool_name, status = key.rsplit(" ", 1)
-                        if "|" in tool_name or "|" in status:
-                            continue
-                        tools.setdefault(tool_name, {})[status] = (
-                            tools.setdefault(tool_name, {}).get(status, 0) + n
-                        )
     except Exception as exc:  # noqa: BLE001
         _debug("telemetry_report_counters_failed", error=type(exc).__name__)
 
@@ -596,10 +608,15 @@ def build_report(week: str) -> dict[str, object]:
                 | {a.value for a in VideoAspect}
                 | {a.wire() for a in VideoAspect}
             )
+            year, week_number = (int(part) for part in week.split("-W"))
+            week_start = datetime.fromisocalendar(year, week_number, 1).replace(tzinfo=UTC)
+            week_end = week_start + timedelta(days=7)
 
             with DataStore.open_readonly(cat_path) as store:
                 op_rows = store.conn.execute(
-                    "SELECT model, mode, aspect_ratio, status, started_at FROM operations"
+                    "SELECT model, mode, aspect_ratio, status, started_at FROM operations "
+                    "WHERE started_at >= ? AND started_at < ?",
+                    (week_start.isoformat(), week_end.isoformat()),
                 ).fetchall()
                 for op in op_rows:
                     started_at = op["started_at"]
@@ -642,7 +659,9 @@ def build_report(week: str) -> dict[str, object]:
 
     return {
         "schema": SCHEMA,
-        "report_id": report_id_for(week),
+        "report_id": (
+            secrets.token_urlsafe(16) if killed() or opted_out() else report_id_for(week)
+        ),
         "week": week,
         "version": __version__,
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",

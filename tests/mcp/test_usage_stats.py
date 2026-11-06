@@ -37,20 +37,15 @@ async def test_mcp_twin_matches_cli_json(
 
     telemetry.record("cli", "image t2i", [], "0", 1.0)
     telemetry.record("mcp", "video t2v", [], "0", 2.0)
-
-    mcp_result = await tools.gflow_usage_stats()
+    monkeypatch.setattr(telemetry, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(telemetry, "record_counter", lambda *_args, **_kwargs: None)
 
     cli_result = CliRunner().invoke(main, ["data", "stats", "--json"])
     assert cli_result.exit_code == 0, cli_result.output
     cli_json = json.loads(cli_result.output)
 
     mcp_result = await tools.gflow_usage_stats()
-    expected = dict(cli_json)
-    expected["commands"] = sorted(
-        [*cli_json["commands"], {"surface": "cli", "command": "data stats", "n": 1}],
-        key=lambda row: (row["surface"], row["command"]),
-    )
-    assert mcp_result == expected
+    assert mcp_result == cli_json
     telemetry.killed.cache_clear()
 
 

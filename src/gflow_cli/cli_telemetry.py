@@ -22,16 +22,7 @@ def telemetry() -> None:
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON status.")
 def status_cmd(as_json: bool) -> None:
     """Show what is counted locally, where, and the kill switch in force."""
-    kill_switch = telemetry_mod.killed()
-    if kill_switch is not None:
-        state = "off"
-        switch = kill_switch
-    elif telemetry_mod.opted_out():
-        state = "off"
-        switch = "telemetry.off"
-    else:
-        state = "on"
-        switch = None
+    state, switch = telemetry_mod.state()
 
     if as_json:
         payload = {
