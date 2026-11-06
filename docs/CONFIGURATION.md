@@ -319,6 +319,13 @@ Until the #1041 fix this setting was ignored and every command logged at `INFO` 
 **Upgrading:** [`gflow update`](USAGE.md#gflow-update) runs the installer that put gflow-cli here (`uv tool` / `pipx` / the venv's own `pip`).
 **Shipped in:** #479 (notice); `gflow update` + banner in #668.
 
+### `GFLOW_CLI_TELEMETRY` and `DO_NOT_TRACK`
+
+**What:** Kill switches for the local usage counters (#1164): which commands and flags are used, exit codes and coarse duration buckets, stored weekly in `<GFLOW_CLI_HOME>/telemetry.db`. No prompts, paths, account data or identifiers are recorded.
+**Values:** `GFLOW_CLI_TELEMETRY` counts only when unset or one of `1` / `true` / `on` (case-insensitive); any other value, including a typo, turns it off. `DO_NOT_TRACK` turns it off when set to anything except empty, `0` or `false`.
+**Where honoured:** the process environment, `<GFLOW_CLI_HOME>/.env` and the working-directory `.env`. Any one of them can turn counting off; none can turn it back on. The result is read once per process.
+**Never fails a command:** an invalid value is not a configuration error (it does not exit 11).
+
 ### `GFLOW_CLI_LEASE_WAIT_SECONDS`
 
 **What:** How long a command waits for another gflow process to release the profile lease before giving up with `ProfileLockedError` (exit 11). The default `0` keeps the historical fail-fast behavior. With a positive value, the waiter polls the kernel lock (0.5 s cadence) and simply takes over when the current holder — a CLI command or a `gflow serve` daemon task, both of which release at their natural end — finishes. Holders are never interrupted or asked to release early.
