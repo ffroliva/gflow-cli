@@ -250,7 +250,7 @@ findings (or record why you declined each), then **STOP** — a human promotes a
 ### Pipeline Continuation (Next Step Handoff)
 
 Upon completing Issue Resolution:
-1. **PR Created & SonarCloud Gate 🟢 GREEN:** Proactively announce: **"PR created and SonarCloud gate green. Next step: Phase 10 Release Pipeline (`/gflow:release`) or merge to `develop`."**
+1. **PR Created, SonarCloud Gate 🟢 GREEN, and every bot review comment (CodeRabbit) answered.** CodeRabbit reviews *after* the PR opens, so a `/gflow:branch-review` run before creation cannot have seen it. Once CI settles, collect `BOT_REVIEWS` and decide on each finding per [`pr-council-review`](../pr-council-review/SKILL.md) § 5 step 7b. Post the decision on each thread (the council run only reports). Step 6 opens a **draft**, and CodeRabbit skips drafts, so the first bot review arrives only after the PR is marked ready: whoever marks it ready re-collects `BOT_REVIEWS` and triages that review, and the merge handoff waits for it. If no review starts (the `CodeRabbit` check stays `skipping`), post `@coderabbitai review`, retry once a rate limit clears, and tell the maintainer if it still does not run. A reply does not close an accepted Must-fix: fix it, then wait for CI and the new review to pass again. Then: Proactively announce: **"PR created and SonarCloud gate green. Next step: Phase 10 Release Pipeline (`/gflow:release`) or merge to `develop`."**
 2. **SonarCloud Gate 🔴 FAILS:** Run `/gflow:sonar <PR#>` to resolve new code smells/coverage issues before merging.
 
 ---
