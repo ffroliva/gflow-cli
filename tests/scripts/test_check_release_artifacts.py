@@ -208,3 +208,51 @@ def test_debt_with_a_tracked_issue_passes(tmp_path: Path) -> None:
         "- DEBT — portrait 9:16 and count > 1 were not run. Tracked in #1234.\n",
     )
     assert not any("blocker" in v.lower() for v in find_violations(root))
+
+
+# #1164 hardening: a merge from develop overwrote the released [0.94.0] section on 2026-11-07.
+_MAIN_CHANGELOG = (
+    "# Changelog\n\n## [Unreleased]\n\n## [1.2.2] — 2025-12-01\n\n- shipped thing\n\n"
+    "[Unreleased]: https://x/compare/v1.2.2...HEAD\n"
+    "[1.2.2]: https://x/compare/v1.2.1...v1.2.2\n"
+)
+
+
+def _repo_on_top_of_main(tmp_path: Path, released_body: str = "- shipped thing") -> Path:
+    root = _repo(tmp_path)
+    (root / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [Unreleased]\n\n## [1.2.3] — 2026-01-01\n\n- x\n\n"
+        f"## [1.2.2] — 2025-12-01\n\n{released_body}\n\n"
+        "[Unreleased]: https://x/compare/v1.2.3...HEAD\n"
+        "[1.2.3]: https://x/compare/v1.2.2...v1.2.3\n"
+        "[1.2.2]: https://x/compare/v1.2.1...v1.2.2\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+@pytest.mark.unit
+def test_released_sections_unchanged_pass(tmp_path: Path) -> None:
+    root = _repo_on_top_of_main(tmp_path)
+    assert find_violations(root, released_changelog=_MAIN_CHANGELOG) == []
+
+
+@pytest.mark.unit
+def test_a_rewritten_released_section_fails(tmp_path: Path) -> None:
+    root = _repo_on_top_of_main(tmp_path, released_body="- a feature that shipped later")
+    violations = find_violations(root, released_changelog=_MAIN_CHANGELOG)
+    assert any("[1.2.2]" in v and "main" in v for v in violations), violations
+
+
+@pytest.mark.unit
+def test_a_deleted_released_section_fails(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    violations = find_violations(root, released_changelog=_MAIN_CHANGELOG)
+    assert any("[1.2.2]" in v for v in violations), violations
+
+
+@pytest.mark.unit
+def test_line_endings_do_not_count_as_a_change(tmp_path: Path) -> None:
+    root = _repo_on_top_of_main(tmp_path)
+    crlf = _MAIN_CHANGELOG.replace("\n", "\r\n")
+    assert find_violations(root, released_changelog=crlf) == []

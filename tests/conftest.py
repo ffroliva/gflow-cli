@@ -152,6 +152,24 @@ def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     reset_settings()
 
 
+@pytest.fixture(autouse=True)
+def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point every proxy at a closed local port so no unit test, or child it spawns, goes online.
+
+    #1164: a unit test's child process once ran the production uploader and POSTed a fixture report
+    to the live telemetry endpoint. ``urllib`` and ``httpx`` read these variables and children
+    inherit them; loopback stays direct. e2e/live tests talk to real services and are exempt, as is
+    a test marked ``needs_network``.
+    """
+    if any(request.node.get_closest_marker(m) for m in ("e2e", "live", "smoke", "needs_network")):
+        return
+    dead = "http://127.0.0.1:9"  # discard port: nothing listens, connections are refused at once
+    for var in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(var, dead)
+    for var in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(var, "127.0.0.1,localhost,::1")
+
+
 @pytest.fixture
 def install_log_capture() -> Iterator[structlog.testing.LogCapture]:
     """Install a fresh structlog ``LogCapture`` processor + ``merge_contextvars``.

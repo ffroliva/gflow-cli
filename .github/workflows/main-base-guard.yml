@@ -41,6 +41,8 @@ jobs:
             echo "Base is '$BASE_REF' (not main) — nothing to enforce."
             exit 0
           fi
+          # released CHANGELOG sections are compared against main (#1164)
+          git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
           python scripts/ci/check_release_artifacts.py
 
   guard:
