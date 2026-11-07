@@ -7,7 +7,7 @@ This directory ships installable agent skill docs for `gflow-cli`. Each `SKILL.m
 | gflow-cli | [`gflow-cli/SKILL.md`](gflow-cli/SKILL.md) | 1.1 |
 | predict | [`predict/SKILL.md`](predict/SKILL.md) | 1.0 |
 | scenario | [`scenario/SKILL.md`](scenario/SKILL.md) | — |
-| pr-council-review | [`pr-council-review/SKILL.md`](pr-council-review/SKILL.md) | 2.1 |
+| pr-council-review | [`pr-council-review/SKILL.md`](pr-council-review/SKILL.md) | 2.4 |
 | plan | [`plan/SKILL.md`](plan/SKILL.md) | 1.0 |
 | status | [`status/SKILL.md`](status/SKILL.md) | 1.0 |
 | issue-assessment | [`issue-assessment/SKILL.md`](issue-assessment/SKILL.md) | — |
