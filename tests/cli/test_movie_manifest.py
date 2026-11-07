@@ -615,3 +615,12 @@ def test_movie_float_duration_with_veo_model_still_parses(tmp_path: Path) -> Non
     turned that into a hard error. The guard tests the coerced value instead."""
     path = _write_toml(tmp_path, _SCENE_HEAD + 'model = "veo-lite"\nduration = 4.0\n')
     assert MovieManifest.from_toml_path(path).scenes[0].duration is None
+
+
+def test_movie_omni12_long_duration_is_explicit(tmp_path: Path) -> None:
+    path = _write_toml(tmp_path, _SCENE_HEAD + 'model = "omni-1.2-flash"\nduration = 15\n')
+    assert MovieManifest.from_toml_path(path).scenes[0].duration == 15
+    for model in ('model = "omni-flash"\n', ""):
+        path = _write_toml(tmp_path, _SCENE_HEAD + model + "duration = 15\n")
+        with pytest.raises(ConfigurationError):
+            MovieManifest.from_toml_path(path)
