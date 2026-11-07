@@ -171,18 +171,32 @@ def emit_unhandled_event(
     """Emit ``error_unhandled`` for non-:class:`GFlowError`. Privacy-safe.
 
     NEVER includes the raw exception message or formatted traceback — only
-    SHA-256 hashes. Aggregators can group recurring errors by hash without
-    storing PII or tokens that may have ended up in ``str(exc)`` or a frame
-    local.
+    hashes and class/function names. Aggregators can group recurring errors
+    without storing PII or tokens that may have ended up in ``str(exc)`` or a
+    frame local.
     """
     tb_bytes = "".join(traceback.format_tb(exc.__traceback__)).encode("utf-8", errors="replace")
-    logger.error(
-        "error_unhandled",
-        exception_class=type(exc).__name__,
-        message_hash=exception_message_hash(exc),
-        stack_hash=hashlib.sha256(tb_bytes).hexdigest(),
-        cli_command=cli_command,
-    )
+    from gflow_cli.telemetry import crash_key, record_crash
+
+    fingerprint: str | None = None
+    try:
+        fingerprint = crash_key(exc)
+    except Exception:
+        pass
+    if fingerprint is not None:
+        try:
+            record_crash("cli", exc, fingerprint=fingerprint)
+        except Exception:
+            pass
+    payload: dict[str, object] = {
+        "exception_class": type(exc).__name__,
+        "message_hash": exception_message_hash(exc),
+        "stack_hash": hashlib.sha256(tb_bytes).hexdigest(),
+        "cli_command": cli_command,
+    }
+    if fingerprint is not None:
+        payload["fingerprint"] = fingerprint
+    logger.error("error_unhandled", **payload)
 
 
 def exception_message_hash(exc: BaseException) -> str:

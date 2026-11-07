@@ -56,6 +56,7 @@ exactly the cost tier you can afford:
 | Marker | Credit cost | Typical wallclock | When to use |
 |---|---|---|---|
 | `e2e_auth` | 0 | < 30 s | auth/session/health-check — always safe to run |
+| `e2e_telemetry` | 0 | < 60 s | usage telemetry against an installed wheel — zero credits, no browser, no Flow account |
 | `e2e_image` | **0** (daily cap) | 30–120 s | text-to-image or image-to-image golden path |
 | `e2e_batch` | **0** (daily cap) | 2–10 min | batch image generation |
 | `e2e_video` | ~1 Veo | 1–10 min | text-to-video or image-to-video |
@@ -67,12 +68,13 @@ data-layer assertions depend on a real generation having run first.
 ### Marker inheritance diagram
 
 ```
-e2e ─┬─ e2e_auth     (auth/session, health check — zero credits)
-     ├─ e2e_image    (t2i, i2i — ZERO credits, daily cap only)
-     │   └─ e2e_data (+ DB assertions)
-     ├─ e2e_batch    (batch t2i — ZERO credits, daily cap only)
-     └─ e2e_video    (t2v, i2v — 1 Veo credit per test)
-         └─ e2e_data (+ DB assertions)
+e2e ─┬─ e2e_auth      (auth/session, health check — zero credits)
+     ├─ e2e_telemetry (usage telemetry against an installed wheel — zero credits)
+     ├─ e2e_image     (t2i, i2i — ZERO credits, daily cap only)
+     │   └─ e2e_data  (+ DB assertions)
+     ├─ e2e_batch     (batch t2i — ZERO credits, daily cap only)
+     └─ e2e_video     (t2v, i2v — 1 Veo credit per test)
+         └─ e2e_data  (+ DB assertions)
 ```
 
 ---

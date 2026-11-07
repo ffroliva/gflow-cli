@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.94.0] — 2026-11-07
+
+### Added
+
+- **Local usage telemetry commands `gflow telemetry status` and `gflow telemetry show`**
+  displaying local counter storage and payload report (#1164).
+
+- **`gflow data stats` (CLI) and its MCP twin `gflow_usage_stats`** summarize local usage statistics
+  across commands and catalogued generations over the last N weeks (#1164).
+
+- **Local usage counters and sanitized crash fingerprinting** in `<home>/telemetry.db`, recording
+  weekly CLI/MCP command execution frequencies and top crash call-sites without capturing prompts,
+  arguments, or account details (#1164).
+
 ## [0.93.0] — 2026-11-05
 
 ### Added
@@ -6833,7 +6847,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.93.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.94.0...HEAD
+[0.94.0]: https://github.com/ffroliva/gflow-cli/compare/v0.93.0...v0.94.0
 [0.93.0]: https://github.com/ffroliva/gflow-cli/compare/v0.92.1...v0.93.0
 [0.92.1]: https://github.com/ffroliva/gflow-cli/compare/v0.92.0...v0.92.1
 [0.92.0]: https://github.com/ffroliva/gflow-cli/compare/v0.91.0...v0.92.0

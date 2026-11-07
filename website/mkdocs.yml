@@ -84,6 +84,7 @@ nav:
       - Configuration: CONFIGURATION.md
       - Media Library: MEDIA_LIBRARY.md
       - Data Layer: DATA_LAYER.md
+      - Telemetry: TELEMETRY.md
       - Debugging: DEBUGGING.md
       - External Storage: EXTERNAL_STORAGE.md
       - Development: DEVELOPMENT.md

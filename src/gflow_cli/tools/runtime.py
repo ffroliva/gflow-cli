@@ -144,7 +144,7 @@ def _apply_multimodal_reverse_engineering(
         return None
 
 
-def apply_tool(
+def _apply_tool(
     spec: ToolSpec,
     prompt: str,
     options: Mapping[str, str],
@@ -194,3 +194,21 @@ def apply_tool(
     if removed:
         log.info("tool_banned_keywords_stripped", tool=spec.name, removed=removed)
     return ExpansionResult(original=result.original, expanded=cleaned, was_expanded=True)
+
+
+def apply_tool(
+    spec: ToolSpec,
+    prompt: str,
+    options: Mapping[str, str],
+    *,
+    category: DomainCategory | None = None,
+    expander: PromptExpander | None = None,
+) -> ExpansionResult:
+    result = _apply_tool(spec, prompt, options, category=category, expander=expander)
+    try:
+        from gflow_cli.telemetry import record_tool
+
+        record_tool(spec, result.was_expanded)
+    except Exception:
+        pass
+    return result

@@ -83,7 +83,8 @@ magic bytes + dimensions/shape + structlog invariants + a user-confirmable
 artifact). Add it to the "what was live-verified" entry in `docs/INDEX.md`. This
 doc shipped for every release v0.7.0→v0.13.0, then lapsed for v0.14.0–v0.15.1 —
 which is why it is now an explicit gate. If a feature genuinely cannot be verified
-this cycle, record that and the reason in the doc; never silently omit it. Stage
+this cycle, record that and the reason in the doc; never silently omit it. Include one
+plain `gflow video t2v` on the release tree, whatever changed (`live-verify` step 0, #1153). Stage
 the doc into the release-prep commit (step 11).
 
 **5. Create a release branch off `develop` — in its own worktree, after telling every

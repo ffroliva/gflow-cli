@@ -503,3 +503,113 @@ def test_data_media_reports_an_unknown_id(empty_db: Path) -> None:
     result = CliRunner().invoke(main, ["data", "media", "nope"])
 
     assert result.exit_code == 16, result.output
+
+
+# ---------------------------------------------------------------------------
+# gflow data stats — Task 4 (#1164)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_stats_json_has_commands_and_generations(
+    seeded_db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from gflow_cli import telemetry
+
+    monkeypatch.delenv("GFLOW_CLI_TELEMETRY", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    home = tmp_path / "gflow_home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
+    telemetry.killed.cache_clear()
+
+    telemetry.record("cli", "image t2i", [], "0", 1.0)
+    telemetry.record("mcp", "video t2v", [], "0", 2.0)
+
+    result = CliRunner().invoke(main, ["data", "stats", "--json"])
+    assert result.exit_code == 0, result.output
+
+    data = json.loads(result.output)
+    assert data["weeks"] == 12
+    assert data["telemetry"]["state"] == "on"
+    assert data["telemetry"]["switch"] is None
+    assert "report" in data["telemetry"]
+
+    # Commands sorted by n desc then command
+    cmds = data["commands"]
+    assert isinstance(cmds, list)
+    assert {"surface": "cli", "command": "image t2i", "n": 1} in cmds
+    assert {"surface": "mcp", "command": "video t2v", "n": 1} in cmds
+
+    # Generations from seeded_db
+    gens = data["generations"]
+    assert isinstance(gens, list)
+    assert len(gens) > 0
+    for g in gens:
+        assert "command" in g
+        assert "model" in g
+        assert "status" in g
+        assert "month" in g
+        assert "n" in g
+    telemetry.killed.cache_clear()
+
+
+def test_cli_stats_empty_catalog_and_no_counters(
+    empty_db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from gflow_cli import telemetry
+
+    monkeypatch.delenv("GFLOW_CLI_TELEMETRY", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    home = tmp_path / "gflow_home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
+    telemetry.killed.cache_clear()
+
+    result = CliRunner().invoke(main, ["data", "stats"])
+    assert result.exit_code == 0, result.output
+    assert "No usage recorded." in result.output
+    telemetry.killed.cache_clear()
+
+
+def test_cli_stats_when_killed_says_counters_are_off(
+    empty_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli import telemetry
+
+    monkeypatch.setenv("GFLOW_CLI_TELEMETRY", "0")
+    telemetry.killed.cache_clear()
+
+    # Human output
+    result = CliRunner().invoke(main, ["data", "stats"])
+    assert result.exit_code == 0, result.output
+    assert "Usage counters are off (GFLOW_CLI_TELEMETRY)." in result.output
+
+    # JSON output
+    result_json = CliRunner().invoke(main, ["data", "stats", "--json"])
+    assert result_json.exit_code == 0, result_json.output
+    data = json.loads(result_json.output)
+    assert data["telemetry"]["state"] == "off"
+    assert data["telemetry"]["switch"] == "GFLOW_CLI_TELEMETRY"
+    assert "report" in data["telemetry"]
+    assert data["commands"] is None  # Off must never read as zero usage
+    telemetry.killed.cache_clear()
+
+
+def test_cli_stats_invalid_weeks(seeded_db: Path) -> None:
+    res_0 = CliRunner().invoke(main, ["data", "stats", "--weeks", "0"])
+    assert res_0.exit_code == 2
+
+    res_54 = CliRunner().invoke(main, ["data", "stats", "--weeks", "54"])
+    assert res_54.exit_code == 2
+
+
+def test_cli_data_stats_help_json_option_text() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["data", "stats", "--help"])
+    assert result.exit_code == 0
+    assert "Emit one JSON object instead of tables." in result.output
+    assert "Emit JSONL instead of a Rich table." not in result.output
+
+    list_result = runner.invoke(main, ["data", "list", "projects", "--help"])
+    assert list_result.exit_code == 0
+    assert "Emit JSONL instead of a Rich table." in list_result.output

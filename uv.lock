@@ -853,7 +853,7 @@ wheels = [
 
 [[package]]
 name = "gflow-cli"
-version = "0.93.0"
+version = "0.94.0"
 source = { editable = "." }
 dependencies = [
     { name = "browser-cookie3" },
@@ -865,6 +865,7 @@ dependencies = [
     { name = "platformdirs" },
     { name = "playwright" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "rich" },
     { name = "sse-starlette" },
     { name = "structlog" },
@@ -954,6 +955,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.6" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rich", specifier = ">=13.7.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.17.3" },
     { name = "s3fs", marker = "extra == 's3'", specifier = ">=2024.2.0" },
