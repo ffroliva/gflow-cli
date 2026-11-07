@@ -369,6 +369,44 @@ def test_transient_failure_keeps_the_week(failure: int | str, _home: Path) -> No
     assert _report(_home, week)[2] is None
 
 
+def test_failed_week_backoff_allows_the_next_week(
+    monkeypatch: pytest.MonkeyPatch, _home: Path
+) -> None:
+    from gflow_cli import telemetry_upload
+
+    monkeypatch.setattr(telemetry_upload.secrets, "randbelow", lambda _n: 0)
+    starts = [_week_start(4), _week_start(3)]
+    weeks = [_week_id(start) for start in starts]
+    for start, week in zip(starts, weeks, strict=True):
+        _seed_week(_home, week, start=start, due_at=start + timedelta(days=7))
+    with _server(500) as (endpoint, _, _):
+        _send_to(weeks[0], endpoint)
+    meta = _meta(_home)
+    assert f"retry_after:{weeks[0]}" in meta
+    retry = datetime.fromisoformat(meta[f"retry_after:{weeks[0]}"])
+    assert retry < datetime.now(UTC) + timedelta(days=1, seconds=2)
+    query_time = datetime.now(UTC) + timedelta(hours=12)
+    assert query_time < retry
+    assert telemetry_upload.next_due_week(query_time) == weeks[1], (
+        f"retry={retry!r}, query={query_time!r}, meta={_meta(_home)!r}"
+    )
+
+
+def test_seven_failed_attempts_drop_only_that_week(
+    monkeypatch: pytest.MonkeyPatch, _home: Path
+) -> None:
+    from gflow_cli import telemetry_upload
+
+    week = _week_id(_week_start())
+    _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
+    monkeypatch.setattr(telemetry_upload.secrets, "randbelow", lambda _n: 0)
+    with _server(500) as (endpoint, _, _):
+        for _ in range(7):
+            _send_to(week, endpoint)
+    sent_at = _report(_home, week)[2]
+    assert sent_at is not None and sent_at.startswith("dropped:")
+
+
 def test_410_stops_uploading_forever(_home: Path) -> None:
 
     week = _week_id(_week_start())
