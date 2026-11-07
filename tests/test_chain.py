@@ -304,7 +304,7 @@ async def test_rejects_invalid_per_link_duration_up_front(tmp_path: Path) -> Non
 async def test_rejects_per_link_duration_up_front(tmp_path: Path) -> None:
     """#634: duration 10 is rejected BEFORE any spend.
 
-    10s is available for omni-flash only, and chains reject omni-flash outright.
+    10s and longer need an Omni model, and chains reject both Omni models outright.
     So any chain link with duration=10 is unsatisfiable by construction.
     """
     client = _make_client([_ok_result("m0", tmp_path / "link0.mp4")])

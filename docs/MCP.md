@@ -525,9 +525,10 @@ is **agent-only** — no classic composer at all — is driven through its chat 
 `gflow_generate_image` (text-to-image) and `gflow_generate_video` (text-to-video): aspect,
 count and model are set in Agent settings for the run and restored afterwards, and
 "Confirm before generating" follows the server's `GFLOW_CLI_AGENT_CONFIRM`. Other forms on
-that composer (references, image-to-video, instructions, more than one video) return an
-exit-36-equivalent envelope before anything is clicked
-([#799](https://github.com/ffroliva/gflow-cli/issues/799)). Through v0.73.2 such an account got
+that composer (references, image-to-video, instructions, Omni 1.2 Flash, more than one video)
+return an exit-36-equivalent envelope before anything is clicked
+([#799](https://github.com/ffroliva/gflow-cli/issues/799)), after up to three free page reloads in
+case Flow serves the classic composer on the next load ([#1142](https://github.com/ffroliva/gflow-cli/issues/1142)). Through v0.73.2 such an account got
 a generic selector-drift envelope (exit 23); v0.74.0 and v0.75.0 named it with exit 25.
 
 The distinction that matters, because the DOM is identical either way: a **pressed chip**

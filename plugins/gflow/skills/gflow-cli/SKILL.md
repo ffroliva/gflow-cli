@@ -88,7 +88,8 @@ gflow run --config <batch.json> --project ID --resume     # skip rows already on
 # `gflow video extend` runs there one segment per call (--project required); -n > 1,
 # --scene/--resume-from, --seed and an --aspect other than the source clip's exit 36.
 # An agent-only composer (#799) is different: t2i and t2v only;
-# i2i, i2v, r2v and character references exit 36 there.
+# i2i, i2v, r2v and character references exit 36 there, after up to
+# three free page reloads in case Flow serves the classic composer (#1142).
 
 # A run without --project creates a new Flow project, unless GFLOW_CLI_PROJECT=<id> is set
 # (#1039): t2i/i2i/t2v/i2v/r2v, `gflow run` and the MCP generate tools then use that

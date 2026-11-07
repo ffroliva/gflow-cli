@@ -1321,7 +1321,7 @@ async def gflow_generate_video(  # NOSONAR
             ``reference_entities`` (mirrors ``--reference-entity-name``); required
             for each id on flow.google.com, where the picker attaches by name.
         model: Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality',
-            'omni_flash' (aliases accepted, mirrors the CLI ``--model``). When
+            'omni_flash', 'omni_1_2_flash' (aliases accepted, mirrors the CLI ``--model``). When
             omitted, Flow's UI default applies EXCEPT for i2v with frames,
             where the transport defaults to veo-lite. Every model supports i2v
             with a start frame and with an end frame; 'omni_flash' was the last
@@ -1337,7 +1337,7 @@ async def gflow_generate_video(  # NOSONAR
             duration slider. Veo or an unspecified model accepts only 8: measured
             shorter Veo requests dropped references and billed text-to-video instead.
             Omitted r2v duration still pins 8 to avoid inherited editor settings.
-        resolution: Optional video resolution — '360p' or '720p' (omni-flash only,
+        resolution: Optional video resolution — '360p' or '720p' (Omni models only,
             mirrors the CLI ``--resolution``). When omitted, Flow's default applies. On any
             other model, or on the labs editor, the job fails pre-submit with the
             exit-11-equivalent envelope and no credits spent.

@@ -4,6 +4,23 @@
 
 ## Current release
 
+**v0.96.0 — alpha.** Omni 1.2 Flash, any Omni r2v length, and a reload past the agent-only composer.
+
+**Omni 1.2 Flash (#1168, by @vietanhjp93).** `--model omni-1.2-flash` (alias `omni-1.2`; MCP
+`omni_1_2_flash`) takes every whole-second `--duration` from 3 to 15 on flow.google.com, set on the
+model's slider and read back before Send. Above 10s needs a Google AI plan; where the slider stops
+at 10s, a longer request is refused before submit (exit 11) with no credits spent.
+
+**Omni r2v durations (#1167, by @vietanhjp93).** `video r2v --model omni-flash` accepts 4, 6 or 10
+seconds, not only 8. Veo keeps its 8s-only rule.
+
+**Fixed (#1142, by @L1meSn0w).** When flow.google.com serves the agent-only composer, a request only
+the classic composer can take gets up to three free reloads before the same exit 36.
+
+Full ledger: [LIVE_VERIFICATION_v0.96.0](LIVE_VERIFICATION_v0.96.0.md).
+
+<details><summary>v0.95.0 — weekly usage reports after a one-time notice</summary>
+
 **v0.95.0 — alpha.** Weekly usage reports, after a one-time notice, with consent required in the EU/EEA.
 
 **What is sent (#1164).** One small report per completed week: command and MCP tool counts, exit
@@ -19,6 +36,8 @@ without a command. In the EU/EEA uploads stay off until `gflow telemetry on`.
 **Fixed.** The `gflow mcp setup` backup is a byte-exact copy of the original config.
 
 Full ledger: [LIVE_VERIFICATION_v0.95.0](LIVE_VERIFICATION_v0.95.0.md).
+
+</details>
 
 <details><summary>v0.94.0 — local usage counters and crash fingerprints</summary>
 
@@ -780,6 +799,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Omni 1.2 Flash 3–15s (#1168), Omni r2v 4/6/10s (#1167), agent-only composer reload (#1142) | ✅ done (v0.96.0) |
 | Weekly usage reports after a one-time notice, EU/EEA consent, `gflow telemetry on\|off` (#1164) | ✅ done (v0.95.0) |
 | Local usage counters, `gflow data stats` + `gflow_usage_stats`, `gflow telemetry status\|show` (#1164) | ✅ done (v0.94.0) |
 | A finished video is read through its own route after status replies began carrying a thumbnail link (#1153); a lost t2v submit reply is recovered (#1141) | ✅ done (v0.93.0) |

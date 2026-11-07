@@ -1526,7 +1526,7 @@ def i2v(  # NOSONAR
     type=click.Path(exists=True, dir_okay=False, path_type=str),
     help=(
         "Reference image (repeat per ref). Per-model cap enforced by --model: "
-        "omni-flash=7, veo-lite/veo-fast/veo-lite-lp=3, veo-quality rejects R2V."
+        "omni-flash/omni-1.2-flash=7, veo-lite/veo-fast/veo-lite-lp=3, veo-quality rejects R2V."
     ),
 )
 @click.option(
@@ -1684,7 +1684,7 @@ def r2v(
         "now — not proven at chain scale, refs #125). The MANIFEST is a JSONL "
         'file: one JSON object per line, each with a required "prompt" and '
         'optional "model"/"aspect"/"duration" overrides. Veo links accept '
-        "duration 4, 6, or 8 seconds (10s remains omni-flash-only, which chain "
+        "duration 4, 6, or 8 seconds (10s and other lengths need an Omni model, which chain "
         "does not accept); invalid values are rejected before submission. Note "
         "that explicit duration can only take effect in Flow cohorts where the "
         "control is rendered.\n\n"

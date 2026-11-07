@@ -304,7 +304,7 @@ class GenerateVideoRequest:
     # The video pipeline clamps to classic-required (no agentic video driver
     # exists); see _generate_video_locked.
     ui_mode: UiMode | None = None
-    # Requested video resolution ("360p" or "720p", omni-flash only); None -> Flow default
+    # Requested video resolution ("360p" or "720p", Omni models only); None -> Flow default
     resolution: str | None = None
 
     def __post_init__(self) -> None:
