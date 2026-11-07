@@ -208,3 +208,95 @@ def test_debt_with_a_tracked_issue_passes(tmp_path: Path) -> None:
         "- DEBT — portrait 9:16 and count > 1 were not run. Tracked in #1234.\n",
     )
     assert not any("blocker" in v.lower() for v in find_violations(root))
+
+
+# #1164 hardening: a merge from develop overwrote the released [0.94.0] section on 2026-11-07.
+_MAIN_CHANGELOG = (
+    "# Changelog\n\n## [Unreleased]\n\n## [1.2.2] — 2025-12-01\n\n- shipped thing\n\n"
+    "[Unreleased]: https://x/compare/v1.2.2...HEAD\n"
+    "[1.2.2]: https://x/compare/v1.2.1...v1.2.2\n"
+)
+
+
+def _repo_on_top_of_main(tmp_path: Path, released_body: str = "- shipped thing") -> Path:
+    root = _repo(tmp_path)
+    (root / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [Unreleased]\n\n## [1.2.3] — 2026-01-01\n\n- x\n\n"
+        f"## [1.2.2] — 2025-12-01\n\n{released_body}\n\n"
+        "[Unreleased]: https://x/compare/v1.2.3...HEAD\n"
+        "[1.2.3]: https://x/compare/v1.2.2...v1.2.3\n"
+        "[1.2.2]: https://x/compare/v1.2.1...v1.2.2\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+@pytest.mark.unit
+def test_released_sections_unchanged_pass(tmp_path: Path) -> None:
+    root = _repo_on_top_of_main(tmp_path)
+    assert find_violations(root, released_changelog=_MAIN_CHANGELOG) == []
+
+
+@pytest.mark.unit
+def test_a_rewritten_released_section_fails(tmp_path: Path) -> None:
+    root = _repo_on_top_of_main(tmp_path, released_body="- a feature that shipped later")
+    violations = find_violations(root, released_changelog=_MAIN_CHANGELOG)
+    assert any("[1.2.2]" in v and "main" in v for v in violations), violations
+
+
+@pytest.mark.unit
+def test_a_deleted_released_section_fails(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    violations = find_violations(root, released_changelog=_MAIN_CHANGELOG)
+    assert any("[1.2.2]" in v for v in violations), violations
+
+
+@pytest.mark.unit
+def test_line_endings_do_not_count_as_a_change(tmp_path: Path) -> None:
+    root = _repo_on_top_of_main(tmp_path)
+    crlf = _MAIN_CHANGELOG.replace("\n", "\r\n")
+    assert find_violations(root, released_changelog=crlf) == []
+
+
+@pytest.mark.unit
+def test_an_edit_after_a_link_definition_inside_a_released_section_fails(tmp_path: Path) -> None:
+    """CodeRabbit on #1173: [0.41.0] holds a `[#357]: url` line; the compare stopped there."""
+    defined = "- shipped thing [#9]\n\n[#9]: https://x/pull/9\n\n- second line"
+    main = _MAIN_CHANGELOG.replace("- shipped thing", defined)
+    root = _repo_on_top_of_main(tmp_path, released_body=defined.replace("second", "rewritten"))
+    violations = find_violations(root, released_changelog=main)
+    assert any("[1.2.2]" in v for v in violations), violations
+
+
+@pytest.mark.unit
+def test_an_unreadable_baseline_fails_in_ci(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CodeRabbit on #1173: a failed `git show` after the fetch must not skip the compare."""
+    import check_release_artifacts as cra
+
+    root = _repo_on_top_of_main(tmp_path)
+    monkeypatch.setattr(cra, "_released_changelog", lambda _root: None)
+    monkeypatch.setattr(cra.sys, "argv", ["x", str(root)])
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert cra.main() == 1
+    assert "released CHANGELOG" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_the_baseline_ref_comes_from_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CodeRabbit on #1173: CI compares against the merge snapshot's base, not a later main."""
+    import check_release_artifacts as cra
+
+    seen: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_: object) -> object:
+        seen.append(cmd)
+        raise OSError("not run")
+
+    monkeypatch.setattr(cra.subprocess, "run", fake_run)
+    monkeypatch.setenv("RELEASED_REF", "abc123")
+    cra._released_changelog(tmp_path)  # noqa: SLF001
+    assert seen and seen[0][-1] == "abc123:CHANGELOG.md", seen

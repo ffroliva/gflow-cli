@@ -31,7 +31,8 @@ import urllib.request
 
 import pytest
 
-pytestmark = [pytest.mark.integration, pytest.mark.containers]
+# needs_network: an operator-supplied gateway may be on another host, past the proxy guard
+pytestmark = [pytest.mark.integration, pytest.mark.containers, pytest.mark.needs_network]
 
 _BASE_URL = os.environ.get("GFLOW_CLI_LLM_BASE_URL", "")
 _API_KEY = os.environ.get("GFLOW_CLI_LLM_API_KEY") or None

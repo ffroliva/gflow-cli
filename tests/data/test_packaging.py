@@ -13,6 +13,7 @@ def test_migration_resource_is_discoverable() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.needs_network  # `uv build` fetches the hatchling build backend
 def test_built_distributions_contain_sql_migrations(tmp_path: Path) -> None:
     dist_dir = tmp_path / "dist"
     subprocess.run(
