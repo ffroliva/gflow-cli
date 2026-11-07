@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Explicit Omni Flash ingredients requests accept 4/6/8/10 seconds on flow.google.com.
+  Keep the measured 8-second safety restriction for Veo and unspecified models.
+
 ## [0.93.0] — 2026-11-05
 
 ### Added

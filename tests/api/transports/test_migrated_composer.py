@@ -4206,3 +4206,14 @@ async def test_the_listing_is_read_only_after_a_candidate_finishes_1141() -> Non
         tab=ListingTab(_listing(_t2v_record(3, url=VIDEO_URL))),
     )
     assert rec.is_done and rec.workflow_id == WF_OURS and tabs == 1
+
+
+@pytest.mark.parametrize("seconds", [4, 6, 8, 10])
+async def test_omni_r2v_accepts_explicit_supported_duration(seconds: int) -> None:
+    """Omni's live abra_r2v_<n>s_360p requests keep the character entity ids."""
+    page = FakePage()
+    await migrated_composer.MigratedComposer().apply_video_settings(
+        page, _r2v_request(model=VideoModel.OMNI_FLASH, duration=seconds)
+    )
+    radios = page.dom.groups["duration"]
+    assert radios[[4, 6, 8, 10].index(seconds)].checked
