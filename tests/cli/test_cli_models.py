@@ -29,6 +29,8 @@ def test_models_json_lists_image_and_video() -> None:
     by_vid = {m["name"]: m for m in data["video"]["models"]}
     assert by_vid["omni_flash"]["ref_cap"] == 7
     assert by_vid["omni_flash"]["max_duration"] == 10
+    assert by_vid["omni_1_2_flash"]["max_duration"] == 15
+    assert set(by_vid["omni_1_2_flash"]["aliases"]) == {"omni-1.2-flash", "omni-1.2"}
     assert by_vid["veo_3_1_fast"]["ref_cap"] == 3
     # Veo 3.1 duration controls expose 4s, 6s, and 8s in the current matrix.
     assert by_vid["veo_3_1_fast"]["max_duration"] == 8

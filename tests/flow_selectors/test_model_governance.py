@@ -244,7 +244,9 @@ def test_every_offered_video_entry_is_modelled() -> None:
 _OMNI_LABELS_SEEN = (
     "volume_up Omni Flash",
     "volume_up Omni 1.1 Flash",
+    "volume_upOmni 1.1 Flash 12月5日に提供終了",
 )
+_OMNI12_LABELS_SEEN = ("volume_upOmni 1.2 Flash",)
 
 
 @pytest.mark.parametrize("label", _OMNI_LABELS_SEEN)
@@ -282,6 +284,7 @@ def test_omni_selector_matches_the_omni_entry_and_nothing_else() -> None:
     menu = [
         "volume_up Omni 1.1 Flash",
         "volume_up Omni 1.1 Flash [Lower Priority]",
+        "volume_up Omni 1.2 Flash",
         "volume_up Veo 3.1 - Lite",
         "volume_up Veo 3.1 - Fast",
         "volume_up Veo 3.1 - Quality",
@@ -301,11 +304,11 @@ def test_the_live_omni_label_is_recorded_in_the_seen_list() -> None:
     degrades to decoration exactly as its own docstring warns.
     """
     live = [m for m in _inventory()["video"] if "omni" in m.lower()]
-    assert len(live) == 1, f"expected exactly one Omni entry in the fixture, got {live}"
-    assert live[0] in _OMNI_LABELS_SEEN, (
-        f"fixture ships {live[0]!r} but _OMNI_LABELS_SEEN does not list it — "
-        f"append it (oldest first) whenever you refresh the fixture."
-    )
+    assert live, "the observed Omni model entries must not disappear"
+    assert all(label in (*_OMNI_LABELS_SEEN, *_OMNI12_LABELS_SEEN) for label in live)
+    offered = _inventory()["video"]
+    for model in (VideoModel.OMNI_FLASH, VideoModel.OMNI_1_2_FLASH):
+        assert len(_matches(VIDEO_MODEL_OPTION_SELECTORS[model], offered)) == 1
 
 
 def test_lower_priority_absence_is_recorded_as_an_observation() -> None:

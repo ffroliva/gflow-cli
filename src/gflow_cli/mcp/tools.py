@@ -1258,7 +1258,8 @@ def _build_video_payload(
         "Generate a video using Google Flow's Veo model. "
         "Modes: t2v (text-to-video), i2v (image-to-video), r2v (reference-to-video). "
         "Aspects: 9:16, 16:9. "
-        "Optional model (veo_lite/veo_fast/veo_quality/omni_flash), duration (seconds), "
+        "Optional model (veo_lite/veo_fast/veo_quality/omni_flash/omni_1_2_flash), "
+        "duration (seconds), "
         "and count select the Veo model, clip length, and batch size (CLI parity). "
         "The prompt supports @CharacterName mentions to tag saved project characters by name "
         "(resolves to referenceEntities). Reference a SAVED character via @Name; pass one-off "
@@ -1327,12 +1328,14 @@ async def gflow_generate_video(  # NOSONAR
             exception and its end-frame route was wire-verified 2026-09-02
             (refs #125, #626).
         duration: Optional clip length in seconds (mirrors the CLI ``--duration``):
-            4/6/8 on the Veo 3.1 models, 4/6/8/10 on ``omni_flash``; whether the
+            Every integer 3–15 on explicit ``omni_1_2_flash`` (11–15 needs a Google AI
+            plan), 4/6/8 on Veo 3.1, 4/6/8/10 on ``omni_flash``; whether the
             account's cohort renders the control is decided pre-submit at zero cost.
             When omitted, Flow's per-model default applies. On the migrated
             flow.google.com host an 'r2v' request with explicit omni_flash accepts
-            4/6/8/10. Veo or an unspecified model accepts only 8: measured shorter
-            Veo requests dropped references and billed text-to-video instead.
+            4/6/8/10, and explicit ``omni_1_2_flash`` every integer 3-15 through its
+            duration slider. Veo or an unspecified model accepts only 8: measured
+            shorter Veo requests dropped references and billed text-to-video instead.
             Omitted r2v duration still pins 8 to avoid inherited editor settings.
         resolution: Optional video resolution — '360p' or '720p' (omni-flash only,
             mirrors the CLI ``--resolution``). When omitted, Flow's default applies. On any
@@ -1445,7 +1448,7 @@ async def gflow_generate_video(  # NOSONAR
         effective = VideoModel.from_cli(model) if model is not None else None
         if effective is None and mode == "i2v" and (initial_frame or end_frame):
             effective = I2V_DEFAULT_MODEL
-        if effective is not None:
+        if effective is not None or duration not in (4, 6, 8, 10):
             try:
                 validate_duration_for_model(effective, duration)
             except ValueError as exc:

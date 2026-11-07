@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Explicit Omni 1.2 Flash model selection with every integer duration from 3–15
+  seconds, a verified migrated duration slider, CLI/MCP/catalog/manifest parity,
+  and pre-submit refusal when the account does not offer the requested duration.
+
 ### Fixed
 
 - Explicit Omni Flash ingredients requests accept 4/6/8/10 seconds on flow.google.com.

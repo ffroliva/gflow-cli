@@ -876,6 +876,22 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 > 2026-09-06 dropped references and submitted text-to-video instead. Because the
 > editor remembers its last duration, omitted r2v duration still pins 8s.
 
+### Omni 1.2 Flash durations
+
+Use explicit `--model omni-1.2-flash` (alias `omni-1.2`) with `video t2v`, `i2v`
+or `r2v`. It accepts every integer `--duration` from 3 through 15, and optional
+`--resolution 360p` or `720p`. Omni 1.1 aliases and model defaults are unchanged.
+On flow.google.com the driver binds the `flow-duration-slider` index and reads
+back the displayed seconds. Missing/changed controls and unavailable durations
+fail before Send; free accounts offer 3–10, Google AI plans offer 3–15.
+`r2v` without an explicit duration pins 8 seconds. Agent-only and chained Omni
+1.2 generation remain unsupported; this change adds no extend/edit operation.
+
+```bash
+gflow video r2v "a continuous scene" --ref scene.png \
+  --model omni-1.2-flash --duration 15 --resolution 360p
+```
+
 ### Sharing one project across calls
 
 By default each `video t2v` / `i2v` / `r2v` call creates its own scratch Flow

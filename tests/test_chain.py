@@ -275,7 +275,8 @@ async def test_aborts_on_wire_format_error_preserving_partial_results(tmp_path: 
     assert partials[0] == good.local_path
 
 
-async def test_rejects_non_interpolation_model_up_front(tmp_path: Path) -> None:
+@pytest.mark.parametrize("model", [VideoModel.OMNI_FLASH, VideoModel.OMNI_1_2_FLASH])
+async def test_rejects_non_interpolation_model_up_front(tmp_path: Path, model: VideoModel) -> None:
     """omni_flash is rejected for chains BEFORE any spend (single-clip
     start-frame i2v only, refs #125): ModelModeIncompatibilityError, and
     generate_video is never awaited."""
@@ -286,7 +287,7 @@ async def test_rejects_non_interpolation_model_up_front(tmp_path: Path) -> None:
             client=client,
             links=_two_link_specs(),
             out_dir=tmp_path,
-            model=VideoModel.OMNI_FLASH,
+            model=model,
             extractor=_fake_extractor([]),
         )
 
@@ -327,7 +328,10 @@ async def test_rejects_per_link_duration_up_front(tmp_path: Path) -> None:
     client.generate_video.assert_not_awaited()
 
 
-async def test_rejects_per_link_omni_flash_override_up_front(tmp_path: Path) -> None:
+@pytest.mark.parametrize("model", [VideoModel.OMNI_FLASH, VideoModel.OMNI_1_2_FLASH])
+async def test_rejects_per_link_omni_flash_override_up_front(
+    tmp_path: Path, model: VideoModel
+) -> None:
     """#634: a per-LINK ``model`` override of omni_flash is rejected too.
 
     ``run_chain`` only ever tested the chain-level ``model``, but
@@ -340,7 +344,7 @@ async def test_rejects_per_link_omni_flash_override_up_front(tmp_path: Path) -> 
     client = _make_client([_ok_result("m0", tmp_path / "link0.mp4")])
     links = [
         ChainLinkSpec(prompt="a cat wakes up"),
-        ChainLinkSpec(prompt="the cat stretches", model=VideoModel.OMNI_FLASH),
+        ChainLinkSpec(prompt="the cat stretches", model=model),
     ]
 
     with pytest.raises(ModelModeIncompatibilityError) as excinfo:
