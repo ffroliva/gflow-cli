@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Local usage telemetry commands `gflow telemetry status` and `gflow telemetry show`**
+  displaying local counter storage and payload report (#1164).
+
+- **`gflow data stats` (CLI) and its MCP twin `gflow_usage_stats`** summarize local usage statistics
+  across commands and catalogued generations over the last N weeks (#1164).
+
+- **Local usage counters and sanitized crash fingerprinting** in `<home>/telemetry.db`, recording
+  weekly CLI/MCP command execution frequencies and top crash call-sites without capturing prompts,
+  arguments, or account details (#1164).
+
 ## [0.93.0] — 2026-11-05
 
 ### Added

@@ -34,6 +34,7 @@ from gflow_cli.data.queries import (
     list_profiles,
     list_projects,
     list_videos,
+    usage_stats,
 )
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
@@ -514,6 +515,133 @@ def list_profiles_cmd(limit: int, offset: int, as_json: bool) -> None:
     """List catalog-known profiles (not auth-known)."""
     rows = list_profiles(db_path=_db_path(), limit=limit, offset=offset)
     _emit(rows, as_json, _emit_profiles_table, "No profiles recorded.")
+
+
+# ---------------------------------------------------------------------------
+# `gflow data stats` (#1164)
+# ---------------------------------------------------------------------------
+
+
+def collect_usage_stats(weeks: int, db_path: Path | None = None) -> dict[str, Any]:
+    """Collect usage statistics over the last ``weeks`` weeks (#1164)."""
+    from gflow_cli import telemetry
+
+    # 1. Telemetry state
+    state, switch = telemetry.state()
+    telemetry_info = {
+        "state": state,
+        "switch": switch,
+        "report": telemetry.build_report(telemetry.iso_week()),
+    }
+
+    # 2. Commands: null when off, or list sorted by n desc then command
+    if telemetry_info["state"] == "off":
+        commands = None
+    else:
+        counters = telemetry.read_counters(weeks=weeks)
+        totals: dict[tuple[str, str], int] = {}
+        for c in counters:
+            if c.kind == "command":
+                pair = (c.surface, c.key)
+                totals[pair] = totals.get(pair, 0) + c.n
+        sorted_items = sorted(totals.items(), key=lambda item: (-item[1], item[0][1]))
+        commands = [
+            {"surface": surface, "command": cmd, "n": count}
+            for (surface, cmd), count in sorted_items
+        ]
+
+    # 3. Generations: from catalog usage_stats
+    target_db = db_path if db_path is not None else _db_path()
+    gen_rows = usage_stats(db_path=target_db, weeks=weeks)
+    generations = [
+        {
+            "command": r.command,
+            "model": r.model,
+            "status": r.status,
+            "month": r.month,
+            "n": r.n,
+        }
+        for r in gen_rows
+    ]
+
+    return {
+        "weeks": weeks,
+        "commands": commands,
+        "generations": generations,
+        "telemetry": telemetry_info,
+    }
+
+
+def _emit_stats(payload: dict[str, Any], as_json: bool) -> None:
+    if as_json:
+        click.echo(json.dumps(payload))
+        return
+
+    commands = payload["commands"]
+    generations = payload["generations"]
+    telemetry_info = payload["telemetry"]
+    state = telemetry_info["state"]
+    switch = telemetry_info["switch"]
+
+    if state == "on" and (not commands) and (not generations):
+        click.echo("No usage recorded.")
+        return
+
+    if state == "off":
+        click.echo(f"Usage counters are off ({switch}).")
+    elif commands:
+        tbl = Table(title="Top Commands", show_header=True, header_style="bold")
+        tbl.add_column("SURFACE")
+        tbl.add_column("COMMAND")
+        tbl.add_column("N", justify="right")
+        for c in commands:
+            tbl.add_row(c["surface"], c["command"], str(c["n"]))
+        Console().print(tbl)
+    else:
+        click.echo("No commands recorded.")
+
+    if generations:
+        tbl = Table(title="Generations", show_header=True, header_style="bold")
+        tbl.add_column("COMMAND")
+        tbl.add_column("MODEL")
+        tbl.add_column("STATUS")
+        tbl.add_column("MONTH")
+        tbl.add_column("N", justify="right")
+        for g in generations:
+            tbl.add_row(
+                escape(g["command"]),
+                escape(g["model"] or ""),
+                escape(g["status"]),
+                escape(g["month"]),
+                str(g["n"]),
+            )
+        Console().print(tbl)
+    elif state != "off" or commands:
+        click.echo("No generations recorded.")
+
+    if state == "on":
+        click.echo("Usage counters are on.")
+
+
+@data.command("stats")
+@click.option(
+    "--weeks",
+    type=click.IntRange(1, 53),
+    default=12,
+    show_default=True,
+    help="Number of weeks to summarize (1..53).",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit one JSON object instead of tables.",
+)
+@_guard
+def stats_cmd(weeks: int, as_json: bool) -> None:
+    """Summarize local usage from counters and catalog (#1164)."""
+    payload = collect_usage_stats(weeks=weeks)
+    _emit_stats(payload, as_json)
 
 
 # ---------------------------------------------------------------------------

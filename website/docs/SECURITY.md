@@ -17,7 +17,7 @@
 ## What we don't do
 
 - ❌ We don't store or transmit your Google password.
-- ❌ We don't ship telemetry. No phone-home, no usage stats, no remote logging by default.
+- ❌ We don't upload telemetry or usage stats. Usage counters are kept locally on your machine only, and nothing leaves the machine (a daily PyPI update check checks for new releases unless disabled).
 - ❌ We don't write secrets to logs (verified by `_post_json` redaction tests in `tests/api/test_client.py`; reCAPTCHA tokens and bearer-style fields are scrubbed before any DEBUG-level body emission).
 - ❌ We don't enable insecure TLS or skip certificate validation anywhere.
 
@@ -126,7 +126,7 @@ Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in adva
 ### Privacy controls
 
 - **`GFLOW_CLI_HISTORY_PROMPTS=redacted`** — store only the SHA-256 hash of the prompt, never the plain text. Useful when prompts contain sensitive or confidential content.
-- The database is local-only. No database cloud sync, no telemetry upload. It lives on your filesystem and never leaves the machine unless you explicitly copy it.
+- The database and usage counters are local-only. No database cloud sync, no telemetry upload. They live on your filesystem and never leave the machine unless you explicitly copy them.
 - `GFLOW_CLI_DB_PATH` lets you redirect the database to any path (e.g. an encrypted volume). A fresh path creates an empty database automatically.
 
 ### Redaction guarantee

@@ -90,8 +90,9 @@ object) between the UTC timestamp and a collision-resistant random suffix:
 ```text
 <GFLOW_CLI_HOME>/incidents/<YYYY-MM-DD>/<UTC-stamp>-<incident-id>-<rand>/
 ├── manifest.json             # allowlisted facts: version/env, error class + exit
-│                             # code + retryable, sanitized route, phase, artifact
-│                             # classifications, HAR state, suppression count
+│                             # code + retryable, safe crash fingerprint, sanitized
+│                             # route, phase, artifact classifications, HAR state
+│                             # and suppression count
 ├── ui.json                   # structural DOM only: Material-Symbol ligatures,
 │                             # signal booleans, tag counts, viewport/scroll,
 │                             # bounded overlay geometry — never raw text/HTML

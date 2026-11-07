@@ -129,6 +129,11 @@ gflow instructions toggle-mode (--on | --off) --project ID # toggle master agent
 # Keeping gflow-cli current (every command shows a banner when a newer release exists)
 gflow update [--check] [--json]
 gflow docs [TOPIC] [--search TERM] [--json]                            # upgrades via uv tool / pipx / pip; source installs refused (exit 11)
+
+# Usage statistics & local telemetry (offline, on-machine only)
+gflow data stats [--weeks N] [--json]
+gflow telemetry status [--json]
+gflow telemetry show
 ```
 
 Every subcommand accepts `--profile <name>` (per-subcommand, not global) to drive multiple Google accounts side-by-side.
