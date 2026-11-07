@@ -159,7 +159,7 @@ def maybe_upload() -> None:
         return
 
 
-def send(week: str, *, endpoint: str = _ENDPOINT) -> None:
+def send(week: str) -> None:
     """POST exactly the allow-listed report and apply the endpoint's reply."""
     try:
         import json
@@ -177,7 +177,7 @@ def send(week: str, *, endpoint: str = _ENDPOINT) -> None:
         body = telemetry.build_report(week)
         body["report_id"] = report_id
         request = urllib.request.Request(  # noqa: S310
-            endpoint,
+            _ENDPOINT,
             data=json.dumps(body).encode(),
             # Cloudflare's edge rejects the default "Python-urllib" agent with 403 (error 1010).
             # The version is already in the report, so naming it here adds nothing new.
@@ -247,7 +247,7 @@ def _main() -> None:
             return
         week = next_due_week(datetime.now(UTC))
         if week is not None:
-            send(week, endpoint=_ENDPOINT)
+            send(week)
     except Exception:
         return
 

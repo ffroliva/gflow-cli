@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import socket
@@ -23,6 +24,12 @@ from unittest.mock import Mock
 import pytest
 
 from gflow_cli import telemetry, update_check
+
+
+def test_sender_has_no_caller_controlled_endpoint() -> None:
+    from gflow_cli import telemetry_upload
+
+    assert tuple(inspect.signature(telemetry_upload.send).parameters) == ("week",)
 
 
 @pytest.fixture(autouse=True)
