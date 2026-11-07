@@ -458,10 +458,45 @@ def test_child_starts_a_new_session_on_posix(monkeypatch: pytest.MonkeyPatch, _h
     telemetry_upload.maybe_upload()
     assert popen.call_args is not None
     kwargs = popen.call_args.kwargs
+    assert popen.call_args.args[0] == [sys.executable, "-P", "-m", "gflow_cli.telemetry_upload"]
+    assert kwargs["cwd"] == os.getcwd()
+    assert kwargs["env"]["GFLOW_CLI_HOME"] == str(_home.resolve())
     assert kwargs.get("start_new_session") is True
     assert kwargs["stdin"] is subprocess.DEVNULL
     assert kwargs["stdout"] is subprocess.DEVNULL
     assert kwargs["stderr"] is subprocess.DEVNULL
+
+
+def test_child_safe_path_does_not_import_json_from_home(
+    monkeypatch: pytest.MonkeyPatch, _home: Path, tmp_path: Path
+) -> None:
+    from gflow_cli import telemetry_upload
+
+    _seed_week(_home, _week_id(_week_start()), due_at=_week_start())
+    (_home / "json.py").write_text("raise RuntimeError('home json imported')", encoding="utf-8")
+    marker = tmp_path / "json-origin"
+    code = (
+        "import json, os; from pathlib import Path; "
+        f"Path({str(marker)!r}).write_text(json.__file__, encoding='utf-8')"
+    )
+    real_popen = subprocess.Popen
+
+    def spawn(args: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+        assert args == [sys.executable, "-P", "-m", "gflow_cli.telemetry_upload"]
+        assert kwargs["env"]["GFLOW_CLI_HOME"] == str(_home.resolve())
+        assert kwargs["cwd"] == os.getcwd()
+        command = list(args)
+        command[command.index("-m")] = "-c"
+        command[command.index("gflow_cli.telemetry_upload")] = code
+        child = real_popen(command, **kwargs)
+        child.wait(timeout=5)
+        return child
+
+    monkeypatch.setattr(telemetry_upload.subprocess, "Popen", spawn)
+    monkeypatch.setattr(telemetry, "uploads_enabled", lambda: True)
+    telemetry_upload.maybe_upload()
+    assert marker.exists()
+    assert Path(marker.read_text(encoding="utf-8")).resolve() != (_home / "json.py").resolve()
 
 
 def test_report_survives_the_parent_exiting_at_once(_home: Path, tmp_path: Path) -> None:
