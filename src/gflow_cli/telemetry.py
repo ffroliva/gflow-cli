@@ -509,21 +509,23 @@ def _safe_frame_tokens(exc: BaseException) -> tuple[list[str], int]:
         module = _safe_frame_module(frame.f_globals.get("__name__"))
         if module is None:
             continue
-        top = module.partition(".")[0]
-        if module == "gflow_cli" or module.startswith("gflow_cli."):
-            if third_party:
-                tokens.append(f"<{third_party}>")
-                third_party = None
-            name = module.removeprefix("gflow_cli.") if module != "gflow_cli" else "gflow_cli"
-            tokens.append(f"{name}:{frame.f_code.co_qualname}")
-            ours += 1
-            if ours == 3:
-                break
-        else:
-            third_party = third_party or top
+        if module != "gflow_cli" and not module.startswith("gflow_cli."):
+            third_party = third_party or module.partition(".")[0]
+            continue
+        if third_party:
+            tokens.append(f"<{third_party}>")
+            third_party = None
+        tokens.append(f"{_frame_name(module)}:{frame.f_code.co_qualname}")
+        ours += 1
+        if ours == 3:
+            break
     if third_party:
         tokens.append(f"<{third_party}>")
     return tokens, ours
+
+
+def _frame_name(module: str) -> str:
+    return module.removeprefix("gflow_cli.") if module != "gflow_cli" else "gflow_cli"
 
 
 def _safe_frame_module(module: object) -> str | None:
@@ -639,7 +641,9 @@ class CountingGroup(click.Group):
 
 def _invocation_outcome(exc: BaseException) -> str:
     if isinstance(exc, SystemExit):
-        return str(exc.code) if isinstance(exc.code, int) else "0" if exc.code is None else "1"
+        if isinstance(exc.code, int):
+            return str(exc.code)
+        return "0" if exc.code is None else "1"
     if isinstance(exc, (click.exceptions.Exit, click.ClickException)):
         return str(exc.exit_code)
     if isinstance(exc, click.Abort):

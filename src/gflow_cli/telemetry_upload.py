@@ -18,6 +18,7 @@ from gflow_cli.config import _resolve_home  # pyright: ignore[reportPrivateUsage
 _ENDPOINT = "https://gflow-telemetry.ffroliva.workers.dev/v1/report"
 _WEEK_SECONDS = 7 * 24 * 60 * 60
 _DAY = timedelta(days=1)
+_SET_META = "INSERT OR REPLACE INTO meta VALUES (?, ?)"
 
 
 def _week_start(week: str) -> datetime:
@@ -120,7 +121,7 @@ def next_due_week(now: datetime) -> str | None:
 def _save_meta(key: str, value: str) -> None:
     home = _resolve_home()
     with closing(telemetry._connect(home)) as con, con:  # pyright: ignore[reportPrivateUsage]
-        con.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, value))
+        con.execute(_SET_META, (key, value))
 
 
 def _claim_due_week(home: Path, now: datetime) -> str | None:
@@ -258,10 +259,10 @@ def _failed_attempt(week: str, now: datetime) -> None:
                 (f"dropped:{now.isoformat()}", week),
             )
         else:
-            con.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, str(attempts)))
+            con.execute(_SET_META, (key, str(attempts)))
             retry = now + timedelta(days=1, seconds=secrets.randbelow(6 * 60 * 60 + 1))
             con.execute(
-                "INSERT OR REPLACE INTO meta VALUES (?, ?)",
+                _SET_META,
                 (f"retry_after:{week}", retry.isoformat()),
             )
 
