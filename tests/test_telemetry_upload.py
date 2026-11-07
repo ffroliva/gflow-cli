@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -145,6 +145,13 @@ def _report(home: Path, week: str) -> tuple[str, str | None, str | None] | None:
     return row
 
 
+def _send_to(week: str, endpoint: str) -> None:
+    from gflow_cli import telemetry_upload
+
+    with patch.object(telemetry_upload, "_ENDPOINT", endpoint):
+        telemetry_upload.send(week)
+
+
 def test_not_enabled_spawns_nothing(monkeypatch: pytest.MonkeyPatch, _home: Path) -> None:
     from gflow_cli import telemetry_upload
 
@@ -227,7 +234,7 @@ def test_one_report_per_attempt_oldest_first(_home: Path) -> None:
     now = datetime.now(UTC)
     assert telemetry_upload.next_due_week(now) == weeks[0]
     with _server() as (endpoint, _, _):
-        telemetry_upload.send(weeks[0], endpoint=endpoint)
+        _send_to(weeks[0], endpoint)
     assert telemetry_upload.next_due_week(now) == weeks[1]
 
 
@@ -237,7 +244,7 @@ def test_204_marks_sent_and_keeps_rows(_home: Path) -> None:
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
     with _server() as (endpoint, _, _):
-        telemetry_upload.send(week, endpoint=endpoint)
+        _send_to(week, endpoint)
     assert _report(_home, week)[2] is not None
     assert any(row.week == week for row in telemetry.read_counters())
 
@@ -266,7 +273,7 @@ def test_request_names_gflow_as_its_user_agent(_home: Path) -> None:
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
     try:
-        telemetry_upload.send(week, endpoint=f"http://127.0.0.1:{server.server_port}/report")
+        _send_to(week, f"http://127.0.0.1:{server.server_port}/report")
     finally:
         server.shutdown()
         server.server_close()
@@ -281,7 +288,7 @@ def test_rejected_report_is_dropped_not_retried(status: int, _home: Path) -> Non
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
     with _server(status) as (endpoint, _, _):
-        telemetry_upload.send(week, endpoint=endpoint)
+        _send_to(week, endpoint)
     assert _report(_home, week)[2] is not None
 
 
@@ -295,7 +302,7 @@ def test_429_waits_for_retry_after_plus_a_random_extra(
     monkeypatch.setattr(telemetry_upload.secrets, "randbelow", lambda n: 1800)
     before = datetime.now(UTC)
     with _server(429, "3600") as (endpoint, _, _):
-        telemetry_upload.send(week, endpoint=endpoint)
+        _send_to(week, endpoint)
     retry = datetime.fromisoformat(_meta(_home)[f"retry_after:{week}"])
     assert timedelta(seconds=5400) <= retry - before <= timedelta(seconds=5401)
     assert _report(_home, week)[2] is None
@@ -309,7 +316,7 @@ def test_transient_failure_keeps_the_week(failure: int | str, _home: Path) -> No
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
     if failure == 500:
         with _server(500) as (endpoint, _, _):
-            telemetry_upload.send(week, endpoint=endpoint)
+            _send_to(week, endpoint)
     else:
         error: BaseException = (
             TimeoutError("timeout") if failure == "timeout" else socket.gaierror("dns")
@@ -322,7 +329,7 @@ def test_transient_failure_keeps_the_week(failure: int | str, _home: Path) -> No
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(urllib.request, "build_opener", lambda *_: BrokenOpener())
         try:
-            telemetry_upload.send(week, endpoint="http://127.0.0.1:1/report")
+            _send_to(week, "http://127.0.0.1:1/report")
         finally:
             monkeypatch.undo()
     assert _report(_home, week)[2] is None
@@ -334,7 +341,7 @@ def test_410_stops_uploading_forever(_home: Path) -> None:
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
     with _server(410) as (endpoint, _, _):
-        telemetry_upload.send(week, endpoint=endpoint)
+        _send_to(week, endpoint)
     assert _meta(_home)["upload_disabled"] == "1"
     assert not telemetry.uploads_enabled()
 
@@ -345,7 +352,7 @@ def test_redirect_is_not_followed(_home: Path) -> None:
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
     with _server(302) as (endpoint, _, paths):
-        telemetry_upload.send(week, endpoint=endpoint)
+        _send_to(week, endpoint)
     assert paths == ["/report"]
     assert _report(_home, week)[2] is None
 
@@ -374,7 +381,7 @@ def test_body_is_never_read(monkeypatch: pytest.MonkeyPatch, _home: Path) -> Non
             return Response()
 
     monkeypatch.setattr(urllib.request, "build_opener", lambda *_: Opener())
-    telemetry_upload.send(week, endpoint="http://127.0.0.1/report")
+    _send_to(week, "http://127.0.0.1/report")
     assert _report(_home, week)[2] is not None
 
 
@@ -396,7 +403,7 @@ def test_two_months_offline_sends_each_week_once(_home: Path) -> None:
         for _ in weeks:
             week = telemetry_upload.next_due_week(datetime.now(UTC))
             assert week is not None
-            telemetry_upload.send(week, endpoint=endpoint)
+            _send_to(week, endpoint)
     assert len(bodies) == len(weeks)
     assert {json.loads(body)["week"] for body in bodies} == set(weeks)
 
@@ -586,7 +593,7 @@ def test_send_body_equals_build_report_for_same_week(_home: Path) -> None:
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
     expected = telemetry.build_report(week)
     with _server() as (endpoint, bodies, _):
-        telemetry_upload.send(week, endpoint=endpoint)
+        _send_to(week, endpoint)
     assert json.loads(bodies[0]) == expected
 
 
@@ -596,7 +603,7 @@ def test_send_without_stored_report_id_keeps_week(_home: Path) -> None:
     week = _week_id(_week_start())
     _seed_week(_home, week)
     with _server() as (endpoint, bodies, _):
-        telemetry_upload.send(week, endpoint=endpoint)
+        _send_to(week, endpoint)
     assert bodies == []
     assert _report(_home, week) is None
 
