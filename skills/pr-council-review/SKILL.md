@@ -108,8 +108,11 @@ Pull in parallel via `ctx_batch_execute`:
   issue-level comments only, and CodeRabbit's findings are inline review comments and
   review summaries. CodeRabbit does not review a **draft** ("Draft PR not reviewed"), and it
   can skip a commit at its rate limit. `BOT_REVIEWS` also returns human inline comments, kept
-  for the replies. Report "no bot review" only when it holds no bot-authored comment and
-  the reviews query is empty, because a draft may still carry an earlier review. `@coderabbitai review` requests
+  for the replies. A clean review can leave neither, so read the `CodeRabbit` row of
+  `PR_CHECKS` first: `pass` is a completed review, while `skipping` or `pending` means none
+  ran on this head. Report "no bot review" only when that row is not `pass`, no
+  bot-authored comment exists and the reviews query is empty, because a draft may still
+  carry an earlier review. `@coderabbitai review` requests
   a review.
 
 > **Read the thread before you flag "no evidence".** `PR_COMMENTS` is not optional colour:
