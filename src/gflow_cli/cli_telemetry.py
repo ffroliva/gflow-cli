@@ -17,7 +17,7 @@ from gflow_cli.config import _resolve_home  # pyright: ignore[reportPrivateUsage
 
 @click.group("telemetry")
 def telemetry() -> None:
-    """Inspect local usage counters and telemetry status."""
+    """Inspect and control usage counters and weekly uploads."""
 
 
 @telemetry.command("status")

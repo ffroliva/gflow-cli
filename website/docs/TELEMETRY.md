@@ -63,7 +63,8 @@ that have already been added.
 Uploads are enabled by default outside the EU and EEA, but only when all these conditions are met:
 
 - This machine has shown the notice below in an interactive terminal. Nothing is uploaded on the run
-  that first shows it, and only weeks that began after the notice was shown can be sent.
+  that first shows it, and only weeks that began after the notice was shown can be sent. In the
+  EU and EEA the week must also have begun after you ran `gflow telemetry on`.
 - gflow-cli was installed from a package index. Editable and local-source installs do not upload.
 - The process is not running in CI, and uploads have not been turned off or disabled by the server.
 - A completed week is due. Its send time is chosen randomly within the seven days after that week
@@ -129,5 +130,5 @@ See exactly what would be sent: gflow telemetry show. Full notice: gflow docs TE
 
 ## Controller and legal basis
 
-The data controller is the gflow-cli maintainer (your.name Oliva); contact via the address in
+The data controller is the gflow-cli maintainer (GitHub: ffroliva); contact via the address in
 [docs/SECURITY.md](SECURITY.md). **Pending legal review (#1164).**

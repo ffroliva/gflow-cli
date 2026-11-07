@@ -25,7 +25,7 @@ This file is forward-staged for a future docs site at https://ffroliva.github.io
 - [External Storage](https://github.com/ffroliva/gflow-cli/blob/main/docs/EXTERNAL_STORAGE.md): S3, MinIO, and Google Cloud Storage output setup.
 - [Known Issues](https://github.com/ffroliva/gflow-cli/blob/main/KNOWN_ISSUES.md): Open + mitigated issues with workarounds.
 - [Data Layer](https://github.com/ffroliva/gflow-cli/blob/main/docs/DATA_LAYER.md): Local SQLite catalog schema and the `gflow data list` query CLI.
-- [Telemetry](https://github.com/ffroliva/gflow-cli/blob/main/docs/TELEMETRY.md): Local usage metrics, SQLite telemetry store, privacy allowlist, kill switches, and the `gflow telemetry status|show` CLI.
+- [Telemetry](https://github.com/ffroliva/gflow-cli/blob/main/docs/TELEMETRY.md): Usage data and privacy notice: local counters, the weekly report sent after a one-time notice (no identifier), EU/EEA consent, kill switches, and the `gflow telemetry on|off|status|show` CLI.
 - [Characters](https://github.com/ffroliva/gflow-cli/blob/main/docs/CHARACTER.md): The `gflow character` command group — reusable, project-scoped Flow Character entities (reference images, optional voice, optional personality).
 - [Instructions](https://github.com/ffroliva/gflow-cli/blob/main/docs/INSTRUCTIONS.md): The `gflow instructions` command group — persistent Agent-Mode brief cards (credits-free CRUD, TOML/JSON full-sync via `apply`, image/character references).
 - [Movie](https://github.com/ffroliva/gflow-cli/blob/main/docs/MOVIE.md): The `gflow movie` command group — multi-scene `movie.toml` manifests with styles, per-scene instructions brief-sync, and resume.
