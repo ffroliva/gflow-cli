@@ -166,7 +166,9 @@ AGENT_ONLY_EARLY_S = 5.0
 #: A positive agent-only verdict is re-asked after this long: the verdict rests on the chip's
 #: ABSENCE, and a slow mount can put the trigger in the DOM before the chip.
 AGENT_ONLY_SETTLE_S = 2.0
-#: Reloads spent looking for the classic composer when a request needs it (references).
+#: Free reloads spent looking for the classic composer when a request needs it. One
+#: observation so far (2026-11-04): an account normally given the classic composer was
+#: served the agent-only one once, and the classic one on the next nine loads.
 AGENT_ONLY_RELOADS = 3
 AGENT_ONLY_RELOAD_WAIT_S = 5.0
 #: The agent-only composer's own Agent-settings button — the thing its driver needs anyway.
@@ -1418,6 +1420,21 @@ class MigratedComposer:
         return f"{detail} [contract={MIGRATED_SETTINGS_CONTRACT}]"
 
     # --- readiness ------------------------------------------------------------
+
+    async def ensure_editor_for(
+        self, page: Page, project_id: str, *, needs_classic: bool
+    ) -> ComposerKind:
+        """:meth:`ensure_editor`, then up to ``AGENT_ONLY_RELOADS`` free reloads while the
+        agent-only composer is served to a request only the classic one can take (#1142)."""
+        kind = await self.ensure_editor(page, project_id)
+        for attempt in range(1, AGENT_ONLY_RELOADS + 1):
+            if kind == "classic" or not needs_classic:
+                break
+            log.info("migrated.agent_only_reload", attempt=attempt, issue_ref="#799")
+            await asyncio.sleep(AGENT_ONLY_RELOAD_WAIT_S)
+            await page.reload(wait_until="domcontentloaded", timeout=45_000)
+            kind = await self.ensure_editor(page, project_id)
+        return kind
 
     async def ensure_editor(
         self, page: Page, project_id: str, *, timeout_s: float = 30.0
@@ -3997,7 +4014,8 @@ async def run_video(
         )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
     composer = MigratedComposer()
-    if await composer.ensure_editor(page, pid) == "agent_only":
+    needs_classic = agent.unported_video(request) is not None
+    if await composer.ensure_editor_for(page, pid, needs_classic=needs_classic) == "agent_only":
         return await agent.run_agent_video(
             page,
             request,
@@ -4117,20 +4135,8 @@ async def run_images(
             )
         )
     composer = MigratedComposer()
-    kind = await composer.ensure_editor(page, pid)
-    # The agent-only composer is served intermittently to accounts that normally get the
-    # classic one (measured 2026-11-04 on an Ultra account: refused at 12:50 UTC, classic on
-    # nine loads and three real i2i runs an hour later). It cannot take references, so ask
-    # for the page again before refusing. A reload costs no credits.
-    if kind == "agent_only" and agent.unported_image(request) is not None:
-        for attempt in range(1, AGENT_ONLY_RELOADS + 1):
-            log.info("migrated.agent_only_reload", attempt=attempt, issue_ref="#799")
-            await asyncio.sleep(AGENT_ONLY_RELOAD_WAIT_S)
-            await page.reload(wait_until="domcontentloaded", timeout=45_000)
-            kind = await composer.ensure_editor(page, pid)
-            if kind == "classic":
-                break
-    if kind == "agent_only":
+    needs_classic = agent.unported_image(request) is not None
+    if await composer.ensure_editor_for(page, pid, needs_classic=needs_classic) == "agent_only":
         return await agent.run_agent_images(page, request, project_id=pid)
     if unported is not None:
         raise refuse()

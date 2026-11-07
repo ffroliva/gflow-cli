@@ -504,6 +504,7 @@ async def test_run_images_attaches_characters_then_appends_the_prompt(
     calls: list[str] = []
     composer = MagicMock()
     composer.ensure_editor = AsyncMock(side_effect=lambda *a, **k: calls.append("editor"))
+    composer.ensure_editor_for = composer.ensure_editor
     composer.apply_image_settings = AsyncMock(side_effect=lambda *a, **k: calls.append("settings"))
 
     async def attach(*_: Any, **kw: Any) -> tuple[str, ...]:
@@ -576,11 +577,14 @@ async def test_references_reload_past_an_intermittent_agent_only_composer(
     import gflow_cli.api.transports.migrated_composer as mc
 
     monkeypatch.setattr(mc, "AGENT_ONLY_RELOAD_WAIT_S", 0)
-    composer = MagicMock()
-    composer.ensure_editor = AsyncMock(side_effect=["agent_only", "agent_only", "classic"])
+    editor = AsyncMock(side_effect=["agent_only", "agent_only", "classic"])
+    monkeypatch.setattr(mc.MigratedComposer, "ensure_editor", editor)
     # Past the composer choice is the classic path, which is covered elsewhere.
-    composer.apply_image_settings = AsyncMock(side_effect=RuntimeError("reached classic path"))
-    monkeypatch.setattr(mc, "MigratedComposer", lambda **_: composer)
+    monkeypatch.setattr(
+        mc.MigratedComposer,
+        "apply_image_settings",
+        AsyncMock(side_effect=RuntimeError("reached classic path")),
+    )
     page = MagicMock(url="https://flow.google.com/project/p1", reload=AsyncMock())
     with pytest.raises(RuntimeError, match="reached classic path"):
         await mc.run_images(page, _i2i_request(tmp_path), project_id="p1")
@@ -594,9 +598,7 @@ async def test_references_are_refused_when_the_agent_only_composer_stays(
     import gflow_cli.api.transports.migrated_composer as mc
 
     monkeypatch.setattr(mc, "AGENT_ONLY_RELOAD_WAIT_S", 0)
-    composer = MagicMock()
-    composer.ensure_editor = AsyncMock(return_value="agent_only")
-    monkeypatch.setattr(mc, "MigratedComposer", lambda **_: composer)
+    monkeypatch.setattr(mc.MigratedComposer, "ensure_editor", AsyncMock(return_value="agent_only"))
     page = MagicMock(url="https://flow.google.com/project/p1", reload=AsyncMock())
     with pytest.raises(FlowHostMigratedError):
         await mc.run_images(page, _i2i_request(tmp_path), project_id="p1")

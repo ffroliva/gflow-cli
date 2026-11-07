@@ -998,6 +998,7 @@ async def test_a_names_only_character_routed_to_the_agent_composer_is_refused(
             download=False,
             on_started=None,
         )
+    assert page.reload.await_count == 2 * mc.AGENT_ONLY_RELOADS  # the video gate reloads too
     page.locator.assert_not_called()
 
 

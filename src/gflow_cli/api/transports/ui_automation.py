@@ -3022,7 +3022,10 @@ class UiAutomationTransport(VideoGenerationMixin):
                 raise_if_migrated(page, at="reference_upload_kill_switch")
             composer = MigratedComposer()
             try:
-                if await composer.ensure_editor(page, project_id) == "agent_only":
+                if (
+                    await composer.ensure_editor_for(page, project_id, needs_classic=True)
+                    == "agent_only"
+                ):
                     from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415
 
                     raise agent.refuse_unported("image-to-image")
