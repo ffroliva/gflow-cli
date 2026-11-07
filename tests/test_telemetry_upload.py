@@ -445,6 +445,32 @@ def test_child_has_no_console_window_on_windows(
     assert kwargs["stderr"] is subprocess.DEVNULL
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows console handle")
+def test_real_uploader_child_has_no_console_window(
+    monkeypatch: pytest.MonkeyPatch, _home: Path, tmp_path: Path
+) -> None:
+    from gflow_cli import telemetry_upload
+
+    week_start = _week_start()
+    _seed_week(_home, _week_id(week_start), start=week_start, due_at=week_start)
+    marker = tmp_path / "console-window"
+    code = (
+        "import ctypes; from pathlib import Path; "
+        f"Path({str(marker)!r}).write_text(str(ctypes.windll.kernel32.GetConsoleWindow()))"
+    )
+    real_popen = subprocess.Popen
+
+    def spawn(_args: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+        child = real_popen([sys.executable, "-c", code], **kwargs)
+        child.wait(timeout=5)
+        return child
+
+    monkeypatch.setattr(telemetry_upload.subprocess, "Popen", spawn)
+    monkeypatch.setattr(telemetry, "uploads_enabled", lambda: True)
+    telemetry_upload.maybe_upload()
+    assert marker.read_text(encoding="utf-8") == "0"
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX session")
 def test_child_starts_a_new_session_on_posix(monkeypatch: pytest.MonkeyPatch, _home: Path) -> None:
     from gflow_cli import telemetry_upload
