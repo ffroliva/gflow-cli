@@ -439,6 +439,7 @@ def test_status_names_the_kill_switch_in_force(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(update_check, "_in_ci", lambda: False)
+    monkeypatch.setattr(update_check, "_installed_from_index", lambda: False)
     monkeypatch.setattr(telemetry, "consent_region", lambda: False)
     runner = CliRunner()
 
