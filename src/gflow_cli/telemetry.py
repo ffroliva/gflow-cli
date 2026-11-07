@@ -131,6 +131,8 @@ _EU_EEA_WINDOWS_TIMEZONES = frozenset(
 
 def _read_windows_timezone_key_name() -> str | None:
     """Read the configured Windows timezone key, if available."""
+    if sys.platform != "win32":
+        return None
     try:
         import winreg
 

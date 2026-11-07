@@ -21,7 +21,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from gflow_cli import telemetry
+from gflow_cli import telemetry, update_check
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +31,10 @@ def _home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
     monkeypatch.delenv("GFLOW_CLI_TELEMETRY", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.delenv("CI", raising=False)
     monkeypatch.setenv("TZ", "America/New_York")
+    monkeypatch.setattr(update_check, "_in_ci", lambda: False)
+    monkeypatch.setattr(telemetry, "consent_region", lambda: False)
     telemetry.killed.cache_clear()
     return home
 
@@ -414,6 +417,7 @@ def test_maybe_upload_never_raises(monkeypatch: pytest.MonkeyPatch, _home: Path)
     telemetry_upload.maybe_upload()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows creationflags")
 def test_child_has_no_console_window_on_windows(
     monkeypatch: pytest.MonkeyPatch, _home: Path
 ) -> None:
@@ -423,10 +427,10 @@ def test_child_has_no_console_window_on_windows(
     monkeypatch.setattr(telemetry, "_NOTICE_SHOWN_THIS_RUN", False)
     week = _week_id(_week_start())
     _seed_week(_home, week)
-    monkeypatch.setattr(telemetry_upload.sys, "platform", "win32")
     popen = Mock()
     monkeypatch.setattr(telemetry_upload.subprocess, "Popen", popen)
     telemetry_upload.maybe_upload()
+    assert popen.call_args is not None
     kwargs = popen.call_args.kwargs
     flags = (
         subprocess.CREATE_NO_WINDOW
@@ -434,6 +438,25 @@ def test_child_has_no_console_window_on_windows(
         | subprocess.CREATE_NEW_PROCESS_GROUP
     )
     assert kwargs["creationflags"] == flags
+    assert kwargs["stdin"] is subprocess.DEVNULL
+    assert kwargs["stdout"] is subprocess.DEVNULL
+    assert kwargs["stderr"] is subprocess.DEVNULL
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX session")
+def test_child_starts_a_new_session_on_posix(monkeypatch: pytest.MonkeyPatch, _home: Path) -> None:
+    from gflow_cli import telemetry_upload
+
+    monkeypatch.setattr(telemetry, "uploads_enabled", lambda: True)
+    monkeypatch.setattr(telemetry, "_NOTICE_SHOWN_THIS_RUN", False)
+    week = _week_id(_week_start())
+    _seed_week(_home, week)
+    popen = Mock()
+    monkeypatch.setattr(telemetry_upload.subprocess, "Popen", popen)
+    telemetry_upload.maybe_upload()
+    assert popen.call_args is not None
+    kwargs = popen.call_args.kwargs
+    assert kwargs.get("start_new_session") is True
     assert kwargs["stdin"] is subprocess.DEVNULL
     assert kwargs["stdout"] is subprocess.DEVNULL
     assert kwargs["stderr"] is subprocess.DEVNULL

@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from gflow_cli import telemetry
+from gflow_cli import telemetry, update_check
 from gflow_cli.cli import main
 from gflow_cli.data.models import (
     OperationKind,
@@ -57,7 +57,10 @@ def _tele_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]
     """Test isolation: clean GFLOW_CLI_HOME, unset kill switches, reset cache."""
     monkeypatch.delenv("GFLOW_CLI_TELEMETRY", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.delenv("CI", raising=False)
     monkeypatch.setenv("TZ", "America/New_York")
+    monkeypatch.setattr(update_check, "_in_ci", lambda: False)
+    monkeypatch.setattr(telemetry, "consent_region", lambda: False)
     home = tmp_path / "gflow_home"
     home.mkdir(exist_ok=True)
     monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
@@ -435,6 +438,8 @@ def test_show_prints_the_report_as_json() -> None:
 def test_status_names_the_kill_switch_in_force(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(update_check, "_in_ci", lambda: False)
+    monkeypatch.setattr(telemetry, "consent_region", lambda: False)
     runner = CliRunner()
 
     # 1. Default (none)
