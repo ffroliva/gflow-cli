@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from gflow_cli import telemetry
+from gflow_cli import telemetry, update_check
 from gflow_cli.cli import main
 from gflow_cli.data.models import (
     OperationKind,
@@ -57,6 +57,10 @@ def _tele_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]
     """Test isolation: clean GFLOW_CLI_HOME, unset kill switches, reset cache."""
     monkeypatch.delenv("GFLOW_CLI_TELEMETRY", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setenv("TZ", "America/New_York")
+    monkeypatch.setattr(update_check, "_in_ci", lambda: False)
+    monkeypatch.setattr(telemetry, "consent_region", lambda: False)
     home = tmp_path / "gflow_home"
     home.mkdir(exist_ok=True)
     monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
@@ -293,6 +297,11 @@ def test_telemetry_state_is_shared_by_status_and_usage_stats(
     assert collect_usage_stats(weeks=12)["telemetry"]["switch"] == "test-switch"
 
 
+def test_state_keeps_telemetry_off_switch_label(_tele_env: Path) -> None:
+    (_tele_env / "telemetry.off").write_text("", encoding="utf-8")
+    assert telemetry.state() == ("off", "telemetry.off")
+
+
 def test_report_catalog_query_is_bounded_to_iso_week(
     empty_catalog_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -429,16 +438,16 @@ def test_show_prints_the_report_as_json() -> None:
 def test_status_names_the_kill_switch_in_force(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(update_check, "_in_ci", lambda: False)
+    monkeypatch.setattr(update_check, "_installed_from_index", lambda: False)
+    monkeypatch.setattr(telemetry, "consent_region", lambda: False)
     runner = CliRunner()
 
     # 1. Default (none)
     res_none = runner.invoke(main, ["telemetry", "status"])
     assert res_none.exit_code == 0
     assert "none" in res_none.output.lower() or "active" in res_none.output.lower()
-    assert (
-        "Nothing is uploaded: this version keeps usage counters on this machine only."
-        in res_none.output
-    )
+    assert "Upload: off (not installed from a package index)" in res_none.output
 
     # 2. DO_NOT_TRACK
     monkeypatch.setenv("DO_NOT_TRACK", "1")
@@ -446,10 +455,7 @@ def test_status_names_the_kill_switch_in_force(
     res_dnt = runner.invoke(main, ["telemetry", "status"])
     assert res_dnt.exit_code == 0
     assert "DO_NOT_TRACK" in res_dnt.output
-    assert (
-        "Nothing is uploaded: this version keeps usage counters on this machine only."
-        in res_dnt.output
-    )
+    assert "Upload: off (killed: DO_NOT_TRACK)" in res_dnt.output
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
     telemetry.killed.cache_clear()
 
@@ -459,10 +465,7 @@ def test_status_names_the_kill_switch_in_force(
     res_env = runner.invoke(main, ["telemetry", "status"])
     assert res_env.exit_code == 0
     assert "GFLOW_CLI_TELEMETRY" in res_env.output
-    assert (
-        "Nothing is uploaded: this version keeps usage counters on this machine only."
-        in res_env.output
-    )
+    assert "Upload: off (killed: GFLOW_CLI_TELEMETRY)" in res_env.output
     monkeypatch.delenv("GFLOW_CLI_TELEMETRY", raising=False)
     telemetry.killed.cache_clear()
 
@@ -471,11 +474,8 @@ def test_status_names_the_kill_switch_in_force(
     (home / "telemetry.off").write_text("", encoding="utf-8")
     res_off = runner.invoke(main, ["telemetry", "status"])
     assert res_off.exit_code == 0
-    assert "telemetry.off" in res_off.output
-    assert (
-        "Nothing is uploaded: this version keeps usage counters on this machine only."
-        in res_off.output
-    )
+    assert "telemetry off" in res_off.output
+    assert "Upload: off (telemetry off)" in res_off.output
 
 
 def test_status_json_mirrors_telemetry_block() -> None:
@@ -485,6 +485,8 @@ def test_status_json_mirrors_telemetry_block() -> None:
     data = json.loads(result.output)
     assert "state" in data
     assert "switch" in data
+    assert "upload" in data
+    assert set(data["upload"]) == {"enabled", "reason"}
     assert "report" in data
     assert set(data["report"].keys()) == ALLOWED
 

@@ -30,6 +30,12 @@ To use `gflow-cli` you must:
 
 4. **Use only your own credentials.** Sharing accounts, automating mass-account creation, or otherwise circumventing Google's per-account quotas is prohibited by Google's terms and is **not a supported use case for `gflow-cli`**.
 
+## Usage data
+
+gflow-cli stores usage counters locally and can upload weekly totals without an identifier after
+showing an interactive notice. You can turn uploads off with `gflow telemetry off`. Read the
+[full usage data and privacy notice](docs/TELEMETRY.md) for what is counted, sent, and retained.
+
 ## Prohibited uses
 
 The maintainer asks that you do **not** use `gflow-cli` to:

@@ -528,9 +528,14 @@ def collect_usage_stats(weeks: int, db_path: Path | None = None) -> dict[str, An
 
     # 1. Telemetry state
     state, switch = telemetry.state()
+    upload_reason = telemetry.upload_disabled_reason()
     telemetry_info = {
         "state": state,
         "switch": switch,
+        "upload": {
+            "enabled": upload_reason is None,
+            "reason": upload_reason,
+        },
         "report": telemetry.build_report(telemetry.iso_week()),
     }
 

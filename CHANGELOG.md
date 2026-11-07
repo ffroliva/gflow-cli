@@ -15,8 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Local usage telemetry commands `gflow telemetry status` and `gflow telemetry show`**
-  displaying local counter storage and payload report (#1164).
+- **Usage telemetry notice and weekly uploads**: `gflow telemetry on|off|status|show` controls
+  default-on weekly totals without an identifier outside the EU/EEA, where explicit consent is
+  required with `gflow telemetry on`. Upload starts only after the interactive notice;
+  `gflow telemetry off --delete`, `GFLOW_CLI_TELEMETRY=0`, and `DO_NOT_TRACK=1` stop it (#1164).
+
+- **`docs/TELEMETRY.md`** explains the notice, exact report, retention and privacy controls (#1164).
 
 - **`gflow data stats` (CLI) and its MCP twin `gflow_usage_stats`** summarize local usage statistics
   across commands and catalogued generations over the last N weeks (#1164).

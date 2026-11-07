@@ -24,6 +24,7 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import click
 import structlog
@@ -47,7 +48,166 @@ def _debug(event: str, **kw: str) -> None:
 
 _RETAIN_WEEKS = 53
 _TRANSITION_WINDOW_S = 30 * 60
+DB_FILE = "telemetry.db"
+OFF_FILE = "telemetry.off"
+CONSENT_FILE = "telemetry.consent"
 SCHEMA = 1
+NOTICE_VERSION = 2
+NOTICE_TEXT = (
+    "gflow sends weekly usage totals to improve it, and we share overall figures publicly and "
+    "with\n"
+    "sponsors. Commands, flag names, models, error codes, and your country as a total. No ID, "
+    "prompts,\n"
+    "paths or account details. Each report is added to totals and discarded.\n"
+    "Turn it off: gflow telemetry off, or set GFLOW_CLI_TELEMETRY=0\n"
+    "See exactly what is sent: gflow telemetry show. Full notice: gflow docs TELEMETRY"
+)
+NOTICE_TEXT_CONSENT = (
+    "gflow can send weekly usage totals to help improve it; overall figures are shared publicly "
+    "and "
+    "with sponsors. Commands, flag names, models, error codes, and your country as a total. No ID, "
+    "prompts, paths or account details. Each report is added to totals and discarded.\n"
+    "In your region nothing is sent unless you agree: gflow telemetry on (undo: gflow telemetry "
+    "off)\n"
+    "See exactly what would be sent: gflow telemetry show. Full notice: gflow docs TELEMETRY"
+)
+_NOTICE_SHOWN_THIS_RUN = False
+
+_EU_EEA_TIMEZONES = frozenset(
+    {
+        "Africa/Ceuta",
+        "America/Cayenne",
+        "America/Guadeloupe",
+        "America/Martinique",
+        "America/Marigot",
+        "America/St_Barthelemy",
+        "Arctic/Longyearbyen",
+        "Asia/Famagusta",
+        "Asia/Nicosia",
+        "Atlantic/Azores",
+        "Atlantic/Canary",
+        "Atlantic/Madeira",
+        "Atlantic/Reykjavik",
+        "Europe/Amsterdam",
+        "Europe/Athens",
+        "Europe/Berlin",
+        "Europe/Bratislava",
+        "Europe/Brussels",
+        "Europe/Bucharest",
+        "Europe/Budapest",
+        "Europe/Busingen",
+        "Europe/Copenhagen",
+        "Europe/Dublin",
+        "Europe/Helsinki",
+        "Europe/Lisbon",
+        "Europe/Ljubljana",
+        "Europe/Luxembourg",
+        "Europe/Madrid",
+        "Europe/Malta",
+        "Europe/Mariehamn",
+        "Europe/Oslo",
+        "Europe/Paris",
+        "Europe/Prague",
+        "Europe/Riga",
+        "Europe/Rome",
+        "Europe/Sofia",
+        "Europe/Stockholm",
+        "Europe/Tallinn",
+        "Europe/Vaduz",
+        "Europe/Vienna",
+        "Europe/Vilnius",
+        "Europe/Warsaw",
+        "Europe/Zagreb",
+        "Indian/Reunion",
+        "Indian/Mayotte",
+        "CET",
+        "EET",
+        "MET",
+        "WET",
+        "Poland",
+        "Portugal",
+        "Eire",
+        "Iceland",
+    }
+)
+# Deliberately over-inclusive: Windows zones spanning any EU/EEA country require consent.
+_EU_EEA_WINDOWS_TIMEZONES = frozenset(
+    {
+        "Azores Standard Time",
+        "Central Europe Standard Time",
+        "Central European Standard Time",
+        "E. Europe Standard Time",
+        "FLE Standard Time",
+        "GMT Standard Time",
+        "Greenwich Standard Time",
+        "GTB Standard Time",
+        "Romance Standard Time",
+        "W. Europe Standard Time",
+    }
+)
+
+
+def _read_windows_timezone_key_name() -> str | None:
+    """Read the configured Windows timezone key, if available."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\TimeZoneInformation",
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, "TimeZoneKeyName")
+        return value if isinstance(value, str) else None
+    except (ImportError, OSError):
+        return None
+
+
+def _posix_timezone_name() -> str | None:
+    """Read an IANA timezone from the POSIX localtime link or timezone file."""
+    try:
+        target = os.readlink("/etc/localtime")
+        parts = target.split("/zoneinfo/", maxsplit=1)
+        if len(parts) == 2 and parts[1]:
+            return parts[1].removeprefix("posix/").removeprefix("right/")
+        return Path("/etc/timezone").read_text(encoding="utf-8").strip() or None
+    except (OSError, RuntimeError):
+        return None
+
+
+def _valid_iana_name(tz: str) -> bool:
+    return (
+        not tz.startswith("/")
+        and ".." not in tz.split("/")
+        and all(part.replace("_", "").replace("-", "").isalnum() for part in tz.split("/"))
+    )
+
+
+def _env_timezone_name(tz: str) -> str | None:
+    if not _valid_iana_name(tz):
+        return None
+    try:
+        ZoneInfo(tz)
+        return tz
+    except (ZoneInfoNotFoundError, ValueError):
+        if sys.platform == "win32" and ("/" in tz or tz in {"UTC", "GMT"}):
+            return tz
+        return None
+
+
+def _timezone_name() -> str | None:
+    """Resolve a timezone name without network or locale information."""
+    if tz := os.environ.get("TZ", "").strip():
+        if _valid_iana_name(tz):
+            return _env_timezone_name(tz)
+    return _posix_timezone_name() if sys.platform != "win32" else _read_windows_timezone_key_name()
+
+
+def consent_region() -> bool:
+    """Whether weekly uploads require explicit consent based on local timezone only."""
+    zone = _timezone_name()
+    return zone is None or zone in _EU_EEA_TIMEZONES or zone in _EU_EEA_WINDOWS_TIMEZONES
 
 
 @dataclass(frozen=True)
@@ -103,9 +263,127 @@ def opted_out() -> bool:
     Fails closed: when the state cannot be read we cannot tell, so nothing is counted.
     """
     try:
-        return (_resolve_home() / "telemetry.off").exists()
+        return (_resolve_home() / OFF_FILE).exists()
     except Exception:  # noqa: BLE001
         return True
+
+
+def set_opted_out(value: bool) -> None:
+    """Persist the user's choice independently of the best-effort counter store."""
+    from gflow_cli.errors import ConfigurationError
+
+    home = _resolve_home()
+    path = home / OFF_FILE
+    consent_path = home / CONSENT_FILE
+    preference_path = path
+    try:
+        if value:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
+            preference_path = consent_path
+            consent_path.unlink(missing_ok=True)
+        else:
+            path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise ConfigurationError(
+            detail=f"Could not write telemetry preference at {preference_path}: {exc}"
+        ) from exc
+
+
+def set_consent() -> None:
+    """Persist explicit upload consent when this machine is in a consent region."""
+    if not consent_region():
+        return
+    path = _resolve_home() / CONSENT_FILE
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
+    except OSError as exc:
+        from gflow_cli.errors import ConfigurationError
+
+        raise ConfigurationError(
+            detail=f"Could not write telemetry preference at {path}: {exc}"
+        ) from exc
+
+
+def _meta() -> dict[str, str]:
+    home = _resolve_home()
+    db_path = home / DB_FILE
+    if not db_path.exists():
+        return {}
+    with closing(sqlite3.connect(db_path, timeout=0.2)) as con:
+        return dict(con.execute("SELECT key, value FROM meta"))
+
+
+def upload_disabled_reason() -> str | None:
+    """Return the first reason weekly uploads are disabled, failing closed on read errors."""
+    try:
+        if switch := killed():
+            return f"killed: {switch}"
+        if opted_out():
+            return "telemetry off"
+        from gflow_cli import update_check
+
+        if update_check._in_ci():  # pyright: ignore[reportPrivateUsage]
+            return "CI"
+        if not update_check._installed_from_index():  # pyright: ignore[reportPrivateUsage]
+            return "not installed from a package index"
+        meta = _meta()
+        if meta.get("upload_disabled") == "1":
+            return "server stopped uploads"
+        if meta.get("notice_seen_version") != str(NOTICE_VERSION):
+            return "notice not shown yet"
+        if consent_region() and not (_resolve_home() / CONSENT_FILE).exists():
+            return "consent needed in your region: run gflow telemetry on"
+        return None
+    except Exception:  # noqa: BLE001 - any uncertain upload state stays off
+        return "local usage state unavailable"
+
+
+def uploads_enabled() -> bool:
+    """Whether upload conditions are satisfied; any uncertainty disables uploads."""
+    return upload_disabled_reason() is None
+
+
+def notice_seen() -> bool:
+    """Whether the current notice version is recorded locally."""
+    try:
+        return _meta().get("notice_seen_version") == str(NOTICE_VERSION)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def maybe_show_notice() -> bool:
+    """Show and persist the one-time notice only in an interactive, opted-in run."""
+    global _NOTICE_SHOWN_THIS_RUN
+    try:
+        if not sys.stderr.isatty() or _NOTICE_SHOWN_THIS_RUN or killed() or opted_out():
+            return False
+        from gflow_cli import update_check
+
+        if (
+            update_check._in_ci()  # pyright: ignore[reportPrivateUsage]
+            or _meta().get("notice_seen_version") == str(NOTICE_VERSION)
+        ):
+            return False
+        click.echo(NOTICE_TEXT_CONSENT if consent_region() else NOTICE_TEXT, err=True)
+        _NOTICE_SHOWN_THIS_RUN = True  # pyright: ignore[reportConstantRedefinition]
+        try:
+            home = _resolve_home()
+            home.mkdir(parents=True, exist_ok=True)
+            with closing(_connect(home)) as con, con:
+                con.executemany(
+                    "INSERT OR REPLACE INTO meta VALUES (?, ?)",
+                    [
+                        ("notice_seen_version", str(NOTICE_VERSION)),
+                        ("notice_seen_at", datetime.now(UTC).isoformat()),
+                    ],
+                )
+        except Exception:  # noqa: BLE001 - a failed write only makes the notice repeat next run
+            pass
+        return True
+    except Exception:  # noqa: BLE001 - the notice must never affect a command
+        return False
 
 
 def state() -> tuple[Literal["on", "off"], str | None]:
@@ -113,7 +391,7 @@ def state() -> tuple[Literal["on", "off"], str | None]:
     if switch := killed():
         return "off", switch
     if opted_out():
-        return "off", "telemetry.off"
+        return "off", OFF_FILE
     return "on", None
 
 
@@ -128,7 +406,7 @@ def _bucket(seconds: float) -> str:
 
 
 def _connect(home: Path) -> sqlite3.Connection:
-    con = sqlite3.connect(home / "telemetry.db", timeout=0.2)
+    con = sqlite3.connect(home / DB_FILE, timeout=0.2)
     try:
         con.execute("PRAGMA journal_mode=WAL")
         con.execute(
@@ -222,39 +500,69 @@ def record_crash(
         _debug("telemetry_crash_failed", error=type(failure).__name__)
 
 
-def crash_key(exc: BaseException) -> str:
-    """Fingerprint exception type and safe gflow_cli frame names only."""
-    cause = exc.__cause__ or (exc.__context__ if not exc.__suppress_context__ else None)
-    head = type(exc).__name__ + (f" from {type(cause).__name__}" if cause else "")
+def _safe_frame_tokens(exc: BaseException) -> tuple[list[str], int]:
     tokens: list[str] = []
     third_party: str | None = None
     ours = 0
     frames = list(traceback.walk_tb(exc.__traceback__))
     for frame, _ in reversed(frames):
-        module = frame.f_globals.get("__name__")
-        if not isinstance(module, str) or module.startswith("<") or module == "__main__":
+        module = _safe_frame_module(frame.f_globals.get("__name__"))
+        if module is None:
             continue
-        top = module.partition(".")[0]
-        if top in sys.stdlib_module_names:
+        if module != "gflow_cli" and not module.startswith("gflow_cli."):
+            third_party = third_party or module.partition(".")[0]
             continue
-        if module == "gflow_cli" or module.startswith("gflow_cli."):
-            if third_party:
-                tokens.append(f"<{third_party}>")
-                third_party = None
-            name = module.removeprefix("gflow_cli.") if module != "gflow_cli" else "gflow_cli"
-            tokens.append(f"{name}:{frame.f_code.co_qualname}")
-            ours += 1
-            if ours == 3:
-                break
-        else:
-            third_party = third_party or top
+        if third_party:
+            tokens.append(f"<{third_party}>")
+            third_party = None
+        tokens.append(f"{_frame_name(module)}:{frame.f_code.co_qualname}")
+        ours += 1
+        if ours == 3:
+            break
     if third_party:
         tokens.append(f"<{third_party}>")
+    return tokens, ours
+
+
+def _frame_name(module: str) -> str:
+    return module.removeprefix("gflow_cli.") if module != "gflow_cli" else "gflow_cli"
+
+
+def _safe_frame_module(module: object) -> str | None:
+    if not isinstance(module, str) or module.startswith("<") or module == "__main__":
+        return None
+    if module.partition(".")[0] in sys.stdlib_module_names:
+        return None
+    return module
+
+
+def crash_key(exc: BaseException) -> str:
+    """Fingerprint exception type and safe gflow_cli frame names only."""
+    cause = exc.__cause__ or (exc.__context__ if not exc.__suppress_context__ else None)
+    head = type(exc).__name__ + (f" from {type(cause).__name__}" if cause else "")
+    tokens, ours = _safe_frame_tokens(exc)
     return (f"{head} <- {' <- '.join(tokens)}" if ours else f"{head} at other")[:200]
 
 
-def leaf_and_flags(root: click.Group, argv: Sequence[str]) -> tuple[str, list[str]]:
-    """Resolve Click's command path and retain only registered leaf option names."""
+def _option_for_arg(group: click.Group, arg: str) -> click.Option | None:
+    return next(
+        (
+            param
+            for param in group.params
+            if isinstance(param, click.Option) and arg.split("=", 1)[0] in param.opts
+        ),
+        None,
+    )
+
+
+def _option_argv_width(group: click.Group, arg: str) -> int:
+    option = _option_for_arg(group, arg)
+    if option and option.nargs and "=" not in arg:
+        return option.nargs + 1
+    return 1
+
+
+def _command_path(root: click.Group, argv: Sequence[str]) -> tuple[str, click.Command]:
     group: click.Group = root
     leaf: click.Command = root
     path: list[str] = []
@@ -264,17 +572,7 @@ def leaf_and_flags(root: click.Group, argv: Sequence[str]) -> tuple[str, list[st
         if arg == "--":
             break
         if arg.startswith("-"):
-            option = next(
-                (
-                    p
-                    for p in group.params
-                    if isinstance(p, click.Option) and arg.split("=", 1)[0] in p.opts
-                ),
-                None,
-            )
-            if option and option.nargs and "=" not in arg:
-                index += option.nargs
-            index += 1
+            index += _option_argv_width(group, arg)
             continue
         command = group.commands.get(arg)
         if command is None:
@@ -290,15 +588,20 @@ def leaf_and_flags(root: click.Group, argv: Sequence[str]) -> tuple[str, list[st
         leaf = group
     if not path:
         command_name = "gflow" if root.name in (None, "main") else root.name
-        leaf = root
-    else:
-        command_name = " ".join(path)
+        return command_name, root
+    return " ".join(path), leaf
+
+
+def _option_aliases(leaf: click.Command) -> dict[str, str]:
     options = [p for p in leaf.params if isinstance(p, click.Option)]
-    aliases = {
+    return {
         name: next((o for o in opt.opts if o.startswith("--")), opt.opts[0])
         for opt in options
         for name in opt.opts + opt.secondary_opts
     }
+
+
+def _used_flag_names(argv: Sequence[str], aliases: dict[str, str]) -> list[str]:
     flags: list[str] = []
     for arg in argv:
         if arg == "--":
@@ -306,7 +609,13 @@ def leaf_and_flags(root: click.Group, argv: Sequence[str]) -> tuple[str, list[st
         name = arg.split("=", 1)[0]
         if name in aliases and aliases[name] not in flags:
             flags.append(aliases[name])
-    return command_name, flags
+    return flags
+
+
+def leaf_and_flags(root: click.Group, argv: Sequence[str]) -> tuple[str, list[str]]:
+    """Resolve Click's command path and retain only registered leaf option names."""
+    command, leaf = _command_path(root, argv)
+    return command, _used_flag_names(argv, _option_aliases(leaf))
 
 
 class CountingGroup(click.Group):
@@ -323,56 +632,63 @@ class CountingGroup(click.Group):
         outcome = "0"
         try:
             return super().invoke(ctx)
-        except SystemExit as exc:
-            outcome = (
-                str(exc.code) if isinstance(exc.code, int) else "0" if exc.code is None else "1"
-            )
-            raise
-        except click.exceptions.Exit as exc:
-            outcome = str(exc.exit_code)
-            raise
-        except click.ClickException as exc:
-            outcome = str(exc.exit_code)
-            raise
-        except click.Abort:
-            outcome = "1"
-            raise
-        except KeyboardInterrupt:
-            outcome = "130"
-            raise
-        except Exception as exc:
-            outcome = "1"
-            try:
-                record_crash("cli", exc)
-            except Exception:
-                pass
-            raise
-        except BaseException:
-            outcome = "1"
+        except BaseException as exc:
+            outcome = _invocation_outcome(exc)
             raise
         finally:
-            try:
-                help_opts = set(ctx.help_option_names)
-                current: click.Command = self
-                for arg in argv:
-                    if arg == "--":
-                        break
-                    if isinstance(current, click.Group):
-                        current = current.commands.get(arg, current)
-                        help_opts.update(current.context_settings.get("help_option_names", ()))
-                if not any(
-                    a in help_opts for a in argv[: argv.index("--") if "--" in argv else len(argv)]
-                ):
-                    record("cli", command, flags, outcome, time.monotonic() - started)
-            except Exception:
-                pass
+            _record_cli_invocation(self, ctx, argv, command, flags, outcome, started)
+
+
+def _invocation_outcome(exc: BaseException) -> str:
+    if isinstance(exc, SystemExit):
+        if isinstance(exc.code, int):
+            return str(exc.code)
+        return "0" if exc.code is None else "1"
+    if isinstance(exc, (click.exceptions.Exit, click.ClickException)):
+        return str(exc.exit_code)
+    if isinstance(exc, click.Abort):
+        return "1"
+    if isinstance(exc, KeyboardInterrupt):
+        return "130"
+    if isinstance(exc, Exception):
+        try:
+            record_crash("cli", exc)
+        except Exception:
+            pass
+    return "1"
+
+
+def _record_cli_invocation(
+    root: click.Group,
+    ctx: click.Context,
+    argv: Sequence[str],
+    command: str,
+    flags: list[str],
+    outcome: str,
+    started: float,
+) -> None:
+    try:
+        help_opts = set(ctx.help_option_names)
+        current: click.Command = root
+        for arg in argv:
+            if arg == "--":
+                break
+            if isinstance(current, click.Group):
+                current = current.commands.get(arg, current)
+                help_opts.update(current.context_settings.get("help_option_names", ()))
+        before_separator = argv[: argv.index("--")] if "--" in argv else argv
+        if any(arg in help_opts for arg in before_separator):
+            return
+        record("cli", command, flags, outcome, time.monotonic() - started)
+    except Exception:
+        pass
 
 
 def read_counters(weeks: int | None = None) -> list[Counter]:
     """All stored counters (or those of the last ``weeks`` ISO weeks); [] on any failure."""
     try:
         home = _resolve_home()
-        if not (home / "telemetry.db").exists():
+        if not (home / DB_FILE).exists():
             return []
         sql = "SELECT week, surface, kind, key, n FROM counters"
         args: tuple[str, ...] = ()
@@ -409,7 +725,7 @@ def stored_report_id(week: str) -> str | None:
     """Return only a report ID known to be persisted, for upload deduplication."""
     try:
         home = _resolve_home()
-        if not (home / "telemetry.db").exists():
+        if not (home / DB_FILE).exists():
             return None
         with closing(_connect(home)) as con:
             row = con.execute("SELECT report_id FROM reports WHERE week = ?", (week,)).fetchone()
@@ -476,7 +792,7 @@ def _detect_installer() -> str:
 
 def _detect_install_age(home: Path) -> str:
     try:
-        if not (home / "telemetry.db").exists():
+        if not (home / DB_FILE).exists():
             return "<1w"
         with closing(_connect(home)) as con:
             row = con.execute("SELECT value FROM meta WHERE key = 'first_seen'").fetchone()
@@ -527,140 +843,165 @@ def _catalog_db_path() -> Path:
         return paths.database_path(_resolve_home())
 
 
-def build_report(week: str) -> dict[str, object]:
-    """Assemble the weekly usage report for ``week`` field by field (#1164)."""
-    home = _resolve_home()
-
-    commands: dict[str, dict[str, int]] = {}
+def _report_counter_targets() -> dict[str, Any]:
     flags: dict[str, dict[str, dict[str, int]]] = {}
     exits: dict[str, dict[str, dict[str, int]]] = {}
     durations: dict[str, dict[str, dict[str, int]]] = {}
-    transitions: dict[str, int] = {}
-    crashes: dict[str, dict[str, int]] = {}
-    mcp_clients: dict[str, int] = {}
     tools: dict[str, dict[str, int]] = {}
-    nested_targets: dict[str, dict[str, Any]] = {
-        "flag": flags,
-        "exit": exits,
-        "duration": durations,
-        "tool": tools,
+    return {
+        "commands": {},
+        "flags": flags,
+        "exits": exits,
+        "durations": durations,
+        "transitions": {},
+        "crashes": {},
+        "mcp_clients": {},
+        "tools": tools,
+        "nested": {"flag": flags, "exit": exits, "duration": durations, "tool": tools},
     }
 
-    def _add(target: dict[str, Any], path: tuple[str, ...], n: int) -> None:
-        cursor = target
-        for key_part in path[:-1]:
-            cursor = cursor.setdefault(key_part, {})
-        leaf = path[-1]
-        cursor[leaf] = cursor.get(leaf, 0) + n
 
+def _add_nested(target: dict[str, Any], path: tuple[str, ...], count: int) -> None:
+    cursor = target
+    for key_part in path[:-1]:
+        cursor = cursor.setdefault(key_part, {})
+    leaf = path[-1]
+    cursor[leaf] = cursor.get(leaf, 0) + count
+
+
+def _add_report_counter(
+    targets: dict[str, Any], surface: str, kind: str, key: str, count: int
+) -> None:
+    if "|" in key or "|" in surface:
+        return
+    nested = targets["nested"]
+    if kind == "command":
+        _add_nested(targets["commands"], (surface, key), count)
+    elif kind in nested and " " in key:
+        _add_nested_counter(nested, surface, kind, key, count)
+    else:
+        _add_scalar_counter(targets, surface, kind, key, count)
+
+
+def _add_nested_counter(
+    nested: dict[str, Any], surface: str, kind: str, key: str, count: int
+) -> None:
+    name, value = key.rsplit(" ", 1)
+    if "|" in name or "|" in value:
+        return
+    path = (name, value) if kind == "tool" else (surface, name, value)
+    _add_nested(nested[kind], path, count)
+
+
+def _add_scalar_counter(
+    targets: dict[str, Any], surface: str, kind: str, key: str, count: int
+) -> None:
+    if kind == "transition":
+        values = targets["transitions"]
+        values[key] = values.get(key, 0) + count
+    elif kind == "crash":
+        values = targets["crashes"].setdefault(surface, {})
+        values[key] = values.get(key, 0) + count
+    elif kind == "client":
+        values = targets["mcp_clients"]
+        values[key] = values.get(key, 0) + count
+
+
+def _report_counters(home: Path, week: str) -> dict[str, Any]:
+    targets = _report_counter_targets()
     try:
-        if (home / "telemetry.db").exists():
+        if (home / DB_FILE).exists():
             with closing(_connect(home)) as con:
                 rows = con.execute(
                     "SELECT surface, kind, key, n FROM counters WHERE week = ?", (week,)
                 ).fetchall()
-                for surface, kind, key, n in rows:
-                    if "|" in key or "|" in surface:
-                        continue
-                    if kind == "command":
-                        _add(commands, (surface, key), n)
-                    elif kind in nested_targets and " " in key:
-                        name, value = key.rsplit(" ", 1)
-                        if "|" in name or "|" in value:
-                            continue
-                        path = (name, value) if kind == "tool" else (surface, name, value)
-                        _add(nested_targets[kind], path, n)
-                    elif kind == "transition":
-                        transitions[key] = transitions.get(key, 0) + n
-                    elif kind == "crash":
-                        crashes.setdefault(surface, {})[key] = (
-                            crashes.setdefault(surface, {}).get(key, 0) + n
-                        )
-                    elif kind == "client":
-                        mcp_clients[key] = mcp_clients.get(key, 0) + n
+                for surface, kind, key, count in rows:
+                    _add_report_counter(targets, surface, kind, key, count)
     except Exception as exc:  # noqa: BLE001
         _debug("telemetry_report_counters_failed", error=type(exc).__name__)
+    targets.pop("nested")
+    return targets
 
-    models: dict[str, int] = {}
-    modes: dict[str, int] = {}
-    aspects: dict[str, int] = {}
-    outcomes: dict[str, int] = {}
 
-    cat_path = _catalog_db_path()
-    if cat_path.is_file():
-        try:
-            from gflow_cli.api.image import (
-                Aspect as ImageAspect,
-            )
-            from gflow_cli.api.image import (
-                Model as ImageModel,
-            )
-            from gflow_cli.api.image import (
-                aspect_choices as image_aspect_choices,
-            )
-            from gflow_cli.api.video import Aspect as VideoAspect
-            from gflow_cli.api.video import VideoModel
-            from gflow_cli.data.models import OperationKind, OperationStatus
-            from gflow_cli.data.store import DataStore
+def _catalog_known_values() -> tuple[set[str], set[str], set[str], set[str]]:
+    from gflow_cli.api.image import Aspect as ImageAspect
+    from gflow_cli.api.image import Model as ImageModel
+    from gflow_cli.api.image import aspect_choices as image_aspect_choices
+    from gflow_cli.api.video import Aspect as VideoAspect
+    from gflow_cli.api.video import VideoModel
+    from gflow_cli.data.models import OperationKind, OperationStatus
 
-            known_models = {m.value for m in ImageModel} | {m.value for m in VideoModel}
-            known_modes = {k.value for k in OperationKind}
-            known_outcomes = {s.value for s in OperationStatus}
-            known_aspects = (
-                {a.value for a in ImageAspect}
-                | set(image_aspect_choices().keys())
-                | {a.value for a in VideoAspect}
-                | {a.wire() for a in VideoAspect}
-            )
-            year, week_number = (int(part) for part in week.split("-W"))
-            week_start = datetime.fromisocalendar(year, week_number, 1).replace(tzinfo=UTC)
-            week_end = week_start + timedelta(days=7)
+    return (
+        {model.value for model in ImageModel} | {model.value for model in VideoModel},
+        {kind.value for kind in OperationKind},
+        {status.value for status in OperationStatus},
+        {aspect.value for aspect in ImageAspect}
+        | set(image_aspect_choices().keys())
+        | {aspect.value for aspect in VideoAspect}
+        | {aspect.wire() for aspect in VideoAspect},
+    )
 
-            with DataStore.open_readonly(cat_path) as store:
-                op_rows = store.conn.execute(
-                    "SELECT model, mode, aspect_ratio, status, started_at FROM operations "
-                    "WHERE started_at >= ? AND started_at < ?",
-                    (week_start.isoformat(), week_end.isoformat()),
-                ).fetchall()
-                for op in op_rows:
-                    started_at = op["started_at"]
-                    if not started_at:
-                        continue
-                    try:
-                        op_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-                        if iso_week(op_dt) != week:
-                            continue
-                    except Exception:
-                        continue
 
-                    # mode
-                    op_mode = op["mode"]
-                    mode_key = op_mode if op_mode in known_modes else "other"
-                    if "|" not in mode_key:
-                        modes[mode_key] = modes.get(mode_key, 0) + 1
+def _count_catalog_value(
+    target: dict[str, int], value: str | None, known: set[str], *, include_missing: bool = False
+) -> None:
+    if value or include_missing:
+        key = value if value and value in known else "other"
+        if "|" not in key:
+            target[key] = target.get(key, 0) + 1
 
-                    # outcome
-                    op_status = op["status"]
-                    outcome_key = op_status if op_status in known_outcomes else "other"
-                    if "|" not in outcome_key:
-                        outcomes[outcome_key] = outcomes.get(outcome_key, 0) + 1
 
-                    # model (if set)
-                    op_model = op["model"]
-                    if op_model:
-                        model_key = op_model if op_model in known_models else "other"
-                        if "|" not in model_key:
-                            models[model_key] = models.get(model_key, 0) + 1
+def _add_catalog_operation(
+    operation: Any,
+    week: str,
+    known: tuple[set[str], set[str], set[str], set[str]],
+    targets: dict[str, dict[str, int]],
+) -> None:
+    started_at = operation["started_at"]
+    if not started_at:
+        return
+    try:
+        if iso_week(datetime.fromisoformat(started_at.replace("Z", "+00:00"))) != week:
+            return
+    except Exception:
+        return
+    _count_catalog_value(targets["modes"], operation["mode"], known[1], include_missing=True)
+    _count_catalog_value(targets["outcomes"], operation["status"], known[2], include_missing=True)
+    _count_catalog_value(targets["models"], operation["model"], known[0])
+    _count_catalog_value(targets["aspects"], operation["aspect_ratio"], known[3])
 
-                    # aspect_ratio (if set)
-                    op_aspect = op["aspect_ratio"]
-                    if op_aspect:
-                        aspect_key = op_aspect if op_aspect in known_aspects else "other"
-                        if "|" not in aspect_key:
-                            aspects[aspect_key] = aspects.get(aspect_key, 0) + 1
-        except Exception as exc:  # noqa: BLE001
-            _debug("telemetry_report_catalog_failed", error=type(exc).__name__)
 
+def _catalog_counts(week: str, path: Path) -> dict[str, dict[str, int]]:
+    targets: dict[str, dict[str, int]] = {
+        name: {} for name in ("models", "modes", "aspects", "outcomes")
+    }
+    if not path.is_file():
+        return targets
+    try:
+        from gflow_cli.data.store import DataStore
+
+        known = _catalog_known_values()
+        year, week_number = (int(part) for part in week.split("-W"))
+        week_start = datetime.fromisocalendar(year, week_number, 1).replace(tzinfo=UTC)
+        week_end = week_start + timedelta(days=7)
+        with DataStore.open_readonly(path) as store:
+            rows = store.conn.execute(
+                "SELECT model, mode, aspect_ratio, status, started_at FROM operations "
+                "WHERE started_at >= ? AND started_at < ?",
+                (week_start.isoformat(), week_end.isoformat()),
+            ).fetchall()
+        for operation in rows:
+            _add_catalog_operation(operation, week, known, targets)
+    except Exception as exc:  # noqa: BLE001
+        _debug("telemetry_report_catalog_failed", error=type(exc).__name__)
+    return targets
+
+
+def build_report(week: str) -> dict[str, object]:
+    """Assemble the weekly usage report for one ISO week."""
+    home = _resolve_home()
+    counters = _report_counters(home, week)
+    catalog = _catalog_counts(week, _catalog_db_path())
     return {
         "schema": SCHEMA,
         "report_id": (
@@ -674,16 +1015,16 @@ def build_report(week: str) -> dict[str, object]:
         "installer": _detect_installer(),
         "install_age": _detect_install_age(home),
         "storage": _detect_storage(),
-        "commands": commands,
-        "flags": flags,
-        "exits": exits,
-        "durations": durations,
-        "transitions": transitions,
-        "models": models,
-        "modes": modes,
-        "aspects": aspects,
-        "outcomes": outcomes,
-        "mcp_clients": mcp_clients,
-        "crashes": crashes,
-        "tools": tools,
+        "commands": counters["commands"],
+        "flags": counters["flags"],
+        "exits": counters["exits"],
+        "durations": counters["durations"],
+        "transitions": counters["transitions"],
+        "models": catalog["models"],
+        "modes": catalog["modes"],
+        "aspects": catalog["aspects"],
+        "outcomes": catalog["outcomes"],
+        "mcp_clients": counters["mcp_clients"],
+        "crashes": counters["crashes"],
+        "tools": counters["tools"],
     }

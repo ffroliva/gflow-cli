@@ -17,7 +17,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from gflow_cli import __version__, profile_store, telemetry
+from gflow_cli import __version__, profile_store, telemetry, telemetry_upload
 from gflow_cli import auth as auth_mod
 from gflow_cli.cli_character import character as _character_group
 from gflow_cli.cli_credits import credits as _credits_group
@@ -194,6 +194,11 @@ def main(ctx: click.Context, verbose: bool) -> None:
     update_notice = maybe_notify_update()
     if update_notice:
         _print_update_notice(update_notice)
+    if ctx.invoked_subcommand and ctx.invoked_subcommand != "telemetry":
+        notice_at_command = sys.argv[1:3]
+        if notice_at_command not in (["auth", "login"], ["mcp", "setup"]):
+            telemetry.maybe_show_notice()
+        telemetry_upload.maybe_upload()
     ctx.ensure_object(dict)
 
 
@@ -331,6 +336,7 @@ def auth_login(profile: str | None, browser: str | None, account: str | None = N
         console.print(f"[red]Unexpected error during login: {escape(str(e))}[/red]")
         sys.exit(1)
     console.print(f"[green]Session saved.[/green] Profile dir: {pdir}")
+    telemetry.maybe_show_notice()
 
     # Auto-rename an opaque "default" profile to the email local-part on first
     # login so the profile inventory is immediately human-readable. Only fires
@@ -758,6 +764,7 @@ def mcp_setup(target: str) -> None:
             f"[green]Already configured[/green] — an existing gflow entry in {path} "
             "was left untouched."
         )
+    telemetry.maybe_show_notice()
 
 
 # --- serve ------------------------------------------------------------------
