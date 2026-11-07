@@ -39,7 +39,7 @@ def status_cmd(as_json: bool) -> None:
         return
 
     home = _resolve_home()
-    db_path = home / "telemetry.db"
+    db_path = home / telemetry_mod.DB_FILE
     click.echo(f"Storage: {db_path}")
     click.echo(
         "Counters: Commands, flags, exits, durations, transitions, models, "
@@ -69,6 +69,7 @@ def on_cmd() -> None:
         _fail(str(exc.detail or exc))
     if switch := telemetry_mod.killed():
         click.echo(f"Telemetry is still off because {switch} is set.", err=True)
+    click.echo("Usage telemetry is on.")
     if not telemetry_mod.notice_seen():
         click.echo(
             "Weekly upload starts only after the usage notice has been shown in an interactive "
@@ -92,14 +93,23 @@ def off_cmd(delete: bool) -> None:
     )
     if delete:
         home = _resolve_home()
-        path = home / "telemetry.db"
+        path = home / telemetry_mod.DB_FILE
+        try:
+            disabled = telemetry_mod._meta().get("upload_disabled") == "1"  # pyright: ignore[reportPrivateUsage]
+        except Exception:
+            disabled = False
         try:
             for path in (
-                home / "telemetry.db",
-                home / "telemetry.db-wal",
-                home / "telemetry.db-shm",
+                home / telemetry_mod.DB_FILE,
+                home / f"{telemetry_mod.DB_FILE}-wal",
+                home / f"{telemetry_mod.DB_FILE}-shm",
             ):
                 path.unlink(missing_ok=True)
+            if disabled:
+                from contextlib import closing
+
+                with closing(telemetry_mod._connect(home)) as con, con:  # pyright: ignore[reportPrivateUsage]
+                    con.execute("INSERT INTO meta VALUES ('upload_disabled', '1')")
         except OSError as exc:
             _fail(f"Could not delete local usage data at {path}: {exc}")
         click.echo(

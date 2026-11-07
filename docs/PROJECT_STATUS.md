@@ -4,7 +4,7 @@
 
 ## Current release
 
-**v0.94.0 — alpha.** Local usage counters and crash forensics — strictly local, nothing leaves the machine.
+**v0.94.0 — alpha.** Local usage counters and crash forensics, with opt-out weekly aggregate uploads.
 
 **Local usage counters and sanitized crash fingerprinting (#1164).** Commands and MCP tool calls record
 weekly usage counts and sanitized crash call-sites into `<home>/telemetry.db`. Prompts, arguments,
@@ -894,3 +894,4 @@ For per-release deltas see [CHANGELOG.md](../CHANGELOG.md). Per-release evidence
 - **Patch releases** — bug fixes, doc refreshes (like v0.8.1), and other backward-compatible changes.
 
 See [RELEASE.md](../RELEASE.md) for the full release protocol and the prerelease vs full-release policy.
+

@@ -369,9 +369,11 @@ def test_off_delete_that_cannot_delete_exits_11_without_a_traceback(
 
 def test_no_writer_can_undo_off() -> None:
     source = Path(telemetry.__file__).read_text(encoding="utf-8")
-    for sentinel in ("telemetry.off", "telemetry.consent"):
+    for constant in ("OFF_FILE", "CONSENT_FILE"):
         lines = [
-            (i, line) for i, line in enumerate(source.splitlines(), start=1) if sentinel in line
+            (i, line)
+            for i, line in enumerate(source.splitlines(), start=1)
+            if constant in line and not line.strip().startswith(f"{constant} =")
         ]
         assert lines
         for line_no, _line in lines:
@@ -381,7 +383,7 @@ def test_no_writer_can_undo_off() -> None:
                 if line.lstrip().startswith("def ")
             )
             allowed = {"opted_out", "set_opted_out", "state"}
-            if sentinel == "telemetry.consent":
+            if constant == "CONSENT_FILE":
                 allowed |= {"set_consent", "upload_disabled_reason"}
             assert owner in allowed
 

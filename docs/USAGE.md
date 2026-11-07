@@ -1686,7 +1686,7 @@ Spends no credits and makes no network requests. Both `--json` and its MCP twin 
 
 ## `gflow telemetry status | show`
 
-Inspect local weekly usage counters and telemetry status. Local-only: nothing leaves the machine in this version. Full privacy allowlists, local SQLite retention, and kill switches are documented in [TELEMETRY.md](TELEMETRY.md).
+Inspect local weekly usage counters and telemetry status. Weekly allow-listed totals can be uploaded after the notice; no identifier is sent. Full privacy allowlists, local SQLite retention, and kill switches are documented in [TELEMETRY.md](TELEMETRY.md).
 
 ```text
 gflow telemetry status [--json]
@@ -2363,3 +2363,4 @@ async with FlowApiClient(profile_dir=profile_dir) as client:
 - [ARCHITECTURE](ARCHITECTURE.md) — internal structure (for contributors)
 - [TELEMETRY](TELEMETRY.md) — local weekly usage metrics, telemetry.db, and kill switches
 - [PLAN](../PLAN.md) — what ships in which phase
+

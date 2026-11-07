@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 import sqlite3
 import subprocess
@@ -23,12 +24,21 @@ def _week_start(week: str) -> datetime:
     return datetime.fromisocalendar(int(year), int(number), 1).replace(tzinfo=UTC)
 
 
-def _next_due_week(now: datetime, con: sqlite3.Connection) -> str | None:
+def _prepare_due_weeks(now: datetime, con: sqlite3.Connection) -> list[tuple[str, str | None, str]]:
     meta = dict(con.execute("SELECT key, value FROM meta"))
     notice = meta.get("notice_seen_at")
     if not notice:
-        return None
+        return []
     notice_at = datetime.fromisoformat(notice)
+    consent_value = telemetry._resolve_home() / telemetry.CONSENT_FILE
+    if telemetry.consent_region():
+        try:
+            consent_at = datetime.fromisoformat(consent_value.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return []
+        if consent_at.tzinfo is None:
+            consent_at = consent_at.replace(tzinfo=UTC)
+        notice_at = max(notice_at, consent_at)
     if notice_at.tzinfo is None:
         notice_at = notice_at.replace(tzinfo=UTC)
     rows = con.execute(
@@ -58,14 +68,20 @@ def _next_due_week(now: datetime, con: sqlite3.Connection) -> str | None:
         "INSERT OR IGNORE INTO reports (week, report_id, due_at) VALUES (?, ?, ?)", inserts
     )
     con.executemany("UPDATE reports SET due_at = ? WHERE week = ? AND due_at IS NULL", updates)
-    for week, sent_at, raw_due_at in eligible:
-        due_at = datetime.fromisoformat(raw_due_at) if raw_due_at else None
-        if sent_at is not None or due_at is None or now < due_at:
-            continue
+    return eligible
+
+
+def _next_due_week(now: datetime, con: sqlite3.Connection) -> str | None:
+    meta = dict(con.execute("SELECT key, value FROM meta"))
+    for week, sent_at, due_at_value in _prepare_due_weeks(now, con):
+        due_at = datetime.fromisoformat(due_at_value)
         retry = meta.get(f"retry_after:{week}")
-        if retry and now < datetime.fromisoformat(retry):
-            continue
-        return str(week)
+        if (
+            sent_at is None
+            and now >= due_at
+            and (retry is None or now >= datetime.fromisoformat(retry))
+        ):
+            return week
     return None
 
 
@@ -73,7 +89,7 @@ def next_due_week(now: datetime) -> str | None:
     """Return the oldest completed, noticed and due week with counters."""
     try:
         home = _resolve_home()
-        if not (home / "telemetry.db").exists():
+        if not (home / telemetry.DB_FILE).exists():
             return None
         with closing(telemetry._connect(home)) as con, con:  # pyright: ignore[reportPrivateUsage]
             con.execute("BEGIN IMMEDIATE")
@@ -91,10 +107,10 @@ def _save_meta(key: str, value: str) -> None:
 def maybe_upload() -> None:
     """Cheap, silent gate that starts one detached sender when a week is due."""
     try:
-        if not telemetry.uploads_enabled() or telemetry._NOTICE_SHOWN_THIS_RUN:  # pyright: ignore[reportPrivateUsage]
+        if not telemetry.uploads_enabled():
             return
         home = _resolve_home()
-        if not (home / "telemetry.db").exists():
+        if not (home / telemetry.DB_FILE).exists():
             return
         now = datetime.now(UTC)
         with closing(telemetry._connect(home)) as con:  # pyright: ignore[reportPrivateUsage]
@@ -121,15 +137,11 @@ def maybe_upload() -> None:
                     "INSERT OR REPLACE INTO meta VALUES ('last_attempt', ?)", (now.isoformat(),)
                 )
 
-        command = [sys.executable, "-m", "gflow_cli.telemetry_upload"]
+        command = [sys.executable, "-P", "-m", "gflow_cli.telemetry_upload"]
+        env = os.environ.copy()
+        env["GFLOW_CLI_HOME"] = str(home.resolve())
         kwargs: dict[str, Any] = (
-            {
-                "creationflags": (
-                    subprocess.CREATE_NO_WINDOW
-                    | subprocess.DETACHED_PROCESS
-                    | subprocess.CREATE_NEW_PROCESS_GROUP
-                )
-            }
+            {"creationflags": (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)}
             if sys.platform == "win32"
             else {"start_new_session": True}
         )
@@ -139,7 +151,8 @@ def maybe_upload() -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
-            cwd=str(home),
+            cwd=os.getcwd(),
+            env=env,
             **kwargs,
         )
     except Exception:
@@ -163,7 +176,6 @@ def send(week: str, *, endpoint: str = _ENDPOINT) -> None:
             return
         body = telemetry.build_report(week)
         body["report_id"] = report_id
-        # The URL is fixed in production; endpoint injection is only for loopback tests.
         request = urllib.request.Request(  # noqa: S310
             endpoint,
             data=json.dumps(body).encode(),
@@ -199,21 +211,43 @@ def send(week: str, *, endpoint: str = _ENDPOINT) -> None:
                 delay = 3600
             retry = now + timedelta(seconds=delay + secrets.randbelow(6 * 60 * 60 + 1))
             _save_meta(f"retry_after:{week}", retry.isoformat())
+        else:
+            _failed_attempt(week, now)
     except Exception:
+        try:
+            _failed_attempt(week, datetime.now(UTC))
+        except Exception:
+            pass
         return
 
 
+def _failed_attempt(week: str, now: datetime) -> None:
+    home = _resolve_home()
+    with closing(telemetry._connect(home)) as con, con:  # pyright: ignore[reportPrivateUsage]
+        key = f"failed_attempts:{week}"
+        row = con.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        attempts = int(row[0]) + 1 if row else 1
+        if attempts >= 7:
+            con.execute(
+                "UPDATE reports SET sent_at = ? WHERE week = ?",
+                (f"dropped:{now.isoformat()}", week),
+            )
+        else:
+            con.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, str(attempts)))
+            retry = now + timedelta(days=1, seconds=secrets.randbelow(6 * 60 * 60 + 1))
+            con.execute(
+                "INSERT OR REPLACE INTO meta VALUES (?, ?)",
+                (f"retry_after:{week}", retry.isoformat()),
+            )
+
+
 def _main() -> None:
-    endpoint = _ENDPOINT
-    # The argv hook exists only for the loopback subprocess test; production spawn passes no args.
-    if len(sys.argv) == 3 and sys.argv[1] == "--test-endpoint":
-        endpoint = sys.argv[2]
     try:
         if not telemetry.uploads_enabled():
             return
         week = next_due_week(datetime.now(UTC))
         if week is not None:
-            send(week, endpoint=endpoint)
+            send(week, endpoint=_ENDPOINT)
     except Exception:
         return
 

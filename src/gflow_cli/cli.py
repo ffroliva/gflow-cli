@@ -195,7 +195,9 @@ def main(ctx: click.Context, verbose: bool) -> None:
     if update_notice:
         _print_update_notice(update_notice)
     if ctx.invoked_subcommand and ctx.invoked_subcommand != "telemetry":
-        telemetry.maybe_show_notice()
+        notice_at_command = sys.argv[1:3]
+        if notice_at_command not in (["auth", "login"], ["mcp", "setup"]):
+            telemetry.maybe_show_notice()
         telemetry_upload.maybe_upload()
     ctx.ensure_object(dict)
 

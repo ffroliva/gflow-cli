@@ -431,11 +431,7 @@ def test_child_has_no_console_window_on_windows(
     telemetry_upload.maybe_upload()
     assert popen.call_args is not None
     kwargs = popen.call_args.kwargs
-    flags = (
-        subprocess.CREATE_NO_WINDOW
-        | subprocess.DETACHED_PROCESS
-        | subprocess.CREATE_NEW_PROCESS_GROUP
-    )
+    flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
     assert kwargs["creationflags"] == flags
     assert kwargs["stdin"] is subprocess.DEVNULL
     assert kwargs["stdout"] is subprocess.DEVNULL
@@ -487,13 +483,14 @@ def test_report_survives_the_parent_exiting_at_once(_home: Path, tmp_path: Path)
     dist.mkdir(parents=True)
     (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: gflow-cli\nVersion: 0.0.0\n")
     source_root = str(Path(telemetry.__file__).resolve().parents[1])
+    child_code = f"import gflow_cli.telemetry_upload as t; t._ENDPOINT = {endpoint!r}; t._main()"
     shim = (
-        "import subprocess; from unittest.mock import patch; "
-        "from gflow_cli import telemetry_upload; "
-        "real = subprocess.Popen; "
-        f"patcher = patch('gflow_cli.telemetry_upload.subprocess.Popen', "
-        f"lambda args, **kw: real([*args, '--test-endpoint', {endpoint!r}], **kw)); "
-        "patcher.start(); telemetry_upload.maybe_upload()"
+        "import subprocess, sys\nfrom unittest.mock import patch\n"
+        "from gflow_cli import telemetry_upload\nreal = subprocess.Popen\n"
+        "def spawn(args, **kwargs):\n"
+        f"    return real([sys.executable, '-P', '-c', {child_code!r}], **kwargs)\n"
+        "patch('gflow_cli.telemetry_upload.subprocess.Popen', spawn).start()\n"
+        "telemetry_upload.maybe_upload()"
     )
     env = dict(os.environ)
     env.update(

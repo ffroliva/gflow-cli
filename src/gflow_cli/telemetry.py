@@ -48,6 +48,9 @@ def _debug(event: str, **kw: str) -> None:
 
 _RETAIN_WEEKS = 53
 _TRANSITION_WINDOW_S = 30 * 60
+DB_FILE = "telemetry.db"
+OFF_FILE = "telemetry.off"
+CONSENT_FILE = "telemetry.consent"
 SCHEMA = 1
 NOTICE_VERSION = 2
 NOTICE_TEXT = (
@@ -73,6 +76,11 @@ _NOTICE_SHOWN_THIS_RUN = False
 _EU_EEA_TIMEZONES = frozenset(
     {
         "Africa/Ceuta",
+        "America/Cayenne",
+        "America/Guadeloupe",
+        "America/Martinique",
+        "America/Marigot",
+        "America/St_Barthelemy",
         "Arctic/Longyearbyen",
         "Asia/Famagusta",
         "Asia/Nicosia",
@@ -110,6 +118,16 @@ _EU_EEA_TIMEZONES = frozenset(
         "Europe/Vilnius",
         "Europe/Warsaw",
         "Europe/Zagreb",
+        "Indian/Reunion",
+        "Indian/Mayotte",
+        "CET",
+        "EET",
+        "MET",
+        "WET",
+        "Poland",
+        "Portugal",
+        "Eire",
+        "Iceland",
     }
 )
 # Deliberately over-inclusive: Windows zones spanning any EU/EEA country require consent.
@@ -149,10 +167,10 @@ def _read_windows_timezone_key_name() -> str | None:
 def _posix_timezone_name() -> str | None:
     """Read an IANA timezone from the POSIX localtime link or timezone file."""
     try:
-        target = Path("/etc/localtime").resolve()
-        parts = target.as_posix().split("/zoneinfo/", maxsplit=1)
+        target = os.readlink("/etc/localtime")
+        parts = target.split("/zoneinfo/", maxsplit=1)
         if len(parts) == 2 and parts[1]:
-            return parts[1]
+            return parts[1].removeprefix("posix/").removeprefix("right/")
         return Path("/etc/timezone").read_text(encoding="utf-8").strip() or None
     except (OSError, RuntimeError):
         return None
@@ -239,7 +257,7 @@ def opted_out() -> bool:
     Fails closed: when the state cannot be read we cannot tell, so nothing is counted.
     """
     try:
-        return (_resolve_home() / "telemetry.off").exists()
+        return (_resolve_home() / OFF_FILE).exists()
     except Exception:  # noqa: BLE001
         return True
 
@@ -249,13 +267,13 @@ def set_opted_out(value: bool) -> None:
     from gflow_cli.errors import ConfigurationError
 
     home = _resolve_home()
-    path = home / "telemetry.off"
-    consent_path = home / "telemetry.consent"
+    path = home / OFF_FILE
+    consent_path = home / CONSENT_FILE
     preference_path = path
     try:
         if value:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("", encoding="utf-8")
+            path.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
             preference_path = consent_path
             consent_path.unlink(missing_ok=True)
         else:
@@ -270,10 +288,10 @@ def set_consent() -> None:
     """Persist explicit upload consent when this machine is in a consent region."""
     if not consent_region():
         return
-    path = _resolve_home() / "telemetry.consent"
+    path = _resolve_home() / CONSENT_FILE
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("", encoding="utf-8")
+        path.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
     except OSError as exc:
         from gflow_cli.errors import ConfigurationError
 
@@ -284,7 +302,7 @@ def set_consent() -> None:
 
 def _meta() -> dict[str, str]:
     home = _resolve_home()
-    db_path = home / "telemetry.db"
+    db_path = home / DB_FILE
     if not db_path.exists():
         return {}
     with closing(sqlite3.connect(db_path, timeout=0.2)) as con:
@@ -309,7 +327,7 @@ def upload_disabled_reason() -> str | None:
             return "server stopped uploads"
         if meta.get("notice_seen_version") != str(NOTICE_VERSION):
             return "notice not shown yet"
-        if consent_region() and not (_resolve_home() / "telemetry.consent").exists():
+        if consent_region() and not (_resolve_home() / CONSENT_FILE).exists():
             return "consent needed in your region: run gflow telemetry on"
         return None
     except Exception:  # noqa: BLE001 - any uncertain upload state stays off
@@ -367,7 +385,7 @@ def state() -> tuple[Literal["on", "off"], str | None]:
     if switch := killed():
         return "off", switch
     if opted_out():
-        return "off", "telemetry.off"
+        return "off", OFF_FILE
     return "on", None
 
 
@@ -382,7 +400,7 @@ def _bucket(seconds: float) -> str:
 
 
 def _connect(home: Path) -> sqlite3.Connection:
-    con = sqlite3.connect(home / "telemetry.db", timeout=0.2)
+    con = sqlite3.connect(home / DB_FILE, timeout=0.2)
     try:
         con.execute("PRAGMA journal_mode=WAL")
         con.execute(
@@ -626,7 +644,7 @@ def read_counters(weeks: int | None = None) -> list[Counter]:
     """All stored counters (or those of the last ``weeks`` ISO weeks); [] on any failure."""
     try:
         home = _resolve_home()
-        if not (home / "telemetry.db").exists():
+        if not (home / DB_FILE).exists():
             return []
         sql = "SELECT week, surface, kind, key, n FROM counters"
         args: tuple[str, ...] = ()
@@ -663,7 +681,7 @@ def stored_report_id(week: str) -> str | None:
     """Return only a report ID known to be persisted, for upload deduplication."""
     try:
         home = _resolve_home()
-        if not (home / "telemetry.db").exists():
+        if not (home / DB_FILE).exists():
             return None
         with closing(_connect(home)) as con:
             row = con.execute("SELECT report_id FROM reports WHERE week = ?", (week,)).fetchone()
@@ -730,7 +748,7 @@ def _detect_installer() -> str:
 
 def _detect_install_age(home: Path) -> str:
     try:
-        if not (home / "telemetry.db").exists():
+        if not (home / DB_FILE).exists():
             return "<1w"
         with closing(_connect(home)) as con:
             row = con.execute("SELECT value FROM meta WHERE key = 'first_seen'").fetchone()
@@ -808,7 +826,7 @@ def build_report(week: str) -> dict[str, object]:
         cursor[leaf] = cursor.get(leaf, 0) + n
 
     try:
-        if (home / "telemetry.db").exists():
+        if (home / DB_FILE).exists():
             with closing(_connect(home)) as con:
                 rows = con.execute(
                     "SELECT surface, kind, key, n FROM counters WHERE week = ?", (week,)
