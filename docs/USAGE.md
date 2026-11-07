@@ -59,7 +59,7 @@ Commands:
   movie     Multi-scene manifest pipeline (run / template).
   tools     Prompt-rewriting tools (list / show / run; also --tool on generation commands).
   run       Config-driven generation run.
-  telemetry Inspect local usage counters and telemetry status (status / show).
+  telemetry     Inspect and control usage counters and weekly uploads.
   mcp       MCP server over stdio (run) + client-config generator (setup).
   serve     MCP server over Streamable HTTP at /mcp.
   update    Upgrade gflow-cli in place via uv tool / pipx / pip (--check to only report).
@@ -1682,21 +1682,25 @@ Displays:
 2. **Generations**: Aggregated generation operations from the local catalog grouped by command, model, status, and month.
 3. **Telemetry state**: The current telemetry state (`on` or `off`) and active kill switch, if any.
 
-Spends no credits and makes no network requests. Both `--json` and its MCP twin tool `gflow_usage_stats` emit the same structured output.
+Spends no credits and makes no network requests of its own. Both `--json` and its MCP twin tool `gflow_usage_stats` emit the same structured output.
 
-## `gflow telemetry status | show`
+## `gflow telemetry status | show | on | off`
 
-Inspect local weekly usage counters and telemetry status. Weekly allow-listed totals can be uploaded after the notice; no identifier is sent. Full privacy allowlists, local SQLite retention, and kill switches are documented in [TELEMETRY.md](TELEMETRY.md).
+Inspect and control local weekly usage counters and the weekly usage upload. After a one-time notice in an interactive terminal, gflow sends one report of allow-listed weekly totals per completed week; no identifier is sent. In the EU/EEA uploads stay off until you run `gflow telemetry on`. Full privacy allowlists, local SQLite retention, and kill switches are documented in [TELEMETRY.md](TELEMETRY.md).
 
 ```text
 gflow telemetry status [--json]
 gflow telemetry show
+gflow telemetry on
+gflow telemetry off [--delete]
 ```
 
 - **`gflow telemetry status`** — Displays what is counted locally, where the database lives (`<home>/telemetry.db`), and the active kill switch (`GFLOW_CLI_TELEMETRY`, `DO_NOT_TRACK`, or `<home>/telemetry.off`). Pass `--json` for a machine-readable summary.
-- **`gflow telemetry show`** — Prints the complete weekly usage report for the current ISO week as JSON to stdout (the report a future version would send after a first-run notice).
+- **`gflow telemetry show`** — Prints the complete weekly usage report for the current ISO week as JSON to stdout: exactly the report that would be uploaded for that week.
+- **`gflow telemetry on`** — Allows weekly uploads. Required in the EU/EEA (explicit consent, recorded in `<home>/telemetry.consent`); elsewhere it clears an earlier `off`.
+- **`gflow telemetry off [--delete]`** — Stops local counting and weekly uploads (writes `<home>/telemetry.off`). `--delete` also removes the local usage data. `GFLOW_CLI_TELEMETRY=0` or `DO_NOT_TRACK=1` do the same without a command.
 
-Spends no credits and makes no network requests.
+These commands spend no credits and make no network requests themselves. The upload runs from other gflow commands, in a detached background process.
 
 ## `gflow doctor`
 

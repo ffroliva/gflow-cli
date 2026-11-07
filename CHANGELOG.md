@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.95.0] — 2026-11-07
+
+### Added
+
+- **Weekly usage reports, after a one-time notice** (#1164). gflow now sends one small report per
+  completed week: command and MCP tool counts, exit codes, models, installer, OS and version
+  totals. No install ID, prompts, file names, paths or account details are sent, and the server
+  adds each report to weekly totals and discards it. `gflow telemetry show` prints the exact
+  report, `gflow telemetry off` stops counting and uploads (`--delete` also removes the local
+  counters), and `GFLOW_CLI_TELEMETRY=0` or `DO_NOT_TRACK=1` turn it off without a command.
+  Uploads start only after the notice has been shown in an interactive terminal.
+- **In the EU/EEA, uploads need consent**: they stay off until you run `gflow telemetry on`, and
+  only weeks after that consent are ever sent. `gflow telemetry status` says which applies.
+- **`docs/TELEMETRY.md`** describes the notice, the exact report, retention, the controller and the
+  legal basis; the receiving server is public at `ffroliva/gflow-telemetry-endpoint` (#1164).
+
 ### Fixed
 
 - The `gflow mcp setup` backup is now a byte-exact copy of the original config.
@@ -15,12 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Usage telemetry notice and weekly uploads**: `gflow telemetry on|off|status|show` controls
-  default-on weekly totals without an identifier outside the EU/EEA, where explicit consent is
-  required with `gflow telemetry on`. Upload starts only after the interactive notice;
-  `gflow telemetry off --delete`, `GFLOW_CLI_TELEMETRY=0`, and `DO_NOT_TRACK=1` stop it (#1164).
-
-- **`docs/TELEMETRY.md`** explains the notice, exact report, retention and privacy controls (#1164).
+- **Local usage telemetry commands `gflow telemetry status` and `gflow telemetry show`**
+  displaying local counter storage and payload report (#1164).
 
 - **`gflow data stats` (CLI) and its MCP twin `gflow_usage_stats`** summarize local usage statistics
   across commands and catalogued generations over the last N weeks (#1164).
@@ -6855,7 +6867,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.94.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.95.0...HEAD
+[0.95.0]: https://github.com/ffroliva/gflow-cli/compare/v0.94.0...v0.95.0
 [0.94.0]: https://github.com/ffroliva/gflow-cli/compare/v0.93.0...v0.94.0
 [0.93.0]: https://github.com/ffroliva/gflow-cli/compare/v0.92.1...v0.93.0
 [0.92.1]: https://github.com/ffroliva/gflow-cli/compare/v0.92.0...v0.92.1
