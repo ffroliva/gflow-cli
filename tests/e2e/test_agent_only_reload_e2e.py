@@ -36,8 +36,12 @@ def _force_first_verdict(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     real = MigratedComposer.ensure_editor
     verdicts: list[str] = []
 
-    async def first_agent_only(self: MigratedComposer, page: Any, project_id: str) -> Any:
-        kind = await real(self, page, project_id)  # the real landing and readiness wait
+    async def first_agent_only(
+        self: MigratedComposer, page: Any, project_id: str, **kw: Any
+    ) -> Any:
+        kind = await real(self, page, project_id, **kw)  # the real landing and readiness wait
+        if kw:  # ensure_editor's own slow-mount retry (timeout_s=): not a new verdict
+            return kind
         verdicts.append("agent_only" if not verdicts else kind)
         return verdicts[-1]
 
@@ -58,7 +62,7 @@ def _ref(tmp_path: Path) -> Path:
 
 
 def _project() -> str:
-    project = os.environ.get("GFLOW_CLI_E2E_PROJECT", "")
+    project = os.environ.get("GFLOW_CLI_E2E_PROJECT", "").strip()
     if not project:
         pytest.skip("GFLOW_CLI_E2E_PROJECT must name an existing migrated project")
     return project
@@ -93,7 +97,7 @@ async def test_mcp_reference_image_reloads_past_the_agent_only_composer(
         wait=True,
     )
     _assert_reloaded_then_uploaded(verdicts, list(install_log_capture.entries))
-    assert result.get("status") != "completed", result
+    assert result.get("status") != "completed", result.get("status")
 
 
 async def test_cli_ref_reloads_past_the_agent_only_composer(

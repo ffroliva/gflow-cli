@@ -135,3 +135,24 @@ async def test_an_upload_is_refused_when_the_agent_only_composer_stays(  # #799:
         await t.upload_reference(project_id="p", path=tmp_path / "photo.png")
     assert page.reload.await_count == migrated_composer.AGENT_ONLY_RELOADS
     migrated_composer.MigratedComposer.upload.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+async def test_a_failed_reload_still_refuses_with_exit_36(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Council on #1177: a reload that times out must not replace the refusal."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    from gflow_cli.errors import FlowHostMigratedError
+
+    t = _transport("https://flow.google.com/project/p", monkeypatch)
+    monkeypatch.setattr(migrated_composer, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    page = _ReloadingPage("https://flow.google.com/project/p")
+    page.reload = AsyncMock(side_effect=PlaywrightTimeoutError("reload timed out"))
+    t._page = page  # type: ignore[assignment]  # noqa: SLF001
+    monkeypatch.setattr(
+        migrated_composer.MigratedComposer, "ensure_editor", AsyncMock(return_value="agent_only")
+    )
+    with pytest.raises(FlowHostMigratedError, match="image-to-image"):
+        await t.upload_reference(project_id="p", path=tmp_path / "photo.png")
+    assert page.reload.await_count == 1

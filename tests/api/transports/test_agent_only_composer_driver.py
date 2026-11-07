@@ -874,6 +874,7 @@ async def test_run_images_and_run_video_route_the_agent_only_composer_here(
     )
     assert images == ["images:p1"]
     assert video == "video:p1"
+    page.reload.assert_not_called()  # requests the agent-only composer takes never reload
 
 
 @pytest.mark.asyncio

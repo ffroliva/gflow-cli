@@ -1427,12 +1427,19 @@ class MigratedComposer:
         """:meth:`ensure_editor`, then up to ``AGENT_ONLY_RELOADS`` free reloads while the
         agent-only composer is served to a request only the classic one can take (#1142)."""
         kind = await self.ensure_editor(page, project_id)
+        if not needs_classic:
+            return kind
         for attempt in range(1, AGENT_ONLY_RELOADS + 1):
-            if kind == "classic" or not needs_classic:
+            if kind == "classic":
                 break
-            log.info("migrated.agent_only_reload", attempt=attempt, issue_ref="#799")
+            log.info("migrated.agent_only_reload", attempt=attempt, issue_ref="#1142")
             await asyncio.sleep(AGENT_ONLY_RELOAD_WAIT_S)
-            await page.reload(wait_until="domcontentloaded", timeout=45_000)
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=45_000)
+            except PlaywrightError as exc:
+                # A failed reload changes nothing: refuse as before (exit 36), not with its error.
+                log.warning("migrated.agent_only_reload_failed", error=str(exc)[:200])
+                break
             kind = await self.ensure_editor(page, project_id)
         return kind
 
@@ -4002,7 +4009,8 @@ async def run_video(
         )
 
     # $0 and before the page only when neither composer takes it (see run_images).
-    if unported is not None and agent.unported_video(request) is not None:
+    needs_classic = agent.unported_video(request) is not None
+    if unported is not None and needs_classic:
         raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
@@ -4014,7 +4022,6 @@ async def run_video(
         )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
     composer = MigratedComposer()
-    needs_classic = agent.unported_video(request) is not None
     if await composer.ensure_editor_for(page, pid, needs_classic=needs_classic) == "agent_only":
         return await agent.run_agent_video(
             page,
@@ -4125,7 +4132,8 @@ async def run_images(
 
     # $0 and before the page only when NEITHER composer takes it: the agent-only one has
     # its own limits (#799) — its Agent-settings pane offers 3:4, the classic pane does not.
-    if unported is not None and agent.unported_image(request) is not None:
+    needs_classic = agent.unported_image(request) is not None
+    if unported is not None and needs_classic:
         raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
@@ -4135,7 +4143,6 @@ async def run_images(
             )
         )
     composer = MigratedComposer()
-    needs_classic = agent.unported_image(request) is not None
     if await composer.ensure_editor_for(page, pid, needs_classic=needs_classic) == "agent_only":
         return await agent.run_agent_images(page, request, project_id=pid)
     if unported is not None:
