@@ -59,6 +59,14 @@ TOKEN_SUBS: tuple[tuple[re.Pattern[str], str], ...] = (
 # maintainer's email in SECURITY's reporting table becomes actionable GitHub
 # private-reporting steps, not a placeholder address.
 FILE_OVERRIDES: dict[str, tuple[tuple[str, str], ...]] = {
+    # The privacy notice must name its controller; the site names the public handle, not
+    # the private name the token pass would otherwise mangle into "your.name Oliva".
+    "TELEMETRY.md": (
+        (
+            "The data controller is the gflow-cli maintainer (Flavio Oliva);",
+            "The data controller is the gflow-cli maintainer (GitHub: ffroliva);",
+        ),
+    ),
     "SECURITY.md": (
         (
             "| **Security vulnerability** (RCE, auth bypass, secret leak in logs/output) | "

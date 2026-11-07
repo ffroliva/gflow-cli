@@ -4,7 +4,25 @@
 
 ## Current release
 
-**v0.94.0 — alpha.** Local usage counters and crash forensics — strictly local, nothing leaves the machine.
+**v0.95.0 — alpha.** Weekly usage reports, after a one-time notice, with consent required in the EU/EEA.
+
+**What is sent (#1164).** One small report per completed week: command and MCP tool counts, exit
+codes, models, installer, OS and version totals. No install ID, prompts, file names, paths or
+account details. The server ([ffroliva/gflow-telemetry-endpoint](https://github.com/ffroliva/gflow-telemetry-endpoint))
+adds each report to weekly totals and discards it. Full field list: [TELEMETRY.md](TELEMETRY.md).
+
+**Control.** Uploads start only after the notice has been shown in an interactive terminal.
+`gflow telemetry show` prints the exact report; `gflow telemetry off` stops counting and uploads
+(`--delete` removes the local counters); `GFLOW_CLI_TELEMETRY=0` and `DO_NOT_TRACK=1` turn it off
+without a command. In the EU/EEA uploads stay off until `gflow telemetry on`.
+
+**Fixed.** The `gflow mcp setup` backup is a byte-exact copy of the original config.
+
+Full ledger: [LIVE_VERIFICATION_v0.95.0](LIVE_VERIFICATION_v0.95.0.md).
+
+<details><summary>v0.94.0 — local usage counters and crash fingerprints</summary>
+
+**v0.94.0 — alpha.** Local usage counters and crash forensics.
 
 **Local usage counters and sanitized crash fingerprinting (#1164).** Commands and MCP tool calls record
 weekly usage counts and sanitized crash call-sites into `<home>/telemetry.db`. Prompts, arguments,
@@ -14,10 +32,12 @@ project IDs, media IDs, and account details are never stored.
 local counter storage and payload reporting. `gflow data stats` (CLI) and its MCP twin `gflow_usage_stats`
 summarize local usage statistics across commands and catalogued generations over the last N weeks.
 
-**Strictly opt-out and local.** Telemetry is 100% on-device; no network socket is ever opened, no server
-endpoint exists. Standard kill switches `DO_NOT_TRACK=1` and `GFLOW_CLI_TELEMETRY=0` disable recording completely.
+**Local only in v0.94.0.** In that release telemetry stayed on the device and opened no network socket;
+uploads arrived in v0.95.0. Standard kill switches `DO_NOT_TRACK=1` and `GFLOW_CLI_TELEMETRY=0` disable recording completely.
 
 Full ledger: [LIVE_VERIFICATION_v0.94.0](LIVE_VERIFICATION_v0.94.0.md).
+
+</details>
 
 <details><summary>v0.93.0 — video delivery on flow.google.com, lost submit replies recovered</summary>
 
@@ -760,6 +780,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Weekly usage reports after a one-time notice, EU/EEA consent, `gflow telemetry on\|off` (#1164) | ✅ done (v0.95.0) |
 | Local usage counters, `gflow data stats` + `gflow_usage_stats`, `gflow telemetry status\|show` (#1164) | ✅ done (v0.94.0) |
 | A finished video is read through its own route after status replies began carrying a thumbnail link (#1153); a lost t2v submit reply is recovered (#1141) | ✅ done (v0.93.0) |
 | MCP `output` / `out_dir` confined to the output dir, `profile` a plain name (GHSA-hqfj-4jww-76f2); cross-filesystem `-o` (#1114) | ✅ done (v0.92.0) |
@@ -894,3 +915,4 @@ For per-release deltas see [CHANGELOG.md](../CHANGELOG.md). Per-release evidence
 - **Patch releases** — bug fixes, doc refreshes (like v0.8.1), and other backward-compatible changes.
 
 See [RELEASE.md](../RELEASE.md) for the full release protocol and the prerelease vs full-release policy.
+

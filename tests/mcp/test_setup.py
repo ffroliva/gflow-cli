@@ -193,6 +193,20 @@ class TestApplyAndCli:
         cfg = json.loads(target_file.read_text(encoding="utf-8"))
         assert cfg["mcpServers"]["gflow"]["command"] == "gflow"
 
+    def test_backup_is_byte_identical_including_bom_and_crlf(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        target_file = tmp_path / "claude_desktop_config.json"
+        original_bytes = b'\xef\xbb\xbf{\r\n  "mcpServers": {}\r\n}\r\n'
+        target_file.write_bytes(original_bytes)
+        monkeypatch.setattr(setup_mod, "config_path_for", lambda t: target_file)
+
+        path, changed = setup_mod.apply("claude-desktop")
+
+        assert changed is True
+        backup = target_file.with_name(target_file.name + ".gflow-backup")
+        assert backup.read_bytes() == original_bytes
+
     def test_non_utf8_config_exits_11_without_traceback(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

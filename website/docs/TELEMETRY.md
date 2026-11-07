@@ -1,128 +1,134 @@
-# Local usage metrics and telemetry
+# Usage data and privacy notice
 
-> **Local only:** Nothing leaves the machine in this version; a future version will add an
-> opt-out weekly upload after a notice — see [#1164](https://github.com/ffroliva/gflow-cli/issues/1164).
+gflow-cli counts command use locally, then sends one small report of weekly totals after you have seen
+the notice below in an interactive terminal. The report has no install or account identifier. You can
+turn uploads off at any time.
 
-gflow-cli records coarse, privacy-preserving usage counters locally on your machine to help
-you inspect your own CLI and MCP activity via `gflow data stats` and preview weekly reports via
-`gflow telemetry show`.
+## What is counted on this machine
 
----
+Counters are kept in `<GFLOW_CLI_HOME>/telemetry.db`, separately from the catalog database. They are
+grouped by ISO week and retained for 53 weeks. gflow counts command and flag names, outcomes, coarse
+duration buckets, command transitions, crash fingerprints made from exception and code names, and
+generation details read from the local catalog. It also records the storage service category and MCP
+client category. Prompts, argument values and other free-form text are not used as counter keys.
 
-## The local store
+`gflow telemetry show` prints the current week's report as JSON, including its random per-week
+`report_id`; this is the report sent by the uploader. `gflow data stats` shows your own local usage
+and generation totals.
 
-All counters are stored in an isolated SQLite database on your local disk:
+## The weekly report
+
+These are all the fields the client can send. Values are names from gflow-cli, coarse categories, or
+counts.
+
+| Field | Values sent |
+|---|---|
+| `schema`, `report_id`, `week` | Schema number; a random report ID used once for that week; ISO week. |
+| `version`, `python`, `os`, `arch` | gflow-cli release; Python major and minor; `windows`, `linux`, `darwin`, or `other`; `x86_64`, `arm64`, or `other`. |
+| `installer` | `uv`, `pipx`, `pip`, or `other`. |
+| `install_age` | `<1w`, `<1m`, `<6m`, or `6m+`, based on the local first-seen week. |
+| `storage` | `local`, `s3`, `gcs`, or `other`, from the storage URI scheme only. S3-compatible services such as MinIO count as `s3`. |
+| `commands`, `flags`, `exits`, `durations` | Counts by `cli` or `mcp` surface and command. Flags are names only. Exit counts use exit-code names such as `0` or `11`; duration buckets are `<10s`, `<1m`, `<5m`, or `5m+`. |
+| `transitions` | Counts of command pairs, such as `image t2i -> video i2v`, when the next command starts within 30 minutes. |
+| `models`, `modes`, `aspects`, `outcomes` | Generation values read from the local catalog; unknown enum values become `other`. |
+| `mcp_clients` | Known names from MCP `clientInfo`; unknown names become `other`. |
+| `crashes` | Counts of code-only crash fingerprints by surface. A fingerprint contains exception class names, up to three gflow-cli function names, and a third-party package marker where relevant. |
+| `tools` | Counts by packaged prompt-tool name and whether it expanded or left the prompt unchanged. Custom tools, including tools that shadow a packaged name, are counted only as `custom`. |
+
+## What is never sent
+
+The report never contains prompts, file names, paths, storage URIs, Google account information, email
+addresses, account names (including `.gflow_account`), project or media IDs, credit balances,
+characters, profile names, error text, stack traces, logs, flag values, user-authored tool names,
+tool options, or the endpoint or model used by an LLM tool. No install ID is created or sent.
+
+## How reports are used and discarded
+
+The maintainer uses the totals to improve gflow-cli and to share aggregate figures publicly and with
+sponsors. Published figures hide any total below 5. The totals can be compared across the categories
+in the table, but they cannot be used to follow an install between weeks.
+
+The endpoint adds each report to weekly totals and discards its body. It does not store the report's
+IP address or log individual requests. A random `report_id` is retained for 14 days without report
+content, solely to reject duplicate submissions. The server derives a country at the network edge
+from the request IP and stores only an incremented country total. Country is not in the report and
+cannot be displayed by `gflow telemetry show`.
+
+Because the server keeps no per-install report or identifier, it has nothing to look up or delete for
+a particular machine. `gflow telemetry off --delete` removes local counters; it cannot undo totals
+that have already been added.
+
+## When an upload can happen
+
+Uploads are enabled by default outside the EU and EEA, but only when all these conditions are met:
+
+- This machine has shown the notice below in an interactive terminal. Nothing is uploaded on the run
+  that first shows it, and only weeks that began after the notice was shown can be sent. In the
+  EU and EEA the week must also have begun after you ran `gflow telemetry on`.
+- gflow-cli was installed from a package index. Editable and local-source installs do not upload.
+- The process is not running in CI, and uploads have not been turned off or disabled by the server.
+- A completed week is due. Its send time is chosen randomly within the seven days after that week
+  ends. There is at most one attempt per day.
+
+## EU and EEA: uploads need your consent
+
+gflow checks the machine's timezone only. It uses the `TZ` IANA timezone when set, otherwise the
+POSIX local timezone configuration or the Windows timezone key. A timezone that cannot be
+determined is treated as being in the EU/EEA, so uploads stay off until you consent. gflow does not
+read your IP address or locale to make this decision, and never sends the timezone or region.
+
+Local counters still work in the EU/EEA and remain on your device unless you consent. To allow
+weekly uploads, run `gflow telemetry on`; this records your choice locally in
+`<GFLOW_CLI_HOME>/telemetry.consent`. Run `gflow telemetry off` to withdraw consent and stop
+counting and uploads. Environment kill switches still take precedence.
+
+The request runs in a detached background process, so the command can exit without waiting. The
+request uses a five-second timeout. A failed request is retried on a later day. An HTTP 410 response
+permanently disables future uploads for that machine; this gives the server a way to stop every
+installed client without an update.
+
+Agents and MCP-only use without an interactive terminal do not display the notice, so those machines
+do not upload. A person can show the notice by running a gflow command from an interactive terminal.
+The telemetry commands themselves do not show it.
+
+## Turn usage uploads off or on
+
+Run `gflow telemetry off` to stop local counting and uploads. Add `--delete` to also remove the local
+usage database. You can also set `GFLOW_CLI_TELEMETRY=0` or `DO_NOT_TRACK=1` in the process
+environment, `$GFLOW_CLI_HOME/.env`, or the working-directory `.env`. Any one of these can turn
+uploads off. `gflow telemetry on` removes the local opt-out marker; environment kill switches still take
+precedence, and uploads still require the notice to have been shown.
+
+For exact switch status, run `gflow telemetry status`. The `gflow telemetry on` and `off` controls
+are CLI-only by design; MCP exposes local statistics through `gflow_usage_stats` but does not expose
+an opt-out command.
+
+The server that receives reports is public at
+[github.com/ffroliva/gflow-telemetry-endpoint](https://github.com/ffroliva/gflow-telemetry-endpoint),
+so what it stores can be checked. The client sends to `https://gflow-telemetry.ffroliva.workers.dev/v1/report`;
+the sender is `src/gflow_cli/telemetry_upload.py` in this repository.
+
+## Notice
+
+Notice version: 2
 
 ```text
-<GFLOW_CLI_HOME>/telemetry.db
+gflow sends weekly usage totals to improve it, and we share overall figures publicly and with
+sponsors. Commands, flag names, models, error codes, and your country as a total. No ID, prompts,
+paths or account details. Each report is added to totals and discarded.
+Turn it off: gflow telemetry off, or set GFLOW_CLI_TELEMETRY=0
+See exactly what is sent: gflow telemetry show. Full notice: gflow docs TELEMETRY
 ```
 
-This file is completely separate from the asset catalog (`<GFLOW_CLI_HOME>/gflow.db`). Counters
-never sit in a database holding prompts or media metadata.
+The notice shown in the EU/EEA:
 
-Database properties:
-- **No cached connection:** The database is opened per write and closed immediately, preventing
-  WAL lock contention during long-running MCP server sessions.
-- **Retention:** Counters are grouped by ISO week and retained for 53 weeks. Older entries are
-  pruned automatically.
-- **Fail-safe:** Counting never raises into, prints during, or noticeably slows user commands.
-  Every SQLite write failure is silent.
-
----
-
-## What is counted locally
-
-The local report is assembled field-by-field from an explicit allow-list:
-
-| Category | Description | Stored values |
-|---|---|---|
-| `commands` | CLI and MCP commands invoked | Command names only (e.g. `video t2v`) |
-| `flags` | Option flags passed to CLI commands | Registered option names only (e.g. `--aspect`) |
-| `exits` | Exit codes per command | Stable numeric exit codes (e.g. `0`, `11`, `37`) |
-| `durations` | Invocation runtime buckets | `<10s`, `<1m`, `<5m`, `5m+` |
-| `transitions` | Chained command workflows | `command_a -> command_b` within 30 minutes |
-| `models` | Models from catalog operations | Known enum values; unknown values become `other` |
-| `modes` | Generation modes (t2i, i2v, etc.) | Known enum values; unknown values become `other` |
-| `aspects` | Aspect ratios from catalog operations | Known ratios/enums; unknown values become `other` |
-| `outcomes` | Status of catalog operations | `started`, `succeeded`, `failed`, or `other` |
-| `mcp_clients`| MCP client names from `clientInfo` | Known client names; unknown values become `other` |
-| `crashes` | Privacy-safe crash fingerprints | Exception class and innermost function names |
-| `tools` | Prompt tool invocations | Built-in tool names; custom/user tools become `custom` |
-
-### Crash fingerprinting
-
-When an unexpected exception occurs, gflow-cli computes a structural fingerprint:
-- The exception class name and cause class (e.g. `TimeoutError from OSError`).
-- At most three innermost frame names inside `gflow_cli` as `module:qualname`.
-- Third-party packages collapse to generic markers (e.g. `<playwright>`).
-- Traceback text, local variables, file paths, line numbers, and error messages are **never** read.
-
----
-
-## What is never collected
-
-The following data never enters `telemetry.db` and is never included in reports:
-- Prompts or prompt text
-- File paths or file names
-- Remote storage URIs, buckets, or paths
-- Google account identifiers, emails, cookies, or session tokens
-- Flow project IDs, media UUIDs, or workflow IDs
-- Account credit balances
-- Character names, faces, voices, or personalities
-- Raw error messages, logs, or full stack traces
-- Positional argument values or free-form flag values
-
----
-
-## Kill switches
-
-You can disable all telemetry counting at any time using standard switches:
-
-### 1. `DO_NOT_TRACK`
-Set `DO_NOT_TRACK=1` in your environment or in `.env` (project-local or `$GFLOW_CLI_HOME/.env`):
-```bash
-export DO_NOT_TRACK=1
-```
-Any value other than empty, `0`, or `false` completely disables all telemetry recording.
-
-### 2. `GFLOW_CLI_TELEMETRY`
-Set `GFLOW_CLI_TELEMETRY=0` in your environment or `.env`:
-```bash
-export GFLOW_CLI_TELEMETRY=0
-```
-Any value other than `1`, `true`, `on`, or empty disables all telemetry recording.
-
-### 3. Sentinel file
-Create an empty sentinel file at `<GFLOW_CLI_HOME>/telemetry.off`:
-```bash
-touch ~/.config/gflow/telemetry.off
-```
-When this file exists, counting stops immediately (including in active MCP server processes).
-
----
-
-## Commands
-
-### `gflow telemetry status`
-Displays the active kill switch, local database location, and collection scope:
-```bash
-gflow telemetry status
+```text
+gflow can send weekly usage totals to help improve it; overall figures are shared publicly and with sponsors. Commands, flag names, models, error codes, and your country as a total. No ID, prompts, paths or account details. Each report is added to totals and discarded.
+In your region nothing is sent unless you agree: gflow telemetry on (undo: gflow telemetry off)
+See exactly what would be sent: gflow telemetry show. Full notice: gflow docs TELEMETRY
 ```
 
-Machine-readable JSON output:
-```bash
-gflow telemetry status --json
-```
+## Controller and legal basis
 
-### `gflow telemetry show`
-Prints the complete report payload for the current ISO week as JSON to stdout:
-```bash
-gflow telemetry show
-```
-
-### `gflow data stats`
-Shows your own aggregated command and generation usage across recent weeks:
-```bash
-gflow data stats
-gflow data stats --weeks 4 --json
-```
+The data controller is the gflow-cli maintainer (GitHub: ffroliva); contact via the address in
+[docs/SECURITY.md](SECURITY.md). **Pending legal review (#1164).**

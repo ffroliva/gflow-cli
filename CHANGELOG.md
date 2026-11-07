@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.95.0] — 2026-11-07
+
+### Added
+
+- **Weekly usage reports, after a one-time notice** (#1164). gflow now sends one small report per
+  completed week: command and MCP tool counts, exit codes, models, installer, OS and version
+  totals. No install ID, prompts, file names, paths or account details are sent, and the server
+  adds each report to weekly totals and discards it. `gflow telemetry show` prints the exact
+  report, `gflow telemetry off` stops counting and uploads (`--delete` also removes the local
+  counters), and `GFLOW_CLI_TELEMETRY=0` or `DO_NOT_TRACK=1` turn it off without a command.
+  Uploads start only after the notice has been shown in an interactive terminal.
+- **In the EU/EEA, uploads need consent**: they stay off until you run `gflow telemetry on`, and
+  only weeks after that consent are ever sent. `gflow telemetry status` says which applies.
+- **`docs/TELEMETRY.md`** describes the notice, the exact report, retention, the controller and the
+  legal basis; the receiving server is public at `ffroliva/gflow-telemetry-endpoint` (#1164).
+
+### Fixed
+
+- The `gflow mcp setup` backup is now a byte-exact copy of the original config.
+
 ## [0.94.0] — 2026-11-07
 
 ### Added
@@ -6847,7 +6867,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.94.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.95.0...HEAD
+[0.95.0]: https://github.com/ffroliva/gflow-cli/compare/v0.94.0...v0.95.0
 [0.94.0]: https://github.com/ffroliva/gflow-cli/compare/v0.93.0...v0.94.0
 [0.93.0]: https://github.com/ffroliva/gflow-cli/compare/v0.92.1...v0.93.0
 [0.92.1]: https://github.com/ffroliva/gflow-cli/compare/v0.92.0...v0.92.1

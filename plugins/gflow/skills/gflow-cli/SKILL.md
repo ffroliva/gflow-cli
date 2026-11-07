@@ -130,8 +130,10 @@ gflow instructions toggle-mode (--on | --off) --project ID # toggle master agent
 gflow update [--check] [--json]
 gflow docs [TOPIC] [--search TERM] [--json]                            # upgrades via uv tool / pipx / pip; source installs refused (exit 11)
 
-# Usage statistics & local telemetry (offline, on-machine only)
+# Usage statistics and weekly telemetry (local counters; upload after interactive notice)
 gflow data stats [--weeks N] [--json]
+gflow telemetry on
+gflow telemetry off [--delete]
 gflow telemetry status [--json]
 gflow telemetry show
 ```

@@ -153,6 +153,7 @@ test, not a mocked proxy — the Bug Lane's step 5.
 | Variable | Default | Purpose |
 |---|---|---|
 | `GFLOW_CLI_E2E_PROFILE` | *(unset)* | Master gate: name of a logged-in Chromium profile. **Required for Layers 3–4.** |
+| `GFLOW_CLI_E2E_RUN_TELEMETRY_UPLOAD` | `"0"` | Set to `"1"` to run the usage telemetry upload e2e against the live Cloudflare endpoint (requires `CLOUDFLARE_ACCOUNT_ID` and `npx wrangler`). |
 | `GFLOW_CLI_E2E_RUN_VIDEO` | `"0"` | Set to `"1"` to include video generation in the data-layer e2e run. Video is opt-in because Veo credits are the most expensive. |
 | `GFLOW_CLI_E2E_VIDEO_ASPECT` | `"landscape"` | Aspect ratio for video e2e: `landscape` or `portrait`. |
 | `GFLOW_CLI_E2E_VIDEO_MODEL` | `"omni-flash"` | Veo model for i2v tests: `omni-flash` or `veo-fast`. |
