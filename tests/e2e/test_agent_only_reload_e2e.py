@@ -24,6 +24,7 @@ import structlog
 from click.testing import CliRunner
 
 from gflow_cli.api.transports.migrated_composer import AGENT_ONLY_RELOADS, MigratedComposer
+from gflow_cli.config import get_settings
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
 
@@ -110,8 +111,14 @@ async def test_cli_ref_reloads_past_the_agent_only_composer(
     args += ["--project", _project(), "--model", "nano2", "--out", str(tmp_path / "out")]
     args += ["--profile", os.environ["GFLOW_CLI_E2E_PROFILE"].strip()]
     verdicts = _force_first_verdict(monkeypatch)
+    # The reload and upload events are info-level; the CLI defaults to WARNING.
+    monkeypatch.setenv("GFLOW_CLI_LOG_LEVEL", "INFO")
+    get_settings.cache_clear()
     # The command runs its own event loop, so it is invoked off this test's loop.
-    result = await asyncio.to_thread(CliRunner().invoke, main, args)
+    try:
+        result = await asyncio.to_thread(CliRunner().invoke, main, args)
+    finally:
+        get_settings.cache_clear()
     # The CLI installs its own logging, so its events are read from its stderr.
     events = [json.loads(line) for line in result.stderr.splitlines() if line.startswith("{")]
     _assert_reloaded_then_uploaded(verdicts, events)
