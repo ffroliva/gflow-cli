@@ -31,6 +31,8 @@ console = Console()
 #   video  → mirror of cli_video's --model Choice (keep in sync if it changes)
 _VIDEO_CLI_MODELS: tuple[str, ...] = (
     "omni-flash",
+    "omni-1.2-flash",
+    "omni-1.2",
     "veo-lite",
     "veo-fast",
     "veo-quality",
