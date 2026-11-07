@@ -51,7 +51,7 @@ _TomlList = list[object]
 # ---------------------------------------------------------------------------
 
 _VALID_VIDEO_ASPECTS: frozenset[str] = frozenset({"9:16", "16:9", "1:1"})
-_VALID_DURATIONS: frozenset[int] = frozenset({4, 6, 8, 10})
+_VALID_DURATIONS: frozenset[int] = frozenset(range(3, 16))
 _VALID_CHARACTER_MODELS: frozenset[str] = frozenset({"nano2", "nanopro"})
 
 
@@ -552,9 +552,14 @@ def _validate_scene_model(model: object, idx: int, duration: int | None) -> None
     and billed, as exit 1 "Unexpected error".
     """
     if model is None:
-        # No model means Flow's sticky UI default, which is genuinely unknowable
-        # here — so a duration cannot be checked against it. Left unguarded BY
-        # DESIGN, the same call #632 made for t2v/r2v.
+        if duration is not None:
+            try:
+                validate_duration_for_model(None, duration)
+            except ValueError as exc:
+                raise ConfigurationError(f"scenes[{idx}].duration: {exc}") from exc
+        # No model means Flow's sticky UI default, which is unknowable here, so the
+        # duration is held to the legacy 4/6/8/10 set (#632); only an explicit
+        # omni-1.2-flash unlocks the rest of 3-15.
         return
     if not isinstance(model, str):
         raise ConfigurationError(f"scenes[{idx}].model must be a string.")

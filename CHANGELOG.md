@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Omni 1.2 Flash** (`--model omni-1.2-flash`, alias `omni-1.2`; MCP `omni_1_2_flash`) with
+  every whole-second `--duration` from 3 to 15 on flow.google.com, set through the model's
+  duration slider and read back before Send. Above 10s needs a Google AI plan: on an account
+  whose slider stops at 10s, a longer request is refused before submit (exit 11), with no
+  credits spent. Chains and the agent-only composer still refuse it (#1168, by @vietanhjp93).
+
+### Fixed
+
+- **`video r2v --model omni-flash` accepts `--duration` 4, 6 or 10** on flow.google.com, not only 8.
+  The 8s-only rule was measured on Veo, and it still applies to Veo and to an omitted
+  `--model`; Omni keeps every reference at each length (#1167, by @vietanhjp93).
+
 ## [0.95.0] — 2026-11-07
 
 ### Added

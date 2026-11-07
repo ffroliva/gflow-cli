@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from gflow_cli.api.video import VideoModel
 from gflow_cli.cli_video import video
 from gflow_cli.data.models import AssetKind
 
@@ -1265,7 +1266,11 @@ def test_tool_option_present_on_video_generation_commands() -> None:
 class TestVideoProjectFlag:
     """`--project <id>` threads project_id through to client.generate_video."""
 
-    def test_t2v_threads_project_id_to_generate_and_report(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("omni12", [False, True])
+    def test_t2v_threads_project_id_to_generate_and_report(
+        self, tmp_path: Path, omni12: bool
+    ) -> None:
+        extra = ["--model", "omni-1.2-flash", "--duration", "15"] if omni12 else []
         captured: dict[str, object] = {}
 
         async def _capture(request: object, **kwargs: object) -> None:
@@ -1278,12 +1283,19 @@ class TestVideoProjectFlag:
             patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
             patch("gflow_cli.cli_video._generate_and_report", new=_capture),
         ):
-            result = runner.invoke(video, ["t2v", "a sunset", "--project", "PROJ123"])
+            result = runner.invoke(video, ["t2v", "a sunset", "--project", "PROJ123"] + extra)
 
         assert result.exit_code == 0, result.output
         assert captured["kwargs"]["project_id"] == "PROJ123"  # type: ignore[index]
+        if omni12:
+            assert captured["request"].model is VideoModel.OMNI_1_2_FLASH
+            assert captured["request"].duration == 15
 
-    def test_i2v_threads_project_id_to_generate_and_report(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("omni12", [False, True])
+    def test_i2v_threads_project_id_to_generate_and_report(
+        self, tmp_path: Path, omni12: bool
+    ) -> None:
+        extra = ["--model", "omni-1.2-flash", "--duration", "15"] if omni12 else []
         captured: dict[str, object] = {}
 
         async def _capture(request: object, **kwargs: object) -> None:
@@ -1301,13 +1313,20 @@ class TestVideoProjectFlag:
         ):
             result = runner.invoke(
                 video,
-                ["i2v", str(start), "slow push-in", "--project", "PROJ123"],
+                ["i2v", str(start), "slow push-in", "--project", "PROJ123"] + extra,
             )
 
         assert result.exit_code == 0, result.output
         assert captured["kwargs"]["project_id"] == "PROJ123"  # type: ignore[index]
+        if omni12:
+            assert captured["request"].model is VideoModel.OMNI_1_2_FLASH
+            assert captured["request"].duration == 15
 
-    def test_r2v_threads_project_id_to_generate_and_report(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("omni12", [False, True])
+    def test_r2v_threads_project_id_to_generate_and_report(
+        self, tmp_path: Path, omni12: bool
+    ) -> None:
+        extra = ["--model", "omni-1.2-flash", "--duration", "15"] if omni12 else []
         captured: dict[str, object] = {}
 
         async def _capture(request: object, **kwargs: object) -> None:
@@ -1325,11 +1344,14 @@ class TestVideoProjectFlag:
         ):
             result = runner.invoke(
                 video,
-                ["r2v", "knight walks forward", "--ref", str(ref), "--project", "PROJ123"],
+                ["r2v", "knight walks forward", "--ref", str(ref), "--project", "PROJ123"] + extra,
             )
 
         assert result.exit_code == 0, result.output
         assert captured["kwargs"]["project_id"] == "PROJ123"  # type: ignore[index]
+        if omni12:
+            assert captured["request"].model is VideoModel.OMNI_1_2_FLASH
+            assert captured["request"].duration == 15
 
     def test_t2v_without_project_passes_none(self, tmp_path: Path) -> None:
         """Omitting --project keeps the historical scratch-project behavior."""
