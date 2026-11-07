@@ -453,6 +453,7 @@ def test_off_delete_preserves_server_upload_stop() -> None:
         )
     result = CliRunner().invoke(main, ["telemetry", "off", "--delete"])
     assert result.exit_code == 0, result.output
+    assert (home / telemetry.DB_FILE).is_file()
     with closing(sqlite3.connect(home / telemetry.DB_FILE)) as con:
         assert dict(con.execute("SELECT key, value FROM meta")) == {"upload_disabled": "1"}
 
