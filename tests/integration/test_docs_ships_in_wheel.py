@@ -26,7 +26,9 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.integration
+# needs_network for the whole module: the module-scoped `wheel` fixture runs `uv build`
+# before any function-scoped guard, and the install resolves dependencies from the index.
+pytestmark = [pytest.mark.integration, pytest.mark.needs_network]
 
 _REPO = Path(__file__).resolve().parents[2]
 
@@ -75,7 +77,6 @@ def test_the_wheel_carries_the_pages_and_only_the_pages(wheel: Path) -> None:
         assert len(shipped) == len(list((_REPO / "docs").glob("*.md")))
 
 
-@pytest.mark.needs_network  # `uv pip install` resolves the wheel's dependencies from the index
 def test_docs_works_from_an_installed_wheel_with_no_checkout(wheel: Path, tmp_path: Path) -> None:
     """Install into a scratch venv and run the command with the repository nowhere near.
 

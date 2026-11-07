@@ -159,7 +159,8 @@ def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
     #1164: a unit test's child process once ran the production uploader and POSTed a fixture report
     to the live telemetry endpoint. ``urllib`` and ``httpx`` read these variables and children
     inherit them; loopback stays direct. e2e/live tests talk to real services and are exempt, as is
-    a test marked ``needs_network``.
+    a test marked ``needs_network``. The guard is function-scoped, so a module- or session-scoped
+    fixture runs before it: a module whose fixture builds or installs is marked as a whole.
     """
     if any(request.node.get_closest_marker(m) for m in ("e2e", "live", "smoke", "needs_network")):
         return
