@@ -168,6 +168,8 @@ def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
         monkeypatch.setenv(var, dead)
     for var in ("NO_PROXY", "no_proxy"):
         monkeypatch.setenv(var, "127.0.0.1,localhost,::1")
+    # urllib ignores HTTP_PROXY when REQUEST_METHOD is set (the httpoxy guard)
+    monkeypatch.delenv("REQUEST_METHOD", raising=False)
 
 
 @pytest.fixture

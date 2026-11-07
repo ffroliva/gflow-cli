@@ -36,14 +36,16 @@ jobs:
       - name: Verify release artifacts
         env:
           BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ "$BASE_REF" != "main" ]; then
             echo "Base is '$BASE_REF' (not main) — nothing to enforce."
             exit 0
           fi
-          # released CHANGELOG sections are compared against main (#1164)
-          git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
-          python scripts/ci/check_release_artifacts.py
+          # Released CHANGELOG sections are compared against the base this merge snapshot
+          # was built on, not a main that moved during the run (#1164).
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          RELEASED_REF="$BASE_SHA" python scripts/ci/check_release_artifacts.py
 
   guard:
     name: Only release/hotfix branches may target main

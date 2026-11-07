@@ -24,6 +24,7 @@ Exit 0 = all artifacts present; exit 1 = violations (each printed).
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -71,13 +72,14 @@ def find_violations(root: Path, released_changelog: str | None = None) -> list[s
     return violations
 
 
-_SECTION_RE = re.compile(
-    r"^## \[(\d[^\]]*)\][^\n]*\n(.*?)(?=^## \[|^\[[^\]]+\]: |\Z)", re.M | re.S
-)
+_SECTION_RE = re.compile(r"^## \[(\d[^\]]*)\][^\n]*\n(.*?)(?=^## \[|\Z)", re.M | re.S)
+#: The link-definition footer after the last section. A definition INSIDE a section
+#: (``[#357]: url`` in [0.41.0]) belongs to that section and is compared with it.
+_FOOTER_RE = re.compile(r"(?:\n\[[^\]]+\]: [^\n]*)+\s*\Z")
 
 
 def _sections(changelog: str) -> dict[str, str]:
-    text = changelog.replace("\r\n", "\n")
+    text = _FOOTER_RE.sub("", changelog.replace("\r\n", "\n"))
     return {m.group(1): m.group(0).strip() for m in _SECTION_RE.finditer(text)}
 
 
@@ -98,10 +100,15 @@ def _released_section_violations(changelog: str, released: str) -> list[str]:
 
 
 def _released_changelog(root: Path) -> str | None:
-    """``origin/main:CHANGELOG.md``, or None when that ref is not available locally."""
+    """``CHANGELOG.md`` at ``$RELEASED_REF`` (default ``origin/main``), or None when unreadable.
+
+    CI sets ``RELEASED_REF`` to the PR's base commit, the one its merge snapshot was built on,
+    so a release landing on main during the run is not reported as missing.
+    """
+    ref = os.environ.get("RELEASED_REF") or "origin/main"
     try:
         out = subprocess.run(  # noqa: S603
-            ["git", "-C", str(root), "show", "origin/main:CHANGELOG.md"],  # noqa: S607
+            ["git", "-C", str(root), "show", f"{ref}:CHANGELOG.md"],  # noqa: S607
             capture_output=True,
             check=True,
         )
@@ -210,6 +217,10 @@ def main() -> int:
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[2]
     released = _released_changelog(root)
     if released is None:
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            # CI fetched the baseline, so an unreadable one fails closed rather than skipping.
+            print("::error::baseline not readable — released CHANGELOG sections not compared.")
+            return 1
         print("::notice::origin/main not available — released CHANGELOG sections not compared.")
     violations = find_violations(root, released)
     if violations:
