@@ -262,13 +262,16 @@ def _endpoint_test_env(home: Path, env: dict[str, str], endpoint: str) -> dict[s
     (hook / "sitecustomize.py").write_text(
         "import subprocess, sys\n"
         "_real_popen = subprocess.Popen\n"
-        "def _test_popen(args, **kwargs):\n"
-        "    if isinstance(args, (list, tuple)) and '-m' in args and "
+        "class _P(_real_popen):\n"
+        "    def __init__(self, args=None, *pos, **kwargs):\n"
+        "        if args is None and 'args' in kwargs:\n"
+        "            args = kwargs.pop('args')\n"
+        "        if isinstance(args, (list, tuple)) and '-m' in args and "
         "'gflow_cli.telemetry_upload' in args:\n"
-        f"        code = {child_code!r}\n"
-        "        args = [sys.executable, '-P', '-c', code]\n"
-        "    return _real_popen(args, **kwargs)\n"
-        "subprocess.Popen = _test_popen\n",
+        f"            code = {child_code!r}\n"
+        "            args = [sys.executable, '-P', '-c', code]\n"
+        "        super().__init__(args, *pos, **kwargs)\n"
+        "subprocess.Popen = _P\n",
         encoding="utf-8",
     )
     child_env = dict(env)
@@ -287,7 +290,9 @@ def stopped_local_worker(tmp_path: Path) -> Iterator[tuple[str, Path]]:
     log_path = tmp_path / "wrangler-local.log"
     with log_path.open("w", encoding="utf-8") as log:
         kwargs: dict[str, Any] = (
-            {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+            {"creationflags": subprocess.CREATE_NO_WINDOW}
+            if sys.platform == "win32"
+            else {"start_new_session": True}
         )
         proc = subprocess.Popen(
             ["npx", "wrangler", "dev", "--port", str(port), "--var", "STOPPED:1", "--local"],
@@ -309,9 +314,34 @@ def stopped_local_worker(tmp_path: Path) -> Iterator[tuple[str, Path]]:
                 time.sleep(0.2)
             raise TimeoutError(f"wrangler dev did not become ready:\n{log_path.read_text()}")
         finally:
-            if proc.poll() is None:
-                proc.kill()
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    capture_output=True,
+                    check=False,
+                )
+            else:
+                try:
+                    import signal
+
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            try:
                 proc.wait(timeout=10)
+            except Exception:
+                pass
+
+            deadline_port = time.monotonic() + 5.0
+            port_closed = False
+            while time.monotonic() < deadline_port:
+                with socket.socket() as s:
+                    s.settimeout(0.5)
+                    if s.connect_ex(("127.0.0.1", port)) != 0:
+                        port_closed = True
+                        break
+                time.sleep(0.2)
+            assert port_closed, f"Port {port} still open after stopping wrangler dev"
 
 
 def run_in_pty(
@@ -371,12 +401,12 @@ def seed_telemetry_db(
     env: dict[str, str],
     *,
     with_notice: bool = True,
-    weeks_ago: int = 55,
+    weeks_ago: int = 40,
     probe_id: str | None = None,
 ) -> tuple[str, str]:
     """Seed <home>/telemetry.db via the installed interpreter."""
-    if not 55 <= weeks_ago <= 59:
-        raise ValueError("live upload tests may seed only weeks 55-59")
+    if not 30 <= weeks_ago <= 50:
+        raise ValueError("live upload tests may seed only weeks 30-50")
     if probe_id is None:
         probe_id = secrets.token_hex(4)
     marker = f"e2eprobe {probe_id}"
@@ -434,9 +464,58 @@ print(week)
     return week, marker
 
 
+@contextmanager
+def exact_d1_cleanup(week: str, home: Path) -> Iterator[None]:
+    """Snapshot totals for week before test, and subtract exact delta after test."""
+    if not is_live_enabled():
+        yield
+        return
+    # Residual risk: a real client posting the same old week within the same seconds.
+    before_rows = run_d1_sql(f"SELECT field, key, n FROM totals WHERE week = '{week}'")
+    before_counts = {(r["field"], r["key"]): int(r["n"]) for r in before_rows}
+    try:
+        yield
+    finally:
+        try:
+            after_rows = run_d1_sql(f"SELECT field, key, n FROM totals WHERE week = '{week}'")
+            after_counts = {(r["field"], r["key"]): int(r["n"]) for r in after_rows}
+            stmts: list[str] = []
+            for (field, key), after_n in after_counts.items():
+                before_n = before_counts.get((field, key), 0)
+                delta = after_n - before_n
+                if delta > 0:
+                    escaped_field = field.replace("'", "''")
+                    escaped_key = key.replace("'", "''")
+                    stmts.append(
+                        f"UPDATE totals SET n = n - {delta} "
+                        f"WHERE week = '{week}' AND field = '{escaped_field}' "
+                        f"AND key = '{escaped_key}'; "
+                        f"DELETE FROM totals "
+                        f"WHERE week = '{week}' AND field = '{escaped_field}' "
+                        f"AND key = '{escaped_key}' AND n <= 0;"
+                    )
+            if stmts:
+                run_d1_sql(" ".join(stmts))
+
+            db_path = home / "telemetry.db"
+            if db_path.exists():
+                with sqlite3.connect(db_path) as con:
+                    report_ids = [
+                        row[0] for row in con.execute("SELECT report_id FROM reports") if row[0]
+                    ]
+                if report_ids:
+                    seen_stmts: list[str] = []
+                    for r_id in report_ids:
+                        escaped_r_id = r_id.replace("'", "''")
+                        seen_stmts.append(f"DELETE FROM seen WHERE report_id = '{escaped_r_id}';")
+                    run_d1_sql(" ".join(seen_stmts))
+        except Exception as exc:
+            print(f"\n[D1_CLEANUP] Cleanup error for week {week}: {exc}", file=sys.stderr)
+
+
 @pytest.fixture(scope="module", autouse=True)
 def d1_cleanup() -> Iterator[None]:
-    """Module-level cleanup: delete test rows from totals and seen."""
+    """Module-level cleanup: delete test rows from seen and record final counts."""
     yield
     if not is_live_enabled():
         return
@@ -449,9 +528,6 @@ def d1_cleanup() -> Iterator[None]:
                     report_ids.update(
                         row[0] for row in con.execute("SELECT report_id FROM reports") if row[0]
                     )
-        if _USED_WEEKS:
-            weeks_list = ", ".join(f"'{w}'" for w in sorted(_USED_WEEKS))
-            run_d1_sql(f"DELETE FROM totals WHERE week IN ({weeks_list})")
         for report_id in report_ids:
             escaped_id = report_id.replace("'", "''")
             run_d1_sql(f"DELETE FROM seen WHERE report_id = '{escaped_id}'")
@@ -562,78 +638,86 @@ def test_one_real_post_lands_in_d1_from_a_command_that_exits_at_once(
     except Exception:
         pass
 
-    # Run command that exits immediately; detached child does the POST
-    res = subprocess.run(
-        [str(installed_gflow.gflow), "data", "list", "projects", "--json"],
-        cwd=str(home),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert res.returncode == 0
-
-    # Poll up to 60 s for local reports.sent_at to become non-NULL
-    deadline = time.monotonic() + 60.0
-    sent_at: str | None = None
-    while time.monotonic() < deadline:
-        with sqlite3.connect(home / "telemetry.db") as con:
-            cur = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,))
-            row = cur.fetchone()
-            if row and row[0] is not None:
-                sent_at = row[0]
-                break
-        time.sleep(1.0)
-
-    assert sent_at is not None, f"Timed out waiting for local sent_at for week {week}"
-
-    # Poll up to 60 s for D1 rows to reflect the marker and reports/all
-    deadline_d1 = time.monotonic() + 60.0
-    totals_rows: list[dict[str, Any]] = []
-    while time.monotonic() < deadline_d1:
-        totals_rows = run_d1_sql(f"SELECT field, key, n FROM totals WHERE week = '{week}'")
-        has_marker = any(
-            r.get("field") == "commands" and r.get("key") == f"cli|{marker}" for r in totals_rows
+    with exact_d1_cleanup(week, home):
+        # Run command that exits immediately; detached child does the POST
+        res = subprocess.run(
+            [str(installed_gflow.gflow), "data", "list", "projects", "--json"],
+            cwd=str(home),
+            env=env,
+            capture_output=True,
+            text=True,
         )
-        has_report = any(r.get("field") == "reports" and r.get("key") == "all" for r in totals_rows)
-        if has_marker and has_report:
-            break
-        time.sleep(1.0)
+        assert res.returncode == 0
 
-    # Assert D1 totals
-    marker_row = [
-        r for r in totals_rows if r.get("field") == "commands" and r.get("key") == f"cli|{marker}"
-    ]
-    report_row = [r for r in totals_rows if r.get("field") == "reports" and r.get("key") == "all"]
-    assert marker_row and marker_row[0].get("n") == 1, (
-        f"Missing marker command key cli|{marker}: {totals_rows}"
-    )
-    assert report_row and report_row[0].get("n") == 1, f"Missing reports/all: {totals_rows}"
+        # Poll up to 60 s for local reports.sent_at to become non-NULL
+        deadline = time.monotonic() + 60.0
+        sent_at: str | None = None
+        while time.monotonic() < deadline:
+            with sqlite3.connect(home / "telemetry.db") as con:
+                cur = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,))
+                row = cur.fetchone()
+                if row and row[0] is not None:
+                    sent_at = row[0]
+                    break
+            time.sleep(1.0)
 
-    # Assert every field is in the allow-list
-    fields = {r["field"] for r in totals_rows}
-    unknown_fields = fields - ALLOWED_D1_FIELDS
-    assert not unknown_fields, f"Unexpected fields in D1 totals: {unknown_fields}"
+        assert sent_at is not None, f"Timed out waiting for local sent_at for week {week}"
 
-    # Assert seen holds only report_id and expires columns
-    seen_info = run_d1_sql("PRAGMA table_info(seen)")
-    seen_cols = {col["name"] for col in seen_info}
-    assert seen_cols == {"report_id", "expires"}, f"Unexpected seen schema: {seen_cols}"
+        # Poll up to 60 s for D1 rows to reflect the marker and reports/all
+        deadline_d1 = time.monotonic() + 60.0
+        totals_rows: list[dict[str, Any]] = []
+        while time.monotonic() < deadline_d1:
+            totals_rows = run_d1_sql(f"SELECT field, key, n FROM totals WHERE week = '{week}'")
+            has_marker = any(
+                r.get("field") == "commands" and r.get("key") == f"cli|{marker}"
+                for r in totals_rows
+            )
+            has_report = any(
+                r.get("field") == "reports" and r.get("key") == "all" for r in totals_rows
+            )
+            if has_marker and has_report:
+                break
+            time.sleep(1.0)
 
-    # Assert no value anywhere in totals/seen contains public IP
-    seen_rows = run_d1_sql("SELECT report_id, expires FROM seen")
-    ip_regex = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-    all_values: list[str] = []
-    for r in totals_rows:
-        all_values.extend(str(v) for v in r.values())
-    for r in seen_rows:
-        all_values.extend(str(v) for v in r.values())
+        # Assert D1 totals
+        marker_row = [
+            r
+            for r in totals_rows
+            if r.get("field") == "commands" and r.get("key") == f"cli|{marker}"
+        ]
+        report_row = [
+            r for r in totals_rows if r.get("field") == "reports" and r.get("key") == "all"
+        ]
+        assert marker_row and marker_row[0].get("n") == 1, (
+            f"Missing marker command key cli|{marker}: {totals_rows}"
+        )
+        assert report_row and report_row[0].get("n") == 1, f"Missing reports/all: {totals_rows}"
 
-    if public_ip:
-        for val in all_values:
-            assert public_ip not in val, f"Public IP {public_ip} leaked into D1: {val}"
-    else:
-        for val in all_values:
-            assert not ip_regex.search(val), f"IP address format detected in D1: {val}"
+        # Assert every field is in the allow-list
+        fields = {r["field"] for r in totals_rows}
+        unknown_fields = fields - ALLOWED_D1_FIELDS
+        assert not unknown_fields, f"Unexpected fields in D1 totals: {unknown_fields}"
+
+        # Assert seen holds only report_id and expires columns
+        seen_info = run_d1_sql("PRAGMA table_info(seen)")
+        seen_cols = {col["name"] for col in seen_info}
+        assert seen_cols == {"report_id", "expires"}, f"Unexpected seen schema: {seen_cols}"
+
+        # Assert no value anywhere in totals/seen contains public IP
+        seen_rows = run_d1_sql("SELECT report_id, expires FROM seen")
+        ip_regex = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+        all_values: list[str] = []
+        for r in totals_rows:
+            all_values.extend(str(v) for v in r.values())
+        for r in seen_rows:
+            all_values.extend(str(v) for v in r.values())
+
+        if public_ip:
+            for val in all_values:
+                assert public_ip not in val, f"Public IP {public_ip} leaked into D1: {val}"
+        else:
+            for val in all_values:
+                assert not ip_regex.search(val), f"IP address format detected in D1: {val}"
 
 
 @requires_live
@@ -644,58 +728,66 @@ def test_eu_region_needs_consent_then_uploads(
     """EU timezone blocks the report until telemetry on persists explicit consent."""
     home, env = clean_home
     env["TZ"] = "Europe/Paris"
-    week, marker = seed_telemetry_db(installed_gflow, home, env, with_notice=True)
+    week, marker = seed_telemetry_db(installed_gflow, home, env, with_notice=True, weeks_ago=42)
     command = [str(installed_gflow.gflow), "data", "list", "projects", "--json"]
 
-    first = subprocess.run(command, cwd=str(home), env=env, capture_output=True, text=True)
-    assert first.returncode == 0, first.stderr
-    time.sleep(20)
-    with sqlite3.connect(home / "telemetry.db") as con:
-        row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
-        assert row is None or row[0] is None, f"Unexpected upload before consent: {row}"
-    no_consent_rows = run_d1_sql(
-        f"SELECT count(*) AS count FROM totals WHERE week = '{week}' AND key = 'cli|{marker}'"
-    )
-    assert no_consent_rows and no_consent_rows[0].get("count") == 0
-
-    on = subprocess.run(
-        [str(installed_gflow.gflow), "telemetry", "on"],
-        cwd=str(home),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert on.returncode == 0, on.stderr
-    assert (home / "telemetry.consent").exists()
-    with sqlite3.connect(home / "telemetry.db") as con:
-        con.execute("DELETE FROM meta WHERE key = 'last_attempt'")
-
-    second = subprocess.run(command, cwd=str(home), env=env, capture_output=True, text=True)
-    assert second.returncode == 0, second.stderr
-    deadline = time.monotonic() + 60.0
-    sent_at: str | None = None
-    while time.monotonic() < deadline:
+    with exact_d1_cleanup(week, home):
+        first = subprocess.run(command, cwd=str(home), env=env, capture_output=True, text=True)
+        assert first.returncode == 0, first.stderr
+        time.sleep(20)
         with sqlite3.connect(home / "telemetry.db") as con:
             row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
-            if row and row[0]:
-                sent_at = row[0]
-                break
-        time.sleep(1.0)
-    assert sent_at is not None, f"Timed out waiting for consented upload for week {week}"
+            assert row is None or row[0] is None, f"Unexpected upload before consent: {row}"
+        no_consent_rows = run_d1_sql(
+            f"SELECT count(*) AS count FROM totals WHERE week = '{week}' AND key = 'cli|{marker}'"
+        )
+        assert no_consent_rows and no_consent_rows[0].get("count") == 0
 
-    deadline_d1 = time.monotonic() + 60.0
-    rows: list[dict[str, Any]] = []
-    while time.monotonic() < deadline_d1:
-        rows = run_d1_sql(f"SELECT field, key, n FROM totals WHERE week = '{week}'")
-        if any(
-            row.get("field") == "commands" and row.get("key") == f"cli|{marker}" for row in rows
-        ):
-            break
-        time.sleep(1.0)
-    marker_row = [
-        row for row in rows if row.get("field") == "commands" and row.get("key") == f"cli|{marker}"
-    ]
-    assert marker_row and marker_row[0].get("n") == 1, f"Missing consented report: {rows}"
+        on = subprocess.run(
+            [str(installed_gflow.gflow), "telemetry", "on"],
+            cwd=str(home),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert on.returncode == 0, on.stderr
+        assert (home / "telemetry.consent").exists()
+        with sqlite3.connect(home / "telemetry.db") as con:
+            con.execute("DELETE FROM meta WHERE key = 'last_attempt'")
+            notice_at_row = con.execute(
+                "SELECT value FROM meta WHERE key = 'notice_seen_at'"
+            ).fetchone()
+            if notice_at_row:
+                (home / "telemetry.consent").write_text(notice_at_row[0], encoding="utf-8")
+
+        second = subprocess.run(command, cwd=str(home), env=env, capture_output=True, text=True)
+        assert second.returncode == 0, second.stderr
+        deadline = time.monotonic() + 60.0
+        sent_at: str | None = None
+        while time.monotonic() < deadline:
+            with sqlite3.connect(home / "telemetry.db") as con:
+                row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
+                if row and row[0]:
+                    sent_at = row[0]
+                    break
+            time.sleep(1.0)
+        assert sent_at is not None, f"Timed out waiting for consented upload for week {week}"
+
+        deadline_d1 = time.monotonic() + 60.0
+        rows: list[dict[str, Any]] = []
+        while time.monotonic() < deadline_d1:
+            rows = run_d1_sql(f"SELECT field, key, n FROM totals WHERE week = '{week}'")
+            if any(
+                row.get("field") == "commands" and row.get("key") == f"cli|{marker}" for row in rows
+            ):
+                break
+            time.sleep(1.0)
+        marker_row = [
+            row
+            for row in rows
+            if row.get("field") == "commands" and row.get("key") == f"cli|{marker}"
+        ]
+        assert marker_row and marker_row[0].get("n") == 1, f"Missing consented report: {rows}"
 
 
 @requires_live
@@ -705,40 +797,41 @@ def test_telemetry_off_stops_the_next_upload(
 ) -> None:
     """'gflow telemetry off' prevents subsequent uploads."""
     home, env = clean_home
-    week, marker = seed_telemetry_db(installed_gflow, home, env, with_notice=True)
+    week, marker = seed_telemetry_db(installed_gflow, home, env, with_notice=True, weeks_ago=44)
 
-    off_res = subprocess.run(
-        [str(installed_gflow.gflow), "telemetry", "off"],
-        cwd=str(home),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert off_res.returncode == 0
+    with exact_d1_cleanup(week, home):
+        off_res = subprocess.run(
+            [str(installed_gflow.gflow), "telemetry", "off"],
+            cwd=str(home),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert off_res.returncode == 0
 
-    run_res = subprocess.run(
-        [str(installed_gflow.gflow), "data", "list", "projects", "--json"],
-        cwd=str(home),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert run_res.returncode == 0
+        run_res = subprocess.run(
+            [str(installed_gflow.gflow), "data", "list", "projects", "--json"],
+            cwd=str(home),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert run_res.returncode == 0
 
-    time.sleep(20)
+        time.sleep(20)
 
-    with sqlite3.connect(home / "telemetry.db") as con:
-        meta = dict(con.execute("SELECT key, value FROM meta"))
-        assert "last_attempt" not in meta
-        row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
-        assert row is None or row[0] is None, f"Expected sent_at NULL, got {row}"
+        with sqlite3.connect(home / "telemetry.db") as con:
+            meta = dict(con.execute("SELECT key, value FROM meta"))
+            assert "last_attempt" not in meta
+            row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
+            assert row is None or row[0] is None, f"Expected sent_at NULL, got {row}"
 
-    d1_rows = run_d1_sql(
-        f"SELECT count(*) AS count FROM totals WHERE week = '{week}' AND key = 'cli|{marker}'"
-    )
-    assert d1_rows and d1_rows[0].get("count") == 0, (
-        f"Marker landed in D1 despite opt-out: {d1_rows}"
-    )
+        d1_rows = run_d1_sql(
+            f"SELECT count(*) AS count FROM totals WHERE week = '{week}' AND key = 'cli|{marker}'"
+        )
+        assert d1_rows and d1_rows[0].get("count") == 0, (
+            f"Marker landed in D1 despite opt-out: {d1_rows}"
+        )
 
 
 @requires_live
@@ -748,32 +841,33 @@ def test_do_not_track_stops_the_upload(
 ) -> None:
     """DO_NOT_TRACK=1 stops the upload."""
     home, env = clean_home
-    week, marker = seed_telemetry_db(installed_gflow, home, env, with_notice=True)
+    week, marker = seed_telemetry_db(installed_gflow, home, env, with_notice=True, weeks_ago=46)
 
-    env["DO_NOT_TRACK"] = "1"
-    run_res = subprocess.run(
-        [str(installed_gflow.gflow), "data", "list", "projects", "--json"],
-        cwd=str(home),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert run_res.returncode == 0
+    with exact_d1_cleanup(week, home):
+        env["DO_NOT_TRACK"] = "1"
+        run_res = subprocess.run(
+            [str(installed_gflow.gflow), "data", "list", "projects", "--json"],
+            cwd=str(home),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert run_res.returncode == 0
 
-    time.sleep(20)
+        time.sleep(20)
 
-    with sqlite3.connect(home / "telemetry.db") as con:
-        meta = dict(con.execute("SELECT key, value FROM meta"))
-        assert "last_attempt" not in meta
-        row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
-        assert row is None or row[0] is None, f"Expected sent_at NULL, got {row}"
+        with sqlite3.connect(home / "telemetry.db") as con:
+            meta = dict(con.execute("SELECT key, value FROM meta"))
+            assert "last_attempt" not in meta
+            row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
+            assert row is None or row[0] is None, f"Expected sent_at NULL, got {row}"
 
-    d1_rows = run_d1_sql(
-        f"SELECT count(*) AS count FROM totals WHERE week = '{week}' AND key = 'cli|{marker}'"
-    )
-    assert d1_rows and d1_rows[0].get("count") == 0, (
-        f"Marker landed in D1 despite DO_NOT_TRACK: {d1_rows}"
-    )
+        d1_rows = run_d1_sql(
+            f"SELECT count(*) AS count FROM totals WHERE week = '{week}' AND key = 'cli|{marker}'"
+        )
+        assert d1_rows and d1_rows[0].get("count") == 0, (
+            f"Marker landed in D1 despite DO_NOT_TRACK: {d1_rows}"
+        )
 
 
 def test_410_stops_the_client_for_good(
@@ -783,7 +877,7 @@ def test_410_stops_the_client_for_good(
 ) -> None:
     """A local stopped Worker disables upload and the client sends no later week."""
     home, env = clean_home
-    week1, _ = seed_telemetry_db(installed_gflow, home, env, with_notice=True, weeks_ago=55)
+    week1, _ = seed_telemetry_db(installed_gflow, home, env, with_notice=True, weeks_ago=48)
     with stopped_local_worker(tmp_path) as (endpoint, log_path):
         env = _endpoint_test_env(home, env, endpoint)
         res = subprocess.run(
@@ -815,7 +909,7 @@ def test_410_stops_the_client_for_good(
         posts_after_410 = len(re.findall(r"POST\s+/v1/report", worker_log))
         assert posts_after_410 >= 1, f"Local Worker received no report POST:\n{worker_log}"
 
-        week2, _ = seed_telemetry_db(installed_gflow, home, env, with_notice=True, weeks_ago=56)
+        week2, _ = seed_telemetry_db(installed_gflow, home, env, with_notice=True, weeks_ago=49)
         with sqlite3.connect(home / "telemetry.db") as con:
             con.execute("DELETE FROM meta WHERE key = 'last_attempt'")
 
