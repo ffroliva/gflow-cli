@@ -4,9 +4,9 @@ import sqlite3
 import sys
 from collections.abc import Iterator
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 
-import click
 import pytest
 from click.testing import CliRunner
 
@@ -198,7 +198,8 @@ def test_on_and_off_persist_consent_only_in_consent_region(
     assert result.exit_code == 0, result.output
     assert "Usage telemetry is on." in result.output
     assert not (home / "telemetry.off").exists()
-    assert (home / "telemetry.consent").exists()
+    consent_at = datetime.fromisoformat((home / telemetry.CONSENT_FILE).read_text(encoding="utf-8"))
+    assert consent_at.tzinfo == UTC
 
     result = CliRunner().invoke(main, ["telemetry", "off"])
     assert result.exit_code == 0, result.output

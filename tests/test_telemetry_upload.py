@@ -189,6 +189,25 @@ def test_weeks_before_consent_are_never_eligible_after_consent(
     assert telemetry_upload.next_due_week(datetime.now(UTC)) is None
 
 
+@pytest.mark.parametrize("consent_text", [None, "not-an-iso-timestamp"])
+def test_missing_or_garbled_consent_never_eligibilizes_old_weeks(
+    monkeypatch: pytest.MonkeyPatch, _home: Path, consent_text: str | None
+) -> None:
+    from gflow_cli import telemetry_upload
+
+    start = _week_start()
+    _seed_week(
+        _home,
+        _week_id(start),
+        start=start,
+        notice_at=start - timedelta(weeks=1),
+    )
+    monkeypatch.setattr(telemetry, "consent_region", lambda: True)
+    if consent_text is not None:
+        (_home / telemetry.CONSENT_FILE).write_text(consent_text, encoding="utf-8")
+    assert telemetry_upload.next_due_week(datetime.now(UTC)) is None
+
+
 def test_week_is_not_due_before_its_random_delay(
     monkeypatch: pytest.MonkeyPatch, _home: Path
 ) -> None:
@@ -367,6 +386,7 @@ def test_transient_failure_keeps_the_week(failure: int | str, _home: Path) -> No
         finally:
             monkeypatch.undo()
     assert _report(_home, week)[2] is None
+    assert f"retry_after:{week}" in _meta(_home)
 
 
 def test_failed_week_backoff_allows_the_next_week(
@@ -582,11 +602,11 @@ def test_child_safe_path_does_not_import_json_from_home(
         f"Path({str(marker)!r}).write_text(json.__file__, encoding='utf-8')"
     )
     real_popen = subprocess.Popen
+    launch: dict[str, Any] = {}
 
     def spawn(args: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
-        assert args == [sys.executable, "-P", "-m", "gflow_cli.telemetry_upload"]
-        assert kwargs["env"]["GFLOW_CLI_HOME"] == str(_home.resolve())
-        assert kwargs["cwd"] == os.getcwd()
+        launch["args"] = list(args)
+        launch["kwargs"] = kwargs
         command = list(args)
         command[command.index("-m")] = "-c"
         command[command.index("gflow_cli.telemetry_upload")] = code
@@ -597,6 +617,9 @@ def test_child_safe_path_does_not_import_json_from_home(
     monkeypatch.setattr(telemetry_upload.subprocess, "Popen", spawn)
     monkeypatch.setattr(telemetry, "uploads_enabled", lambda: True)
     telemetry_upload.maybe_upload()
+    assert launch["args"] == [sys.executable, "-P", "-m", "gflow_cli.telemetry_upload"]
+    assert launch["kwargs"]["env"]["GFLOW_CLI_HOME"] == str(_home.resolve())
+    assert launch["kwargs"]["cwd"] == os.getcwd()
     assert marker.exists()
     assert Path(marker.read_text(encoding="utf-8")).resolve() != (_home / "json.py").resolve()
 
