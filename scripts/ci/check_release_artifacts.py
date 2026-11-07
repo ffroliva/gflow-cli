@@ -8,7 +8,9 @@ Enforces (for the version in pyproject.toml):
   4. ``docs/LIVE_VERIFICATION_v<version>.md`` exists (the step-4b gate),
   5. ``docs/INDEX.md`` references that live-verification doc,
   6. ``docs/PROJECT_STATUS.md``'s "## Current release" section names this
-     version (added 2026-09-02 — see ``_project_status_violations``).
+     version (added 2026-09-02 — see ``_project_status_violations``),
+  7. every CHANGELOG section already released on ``origin/main`` is unchanged
+     (added 2026-11-07 — see ``_released_section_violations``).
 
 Run by the main-base guard workflow on PRs targeting ``main`` (release PRs).
 Born 2026-07-17: v0.38.1 was initially cut WITHOUT /gflow:release — the missing
@@ -23,11 +25,12 @@ Exit 0 = all artifacts present; exit 1 = violations (each printed).
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 
-def find_violations(root: Path) -> list[str]:
+def find_violations(root: Path, released_changelog: str | None = None) -> list[str]:
     """Return human-readable violations for the release version in pyproject."""
     violations: list[str] = []
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
@@ -63,7 +66,48 @@ def find_violations(root: Path) -> list[str]:
 
     violations.extend(_project_status_violations(root, version))
     violations.extend(_not_verified_violations(root, version))
+    if released_changelog is not None:
+        violations.extend(_released_section_violations(changelog, released_changelog))
     return violations
+
+
+_SECTION_RE = re.compile(
+    r"^## \[(\d[^\]]*)\][^\n]*\n(.*?)(?=^## \[|^\[[^\]]+\]: |\Z)", re.M | re.S
+)
+
+
+def _sections(changelog: str) -> dict[str, str]:
+    text = changelog.replace("\r\n", "\n")
+    return {m.group(1): m.group(0).strip() for m in _SECTION_RE.finditer(text)}
+
+
+def _released_section_violations(changelog: str, released: str) -> list[str]:
+    """A released section is history: a release branch may add sections, never rewrite one.
+
+    #1164: merging develop into a feature branch replaced the released ``[0.94.0]`` entry with
+    the next release's notes; nothing noticed until the next release cut.
+    """
+    current = _sections(changelog)
+    out: list[str] = []
+    for version, body in _sections(released).items():
+        if version not in current:
+            out.append(f"CHANGELOG.md: released section [{version}] is missing (it exists on main)")
+        elif current[version] != body:
+            out.append(f"CHANGELOG.md: released section [{version}] differs from main — restore it")
+    return out
+
+
+def _released_changelog(root: Path) -> str | None:
+    """``origin/main:CHANGELOG.md``, or None when that ref is not available locally."""
+    try:
+        out = subprocess.run(  # noqa: S603
+            ["git", "-C", str(root), "show", "origin/main:CHANGELOG.md"],  # noqa: S607
+            capture_output=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return out.stdout.decode("utf-8")
 
 
 #: Words that name a real external blocker — something the author cannot remove:
@@ -164,7 +208,10 @@ def _project_status_violations(root: Path, version: str) -> list[str]:
 
 def main() -> int:
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[2]
-    violations = find_violations(root)
+    released = _released_changelog(root)
+    if released is None:
+        print("::notice::origin/main not available — released CHANGELOG sections not compared.")
+    violations = find_violations(root, released)
     if violations:
         for v in violations:
             print(f"::error title=Release protocol violation::{v}")

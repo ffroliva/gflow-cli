@@ -75,6 +75,7 @@ def test_the_wheel_carries_the_pages_and_only_the_pages(wheel: Path) -> None:
         assert len(shipped) == len(list((_REPO / "docs").glob("*.md")))
 
 
+@pytest.mark.needs_network  # `uv pip install` resolves the wheel's dependencies from the index
 def test_docs_works_from_an_installed_wheel_with_no_checkout(wheel: Path, tmp_path: Path) -> None:
     """Install into a scratch venv and run the command with the repository nowhere near.
 
