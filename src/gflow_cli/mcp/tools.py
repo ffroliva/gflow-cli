@@ -1330,10 +1330,10 @@ async def gflow_generate_video(  # NOSONAR
             4/6/8 on the Veo 3.1 models, 4/6/8/10 on ``omni_flash``; whether the
             account's cohort renders the control is decided pre-submit at zero cost.
             When omitted, Flow's per-model default applies. On the migrated
-            flow.google.com host an 'r2v' request accepts only 8 and pins it when
-            omitted — Flow offers reference-to-video at its base tier alone, and at
-            4 or 6 it drops the references and bills a text-to-video clip instead of
-            refusing; any other value returns the exit-11-equivalent envelope.
+            flow.google.com host an 'r2v' request with explicit omni_flash accepts
+            4/6/8/10. Veo or an unspecified model accepts only 8: measured shorter
+            Veo requests dropped references and billed text-to-video instead.
+            Omitted r2v duration still pins 8 to avoid inherited editor settings.
         resolution: Optional video resolution — '360p' or '720p' (omni-flash only,
             mirrors the CLI ``--resolution``). When omitted, Flow's default applies. On any
             other model, or on the labs editor, the job fails pre-submit with the

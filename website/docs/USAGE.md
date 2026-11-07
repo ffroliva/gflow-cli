@@ -869,11 +869,12 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 > verified before submit; an id without a name exits 36, and a video `@Name` exits 29
 > because the character catalog cannot be read on that host.
 >
-> **`--duration` is refused on this path (exit 11).** The host offers reference-to-video
-> only at its base 8s tier. At 4s or 6s it does not refuse — it drops the references,
-> types their uploaded *names* into the prompt and bills a text-to-video clip (measured at
-> zero credits, 2026-09-06). Because the editor remembers the last duration used, an r2v
-> run pins 8s itself rather than inheriting it. Pass no `--duration`, or `--duration 8`.
+> **Explicit `--model omni-flash` accepts `--duration 4/6/8/10`.** Route-blocked
+> requests measured on 2026-11-07 retained the character entity with an
+> `abra_r2v_<duration>s_360p` model key. Veo and unspecified models retain the 8s
+> safety policy (exit 11 for other values): shorter Veo requests measured on
+> 2026-09-06 dropped references and submitted text-to-video instead. Because the
+> editor remembers its last duration, omitted r2v duration still pins 8s.
 
 ### Sharing one project across calls
 

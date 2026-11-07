@@ -183,9 +183,10 @@ async def _probe(
                 const url = (input && input.url) || input;
                 const body = (init && init.body) || (input && input.body) || null;
                 if (isTarget(url)) {
-                    window.__captured.push({via: 'fetch', url: String(url),
-                                            body: body ? String(body) : null});
-                    return Promise.reject(new Error('blocked by probe'));
+                    return (body ? new Response(body).text() : Promise.resolve('')).then(text => {
+                        window.__captured.push({via: 'fetch', url: String(url), body: text});
+                        throw new Error('blocked by probe');
+                    });
                 }
                 return of.apply(this, arguments);
             };
