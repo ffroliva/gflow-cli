@@ -23,7 +23,7 @@ import pytest
 import structlog
 from click.testing import CliRunner
 
-from gflow_cli.api.transports.migrated_composer import MigratedComposer
+from gflow_cli.api.transports.migrated_composer import AGENT_ONLY_RELOADS, MigratedComposer
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
 
@@ -72,8 +72,8 @@ def _assert_reloaded_then_uploaded(
     verdicts: list[str], events: Sequence[Mapping[str, Any]]
 ) -> None:
     names = [str(e.get("event")) for e in events]
-    assert verdicts[:2] == ["agent_only", "classic"], f"forced, then the live page: {verdicts}"
-    assert names.count("migrated.agent_only_reload") == 1, names
+    assert verdicts[0] == "agent_only" and "classic" in verdicts, f"forced, then live: {verdicts}"
+    assert 1 <= names.count("migrated.agent_only_reload") <= AGENT_ONLY_RELOADS, names
     assert "migrated.reference_uploaded" in names, f"the upload never ran: {names}"
 
 

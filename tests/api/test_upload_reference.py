@@ -155,4 +155,25 @@ async def test_a_failed_reload_still_refuses_with_exit_36(
     )
     with pytest.raises(FlowHostMigratedError, match="image-to-image"):
         await t.upload_reference(project_id="p", path=tmp_path / "photo.png")
-    assert page.reload.await_count == 1
+    assert page.reload.await_count == migrated_composer.AGENT_ONLY_RELOADS  # each spends one
+
+
+async def test_a_slow_remount_after_a_reload_spends_the_attempt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CodeRabbit on #1177: drift on a re-check is not exit 23; the next reload still runs."""
+    from gflow_cli.errors import UiSelectorDriftError
+
+    t = _transport("https://flow.google.com/project/p", monkeypatch)
+    monkeypatch.setattr(migrated_composer, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    page = _ReloadingPage("https://flow.google.com/project/p")
+    t._page = page  # type: ignore[assignment]  # noqa: SLF001
+    drift = UiSelectorDriftError(detail="slow mount")
+    monkeypatch.setattr(
+        migrated_composer.MigratedComposer,
+        "ensure_editor",
+        AsyncMock(side_effect=["agent_only", drift, "classic"]),
+    )
+    ref = await t.upload_reference(project_id="p", path=tmp_path / "photo.png")
+    assert ref is not None and ref.name == "media-1"
+    assert page.reload.await_count == 2

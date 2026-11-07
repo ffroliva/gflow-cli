@@ -1436,11 +1436,11 @@ class MigratedComposer:
             await asyncio.sleep(AGENT_ONLY_RELOAD_WAIT_S)
             try:
                 await page.reload(wait_until="domcontentloaded", timeout=45_000)
-            except PlaywrightError as exc:
-                # A failed reload changes nothing: refuse as before (exit 36), not with its error.
+                kind = await self.ensure_editor(page, project_id)
+            except (PlaywrightError, UiSelectorDriftError) as exc:
+                # A reload or re-check that fails spends its attempt; real drift already
+                # surfaced on the first check above, so this ends in the usual exit 36.
                 log.warning("migrated.agent_only_reload_failed", error=str(exc)[:200])
-                break
-            kind = await self.ensure_editor(page, project_id)
         return kind
 
     async def ensure_editor(
