@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import secrets
 import sqlite3
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
-from urllib.request import HTTPRedirectHandler
+from typing import Any
 
 from gflow_cli import __version__, telemetry
 from gflow_cli.config import _resolve_home  # pyright: ignore[reportPrivateUsage]
@@ -19,11 +16,6 @@ from gflow_cli.config import _resolve_home  # pyright: ignore[reportPrivateUsage
 _ENDPOINT = "https://gflow-telemetry.ffroliva.workers.dev/v1/report"
 _WEEK_SECONDS = 7 * 24 * 60 * 60
 _DAY = timedelta(days=1)
-
-
-class _NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, *_: object, **__: object) -> None:
-        return None
 
 
 def _week_start(week: str) -> datetime:
@@ -105,48 +97,51 @@ def maybe_upload() -> None:
         if not (home / "telemetry.db").exists():
             return
         now = datetime.now(UTC)
-        with closing(telemetry._connect(home)) as con, con:  # pyright: ignore[reportPrivateUsage]
-            con.execute("BEGIN IMMEDIATE")
-            meta = dict(con.execute("SELECT key, value FROM meta"))
-            last = meta.get("last_attempt")
-            if last:
-                last_at = datetime.fromisoformat(last)
+        with closing(telemetry._connect(home)) as con:  # pyright: ignore[reportPrivateUsage]
+            row = con.execute("SELECT value FROM meta WHERE key = 'last_attempt'").fetchone()
+            if row:
+                last_at = datetime.fromisoformat(str(row[0]))
                 if last_at.tzinfo is None:
                     last_at = last_at.replace(tzinfo=UTC)
                 if last_at <= now and now - last_at < _DAY:
                     return
-            week = _next_due_week(now, con)
-            if week is None:
-                return
-            con.execute(
-                "INSERT OR REPLACE INTO meta VALUES ('last_attempt', ?)", (now.isoformat(),)
-            )
+            with con:
+                con.execute("BEGIN IMMEDIATE")
+                row = con.execute("SELECT value FROM meta WHERE key = 'last_attempt'").fetchone()
+                if row:
+                    last_at = datetime.fromisoformat(str(row[0]))
+                    if last_at.tzinfo is None:
+                        last_at = last_at.replace(tzinfo=UTC)
+                    if last_at <= now and now - last_at < _DAY:
+                        return
+                week = _next_due_week(now, con)
+                if week is None:
+                    return
+                con.execute(
+                    "INSERT OR REPLACE INTO meta VALUES ('last_attempt', ?)", (now.isoformat(),)
+                )
 
         command = [sys.executable, "-m", "gflow_cli.telemetry_upload"]
-        if sys.platform == "win32":
-            subprocess.Popen(  # noqa: S603 - fixed module command with the current interpreter
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                close_fds=True,
-                cwd=str(home),
-                creationflags=(
+        kwargs: dict[str, Any] = (
+            {
+                "creationflags": (
                     subprocess.CREATE_NO_WINDOW
                     | subprocess.DETACHED_PROCESS
                     | subprocess.CREATE_NEW_PROCESS_GROUP
-                ),
-            )
-        else:
-            subprocess.Popen(  # noqa: S603 - fixed module command with the current interpreter
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                close_fds=True,
-                cwd=str(home),
-                start_new_session=True,
-            )
+                )
+            }
+            if sys.platform == "win32"
+            else {"start_new_session": True}
+        )
+        subprocess.Popen(  # noqa: S603 - fixed module command with the current interpreter
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            cwd=str(home),
+            **kwargs,
+        )
     except Exception:
         return
 
@@ -154,6 +149,15 @@ def maybe_upload() -> None:
 def send(week: str, *, endpoint: str = _ENDPOINT) -> None:
     """POST exactly the allow-listed report and apply the endpoint's reply."""
     try:
+        import json
+        import urllib.error
+        import urllib.request
+        from urllib.request import HTTPRedirectHandler
+
+        class _NoRedirect(HTTPRedirectHandler):
+            def redirect_request(self, *_: object, **__: object) -> None:
+                return None
+
         report_id = telemetry.stored_report_id(week)
         if report_id is None:
             return

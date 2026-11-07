@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.request
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
@@ -312,9 +313,7 @@ def test_transient_failure_keeps_the_week(failure: int | str, _home: Path) -> No
                 raise urllib.error.URLError(error)
 
         monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.setattr(
-            telemetry_upload.urllib.request, "build_opener", lambda *_: BrokenOpener()
-        )
+        monkeypatch.setattr(urllib.request, "build_opener", lambda *_: BrokenOpener())
         try:
             telemetry_upload.send(week, endpoint="http://127.0.0.1:1/report")
         finally:
@@ -367,7 +366,7 @@ def test_body_is_never_read(monkeypatch: pytest.MonkeyPatch, _home: Path) -> Non
         def open(self, *_: object, **__: object) -> Response:
             return Response()
 
-    monkeypatch.setattr(telemetry_upload.urllib.request, "build_opener", lambda *_: Opener())
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_: Opener())
     telemetry_upload.send(week, endpoint="http://127.0.0.1/report")
     assert _report(_home, week)[2] is not None
 
@@ -573,3 +572,45 @@ def test_recent_attempt_does_not_open_per_week_connections(
     monkeypatch.setattr(sqlite3, "connect", count_connect)
     telemetry_upload.maybe_upload()
     assert calls <= 2
+
+
+def test_importing_telemetry_upload_alone_does_not_import_urllib_request() -> None:
+    res = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import gflow_cli.telemetry_upload; print('urllib.request' in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert res.stdout.strip() == "False"
+
+
+def test_recent_attempt_does_not_execute_begin_immediate(
+    monkeypatch: pytest.MonkeyPatch, _home: Path
+) -> None:
+    from gflow_cli import telemetry_upload
+
+    _allow_upload(monkeypatch)
+    week = _week_id(_week_start())
+    _seed_week(_home, week)
+    now = datetime.now(UTC)
+    with closing(telemetry._connect(_home)) as con, con:  # pyright: ignore[reportPrivateUsage]
+        con.execute(
+            "INSERT OR REPLACE INTO meta VALUES ('last_attempt', ?)",
+            (now.isoformat(),),
+        )
+
+    executed: list[str] = []
+    real_connect = telemetry._connect
+
+    def spy_connect(home: Path) -> sqlite3.Connection:
+        con = real_connect(home)
+        con.set_trace_callback(executed.append)
+        return con
+
+    monkeypatch.setattr(telemetry, "_connect", spy_connect)
+    telemetry_upload.maybe_upload()
+    assert not any("BEGIN IMMEDIATE" in stmt.upper() for stmt in executed)
