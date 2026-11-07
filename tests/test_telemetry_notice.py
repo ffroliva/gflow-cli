@@ -80,6 +80,23 @@ def test_notice_goes_to_stderr_never_stdout(
         ("Europe/London", False),
         ("America/New_York", False),
         ("Atlantic/Canary", True),
+        ("America/Cayenne", True),
+        ("America/Guadeloupe", True),
+        ("America/Martinique", True),
+        ("America/Marigot", True),
+        ("America/St_Barthelemy", True),
+        ("Indian/Reunion", True),
+        ("Indian/Mayotte", True),
+        ("CET", True),
+        ("EET", True),
+        ("MET", True),
+        ("WET", True),
+        ("Poland", True),
+        ("Portugal", True),
+        ("Eire", True),
+        ("Iceland", True),
+        ("Atlantic/Faeroe", False),
+        ("Europe/Belgrade", False),
     ],
 )
 def test_consent_region_from_iana_timezone(
@@ -87,6 +104,24 @@ def test_consent_region_from_iana_timezone(
 ) -> None:
     monkeypatch.setenv("TZ", zone)
     assert telemetry.consent_region() is expected
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("/usr/share/zoneinfo/Europe/Zagreb", "Europe/Zagreb"),
+        ("/usr/share/zoneinfo/posix/Europe/Zagreb", "Europe/Zagreb"),
+        ("/usr/share/zoneinfo/right/Atlantic/Reykjavik", "Atlantic/Reykjavik"),
+    ],
+)
+def test_posix_timezone_reads_the_link_without_resolving(
+    target: str, expected: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(telemetry.os, "readlink", lambda path: calls.append(path) or target)
+    monkeypatch.setattr(Path, "resolve", lambda *_args, **_kwargs: pytest.fail("must not resolve"))
+    assert telemetry._posix_timezone_name() == expected
+    assert calls == ["/etc/localtime"]
 
 
 @pytest.mark.parametrize("zone", [None, ""])
