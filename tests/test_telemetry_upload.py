@@ -174,6 +174,21 @@ def test_weeks_before_the_notice_are_never_sent(_home: Path) -> None:
     assert _report(_home, week) is None
 
 
+def test_weeks_before_consent_are_never_eligible_after_consent(
+    monkeypatch: pytest.MonkeyPatch, _home: Path
+) -> None:
+    from gflow_cli import telemetry_upload
+
+    start = _week_start()
+    week = _week_id(start)
+    _seed_week(_home, week, start=start, notice_at=start - timedelta(weeks=1))
+    monkeypatch.setattr(telemetry, "consent_region", lambda: True)
+    (_home / telemetry.CONSENT_FILE).write_text(
+        (start + timedelta(days=3)).isoformat(), encoding="utf-8"
+    )
+    assert telemetry_upload.next_due_week(datetime.now(UTC)) is None
+
+
 def test_week_is_not_due_before_its_random_delay(
     monkeypatch: pytest.MonkeyPatch, _home: Path
 ) -> None:
@@ -239,7 +254,6 @@ def test_one_report_per_attempt_oldest_first(_home: Path) -> None:
 
 
 def test_204_marks_sent_and_keeps_rows(_home: Path) -> None:
-    from gflow_cli import telemetry_upload
 
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
@@ -252,7 +266,7 @@ def test_204_marks_sent_and_keeps_rows(_home: Path) -> None:
 def test_request_names_gflow_as_its_user_agent(_home: Path) -> None:
     # Cloudflare's edge answers 403 (error 1010) to the default "Python-urllib/3.x" agent, so a
     # report sent without our own agent never reaches the Worker (found by the live e2e).
-    from gflow_cli import __version__, telemetry_upload
+    from gflow_cli import __version__
 
     agents: list[str | None] = []
 
@@ -283,7 +297,6 @@ def test_request_names_gflow_as_its_user_agent(_home: Path) -> None:
 
 @pytest.mark.parametrize("status", [400, 413])
 def test_rejected_report_is_dropped_not_retried(status: int, _home: Path) -> None:
-    from gflow_cli import telemetry_upload
 
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
@@ -310,7 +323,6 @@ def test_429_waits_for_retry_after_plus_a_random_extra(
 
 @pytest.mark.parametrize("failure", [500, "timeout", "dns"])
 def test_transient_failure_keeps_the_week(failure: int | str, _home: Path) -> None:
-    from gflow_cli import telemetry_upload
 
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
@@ -336,7 +348,6 @@ def test_transient_failure_keeps_the_week(failure: int | str, _home: Path) -> No
 
 
 def test_410_stops_uploading_forever(_home: Path) -> None:
-    from gflow_cli import telemetry_upload
 
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
@@ -347,7 +358,6 @@ def test_410_stops_uploading_forever(_home: Path) -> None:
 
 
 def test_redirect_is_not_followed(_home: Path) -> None:
-    from gflow_cli import telemetry_upload
 
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
@@ -358,7 +368,6 @@ def test_redirect_is_not_followed(_home: Path) -> None:
 
 
 def test_body_is_never_read(monkeypatch: pytest.MonkeyPatch, _home: Path) -> None:
-    from gflow_cli import telemetry_upload
 
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
@@ -587,7 +596,6 @@ def test_report_survives_the_parent_exiting_at_once(_home: Path, tmp_path: Path)
 
 
 def test_send_body_equals_build_report_for_same_week(_home: Path) -> None:
-    from gflow_cli import telemetry_upload
 
     week = _week_id(_week_start())
     _seed_week(_home, week, due_at=datetime.now(UTC) - timedelta(days=1))
@@ -598,7 +606,6 @@ def test_send_body_equals_build_report_for_same_week(_home: Path) -> None:
 
 
 def test_send_without_stored_report_id_keeps_week(_home: Path) -> None:
-    from gflow_cli import telemetry_upload
 
     week = _week_id(_week_start())
     _seed_week(_home, week)
