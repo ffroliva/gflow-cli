@@ -233,6 +233,28 @@ def test_at_most_one_attempt_a_day(monkeypatch: pytest.MonkeyPatch, _home: Path)
     assert telemetry_upload.subprocess.Popen.call_count == 1
 
 
+def test_process_that_shows_notice_can_upload_a_later_eligible_week(
+    monkeypatch: pytest.MonkeyPatch, _home: Path
+) -> None:
+    from gflow_cli import telemetry_upload
+
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+    assert telemetry.maybe_show_notice()
+    monkeypatch.setattr(telemetry, "uploads_enabled", lambda: True)
+    start = _week_start(3)
+    week = _week_id(start)
+    _seed_week(_home, week, start=start, due_at=start + timedelta(days=7))
+    with closing(telemetry._connect(_home)) as con, con:  # pyright: ignore[reportPrivateUsage]
+        con.execute(
+            "UPDATE meta SET value = ? WHERE key = 'notice_seen_at'",
+            ((start - timedelta(seconds=1)).isoformat(),),
+        )
+    popen = Mock()
+    monkeypatch.setattr(telemetry_upload.subprocess, "Popen", popen)
+    telemetry_upload.maybe_upload()
+    popen.assert_called_once()
+
+
 def test_one_report_per_attempt_oldest_first(_home: Path) -> None:
     from gflow_cli import telemetry_upload
 
