@@ -1,7 +1,7 @@
 ---
 name: pr-council-review
 version: "2.4"
-description: Multi-dimensional LLM council review of an open PR (default) or a local feature branch (§ 8 branch mode, invoked via `/gflow:branch-review`). Five baseline dimensions (correctness, quality, security, tests, memory-hygiene) plus adaptive dimensions per surface (transports / data / CLI / docs / auth / BDD / scripts / release-gate). Each agent invokes specialized skills (security-review, code-review, verify) for its dimension. Reads files via `git show <sha>:<path>` to avoid stale-working-tree false positives. Cross-tool portable.
+description: Multi-dimensional LLM council review of an open PR (default) or a local feature branch (§ 8 branch mode, invoked via `/gflow:branch-review`). Five baseline dimensions (correctness, quality, security, tests, memory-hygiene) plus adaptive dimensions per surface (transports / data / CLI / docs / auth / BDD / scripts / release-gate). Each agent invokes specialized skills (security-review, code-review, verify) for its dimension. Gathers and triages bot reviews (CodeRabbit) as a required step. Reads files via `git show <sha>:<path>` to avoid stale-working-tree false positives. Cross-tool portable.
 ---
 
 # `pr-council-review` — PR Council Review skill
