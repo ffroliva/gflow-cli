@@ -234,7 +234,7 @@ def killed() -> str | None:
 
 
 def opted_out() -> bool:
-    """Not cached: a running MCP server must notice ``gflow telemetry off``.
+    """Not cached: a running MCP server must notice the ``<home>/telemetry.off`` sentinel.
 
     Fails closed: when the state cannot be read we cannot tell, so nothing is counted.
     """

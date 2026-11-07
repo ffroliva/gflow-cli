@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.94.0] — 2026-11-07
+
 ### Added
 
 - **Usage telemetry notice and weekly uploads**: `gflow telemetry on|off|status|show` controls
@@ -6849,7 +6851,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.93.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.94.0...HEAD
+[0.94.0]: https://github.com/ffroliva/gflow-cli/compare/v0.93.0...v0.94.0
 [0.93.0]: https://github.com/ffroliva/gflow-cli/compare/v0.92.1...v0.93.0
 [0.92.1]: https://github.com/ffroliva/gflow-cli/compare/v0.92.0...v0.92.1
 [0.92.0]: https://github.com/ffroliva/gflow-cli/compare/v0.91.0...v0.92.0

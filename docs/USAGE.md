@@ -48,6 +48,7 @@ Commands:
     media MEDIA_ID              Show stored record for a Flow media ID.
     list {projects,images,videos,profiles}  Browse the catalog.
     prune                       Remove stale local file entries.
+    stats                       Summarize local usage from counters and catalog (#1164).
 
   credits   Inspect current Flow balances (user / list).
 
@@ -58,6 +59,7 @@ Commands:
   movie     Multi-scene manifest pipeline (run / template).
   tools     Prompt-rewriting tools (list / show / run; also --tool on generation commands).
   run       Config-driven generation run.
+  telemetry Inspect local usage counters and telemetry status (status / show).
   mcp       MCP server over stdio (run) + client-config generator (setup).
   serve     MCP server over Streamable HTTP at /mcp.
   update    Upgrade gflow-cli in place via uv tool / pipx / pip (--check to only report).
@@ -1665,7 +1667,7 @@ to schedule or re-run after a partial failure.
 
 ## `gflow data stats`
 
-Summarize local usage statistics over the last N weeks (default: 12). Unreleased (#1164).
+Summarize local usage statistics over the last N weeks (default: 12). Shipped in v0.94.0 (#1164).
 
 ```text
 gflow data stats [--weeks N] [--json]
@@ -1681,6 +1683,20 @@ Displays:
 3. **Telemetry state**: The current telemetry state (`on` or `off`) and active kill switch, if any.
 
 Spends no credits and makes no network requests. Both `--json` and its MCP twin tool `gflow_usage_stats` emit the same structured output.
+
+## `gflow telemetry status | show`
+
+Inspect local weekly usage counters and telemetry status. Local-only: nothing leaves the machine in this version. Full privacy allowlists, local SQLite retention, and kill switches are documented in [TELEMETRY.md](TELEMETRY.md).
+
+```text
+gflow telemetry status [--json]
+gflow telemetry show
+```
+
+- **`gflow telemetry status`** — Displays what is counted locally, where the database lives (`<home>/telemetry.db`), and the active kill switch (`GFLOW_CLI_TELEMETRY`, `DO_NOT_TRACK`, or `<home>/telemetry.off`). Pass `--json` for a machine-readable summary.
+- **`gflow telemetry show`** — Prints the complete weekly usage report for the current ISO week as JSON to stdout (the report a future version would send after a first-run notice).
+
+Spends no credits and makes no network requests.
 
 ## `gflow doctor`
 
@@ -2345,4 +2361,5 @@ async with FlowApiClient(profile_dir=profile_dir) as client:
 - [CONFIGURATION](CONFIGURATION.md) — env vars, output paths, defaults
 - [AUTHENTICATION](AUTHENTICATION.md) — auth flow + multi-account
 - [ARCHITECTURE](ARCHITECTURE.md) — internal structure (for contributors)
+- [TELEMETRY](TELEMETRY.md) — local weekly usage metrics, telemetry.db, and kill switches
 - [PLAN](../PLAN.md) — what ships in which phase

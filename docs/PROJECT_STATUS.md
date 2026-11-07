@@ -4,6 +4,23 @@
 
 ## Current release
 
+**v0.94.0 — alpha.** Local usage counters and crash forensics — strictly local, nothing leaves the machine.
+
+**Local usage counters and sanitized crash fingerprinting (#1164).** Commands and MCP tool calls record
+weekly usage counts and sanitized crash call-sites into `<home>/telemetry.db`. Prompts, arguments,
+project IDs, media IDs, and account details are never stored.
+
+**Inspection and diagnostics (#1164).** `gflow telemetry status` and `gflow telemetry show` inspect
+local counter storage and payload reporting. `gflow data stats` (CLI) and its MCP twin `gflow_usage_stats`
+summarize local usage statistics across commands and catalogued generations over the last N weeks.
+
+**Strictly opt-out and local.** Telemetry is 100% on-device; no network socket is ever opened, no server
+endpoint exists. Standard kill switches `DO_NOT_TRACK=1` and `GFLOW_CLI_TELEMETRY=0` disable recording completely.
+
+Full ledger: [LIVE_VERIFICATION_v0.94.0](LIVE_VERIFICATION_v0.94.0.md).
+
+<details><summary>v0.93.0 — video delivery on flow.google.com, lost submit replies recovered</summary>
+
 **v0.93.0 — alpha.** Video delivery on flow.google.com works again.
 
 **A finished video reaches disk (#1153).** On text-to-video, Flow's status replies now carry the
@@ -20,6 +37,8 @@ a My Account request that cannot complete (#1144), an `@` mention that matches n
 longer risks a submit (#1143), and `nano21` is an image model alias (#1145).
 
 Full ledger: [LIVE_VERIFICATION_v0.93.0](LIVE_VERIFICATION_v0.93.0.md).
+
+</details>
 
 <details><summary>v0.92.1 — MCP generate-tool schema</summary>
 
@@ -741,6 +760,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Local usage counters, `gflow data stats` + `gflow_usage_stats`, `gflow telemetry status\|show` (#1164) | ✅ done (v0.94.0) |
 | A finished video is read through its own route after status replies began carrying a thumbnail link (#1153); a lost t2v submit reply is recovered (#1141) | ✅ done (v0.93.0) |
 | MCP `output` / `out_dir` confined to the output dir, `profile` a plain name (GHSA-hqfj-4jww-76f2); cross-filesystem `-o` (#1114) | ✅ done (v0.92.0) |
 | MCP generate-tool schema states the `tools` item shape and the id + name pairing for saved characters (#1121) | ✅ done (v0.92.1) |
