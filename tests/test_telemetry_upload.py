@@ -412,6 +412,7 @@ def test_failed_week_backoff_allows_the_next_week(
     )
 
 
+@pytest.mark.sharpit(allow_n_plus_one=True)  # Seven explicit retries exercise the drop limit.
 def test_seven_failed_attempts_drop_only_that_week(
     monkeypatch: pytest.MonkeyPatch, _home: Path
 ) -> None:

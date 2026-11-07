@@ -9,6 +9,7 @@ import subprocess
 import sys
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from gflow_cli import __version__, telemetry
@@ -24,46 +25,64 @@ def _week_start(week: str) -> datetime:
     return datetime.fromisocalendar(int(year), int(number), 1).replace(tzinfo=UTC)
 
 
-def _prepare_due_weeks(now: datetime, con: sqlite3.Connection) -> list[tuple[str, str | None, str]]:
-    meta = dict(con.execute("SELECT key, value FROM meta"))
+def _notice_cutoff(meta: dict[str, str]) -> datetime | None:
     notice = meta.get("notice_seen_at")
     if not notice:
-        return []
+        return None
     notice_at = datetime.fromisoformat(notice)
-    consent_value = telemetry._resolve_home() / telemetry.CONSENT_FILE
+    consent_value = _resolve_home() / telemetry.CONSENT_FILE
     if telemetry.consent_region():
         try:
             consent_at = datetime.fromisoformat(consent_value.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
-            return []
+            return None
         if consent_at.tzinfo is None:
             consent_at = consent_at.replace(tzinfo=UTC)
         notice_at = max(notice_at, consent_at)
     if notice_at.tzinfo is None:
         notice_at = notice_at.replace(tzinfo=UTC)
+    return notice_at
+
+
+def _eligible_week(
+    row: tuple[object, ...],
+    notice_at: datetime,
+    now: datetime,
+    inserts: list[tuple[str, str, str]],
+    updates: list[tuple[str, str]],
+) -> tuple[str, str | None, str] | None:
+    raw_week, report_id, raw_due_at, sent_at = row
+    week = str(raw_week)
+    start = _week_start(week)
+    end = start + _DAY * 7
+    if start <= notice_at or end > now:
+        return None
+    if raw_due_at is None:
+        due_at = (end + timedelta(seconds=secrets.randbelow(_WEEK_SECONDS + 1))).isoformat()
+        if report_id is None:
+            inserts.append((week, secrets.token_urlsafe(16), due_at))
+        else:
+            updates.append((due_at, week))
+    else:
+        due_at = str(raw_due_at)
+    return week, str(sent_at) if sent_at is not None else None, due_at
+
+
+def _prepare_due_weeks(now: datetime, con: sqlite3.Connection) -> list[tuple[str, str | None, str]]:
+    notice_at = _notice_cutoff(dict(con.execute("SELECT key, value FROM meta")))
+    if notice_at is None:
+        return []
     rows = con.execute(
         "SELECT DISTINCT counters.week, reports.report_id, reports.due_at, reports.sent_at "
         "FROM counters LEFT JOIN reports ON reports.week = counters.week "
         "ORDER BY counters.week"
     ).fetchall()
-    eligible: list[tuple[str, str | None, str | None]] = []
+    eligible: list[tuple[str, str | None, str]] = []
     inserts: list[tuple[str, str, str]] = []
     updates: list[tuple[str, str]] = []
-    for raw_week, report_id, raw_due_at, sent_at in rows:
-        week = str(raw_week)
-        start = _week_start(week)
-        end = start + _DAY * 7
-        if start <= notice_at or end > now:
-            continue
-        if raw_due_at is None:
-            due_at = (end + timedelta(seconds=secrets.randbelow(_WEEK_SECONDS + 1))).isoformat()
-            if report_id is None:
-                inserts.append((week, secrets.token_urlsafe(16), due_at))
-            else:
-                updates.append((due_at, week))
-        else:
-            due_at = str(raw_due_at)
-        eligible.append((week, str(sent_at) if sent_at is not None else None, due_at))
+    for row in rows:
+        if week_row := _eligible_week(row, notice_at, now, inserts, updates):
+            eligible.append(week_row)
     con.executemany(
         "INSERT OR IGNORE INTO reports (week, report_id, due_at) VALUES (?, ?, ?)", inserts
     )
@@ -104,6 +123,53 @@ def _save_meta(key: str, value: str) -> None:
         con.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, value))
 
 
+def _claim_due_week(home: Path, now: datetime) -> str | None:
+    with closing(telemetry._connect(home)) as con:  # pyright: ignore[reportPrivateUsage]
+        row = con.execute("SELECT value FROM meta WHERE key = 'last_attempt'").fetchone()
+        if row and _attempt_is_recent(row[0], now):
+            return None
+        with con:
+            con.execute("BEGIN IMMEDIATE")
+            row = con.execute("SELECT value FROM meta WHERE key = 'last_attempt'").fetchone()
+            if row and _attempt_is_recent(row[0], now):
+                return None
+            week = _next_due_week(now, con)
+            if week is None:
+                return None
+            con.execute(
+                "INSERT OR REPLACE INTO meta VALUES ('last_attempt', ?)", (now.isoformat(),)
+            )
+            return week
+
+
+def _attempt_is_recent(value: object, now: datetime) -> bool:
+    last_at = datetime.fromisoformat(str(value))
+    if last_at.tzinfo is None:
+        last_at = last_at.replace(tzinfo=UTC)
+    return last_at <= now and now - last_at < _DAY
+
+
+def _spawn_sender(home: Path) -> None:
+    command = [sys.executable, "-P", "-m", "gflow_cli.telemetry_upload"]
+    env = os.environ.copy()
+    env["GFLOW_CLI_HOME"] = str(home.resolve())
+    kwargs: dict[str, Any] = (
+        {"creationflags": (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)}
+        if sys.platform == "win32"
+        else {"start_new_session": True}
+    )
+    subprocess.Popen(  # noqa: S603 - fixed module command with the current interpreter
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        cwd=os.getcwd(),
+        env=env,
+        **kwargs,
+    )
+
+
 def maybe_upload() -> None:
     """Cheap, silent gate that starts one detached sender when a week is due."""
     try:
@@ -112,49 +178,8 @@ def maybe_upload() -> None:
         home = _resolve_home()
         if not (home / telemetry.DB_FILE).exists():
             return
-        now = datetime.now(UTC)
-        with closing(telemetry._connect(home)) as con:  # pyright: ignore[reportPrivateUsage]
-            row = con.execute("SELECT value FROM meta WHERE key = 'last_attempt'").fetchone()
-            if row:
-                last_at = datetime.fromisoformat(str(row[0]))
-                if last_at.tzinfo is None:
-                    last_at = last_at.replace(tzinfo=UTC)
-                if last_at <= now and now - last_at < _DAY:
-                    return
-            with con:
-                con.execute("BEGIN IMMEDIATE")
-                row = con.execute("SELECT value FROM meta WHERE key = 'last_attempt'").fetchone()
-                if row:
-                    last_at = datetime.fromisoformat(str(row[0]))
-                    if last_at.tzinfo is None:
-                        last_at = last_at.replace(tzinfo=UTC)
-                    if last_at <= now and now - last_at < _DAY:
-                        return
-                week = _next_due_week(now, con)
-                if week is None:
-                    return
-                con.execute(
-                    "INSERT OR REPLACE INTO meta VALUES ('last_attempt', ?)", (now.isoformat(),)
-                )
-
-        command = [sys.executable, "-P", "-m", "gflow_cli.telemetry_upload"]
-        env = os.environ.copy()
-        env["GFLOW_CLI_HOME"] = str(home.resolve())
-        kwargs: dict[str, Any] = (
-            {"creationflags": (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)}
-            if sys.platform == "win32"
-            else {"start_new_session": True}
-        )
-        subprocess.Popen(  # noqa: S603 - fixed module command with the current interpreter
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            cwd=os.getcwd(),
-            env=env,
-            **kwargs,
-        )
+        if _claim_due_week(home, datetime.now(UTC)):
+            _spawn_sender(home)
     except Exception:
         return
 
