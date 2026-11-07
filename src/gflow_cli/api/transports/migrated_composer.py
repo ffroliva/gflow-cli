@@ -368,7 +368,7 @@ def _picker_query(ref: ImageRef) -> str:
 
 #: The Ingredients sub-mode holds references; Frames holds the i2v chips.
 INGREDIENTS_LIGATURE = "chrome_extension"
-#: The only duration at which this host offers reference-to-video. Measured 2026-09-06 at
+#: Safe base duration for Veo/unspecified-model reference-to-video. Measured 2026-09-06 at
 #: $0 on a cohort that DOES render a duration row for Veo 3.1 Lite [Lower Priority]
 #: (`capture_migrated_r2v_production_submit.py`, three route-blocked runs, same account,
 #: model, references and gestures — only the duration changed):
@@ -1232,7 +1232,7 @@ def _r2v_body_problem(body: str, rpcid: str, media_ids: tuple[str, ...]) -> str 
         # submits t2v. Say so — "no reference was bound" alone sent the first reporter
         # looking at the attach code, which was working correctly.
         duration_hint = ""
-        if _DURATION_IN_KEY.search(key_text):
+        if key_text.startswith("veo_") and _DURATION_IN_KEY.search(key_text):
             duration_hint = (
                 f" — the key names a duration, and this host offers r2v only at "
                 f"{R2V_DURATION_S}s; below that it drops the references instead of "
@@ -1783,10 +1783,15 @@ class MigratedComposer:
                 await self._select_model(page, pane, model)
             await self._select(page, pane, axis="aspect", lig=ASPECT_LIGATURE[request.aspect])
             if request.duration is not None:
-                if request.mode is Mode.R2V and request.duration != R2V_DURATION_S:
+                if (
+                    request.mode is Mode.R2V
+                    and model is not VideoModel.OMNI_FLASH
+                    and request.duration != R2V_DURATION_S
+                ):
                     raise ConfigurationError(
                         detail=(
-                            f"the migrated Flow host offers reference-to-video only at "
+                            "the SDK restricts Veo/unspecified-model "
+                            "reference-to-video to "
                             f"{R2V_DURATION_S}s; at {request.duration}s it does not refuse but "
                             "silently drops the references and submits a text-to-video run "
                             "with their file names typed into the prompt — a full-price clip "
