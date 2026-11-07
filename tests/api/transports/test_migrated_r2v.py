@@ -569,6 +569,7 @@ async def test_the_chip_count_refusal_states_the_numbers_it_compared(
 
     composer = MagicMock()
     composer.ensure_editor = AsyncMock(return_value="classic")
+    composer.ensure_editor_for = composer.ensure_editor
     composer.apply_video_settings = AsyncMock()
     composer.attach_references = AsyncMock(return_value=("m1",))
     composer.attach_character_entities = AsyncMock(return_value=("ent-kael",))
@@ -619,6 +620,7 @@ async def test_the_submit_body_must_carry_the_committed_characters(
 
     composer = MagicMock()
     composer.ensure_editor = AsyncMock(return_value="classic")
+    composer.ensure_editor_for = composer.ensure_editor
     composer.apply_video_settings = AsyncMock()
     composer.attach_references = AsyncMock(return_value=uploaded)
     composer.attach_character_entities = AsyncMock(return_value=("ent-kael",))
@@ -669,6 +671,7 @@ async def test_only_a_single_clip_text_run_finds_its_clip_by_prompt_1141(
 
     composer = MagicMock()
     composer.ensure_editor = AsyncMock(return_value="classic")
+    composer.ensure_editor_for = composer.ensure_editor
     composer.apply_video_settings = AsyncMock()
     composer.send_prompt = AsyncMock()
     composer.read_chips = AsyncMock(return_value=[])

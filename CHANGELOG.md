@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A request only the classic composer can take reloads the page before refusing.** When
+  flow.google.com serves the agent-only composer (#799), image-to-image, a local `--ref`
+  upload, character references and the video forms it cannot take now get up to three free
+  reloads, then the same exit 36 as before. Seen once so far, on an account that got the
+  classic composer on its next nine loads (#1142, by @L1meSn0w).
 - **`video r2v --model omni-flash` accepts `--duration` 4, 6 or 10** on flow.google.com, not only 8.
   The 8s-only rule was measured on Veo, and it still applies to Veo and to an omitted
   `--model`; Omni keeps every reference at each length (#1167, by @vietanhjp93).

@@ -166,6 +166,11 @@ AGENT_ONLY_EARLY_S = 5.0
 #: A positive agent-only verdict is re-asked after this long: the verdict rests on the chip's
 #: ABSENCE, and a slow mount can put the trigger in the DOM before the chip.
 AGENT_ONLY_SETTLE_S = 2.0
+#: Free reloads spent looking for the classic composer when a request needs it. One
+#: observation so far (2026-11-04): an account normally given the classic composer was
+#: served the agent-only one once, and the classic one on the next nine loads.
+AGENT_ONLY_RELOADS = 3
+AGENT_ONLY_RELOAD_WAIT_S = 5.0
 #: The agent-only composer's own Agent-settings button — the thing its driver needs anyway.
 AGENT_ONLY_ANCHOR = "flow-creative-agent-prompt-box button:has(mat-icon:text-is('tune'))"
 #: What `ensure_editor` found: the classic migrated composer, or #799's agent-only one.
@@ -1415,6 +1420,28 @@ class MigratedComposer:
         return f"{detail} [contract={MIGRATED_SETTINGS_CONTRACT}]"
 
     # --- readiness ------------------------------------------------------------
+
+    async def ensure_editor_for(
+        self, page: Page, project_id: str, *, needs_classic: bool
+    ) -> ComposerKind:
+        """:meth:`ensure_editor`, then up to ``AGENT_ONLY_RELOADS`` free reloads while the
+        agent-only composer is served to a request only the classic one can take (#1142)."""
+        kind = await self.ensure_editor(page, project_id)
+        if not needs_classic:
+            return kind
+        for attempt in range(1, AGENT_ONLY_RELOADS + 1):
+            if kind == "classic":
+                break
+            log.info("migrated.agent_only_reload", attempt=attempt, issue_ref="#1142")
+            await asyncio.sleep(AGENT_ONLY_RELOAD_WAIT_S)
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=45_000)
+                kind = await self.ensure_editor(page, project_id)
+            except (PlaywrightError, UiSelectorDriftError) as exc:
+                # A reload or re-check that fails spends its attempt; real drift already
+                # surfaced on the first check above, so this ends in the usual exit 36.
+                log.warning("migrated.agent_only_reload_failed", error=str(exc)[:200])
+        return kind
 
     async def ensure_editor(
         self, page: Page, project_id: str, *, timeout_s: float = 30.0
@@ -3982,7 +4009,8 @@ async def run_video(
         )
 
     # $0 and before the page only when neither composer takes it (see run_images).
-    if unported is not None and agent.unported_video(request) is not None:
+    needs_classic = agent.unported_video(request) is not None
+    if unported is not None and needs_classic:
         raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
@@ -3994,7 +4022,7 @@ async def run_video(
         )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
     composer = MigratedComposer()
-    if await composer.ensure_editor(page, pid) == "agent_only":
+    if await composer.ensure_editor_for(page, pid, needs_classic=needs_classic) == "agent_only":
         return await agent.run_agent_video(
             page,
             request,
@@ -4104,7 +4132,8 @@ async def run_images(
 
     # $0 and before the page only when NEITHER composer takes it: the agent-only one has
     # its own limits (#799) — its Agent-settings pane offers 3:4, the classic pane does not.
-    if unported is not None and agent.unported_image(request) is not None:
+    needs_classic = agent.unported_image(request) is not None
+    if unported is not None and needs_classic:
         raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
@@ -4114,7 +4143,7 @@ async def run_images(
             )
         )
     composer = MigratedComposer()
-    if await composer.ensure_editor(page, pid) == "agent_only":
+    if await composer.ensure_editor_for(page, pid, needs_classic=needs_classic) == "agent_only":
         return await agent.run_agent_images(page, request, project_id=pid)
     if unported is not None:
         raise refuse()

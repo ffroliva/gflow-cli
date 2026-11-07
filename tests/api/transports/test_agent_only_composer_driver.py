@@ -874,6 +874,7 @@ async def test_run_images_and_run_video_route_the_agent_only_composer_here(
     )
     assert images == ["images:p1"]
     assert video == "video:p1"
+    page.reload.assert_not_called()  # requests the agent-only composer takes never reload
 
 
 @pytest.mark.asyncio
@@ -979,13 +980,15 @@ async def test_a_names_only_character_routed_to_the_agent_composer_is_refused(
         return "agent_only"
 
     monkeypatch.setattr(mc.MigratedComposer, "ensure_editor", agent_only)
-    page = MagicMock(url="https://flow.google.com/project/p1")
+    monkeypatch.setattr(mc, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    page = MagicMock(url="https://flow.google.com/project/p1", reload=AsyncMock())
     with pytest.raises(FlowHostMigratedError, match="character"):
         await mc.run_images(
             page,
             image_api.GenerateImageRequest(prompt="x", reference_entity_names=("Ada",)),
             project_id="p1",
         )
+    assert page.reload.await_count == mc.AGENT_ONLY_RELOADS
     with pytest.raises(FlowHostMigratedError, match="character"):
         await mc.run_video(
             page,
@@ -996,6 +999,7 @@ async def test_a_names_only_character_routed_to_the_agent_composer_is_refused(
             download=False,
             on_started=None,
         )
+    assert page.reload.await_count == 2 * mc.AGENT_ONLY_RELOADS  # the video gate reloads too
     page.locator.assert_not_called()
 
 
