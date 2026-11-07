@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import sys
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 
 import click
@@ -195,6 +196,7 @@ def test_on_and_off_persist_consent_only_in_consent_region(
     telemetry.set_opted_out(True)
     result = CliRunner().invoke(main, ["telemetry", "on"])
     assert result.exit_code == 0, result.output
+    assert "Usage telemetry is on." in result.output
     assert not (home / "telemetry.off").exists()
     assert (home / "telemetry.consent").exists()
 
@@ -437,6 +439,23 @@ def test_off_delete_wipes_local_data_and_says_remote_holds_nothing_per_install()
     )
 
 
+def test_off_delete_preserves_server_upload_stop() -> None:
+    home = Path.cwd() / "gflow_home"
+    with closing(telemetry._connect(home)) as con, con:  # pyright: ignore[reportPrivateUsage]
+        con.executemany(
+            "INSERT OR REPLACE INTO meta VALUES (?, ?)",
+            [
+                ("notice_seen_version", str(telemetry.NOTICE_VERSION)),
+                ("notice_seen_at", "2026-11-06T12:00:00+00:00"),
+                ("upload_disabled", "1"),
+            ],
+        )
+    result = CliRunner().invoke(main, ["telemetry", "off", "--delete"])
+    assert result.exit_code == 0, result.output
+    with closing(sqlite3.connect(home / telemetry.DB_FILE)) as con:
+        assert dict(con.execute("SELECT key, value FROM meta")) == {"upload_disabled": "1"}
+
+
 def test_on_under_a_kill_switch_persists_says_what_blocks_and_exits_0(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -444,6 +463,7 @@ def test_on_under_a_kill_switch_persists_says_what_blocks_and_exits_0(
     telemetry.killed.cache_clear()
     result = CliRunner().invoke(main, ["telemetry", "on"])
     assert result.exit_code == 0, result.output
+    assert "Usage telemetry is on." in result.output
     assert "Telemetry is still off because GFLOW_CLI_TELEMETRY is set." in result.output
     assert (
         "Weekly upload starts only after the usage notice has been shown in an interactive "
