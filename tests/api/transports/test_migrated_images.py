@@ -18,7 +18,7 @@ from gflow_cli.api.image import (
     ImageRef,
     Model,
 )
-from gflow_cli.errors import WireFormatError
+from gflow_cli.errors import FlowHostMigratedError, WireFormatError
 from tests.api.transports._ogiz0b import submit_body
 
 MEDIA = "11111111-1111-4111-8111-111111111111"
@@ -559,3 +559,45 @@ def test_an_unreadable_body_is_refused_only_when_references_are_expected() -> No
     assert _image_body_problem("ogiZ0b something else", ()) is None
     problem = _image_body_problem(f"ogiZ0b {REFERENCE}", (REFERENCE,))
     assert problem is not None and "could not be read" in problem
+
+
+def _i2i_request(tmp_path: Path) -> Any:
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"x")
+    return _request(prompt="x", ref_paths=(ref,))
+
+
+@pytest.mark.asyncio
+async def test_references_reload_past_an_intermittent_agent_only_composer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An account normally on the classic composer is sometimes served the agent-only one,
+    which takes no references: a reload is free, so it comes before refusing."""
+    import gflow_cli.api.transports.migrated_composer as mc
+
+    monkeypatch.setattr(mc, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    composer = MagicMock()
+    composer.ensure_editor = AsyncMock(side_effect=["agent_only", "agent_only", "classic"])
+    # Past the composer choice is the classic path, which is covered elsewhere.
+    composer.apply_image_settings = AsyncMock(side_effect=RuntimeError("reached classic path"))
+    monkeypatch.setattr(mc, "MigratedComposer", lambda **_: composer)
+    page = MagicMock(url="https://flow.google.com/project/p1", reload=AsyncMock())
+    with pytest.raises(RuntimeError, match="reached classic path"):
+        await mc.run_images(page, _i2i_request(tmp_path), project_id="p1")
+    assert page.reload.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_references_are_refused_when_the_agent_only_composer_stays(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import gflow_cli.api.transports.migrated_composer as mc
+
+    monkeypatch.setattr(mc, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    composer = MagicMock()
+    composer.ensure_editor = AsyncMock(return_value="agent_only")
+    monkeypatch.setattr(mc, "MigratedComposer", lambda **_: composer)
+    page = MagicMock(url="https://flow.google.com/project/p1", reload=AsyncMock())
+    with pytest.raises(FlowHostMigratedError):
+        await mc.run_images(page, _i2i_request(tmp_path), project_id="p1")
+    assert page.reload.await_count == mc.AGENT_ONLY_RELOADS
