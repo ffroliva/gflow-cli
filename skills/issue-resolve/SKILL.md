@@ -250,7 +250,7 @@ findings (or record why you declined each), then **STOP** — a human promotes a
 ### Pipeline Continuation (Next Step Handoff)
 
 Upon completing Issue Resolution:
-1. **PR Created & SonarCloud Gate 🟢 GREEN:** Proactively announce: **"PR created and SonarCloud gate green. Next step: Phase 10 Release Pipeline (`/gflow:release`) or merge to `develop`."**
+1. **PR Created, SonarCloud Gate 🟢 GREEN, and every bot review comment (CodeRabbit) answered** per [`pr-council-review`](../pr-council-review/SKILL.md) § 5 step 7b: Proactively announce: **"PR created and SonarCloud gate green. Next step: Phase 10 Release Pipeline (`/gflow:release`) or merge to `develop`."**
 2. **SonarCloud Gate 🔴 FAILS:** Run `/gflow:sonar <PR#>` to resolve new code smells/coverage issues before merging.
 
 ---

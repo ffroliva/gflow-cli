@@ -1,6 +1,6 @@
 ---
 name: pr-council-review
-version: "2.3"
+version: "2.4"
 description: Multi-dimensional LLM council review of an open PR (default) or a local feature branch (§ 8 branch mode, invoked via `/gflow:branch-review`). Five baseline dimensions (correctness, quality, security, tests, memory-hygiene) plus adaptive dimensions per surface (transports / data / CLI / docs / auth / BDD / scripts / release-gate). Each agent invokes specialized skills (security-review, code-review, verify) for its dimension. Reads files via `git show <sha>:<path>` to avoid stale-working-tree false positives. Cross-tool portable.
 ---
 
@@ -95,6 +95,12 @@ Pull in parallel via `ctx_batch_execute`:
 - `TOUCHED_PATHS` → `gh pr view <N> --json files --jq '.files[].path' | sort -u`
 - `RECENT_COMMITS` → `gh pr view <N> --json commits --jq '.commits[-5:] | .[] | "\(.oid[:7]) \(.messageHeadline)"'`
 - `PR_COMMENTS` → `gh pr view <N> --json comments --jq '.comments[] | "\(.createdAt) \(.author.login): \(.body)"'`
+- `BOT_REVIEWS` → `gh api repos/{owner}/{repo}/pulls/<N>/comments --paginate --jq '.[] | select(.user.type=="Bot") | "\(.id) \(.user.login) \(.path):\(.line // .original_line) \(.body)"'` plus `gh api repos/{owner}/{repo}/pulls/<N>/reviews --jq '.[] | select(.user.type=="Bot") | "\(.user.login) \(.state): \(.body)"'`
+  (strip the HTML `<details>` blocks before reading). **`PR_COMMENTS` cannot see these:**
+  `gh pr view --json comments` returns issue-level comments only, and CodeRabbit's findings
+  are inline review comments and review summaries. CodeRabbit skips **draft** PRs ("Draft PR
+  not reviewed"). On a draft, note that no bot review exists. It runs again once the PR is
+  ready, or when someone comments `@coderabbitai review`.
 
 > **Read the thread before you flag "no evidence".** `PR_COMMENTS` is not optional colour:
 > a prior council verdict, a maintainer's counter-capture, and the contributor's reply all
@@ -372,6 +378,17 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 5b. **Spike gate** — run it on every must-fix that makes a live-behaviour claim before the report is written or posted. See § Spike gate below.
 6. **Live-verify gate** (D6 fired + PR body has unchecked live-verify boxes): explicit `AskUserQuestion` with three options — *Run now (~1 Flow credit per locale)*, *Block merge — add to PR body as required reviewer action*, *Skip and accept risk*. Cite `[[verification-ledger-5-layer]]`. Do NOT spend credits without affirmative click.
 7. **Memory-action gate** (D5 fired with must-fix items): explicit `AskUserQuestion` offering to APPLY the memory edits/additions/deletions in the same PR or as a follow-up.
+7b. **Bot-review triage** (`BOT_REVIEWS` non-empty). Decide on every CodeRabbit actionable
+   comment and nitpick, the same as on a council finding. Never merge past one in silence.
+   - **Accept**: fold it into Must-fix / Nice-to-have, crediting the bot.
+   - **Decline**: give a one-line reason, such as "duplicate of D4 #2", "the loop is index-uniform, a case adds nothing", or "contradicts measured spike X".
+   - **False positive**: verify it against `REVIEWED_SHA` exactly like an agent claim (step 5).
+
+   Before calling a finding redundant, ablate it: check whether existing code already covers
+   it. On #1174, "test the Omni 1.2 agent-only refusal" looked redundant. It was not: the menu
+   matchers already contained the new model, so its own branch was the only guard. On the
+   maintainer's own PRs, reply on each bot thread with the decision (and the fixing SHA when
+   accepted), so the record is in the PR.
 8. **YELLOW escape valve:** the Phase 6 `AskUserQuestion` MUST include a *"Dismiss YELLOW with justification (logged)"* option. Dismissal requires a one-line reason appended to the PR body or comment, so the override is auditable.
 
 ### Spike gate
@@ -448,6 +465,10 @@ contributor, not a finding to report.
 
 ## Confirmed-good (high-confidence positives)
 - …
+
+## Bot reviews (§ 5 step 7b)
+- CodeRabbit `<file>:<line>` "<title>": ACCEPTED → Must-fix #n | DECLINED — <reason> | FALSE POSITIVE — <evidence>
+- (or: "none — draft PR, CodeRabbit did not review")
 
 ## Memory actions (D5)
 - ADD: <slug> capturing <pattern>
