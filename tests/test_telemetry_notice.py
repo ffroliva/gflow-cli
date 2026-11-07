@@ -282,13 +282,12 @@ def test_auth_login_shows_it_after_session_saved(
     from gflow_cli import auth as auth_mod
     from gflow_cli import cli
 
-    notices = iter([False, True])
+    monkeypatch.setattr(sys, "argv", ["gflow", "auth", "login"])
+    real_notice = telemetry.maybe_show_notice
 
     def show_notice() -> bool:
-        shown = next(notices)
-        if shown:
-            click.echo("NOTICE", err=True)
-        return shown
+        monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+        return real_notice()
 
     monkeypatch.setattr(cli.telemetry, "maybe_show_notice", show_notice)
     monkeypatch.setattr(cli, "_resolve_or_prompt", lambda **_kwargs: "test-profile")
@@ -301,25 +300,26 @@ def test_auth_login_shows_it_after_session_saved(
     monkeypatch.setattr(cli.profile_store, "list_profiles", lambda: [])
     result = CliRunner().invoke(main, ["auth", "login"])
     assert result.exit_code == 0, result.output
-    assert result.output.index("Session saved.") < result.output.index("NOTICE")
+    assert result.output.index("Session saved.") < result.output.index(
+        telemetry.NOTICE_TEXT.splitlines()[0]
+    )
 
 
 def test_mcp_setup_shows_it(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from gflow_cli import cli
 
-    notices = iter([False, True])
+    monkeypatch.setattr(sys, "argv", ["gflow", "mcp", "setup"])
+    real_notice = telemetry.maybe_show_notice
 
     def show_notice() -> bool:
-        shown = next(notices)
-        if shown:
-            click.echo("NOTICE", err=True)
-        return shown
+        monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+        return real_notice()
 
     monkeypatch.setattr(cli.telemetry, "maybe_show_notice", show_notice)
     monkeypatch.setattr("gflow_cli.mcp.setup.apply", lambda _target: (tmp_path / "config", True))
     result = CliRunner().invoke(main, ["mcp", "setup"])
     assert result.exit_code == 0, result.output
-    assert "NOTICE" in result.output
+    assert telemetry.NOTICE_TEXT.splitlines()[0] in result.output
 
 
 @pytest.mark.parametrize(
