@@ -717,6 +717,7 @@ Today the CLI writes media to `$GFLOW_CLI_OUTPUT_DIR` on the local filesystem. P
 | 12 | `Provider` indirection (legacy `providers/`) removed | Superseded by `api.FlowApiClient`. Re-introduce when we add `OfficialVeoProvider` (planned v0.5+) |
 | 13 | CDP attach / stealth-engine alternatives deferred; **current stealth fix confirmed sufficient 2026-07-09** | Gate met: a 20-gen live baseline through the default stealth stack showed a **0.0% WAF 403 rate**, so the "confirm insufficient before implementing" bar is unmet — CDP-Attach and the Camoufox engine stay parked (Camoufox roadmap closed at Phase 2). Evidence: [superpowers/spikes/2026-07-09-camoufox-waf-403.md](superpowers/spikes/2026-07-09-camoufox-waf-403.md). |
 | 14 | HTTP status path (`get_video_status`) retired alongside `generate_video` | It is the same 401-dead path and would collide with the new `api/video.py:VideoStatus` value object — retiring both together keeps the domain clean. **Scope note 2026-08-31:** "401-dead" was measured on `batchAsyncGenerateVideoText` in 2026-05 and has NOT been re-tested. It is not a property of `/v1/video:*` as a family — `batchAsyncGenerateVideoExtendVideo` returned **200** from our own transport with our own minted token on 2026-08-31 ([spike](docs/superpowers/spikes/2026-08-31-veo-extend-route-recon.md)). Do not cite this ADR as evidence that a direct-wire video route cannot work; re-measure the specific route. |
+| 15 | Usage telemetry: default-on, opt-out weekly totals after a notice; no identifier; endpoint discards reports | Sole endpoint exception to ADR #9; legal review tracked in [#1164](https://github.com/ffroliva/gflow-cli/issues/1164), with details in [the usage data notice](docs/TELEMETRY.md). (2026-11-06) |
 
 ---
 
@@ -747,4 +748,3 @@ A phase ships when:
 ---
 
 _End of plan. Updates ship as part of the phase that motivated them._
-| 15 | Usage telemetry: default-on, opt-out weekly totals after a notice; no identifier; endpoint discards reports | Sole endpoint exception to ADR #9; legal review tracked in [#1164](https://github.com/ffroliva/gflow-cli/issues/1164), with details in [the usage data notice](docs/TELEMETRY.md). (2026-11-06) |
