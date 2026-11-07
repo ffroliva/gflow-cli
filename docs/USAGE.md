@@ -663,9 +663,10 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 - `image_batch.inter_submission_latency_ms {row_idx, latency_ms}` (fires from row 1 onward)
 
 > **Shared video flags** (`t2v` / `i2v` / `r2v`):
-> `--model [omni-flash|veo-lite|veo-fast|veo-quality|veo-lite-lp]` (omit → Flow's
-> current UI default), `--duration [4|6|8|10]` (4/6/8 for Veo 3.1;
-> 4/6/8/10 for omni-flash),
+> `--model [omni-flash|omni-1.2-flash|omni-1.2|veo-lite|veo-fast|veo-quality|veo-lite-lp]`
+> (omit → Flow's current UI default), `--duration [3..15]` (4/6/8 for Veo 3.1;
+> 4/6/8/10 for omni-flash; every integer 3–15 for omni-1.2-flash; 4/6/8/10 when
+> `--model` is omitted),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
 > **`--duration` support across models**: Flow's settings

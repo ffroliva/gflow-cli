@@ -207,7 +207,8 @@ def _reject_duration_without_control(
     the guard must still run — otherwise the most natural way to try
     ``--duration`` skips this check and dies as "Unexpected error." `t2v`/`r2v`
     inherit Flow's sticky UI default, which gflow cannot know, so they pass
-    nothing and stay unguarded by design rather than by assumption.
+    nothing and are held to the legacy 4/6/8/10 set; only an explicit model
+    unlocks other lengths (omni-1.2-flash's 3–15).
     """
     if duration is None:
         return
@@ -221,16 +222,16 @@ def _reject_duration_without_control(
             # a programmatic caller deserves that error, not this guard's. Let the
             # real validation report it rather than dying as "Unexpected error."
             return
-    if resolved is not None or duration not in (4, 6, 8, 10):
-        try:
-            validate_duration_for_model(resolved, duration)
-        except ValueError as exc:
-            named = (
-                f"--model {model}"
-                if model is not None
-                else f"the default model {resolved.value if resolved else '(unspecified)'}"
-            )
-            raise click.UsageError(f"{named}: {exc}") from exc
+    try:
+        validate_duration_for_model(resolved, duration)
+    except ValueError as exc:
+        if model is not None:
+            named = f"--model {model}"
+        elif resolved is not None:
+            named = f"the default model {resolved.value}"
+        else:
+            named = "without --model"
+        raise click.UsageError(f"{named}: {exc}") from exc
 
 
 def _relocate_single_video(item: Any, target: Path) -> Any:
@@ -1387,7 +1388,8 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     ),
     help=(
         "Video model. Defaults to veo-lite (cheapest). omni-flash supports both "
-        "--initial-frame and --end-frame, and unlocks --duration 10."
+        "--initial-frame and --end-frame, and unlocks --duration 10; "
+        "omni-1.2-flash takes any --duration from 3 to 15."
     ),
 )
 @click.option(

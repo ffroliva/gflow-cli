@@ -557,9 +557,9 @@ def _validate_scene_model(model: object, idx: int, duration: int | None) -> None
                 validate_duration_for_model(None, duration)
             except ValueError as exc:
                 raise ConfigurationError(f"scenes[{idx}].duration: {exc}") from exc
-        # No model means Flow's sticky UI default, which is genuinely unknowable
-        # here — so a duration cannot be checked against it. Left unguarded BY
-        # DESIGN, the same call #632 made for t2v/r2v.
+        # No model means Flow's sticky UI default, which is unknowable here, so the
+        # duration is held to the legacy 4/6/8/10 set (#632); only an explicit
+        # omni-1.2-flash unlocks the rest of 3-15.
         return
     if not isinstance(model, str):
         raise ConfigurationError(f"scenes[{idx}].model must be a string.")

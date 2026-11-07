@@ -1436,7 +1436,7 @@ async def gflow_generate_video(  # NOSONAR
     # instead of a ValueError inside the worker. Mirrors the CLI's pre-spend
     # checks: i2v binds I2V_DEFAULT_MODEL when `model` is omitted (so "no model"
     # is not "no opinion" there), while t2v/r2v inherit Flow's sticky UI default,
-    # which is unknowable here and left unguarded by design.
+    # which is unknowable here, so they are held to the legacy 4/6/8/10 set.
     if duration is not None:
         # #659: the CLI's --duration is a click.Choice, so 99 never reaches the
         # transport there; here it did, and queued a browser run that died at claim.
@@ -1448,14 +1448,10 @@ async def gflow_generate_video(  # NOSONAR
         effective = VideoModel.from_cli(model) if model is not None else None
         if effective is None and mode == "i2v" and (initial_frame or end_frame):
             effective = I2V_DEFAULT_MODEL
-        if effective is not None or duration not in (4, 6, 8, 10):
-            try:
-                validate_duration_for_model(effective, duration)
-            except ValueError as exc:
-                return _bad_param(
-                    "Unsupported duration for model",
-                    str(exc),
-                )
+        try:
+            validate_duration_for_model(effective, duration)
+        except ValueError as exc:
+            return _bad_param("Unsupported duration for model", str(exc))
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_video")

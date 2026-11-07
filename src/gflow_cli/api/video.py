@@ -213,17 +213,16 @@ def validate_duration_for_model(model: VideoModel | None, duration: object) -> N
         raise ValueError(f"duration must be an integer number of seconds, got {duration}") from exc
     choices = duration_choices_for(model)
     if seconds not in choices:
-        name = model.value if model is not None else "unspecified model"
-        maximum = max(choices)
-        if seconds > maximum:
+        name = f"model {model.value!r}" if model is not None else "an unspecified model"
+        if seconds > max(choices):
             offered = "omni_flash or omni_1_2_flash" if seconds == 10 else "omni_1_2_flash"
             raise ValueError(
-                f"model {name!r} caps at {maximum}s; duration {seconds} "
+                f"{name} caps at {max(choices)}s; duration {seconds} "
                 f"is only available for {offered}"
             )
         raise ValueError(
-            f"model {name!r} caps at {maximum}s; duration must be one of {list(choices)} "
-            f"seconds, got {duration}. Use explicit omni-1.2-flash for integer durations 3–15."
+            f"duration must be one of {list(choices)} seconds for {name}, got {duration}. "
+            "Use explicit omni-1.2-flash for any integer duration 3–15."
         )
 
 
@@ -264,7 +263,7 @@ class GenerateVideoRequest:
     aspect: Aspect = Aspect.PORTRAIT
     tier: Tier = Tier.FAST  # meaningful for T2V only — I2V/R2V model keys are fixed
     model: VideoModel | None = None  # None -> Flow UI default (picker untouched)
-    duration: int | None = None  # seconds: 4/6/8 (or 10, omni_flash only); None -> default
+    duration: int | None = None  # seconds, per duration_choices_for(model); None -> default
     count: int = 1  # 1-4 outputs; >1 multiplies credit cost
     seed: int | None = None
     start_image: Path | None = None  # I2V (local file path)

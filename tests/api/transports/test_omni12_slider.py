@@ -71,3 +71,27 @@ async def test_changed_scale_is_not_guessed():
 async def test_unbound_control_is_not_accepted():
     with pytest.raises(UiSelectorDriftError):
         await select(Slider(stuck=True), 3)
+
+
+async def test_free_account_binds_its_longest_offered_duration():
+    slider = Slider("7")
+    await select(slider, 10)
+    assert slider.value == 7
+
+
+async def test_free_account_refuses_one_past_its_maximum_before_any_keypress():
+    slider = Slider("7")
+    with pytest.raises(ConfigurationError):
+        await select(slider, 11)
+    assert slider.presses == []
+
+
+async def test_model_menu_that_never_closes_is_drift_not_a_raw_timeout():
+    slider = Slider()
+    component = SimpleNamespace(locator=lambda _: slider)
+    pane = SimpleNamespace(locator=lambda _: component)
+    stuck = SimpleNamespace(first=SimpleNamespace(wait_for=AsyncMock(side_effect=TimeoutError())))
+    page = SimpleNamespace(locator=lambda _: stuck)
+    with pytest.raises(UiSelectorDriftError):
+        await MigratedComposer()._select_omni12_duration(page, pane, 8)
+    assert slider.presses == []

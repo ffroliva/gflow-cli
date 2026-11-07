@@ -2025,11 +2025,13 @@ class MigratedComposer:
         """
         component = pane.locator("flow-duration-slider")
         slider = component.locator('input[type="range"]')
-        await page.locator(MENU_ITEM).first.wait_for(state="hidden", timeout=4000)
         try:
+            await page.locator(MENU_ITEM).first.wait_for(state="hidden", timeout=4000)
             await slider.first.wait_for(state="visible", timeout=4000)
         except Exception as exc:
-            raise UiSelectorDriftError(detail="Omni 1.2 duration slider missing") from exc
+            raise UiSelectorDriftError(
+                detail="Omni 1.2 duration slider missing (model menu open or slider unmounted)"
+            ) from exc
         if await slider.count() != 1:
             raise UiSelectorDriftError(detail="Omni 1.2 duration slider ambiguous")
         minimum = await slider.get_attribute("min")

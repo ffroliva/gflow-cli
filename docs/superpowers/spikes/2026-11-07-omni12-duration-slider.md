@@ -54,3 +54,26 @@ No paid generation, completed clip, primary-image-plus-character combination,
 max=7 handling is an offline negative fixture based on Google's documented
 limit. The agent-only path explicitly refuses this new model. Generation and
 export spending/approval policies are unchanged.
+
+## Maintainer reproduction (2026-11-07, a second account)
+
+Re-run by the maintainer on a profile we hold (served flow.google.com, no Google AI
+plan), on the combined #1167 + #1168 tree, with
+`scripts/dev/capture_migrated_r2v_production_submit.py` (one uploaded 256 px reference,
+submit blocked in the page, `submits` recorded, no video credit spent). Reading
+registered before the run: an r2v key naming the requested seconds with every
+uploaded media id in the body confirms; a t2v key or a missing id refutes; no capture
+settles nothing.
+
+| Model | Requested | RPC | Key in the blocked body | Reference ids |
+| --- | --- | --- | --- | --- |
+| omni-flash | 4s | MZZa6b | `abra_r2v_4s_360p` | all present |
+| omni-flash | 8s (control) | MZZa6b | `abra_r2v_8s_360p` | all present |
+| omni-flash | 10s | MZZa6b | `abra_r2v_10s_360p` | all present |
+| omni-1.2-flash | 3s | MZZa6b | `macaron_cookie_r2v_3s_360p` | all present |
+| omni-1.2-flash | 8s | MZZa6b | `macaron_cookie_r2v_8s_360p` | all present |
+| omni-1.2-flash | 15s | — | refused before submit: `Omni 1.2 duration 15s is not offered by this account` | — |
+
+All five captures CONFIRM the contributor's readings on an independent account, and
+the 15s row shows the free-tier refusal live. The harness's key summary only knew the
+`veo_`/`abra_` prefixes and printed `[]` for the Omni 1.2 key; it now uses `MODEL_KEY`.

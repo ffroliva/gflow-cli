@@ -16,6 +16,15 @@ project `5ee3e625-…`; evidence doc
 | `veo_3_1_quality` | **NONE** | x1–x4 | 100 | **REJECTED** |
 | `veo_3_1_lite_lower_priority` | picker MISS — **absence, not a broken selector; settled 2026-09-05, see the end of this file** | | | |
 
+**Update 2026-11-07 (#1167/#1168, $0, flow.google.com):** Omni 1.2 Flash
+(`omni_1_2_flash`) sits beside Omni 1.1 in the model menu and replaces the duration
+radios with a range slider (`flow-duration-slider`, index 0..N = 3..N+3 s). The
+slider stops at index 7 (10s) on an account without a Google AI plan and at 12 (15s)
+on a subscriber. Omni r2v is **not** limited to 8s: route-blocked captures on our own
+profile carried every reference id under `abra_r2v_{4,8,10}s_360p` (1.1) and
+`macaron_cookie_r2v_{3,8}s_360p` (1.2). The 8s-only r2v rule was measured on Veo Lite
+and still applies to Veo. Spike: `docs/superpowers/spikes/2026-11-07-omni12-duration-slider.md`.
+
 **🎯 ROOT CAUSE of [[#451]]/#288:** `api/video.py:44` claims "the four `VEO_3_1_*`
 models cap at 8s" — presuming they render a duration control. **They render none.**
 `_select_video_duration` hunts a control the selected model never draws, so the

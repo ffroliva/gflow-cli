@@ -21,6 +21,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports.migrated_composer import MigratedComposer, _duration
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.config import Settings
+from gflow_cli.errors import ConfigurationError
 
 scenarios("../features/migrated_omni12_duration.feature")
 
@@ -63,13 +64,17 @@ def apply(
                 ref_names=("unused: settings only",),
             )
             try:
-                await composer.apply_video_settings(page, request)
+                try:
+                    await composer.apply_video_settings(page, request)
+                except ConfigurationError:
+                    # A free account's slider stops at 10s; `checked` decides if that's it.
+                    duration_world["refused"] = True
                 pane = await composer._open_pane(page)  # noqa: SLF001
                 try:
                     component = pane.locator("flow-duration-slider")
-                    duration_world["index"] = await component.locator(
-                        'input[type="range"]'
-                    ).input_value()
+                    slider = component.locator('input[type="range"]')
+                    duration_world["max"] = await slider.get_attribute("max")
+                    duration_world["index"] = await slider.input_value()
                     duration_world["label"] = await component.locator(
                         ".duration-slider-value"
                     ).inner_text()
@@ -84,5 +89,10 @@ def apply(
 
 @then(parsers.parse("the live duration slider is {seconds:d} seconds"))
 def checked(duration_world: dict[str, Any], seconds: int) -> None:
+    if duration_world.get("refused"):
+        # Only a refusal past a free account's 10s maximum (slider max index 7) is correct.
+        assert duration_world["max"] == "7"
+        assert seconds > 10
+        return
     assert duration_world["index"] == str(seconds - 3)
     assert _duration(f"{seconds}s").search(duration_world["label"])
