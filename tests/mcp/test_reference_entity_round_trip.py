@@ -56,10 +56,15 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return seen
 
 
-async def test_video_reference_entities_reach_the_worker_codec(captured: dict[str, Any]) -> None:
+@pytest.mark.parametrize("omni12", [False, True])
+async def test_video_reference_entities_reach_the_worker_codec(
+    captured: dict[str, Any], omni12: bool
+) -> None:
     """The id survives tool -> payload -> codec -> request without being dropped."""
     await mcp_tools.gflow_generate_video(
         prompt="a lone wolf on a ridge",
+        model="omni_1_2_flash" if omni12 else None,
+        duration=15 if omni12 else None,
         mode="r2v",
         reference_entities=[_ENTITY_A, _ENTITY_B],
         reference_entity_names=["Aldous", "Mira"],
@@ -71,6 +76,11 @@ async def test_video_reference_entities_reach_the_worker_codec(captured: dict[st
     req = codec.build_video_request(payload)
     assert req.reference_entities == (_ENTITY_A, _ENTITY_B)
     assert req.reference_entity_names == ("Aldous", "Mira")
+    if omni12:
+        from gflow_cli.api.video import VideoModel
+
+        assert payload["model"] == "omni_1_2_flash" and payload["duration"] == 15
+        assert req.model is VideoModel.OMNI_1_2_FLASH and req.duration == 15
 
 
 async def test_video_omits_the_keys_when_unused(captured: dict[str, Any]) -> None:

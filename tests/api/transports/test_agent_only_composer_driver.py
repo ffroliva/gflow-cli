@@ -943,6 +943,9 @@ async def test_unported_image_forms_are_refused(request_: Any) -> None:
         {"reference_entity_names": ("Ada",)},
         # The agent pane has no resolution control: driving on would silently drop it.
         {"resolution": "720p"},
+        # Load-bearing: Omni 1.2 IS in the menu matchers (they are built from the labels),
+        # so only its own branch stops the agent pane driving an unmeasured model.
+        {"model": video_api.VideoModel.OMNI_1_2_FLASH},
     ],
 )
 async def test_unported_video_forms_are_refused(changes: dict[str, Any]) -> None:

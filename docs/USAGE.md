@@ -663,9 +663,10 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 - `image_batch.inter_submission_latency_ms {row_idx, latency_ms}` (fires from row 1 onward)
 
 > **Shared video flags** (`t2v` / `i2v` / `r2v`):
-> `--model [omni-flash|veo-lite|veo-fast|veo-quality|veo-lite-lp]` (omit → Flow's
-> current UI default), `--duration [4|6|8|10]` (4/6/8 for Veo 3.1;
-> 4/6/8/10 for omni-flash),
+> `--model [omni-flash|omni-1.2-flash|omni-1.2|veo-lite|veo-fast|veo-quality|veo-lite-lp]`
+> (omit → Flow's current UI default), `--duration [3..15]` (4/6/8 for Veo 3.1;
+> 4/6/8/10 for omni-flash; every integer 3–15 for omni-1.2-flash; 4/6/8/10 when
+> `--model` is omitted),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
 > **`--duration` support across models**: Flow's settings
@@ -869,11 +870,28 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 > verified before submit; an id without a name exits 36, and a video `@Name` exits 29
 > because the character catalog cannot be read on that host.
 >
-> **`--duration` is refused on this path (exit 11).** The host offers reference-to-video
-> only at its base 8s tier. At 4s or 6s it does not refuse — it drops the references,
-> types their uploaded *names* into the prompt and bills a text-to-video clip (measured at
-> zero credits, 2026-09-06). Because the editor remembers the last duration used, an r2v
-> run pins 8s itself rather than inheriting it. Pass no `--duration`, or `--duration 8`.
+> **Explicit `--model omni-flash` accepts `--duration 4/6/8/10`.** Route-blocked
+> requests measured on 2026-11-07 retained the character entity with an
+> `abra_r2v_<duration>s_360p` model key. Veo and unspecified models retain the 8s
+> safety policy (exit 11 for other values): shorter Veo requests measured on
+> 2026-09-06 dropped references and submitted text-to-video instead. Because the
+> editor remembers its last duration, omitted r2v duration still pins 8s.
+
+### Omni 1.2 Flash durations
+
+Use explicit `--model omni-1.2-flash` (alias `omni-1.2`) with `video t2v`, `i2v`
+or `r2v`. It accepts every integer `--duration` from 3 through 15, and optional
+`--resolution 360p` or `720p`. Omni 1.1 aliases and model defaults are unchanged.
+On flow.google.com the driver binds the `flow-duration-slider` index and reads
+back the displayed seconds. Missing/changed controls and unavailable durations
+fail before Send; free accounts offer 3–10, Google AI plans offer 3–15.
+`r2v` without an explicit duration pins 8 seconds. Agent-only and chained Omni
+1.2 generation remain unsupported; this change adds no extend/edit operation.
+
+```bash
+gflow video r2v "a continuous scene" --ref scene.png \
+  --model omni-1.2-flash --duration 15 --resolution 360p
+```
 
 ### Sharing one project across calls
 

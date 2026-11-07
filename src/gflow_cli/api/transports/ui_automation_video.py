@@ -279,7 +279,11 @@ VIDEO_MODEL_OPTION_SELECTORS: dict[VideoModel, str] = {
     # match two menuitems and put omni-flash back at exit 18 — the same outage,
     # from the same class of drift.
     VideoModel.OMNI_FLASH: (
-        "[role='menuitem']:has-text('Omni'):has-text('Flash'):not(:has-text('[Lower Priority]'))"
+        "[role='menuitem']:has-text('Omni'):has-text('Flash')"
+        ":not(:has-text('1.2')):not(:has-text('[Lower Priority]'))"
+    ),
+    VideoModel.OMNI_1_2_FLASH: (
+        "[role='menuitem']:has-text('Omni 1.2 Flash'):not(:has-text('[Lower Priority]'))"
     ),
     # The Veo entries deliberately KEEP the contiguous '3.1'. Do NOT "fix" them
     # the way OMNI_FLASH was fixed above: the discriminator is whether gflow's
