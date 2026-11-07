@@ -102,6 +102,8 @@ Pull in parallel via `ctx_batch_execute`:
   Strip HTML **tags** but keep the text inside `<details>`, because CodeRabbit puts its
   nitpicks there. Keep each finding's `commit_id`: a finding made on a commit older than
   `REVIEWED_SHA` may already be fixed, so check it against `REVIEWED_SHA` before carrying it.
+  A finding on a commit newer than `REVIEWED_SHA` stays out of this verdict. List it
+  separately and re-run the council on the new head (§ 5 step 5).
   **`PR_COMMENTS` cannot see any of this.** `gh pr view --json comments` returns
   issue-level comments only, and CodeRabbit's findings are inline review comments and
   review summaries. CodeRabbit does not review a **draft** ("Draft PR not reviewed"), and it
