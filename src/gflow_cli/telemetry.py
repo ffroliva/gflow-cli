@@ -24,6 +24,7 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import click
 import structlog
@@ -48,7 +49,7 @@ def _debug(event: str, **kw: str) -> None:
 _RETAIN_WEEKS = 53
 _TRANSITION_WINDOW_S = 30 * 60
 SCHEMA = 1
-NOTICE_VERSION = 1
+NOTICE_VERSION = 2
 NOTICE_TEXT = (
     "gflow sends weekly usage totals to improve it, and we share overall figures publicly and "
     "with\n"
@@ -58,7 +59,129 @@ NOTICE_TEXT = (
     "Turn it off: gflow telemetry off, or set GFLOW_CLI_TELEMETRY=0\n"
     "See exactly what is sent: gflow telemetry show. Full notice: gflow docs TELEMETRY"
 )
+NOTICE_TEXT_CONSENT = (
+    "gflow can send weekly usage totals to help improve it; overall figures are shared publicly "
+    "and "
+    "with sponsors. Commands, flag names, models, error codes, and your country as a total. No ID, "
+    "prompts, paths or account details. Each report is added to totals and discarded.\n"
+    "In your region nothing is sent unless you agree: gflow telemetry on (undo: gflow telemetry "
+    "off)\n"
+    "See exactly what would be sent: gflow telemetry show. Full notice: gflow docs TELEMETRY"
+)
 _NOTICE_SHOWN_THIS_RUN = False
+
+_EU_EEA_TIMEZONES = frozenset(
+    {
+        "Africa/Ceuta",
+        "Arctic/Longyearbyen",
+        "Asia/Famagusta",
+        "Asia/Nicosia",
+        "Atlantic/Azores",
+        "Atlantic/Canary",
+        "Atlantic/Madeira",
+        "Atlantic/Reykjavik",
+        "Europe/Amsterdam",
+        "Europe/Athens",
+        "Europe/Berlin",
+        "Europe/Bratislava",
+        "Europe/Brussels",
+        "Europe/Bucharest",
+        "Europe/Budapest",
+        "Europe/Busingen",
+        "Europe/Copenhagen",
+        "Europe/Dublin",
+        "Europe/Helsinki",
+        "Europe/Lisbon",
+        "Europe/Ljubljana",
+        "Europe/Luxembourg",
+        "Europe/Madrid",
+        "Europe/Malta",
+        "Europe/Mariehamn",
+        "Europe/Oslo",
+        "Europe/Paris",
+        "Europe/Prague",
+        "Europe/Riga",
+        "Europe/Rome",
+        "Europe/Sofia",
+        "Europe/Stockholm",
+        "Europe/Tallinn",
+        "Europe/Vaduz",
+        "Europe/Vienna",
+        "Europe/Vilnius",
+        "Europe/Warsaw",
+        "Europe/Zagreb",
+    }
+)
+# Deliberately over-inclusive: Windows zones spanning any EU/EEA country require consent.
+_EU_EEA_WINDOWS_TIMEZONES = frozenset(
+    {
+        "Azores Standard Time",
+        "Central Europe Standard Time",
+        "Central European Standard Time",
+        "E. Europe Standard Time",
+        "FLE Standard Time",
+        "GMT Standard Time",
+        "Greenwich Standard Time",
+        "GTB Standard Time",
+        "Romance Standard Time",
+        "W. Europe Standard Time",
+    }
+)
+
+
+def _read_windows_timezone_key_name() -> str | None:
+    """Read the configured Windows timezone key, if available."""
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\TimeZoneInformation",
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, "TimeZoneKeyName")
+        return value if isinstance(value, str) else None
+    except (ImportError, OSError):
+        return None
+
+
+def _posix_timezone_name() -> str | None:
+    """Read an IANA timezone from the POSIX localtime link or timezone file."""
+    try:
+        target = Path("/etc/localtime").resolve()
+        parts = target.as_posix().split("/zoneinfo/", maxsplit=1)
+        if len(parts) == 2 and parts[1]:
+            return parts[1]
+        return Path("/etc/timezone").read_text(encoding="utf-8").strip() or None
+    except (OSError, RuntimeError):
+        return None
+
+
+def _timezone_name() -> str | None:
+    """Resolve a timezone name without network or locale information."""
+    tz = os.environ.get("TZ", "").strip()
+    if tz:
+        # Accept IANA names only; POSIX TZ strings and arbitrary paths are not zone names.
+        if (
+            not tz.startswith("/")
+            and ".." not in tz.split("/")
+            and all(part.replace("_", "").replace("-", "").isalnum() for part in tz.split("/"))
+        ):
+            try:
+                ZoneInfo(tz)
+                return tz
+            except (ZoneInfoNotFoundError, ValueError):
+                if sys.platform == "win32" and ("/" in tz or tz in {"UTC", "GMT"}):
+                    return tz
+                return None
+    if sys.platform != "win32":
+        return _posix_timezone_name()
+    return _read_windows_timezone_key_name()
+
+
+def consent_region() -> bool:
+    """Whether weekly uploads require explicit consent based on local timezone only."""
+    zone = _timezone_name()
+    return zone is None or zone in _EU_EEA_TIMEZONES or zone in _EU_EEA_WINDOWS_TIMEZONES
 
 
 @dataclass(frozen=True)
@@ -123,14 +246,35 @@ def set_opted_out(value: bool) -> None:
     """Persist the user's choice independently of the best-effort counter store."""
     from gflow_cli.errors import ConfigurationError
 
-    path = _resolve_home() / "telemetry.off"
+    home = _resolve_home()
+    path = home / "telemetry.off"
+    consent_path = home / "telemetry.consent"
+    preference_path = path
     try:
         if value:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("", encoding="utf-8")
+            preference_path = consent_path
+            consent_path.unlink(missing_ok=True)
         else:
             path.unlink(missing_ok=True)
     except OSError as exc:
+        raise ConfigurationError(
+            detail=f"Could not write telemetry preference at {preference_path}: {exc}"
+        ) from exc
+
+
+def set_consent() -> None:
+    """Persist explicit upload consent when this machine is in a consent region."""
+    if not consent_region():
+        return
+    path = _resolve_home() / "telemetry.consent"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    except OSError as exc:
+        from gflow_cli.errors import ConfigurationError
+
         raise ConfigurationError(
             detail=f"Could not write telemetry preference at {path}: {exc}"
         ) from exc
@@ -163,6 +307,8 @@ def upload_disabled_reason() -> str | None:
             return "server stopped uploads"
         if meta.get("notice_seen_version") != str(NOTICE_VERSION):
             return "notice not shown yet"
+        if consent_region() and not (_resolve_home() / "telemetry.consent").exists():
+            return "consent needed in your region: run gflow telemetry on"
         return None
     except Exception:  # noqa: BLE001 - any uncertain upload state stays off
         return "local usage state unavailable"
@@ -194,7 +340,7 @@ def maybe_show_notice() -> bool:
             or _meta().get("notice_seen_version") == str(NOTICE_VERSION)
         ):
             return False
-        click.echo(NOTICE_TEXT, err=True)
+        click.echo(NOTICE_TEXT_CONSENT if consent_region() else NOTICE_TEXT, err=True)
         _NOTICE_SHOWN_THIS_RUN = True  # pyright: ignore[reportConstantRedefinition]
         try:
             home = _resolve_home()

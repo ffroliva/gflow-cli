@@ -24,6 +24,7 @@ def _tele_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(update_check, "_in_ci", lambda: False)
     monkeypatch.setattr(update_check, "_installed_from_index", lambda: True)
+    monkeypatch.setenv("TZ", "America/New_York")
     monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
     telemetry.killed.cache_clear()
     telemetry._NOTICE_SHOWN_THIS_RUN = False
@@ -70,6 +71,130 @@ def test_notice_goes_to_stderr_never_stdout(
     output = capsys.readouterr()
     assert output.out == ""
     assert telemetry.NOTICE_TEXT in output.err
+
+
+@pytest.mark.parametrize(
+    ("zone", "expected"),
+    [
+        ("Europe/Paris", True),
+        ("Europe/London", False),
+        ("America/New_York", False),
+        ("Atlantic/Canary", True),
+    ],
+)
+def test_consent_region_from_iana_timezone(
+    zone: str, expected: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TZ", zone)
+    assert telemetry.consent_region() is expected
+
+
+@pytest.mark.parametrize("zone", [None, ""])
+def test_unknown_timezone_requires_consent(
+    zone: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TZ", raising=False) if zone is None else monkeypatch.setenv("TZ", zone)
+    monkeypatch.setattr(telemetry, "_posix_timezone_name", lambda: None)
+    monkeypatch.setattr(telemetry, "_read_windows_timezone_key_name", lambda: None)
+    assert telemetry.consent_region()
+
+
+def test_windows_timezone_mapping_requires_consent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TZ", raising=False)
+    monkeypatch.setattr(telemetry, "_posix_timezone_name", lambda: None)
+    monkeypatch.setattr(telemetry.sys, "platform", "win32")
+    monkeypatch.setattr(
+        telemetry, "_read_windows_timezone_key_name", lambda: "Romance Standard Time"
+    )
+    assert telemetry.consent_region()
+
+
+def test_windows_timezone_outside_eu_eea_does_not_require_consent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TZ", raising=False)
+    monkeypatch.setattr(telemetry, "_posix_timezone_name", lambda: None)
+    monkeypatch.setattr(telemetry.sys, "platform", "win32")
+    monkeypatch.setattr(
+        telemetry, "_read_windows_timezone_key_name", lambda: "Eastern Standard Time"
+    )
+    assert not telemetry.consent_region()
+
+
+def test_timezone_env_precedes_windows_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TZ", "America/New_York")
+    monkeypatch.setattr(telemetry.sys, "platform", "win32")
+    monkeypatch.setattr(
+        telemetry, "_read_windows_timezone_key_name", lambda: "Romance Standard Time"
+    )
+    assert not telemetry.consent_region()
+
+
+def test_consent_region_blocks_upload_until_consent(monkeypatch: pytest.MonkeyPatch) -> None:
+    home = Path.cwd() / "gflow_home"
+    _enable_upload(home)
+    monkeypatch.setattr(telemetry, "consent_region", lambda: True)
+    assert (
+        telemetry.upload_disabled_reason()
+        == "consent needed in your region: run gflow telemetry on"
+    )
+    telemetry.set_consent()
+    assert telemetry.uploads_enabled()
+
+
+def test_consent_region_keeps_counting_local_without_consent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(telemetry, "consent_region", lambda: True)
+    telemetry.record("cli", "image t2i", [], "0", 1.0)
+    assert any(row.key == "image t2i" for row in telemetry.read_counters())
+
+
+def test_on_and_off_persist_consent_only_in_consent_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = Path.cwd() / "gflow_home"
+    monkeypatch.setattr(telemetry, "consent_region", lambda: True)
+    telemetry.set_opted_out(True)
+    result = CliRunner().invoke(main, ["telemetry", "on"])
+    assert result.exit_code == 0, result.output
+    assert not (home / "telemetry.off").exists()
+    assert (home / "telemetry.consent").exists()
+
+    result = CliRunner().invoke(main, ["telemetry", "off"])
+    assert result.exit_code == 0, result.output
+    assert not (home / "telemetry.consent").exists()
+
+
+def test_on_does_not_write_consent_outside_consent_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(telemetry, "consent_region", lambda: False)
+    result = CliRunner().invoke(main, ["telemetry", "on"])
+    assert result.exit_code == 0, result.output
+    assert not (Path.cwd() / "gflow_home" / "telemetry.consent").exists()
+
+
+def test_eu_notice_is_selected_and_mentions_explicit_consent(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+    monkeypatch.setattr(telemetry, "consent_region", lambda: True)
+    assert telemetry.maybe_show_notice()
+    output = capsys.readouterr()
+    assert telemetry.NOTICE_TEXT_CONSENT in output.err
+    assert "nothing is sent unless you agree" in output.err
+
+
+def test_telemetry_status_shows_consent_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    home = Path.cwd() / "gflow_home"
+    _enable_upload(home)
+    monkeypatch.setattr(telemetry, "consent_region", lambda: True)
+    result = CliRunner().invoke(main, ["telemetry", "status"])
+    assert result.exit_code == 0, result.output
+    assert "Upload: off (consent needed in your region: run gflow telemetry on)" in result.output
 
 
 def test_notice_shows_once_per_version() -> None:
@@ -244,19 +369,21 @@ def test_off_delete_that_cannot_delete_exits_11_without_a_traceback(
 
 def test_no_writer_can_undo_off() -> None:
     source = Path(telemetry.__file__).read_text(encoding="utf-8")
-    lines = [
-        (i, line) for i, line in enumerate(source.splitlines(), start=1) if "telemetry.off" in line
-    ]
-    assert lines
-    for line_no, _line in lines:
-        preceding = "\n".join(source.splitlines()[:line_no])
-        assert (
-            "def opted_out" in preceding[-300:]
-            or "def set_opted_out" in preceding[-300:]
-            or (
-                'return "off", "telemetry.off"' == _line.strip() and "def state" in preceding[-300:]
+    for sentinel in ("telemetry.off", "telemetry.consent"):
+        lines = [
+            (i, line) for i, line in enumerate(source.splitlines(), start=1) if sentinel in line
+        ]
+        assert lines
+        for line_no, _line in lines:
+            owner = next(
+                line.strip().split("def ", 1)[1].split("(", 1)[0]
+                for line in reversed(source.splitlines()[:line_no])
+                if line.lstrip().startswith("def ")
             )
-        )
+            allowed = {"opted_out", "set_opted_out", "state"}
+            if sentinel == "telemetry.consent":
+                allowed |= {"set_consent", "upload_disabled_reason"}
+            assert owner in allowed
 
 
 def test_off_delete_wipes_local_data_and_says_remote_holds_nothing_per_install() -> None:

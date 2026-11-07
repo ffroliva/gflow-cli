@@ -57,6 +57,7 @@ def _tele_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]
     """Test isolation: clean GFLOW_CLI_HOME, unset kill switches, reset cache."""
     monkeypatch.delenv("GFLOW_CLI_TELEMETRY", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("TZ", "America/New_York")
     home = tmp_path / "gflow_home"
     home.mkdir(exist_ok=True)
     monkeypatch.setenv("GFLOW_CLI_HOME", str(home))

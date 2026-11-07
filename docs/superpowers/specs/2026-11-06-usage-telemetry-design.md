@@ -252,8 +252,8 @@ differ, and that is stated too.
   for analytics; France and Spain have narrow exemptions and Germany does not. The EDPB says it does
   not apply to processing that stays on the device, which covers PR 1. An aggregated audience
   measurement exemption is in the Digital Omnibus, but that is still in trilogue.
-- **Consequence:** default-on is supported for the UK and most of the world, but not settled for EU
-  users. See open decision 2.
+- **Consequence:** default-on is supported for the UK and most of the world. The owner decided on
+  2026-11-07 that machines in the EU/EEA need explicit consent, determined from timezone only.
 
 ## Open decisions
 
@@ -262,8 +262,8 @@ differ, and that is stated too.
    call pins `CLOUDFLARE_ACCOUNT_ID`, and the Worker's `wrangler.toml` sets `account_id`. The
    Worker lives in the public repo
    [ffroliva/gflow-telemetry-endpoint](https://github.com/ffroliva/gflow-telemetry-endpoint).
-2. **EU users:** for counsel. Default-on for all, or a consent prompt where the machine's timezone is
-   in the EU. Not built until decided.
+2. **EU users: decided 2026-11-07.** A machine whose timezone is in the EU/EEA must explicitly
+   consent with `gflow telemetry on`; an unknown timezone fails safe and also requires consent.
 3. **Data controller:** who the notice names.
 4. **Uses of the totals: decided 2026-11-06.** Improving the tool, and aggregate figures shared
    publicly and with sponsors. The notice states both. **This is the main legal risk:** the UK exception

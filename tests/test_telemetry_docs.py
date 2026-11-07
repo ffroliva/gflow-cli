@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from gflow_cli.telemetry import NOTICE_TEXT, NOTICE_VERSION
+from gflow_cli.telemetry import NOTICE_TEXT, NOTICE_TEXT_CONSENT, NOTICE_VERSION
 from gflow_cli.telemetry_upload import _ENDPOINT
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +67,13 @@ def test_notice_copy_matches_the_doc() -> None:
     fenced_blocks = re.findall(r"```[^\n]*\n(.*?)```", notice, re.DOTALL)
 
     assert NOTICE_TEXT in [block.rstrip("\n") for block in fenced_blocks]
+
+
+def test_consent_notice_copy_matches_the_doc() -> None:
+    notice = (ROOT / "docs" / "TELEMETRY.md").read_text(encoding="utf-8")
+    fenced_blocks = re.findall(r"```[^\n]*\n(.*?)```", notice, re.DOTALL)
+
+    assert NOTICE_TEXT_CONSENT in [block.rstrip("\n") for block in fenced_blocks]
 
 
 def test_endpoint_matches_code() -> None:

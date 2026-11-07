@@ -218,6 +218,7 @@ def clean_home(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     env["GFLOW_CLI_HOME"] = str(home)
     env["GFLOW_CLI_UPDATE_CHECK"] = "0"
     env["PYTHONUTF8"] = "1"
+    env["TZ"] = "America/New_York"
     return home, env
 
 
@@ -395,7 +396,7 @@ with sqlite3.connect(home / 'telemetry.db') as con:
     if {with_notice}:
         con.execute(
             "INSERT OR REPLACE INTO meta VALUES (?, ?)",
-            ('notice_seen_version', '1')
+            ('notice_seen_version', '2')
         )
         con.execute(
             "INSERT OR REPLACE INTO meta VALUES (?, ?)",
@@ -472,7 +473,7 @@ def test_notice_prints_once_in_a_real_tty_and_nothing_is_sent(
     # Verify local DB: notice recorded, nothing sent
     with sqlite3.connect(home / "telemetry.db") as con:
         meta = dict(con.execute("SELECT key, value FROM meta"))
-        assert meta.get("notice_seen_version") == "1"
+        assert meta.get("notice_seen_version") == "2"
         assert "last_attempt" not in meta
 
         row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
@@ -618,6 +619,68 @@ def test_one_real_post_lands_in_d1_from_a_command_that_exits_at_once(
     else:
         for val in all_values:
             assert not ip_regex.search(val), f"IP address format detected in D1: {val}"
+
+
+@requires_live
+def test_eu_region_needs_consent_then_uploads(
+    installed_gflow: InstalledGFlow,
+    clean_home: tuple[Path, dict[str, str]],
+) -> None:
+    """EU timezone blocks the report until telemetry on persists explicit consent."""
+    home, env = clean_home
+    env["TZ"] = "Europe/Paris"
+    week, marker = seed_telemetry_db(installed_gflow, home, env, with_notice=True)
+    command = [str(installed_gflow.gflow), "data", "list", "projects", "--json"]
+
+    first = subprocess.run(command, cwd=str(home), env=env, capture_output=True, text=True)
+    assert first.returncode == 0, first.stderr
+    time.sleep(20)
+    with sqlite3.connect(home / "telemetry.db") as con:
+        row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
+        assert row is None or row[0] is None, f"Unexpected upload before consent: {row}"
+    no_consent_rows = run_d1_sql(
+        f"SELECT count(*) AS count FROM totals WHERE week = '{week}' AND key = 'cli|{marker}'"
+    )
+    assert no_consent_rows and no_consent_rows[0].get("count") == 0
+
+    on = subprocess.run(
+        [str(installed_gflow.gflow), "telemetry", "on"],
+        cwd=str(home),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert on.returncode == 0, on.stderr
+    assert (home / "telemetry.consent").exists()
+    with sqlite3.connect(home / "telemetry.db") as con:
+        con.execute("DELETE FROM meta WHERE key = 'last_attempt'")
+
+    second = subprocess.run(command, cwd=str(home), env=env, capture_output=True, text=True)
+    assert second.returncode == 0, second.stderr
+    deadline = time.monotonic() + 60.0
+    sent_at: str | None = None
+    while time.monotonic() < deadline:
+        with sqlite3.connect(home / "telemetry.db") as con:
+            row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
+            if row and row[0]:
+                sent_at = row[0]
+                break
+        time.sleep(1.0)
+    assert sent_at is not None, f"Timed out waiting for consented upload for week {week}"
+
+    deadline_d1 = time.monotonic() + 60.0
+    rows: list[dict[str, Any]] = []
+    while time.monotonic() < deadline_d1:
+        rows = run_d1_sql(f"SELECT field, key, n FROM totals WHERE week = '{week}'")
+        if any(
+            row.get("field") == "commands" and row.get("key") == f"cli|{marker}" for row in rows
+        ):
+            break
+        time.sleep(1.0)
+    marker_row = [
+        row for row in rows if row.get("field") == "commands" and row.get("key") == f"cli|{marker}"
+    ]
+    assert marker_row and marker_row[0].get("n") == 1, f"Missing consented report: {rows}"
 
 
 @requires_live

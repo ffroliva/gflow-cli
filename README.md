@@ -99,7 +99,7 @@ Reproduce the recording with [`scripts/record_demo.ps1`](scripts/record_demo.ps1
 
 [**docs/INDEX.md**](docs/INDEX.md) is the master routing layer. Quick links:
 
-**Usage data:** gflow stores local usage counters and, after an interactive notice, uploads weekly totals without an identifier. See [the privacy notice](docs/TELEMETRY.md) and [how to turn it off](docs/TELEMETRY.md#turn-usage-uploads-off-or-on).
+**Usage data:** gflow stores local usage counters and, after an interactive notice (and explicit consent in the EU/EEA), uploads weekly totals without an identifier. See [the privacy notice](docs/TELEMETRY.md) and [how to turn it off](docs/TELEMETRY.md#turn-usage-uploads-off-or-on).
 
 | Topic | Read |
 |---|---|

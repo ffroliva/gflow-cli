@@ -64,6 +64,7 @@ def on_cmd() -> None:
 
     try:
         telemetry_mod.set_opted_out(False)
+        telemetry_mod.set_consent()
     except ConfigurationError as exc:
         _fail(str(exc.detail or exc))
     if switch := telemetry_mod.killed():

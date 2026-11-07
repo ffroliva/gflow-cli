@@ -17,7 +17,7 @@
 ## What we don't do
 
 - ❌ We don't store or transmit your Google password.
-- Weekly usage totals with no identifier are uploaded after the interactive notice; turn them off with `gflow telemetry off`, `GFLOW_CLI_TELEMETRY=0`, or `DO_NOT_TRACK=1`. See the [usage data notice](TELEMETRY.md). Separately, a daily PyPI update check looks for new releases; set `GFLOW_CLI_UPDATE_CHECK=0` to disable it.
+- Weekly usage totals with no identifier are uploaded after the interactive notice and, in the EU/EEA, explicit consent; turn them off with `gflow telemetry off`, `GFLOW_CLI_TELEMETRY=0`, or `DO_NOT_TRACK=1`. See the [usage data notice](TELEMETRY.md). Separately, a daily PyPI update check looks for new releases; set `GFLOW_CLI_UPDATE_CHECK=0` to disable it.
 - ❌ We don't write secrets to logs (verified by `_post_json` redaction tests in `tests/api/test_client.py`; reCAPTCHA tokens and bearer-style fields are scrubbed before any DEBUG-level body emission).
 - ❌ We don't enable insecure TLS or skip certificate validation anywhere.
 
@@ -126,7 +126,7 @@ Not used by v0.4.0a2's reverse-engineered Flow provider. Documented here in adva
 ### Privacy controls
 
 - **`GFLOW_CLI_HISTORY_PROMPTS=redacted`** — store only the SHA-256 hash of the prompt, never the plain text. Useful when prompts contain sensitive or confidential content.
-- Usage counters are stored locally and weekly totals with no identifier can be uploaded after the notice. Turn uploads off with `gflow telemetry off`, `GFLOW_CLI_TELEMETRY=0`, or `DO_NOT_TRACK=1`; see the [full notice](TELEMETRY.md). The daily PyPI update check is separate and can be disabled with `GFLOW_CLI_UPDATE_CHECK=0`.
+- Usage counters are stored locally and weekly totals with no identifier can be uploaded after the notice and, in the EU/EEA, explicit consent. Turn uploads off with `gflow telemetry off`, `GFLOW_CLI_TELEMETRY=0`, or `DO_NOT_TRACK=1`; see the [full notice](TELEMETRY.md). The daily PyPI update check is separate and can be disabled with `GFLOW_CLI_UPDATE_CHECK=0`.
 - `GFLOW_CLI_DB_PATH` lets you redirect the database to any path (e.g. an encrypted volume). A fresh path creates an empty database automatically.
 
 ### Redaction guarantee

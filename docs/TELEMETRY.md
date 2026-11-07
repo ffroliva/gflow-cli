@@ -60,7 +60,7 @@ that have already been added.
 
 ## When an upload can happen
 
-Uploads are enabled by default, but only when all these conditions are met:
+Uploads are enabled by default outside the EU and EEA, but only when all these conditions are met:
 
 - This machine has shown the notice below in an interactive terminal. Nothing is uploaded on the run
   that first shows it, and only weeks that began after the notice was shown can be sent.
@@ -68,6 +68,18 @@ Uploads are enabled by default, but only when all these conditions are met:
 - The process is not running in CI, and uploads have not been turned off or disabled by the server.
 - A completed week is due. Its send time is chosen randomly within the seven days after that week
   ends. There is at most one attempt per day.
+
+## EU and EEA: uploads need your consent
+
+gflow checks the machine's timezone only. It uses the `TZ` IANA timezone when set, otherwise the
+POSIX local timezone configuration or the Windows timezone key. A timezone that cannot be
+determined is treated as being in the EU/EEA, so uploads stay off until you consent. gflow does not
+read your IP address or locale to make this decision, and never sends the timezone or region.
+
+Local counters still work in the EU/EEA and remain on your device unless you consent. To allow
+weekly uploads, run `gflow telemetry on`; this records your choice locally in
+`<GFLOW_CLI_HOME>/telemetry.consent`. Run `gflow telemetry off` to withdraw consent and stop
+counting and uploads. Environment kill switches still take precedence.
 
 The request runs in a detached background process, so the command can exit without waiting. The
 request uses a five-second timeout. A failed request is retried on a later day. An HTTP 410 response
@@ -97,7 +109,7 @@ the sender is `src/gflow_cli/telemetry_upload.py` in this repository.
 
 ## Notice
 
-Notice version: 1
+Notice version: 2
 
 ```text
 gflow sends weekly usage totals to improve it, and we share overall figures publicly and with
@@ -105,6 +117,14 @@ sponsors. Commands, flag names, models, error codes, and your country as a total
 paths or account details. Each report is added to totals and discarded.
 Turn it off: gflow telemetry off, or set GFLOW_CLI_TELEMETRY=0
 See exactly what is sent: gflow telemetry show. Full notice: gflow docs TELEMETRY
+```
+
+The notice shown in the EU/EEA:
+
+```text
+gflow can send weekly usage totals to help improve it; overall figures are shared publicly and with sponsors. Commands, flag names, models, error codes, and your country as a total. No ID, prompts, paths or account details. Each report is added to totals and discarded.
+In your region nothing is sent unless you agree: gflow telemetry on (undo: gflow telemetry off)
+See exactly what would be sent: gflow telemetry show. Full notice: gflow docs TELEMETRY
 ```
 
 ## Controller and legal basis

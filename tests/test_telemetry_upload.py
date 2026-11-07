@@ -31,6 +31,7 @@ def _home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
     monkeypatch.delenv("GFLOW_CLI_TELEMETRY", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("TZ", "America/New_York")
     telemetry.killed.cache_clear()
     return home
 
