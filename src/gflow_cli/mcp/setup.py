@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -125,7 +126,7 @@ def apply(target: str) -> tuple[Path, bool]:
     if existing is not None:
         backup = path.with_name(path.name + ".gflow-backup")
         if not backup.exists():  # the FIRST backup is the pristine one — keep it
-            backup.write_text(existing, encoding="utf-8")
+            shutil.copy2(path, backup)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".gflow-tmp")
     tmp.write_text(merged, encoding="utf-8")
