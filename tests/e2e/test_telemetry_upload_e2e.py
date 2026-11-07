@@ -10,11 +10,13 @@ import json
 import os
 import re
 import secrets
+import socket
 import sqlite3
 import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,7 +25,6 @@ import pytest
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_telemetry]
 
-ENDPOINT = "https://gflow-telemetry.ffroliva.workers.dev/v1/report"
 WRANGLER_DIR = Path(r"C:\development\github\gflow-telemetry-endpoint")
 CLOUDFLARE_ACCOUNT_ID = "6e84ee0d4c899e5b5fa648302e0bfba9"
 
@@ -59,7 +60,7 @@ ALLOWED_D1_FIELDS = {
 }
 
 _USED_WEEKS: set[str] = set()
-_RUN_START_UNIX = int(time.time())
+_USED_HOMES: set[Path] = set()
 
 CI_VARS = {
     "CI",
@@ -253,62 +254,64 @@ def run_d1_sql(sql: str) -> list[dict[str, Any]]:
     return []
 
 
-def empty_post(timeout_s: float = 5.0) -> int:
-    """Send empty POST to endpoint to check status (400 vs 410)."""
-    import urllib.error
-    import urllib.request
-
-    req = urllib.request.Request(
-        ENDPOINT,
-        data=b"",
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "gflow-cli-e2e/0.68.0",
-        },
-        method="POST",
+def _endpoint_test_env(home: Path, env: dict[str, str], endpoint: str) -> dict[str, str]:
+    """Inject the loopback URL in the test process that starts the detached sender."""
+    hook = home / "test-endpoint-hook"
+    hook.mkdir(parents=True, exist_ok=True)
+    child_code = f"import gflow_cli.telemetry_upload as t; t._ENDPOINT = {endpoint!r}; t._main()"
+    (hook / "sitecustomize.py").write_text(
+        "import subprocess, sys\n"
+        "_real_popen = subprocess.Popen\n"
+        "def _test_popen(args, **kwargs):\n"
+        "    if isinstance(args, (list, tuple)) and '-m' in args and "
+        "'gflow_cli.telemetry_upload' in args:\n"
+        f"        code = {child_code!r}\n"
+        "        args = [sys.executable, '-P', '-c', code]\n"
+        "    return _real_popen(args, **kwargs)\n"
+        "subprocess.Popen = _test_popen\n",
+        encoding="utf-8",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310
-            return int(resp.status)
-    except urllib.error.HTTPError as err:
-        return int(err.code)
+    child_env = dict(env)
+    child_env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(hook), env.get("PYTHONPATH", "")) if part
+    )
+    return child_env
 
 
-def wait_for_empty_post_status(expected: int, timeout_s: float = 60.0) -> None:
-    """Poll endpoint with empty POST until status matches expected."""
-    deadline = time.monotonic() + timeout_s
-    last_status: int | None = None
-    while time.monotonic() < deadline:
+@contextmanager
+def stopped_local_worker(tmp_path: Path) -> Iterator[tuple[str, Path]]:
+    """Run the test Worker locally with uploads stopped, then kill its process."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    log_path = tmp_path / "wrangler-local.log"
+    with log_path.open("w", encoding="utf-8") as log:
+        kwargs: dict[str, Any] = (
+            {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+        )
+        proc = subprocess.Popen(
+            ["npx", "wrangler", "dev", "--port", str(port), "--var", "STOPPED:1", "--local"],
+            cwd=str(WRANGLER_DIR),
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            shell=sys.platform == "win32",
+            **kwargs,
+        )
         try:
-            status = empty_post(timeout_s=5.0)
-            last_status = status
-            if status == expected:
-                return
-        except Exception:
-            pass
-        time.sleep(1.0)
-    raise TimeoutError(
-        f"Endpoint did not return {expected} within {timeout_s}s (last: {last_status})"
-    )
-
-
-def run_wrangler_deploy(var_stopped: str | None = None) -> None:
-    """Deploy Worker optionally with --var STOPPED:<val>."""
-    env = dict(os.environ)
-    env["CLOUDFLARE_ACCOUNT_ID"] = CLOUDFLARE_ACCOUNT_ID
-    cmd = ["npx", "wrangler", "deploy"]
-    if var_stopped is not None:
-        cmd.extend(["--var", f"STOPPED:{var_stopped}"])
-    res = subprocess.run(
-        cmd,
-        cwd=str(WRANGLER_DIR),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        shell=sys.platform == "win32",
-    )
-    assert res.returncode == 0, f"wrangler deploy failed:\n{res.stderr}\n{res.stdout}"
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                output = log_path.read_text(encoding="utf-8", errors="replace")
+                if "Ready on" in output:
+                    yield f"http://127.0.0.1:{port}/v1/report", log_path
+                    return
+                if proc.poll() is not None:
+                    raise RuntimeError(f"wrangler dev exited early:\n{output}")
+                time.sleep(0.2)
+            raise TimeoutError(f"wrangler dev did not become ready:\n{log_path.read_text()}")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=10)
 
 
 def run_in_pty(
@@ -368,10 +371,12 @@ def seed_telemetry_db(
     env: dict[str, str],
     *,
     with_notice: bool = True,
-    weeks_ago: int = 3,
+    weeks_ago: int = 55,
     probe_id: str | None = None,
 ) -> tuple[str, str]:
     """Seed <home>/telemetry.db via the installed interpreter."""
+    if not 55 <= weeks_ago <= 59:
+        raise ValueError("live upload tests may seed only weeks 55-59")
     if probe_id is None:
         probe_id = secrets.token_hex(4)
     marker = f"e2eprobe {probe_id}"
@@ -386,6 +391,8 @@ home = Path(r'{home}')
 now = datetime.now(UTC)
 target_dt = now - timedelta(days={weeks_ago} * 7)
 week = telemetry.iso_week(target_dt)
+iso = target_dt.isocalendar()
+week_start = datetime.fromisocalendar(iso.year, iso.week, 1).replace(tzinfo=UTC)
 
 # 1. Create schema
 with telemetry._connect(home) as con:
@@ -400,7 +407,7 @@ with sqlite3.connect(home / 'telemetry.db') as con:
         )
         con.execute(
             "INSERT OR REPLACE INTO meta VALUES (?, ?)",
-            ('notice_seen_at', (now - timedelta(days=70)).isoformat())
+            ('notice_seen_at', (week_start - timedelta(microseconds=1)).isoformat())
         )
     con.execute(
         "INSERT INTO counters (week, surface, kind, key, n) VALUES (?, 'cli', 'command', ?, 1)",
@@ -423,6 +430,7 @@ print(week)
     )
     week = res.stdout.strip()
     _USED_WEEKS.add(week)
+    _USED_HOMES.add(home)
     return week, marker
 
 
@@ -433,13 +441,20 @@ def d1_cleanup() -> Iterator[None]:
     if not is_live_enabled():
         return
     try:
+        report_ids: set[str] = set()
+        for home in _USED_HOMES:
+            db_path = home / "telemetry.db"
+            if db_path.exists():
+                with sqlite3.connect(db_path) as con:
+                    report_ids.update(
+                        row[0] for row in con.execute("SELECT report_id FROM reports") if row[0]
+                    )
         if _USED_WEEKS:
             weeks_list = ", ".join(f"'{w}'" for w in sorted(_USED_WEEKS))
             run_d1_sql(f"DELETE FROM totals WHERE week IN ({weeks_list})")
-        # DELETE FROM seen WHERE expires > <run start + 13 days> is acceptable
-        # since no other client exists yet
-        cutoff = _RUN_START_UNIX + 13 * 86400
-        run_d1_sql(f"DELETE FROM seen WHERE expires > {cutoff}")
+        for report_id in report_ids:
+            escaped_id = report_id.replace("'", "''")
+            run_d1_sql(f"DELETE FROM seen WHERE report_id = '{escaped_id}'")
 
         t_cnt = run_d1_sql("SELECT count(*) AS count FROM totals")
         s_cnt = run_d1_sql("SELECT count(*) AS count FROM seen")
@@ -761,21 +776,16 @@ def test_do_not_track_stops_the_upload(
     )
 
 
-@requires_live
 def test_410_stops_the_client_for_good(
     installed_gflow: InstalledGFlow,
     clean_home: tuple[Path, dict[str, str]],
+    tmp_path: Path,
 ) -> None:
-    """HTTP 410 permanently disables upload locally; subsequent weeks are never sent."""
+    """A local stopped Worker disables upload and the client sends no later week."""
     home, env = clean_home
-    week1, marker1 = seed_telemetry_db(installed_gflow, home, env, with_notice=True, weeks_ago=3)
-
-    try:
-        # 1. Deploy STOPPED:1 and wait until empty POST answers 410
-        run_wrangler_deploy(var_stopped="1")
-        wait_for_empty_post_status(expected=410, timeout_s=60.0)
-
-        # 2. Run command and poll for upload_disabled='1' (max 60 s)
+    week1, _ = seed_telemetry_db(installed_gflow, home, env, with_notice=True, weeks_ago=55)
+    with stopped_local_worker(tmp_path) as (endpoint, log_path):
+        env = _endpoint_test_env(home, env, endpoint)
         res = subprocess.run(
             [str(installed_gflow.gflow), "data", "list", "projects", "--json"],
             cwd=str(home),
@@ -801,39 +811,31 @@ def test_410_stops_the_client_for_good(
             row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week1,)).fetchone()
             assert row is None or row[0] is None, f"Expected sent_at NULL on 410, got {row}"
 
-    finally:
-        # 3. Restore deploy in finally block and confirm 400
-        run_wrangler_deploy()
-        wait_for_empty_post_status(expected=400, timeout_s=60.0)
+        worker_log = log_path.read_text(encoding="utf-8", errors="replace")
+        posts_after_410 = len(re.findall(r"POST\s+/v1/report", worker_log))
+        assert posts_after_410 >= 1, f"Local Worker received no report POST:\n{worker_log}"
 
-    # 4. Add a SECOND eligible week marker, clear last_attempt
-    week2, marker2 = seed_telemetry_db(installed_gflow, home, env, with_notice=True, weeks_ago=4)
-    with sqlite3.connect(home / "telemetry.db") as con:
-        con.execute("DELETE FROM meta WHERE key = 'last_attempt'")
+        week2, _ = seed_telemetry_db(installed_gflow, home, env, with_notice=True, weeks_ago=56)
+        with sqlite3.connect(home / "telemetry.db") as con:
+            con.execute("DELETE FROM meta WHERE key = 'last_attempt'")
 
-    # Run command again
-    run_res2 = subprocess.run(
-        [str(installed_gflow.gflow), "data", "list", "projects", "--json"],
-        cwd=str(home),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert run_res2.returncode == 0
+        run_res2 = subprocess.run(
+            [str(installed_gflow.gflow), "data", "list", "projects", "--json"],
+            cwd=str(home),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert run_res2.returncode == 0
+        time.sleep(3)
 
-    time.sleep(20)
-
-    # Assert no POST
-    with sqlite3.connect(home / "telemetry.db") as con:
-        row2 = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week2,)).fetchone()
-        assert row2 is None or row2[0] is None, f"Expected sent_at NULL for second week, got {row2}"
-
-    d1_rows2 = run_d1_sql(
-        f"SELECT count(*) AS count FROM totals WHERE week = '{week2}' AND key = 'cli|{marker2}'"
-    )
-    assert d1_rows2 and d1_rows2[0].get("count") == 0, (
-        f"Marker 2 landed in D1 despite 410: {d1_rows2}"
-    )
+        with sqlite3.connect(home / "telemetry.db") as con:
+            row2 = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week2,)).fetchone()
+            assert row2 is None or row2[0] is None, (
+                f"Expected sent_at NULL for second week, got {row2}"
+            )
+        worker_log = log_path.read_text(encoding="utf-8", errors="replace")
+        assert len(re.findall(r"POST\s+/v1/report", worker_log)) == posts_after_410
 
     # Status command reports server stopped uploads
     status_res = subprocess.run(
