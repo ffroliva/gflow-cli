@@ -58,3 +58,13 @@ four passed when re-run alone.
 | `pytest --cov` (`-n 8`) | 6027 passed, 12 skipped, 1 failed: `test_packaging.py::test_built_distributions_contain_sql_migrations`, which passed alone (2/2) and with `tests/data` under `-n 8` (173/173); the full-suite run kept no traceback |
 | `check_release_artifacts.py` | ✅ release artifacts OK |
 | `/gflow:doc-review` | _Council verdict: RED across 3 auditors (completeness RED, cross-reference YELLOW, drift RED). All findings were docs lagging #1174/#1177, none code: `docs/USAGE.md` called 10s "exclusively omni-flash"; the `video chain` help said "10s remains omni-flash-only"; resolution was "omni-flash only" in USAGE, the MCP docstring and `VideoRequest`; Omni 1.2's reference cap of 7 and its chain refusal were missing from the cap and chain lists; the video-production skill, KNOWN_ISSUES and MOVIE.md omitted the 3–15 range; no user doc described the #1142 reloads before exit 36 (now in USAGE, KNOWN_ISSUES, MCP.md and the gflow-cli skill); this ledger over-claimed that the forced e2e covers every gate (it covers the reference-upload gate). All fixed in the release-prep commit, website and plugin mirrors regenerated. Deferred: README's "5-model Veo picker" count, 720p on Omni 1.2 (unmeasured), the video-production skill's claim that `--duration` without `--model` exits 2 (pre-existing). Council reports at `tmp/council/0{1,2,3}-*.md` (local-only)._ |
+
+## Post-tag evidence
+
+| Check | Result |
+|---|---|
+| Signed tag | `v0.96.0` on `9fd03513`, SSH-signed (`git cat-file -p v0.96.0` carries one `BEGIN SSH SIGNATURE`) |
+| `Release` workflow | run 42427395129: success (`build-and-publish`, `mcp-registry / publish`) |
+| GitHub Release | `v0.96.0`, published 2026-11-07T23:55:56Z, not a prerelease |
+| PyPI | `https://pypi.org/pypi/gflow-cli/0.96.0/json` lists `gflow_cli-0.96.0-py3-none-any.whl` and `gflow_cli-0.96.0.tar.gz` |
+| Release PR | #1179 merged into `main` (merge commit `3188d2b1`), every check green incl. SonarCloud; back-merge `ea7a94ff` into `develop` |
