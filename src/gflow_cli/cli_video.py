@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -1842,6 +1843,18 @@ _LABS_EXTEND_DEFAULT_ASPECT = "9:16"
 _EXTEND_COMMAND = "video extend"
 
 
+def _migrated_extend_seconds(model_key: str | None) -> tuple[int, int]:
+    """(seconds added, seconds billed) for one flow.google.com extend.
+
+    An Omni key names its length (``macaron_cookie_extend_4s``: +3.9 s measured, #1184);
+    billed seconds are read from that token, not measured (12 credits is the only billing
+    fact). Any other key keeps the measured Veo 7 s added / 8 s billed.
+    """
+    if model_key and (m := re.search(r"_extend_(\d+)s\b", model_key)):
+        return int(m.group(1)), int(m.group(1))
+    return _EXTEND_CONTENT_SECONDS, _EXTEND_SEGMENT_SECONDS
+
+
 def _print_extend_plan(
     *, media_id: str, prompt: str, aspect: str, segments: int, migrated: bool = False
 ) -> None:
@@ -1871,7 +1884,7 @@ def _print_extend_plan(
             "  cost        : spends credits — flow.google.com does not report the price "
             "before submitting; compare `gflow credits user` before and after"
         )
-        console.print("  leaves      : a new scene in the project (Flow creates it on submit)")
+        console.print("  changes     : the source clip, grown in place (Omni key)")
         return
     console.print("  cost        : spends credits — exact amount is shown before submitting")
 
@@ -2038,6 +2051,7 @@ def _migrated_extend_payload(
     """The ``--json`` result of one migrated extend (``rendered`` is the file, if any)."""
     record = outcome.record
     ok = rendered is not None
+    added, billed = _migrated_extend_seconds(outcome.model_key)
     return {
         "status": "ok" if ok else "fail",
         "command": _EXTEND_COMMAND,
@@ -2057,8 +2071,8 @@ def _migrated_extend_payload(
         "segments_completed": 1 if ok else 0,
         "media_ids": [record.media_id],
         "credits_spent": None,
-        "seconds_added": _EXTEND_CONTENT_SECONDS if ok else 0,
-        "seconds_billed": _EXTEND_SEGMENT_SECONDS,
+        "seconds_added": added if ok else 0,
+        "seconds_billed": billed,
         "aborted": not ok,
         "profile": profile_name,
         "host": "flow.google.com",
@@ -2066,7 +2080,7 @@ def _migrated_extend_payload(
             "model": outcome.model_key,
             "mode": "extend",
             "aspect": outcome.aspect or aspect,
-            "duration": _EXTEND_CONTENT_SECONDS,
+            "duration": added,
             "count": 1,
             "seed": None,
         },
@@ -2360,10 +2374,11 @@ async def _extend_session(  # noqa: PLR0913
         "seam. See KNOWN_ISSUES.\n\n"
         "On flow.google.com gflow drives Flow's own extend UI: one segment per call "
         "(one PROMPT; --segments > 1, --scene/--resume-from and --seed exit 36), in "
-        "the source clip's aspect; the new extension clip alone (not the joined "
-        "scene) is downloaded to --output or the output directory. "
-        "Each run leaves a new scene in the project, and the price is not shown "
-        "before submitting there."
+        "the source clip's aspect, downloaded to --output or the output directory. "
+        "With the Omni extend key (macaron_cookie_extend_4s, measured 2026-11-08) Flow "
+        "grows the source clip in place by ~4s under its own media id, so the file is "
+        "the whole extended clip and no earlier version is listed. "
+        "The price is not shown before submitting there."
     ),
 )
 @click.argument("media_id")

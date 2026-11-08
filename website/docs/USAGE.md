@@ -1000,13 +1000,18 @@ reach for it before spending anything.
 > and signs the request itself. Before any click, Flow's project read must list
 > `MEDIA_ID` as a video in `--project` (exit 11 otherwise), and every scene/extend request
 > is checked at the route and aborted, before Flow sees it, if it names another clip. The
-> new segment is downloaded to `-o` (default: the output directory). Not ported to
+> result is downloaded to `-o` (default: the output directory). **Measured 2026-11-08 with
+> the Omni extend key `macaron_cookie_extend_4s`:** Flow grew the source clip **in place**
+> by about 4 s (7.93 s became 11.83 s), under the source's own media id, for 12 credits. So
+> the file is the whole extended clip, the project lists no separate extension or earlier
+> version, and `--json` reports `seconds_added`/`seconds_billed` from the key (4/4)
+> ([#1184](https://github.com/ffroliva/gflow-cli/issues/1184)). A page that still orders a
+> Veo extend key was not observed that day. Not ported to
 > flow.google.com yet, each refused with exit 36 before anything is billed: more than one
 > PROMPT or `-n > 1`, `--scene`/`--resume-from`, `--seed`, and an `--aspect` other than the
-> source clip's (leave `--aspect` off; the extension keeps the source's). Each run leaves a
-> new "Untitled Scene" in the project, and the plan shows no price because that host does
-> not report one before submitting — compare `gflow credits user` before and after. To go
-> further, extend the new clip again. "Cost and safety" and "What it produces" below
+> source clip's (leave `--aspect` off; the extension keeps the source's). The plan shows no
+> price because that host does not report one before submitting — compare
+> `gflow credits user` before and after. To go further, extend the same clip again. "Cost and safety" and "What it produces" below
 > describe the labs.google arm.
 
 Continue an existing clip by another 8 seconds, then optionally render the whole

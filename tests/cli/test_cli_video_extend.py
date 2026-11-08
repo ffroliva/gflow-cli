@@ -629,7 +629,7 @@ def test_the_migrated_plan_claims_no_price(runner: CliRunner, _host: Any) -> Non
     assert result.exit_code == 0
     assert "does not report the price" in result.output
     assert "exact amount" not in result.output
-    assert "scene" in result.output
+    assert "grown in place" in result.output  # #1184: the Omni extend leaves no new scene
 
 
 class _MigratedClient:
@@ -711,6 +711,34 @@ async def test_the_migrated_session_reports_one_video_result(
     assert payload["scene_id"] == SCENE
     assert rows == [("new-media", "16:9")]  # recorded at submit, with the page's aspect
     assert fake.calls[0]["aspect"] is None
+
+
+@pytest.mark.parametrize(
+    ("key", "added", "billed"),
+    [("macaron_cookie_extend_4s", 4, 4), ("veo_3_1_extension_lite", 7, 8)],
+)
+def test_the_migrated_payload_reports_the_key_length(key: str, added: int, billed: int) -> None:
+    """#1184: an Omni key names its length (+3.9 s measured for ``_4s``); a Veo key keeps
+    the measured 7 s added / 8 s billed."""
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome
+    from gflow_cli.cli_video import _migrated_extend_payload
+
+    record = GenerationRecord(
+        workflow_id="wf",
+        project_id=PROJECT,
+        media_id=MEDIA,
+        status=3,
+        video_url=None,
+        poster_url=None,
+        size_bytes=None,
+    )
+    outcome = ExtendOutcome(record=record, video=None, model_key=key, aspect="9:16", scene_id=None)
+    payload = _migrated_extend_payload(
+        outcome, "out.mp4", profile_name="p", project_id=PROJECT, aspect=None
+    )
+    assert (payload["seconds_added"], payload["seconds_billed"]) == (added, billed)
+    assert payload["request"]["duration"] == added
 
 
 def test_json_mode_prints_no_human_plan(runner: CliRunner) -> None:

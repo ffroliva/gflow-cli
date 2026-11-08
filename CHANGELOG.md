@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`video extend` on flow.google.com no longer fails its catalog write, and reports the
+  length it added.** Measured 2026-11-08 with the Omni extend key, Flow grows the source clip
+  in place, under the source's media id. The catalog now notes the extend on the existing
+  row (`extended_by`) instead of failing on the duplicate id. `--json` reads
+  `seconds_added`/`seconds_billed` from the key's `_<n>s` token (4/4 for
+  `macaron_cookie_extend_4s`); a Veo key keeps 7/8. The help no longer says the extension
+  alone is downloaded or that each run leaves a new scene (#1184).
 - **`video extend` on flow.google.com reports the model it ran with instead of `unknown`.**
   The page now orders the extension with an Omni key (`macaron_cookie_extend_4s`, measured
   2026-11-08) that gflow's key search did not match. The key is now read from its slot in the

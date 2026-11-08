@@ -266,6 +266,25 @@ class DataRepository:
                 (status, profile_name, flow_media_id),
             )
 
+    def note_asset_extended(
+        self, profile_name: str, flow_media_id: str, *, model_key: str, unit_cost: int | None
+    ) -> None:
+        """Record an extend that grew this clip in place (#1184), keeping its other columns."""
+        with self._store.transaction(immediate=True):
+            self._store.conn.execute(
+                """
+                UPDATE assets
+                SET metadata_json = json_set(
+                    COALESCE(metadata_json, '{}'),
+                    '$.extended_by', ?,
+                    '$.extend_unit_cost', ?,
+                    '$.extended_at', ?
+                )
+                WHERE profile_name = ? AND flow_media_id = ?
+                """,
+                (model_key, unit_cost, _utc_now(), profile_name, flow_media_id),
+            )
+
     def set_asset_display_name(
         self,
         profile_name: str,

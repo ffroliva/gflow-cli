@@ -29,6 +29,7 @@ Env: ``GFLOW_CLI_E2E_PROFILE`` (profile served flow.google.com), ``GFLOW_CLI_E2E
 from __future__ import annotations
 
 import os
+import re
 import struct
 import uuid
 from pathlib import Path
@@ -230,8 +231,14 @@ async def test_e2e_one_paid_extend_downloads_an_mp4(
             on_started=lambda s, _a: started.append(s.media_id),
         )
     assert started == [outcome.record.media_id]
-    assert outcome.record.media_id != media
     assert target is not None
     data = Path(str(target)).read_bytes()
     assert data[4:8] == b"ftyp"
-    assert 6.5 <= _mp4_seconds(data) <= 8.5  # Flow bills 8 s; measured content ~7 s
+    seconds = _mp4_seconds(data)
+    if outcome.record.media_id == media:
+        # #1184, measured 2026-11-08 with macaron_cookie_extend_4s: the extend grows the
+        # source in place, so the file is the joined clip, longer than the extension alone.
+        added = int(m.group(1)) if (m := re.search(r"_extend_(\d+)s", outcome.model_key)) else 4
+        assert seconds > added + 1, (outcome.model_key, seconds)
+    else:
+        assert 6.5 <= seconds <= 8.5  # a separate Veo segment: Flow bills 8 s, ~7 s content

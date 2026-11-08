@@ -814,6 +814,15 @@ class OperationRecorder:
                 source="generated",
             ),
         )
+        if repo.get_asset_by_flow_media_id(profile_name, started.media_id) is not None:
+            # #1184: the Omni extend grows the source clip in place, under its own id.
+            repo.note_asset_extended(
+                profile_name,
+                started.media_id,
+                model_key=started.model_key,
+                unit_cost=started.unit_cost,
+            )
+            return
         repo.upsert_asset(
             AssetRecord(
                 id=_new_id(),
