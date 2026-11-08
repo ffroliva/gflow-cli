@@ -3469,8 +3469,8 @@ class MigratedComposer:
         # the route never saw, whose verdict lands once the run settles or times out.
         # Gating on `expect_media_id` once left `_r2v_body_problem` unreached live.
         page.on("request", on_request)
-        await page.route(BATCHEXECUTE_GLOB, guard)
         try:
+            await page.route(BATCHEXECUTE_GLOB, guard)
             submit = (
                 page.locator(submit_selector).first
                 if submit_selector

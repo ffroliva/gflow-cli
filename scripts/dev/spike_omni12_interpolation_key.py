@@ -71,22 +71,16 @@ async def run_case(
     submits: list[dict[str, Any]] = []
     observed: list[str] = []
 
-    def is_submit(url: str) -> bool:
-        # URL-only ON PURPOSE: this is the predicate that MISSED Omni 1.2's body-only
-        # nprQif and billed two clips (spike doc, finding 3). Production routes every
-        # batchexecute (BATCHEXECUTE_GLOB) and reads the rpc from the URL or the body.
-        return mc.url_rpcid(url) in mc.SUBMIT_RPCS
-
     async def block(route: Any, request: Any) -> None:
+        # Every batchexecute, rpc from the URL OR the body: the first run's URL-only
+        # predicate missed Omni 1.2's body-only nprQif and billed two clips (finding 3).
         body = mc.request_body(request)
+        rpcid = mc.url_rpcid(request.url) or mc.body_rpcid(body)
+        if rpcid not in mc.SUBMIT_RPCS:
+            await route.fallback()
+            return
         key = mc.MODEL_KEY.search(body)
-        submits.append(
-            {
-                "rpcid": mc.url_rpcid(request.url),
-                "model_key": key.group(0) if key else None,
-                "body": body,
-            }
-        )
+        submits.append({"rpcid": rpcid, "model_key": key.group(0) if key else None, "body": body})
         await route.abort()  # nothing reaches Google; nothing is billed
 
     def watch(request: Any) -> None:
@@ -121,7 +115,7 @@ async def run_case(
     async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
         page = await client._checkout_page()
         try:
-            await page.route(is_submit, block)
+            await page.route(mc.BATCHEXECUTE_GLOB, block)
             page.on("request", watch)
             try:
                 await mc.run_video(

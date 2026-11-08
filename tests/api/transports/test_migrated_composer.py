@@ -4416,3 +4416,20 @@ async def test_a_check_that_raises_on_a_submit_aborts_it_unsent(
             expect_media_id=MEDIA_UP,
         )
     assert page.route_outcomes == ["abort"]
+
+
+async def test_a_failed_route_registration_leaves_no_listener_on_the_page() -> None:
+    """A pooled page is reused: a leaked listener would settle the next run's futures."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    class BrokenRoutePage(RoutingPage):
+        async def route(self, url: Any, handler: Any) -> None:
+            raise RuntimeError("route registration failed")
+
+    page = BrokenRoutePage()
+    page.dom.prompt = "a crane"
+    with pytest.raises(RuntimeError, match="route registration failed"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+    assert page.listeners("request") == [] and page.listeners("response") == []

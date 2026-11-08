@@ -11,6 +11,7 @@ These tests verify that:
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -948,12 +949,30 @@ async def test_omni12_end_frame_above_10s_is_a_400() -> None:
 
 
 @pytest.mark.asyncio
-async def test_omni12_start_only_15s_is_not_refused_for_an_end_frame() -> None:
-    from gflow_cli.mcp.tools import gflow_generate_video
+async def test_omni12_start_only_15s_reaches_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Start-only Omni 1.2 keeps 3-15s: the 15s request is queued, not refused."""
+    from gflow_cli.mcp import tools as mcp_tools
 
-    result = await gflow_generate_video(
-        prompt="x", mode="i2v", model="omni_1_2_flash", initial_frame="a.png", duration=15
+    start = tmp_path / "start.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+    seen: dict[str, Any] = {}
+
+    async def fake_run(
+        *, profile: str, task_type: str, payload: dict[str, Any], wait: bool
+    ) -> dict[str, Any]:
+        seen["task_type"], seen["payload"] = task_type, payload
+        return {"status": "queued", "task_id": "t"}
+
+    async def always_allow() -> bool:
+        return True
+
+    monkeypatch.setattr(mcp_tools, "_run_generation_task", fake_run)
+    monkeypatch.setattr(mcp_tools, "_resolve_and_validate_profile", lambda p: "testprofile")
+    monkeypatch.setattr(mcp_tools._rate_limiter, "acquire", always_allow)
+    result = await mcp_tools.gflow_generate_video(
+        prompt="x", mode="i2v", model="omni_1_2_flash", initial_frame=str(start), duration=15
     )
-    error = result.get("error", {})
-    assert "end frame" not in str(error.get("detail", ""))
-    assert error.get("title") != "Unsupported duration for model"  # got past the check
+    assert result.get("status") == "queued", result
+    assert seen["task_type"] == "i2v" and seen["payload"]["duration"] == 15
