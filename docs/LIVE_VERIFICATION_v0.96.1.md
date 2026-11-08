@@ -51,3 +51,14 @@ are billed, and the 10s Omni 1.2 end-frame cap (#1178, PR #1181).
 | `pytest --cov` (`-n 8`) | ✅ 6056 passed, 12 skipped, 93% |
 | `check_release_artifacts.py` | ✅ release artifacts OK |
 | `/gflow:doc-review` | _Council verdict: YELLOW across 3 auditors (completeness YELLOW, cross-reference GREEN, drift GREEN); no false claim. Fixed in the release-prep commit: the USAGE exit-7 row, the i2v and r2v exit-7 lines and MCP.md's retryable section now say a refused video submit is aborted unsent (hint: *billed nothing*) and how to tell it from one already sent; USAGE's Omni 1.2 section says start+end works; the i2v `--model` help and the gflow-cli skill carry the 10s end-frame cap. Deferred: no Omni model is named in `llms.txt`/README (pre-existing). Council reports at `tmp/council/0{1,2,3}-*.md` (local-only)._ |
+
+## Post-tag evidence
+
+| Check | Result |
+|---|---|
+| Signed tag | `v0.96.1` on `8a6b04ee`, SSH-signed (`git cat-file -p v0.96.1` carries one `BEGIN SSH SIGNATURE`) |
+| `Release` workflow | run 42450733650: success (`build-and-publish`, `mcp-registry / publish`) |
+| GitHub Release | `v0.96.1`, published 2026-11-08T05:26:20Z, not a prerelease |
+| PyPI | `https://pypi.org/pypi/gflow-cli/0.96.1/json` lists `gflow_cli-0.96.1-py3-none-any.whl` and `gflow_cli-0.96.1.tar.gz` |
+| Release PR | #1182 merged into `main` (merge commit `5bc95e09`), every check green; back-merge `41928a05` into `develop` |
+| Reporter | thanked on #1178 with a request to test 8s and 10s start+end and report the over-10s behaviour on Ultra |
