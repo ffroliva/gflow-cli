@@ -927,3 +927,31 @@ async def test_generate_video_rejects_unsupported_duration_without_model() -> No
     result = await gflow_generate_video(prompt="a crane", duration=99)
     assert result["status"] == "error"
     assert "Unsupported duration" in str(result)
+
+
+@pytest.mark.asyncio
+async def test_omni12_end_frame_above_10s_is_a_400() -> None:
+    """#1178: the MCP twin refuses before queueing, with the CLI's reason."""
+    from gflow_cli.mcp.tools import gflow_generate_video
+
+    result = await gflow_generate_video(
+        prompt="x",
+        mode="i2v",
+        model="omni_1_2_flash",
+        initial_frame="a.png",
+        end_frame="b.png",
+        duration=12,
+    )
+    assert result["status"] == "error"
+    assert result["error"]["status"] == 400
+    assert "end frame" in result["error"]["detail"] and "1178" in result["error"]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_omni12_start_only_15s_is_not_refused_for_an_end_frame() -> None:
+    from gflow_cli.mcp.tools import gflow_generate_video
+
+    result = await gflow_generate_video(
+        prompt="x", mode="i2v", model="omni_1_2_flash", initial_frame="a.png", duration=15
+    )
+    assert "end frame" not in str(result.get("error", {}).get("detail", ""))

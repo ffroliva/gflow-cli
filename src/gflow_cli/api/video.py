@@ -201,8 +201,19 @@ def max_duration_for(model: VideoModel) -> int:
     return max(duration_choices_for(model))
 
 
-def validate_duration_for_model(model: VideoModel | None, duration: object) -> None:
-    """Validate duration without rounding or inheriting an unknown new model."""
+#: Longest Omni 1.2 clip that keeps an end frame. Above it Flow submits without the end
+#: frame and bills a start-only clip (#1178: reporter's measurement at 12s and 15s on a
+#: Google AI Ultra account; no account here can reach past 10s to re-measure).
+OMNI_1_2_END_FRAME_MAX_S = 10
+
+
+def validate_duration_for_model(
+    model: VideoModel | None, duration: object, *, end_frame: bool = False
+) -> None:
+    """Validate duration without rounding or inheriting an unknown new model.
+
+    ``end_frame`` says the request carries an end frame, which caps Omni 1.2 (#1178).
+    """
     if duration is None:
         return
     if isinstance(duration, bool) or not isinstance(duration, (int, str)):
@@ -223,6 +234,13 @@ def validate_duration_for_model(model: VideoModel | None, duration: object) -> N
         raise ValueError(
             f"duration must be one of {list(choices)} seconds for {name}, got {duration}. "
             "Use explicit omni-1.2-flash for any integer duration 3–15."
+        )
+    if end_frame and model is VideoModel.OMNI_1_2_FLASH and seconds > OMNI_1_2_END_FRAME_MAX_S:
+        raise ValueError(
+            f"model 'omni_1_2_flash' keeps an end frame only up to "
+            f"{OMNI_1_2_END_FRAME_MAX_S}s; at {seconds}s Flow drops the end frame and bills "
+            f"a start-only clip (#1178). Use a duration of {OMNI_1_2_END_FRAME_MAX_S} or "
+            "less, or drop the end frame"
         )
 
 
@@ -358,7 +376,10 @@ class GenerateVideoRequest:
             effective = I2V_DEFAULT_MODEL
         if effective is None:
             return
-        validate_duration_for_model(effective, self.duration)
+        has_end = self.mode is Mode.I2V and any(
+            (self.end_image, self.end_image_ref_name, self.end_image_ref_id)
+        )
+        validate_duration_for_model(effective, self.duration, end_frame=has_end)
         # NOTE: the ingredient x model case is deliberately NOT re-checked here.
         # ``_validate_r2v_caps`` already rejects it via ``reference_cap_for() == 0``
         # (VEO_3_1_QUALITY), with a cap-aware message. A second guard would be a
