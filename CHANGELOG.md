@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.96.1] — 2026-11-08
+
 ### Fixed
 
 - **Omni 1.2 Flash start+end (`video i2v --model omni-1.2-flash --end-frame`) runs instead of
@@ -6902,7 +6904,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.96.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...HEAD
+[0.96.1]: https://github.com/ffroliva/gflow-cli/compare/v0.96.0...v0.96.1
 [0.96.0]: https://github.com/ffroliva/gflow-cli/compare/v0.95.0...v0.96.0
 [0.95.0]: https://github.com/ffroliva/gflow-cli/compare/v0.94.0...v0.95.0
 [0.94.0]: https://github.com/ffroliva/gflow-cli/compare/v0.93.0...v0.94.0

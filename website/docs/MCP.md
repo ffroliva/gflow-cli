@@ -190,6 +190,10 @@ site can override its class. Among them, Flow's `/about` redirect raises
 preserved default: caught during a live occurrence, 5/5 consecutive attempts over ~3 minutes
 landed on `/about` again, on the account's own project with a healthy session — so a retry is
 doomed and costs ~35 s each ([#756](https://github.com/ffroliva/gflow-cli/issues/756)). The
+A video submit gflow refuses on flow.google.com ([#1178](https://github.com/ffroliva/gflow-cli/issues/1178)) is
+`WireFormatError`, `retryable: false`, aborted before it was sent (its hint says nothing was
+billed): re-running the same inputs usually repeats the refusal, so check the frames or
+references first. The
 second is the migrated **agent-only composer** ([#799](https://github.com/ffroliva/gflow-cli/issues/799)),
 which gflow drives through its chat agent: there `FlowAgentUiError` carries `retryable: false`
 because it means the agent did something other than what was asked — a credit
