@@ -2821,6 +2821,30 @@ def test_interpolation_body_problem_names_what_is_wrong() -> None:
     assert unreadable is not None and "could not be read" in unreadable
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        # Measured 2026-11-08 on denon82 (docs/superpowers/spikes/2026-11-08-omni12-...):
+        "macaron_cookie_i2v_fl_8s_360p",  # Omni 1.2 at 360p
+        "macaron_cookie_i2v_fl_8s",  # Omni 1.2 at 720p (no resolution suffix)
+        "omni_flash_i2v_8s_first_last_360p",  # Omni 1.1, the same run's control
+    ],
+)
+def test_interpolation_body_problem_accepts_every_measured_start_end_key(key: str) -> None:
+    """#1178: Omni 1.2 sends `*_i2v_fl_*`; refusing it exits 7 on a run Flow bills."""
+    from gflow_cli.api.transports.migrated_composer import _interpolation_body_problem
+
+    assert _interpolation_body_problem(_interp_body(key=key), "nprQif", MEDIA_UP, END_UP) is None
+
+
+def test_an_omni_12_start_end_key_still_needs_both_frames() -> None:
+    from gflow_cli.api.transports.migrated_composer import _interpolation_body_problem
+
+    body = _interp_body(key="macaron_cookie_i2v_fl_8s_360p", end_id=MEDIA)
+    problem = _interpolation_body_problem(body, "nprQif", MEDIA_UP, END_UP)
+    assert problem is not None and "end frame" in problem
+
+
 async def test_interpolation_reply_on_a_bare_batchexecute_url_resolves() -> None:
     """The captured interpolation reply shape: a `batchexecute` POST with NO
     `rpcids` query param, whose frame names `nprQif`. `parse_frames` recovers the

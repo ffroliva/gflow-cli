@@ -236,6 +236,8 @@ UPLOAD_RPC = "maseQ"
 #: key on an r2v submit*, and that key carries no infix to match on. A mode-only
 #: alternation reported "no model key" for exactly that body.
 MODEL_KEY = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*_(?:t2v|i2v|r2v)_[a-z0-9_]+|veo_[a-z0-9_]+")
+#: Omni 1.2's start+end family, ``*_i2v_fl_<n>s[_<res>]`` (#1178), as whole segments.
+_I2V_FIRST_LAST_TOKEN = re.compile(r"(?:^|_)i2v_fl(?:_|$)")
 #: A duration segment inside a model key, e.g. the ``_4s_`` of
 #: ``veo_3_1_t2v_lite_4s_low_priority``. The base tier carries none.
 _DURATION_IN_KEY = re.compile(r"_\d+s_")
@@ -1200,7 +1202,13 @@ def _interpolation_body_problem(
     # Matching on key SHAPE rather than a pinned literal is deliberate: the two
     # cohorts disagree on the key, so a literal would refuse a valid run on one of
     # them. A plain i2v/t2v key means a frame dropped before the app submitted.
-    if "interpolation" not in key_text and "first_last" not in key_text:
+    # Omni 1.2 sends ``macaron_cookie_i2v_fl_8s[_360p]`` (#1178, measured 2026-11-08,
+    # docs/superpowers/spikes/2026-11-08-omni12-interpolation-key.md).
+    if (
+        "interpolation" not in key_text
+        and "first_last" not in key_text
+        and not _I2V_FIRST_LAST_TOKEN.search(key_text)
+    ):
         return (
             f"migrated host: the submit went out on {rpcid} with {key_text} for a "
             "start+end (interpolation) request — expected an interpolation "
