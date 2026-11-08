@@ -954,4 +954,6 @@ async def test_omni12_start_only_15s_is_not_refused_for_an_end_frame() -> None:
     result = await gflow_generate_video(
         prompt="x", mode="i2v", model="omni_1_2_flash", initial_frame="a.png", duration=15
     )
-    assert "end frame" not in str(result.get("error", {}).get("detail", ""))
+    error = result.get("error", {})
+    assert "end frame" not in str(error.get("detail", ""))
+    assert error.get("title") != "Unsupported duration for model"  # got past the check

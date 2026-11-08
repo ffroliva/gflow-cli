@@ -136,7 +136,8 @@ async def test_a_right_omni12_start_end_submit_passes_the_guard(
     hit = safety["submits"][0]
     assert hit["rpcid"] == mc.INTERPOLATION_SUBMIT_RPC, hit["rpcid"]
     assert mc._I2V_FIRST_LAST_TOKEN.search(hit["key"]), hit["key"]  # pyright: ignore[reportPrivateUsage]
-    assert safety["ids"]["start"] in hit["body"] and safety["ids"]["end"] in hit["body"]
+    both_ids = safety["ids"]["start"] in hit["body"] and safety["ids"]["end"] in hit["body"]
+    assert both_ids, "the submit body did not carry both uploaded frame ids"
 
 
 @pytest.mark.parametrize("door", ["cli", "mcp"])

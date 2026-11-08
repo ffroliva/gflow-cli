@@ -38,7 +38,7 @@ bodies (`0x8b` = gzip), and the handler failed before `continue_()`. I read that
 "routing every batchexecute is unsafe" and narrowed the predicate to URL rpcids — the
 exact gap finding 3 names. The extend guard proves the wide route is safe when bodies
 are read through `request_body()` (which never raises). Memory:
-`omni12-submit-rpc-rides-the-body-only`.
+[`migrated-host-driver-wire-lessons`](../memory/migrated-host-driver-wire-lessons.md).
 
 ## Not measured
 

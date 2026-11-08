@@ -600,9 +600,10 @@ class FakePage:
         self._handlers[event] = [h for h in self._handlers[event] if h is not handler]
 
     async def route(self, _url: Any, _handler: Any) -> None:
-        # The submit guard (#913) is installed here; this double fires requests through
-        # its listeners, so the observer path these tests pin still runs. The guard
-        # itself is covered in test_migrated_existing_refs.py.
+        # Route guards (#913 image, #1178 video) are installed here; this double fires
+        # requests through the listeners only, so the observer path these tests pin still
+        # runs. `RoutingPage` below drives the video guard; the image guard is covered in
+        # test_migrated_existing_refs.py.
         return None
 
     async def unroute(self, _url: Any, _handler: Any) -> None:
@@ -4351,7 +4352,7 @@ async def test_a_right_start_end_submit_falls_through_and_completes() -> None:
     assert page.route_outcomes == ["fallback"]
 
 
-async def test_a_guard_that_cannot_read_a_submit_aborts_it() -> None:
+async def test_an_unreadable_submit_body_is_aborted_unsent() -> None:
     """Fail closed on a submit rpc: an unreadable body is refused unsent, not waved through."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -4389,3 +4390,29 @@ async def test_a_problem_the_route_never_saw_is_still_raised_after_send() -> Non
             expect_end_media_id=END_UP,
         )
     assert "billed nothing" not in (ei.value.remediation_hint or "")
+
+
+async def test_a_check_that_raises_on_a_submit_aborts_it_unsent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard's own failure must fail CLOSED on a submit rpc: an unsettled or waved-through
+    route is exactly how a wrong run gets billed."""
+    from gflow_cli.api.transports import migrated_composer as mc
+
+    def boom(*_a: Any, **_k: Any) -> str | None:
+        raise RuntimeError("checker broke")
+
+    monkeypatch.setattr(mc, "_submit_body_problem", boom)
+    page = RoutingPage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("eb1hJf", _i2v_body())
+    page.scripted_responses = _omni12_interp_replies()
+    with pytest.raises(WireFormatError, match="could not be checked"):
+        await mc.MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+        )
+    assert page.route_outcomes == ["abort"]

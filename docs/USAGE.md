@@ -665,7 +665,7 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > **Shared video flags** (`t2v` / `i2v` / `r2v`):
 > `--model [omni-flash|omni-1.2-flash|omni-1.2|veo-lite|veo-fast|veo-quality|veo-lite-lp]`
 > (omit → Flow's current UI default), `--duration [3..15]` (4/6/8 for Veo 3.1;
-> 4/6/8/10 for omni-flash; every integer 3–15 for omni-1.2-flash, with `--end-frame`, at most 10 (#1178); 4/6/8/10
+> 4/6/8/10 for omni-flash; every integer 3–15 for omni-1.2-flash (at most 10 with `--end-frame`); 4/6/8/10
 > when `--model` is omitted),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
@@ -675,7 +675,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > those controls (positive capture: a third, contributor-owned account on `labs.google`, 2026-09-04, PR #650;
 > the historical negative matrix on `denon82` remains valid for its cohort).
 > 10s needs `omni-flash` or `omni-1.2-flash`; 11–15s needs `omni-1.2-flash` (above 10 needs a
-> Google AI plan, else exit 11 before submit). Passing `--duration 10` with a Veo model
+> Google AI plan, else exit 11 before submit) and no `--end-frame` (with one, Omni 1.2 stops
+> at 10s: Flow drops the end frame above that and bills a start-only clip). Passing `--duration 10` with a Veo model
 > fails fast with exit 2 before any browser work. On a cohort where Flow renders no
 > duration control for Veo, omit `--duration` to accept Flow's default.
 > `--count` is enforced **fail-closed**: if Flow's count control cannot be

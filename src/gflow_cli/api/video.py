@@ -240,7 +240,7 @@ def validate_duration_for_model(
             f"model 'omni_1_2_flash' keeps an end frame only up to "
             f"{OMNI_1_2_END_FRAME_MAX_S}s; at {seconds}s Flow drops the end frame and bills "
             f"a start-only clip (#1178). Use a duration of {OMNI_1_2_END_FRAME_MAX_S} or "
-            "less, or drop the end frame"
+            "less, or drop the end frame (--end-frame / end_frame)."
         )
 
 

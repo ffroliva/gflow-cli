@@ -1451,7 +1451,7 @@ async def gflow_generate_video(  # NOSONAR
             effective = I2V_DEFAULT_MODEL
         try:
             validate_duration_for_model(
-                effective, duration, end_frame=mode == "i2v" and end_frame is not None
+                effective, duration, end_frame=mode == "i2v" and bool(end_frame)
             )
         except ValueError as exc:
             return _bad_param("Unsupported duration for model", str(exc))

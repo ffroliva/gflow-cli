@@ -72,8 +72,9 @@ async def run_case(
     observed: list[str] = []
 
     def is_submit(url: str) -> bool:
-        # URL-only, like the image guard: routing every batchexecute also catches gzip
-        # bodies, and continue_() on those fails in Playwright 1.61 (measured here).
+        # URL-only ON PURPOSE: this is the predicate that MISSED Omni 1.2's body-only
+        # nprQif and billed two clips (spike doc, finding 3). Production routes every
+        # batchexecute (BATCHEXECUTE_GLOB) and reads the rpc from the URL or the body.
         return mc.url_rpcid(url) in mc.SUBMIT_RPCS
 
     async def block(route: Any, request: Any) -> None:

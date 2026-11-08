@@ -38,6 +38,12 @@ captured request.
   [[flow-credit-free-spike-harness]].
 - Caveat: `route.abort()` proves the SUBMIT payload, not generation success — a
   final paid run still validates poll + download + the response-echo backstop.
+- **On flow.google.com (`batchexecute`), the snippet above bills on a miss.** Raw
+  `post_data` raises on gzip bodies, and a URL-keyed match missed Omni 1.2's body-only
+  `nprQif` (#1178: two clips billed). Route `**/batchexecute**`, read the body with
+  `request_body()`, resolve the rpc with `url_rpcid(url) or body_rpcid(body)`, and run a
+  positive control on the SAME model before route-aborting a paid submit. See
+  [[migrated-host-driver-wire-lessons]].
 
 Relates to [[movie-consistency-feature]], [[rest-path-capability-matrix]],
 [[verification-ledger-5-layer]].

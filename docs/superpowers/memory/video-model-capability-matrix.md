@@ -25,6 +25,13 @@ profile carried every reference id under `abra_r2v_{4,8,10}s_360p` (1.1) and
 `macaron_cookie_r2v_{3,8}s_360p` (1.2). The 8s-only r2v rule was measured on Veo Lite
 and still applies to Veo. Spike: `docs/superpowers/spikes/2026-11-07-omni12-duration-slider.md`.
 
+**Update 2026-11-08 (#1178):** Omni 1.2 start+end submits on `nprQif` with
+`macaron_cookie_i2v_fl_<n>s[_360p]` (no resolution suffix at 720p), measured at 8s on
+`denon82`. With an end frame it is capped at 10s: the reporter measured Flow submitting
+12s and 15s without the end frame on a Google AI Ultra account (no account here can
+reach past 10s, so that cap is theirs, not re-measured). Spike:
+`docs/superpowers/spikes/2026-11-08-omni12-interpolation-key.md`.
+
 **🎯 ROOT CAUSE of [[#451]]/#288:** `api/video.py:44` claims "the four `VEO_3_1_*`
 models cap at 8s" — presuming they render a duration control. **They render none.**
 `_select_video_duration` hunts a control the selected model never draws, so the

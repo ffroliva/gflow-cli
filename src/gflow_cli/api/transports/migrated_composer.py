@@ -3237,13 +3237,16 @@ class MigratedComposer:
                 # The prompt comes first in the body, and a prompt can read like a key.
                 if key := MODEL_KEY.search(body.replace(adopt_prompt or "", "")):
                     submit_key["key"] = key.group(0)
-                problem = _submit_body_problem(
-                    rpcid,
-                    body,
-                    expect_media_id=expect_media_id,
-                    expect_end_media_id=expect_end_media_id,
-                    expect_reference_ids=expect_reference_ids,
-                )
+                try:
+                    problem = _submit_body_problem(
+                        rpcid,
+                        body,
+                        expect_media_id=expect_media_id,
+                        expect_end_media_id=expect_end_media_id,
+                        expect_reference_ids=expect_reference_ids,
+                    )
+                except Exception:  # noqa: BLE001 - a listener must not raise; the route
+                    return  # guard runs the same check and aborts the submit on failure
                 # Recorded, not raised: this event fires before the route guard, which
                 # aborts the same request unsent and names it so. A problem only the
                 # observer saw means the route missed it and Flow got the request.
@@ -3421,14 +3424,6 @@ class MigratedComposer:
 
         page.on("response", on_response)
 
-        # Every body assertion lives in `on_request`, so the listener must be armed for
-        # all of them. Gating it on `expect_media_id` alone left `_r2v_body_problem`
-        # unit-tested but never reached in a live run — the check the r2v path was built
-        # around. It is now ALWAYS armed, including for t2v, because the interpolation
-        # guard is a BILLING guard that only matters when nothing was asked for: a stale
-        # End chip makes the app submit `nprQif` on a run that requested no end frame,
-        # and refusing that is free while the generation is not. `on_request` returns
-        # early for a t2v submit it has nothing to assert about.
         async def guard(route: Any, request: Any) -> None:
             """Abort a wrong submit BEFORE it leaves the browser (#1178): the observer
             above only sees a request already on its way to Flow, which bills it."""
@@ -3468,6 +3463,11 @@ class MigratedComposer:
                     )
                 )
 
+        # Both are ALWAYS armed, t2v included: a stale End chip makes the app submit
+        # `nprQif` on a run that asked for no end frame. The route guard is where refusing
+        # is free (the request never leaves); the observer is the backstop for a request
+        # the route never saw, whose verdict lands once the run settles or times out.
+        # Gating on `expect_media_id` once left `_r2v_body_problem` unreached live.
         page.on("request", on_request)
         await page.route(BATCHEXECUTE_GLOB, guard)
         try:
