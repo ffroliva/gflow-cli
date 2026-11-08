@@ -961,6 +961,63 @@ def test_record_started_extend_persists_a_pending_video(tmp_path: Path) -> None:
     assert row[2] == "veo_3_1_extension_lite"
 
 
+def test_an_in_place_extend_keeps_the_source_row(tmp_path: Path) -> None:
+    """#1184: the Omni extend grows the SOURCE media id in place, so the started id is a
+    clip the catalog already holds. The UNIQUE(profile, media id) row must survive with
+    its status and model, and carry the extend's facts, instead of the write failing."""
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.data.models import AssetKind, AssetRecord, ProjectRecord
+
+    media = "a69e0c3b-47a2-4751-81e9-c8d923832aa0"
+    project = "5dffb6db-83dc-43a2-bed9-613b0661a35b"
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("p", tmp_path)
+        repo.upsert_project(
+            ProjectRecord(
+                id="pr", profile_name="p", flow_project_id=project, title="t", source="generated"
+            )
+        )
+        repo.upsert_asset(
+            AssetRecord(
+                id="src",
+                profile_name="p",
+                flow_project_id=project,
+                flow_media_id=media,
+                flow_workflow_id="wf",
+                flow_media_generation_id=None,
+                kind=AssetKind.VIDEO,
+                status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                model="veo_3_1_lite",
+                aspect_ratio="portrait",
+                width=None,
+                height=None,
+                duration_seconds=8.0,
+                seed=None,
+                metadata_json={"display_name": "cup"},
+            )
+        )
+        OperationRecorder(repo, prompt_mode="store").record_started_extend(
+            profile_name="p",
+            profile_dir=tmp_path,
+            project_id=project,
+            aspect="9:16",
+            started=ExtendStarted(
+                media_id=media, workflow_id="wf", model_key="macaron_cookie_extend_4s"
+            ),
+        )
+        rows = store.conn.execute(
+            "SELECT id, status, model, metadata_json, duration_seconds FROM assets"
+        ).fetchall()
+    assert len(rows) == 1
+    row_id, status, model, meta, duration = rows[0]
+    assert duration is None  # the clip grew, so the stored 8 s is no longer true
+    assert (row_id, status, model) == ("src", "MEDIA_GENERATION_STATUS_SUCCESSFUL", "veo_3_1_lite")
+    meta = json.loads(meta)
+    assert meta["display_name"] == "cup"
+    assert meta["extended_by"] == "macaron_cookie_extend_4s"
+
+
 def test_record_started_extend_does_not_persist_the_prompt(tmp_path: Path) -> None:
     """A user who set history_prompts=redacted asked for prompts NOT to be
     stored. Asset metadata is not where prompts live on any other path either —
