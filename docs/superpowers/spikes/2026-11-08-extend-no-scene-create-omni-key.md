@@ -49,5 +49,5 @@ submit, so the absences below are real and not a capture miss.
   **in place**, under the source's id, and gflow downloaded that joined clip. Three things
   this PR does not fix: the help says the extension alone is downloaded; the JSON reports
   the Veo constants `seconds_added: 7` / `seconds_billed: 8`; and the catalog write failed
-  (`extend_record_failed`, `DataIntegrityError`). They are tracked in a follow-up issue.
+  (`extend_record_failed`, `DataIntegrityError`). They are tracked in #1184.
 - This is one account on one day. The labs arm and other cohorts were not observed.
