@@ -4241,3 +4241,151 @@ async def test_omni_r2v_accepts_explicit_supported_duration(seconds: int) -> Non
     )
     radios = page.dom.groups["duration"]
     assert radios[[4, 6, 8, 10].index(seconds)].checked
+
+
+# --- #1178: the video submit route guard stops a wrong submit BEFORE it is sent ----------
+
+
+class FakeRoute:
+    def __init__(self) -> None:
+        self.outcome: str | None = None
+
+    async def abort(self) -> None:
+        self.outcome = "abort"
+
+    async def fallback(self) -> None:
+        self.outcome = "fallback"
+
+
+class RoutingPage(FakePage):
+    """Playwright's order: the request event, then the route handler; a reply only if the
+    route let the request out. ``routes`` records what was installed and removed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.routes: list[tuple[Any, Any]] = []
+        self.unrouted: list[tuple[Any, Any]] = []
+        self.route_outcomes: list[str | None] = []
+
+    async def route(self, url: Any, handler: Any) -> None:
+        self.routes.append((url, handler))
+
+    async def unroute(self, url: Any, handler: Any) -> None:
+        self.unrouted.append((url, handler))
+
+    def _fire_submit(self) -> None:
+        assert self.scripted_request is not None
+        rpcid, body = self.scripted_request
+        url = _batch_url(rpcid) if rpcid is not None else _batch_bare_url()
+        request = FakeRequest(url, body)
+        for h in list(self._handlers["request"]):
+            asyncio.get_event_loop().create_task(_maybe_await(h(request)))
+
+        async def through_route() -> None:
+            route = FakeRoute()
+            await self.routes[-1][1](route, request)
+            self.route_outcomes.append(route.outcome)
+            if route.outcome == "abort":
+                return  # never sent: Flow answers nothing
+            for scripted in self.scripted_responses:
+                u, text, *rest = scripted
+                response = FakeResponse(u, text, *rest)
+                response.request = request if request.url == u else None
+                self._fire_response(response)
+
+        asyncio.get_event_loop().create_task(through_route())
+
+
+def _omni12_interp_replies() -> list[tuple[str, ...]]:
+    return [
+        (_batch_url("nprQif"), _frame("nprQif", [None, 9312, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+
+
+async def test_a_wrong_start_end_submit_is_aborted_before_it_is_sent() -> None:
+    """The end frame missing from Omni 1.2's body-only nprQif: aborted, nothing answered,
+    and the error says nothing was billed."""
+    from gflow_cli.api.transports.migrated_composer import (
+        ABORTED_BEFORE_SEND,
+        BATCHEXECUTE_GLOB,
+        MigratedComposer,
+    )
+
+    page = RoutingPage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = (None, _interp_body(key="macaron_cookie_i2v_fl_8s", end_id=MEDIA))
+    page.scripted_responses = _omni12_interp_replies()
+    with pytest.raises(WireFormatError, match="end frame") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+            expect_end_media_id=END_UP,
+        )
+    assert page.route_outcomes == ["abort"]
+    assert ei.value.remediation_hint == ABORTED_BEFORE_SEND
+    assert page.routes[0][0] == BATCHEXECUTE_GLOB  # a glob, not a per-request predicate
+    assert page.unrouted == page.routes
+
+
+async def test_a_right_start_end_submit_falls_through_and_completes() -> None:
+    """fallback(), not continue_(): extend's outer guard must still see the request."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = RoutingPage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = (None, _interp_body(key="macaron_cookie_i2v_fl_8s_360p"))
+    page.scripted_responses = _omni12_interp_replies()
+    record = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=None,
+        project_id=PROJ,
+        expect_media_id=MEDIA_UP,
+        expect_end_media_id=END_UP,
+    )
+    assert record.is_done
+    assert page.route_outcomes == ["fallback"]
+
+
+async def test_a_guard_that_cannot_read_a_submit_aborts_it() -> None:
+    """Fail closed on a submit rpc: an unreadable body is refused unsent, not waved through."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = RoutingPage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("eb1hJf", "")
+    page.scripted_responses = _omni12_interp_replies()
+    with pytest.raises(WireFormatError, match="could not be read"):
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+        )
+    assert page.route_outcomes == ["abort"]
+
+
+async def test_a_problem_the_route_never_saw_is_still_raised_after_send() -> None:
+    """Backstop: if the route misses a request, the observer's verdict still fails the run
+    (as before #1178), so a wrong clip is never adopted as the right one."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()  # its route() installs nothing: every request goes out unrouted
+    page.dom.prompt = "a crane"
+    page.scripted_request = (None, _interp_body(key="macaron_cookie_i2v_fl_8s", end_id=MEDIA))
+    page.scripted_responses = _omni12_interp_replies()
+    with pytest.raises(WireFormatError, match="end frame") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+            expect_end_media_id=END_UP,
+        )
+    assert "billed nothing" not in (ei.value.remediation_hint or "")
