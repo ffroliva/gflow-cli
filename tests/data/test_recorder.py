@@ -992,7 +992,7 @@ def test_an_in_place_extend_keeps_the_source_row(tmp_path: Path) -> None:
                 aspect_ratio="portrait",
                 width=None,
                 height=None,
-                duration_seconds=None,
+                duration_seconds=8.0,
                 seed=None,
                 metadata_json={"display_name": "cup"},
             )
@@ -1006,9 +1006,12 @@ def test_an_in_place_extend_keeps_the_source_row(tmp_path: Path) -> None:
                 media_id=media, workflow_id="wf", model_key="macaron_cookie_extend_4s"
             ),
         )
-        rows = store.conn.execute("SELECT id, status, model, metadata_json FROM assets").fetchall()
+        rows = store.conn.execute(
+            "SELECT id, status, model, metadata_json, duration_seconds FROM assets"
+        ).fetchall()
     assert len(rows) == 1
-    row_id, status, model, meta = rows[0]
+    row_id, status, model, meta, duration = rows[0]
+    assert duration is None  # the clip grew, so the stored 8 s is no longer true
     assert (row_id, status, model) == ("src", "MEDIA_GENERATION_STATUS_SUCCESSFUL", "veo_3_1_lite")
     meta = json.loads(meta)
     assert meta["display_name"] == "cup"

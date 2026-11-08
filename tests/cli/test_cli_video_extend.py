@@ -629,7 +629,10 @@ def test_the_migrated_plan_claims_no_price(runner: CliRunner, _host: Any) -> Non
     assert result.exit_code == 0
     assert "does not report the price" in result.output
     assert "exact amount" not in result.output
-    assert "grown in place" in result.output  # #1184: the Omni extend leaves no new scene
+    flat = " ".join(result.output.split())  # Rich wraps at the terminal width
+    assert "grows the source clip in place" in flat  # #1184, a dated observation
+    assert "measured 2026-11-08" in flat
+    assert "Flow bills 8s" not in flat  # the length is the key's, not a fixed Veo 8 s
 
 
 class _MigratedClient:

@@ -269,17 +269,22 @@ class DataRepository:
     def note_asset_extended(
         self, profile_name: str, flow_media_id: str, *, model_key: str, unit_cost: int | None
     ) -> None:
-        """Record an extend that grew this clip in place (#1184), keeping its other columns."""
+        """Record an extend that grew this clip in place (#1184).
+
+        Status and model are kept; the stored duration is cleared because the clip is now
+        longer. A later extend overwrites these keys: they describe the latest extend.
+        """
         with self._store.transaction(immediate=True):
             self._store.conn.execute(
                 """
                 UPDATE assets
-                SET metadata_json = json_set(
-                    COALESCE(metadata_json, '{}'),
-                    '$.extended_by', ?,
-                    '$.extend_unit_cost', ?,
-                    '$.extended_at', ?
-                )
+                SET duration_seconds = NULL,
+                    metadata_json = json_set(
+                        COALESCE(metadata_json, '{}'),
+                        '$.extended_by', ?,
+                        '$.extend_unit_cost', ?,
+                        '$.extended_at', ?
+                    )
                 WHERE profile_name = ? AND flow_media_id = ?
                 """,
                 (model_key, unit_cost, _utc_now(), profile_name, flow_media_id),

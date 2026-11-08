@@ -1874,18 +1874,22 @@ def _print_extend_plan(
     console.print(f"  source clip : {media_id}")
     console.print(f"  prompt      : {prompt}")
     console.print(f"  aspect      : {aspect}")
-    console.print(
-        f"  segments    : {segments} x ~{_EXTEND_CONTENT_SECONDS}s = ~{footage}s of new "
-        f"footage (Flow bills {billed}s)"
-    )
     if migrated:
-        # flow.google.com publishes no extend price gflow can read before submitting.
+        # flow.google.com publishes no extend price gflow can read before submitting, and
+        # the length depends on the key the page picks (#1184).
         console.print(
             "  cost        : spends credits — flow.google.com does not report the price "
             "before submitting; compare `gflow credits user` before and after"
         )
-        console.print("  changes     : the source clip, grown in place (Omni key)")
+        console.print(
+            "  length      : set by the key Flow picks; measured 2026-11-08, the Omni key "
+            "grows the source clip in place by ~4s (a Veo key adds a separate ~7s segment)"
+        )
         return
+    console.print(
+        f"  segments    : {segments} x ~{_EXTEND_CONTENT_SECONDS}s = ~{footage}s of new "
+        f"footage (Flow bills {billed}s)"
+    )
     console.print("  cost        : spends credits — exact amount is shown before submitting")
 
 

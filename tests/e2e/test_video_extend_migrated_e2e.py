@@ -29,7 +29,6 @@ Env: ``GFLOW_CLI_E2E_PROFILE`` (profile served flow.google.com), ``GFLOW_CLI_E2E
 from __future__ import annotations
 
 import os
-import re
 import struct
 import uuid
 from pathlib import Path
@@ -216,10 +215,16 @@ async def test_e2e_one_paid_extend_downloads_an_mp4(
     if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO") != "1":
         pytest.skip("spends Veo credits — set GFLOW_CLI_E2E_RUN_VIDEO=1 (owner consent)")
     from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.cli_video import _migrated_extend_seconds
+    from gflow_cli.services.media_recovery import download_media
 
     project, media = _ids()
     monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
     reset_settings()
+    before = await download_media(
+        media_id=media, profile=os.environ["GFLOW_CLI_E2E_PROFILE"], out_dir=tmp_path / "before"
+    )
+    source_seconds = _mp4_seconds(before.path.read_bytes())
     started: list[str] = []
     async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
         outcome, target = await client.extend_video_migrated(
@@ -237,8 +242,8 @@ async def test_e2e_one_paid_extend_downloads_an_mp4(
     seconds = _mp4_seconds(data)
     if outcome.record.media_id == media:
         # #1184, measured 2026-11-08 with macaron_cookie_extend_4s: the extend grows the
-        # source in place, so the file is the joined clip, longer than the extension alone.
-        added = int(m.group(1)) if (m := re.search(r"_extend_(\d+)s", outcome.model_key)) else 4
-        assert seconds > added + 1, (outcome.model_key, seconds)
+        # source in place, so the same id now holds the source plus the extension.
+        added, _billed = _migrated_extend_seconds(outcome.model_key)
+        assert seconds >= source_seconds + added - 0.5, (outcome.model_key, source_seconds, seconds)
     else:
         assert 6.5 <= seconds <= 8.5  # a separate Veo segment: Flow bills 8 s, ~7 s content
