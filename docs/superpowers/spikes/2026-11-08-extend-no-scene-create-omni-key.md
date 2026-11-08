@@ -34,14 +34,20 @@ submit, so the absences below are real and not a capture miss.
 
 - `migrated_extend.submit_facts` reads the key from its slot in the `fZytfe` entry (next
   to the aspect) instead of searching the body, so the started event and the result name
-  the real key instead of `unknown`. The search would also have matched a `veo_*` or
-  `*_extend_*` word in the user's prompt, which comes earlier in the body.
+  the real key instead of `unknown`. The old search could also match a word in the user's
+  prompt, which comes earlier in the body: `veo_style`, or any word with `_t2v_`, `_i2v_` or
+  `_r2v_` in it.
 - The e2e test now requires that **any** `rqZuUc` names the clip, not that one is sent.
   The scene guard stays for a page that still sends one.
 
 ## Open
 
-- **`_4s` in the key is not measured as the extension length.** The docs say a Veo
-  extend segment adds about 7 s (KNOWN_ISSUES). Whether an Omni extend adds 4 s needs one
-  paid extend. Do not change the docs from the key name alone.
+- **One paid extend, measured the same day (12 credits).** It reported
+  `model: macaron_cookie_extend_4s`, so this fix works on the billed path. The source clip
+  was 7.93 s the day before. After the extend, **the same media id** served an 11.83 s file
+  (5.7 MB, first frame identical to the source's). The Omni extend added about 3.9 s
+  **in place**, under the source's id, and gflow downloaded that joined clip. Three things
+  this PR does not fix: the help says the extension alone is downloaded; the JSON reports
+  the Veo constants `seconds_added: 7` / `seconds_billed: 8`; and the catalog write failed
+  (`extend_record_failed`, `DataIntegrityError`). They are tracked in a follow-up issue.
 - This is one account on one day. The labs arm and other cohorts were not observed.
