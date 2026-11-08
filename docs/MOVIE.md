@@ -57,7 +57,7 @@ characters = ["Stickman"]         # which characters appear (drives R2V reuse)
 speaker = "Stickman"
 line = "We finally made it to the top!"
 aspect = "9:16"
-model = "omni-flash"              # 4/6/8/10s; Veo 3.1 supports 4/6/8
+model = "omni-flash"              # 4/6/8/10s; omni-1.2-flash 3–15; Veo 3.1 4/6/8
 duration = 8
 
 [[scenes]]
@@ -70,7 +70,8 @@ duration = 6
 ```
 
 > **Scene `duration` values depend on the model** (issue #634). Veo 3.1 models
-> support `4`, `6`, and `8`; `omni-flash` also supports `10`. Whether your account
+> support `4`, `6`, and `8`; `omni-flash` also supports `10`; an explicit `omni-1.2-flash` takes every
+> integer from `3` to `15`. Whether your account
 > renders a duration control at all is cohort-dependent — where it does not, the run
 > aborts pre-submit with no credits spent. Values are checked
 > at parse time, before any scene generates. A scene with no named model inherits

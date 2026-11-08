@@ -208,10 +208,10 @@ def reject_unusable_links(*, model: VideoModel, links: Sequence[ChainLinkSpec]) 
     * **omni_flash.** The chain-level ``model`` is rejected first, but
       :func:`_build_link_request` prefers ``spec.model`` when set, so a per-link
       override walked straight past that check.
-    * **duration.** Duration 10 is rejected, because chains reject omni_flash and
-      10s is available for omni_flash alone — Veo 3.1 models support 4s, 6s, or 8s.
+    * **duration.** Anything but 4, 6 or 8 is rejected: chains reject both Omni
+      models, the only ones offering other lengths, and Veo 3.1 supports 4s/6s/8s.
     """
-    if model is VideoModel.OMNI_FLASH:
+    if model in (VideoModel.OMNI_FLASH, VideoModel.OMNI_1_2_FLASH):
         msg = (
             f"model {model.value!r} is not supported for chains: a chain "
             f"renders N seeded i2v links back-to-back, and omni_flash i2v is "
@@ -223,7 +223,7 @@ def reject_unusable_links(*, model: VideoModel, links: Sequence[ChainLinkSpec]) 
 
     for index, spec in enumerate(links):
         effective = spec.model if spec.model is not None else model
-        if effective is VideoModel.OMNI_FLASH:
+        if effective in (VideoModel.OMNI_FLASH, VideoModel.OMNI_1_2_FLASH):
             msg = (
                 f"links[{index}] overrides model to {effective.value!r}, which is "
                 f"not supported for chains: omni_flash i2v is wire-verified for "

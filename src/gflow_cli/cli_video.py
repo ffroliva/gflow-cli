@@ -93,7 +93,7 @@ _resolution_option = click.option(
     type=click.Choice(["360p", "720p"], case_sensitive=False),
     help=(
         "Video resolution ('360p' or '720p'). Omit for Flow's default. Only models whose "
-        "settings show a resolution row offer it (omni-flash); on any other model, or on "
+        "settings show a resolution row offer it (Omni Flash 1.1/1.2); on any other model, or on "
         "the labs editor, the run stops before submit (exit 11), with no credits spent."
     ),
 )
@@ -207,7 +207,8 @@ def _reject_duration_without_control(
     the guard must still run — otherwise the most natural way to try
     ``--duration`` skips this check and dies as "Unexpected error." `t2v`/`r2v`
     inherit Flow's sticky UI default, which gflow cannot know, so they pass
-    nothing and stay unguarded by design rather than by assumption.
+    nothing and are held to the legacy 4/6/8/10 set; only an explicit model
+    unlocks other lengths (omni-1.2-flash's 3–15).
     """
     if duration is None:
         return
@@ -221,14 +222,16 @@ def _reject_duration_without_control(
             # a programmatic caller deserves that error, not this guard's. Let the
             # real validation report it rather than dying as "Unexpected error."
             return
-    if resolved is not None:
-        try:
-            validate_duration_for_model(resolved, duration)
-        except ValueError as exc:
-            named = (
-                f"--model {model}" if model is not None else f"the default model {resolved.value}"
-            )
-            raise click.UsageError(f"{named}: {exc}") from exc
+    try:
+        validate_duration_for_model(resolved, duration)
+    except ValueError as exc:
+        if model is not None:
+            named = f"--model {model}"
+        elif resolved is not None:
+            named = f"the default model {resolved.value}"
+        else:
+            named = "without --model"
+        raise click.UsageError(f"{named}: {exc}") from exc
 
 
 def _relocate_single_video(item: Any, target: Path) -> Any:
@@ -686,7 +689,7 @@ def _resolve_chain_model(model: str | None) -> VideoModel:
     resolved = VideoModel.from_cli(model)
     if resolved is None:
         return I2V_DEFAULT_MODEL
-    if resolved is VideoModel.OMNI_FLASH:
+    if resolved in (VideoModel.OMNI_FLASH, VideoModel.OMNI_1_2_FLASH):
         msg = (
             f"{resolved.value!r} is not accepted for chains. Chains render N "
             f"seeded i2v links back-to-back; omni-flash start-frame i2v was "
@@ -1177,15 +1180,29 @@ def video() -> None:
 @click.option(
     "--model",
     default=None,
-    type=click.Choice(["omni-flash", "veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
-    help="Veo model. Omit to use Flow's current default. Only omni-flash supports --duration 10.",
+    type=click.Choice(
+        [
+            "omni-flash",
+            "omni-1.2-flash",
+            "omni-1.2",
+            "veo-lite",
+            "veo-fast",
+            "veo-quality",
+            "veo-lite-lp",
+        ]
+    ),
+    help=(
+        "Video model. Omit to use Flow's current default. "
+        "omni-1.2-flash supports 3–15 seconds; omni-flash supports 4/6/8/10."
+    ),
 )
 @click.option(
     "--duration",
     default=None,
-    type=click.Choice(["4", "6", "8", "10"]),
+    type=click.Choice([str(n) for n in range(3, 16)]),
     help=(
-        "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
+        "Clip length: 3–15 by one second for omni-1.2-flash; "
+        "4/6/8/10 for omni-flash; 4/6/8 for Veo 3.1. "
         "Omit for Flow's default length. Refused pre-submit (no credits) when your "
         "account's cohort renders no duration control for the model."
     ),
@@ -1358,18 +1375,30 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
 @click.option(
     "--model",
     default=None,
-    type=click.Choice(["omni-flash", "veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
+    type=click.Choice(
+        [
+            "omni-flash",
+            "omni-1.2-flash",
+            "omni-1.2",
+            "veo-lite",
+            "veo-fast",
+            "veo-quality",
+            "veo-lite-lp",
+        ]
+    ),
     help=(
         "Video model. Defaults to veo-lite (cheapest). omni-flash supports both "
-        "--initial-frame and --end-frame, and unlocks --duration 10."
+        "--initial-frame and --end-frame, and unlocks --duration 10; "
+        "omni-1.2-flash takes any --duration from 3 to 15."
     ),
 )
 @click.option(
     "--duration",
     default=None,
-    type=click.Choice(["4", "6", "8", "10"]),
+    type=click.Choice([str(n) for n in range(3, 16)]),
     help=(
-        "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
+        "Clip length: 3–15 by one second for omni-1.2-flash; "
+        "4/6/8/10 for omni-flash; 4/6/8 for Veo 3.1. "
         "Omit for Flow's default length. Refused pre-submit (no credits) when your "
         "account's cohort renders no duration control for the model."
     ),
@@ -1497,7 +1526,7 @@ def i2v(  # NOSONAR
     type=click.Path(exists=True, dir_okay=False, path_type=str),
     help=(
         "Reference image (repeat per ref). Per-model cap enforced by --model: "
-        "omni-flash=7, veo-lite/veo-fast/veo-lite-lp=3, veo-quality rejects R2V."
+        "omni-flash/omni-1.2-flash=7, veo-lite/veo-fast/veo-lite-lp=3, veo-quality rejects R2V."
     ),
 )
 @click.option(
@@ -1510,15 +1539,26 @@ def i2v(  # NOSONAR
 @click.option(
     "--model",
     default=None,
-    type=click.Choice(["omni-flash", "veo-lite", "veo-fast", "veo-quality", "veo-lite-lp"]),
+    type=click.Choice(
+        [
+            "omni-flash",
+            "omni-1.2-flash",
+            "omni-1.2",
+            "veo-lite",
+            "veo-fast",
+            "veo-quality",
+            "veo-lite-lp",
+        ]
+    ),
     help="Veo model. Omit to use Flow's current default.",
 )
 @click.option(
     "--duration",
     default=None,
-    type=click.Choice(["4", "6", "8", "10"]),
+    type=click.Choice([str(n) for n in range(3, 16)]),
     help=(
-        "Clip length in seconds (4, 6, 8 for Veo 3.1; 4, 6, 8, 10 for omni-flash). "
+        "Clip length: 3–15 by one second for omni-1.2-flash; "
+        "4/6/8/10 for omni-flash; 4/6/8 for Veo 3.1. "
         "Omit for Flow's default length. Refused pre-submit (no credits) when your "
         "account's cohort renders no duration control for the model."
     ),
@@ -1644,7 +1684,7 @@ def r2v(
         "now — not proven at chain scale, refs #125). The MANIFEST is a JSONL "
         'file: one JSON object per line, each with a required "prompt" and '
         'optional "model"/"aspect"/"duration" overrides. Veo links accept '
-        "duration 4, 6, or 8 seconds (10s remains omni-flash-only, which chain "
+        "duration 4, 6, or 8 seconds (10s and other lengths need an Omni model, which chain "
         "does not accept); invalid values are rejected before submission. Note "
         "that explicit duration can only take effect in Flow cohorts where the "
         "control is rendered.\n\n"

@@ -617,7 +617,7 @@ waits for each link in turn, so total wallclock is the sum of all link waits.
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--model` | `veo-lite` | `veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`. `omni-flash` is rejected — its single-clip start-frame i2v is verified, chain-scale seeding is not (issue #125). |
+| `--model` | `veo-lite` | `veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`. `omni-flash` and `omni-1.2-flash` are rejected — Omni's single-clip start-frame i2v is verified, chain-scale seeding is not (issue #125). |
 | `--max-links N` | unset | Cap link count; exit 11 (`ConfigurationError`) if the manifest has more. A spend guardrail. |
 | `-y` / `--yes` | off | Skip the pending video operation confirmation prompt. |
 | `--dry-run` | off | Print the pending video operation plan and submit nothing. |

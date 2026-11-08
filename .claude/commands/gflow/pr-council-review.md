@@ -1,5 +1,5 @@
 ---
-description: Multi-dimensional LLM council review of an open PR. Five baseline dimensions (correctness, quality, security, tests, memory-hygiene) plus adaptive per-surface dimensions. Sub-agents invoke specialized skills (security-review, code-review, verify). With no argument, lists open PRs ranked by priority. Wrapper around skills/pr-council-review/SKILL.md (canonical body).
+description: Multi-dimensional LLM council review of an open PR. Five baseline dimensions (correctness, quality, security, tests, memory-hygiene) plus adaptive per-surface dimensions. Sub-agents invoke specialized skills (security-review, code-review, verify). Every CodeRabbit comment is triaged and answered. With no argument, lists open PRs ranked by priority. Wrapper around skills/pr-council-review/SKILL.md (canonical body).
 ---
 
 # `/gflow:pr-council-review [PR#]`
@@ -13,5 +13,11 @@ not see SonarCloud's verdict. Before declaring the final verdict, run **`/gflow:
 for this PR — the `SonarCloud analysis` gate must be green (zero new issues). A red gate
 is a blocking finding regardless of the council's own conclusions; report it with the
 exact failing conditions and do not call the PR merge-ready until it is green.
+
+**Required gate: every bot review is answered.** CodeRabbit's inline findings are invisible
+to `gh pr view --json comments`. Gather them as `BOT_REVIEWS` (SKILL.md § 2). Give each
+one a decision under § 5 step 7b: accept, decline with a reason, or false positive. Do
+this on maintainer PRs and contributor PRs alike. An unanswered bot comment means the PR
+is not merge-ready.
 
 Sibling: `/review` is the single-agent Claude-Code built-in (fast, one-pass). Use it for spot-checks; use this command for pre-merge multi-dim audits.

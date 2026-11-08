@@ -69,7 +69,8 @@ the maintainer's session, with the same D1 0/0 check and no leftover local Worke
 
 | Check | Result |
 |---|---|
-| Signed tag | to be filled after the tag |
-| `Release` workflow | to be filled after publish |
-| GitHub Release | to be filled after publish |
-| PyPI | to be filled after publish |
+| Signed tag | `v0.95.0` on `78d1b658`, SSH-signed (`git cat-file -p v0.95.0` carries one `BEGIN SSH SIGNATURE`) |
+| `Release` workflow | run 42361883581: success (`build-and-publish`, `mcp-registry / publish`) |
+| GitHub Release | `v0.95.0`, published 2026-11-07T09:58:16Z, not a prerelease |
+| PyPI | `https://pypi.org/pypi/gflow-cli/json` reports 0.95.0 as the latest |
+| Release PR | #1171 merged into `main` (merge commit `173af727`); back-merge `59f63f8a` into `develop` |

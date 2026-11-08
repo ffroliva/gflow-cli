@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.96.0] — 2026-11-07
+
+### Added
+
+- **Omni 1.2 Flash** (`--model omni-1.2-flash`, alias `omni-1.2`; MCP `omni_1_2_flash`) with
+  every whole-second `--duration` from 3 to 15 on flow.google.com, set through the model's
+  duration slider and read back before Send. Above 10s needs a Google AI plan: on an account
+  whose slider stops at 10s, a longer request is refused before submit (exit 11), with no
+  credits spent. Chains and the agent-only composer still refuse it (#1168, by @vietanhjp93).
+
+### Fixed
+
+- **A request only the classic composer can take reloads the page before refusing.** When
+  flow.google.com serves the agent-only composer (#799), image-to-image, a local `--ref`
+  upload, character references and the video forms it cannot take now get up to three free
+  reloads, then the same exit 36 as before. Seen once so far, on an account that got the
+  classic composer on its next nine loads (#1142, by @L1meSn0w).
+- **`video r2v --model omni-flash` accepts `--duration` 4, 6 or 10** on flow.google.com, not only 8.
+  The 8s-only rule was measured on Veo, and it still applies to Veo and to an omitted
+  `--model`; Omni keeps every reference at each length (#1167, by @vietanhjp93).
+
 ## [0.95.0] — 2026-11-07
 
 ### Added
@@ -6867,7 +6888,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.95.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.96.0...HEAD
+[0.96.0]: https://github.com/ffroliva/gflow-cli/compare/v0.95.0...v0.96.0
 [0.95.0]: https://github.com/ffroliva/gflow-cli/compare/v0.94.0...v0.95.0
 [0.94.0]: https://github.com/ffroliva/gflow-cli/compare/v0.93.0...v0.94.0
 [0.93.0]: https://github.com/ffroliva/gflow-cli/compare/v0.92.1...v0.93.0

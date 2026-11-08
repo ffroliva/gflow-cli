@@ -53,7 +53,7 @@ from gflow_cli.api.transports.migrated_composer import (
     ModelMenuMatcher,
     _raise_if_out_of_credits,  # pyright: ignore[reportPrivateUsage]
 )
-from gflow_cli.api.video import Aspect, Mode, VideoResult, VideoStarted, VideoStatus
+from gflow_cli.api.video import Aspect, Mode, VideoModel, VideoResult, VideoStarted, VideoStatus
 from gflow_cli.errors import (
     ConfigurationError,
     FlowAgentUiError,
@@ -864,6 +864,8 @@ def unported_video(request: GenerateVideoRequest) -> str | None:
         return "more than one video per request"
     if request.aspect not in _VIDEO_ASPECT_LABEL:
         return f"the {request.aspect.value} aspect ratio"
+    if request.model is VideoModel.OMNI_1_2_FLASH:
+        return "Omni 1.2 on the agent-only composer (not measured)"
     if request.model is not None and request.model not in VIDEO_MODEL_MENU_MATCHERS:
         return f"the {request.model.value} model"
     if request.resolution is not None:

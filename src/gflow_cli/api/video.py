@@ -60,6 +60,7 @@ class VideoModel(StrEnum):
     """
 
     OMNI_FLASH = "omni_flash"
+    OMNI_1_2_FLASH = "omni_1_2_flash"
     VEO_3_1_LITE = "veo_3_1_lite"
     VEO_3_1_FAST = "veo_3_1_fast"
     VEO_3_1_QUALITY = "veo_3_1_quality"
@@ -97,6 +98,9 @@ I2V_DEFAULT_MODEL: VideoModel = VideoModel.VEO_3_1_LITE
 # `gflow models` can enumerate the aliases without duplicating them.
 _VIDEO_MODEL_FROM_CLI: dict[str, VideoModel] = {
     "omni_flash": VideoModel.OMNI_FLASH,
+    "omni_1.2_flash": VideoModel.OMNI_1_2_FLASH,
+    "omni_1_2_flash": VideoModel.OMNI_1_2_FLASH,
+    "omni_1.2": VideoModel.OMNI_1_2_FLASH,
     "omni": VideoModel.OMNI_FLASH,
     "flash": VideoModel.OMNI_FLASH,
     "veo_3_1_lite": VideoModel.VEO_3_1_LITE,
@@ -145,6 +149,7 @@ MAX_REFERENCE_IMAGES = 7
 _VIDEO_REFERENCE_CAP: Mapping[VideoModel, int] = MappingProxyType(
     {
         VideoModel.OMNI_FLASH: 7,
+        VideoModel.OMNI_1_2_FLASH: 7,
         VideoModel.VEO_3_1_LITE: 3,
         VideoModel.VEO_3_1_FAST: 3,
         VideoModel.VEO_3_1_LITE_LOWER_PRIORITY: 3,
@@ -179,29 +184,45 @@ def model_aliases(model: VideoModel) -> list[str]:
     return sorted(alias for alias, m in _VIDEO_MODEL_FROM_CLI.items() if m is model)
 
 
-VIDEO_DURATION_CHOICES: tuple[int, ...] = (4, 6, 8, 10)
+VIDEO_DURATION_CHOICES: tuple[int, ...] = tuple(range(3, 16))
+
+
+def duration_choices_for(model: VideoModel | None) -> tuple[int, ...]:
+    """Selectable model durations; unknown sticky models keep the legacy set."""
+    if model is VideoModel.OMNI_1_2_FLASH:
+        return VIDEO_DURATION_CHOICES
+    if model is VideoModel.OMNI_FLASH or model is None:
+        return (4, 6, 8, 10)
+    return (4, 6, 8)
 
 
 def max_duration_for(model: VideoModel) -> int:
     """Maximum selectable clip length in seconds for *model*."""
-    return 10 if model is VideoModel.OMNI_FLASH else 8
+    return max(duration_choices_for(model))
 
 
-def validate_duration_for_model(model: VideoModel, duration: int | str | None) -> None:
-    """Validate one duration against the canonical Flow model limits."""
+def validate_duration_for_model(model: VideoModel | None, duration: object) -> None:
+    """Validate duration without rounding or inheriting an unknown new model."""
     if duration is None:
         return
+    if isinstance(duration, bool) or not isinstance(duration, (int, str)):
+        raise ValueError(f"duration must be an integer number of seconds, got {duration}")
     try:
         seconds = int(duration)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"duration must be one of 4/6/8/10 seconds, got {duration}") from exc
-    if seconds not in VIDEO_DURATION_CHOICES:
-        raise ValueError(f"duration must be one of 4/6/8/10 seconds, got {duration}")
-    maximum = max_duration_for(model)
-    if seconds > maximum:
+        raise ValueError(f"duration must be an integer number of seconds, got {duration}") from exc
+    choices = duration_choices_for(model)
+    if seconds not in choices:
+        name = f"model {model.value!r}" if model is not None else "an unspecified model"
+        if seconds > max(choices):
+            offered = "omni_flash or omni_1_2_flash" if seconds == 10 else "omni_1_2_flash"
+            raise ValueError(
+                f"{name} caps at {max(choices)}s; duration {seconds} "
+                f"is only available for {offered}"
+            )
         raise ValueError(
-            f"model {model.value!r} caps at {maximum}s; duration {seconds} is only available "
-            f"for omni_flash"
+            f"duration must be one of {list(choices)} seconds for {name}, got {duration}. "
+            "Use explicit omni-1.2-flash for any integer duration 3–15."
         )
 
 
@@ -242,7 +263,7 @@ class GenerateVideoRequest:
     aspect: Aspect = Aspect.PORTRAIT
     tier: Tier = Tier.FAST  # meaningful for T2V only — I2V/R2V model keys are fixed
     model: VideoModel | None = None  # None -> Flow UI default (picker untouched)
-    duration: int | None = None  # seconds: 4/6/8 (or 10, omni_flash only); None -> default
+    duration: int | None = None  # seconds, per duration_choices_for(model); None -> default
     count: int = 1  # 1-4 outputs; >1 multiplies credit cost
     seed: int | None = None
     start_image: Path | None = None  # I2V (local file path)
@@ -283,7 +304,7 @@ class GenerateVideoRequest:
     # The video pipeline clamps to classic-required (no agentic video driver
     # exists); see _generate_video_locked.
     ui_mode: UiMode | None = None
-    # Requested video resolution ("360p" or "720p", omni-flash only); None -> Flow default
+    # Requested video resolution ("360p" or "720p", Omni models only); None -> Flow default
     resolution: str | None = None
 
     def __post_init__(self) -> None:
@@ -406,9 +427,9 @@ class GenerateVideoRequest:
             raise ValueError(msg)
 
     def _validate_duration(self) -> None:
-        if self.duration is not None and self.duration not in VIDEO_DURATION_CHOICES:
-            msg = f"duration must be one of 4/6/8/10 seconds, got {self.duration}"
-            raise ValueError(msg)
+        if self.duration is not None and type(self.duration) is not int:
+            raise ValueError("duration must be an integer number of seconds")
+        validate_duration_for_model(self.model, self.duration)
 
     def _validate_count(self) -> None:
         if not (1 <= self.count <= 4):

@@ -1258,7 +1258,8 @@ def _build_video_payload(
         "Generate a video using Google Flow's Veo model. "
         "Modes: t2v (text-to-video), i2v (image-to-video), r2v (reference-to-video). "
         "Aspects: 9:16, 16:9. "
-        "Optional model (veo_lite/veo_fast/veo_quality/omni_flash), duration (seconds), "
+        "Optional model (veo_lite/veo_fast/veo_quality/omni_flash/omni_1_2_flash), "
+        "duration (seconds), "
         "and count select the Veo model, clip length, and batch size (CLI parity). "
         "The prompt supports @CharacterName mentions to tag saved project characters by name "
         "(resolves to referenceEntities). Reference a SAVED character via @Name; pass one-off "
@@ -1320,21 +1321,23 @@ async def gflow_generate_video(  # NOSONAR
             ``reference_entities`` (mirrors ``--reference-entity-name``); required
             for each id on flow.google.com, where the picker attaches by name.
         model: Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality',
-            'omni_flash' (aliases accepted, mirrors the CLI ``--model``). When
+            'omni_flash', 'omni_1_2_flash' (aliases accepted, mirrors the CLI ``--model``). When
             omitted, Flow's UI default applies EXCEPT for i2v with frames,
             where the transport defaults to veo-lite. Every model supports i2v
             with a start frame and with an end frame; 'omni_flash' was the last
             exception and its end-frame route was wire-verified 2026-09-02
             (refs #125, #626).
         duration: Optional clip length in seconds (mirrors the CLI ``--duration``):
-            4/6/8 on the Veo 3.1 models, 4/6/8/10 on ``omni_flash``; whether the
+            Every integer 3–15 on explicit ``omni_1_2_flash`` (11–15 needs a Google AI
+            plan), 4/6/8 on Veo 3.1, 4/6/8/10 on ``omni_flash``; whether the
             account's cohort renders the control is decided pre-submit at zero cost.
             When omitted, Flow's per-model default applies. On the migrated
-            flow.google.com host an 'r2v' request accepts only 8 and pins it when
-            omitted — Flow offers reference-to-video at its base tier alone, and at
-            4 or 6 it drops the references and bills a text-to-video clip instead of
-            refusing; any other value returns the exit-11-equivalent envelope.
-        resolution: Optional video resolution — '360p' or '720p' (omni-flash only,
+            flow.google.com host an 'r2v' request with explicit omni_flash accepts
+            4/6/8/10, and explicit ``omni_1_2_flash`` every integer 3-15 through its
+            duration slider. Veo or an unspecified model accepts only 8: measured
+            shorter Veo requests dropped references and billed text-to-video instead.
+            Omitted r2v duration still pins 8 to avoid inherited editor settings.
+        resolution: Optional video resolution — '360p' or '720p' (Omni models only,
             mirrors the CLI ``--resolution``). When omitted, Flow's default applies. On any
             other model, or on the labs editor, the job fails pre-submit with the
             exit-11-equivalent envelope and no credits spent.
@@ -1433,7 +1436,7 @@ async def gflow_generate_video(  # NOSONAR
     # instead of a ValueError inside the worker. Mirrors the CLI's pre-spend
     # checks: i2v binds I2V_DEFAULT_MODEL when `model` is omitted (so "no model"
     # is not "no opinion" there), while t2v/r2v inherit Flow's sticky UI default,
-    # which is unknowable here and left unguarded by design.
+    # which is unknowable here, so they are held to the legacy 4/6/8/10 set.
     if duration is not None:
         # #659: the CLI's --duration is a click.Choice, so 99 never reaches the
         # transport there; here it did, and queued a browser run that died at claim.
@@ -1445,14 +1448,10 @@ async def gflow_generate_video(  # NOSONAR
         effective = VideoModel.from_cli(model) if model is not None else None
         if effective is None and mode == "i2v" and (initial_frame or end_frame):
             effective = I2V_DEFAULT_MODEL
-        if effective is not None:
-            try:
-                validate_duration_for_model(effective, duration)
-            except ValueError as exc:
-                return _bad_param(
-                    "Unsupported duration for model",
-                    str(exc),
-                )
+        try:
+            validate_duration_for_model(effective, duration)
+        except ValueError as exc:
+            return _bad_param("Unsupported duration for model", str(exc))
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_video")

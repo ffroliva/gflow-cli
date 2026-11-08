@@ -663,9 +663,10 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 - `image_batch.inter_submission_latency_ms {row_idx, latency_ms}` (fires from row 1 onward)
 
 > **Shared video flags** (`t2v` / `i2v` / `r2v`):
-> `--model [omni-flash|veo-lite|veo-fast|veo-quality|veo-lite-lp]` (omit → Flow's
-> current UI default), `--duration [4|6|8|10]` (4/6/8 for Veo 3.1;
-> 4/6/8/10 for omni-flash),
+> `--model [omni-flash|omni-1.2-flash|omni-1.2|veo-lite|veo-fast|veo-quality|veo-lite-lp]`
+> (omit → Flow's current UI default), `--duration [3..15]` (4/6/8 for Veo 3.1;
+> 4/6/8/10 for omni-flash; every integer 3–15 for omni-1.2-flash; 4/6/8/10 when
+> `--model` is omitted),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
 > **`--duration` support across models**: Flow's settings
@@ -673,7 +674,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > while Veo 3.1 models accept `4s/6s/8s` where the current Flow account/cohort exposes
 > those controls (positive capture: a third, contributor-owned account on `labs.google`, 2026-09-04, PR #650;
 > the historical negative matrix on `my-profile` remains valid for its cohort).
-> 10s is reserved exclusively for `omni-flash`. Passing `--duration 10` with a Veo model
+> 10s needs `omni-flash` or `omni-1.2-flash`; 11–15s needs `omni-1.2-flash` (above 10 needs a
+> Google AI plan, else exit 11 before submit). Passing `--duration 10` with a Veo model
 > fails fast with exit 2 before any browser work. On a cohort where Flow renders no
 > duration control for Veo, omit `--duration` to accept Flow's default.
 > `--count` is enforced **fail-closed**: if Flow's count control cannot be
@@ -713,7 +715,7 @@ gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect
 
 Options:
   --resolution [360p|720p]
-                        Video resolution ('360p' or '720p', supported on omni-flash; on any other
+                        Video resolution ('360p' or '720p', supported on omni-flash and omni-1.2-flash; on any other
                         model, or on the labs editor, the run stops before submit with exit 11
                         and no credits spent).
                         Omit for Flow's default.
@@ -799,7 +801,7 @@ Options:
   --initial-frame PATH|UUID  Initial frame to animate: local image path or in-project
                              asset media UUID. Canonical form; replaces the positional IMAGE.
   --end-frame PATH|UUID      Optional end frame — Flow interpolates initial frame -> end frame.
-  --resolution [360p|720p]   Video resolution ('360p' or '720p', supported on omni-flash; on any other
+  --resolution [360p|720p]   Video resolution ('360p' or '720p', supported on omni-flash and omni-1.2-flash; on any other
                         model, or on the labs editor, the run stops before submit with exit 11
                         and no credits spent).
                              Omit for Flow's default.
@@ -833,15 +835,15 @@ rescues a picker miss instead of failing).
 ## `gflow video r2v`
 
 Reference-to-video (Flow "ingredients"): condition a generation on reference
-images. Per-model cap: `omni-flash` ≤7, the `veo-*` models ≤3. Fires
+images. Per-model cap: `omni-flash` and `omni-1.2-flash` ≤7, the `veo-*` models ≤3. Fires
 `batchAsyncGenerateVideoReferenceImages`.
 
 ```text
 gflow video r2v PROMPT --ref IMG [--ref IMG ...] [--model] [--duration] [--resolution] [--count] [--aspect] [...]
 
 Options:
-  --ref PATH                Reference image; repeat for up to 7 (omni-flash) / 3 (veo). [required]
-  --resolution [360p|720p]  Video resolution ('360p' or '720p', supported on omni-flash; on any other
+  --ref PATH                Reference image; repeat for up to 7 (omni-flash, omni-1.2-flash) / 3 (veo). [required]
+  --resolution [360p|720p]  Video resolution ('360p' or '720p', supported on omni-flash and omni-1.2-flash; on any other
                         model, or on the labs editor, the run stops before submit with exit 11
                         and no credits spent).
                             Omit for Flow's default.
@@ -869,11 +871,28 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 > verified before submit; an id without a name exits 36, and a video `@Name` exits 29
 > because the character catalog cannot be read on that host.
 >
-> **`--duration` is refused on this path (exit 11).** The host offers reference-to-video
-> only at its base 8s tier. At 4s or 6s it does not refuse — it drops the references,
-> types their uploaded *names* into the prompt and bills a text-to-video clip (measured at
-> zero credits, 2026-09-06). Because the editor remembers the last duration used, an r2v
-> run pins 8s itself rather than inheriting it. Pass no `--duration`, or `--duration 8`.
+> **Explicit `--model omni-flash` accepts `--duration 4/6/8/10`.** Route-blocked
+> requests measured on 2026-11-07 retained the character entity with an
+> `abra_r2v_<duration>s_360p` model key. Veo and unspecified models retain the 8s
+> safety policy (exit 11 for other values): shorter Veo requests measured on
+> 2026-09-06 dropped references and submitted text-to-video instead. Because the
+> editor remembers its last duration, omitted r2v duration still pins 8s.
+
+### Omni 1.2 Flash durations
+
+Use explicit `--model omni-1.2-flash` (alias `omni-1.2`) with `video t2v`, `i2v`
+or `r2v`. It accepts every integer `--duration` from 3 through 15, and optional
+`--resolution 360p` or `720p`. Omni 1.1 aliases and model defaults are unchanged.
+On flow.google.com the driver binds the `flow-duration-slider` index and reads
+back the displayed seconds. Missing/changed controls and unavailable durations
+fail before Send; free accounts offer 3–10, Google AI plans offer 3–15.
+`r2v` without an explicit duration pins 8 seconds. Agent-only and chained Omni
+1.2 generation remain unsupported; this change adds no extend/edit operation.
+
+```bash
+gflow video r2v "a continuous scene" --ref scene.png \
+  --model omni-1.2-flash --duration 15 --resolution 360p
+```
 
 ### Sharing one project across calls
 
@@ -1108,7 +1127,7 @@ Options:
   --json                    Emit a machine-readable JSON result.
 ```
 
-> **`omni-flash` is rejected for chains.** Its single-clip start-frame i2v is
+> **`omni-flash` and `omni-1.2-flash` are rejected for chains.** Omni's single-clip start-frame i2v is
 > wire-verified (2026-08-03, issue #125), but a chain renders N seeded links
 > back-to-back and that has not been verified at chain scale — so `chain` stays
 > on the Veo 3.1 family pending a chain-scale verification. The chain also
@@ -2208,7 +2227,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `14` | `AuthBrowserRejectedError` | Sign-in rejected the browser for `navigator.webdriver` | Re-run `gflow auth login`; with Chrome installed the `chrome` strategy retries automatically |
 | `15` | `BrowserSessionClosedError` | The automation browser window was closed mid-operation | Re-run; keep the browser window open until the command finishes |
 | `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
-| `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode — today that is `omni-flash` for `chain` (issues #125, #626) | Use a Veo 3.1 model (`veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`) for `chain`. Single-clip `i2v` with omni-flash, `--end-frame` included, is accepted |
+| `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode — today that is `omni-flash` or `omni-1.2-flash` for `chain` (issues #125, #626) | Use a Veo 3.1 model (`veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`) for `chain`. Single-clip `i2v` with omni-flash, `--end-frame` included, is accepted |
 | `18` | `VideoModelSelectionError` | gflow could not select the requested video model in Flow's editor for an `i2v` run (model-picker option not found) | Usually transient — retry; if it persists, Flow's model-picker UI changed (report referencing #125) |
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --output`) | Retry; the recorded compose survives, so re-render is safe |
 | `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |
@@ -2227,7 +2246,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
-| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; local-file `image i2i`; and `gflow run --config` rows referencing an earlier row (`batch:N`) or a local file; `image i2i --ref <uuid>` of an image the catalog records in the same `--project` (#995); `image upscale`; `video upscale` (served here only); and single-segment `video extend`. Images and `video r2v` may tag a character by name (`@Name` on images, or `--reference-entity` with `--reference-entity-name`, #723); a character on `video t2v`/`i2v` (#716), other image UUID references, an entity id without a name, instructions, Imagen 4 and `image batch` remain unsupported. On an agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), generation is limited to `image t2i` and `video t2v` (one 9:16 or 16:9 clip). Not selector drift (23) | **Not retryable.** Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
+| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; local-file `image i2i`; and `gflow run --config` rows referencing an earlier row (`batch:N`) or a local file; `image i2i --ref <uuid>` of an image the catalog records in the same `--project` (#995); `image upscale`; `video upscale` (served here only); and single-segment `video extend`. Images and `video r2v` may tag a character by name (`@Name` on images, or `--reference-entity` with `--reference-entity-name`, #723); a character on `video t2v`/`i2v` (#716), other image UUID references, an entity id without a name, instructions, Imagen 4 and `image batch` remain unsupported. On an agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), generation is limited to `image t2i` and `video t2v` (one 9:16 or 16:9 clip), and a request it cannot take first gets up to three free page reloads (`migrated.agent_only_reload`, #1142). Not selector drift (23) | **Not retryable** after gflow's own reloads. Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
 | `37` | `InsufficientCreditsError` | The account's balance is short **for the model it asked for**, so Flow **replaced** the submit control with its `Insufficient credits warning` instead of disabling it. Short, not necessarily empty: measured 2026-09-07, an account holding **50** credits requesting `--model veo-quality` (**100**) rendered the warning. Recognised by the warning's class, so it does not depend on the UI language ([#745](https://github.com/ffroliva/gflow-cli/issues/745)). Explicitly **not** selector drift (23): reporting it as drift told users to file a frontend bug over a credit shortfall | Check the balance with `gflow credits user`, then pick a cheaper `--model` (`veo-lite` costs 10), top up, or wait for the allowance to reset. Nothing was submitted, so no credit was spent. `gflow image` draws on a separate daily quota and may still work |
 | `38` | `FlowAccountChooserError` | The post-migration hop landed on Google's account chooser and the profile's recorded account (`.gflow_account`) could not be selected automatically (row absent, click-through did not return to the editor, or `--account` mismatch) | **Not retryable**: run `gflow auth login --profile <name>` and complete the chooser manually, while signed in as the recorded account (re-run `gflow auth login` if the chooser offers a different session) |
 | `39` | `FlowAccessUnavailableError` | Flow loaded and routed to its own "you don't have access" screen (`<flow-pinhole-unavailable-screen>`): this Google account has no Flow entitlement. Detected by component, not by URL — the hop is client-side (`flow.google.com/` answers 200) and the path varies (`/unavailable`, `/u/8/unavailable`). Explicitly **not** auth expiry (3/8) and **not** selector drift (23): nothing expired and nothing drifted | **Not retryable, and signing in again cannot change it.** Flow needs an age-verified account in a supported region on a Google AI Plus/Pro/Ultra or qualifying Workspace plan — check which applies at [Google's eligibility page](https://support.google.com/flow/answer/16353333) and open https://flow.google.com in a browser on this account to confirm |

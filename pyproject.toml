@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.95.0"
+version = "0.96.0"
 description = "CLI and MCP server for Google Flow — drive Veo text-to-video, image-to-video and Imagen image generation from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -246,6 +246,7 @@ markers = [
     "e2e_telemetry: usage telemetry against an installed wheel — zero credits, no browser, no Flow account",
     "sharpit(allow_n_plus_one=False, allow_swallowed=False): per-test sharpit gate settings; inert without --sharpit",
     "smoke: golden-path live test (image gen — ZERO credits); opt-in via GFLOW_CLI_E2E_PROFILE",
+    "needs_network: may reach the package index (builds, installs); exempt from the no-outbound-network test guard",
 ]
 
 [dependency-groups]

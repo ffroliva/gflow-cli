@@ -73,7 +73,7 @@ The plan changes completely with the answers. Ask, or read them from the brief; 
 | One location or several? How many camera angles each? | drives the plate-chaining work in `consistency.md` |
 | Recurring people? How many in frame at once? | one face-bearing reference per generation **[CONSTRAINT]** |
 | A prop that must not change? | needs its own sheet with a scale anchor |
-| Aspect, total length, credit ceiling | 16:9 or 9:16; clips are 4/6/8, or 10 on omni-flash |
+| Aspect, total length, credit ceiling | 16:9 or 9:16; clips are 4/6/8, 10 on omni-flash, or 3–15 on omni-1.2-flash |
 | One-off, or a repeatable pipeline? | decides the production shape in `composition.md` |
 
 **Veo always generates audio [CONSTRAINT].** There is no silent mode and omitting sound from the prompt does not produce silence. A "silent" montage returns invented room tone under every shot. If the audio is unwanted, strip it at assembly (`-an`) rather than hoping for a quiet clip.
@@ -271,14 +271,14 @@ Full method in **[`consistency.md`](consistency.md)**. The rest of the short for
 - **Locations and props** have no entity type **[CONSTRAINT]** — they are images attached per shot with `--ref`. Look.
 - **One face-bearing reference per generation [CONSTRAINT].** A second entity, or an entity plus a portrait, returns HTTP 400 reported as a wire-format error. Carry other people as role nouns in prose.
 - **Multi-angle locations must be chained, not generated in parallel [CALIBRATED]** — anchor angle by `t2i`, every other angle by `i2i --ref <anchor>`. Independent calls from the same paragraph produce different rooms.
-- **The reference count picks the model, before quality does [CONSTRAINT].** Caps are per model and the entity counts against the same pool: `omni-flash` 7, `veo-lite` / `veo-fast` / `veo-lite-lp` 3, **`veo-quality` 0 — it accepts no references at all**. So a shot carrying any `--ref` or entity cannot use `veo-quality` however much you want its quality. For a **single** generation needing references and quality together, that makes `omni-flash` the pick; a `veo-lite` variant when 3 refs is enough. **`video chain` is the exception [CONSTRAINT]** — it refuses `omni-flash` outright (its i2v is wire-verified for single generations only) and exits with a model/mode incompatibility, so chained links take a Veo 3.1 model and its cap of 3. Full table, image models included: [`consistency.md`](consistency.md).
+- **The reference count picks the model, before quality does [CONSTRAINT].** Caps are per model and the entity counts against the same pool: `omni-flash` and `omni-1.2-flash` 7, `veo-lite` / `veo-fast` / `veo-lite-lp` 3, **`veo-quality` 0 — it accepts no references at all**. So a shot carrying any `--ref` or entity cannot use `veo-quality` however much you want its quality. For a **single** generation needing references and quality together, that makes `omni-flash` the pick; a `veo-lite` variant when 3 refs is enough. **`video chain` is the exception [CONSTRAINT]** — it refuses `omni-flash` outright (its i2v is wire-verified for single generations only) and exits with a model/mode incompatibility, so chained links take a Veo 3.1 model and its cap of 3. Full table, image models included: [`consistency.md`](consistency.md).
 - Attaching by media UUID buys asset identity, never scene coherence.
 
 ## Step 5 — beat sheet
 
 One row per clip: id, camera setup, action, lines with delivery, duration, model, references.
 
-- **Durations are 4/6/8, plus 10 on omni-flash [CONSTRAINT].** `--duration` requires an explicit `--model`; omitted, it binds `veo-lite`, which renders no duration control, and exits 2.
+- **Durations are 4/6/8, plus 10 on omni-flash, and every integer 3–15 on omni-1.2-flash (above 10 needs a Google AI plan, else exit 11 before submit) [CONSTRAINT].** `--duration` requires an explicit `--model`; omitted, it binds `veo-lite`, which renders no duration control, and exits 2.
 - **≤ 2.5 spoken words per second [CALIBRATED, 25 clips, one model]** — 8 s ≈ 18 words, 10 s ≈ 24. Above it, delivery rushes and the last sentence is cut.
 - **Never rewrite the script to fit.** Split a long speech across beats; the words are the deliverable.
 - Two speakers per beat is fine with the order explicit; three is where sync breaks **[CALIBRATED]**.

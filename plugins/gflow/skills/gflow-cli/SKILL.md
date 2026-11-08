@@ -88,14 +88,15 @@ gflow run --config <batch.json> --project ID --resume     # skip rows already on
 # `gflow video extend` runs there one segment per call (--project required); -n > 1,
 # --scene/--resume-from, --seed and an --aspect other than the source clip's exit 36.
 # An agent-only composer (#799) is different: t2i and t2v only;
-# i2i, i2v, r2v and character references exit 36 there.
+# i2i, i2v, r2v and character references exit 36 there, after up to
+# three free page reloads in case Flow serves the classic composer (#1142).
 
 # A run without --project creates a new Flow project, unless GFLOW_CLI_PROJECT=<id> is set
 # (#1039): t2i/i2i/t2v/i2v/r2v, `gflow run` and the MCP generate tools then use that
 # project. Set it once when looping, instead of leaving one project per call.
 
 # Video generation (Veo 3.1)
-gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: omni-flash only; without --project a project is created first, on either host (#864); 10s is omni-flash-only
+gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 3..15] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: Omni models only; without --project a project is created first, on either host (#864); durations: 4/6/8 Veo, 4/6/8/10 omni-flash, 3-15 omni-1.2-flash
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project)
 gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DIR]  # 1080p = Full HD, 720p = original, 270p = GIF
 # `gflow video` has no `batch` subcommand — that stub never worked and was

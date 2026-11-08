@@ -166,6 +166,11 @@ AGENT_ONLY_EARLY_S = 5.0
 #: A positive agent-only verdict is re-asked after this long: the verdict rests on the chip's
 #: ABSENCE, and a slow mount can put the trigger in the DOM before the chip.
 AGENT_ONLY_SETTLE_S = 2.0
+#: Free reloads spent looking for the classic composer when a request needs it. One
+#: observation so far (2026-11-04): an account normally given the classic composer was
+#: served the agent-only one once, and the classic one on the next nine loads.
+AGENT_ONLY_RELOADS = 3
+AGENT_ONLY_RELOAD_WAIT_S = 5.0
 #: The agent-only composer's own Agent-settings button — the thing its driver needs anyway.
 AGENT_ONLY_ANCHOR = "flow-creative-agent-prompt-box button:has(mat-icon:text-is('tune'))"
 #: What `ensure_editor` found: the classic migrated composer, or #799's agent-only one.
@@ -368,7 +373,7 @@ def _picker_query(ref: ImageRef) -> str:
 
 #: The Ingredients sub-mode holds references; Frames holds the i2v chips.
 INGREDIENTS_LIGATURE = "chrome_extension"
-#: The only duration at which this host offers reference-to-video. Measured 2026-09-06 at
+#: Safe base duration for Veo/unspecified-model reference-to-video. Measured 2026-09-06 at
 #: $0 on a cohort that DOES render a duration row for Veo 3.1 Lite [Lower Priority]
 #: (`capture_migrated_r2v_production_submit.py`, three route-blocked runs, same account,
 #: model, references and gestures — only the duration changed):
@@ -495,6 +500,7 @@ IMAGE_RECOVERY_SETTLE_S = 3.0
 #: moved* account may be routed to the new host for — see :func:`migrated_can_serve`.
 VIDEO_MODEL_MENU_LABELS: dict[VideoModel, str] = {
     VideoModel.OMNI_FLASH: "Omni 1.1 Flash",
+    VideoModel.OMNI_1_2_FLASH: "Omni 1.2 Flash",
     VideoModel.VEO_3_1_LITE: "Veo 3.1 - Lite",
     VideoModel.VEO_3_1_FAST: "Veo 3.1 - Fast",
     VideoModel.VEO_3_1_QUALITY: "Veo 3.1 - Quality",
@@ -1232,7 +1238,7 @@ def _r2v_body_problem(body: str, rpcid: str, media_ids: tuple[str, ...]) -> str 
         # submits t2v. Say so — "no reference was bound" alone sent the first reporter
         # looking at the attach code, which was working correctly.
         duration_hint = ""
-        if _DURATION_IN_KEY.search(key_text):
+        if key_text.startswith("veo_") and _DURATION_IN_KEY.search(key_text):
             duration_hint = (
                 f" — the key names a duration, and this host offers r2v only at "
                 f"{R2V_DURATION_S}s; below that it drops the references instead of "
@@ -1414,6 +1420,28 @@ class MigratedComposer:
         return f"{detail} [contract={MIGRATED_SETTINGS_CONTRACT}]"
 
     # --- readiness ------------------------------------------------------------
+
+    async def ensure_editor_for(
+        self, page: Page, project_id: str, *, needs_classic: bool
+    ) -> ComposerKind:
+        """:meth:`ensure_editor`, then up to ``AGENT_ONLY_RELOADS`` free reloads while the
+        agent-only composer is served to a request only the classic one can take (#1142)."""
+        kind = await self.ensure_editor(page, project_id)
+        if not needs_classic:
+            return kind
+        for attempt in range(1, AGENT_ONLY_RELOADS + 1):
+            if kind == "classic":
+                break
+            log.info("migrated.agent_only_reload", attempt=attempt, issue_ref="#1142")
+            await asyncio.sleep(AGENT_ONLY_RELOAD_WAIT_S)
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=45_000)
+                kind = await self.ensure_editor(page, project_id)
+            except (PlaywrightError, UiSelectorDriftError) as exc:
+                # A reload or re-check that fails spends its attempt; real drift already
+                # surfaced on the first check above, so this ends in the usual exit 36.
+                log.warning("migrated.agent_only_reload_failed", error=str(exc)[:200])
+        return kind
 
     async def ensure_editor(
         self, page: Page, project_id: str, *, timeout_s: float = 30.0
@@ -1783,10 +1811,15 @@ class MigratedComposer:
                 await self._select_model(page, pane, model)
             await self._select(page, pane, axis="aspect", lig=ASPECT_LIGATURE[request.aspect])
             if request.duration is not None:
-                if request.mode is Mode.R2V and request.duration != R2V_DURATION_S:
+                if (
+                    request.mode is Mode.R2V
+                    and model not in (VideoModel.OMNI_FLASH, VideoModel.OMNI_1_2_FLASH)
+                    and request.duration != R2V_DURATION_S
+                ):
                     raise ConfigurationError(
                         detail=(
-                            f"the migrated Flow host offers reference-to-video only at "
+                            "the SDK restricts Veo/unspecified-model "
+                            "reference-to-video to "
                             f"{R2V_DURATION_S}s; at {request.duration}s it does not refuse but "
                             "silently drops the references and submits a text-to-video run "
                             "with their file names typed into the prompt — a full-price clip "
@@ -1798,9 +1831,15 @@ class MigratedComposer:
                             "GFLOW_CLI_FLOW_HOST=labs.google."
                         ),
                     )
-                await self._select(page, pane, axis="duration", text=f"{request.duration}s")
+                if model is VideoModel.OMNI_1_2_FLASH:
+                    await self._select_omni12_duration(page, pane, request.duration)
+                else:
+                    await self._select(page, pane, axis="duration", text=f"{request.duration}s")
             elif request.mode is Mode.R2V:
-                await self._pin_r2v_duration(page, pane)
+                if model is VideoModel.OMNI_1_2_FLASH:
+                    await self._select_omni12_duration(page, pane, R2V_DURATION_S)
+                else:
+                    await self._pin_r2v_duration(page, pane)
             if request.resolution is not None:
                 await self._select_resolution(page, pane, request.resolution)
             await self._select(page, pane, axis="count", text=f"x{request.count}")
@@ -2003,6 +2042,49 @@ class MigratedComposer:
             error=f"{remaining} visible overlay(s)",
         )
         raise UiSelectorDriftError(detail=detail)
+
+    async def _select_omni12_duration(self, page: Page, pane: Any, seconds: int) -> None:
+        """Measured Omni 1.2 slider: index 0..12 maps to 3..15 seconds.
+
+        Free accounts expose 0..7 (3..10 seconds). Never clamp a subscriber-only
+        duration or reinterpret a changed slider: validate the structure and read
+        both its index and displayed seconds back before leaving settings.
+        """
+        component = pane.locator("flow-duration-slider")
+        slider = component.locator('input[type="range"]')
+        try:
+            await page.locator(MENU_ITEM).first.wait_for(state="hidden", timeout=4000)
+            await slider.first.wait_for(state="visible", timeout=4000)
+        except Exception as exc:
+            raise UiSelectorDriftError(
+                detail="Omni 1.2 duration slider missing (model menu open or slider unmounted)"
+            ) from exc
+        if await slider.count() != 1:
+            raise UiSelectorDriftError(detail="Omni 1.2 duration slider ambiguous")
+        minimum = await slider.get_attribute("min")
+        maximum = await slider.get_attribute("max")
+        step = await slider.get_attribute("step")
+        if minimum != "0" or maximum not in ("7", "12") or step != "1":
+            raise UiSelectorDriftError(detail="Omni 1.2 duration slider range changed")
+        index = seconds - 3
+        if not 0 <= index <= int(maximum) or not await slider.is_enabled():
+            raise ConfigurationError(
+                detail=f"Omni 1.2 duration {seconds}s is not offered by this account",
+                remediation_hint="Choose an offered duration; 11–15s requires a Google AI plan.",
+            )
+        await slider.press("Home")
+        for _ in range(index):
+            await slider.press("ArrowRight")
+        await asyncio.sleep(0.2)
+        label = await component.locator(".duration-slider-value").inner_text()
+        actual_index = await slider.input_value()
+        if actual_index != str(index) or not _duration(f"{seconds}s").search(label):
+            raise UiSelectorDriftError(
+                detail=(
+                    f"Omni 1.2 duration slider did not bind {seconds}s: "
+                    f"index={actual_index}, label={label!r}"
+                )
+            )
 
     async def _pin_r2v_duration(self, page: Page, pane: Any) -> None:
         """Bind the base duration for a references run, when this pane offers durations.
@@ -3927,7 +4009,8 @@ async def run_video(
         )
 
     # $0 and before the page only when neither composer takes it (see run_images).
-    if unported is not None and agent.unported_video(request) is not None:
+    needs_classic = agent.unported_video(request) is not None
+    if unported is not None and needs_classic:
         raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
@@ -3939,7 +4022,7 @@ async def run_video(
         )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
     composer = MigratedComposer()
-    if await composer.ensure_editor(page, pid) == "agent_only":
+    if await composer.ensure_editor_for(page, pid, needs_classic=needs_classic) == "agent_only":
         return await agent.run_agent_video(
             page,
             request,
@@ -4049,7 +4132,8 @@ async def run_images(
 
     # $0 and before the page only when NEITHER composer takes it: the agent-only one has
     # its own limits (#799) — its Agent-settings pane offers 3:4, the classic pane does not.
-    if unported is not None and agent.unported_image(request) is not None:
+    needs_classic = agent.unported_image(request) is not None
+    if unported is not None and needs_classic:
         raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
@@ -4059,7 +4143,7 @@ async def run_images(
             )
         )
     composer = MigratedComposer()
-    if await composer.ensure_editor(page, pid) == "agent_only":
+    if await composer.ensure_editor_for(page, pid, needs_classic=needs_classic) == "agent_only":
         return await agent.run_agent_images(page, request, project_id=pid)
     if unported is not None:
         raise refuse()

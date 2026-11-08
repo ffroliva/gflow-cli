@@ -26,7 +26,9 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.integration
+# needs_network for the whole module: the module-scoped `wheel` fixture runs `uv build`
+# before any function-scoped guard, and the install resolves dependencies from the index.
+pytestmark = [pytest.mark.integration, pytest.mark.needs_network]
 
 _REPO = Path(__file__).resolve().parents[2]
 

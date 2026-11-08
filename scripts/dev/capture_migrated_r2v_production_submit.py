@@ -57,6 +57,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
+    MODEL_KEY,
     MigratedComposer,
     _ligature,
 )
@@ -183,9 +184,10 @@ async def _probe(
                 const url = (input && input.url) || input;
                 const body = (init && init.body) || (input && input.body) || null;
                 if (isTarget(url)) {
-                    window.__captured.push({via: 'fetch', url: String(url),
-                                            body: body ? String(body) : null});
-                    return Promise.reject(new Error('blocked by probe'));
+                    return (body ? new Response(body).text() : Promise.resolve('')).then(text => {
+                        window.__captured.push({via: 'fetch', url: String(url), body: text});
+                        throw new Error('blocked by probe');
+                    });
                 }
                 return of.apply(this, arguments);
             };
@@ -229,7 +231,8 @@ async def _probe(
         blob = json.dumps(payload, ensure_ascii=False)
         verdict = {
             "rpcid": (c["decoded"] or {}).get("rpcid"),
-            "model_keys_in_body": sorted({s for s in strings if s.startswith(("veo_", "abra_"))}),
+            # MODEL_KEY, not a prefix list: Omni 1.2's key is `macaron_cookie_r2v_*`.
+            "model_keys_in_body": sorted({s for s in strings if MODEL_KEY.fullmatch(s)}),
             "reference_ids_present": {mid: (mid in blob) for mid in media_ids},
             "all_reference_ids_present": all(mid in blob for mid in media_ids),
         }
