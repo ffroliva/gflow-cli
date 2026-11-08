@@ -2355,7 +2355,7 @@ async def _extend_session(  # noqa: PLR0913
 
 @video.command(
     "extend",
-    short_help="Continue an existing clip by another 8 seconds (costs credits).",
+    short_help="Continue an existing clip (costs credits).",
     help=(
         "Continue an existing video by generating another 8-second segment that "
         "carries its motion and audio forward.\n\n"
@@ -2427,8 +2427,9 @@ async def _extend_session(  # noqa: PLR0913
     type=click.Path(dir_okay=False, path_type=Path),
     help=(
         "labs.google: render the whole scene (source clip + extensions) to ONE mp4 "
-        "here (server-side concat, credit-free). flow.google.com: save only the new "
-        "extension clip here — scene concat is not ported there yet."
+        "here (server-side concat, credit-free). flow.google.com: save the clip Flow "
+        "returns here; with the Omni extend key (measured 2026-11-08) that is the whole "
+        "source clip, grown in place by ~4s."
     ),
 )
 @_project_option

@@ -215,16 +215,20 @@ async def test_e2e_one_paid_extend_downloads_an_mp4(
     if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO") != "1":
         pytest.skip("spends Veo credits — set GFLOW_CLI_E2E_RUN_VIDEO=1 (owner consent)")
     from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.api.transports.migrated_recover import read_clip
     from gflow_cli.cli_video import _migrated_extend_seconds
-    from gflow_cli.services.media_recovery import download_media
 
     project, media = _ids()
     monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
     reset_settings()
-    before = await download_media(
-        media_id=media, profile=os.environ["GFLOW_CLI_E2E_PROFILE"], out_dir=tmp_path / "before"
-    )
-    source_seconds = _mp4_seconds(before.path.read_bytes())
+    # Read the source through Flow itself: the per-test catalog is empty, so a catalog
+    # lookup (download_media) would raise before the extend.
+    transport, page = await _live_page(e2e_profile_dir)
+    try:
+        _wf, source = await read_clip(page, project_id=project, media_id=media)
+    finally:
+        await transport.teardown()
+    source_seconds = _mp4_seconds(source)
     started: list[str] = []
     async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
         outcome, target = await client.extend_video_migrated(

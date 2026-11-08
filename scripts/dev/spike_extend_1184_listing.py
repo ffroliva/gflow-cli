@@ -2,8 +2,10 @@
 
 Opens the project page, captures every ``Zzl0ze`` listing payload, and prints each
 record that names the source media id or its workflow id: the record's ids, its
-timestamps, and every number in it, so a second (pre-extend or extension-only)
-version would show as a second record. Nothing is clicked or typed.
+timestamps, and every number in it. A second version that names neither id would NOT be
+printed: the full payload is saved to ``_spike_out/extend_1184_listing.json`` for that
+check (the 2026-11-08 conclusion enumerated all of its records). Nothing is clicked or
+typed.
 
 Positive control: the source media id must appear in the listing at least once; if
 it does not, the capture missed and the result says nothing.
