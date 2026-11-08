@@ -203,6 +203,13 @@ def test_submit_facts_reads_the_omni_extend_key() -> None:
     assert mx.submit_facts(body) == ("macaron_cookie_extend_4s", "9:16")
 
 
+def test_submit_facts_never_reads_the_key_from_the_prompt() -> None:
+    body = _fzytfe(key="macaron_cookie_extend_4s").replace(
+        "continue the camera move", "a slow_extend_shot in veo_style light"
+    )
+    assert mx.submit_facts(body) == ("macaron_cookie_extend_4s", "16:9")
+
+
 # --- the driver (mitigations 2-5), against a fake page -----------------------
 
 NEW_WF = "12345678-1234-4234-8234-123456789abc"

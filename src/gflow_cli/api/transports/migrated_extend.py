@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qs, urlsplit
@@ -36,7 +35,6 @@ from gflow_cli.api.transports.batchexecute import find_record, parse_frames
 from gflow_cli.api.transports.migrated_composer import (
     LISTING_RPC,
     MIGRATED_PROJECT_URL,
-    MODEL_KEY,
     MigratedComposer,
     request_body,
 )
@@ -71,9 +69,6 @@ SCENE_CREATE_RPC = "rqZuUc"
 #: The page's aspect index in the ``fZytfe`` request entry (measured 2 = 16:9; #882's
 #: live capture 1 = 9:16).
 ASPECT_BY_INDEX = {1: "9:16", 2: "16:9"}
-#: An Omni extend key (``macaron_cookie_extend_4s``, measured 2026-11-08, #1180) carries no
-#: t2v/i2v/r2v token and no ``veo_`` prefix, so the shared ``MODEL_KEY`` misses it.
-EXTEND_MODEL_KEY = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*_extend_[a-z0-9_]+")
 
 ADD_CLIP_BUTTON = "flow-scene-timeline button.add-clip-button"
 EXTEND_MENU_ITEM = (
@@ -225,10 +220,12 @@ def batch_rpcids(rpcids: list[str], body: str) -> list[str]:
 
 def submit_facts(body: str) -> tuple[str | None, str | None]:
     """(model key, aspect) the page put in its ``fZytfe`` request."""
-    key = MODEL_KEY.search(body or "") or EXTEND_MODEL_KEY.search(body or "")
-    idx = _at(_inner(EXTEND_SUBMIT_RPC, body or ""), 0, 0, 3)
+    # The key is read from its slot, not searched for: the prompt precedes it in the body,
+    # and an Omni key (``macaron_cookie_extend_4s``, #1180) matches no shared pattern.
+    entry = _at(_inner(EXTEND_SUBMIT_RPC, body or ""), 0, 0)
+    key, idx = _at(entry, 2), _at(entry, 3)
     return (
-        key.group(0) if key else None,
+        key if isinstance(key, str) else None,
         ASPECT_BY_INDEX.get(idx) if isinstance(idx, int) else None,
     )
 

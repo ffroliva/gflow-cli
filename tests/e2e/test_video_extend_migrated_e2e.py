@@ -134,7 +134,8 @@ async def test_e2e_extend_submit_contract_at_zero_cost(
     hit = seen["fZytfe"][0]
     assert hit["slot1"] == seen["workflow"], hit
     model_key, aspect = hit["facts"]
-    assert model_key and "extend" in model_key, hit  # veo_3_1_extension_* or *_extend_*
+    # veo_3_1_extension_* (labs-era) or *_extend_* (Omni, #1180)
+    assert model_key and ("extension" in model_key or "_extend_" in model_key), hit
     assert aspect in ("9:16", "16:9"), hit
 
 

@@ -32,8 +32,10 @@ submit, so the absences below are real and not a capture miss.
 
 ## What changed in gflow
 
-- `migrated_extend.EXTEND_MODEL_KEY` (`*_extend_*`) is tried after `MODEL_KEY`, so the
-  started event and the result name the real key instead of `unknown`.
+- `migrated_extend.submit_facts` reads the key from its slot in the `fZytfe` entry (next
+  to the aspect) instead of searching the body, so the started event and the result name
+  the real key instead of `unknown`. The search would also have matched a `veo_*` or
+  `*_extend_*` word in the user's prompt, which comes earlier in the body.
 - The e2e test now requires that **any** `rqZuUc` names the clip, not that one is sent.
   The scene guard stays for a page that still sends one.
 
