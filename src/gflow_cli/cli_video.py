@@ -1390,7 +1390,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     help=(
         "Video model. Defaults to veo-lite (cheapest). omni-flash supports both "
         "--initial-frame and --end-frame, and unlocks --duration 10; "
-        "omni-1.2-flash takes any --duration from 3 to 15."
+        "omni-1.2-flash takes any --duration from 3 to 15 (at most 10 with --end-frame)."
     ),
 )
 @click.option(
