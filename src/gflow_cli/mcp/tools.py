@@ -1329,8 +1329,9 @@ async def gflow_generate_video(  # NOSONAR
             (refs #125, #626).
         duration: Optional clip length in seconds (mirrors the CLI ``--duration``):
             Every integer 3–15 on explicit ``omni_1_2_flash`` (11–15 needs a Google AI
-            plan; with an ``end_frame`` at most 10, #1178), 4/6/8 on Veo 3.1, 4/6/8/10 on ``omni_flash``; whether the
-            account's cohort renders the control is decided pre-submit at zero cost.
+            plan; with an ``end_frame`` at most 10, #1178), 4/6/8 on Veo 3.1, 4/6/8/10
+            on ``omni_flash``; whether the account's cohort renders the control is
+            decided pre-submit at zero cost.
             When omitted, Flow's per-model default applies. On the migrated
             flow.google.com host an 'r2v' request with explicit omni_flash accepts
             4/6/8/10, and explicit ``omni_1_2_flash`` every integer 3-15 through its
