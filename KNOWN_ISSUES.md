@@ -428,7 +428,7 @@ Upgrade first (`gflow update`). The locale refutation below applies to the Portu
 labs cohort it was measured on.
 
 **What actually happens today.** gflow accepts `--duration 4`, `6` or `8` on the
-Veo 3.1 models and `10` on `omni-flash` only — the CLI no longer refuses a
+Veo 3.1 models, `10` on `omni-flash`, and every integer 3–15 on `omni-1.2-flash` — the CLI no longer refuses a
 duration it cannot know your account supports. What it still cannot do is tell
 your cohort apart before opening the browser, so on an account that renders no
 duration row the run reaches Flow's settings popover and fails there — on the
@@ -1423,8 +1423,10 @@ t2i 3:4 × 2 (896×1200 each), t2v 4 s 9:16 (ready 69 s after submit, MP4 downlo
 
 **Not driven yet on this composer** (exit 36, before anything is clicked): image-to-image,
 image-to-video, reference-to-video, character references, Agent instructions, an explicit
-video `--resolution` (the Agent settings pane has no resolution control), and more than one
-video per request.
+video `--resolution` (the Agent settings pane has no resolution control), Omni 1.2 Flash, and
+more than one video per request. Flow can serve this composer on one load and the classic one
+on the next, so a request only the classic composer can take first gets up to three free page
+reloads (log event `migrated.agent_only_reload`, #1142).
 
 **Rough edges, measured:**
 - A run that dies between Save and restore can leave the account on the run's defaults; the
