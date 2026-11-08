@@ -3,7 +3,8 @@
 Three $0 ``e2e_auth`` tests drive the PRODUCTION driver (``migrated_extend.run_extend``)
 against a live page and keep every ``fZytfe`` from reaching Flow:
 
-* the submit contract — ``rqZuUc`` carries the media id and ``fZytfe`` slot 1 the
+* the submit contract — any ``rqZuUc`` carries the media id (since 2026-11-08 the page
+  on our account sends none before ``fZytfe``, #1180) and ``fZytfe`` slot 1 the
   workflow id the passive ``Zzl0ze`` read maps it to (the release hook is replaced so the
   checked ``fZytfe`` is aborted instead of let through);
 * the refusal matrix on a live page — a media id that is not in the project exits 11
@@ -13,9 +14,9 @@ against a live page and keep every ``fZytfe`` from reaching Flow:
 Belt and braces: a context-level route aborts ``fZytfe`` for the whole test, so even a
 fall-through in the driver cannot bill.
 
-**Side effect:** the contract and aspect tests let ``rqZuUc`` through (it is free), so each
-run leaves one empty "Untitled Scene" in the project. gflow has no scene delete; remove
-them from Flow's Scenes tab if wanted.
+**Side effect:** the contract and aspect tests let ``rqZuUc`` through (it is free), so
+a run that sends one leaves an empty "Untitled Scene" in the project. gflow has no scene
+delete; remove them from Flow's Scenes tab if wanted.
 
 The ``e2e_video`` test runs ONE real extend and spends Veo credits — opt in with
 ``GFLOW_CLI_E2E_RUN_VIDEO=1`` and only with the account owner's consent.
@@ -127,12 +128,13 @@ async def test_e2e_extend_submit_contract_at_zero_cost(
     finally:
         await transport.teardown()
 
-    assert seen["rqZuUc"] == [True], seen
+    # #1180: the scene create is no longer sent on our account; when it is, it names the clip.
+    assert all(seen["rqZuUc"]) and len(seen["rqZuUc"]) <= 1, seen
     assert len(seen["fZytfe"]) == 1, seen
     hit = seen["fZytfe"][0]
     assert hit["slot1"] == seen["workflow"], hit
     model_key, aspect = hit["facts"]
-    assert model_key and "extension" in model_key, hit
+    assert model_key and "extend" in model_key, hit  # veo_3_1_extension_* or *_extend_*
     assert aspect in ("9:16", "16:9"), hit
 
 

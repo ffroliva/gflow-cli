@@ -9,7 +9,10 @@ way every other migrated port works. Click path, wire and record shapes are meas
    its workflow id and tells a video from an image (round 2, B1/B3/B4).
 2. timeline add-clip → the ``keyboard_double_arrow_right`` menu item → type the prompt.
 3. submit: the page sends ``rqZuUc`` (creates a scene from the MEDIA id), ``uwAyfb``
-   (reads it back) and ``fZytfe`` (the billed extend, slot 1 = the WORKFLOW id).
+   (reads it back) and ``fZytfe`` (the billed extend, slot 1 = the WORKFLOW id). On
+   2026-11-08 our account's page sent ``fZytfe`` alone, with an Omni key
+   (``macaron_cookie_extend_4s``), and no ``rqZuUc`` / ``uwAyfb`` (#1180); the scene guard
+   stays for a page that still sends them.
 
 Every ``rqZuUc`` / ``fZytfe`` passes a route guard first: a request for another clip is
 aborted before Flow sees it. Single segment only; chains, an existing scene and a fixed
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qs, urlsplit
@@ -67,6 +71,9 @@ SCENE_CREATE_RPC = "rqZuUc"
 #: The page's aspect index in the ``fZytfe`` request entry (measured 2 = 16:9; #882's
 #: live capture 1 = 9:16).
 ASPECT_BY_INDEX = {1: "9:16", 2: "16:9"}
+#: An Omni extend key (``macaron_cookie_extend_4s``, measured 2026-11-08, #1180) carries no
+#: t2v/i2v/r2v token and no ``veo_`` prefix, so the shared ``MODEL_KEY`` misses it.
+EXTEND_MODEL_KEY = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*_extend_[a-z0-9_]+")
 
 ADD_CLIP_BUTTON = "flow-scene-timeline button.add-clip-button"
 EXTEND_MENU_ITEM = (
@@ -218,7 +225,7 @@ def batch_rpcids(rpcids: list[str], body: str) -> list[str]:
 
 def submit_facts(body: str) -> tuple[str | None, str | None]:
     """(model key, aspect) the page put in its ``fZytfe`` request."""
-    key = MODEL_KEY.search(body or "")
+    key = MODEL_KEY.search(body or "") or EXTEND_MODEL_KEY.search(body or "")
     idx = _at(_inner(EXTEND_SUBMIT_RPC, body or ""), 0, 0, 3)
     return (
         key.group(0) if key else None,

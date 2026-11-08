@@ -55,11 +55,11 @@ def _body(rpcid: str, inner: Any) -> str:
     return f"f.req={json.dumps(outer)}&at=AJpMEa0:1760000000000&"
 
 
-def _fzytfe(wf: str = WF, aspect_idx: int = 2) -> str:
+def _fzytfe(wf: str = WF, aspect_idx: int = 2, key: str = "veo_3_1_extension_lite") -> str:
     entry = [
         [None, wf, 169, 192],
         [None, None, [[["continue the camera move"]]]],
-        "veo_3_1_extension_lite",
+        key,
         aspect_idx,
         None,
         [SCENE, None, None, None, "U-A", "U-B"],
@@ -195,6 +195,12 @@ def test_no_verdict_ever_carries_the_token(body: str) -> None:
 def test_submit_facts_reads_model_key_and_aspect() -> None:
     assert mx.submit_facts(_fzytfe(aspect_idx=1)) == ("veo_3_1_extension_lite", "9:16")
     assert mx.submit_facts("") == (None, None)
+
+
+def test_submit_facts_reads_the_omni_extend_key() -> None:
+    # #1180: measured 2026-11-08 on flow.google.com, the page's fZytfe carries an Omni key.
+    body = _fzytfe(aspect_idx=1, key="macaron_cookie_extend_4s")
+    assert mx.submit_facts(body) == ("macaron_cookie_extend_4s", "9:16")
 
 
 # --- the driver (mitigations 2-5), against a fake page -----------------------

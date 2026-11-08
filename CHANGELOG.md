@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`video extend` on flow.google.com reports the model it ran with instead of `unknown`.**
+  The page now orders the extension with an Omni key (`macaron_cookie_extend_4s`, measured
+  2026-11-08) that gflow's key reader did not match, and it no longer creates a scene before
+  the extend. The extend e2e contract follows the new wire, and the guard that refuses an
+  extend of the wrong clip is unchanged (#1180).
+
 ## [0.96.1] — 2026-11-08
 
 ### Fixed
