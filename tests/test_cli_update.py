@@ -153,12 +153,12 @@ def test_update_suppresses_banner_with_and_without_check(monkeypatch: pytest.Mon
     # gflow update --check suppresses the banner
     res_check = CliRunner().invoke(main, ["update", "--check"])
     assert res_check.exit_code == 0
-    assert "Update available" not in res_check.stderr
+    assert "Update available" not in res_check.output
 
     # gflow update suppresses the banner
     res_update = CliRunner().invoke(main, ["update"])
     assert res_update.exit_code == 0
-    assert "Update available" not in res_update.stderr
+    assert "Update available" not in res_update.output
 
 
 def test_update_verbose_option_passed(monkeypatch: pytest.MonkeyPatch) -> None:

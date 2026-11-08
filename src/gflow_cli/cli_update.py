@@ -57,12 +57,15 @@ async def _run(check: bool, as_json: bool, verbose: bool = False) -> None:
             click.echo(msg)
 
     try:
-        report = run_update(check=check, verbose=verbose, status_callback=_status)
+        report = run_update(check=check, verbose=verbose, as_json=as_json, status_callback=_status)
     except TypeError:
         try:
-            report = run_update(check=check, verbose=verbose)  # type: ignore[call-arg]
+            report = run_update(check=check, verbose=verbose, status_callback=_status)  # type: ignore[call-arg]
         except TypeError:
-            report = run_update(check=check)  # type: ignore[call-arg]
+            try:
+                report = run_update(check=check, verbose=verbose)  # type: ignore[call-arg]
+            except TypeError:
+                report = run_update(check=check)  # type: ignore[call-arg]
 
     if as_json:
         json_output.emit(

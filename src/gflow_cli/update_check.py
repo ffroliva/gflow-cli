@@ -227,11 +227,13 @@ def installer() -> Installer | None:
     return Installer("pip", (sys.executable, "-m", "pip", "install", "--upgrade", "gflow-cli"))
 
 
-def _run_command(command: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
-    """Run the manager with captured output."""
+def _run_command(
+    command: tuple[str, ...], *, capture_output: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Run the manager subprocess, capturing output by default."""
     return subprocess.run(  # noqa: S603 — fixed argv
         list(command),
-        capture_output=True,
+        capture_output=capture_output,
         text=True,
         check=False,
     )
@@ -306,6 +308,7 @@ def run_update(
     *,
     check: bool,
     verbose: bool = False,
+    as_json: bool = False,
     status_callback: Callable[[str], None] | None = None,
 ) -> UpdateReport:
     """Upgrade gflow-cli in place, or with ``check`` only report.
@@ -365,20 +368,26 @@ def run_update(
             ),
         )
     playwright_before = _version_in_venv("playwright")
-    res = _run_command(inst.command)
+    capture = not (verbose and not as_json)
+    try:
+        res = _run_command(inst.command, capture_output=capture)  # type: ignore[call-arg]
+    except TypeError:
+        res = _run_command(inst.command)
+
     if isinstance(res, int):
         returncode = res
         installer_output = ""
+        output_printed = False
     else:
         returncode = res.returncode
-        stdout = getattr(res, "stdout", "") or ""
-        stderr = getattr(res, "stderr", "") or ""
+        stdout = getattr(res, "stdout", None) or ""
+        stderr = getattr(res, "stderr", None) or ""
         installer_output = (
             f"{stdout}\n{stderr}".strip() if (stdout and stderr) else (stdout or stderr).strip()
         )
+        output_printed = (not capture) and not bool(installer_output)
 
-    output_printed = False
-    if verbose and installer_output:
+    if verbose and installer_output and not output_printed:
         sys.stderr.write(f"{installer_output}\n")
         output_printed = True
 
