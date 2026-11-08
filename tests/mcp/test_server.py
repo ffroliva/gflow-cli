@@ -11,6 +11,7 @@ These tests verify that:
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -927,3 +928,51 @@ async def test_generate_video_rejects_unsupported_duration_without_model() -> No
     result = await gflow_generate_video(prompt="a crane", duration=99)
     assert result["status"] == "error"
     assert "Unsupported duration" in str(result)
+
+
+@pytest.mark.asyncio
+async def test_omni12_end_frame_above_10s_is_a_400() -> None:
+    """#1178: the MCP twin refuses before queueing, with the CLI's reason."""
+    from gflow_cli.mcp.tools import gflow_generate_video
+
+    result = await gflow_generate_video(
+        prompt="x",
+        mode="i2v",
+        model="omni_1_2_flash",
+        initial_frame="a.png",
+        end_frame="b.png",
+        duration=12,
+    )
+    assert result["status"] == "error"
+    assert result["error"]["status"] == 400
+    assert "end frame" in result["error"]["detail"] and "1178" in result["error"]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_omni12_start_only_15s_reaches_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Start-only Omni 1.2 keeps 3-15s: the 15s request is queued, not refused."""
+    from gflow_cli.mcp import tools as mcp_tools
+
+    start = tmp_path / "start.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+    seen: dict[str, Any] = {}
+
+    async def fake_run(
+        *, profile: str, task_type: str, payload: dict[str, Any], wait: bool
+    ) -> dict[str, Any]:
+        seen["task_type"], seen["payload"] = task_type, payload
+        return {"status": "queued", "task_id": "t"}
+
+    async def always_allow() -> bool:
+        return True
+
+    monkeypatch.setattr(mcp_tools, "_run_generation_task", fake_run)
+    monkeypatch.setattr(mcp_tools, "_resolve_and_validate_profile", lambda p: "testprofile")
+    monkeypatch.setattr(mcp_tools._rate_limiter, "acquire", always_allow)
+    result = await mcp_tools.gflow_generate_video(
+        prompt="x", mode="i2v", model="omni_1_2_flash", initial_frame=str(start), duration=15
+    )
+    assert result.get("status") == "queued", result
+    assert seen["task_type"] == "i2v" and seen["payload"]["duration"] == 15

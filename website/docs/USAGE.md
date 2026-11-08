@@ -665,8 +665,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > **Shared video flags** (`t2v` / `i2v` / `r2v`):
 > `--model [omni-flash|omni-1.2-flash|omni-1.2|veo-lite|veo-fast|veo-quality|veo-lite-lp]`
 > (omit → Flow's current UI default), `--duration [3..15]` (4/6/8 for Veo 3.1;
-> 4/6/8/10 for omni-flash; every integer 3–15 for omni-1.2-flash; 4/6/8/10 when
-> `--model` is omitted),
+> 4/6/8/10 for omni-flash; every integer 3–15 for omni-1.2-flash (at most 10 with `--end-frame`); 4/6/8/10
+> when `--model` is omitted),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
 > **`--duration` support across models**: Flow's settings
@@ -675,7 +675,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > those controls (positive capture: a third, contributor-owned account on `labs.google`, 2026-09-04, PR #650;
 > the historical negative matrix on `my-profile` remains valid for its cohort).
 > 10s needs `omni-flash` or `omni-1.2-flash`; 11–15s needs `omni-1.2-flash` (above 10 needs a
-> Google AI plan, else exit 11 before submit). Passing `--duration 10` with a Veo model
+> Google AI plan, else exit 11 before submit) and no `--end-frame` (with one, Omni 1.2 stops
+> at 10s: Flow drops the end frame above that and bills a start-only clip). Passing `--duration 10` with a Veo model
 > fails fast with exit 2 before any browser work. On a cohort where Flow renders no
 > duration control for Veo, omit `--duration` to accept Flow's default.
 > `--count` is enforced **fail-closed**: if Flow's count control cannot be
@@ -778,7 +779,8 @@ the editor's frame slot via the media dialog, then Flow fires
 > Start-frame picker under the name it was uploaded with (see below), and refuses
 > to submit unless the app's own
 > submit body carries that upload's media id with an image-to-video model key (exit 7
-> otherwise: the labs #125 shape, where an unbound frame silently goes out as text-to-video).
+> otherwise, aborted before it is sent, so nothing is billed (#1178; see exit 7): the labs #125 shape,
+> where an unbound frame would go out as text-to-video).
 > A UUID or `@Name` frame exits 36 there; a local `--end-frame` is ported (#639). An
 > account served labs.google keeps the labs driver for the unported forms.
 >
@@ -865,8 +867,8 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 > an `@` **mention** in the prompt — references are not a chip slot on this host. A run
 > whose references have not all attached is refused **before** submit (exit 32), and the
 > app's own submit body must carry every uploaded media id with a reference-to-video model
-> key (exit 7 otherwise) — the failure being a full-price clip with none of your references
-> on it. A character entity is attached there through the composer's `@` picker when
+> key (exit 7 otherwise, aborted before it is sent, so nothing is billed, #1178; see exit 7) — sent, that
+> would have been a full-price clip with none of your references on it. A character entity is attached there through the composer's `@` picker when
 > `--reference-entity` is paired with `--reference-entity-name` (#723), and its chip is
 > verified before submit; an id without a name exits 36, and a video `@Name` exits 29
 > because the character catalog cannot be read on that host.
@@ -882,7 +884,9 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 
 Use explicit `--model omni-1.2-flash` (alias `omni-1.2`) with `video t2v`, `i2v`
 or `r2v`. It accepts every integer `--duration` from 3 through 15, and optional
-`--resolution 360p` or `720p`. Omni 1.1 aliases and model defaults are unchanged.
+`--resolution 360p` or `720p`. Start+end `i2v` (`--end-frame`) works since v0.96.1 and stops
+at 10: above that Flow
+drops the end frame and bills a start-only clip, so gflow exits 2 before any upload. Omni 1.1 aliases and model defaults are unchanged.
 On flow.google.com the driver binds the `flow-duration-slider` index and reads
 back the displayed seconds. Missing/changed controls and unavailable durations
 fail before Send; free accounts offer 3–10, Google AI plans offer 3–15.
@@ -2217,7 +2221,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `4`  | `RateLimitError`      | Quota / rate limit hit, exhausted retries        | Wait + reduce `GFLOW_CLI_CONCURRENCY`                      |
 | `5`  | `ContentPolicyError`  | Flow rejected the prompt (200 + empty `media[]`) | Soften prompt wording                                      |
 | `6`  | `NetworkError`        | Network failure persisted across 3 attempts. A failed download of media Flow already made (`MediaDownloadError`) is `retryable: false` ([#941](https://github.com/ffroliva/gflow-cli/issues/941)): use `gflow data download` instead of re-running — including a signed-media download whose connection dropped on every attempt ([#895](https://github.com/ffroliva/gflow-cli/issues/895)), or whose signed URL answered an HTTP error such as an expired link (exit 7 until #941 part 2) | Check connectivity — **but read the error's own `remediation_hint` first.** When a *generation* download fails this way the clip was already produced and billed: the hint names it, and `gflow data download <media_id>` recovers it for free. Re-generating pays twice |
-| `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed. **Also `RpcResponseUnavailableError`** (flow.google.com): Chrome lost the reply body of a project create, rename or upload ([#1009](https://github.com/ffroliva/gflow-cli/issues/1009)), or a project create or rename got no reply within 120 s ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)), and gflow could not confirm the outcome by reading the project back | File a bug (do NOT include captured tokens or signed URLs). **For `RpcResponseUnavailableError` the write may have saved:** open the project and check its title or the uploaded file before re-running, or you may get a duplicate (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
+| `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed. **Also a refused video submit** (flow.google.com, [#1178](https://github.com/ffroliva/gflow-cli/issues/1178)): the submit was not the run asked for (a dropped frame, another asset) and gflow aborted it before it was sent — the hint then says *billed nothing*; without that hint it was already sent and may be billed, so check the project before re-running. **Also `RpcResponseUnavailableError`** (flow.google.com): Chrome lost the reply body of a project create, rename or upload ([#1009](https://github.com/ffroliva/gflow-cli/issues/1009)), or a project create or rename got no reply within 120 s ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)), and gflow could not confirm the outcome by reading the project back | File a bug (do NOT include captured tokens or signed URLs). **For `RpcResponseUnavailableError` the write may have saved:** open the project and check its title or the uploaded file before re-running, or you may get a duplicate (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
 | `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287; or a wedged submission stage — the error names the stage and your Playwright version) | Retry; raise the relevant timeout. **If the detail says `clicking submit`, `not terminal`, `unreadable` or `was lost`, or `--json` shows `retryable: false`, the submit already went out ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)): check the project in Flow before re-running, because a re-run bills again.** A lost **image** reply is recovered from the project grid since v0.89.1 ([#1075](https://github.com/ffroliva/gflow-cli/issues/1075)), so exit 9 there means the grid did not show exactly the requested images. A lost **video** reply is followed to the clip when the run uploaded a file (`--ref`, `--initial-frame`, `--end-frame`; [#1112](https://github.com/ffroliva/gflow-cli/issues/1112)), so exit 9 with `unreadable` there means no clip, or more than one, carried the upload. A one-clip t2v run is followed by its exact prompt and model ([#1141](https://github.com/ffroliva/gflow-cli/issues/1141)), so `was lost` there means the project listing could not name exactly one clip; t2v with `--count` above 1 and character-only r2v still exit 9. For a frame-UUID miss verify the UUID belongs to the `--project` passed; for a `stage_stalled` abort check your Playwright is in range (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
 | `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |

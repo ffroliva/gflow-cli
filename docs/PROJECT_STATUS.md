@@ -4,6 +4,19 @@
 
 ## Current release
 
+**v0.96.1 — alpha.** Omni 1.2 start+end frames, and refused video submits are no longer billed.
+
+**Fixed (#1178, by @Eighty20Digital).** `video i2v --model omni-1.2-flash --end-frame` is no longer
+refused with exit 7: its submit carries a `*_i2v_fl_*` model key gflow did not know. A video submit
+gflow refuses (a dropped frame, the wrong asset) is now stopped before it leaves the browser, so
+Flow bills nothing; before, the check only saw requests already sent. An Omni 1.2 end frame above
+10 seconds is refused before upload, because Flow drops the end frame there and bills a
+start-only clip (reporter's measurement on a Google AI plan).
+
+Full ledger: [LIVE_VERIFICATION_v0.96.1](LIVE_VERIFICATION_v0.96.1.md).
+
+<details><summary>v0.96.0 — Omni 1.2 Flash, Omni r2v lengths, agent-only reload</summary>
+
 **v0.96.0 — alpha.** Omni 1.2 Flash, any Omni r2v length, and a reload past the agent-only composer.
 
 **Omni 1.2 Flash (#1168, by @vietanhjp93).** `--model omni-1.2-flash` (alias `omni-1.2`; MCP
@@ -18,6 +31,8 @@ seconds, not only 8. Veo keeps its 8s-only rule.
 the classic composer can take gets up to three free reloads before the same exit 36.
 
 Full ledger: [LIVE_VERIFICATION_v0.96.0](LIVE_VERIFICATION_v0.96.0.md).
+
+</details>
 
 <details><summary>v0.95.0 — weekly usage reports after a one-time notice</summary>
 
@@ -799,6 +814,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Omni 1.2 start+end, video submits refused before they are billed, 10s end-frame cap (#1178) | ✅ done (v0.96.1) |
 | Omni 1.2 Flash 3–15s (#1168), Omni r2v 4/6/10s (#1167), agent-only composer reload (#1142) | ✅ done (v0.96.0) |
 | Weekly usage reports after a one-time notice, EU/EEA consent, `gflow telemetry on\|off` (#1164) | ✅ done (v0.95.0) |
 | Local usage counters, `gflow data stats` + `gflow_usage_stats`, `gflow telemetry status\|show` (#1164) | ✅ done (v0.94.0) |
