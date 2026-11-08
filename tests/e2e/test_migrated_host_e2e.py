@@ -203,7 +203,9 @@ async def test_e2e_end_frame_binds_the_second_chip_and_submits_interpolation(
     assert hit["rpcid"] == migrated_composer.INTERPOLATION_SUBMIT_RPC, hit
     assert hit["start"] and hit["end"], hit
     key = str(hit["model_key"] or "")
-    assert "interpolation" in key or "first_last" in key, hit
+    # Veo `*_interpolation_*`, Omni 1.1 `*_first_last*`, Omni 1.2 `*_i2v_fl_*` (#1178).
+    fl = migrated_composer._I2V_FIRST_LAST_TOKEN  # pyright: ignore[reportPrivateUsage]
+    assert "interpolation" in key or "first_last" in key or fl.search(key), hit
 
 
 @pytest.mark.asyncio

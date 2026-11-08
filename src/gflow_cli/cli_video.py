@@ -1398,8 +1398,8 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     default=None,
     type=click.Choice([str(n) for n in range(3, 16)]),
     help=(
-        "Clip length: 3–15 by one second for omni-1.2-flash; "
-        "4/6/8/10 for omni-flash; 4/6/8 for Veo 3.1. "
+        "Clip length: 3–15 by one second for omni-1.2-flash (at most 10 with "
+        "--end-frame, #1178); 4/6/8/10 for omni-flash; 4/6/8 for Veo 3.1. "
         "Omit for Flow's default length. Refused pre-submit (no credits) when your "
         "account's cohort renders no duration control for the model."
     ),

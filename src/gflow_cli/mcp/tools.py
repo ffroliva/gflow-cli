@@ -1259,7 +1259,7 @@ def _build_video_payload(
         "Modes: t2v (text-to-video), i2v (image-to-video), r2v (reference-to-video). "
         "Aspects: 9:16, 16:9. "
         "Optional model (veo_lite/veo_fast/veo_quality/omni_flash/omni_1_2_flash), "
-        "duration (seconds), "
+        "duration (seconds; omni_1_2_flash takes 3-15, at most 10 with an end_frame), "
         "and count select the Veo model, clip length, and batch size (CLI parity). "
         "The prompt supports @CharacterName mentions to tag saved project characters by name "
         "(resolves to referenceEntities). Reference a SAVED character via @Name; pass one-off "
@@ -1329,7 +1329,7 @@ async def gflow_generate_video(  # NOSONAR
             (refs #125, #626).
         duration: Optional clip length in seconds (mirrors the CLI ``--duration``):
             Every integer 3–15 on explicit ``omni_1_2_flash`` (11–15 needs a Google AI
-            plan), 4/6/8 on Veo 3.1, 4/6/8/10 on ``omni_flash``; whether the
+            plan; with an ``end_frame`` at most 10, #1178), 4/6/8 on Veo 3.1, 4/6/8/10 on ``omni_flash``; whether the
             account's cohort renders the control is decided pre-submit at zero cost.
             When omitted, Flow's per-model default applies. On the migrated
             flow.google.com host an 'r2v' request with explicit omni_flash accepts

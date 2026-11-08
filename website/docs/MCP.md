@@ -582,4 +582,4 @@ values, and signed media URLs before pasting anything into an issue. If you have
 incident bundle, say so — but do not paste it: it contains prompts and can contain
 identity-bearing attributes.
 
-Omni 1.2 uses `model="omni_1_2_flash"` (alias `omni-1.2-flash`), integer durations 3–15 and optional 360p/720p. CLI, direct MCP and queued MCP preserve the explicit model and duration. Unavailable account durations fail before Send; no model fallback or rounding is performed.
+Omni 1.2 uses `model="omni_1_2_flash"` (alias `omni-1.2-flash`), integer durations 3–15 (at most 10 with an `end_frame`: above that Flow drops the end frame and bills a start-only clip, so it is refused before queueing, [#1178](https://github.com/ffroliva/gflow-cli/issues/1178)) and optional 360p/720p. CLI, direct MCP and queued MCP preserve the explicit model and duration. Unavailable account durations fail before Send; no model fallback or rounding is performed.

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Omni 1.2 Flash start+end (`video i2v --model omni-1.2-flash --end-frame`) runs instead of
+  exiting 7.** Its submit carries a `*_i2v_fl_*` model key that gflow's start+end check did not
+  know, so a valid run was refused after Flow had already billed it (#1178, by @Eighty20Digital).
+- **A video submit gflow refuses is stopped before it leaves the browser, so it is not billed.**
+  The check used to watch requests already on their way to Flow; it now runs as a route guard
+  that aborts a wrong start+end, start-only or reference submit unsent, and the error says
+  nothing was billed (#1178).
+- **An Omni 1.2 end frame above 10 seconds is refused before any upload** (exit 2 on the CLI, a
+  bad-parameter error over MCP). Flow drops the end frame there and bills a start-only clip,
+  as measured by the reporter at 12s and 15s on a Google AI plan; start-only Omni 1.2 keeps
+  3–15s (#1178).
+
 ## [0.96.0] — 2026-11-07
 
 ### Added
