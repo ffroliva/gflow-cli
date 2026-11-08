@@ -156,6 +156,16 @@ rounds); e2e `tests/e2e/test_migrated_host_e2e.py`. Read this before re-mining t
 - **The Ingredients submit is rpcid `MZZa6b`** — not `YhhmEf` (t2v) and not `eb1hJf`
   (i2v). Several rounds of recon reported "r2v never submits" purely because only the
   first was being watched. Any new sub-mode: find its rpcid before concluding anything.
+- **Omni 1.2's start+end submit (`nprQif`) names its rpc in the BODY only** — Omni 1.1's
+  carries it in the URL `rpcids`. A `page.route` keyed on the URL missed both Omni 1.2
+  submits in the #1178 spike and they were billed. Route every `batchexecute`
+  (`BATCHEXECUTE_GLOB`), read bodies with `request_body()` (raw `post_data` raises on
+  gzip), resolve the rpc with `url_rpcid(url) or body_rpcid(body)`, and pass other
+  requests on with `fallback()` so an outer guard (extend) still runs. Its key is
+  `macaron_cookie_i2v_fl_<n>s[_<res>]`.
+- **A `page.on("request")` check cannot stop a bill** — the request is already on its
+  way. Video submits are refused by the route guard in `submit_and_observe` (#1178); the
+  observer stays as the backstop for a request the route never saw.
 - **Enter commits a mention; a typed query alone inserts nothing** and leaves the picker
   open. And mentions need real key events (`keyboard.type`) where prompt text needs
   `insert_text` — the latter dispatches input events with no keystrokes, so the mention

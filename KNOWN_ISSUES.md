@@ -428,7 +428,8 @@ Upgrade first (`gflow update`). The locale refutation below applies to the Portu
 labs cohort it was measured on.
 
 **What actually happens today.** gflow accepts `--duration 4`, `6` or `8` on the
-Veo 3.1 models, `10` on `omni-flash`, and every integer 3–15 on `omni-1.2-flash` — the CLI no longer refuses a
+Veo 3.1 models, `10` on `omni-flash`, and every integer 3–15 on `omni-1.2-flash` (at most `10`
+with an end frame, #1178) — the CLI no longer refuses a
 duration it cannot know your account supports. What it still cannot do is tell
 your cohort apart before opening the browser, so on an account that renders no
 duration row the run reaches Flow's settings popover and fails there — on the

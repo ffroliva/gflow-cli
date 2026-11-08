@@ -665,8 +665,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > **Shared video flags** (`t2v` / `i2v` / `r2v`):
 > `--model [omni-flash|omni-1.2-flash|omni-1.2|veo-lite|veo-fast|veo-quality|veo-lite-lp]`
 > (omit → Flow's current UI default), `--duration [3..15]` (4/6/8 for Veo 3.1;
-> 4/6/8/10 for omni-flash; every integer 3–15 for omni-1.2-flash; 4/6/8/10 when
-> `--model` is omitted),
+> 4/6/8/10 for omni-flash; every integer 3–15 for omni-1.2-flash (at most 10 with `--end-frame`); 4/6/8/10
+> when `--model` is omitted),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
 > **`--duration` support across models**: Flow's settings
@@ -675,7 +675,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > those controls (positive capture: a third, contributor-owned account on `labs.google`, 2026-09-04, PR #650;
 > the historical negative matrix on `my-profile` remains valid for its cohort).
 > 10s needs `omni-flash` or `omni-1.2-flash`; 11–15s needs `omni-1.2-flash` (above 10 needs a
-> Google AI plan, else exit 11 before submit). Passing `--duration 10` with a Veo model
+> Google AI plan, else exit 11 before submit) and no `--end-frame` (with one, Omni 1.2 stops
+> at 10s: Flow drops the end frame above that and bills a start-only clip). Passing `--duration 10` with a Veo model
 > fails fast with exit 2 before any browser work. On a cohort where Flow renders no
 > duration control for Veo, omit `--duration` to accept Flow's default.
 > `--count` is enforced **fail-closed**: if Flow's count control cannot be
@@ -882,7 +883,8 @@ gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model
 
 Use explicit `--model omni-1.2-flash` (alias `omni-1.2`) with `video t2v`, `i2v`
 or `r2v`. It accepts every integer `--duration` from 3 through 15, and optional
-`--resolution 360p` or `720p`. Omni 1.1 aliases and model defaults are unchanged.
+`--resolution 360p` or `720p`. With `--end-frame` it stops at 10: above that Flow
+drops the end frame and bills a start-only clip, so gflow exits 2 before any upload. Omni 1.1 aliases and model defaults are unchanged.
 On flow.google.com the driver binds the `flow-duration-slider` index and reads
 back the displayed seconds. Missing/changed controls and unavailable durations
 fail before Send; free accounts offer 3–10, Google AI plans offer 3–15.

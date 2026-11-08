@@ -129,6 +129,10 @@ def test_e2e_file_has_cost_sub_marker(test_file: pathlib.Path) -> None:
     )
 
 
+#: Models whose composer renders a duration control (Omni 1.1 and 1.2, every alias).
+_OMNI_ALIASES = frozenset({"omni-flash", "omni-1.2-flash", "omni-1.2"})
+
+
 def _duration_without_omni_flash(source: str) -> list[int]:
     """Line numbers of argument lists that pass ``--duration`` without ``omni-flash``.
 
@@ -144,7 +148,7 @@ def _duration_without_omni_flash(source: str) -> list[int]:
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.List):
             args = {e.value for e in node.elts if isinstance(e, ast.Constant)}
-            if "--duration" in args and "omni-flash" not in args:
+            if "--duration" in args and not args & _OMNI_ALIASES:
                 bad.append(node.lineno)
     return bad
 

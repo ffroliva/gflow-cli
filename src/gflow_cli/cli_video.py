@@ -193,6 +193,7 @@ def _reject_duration_without_control(
     duration: str | int | None,
     *,
     default_model: VideoModel | None = None,
+    end_frame: bool = False,
 ) -> None:
     """Validate ``--duration`` when this command has a known model.
 
@@ -223,7 +224,7 @@ def _reject_duration_without_control(
             # real validation report it rather than dying as "Unexpected error."
             return
     try:
-        validate_duration_for_model(resolved, duration)
+        validate_duration_for_model(resolved, duration, end_frame=end_frame)
     except ValueError as exc:
         if model is not None:
             named = f"--model {model}"
@@ -1397,8 +1398,8 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     default=None,
     type=click.Choice([str(n) for n in range(3, 16)]),
     help=(
-        "Clip length: 3–15 by one second for omni-1.2-flash; "
-        "4/6/8/10 for omni-flash; 4/6/8 for Veo 3.1. "
+        "Clip length: 3–15 by one second for omni-1.2-flash (at most 10 with "
+        "--end-frame); 4/6/8/10 for omni-flash; 4/6/8 for Veo 3.1. "
         "Omit for Flow's default length. Refused pre-submit (no credits) when your "
         "account's cohort renders no duration control for the model."
     ),
@@ -1437,7 +1438,12 @@ def i2v(  # NOSONAR
     _reject_agentic_ui_mode(ui_mode)
     # i2v binds I2V_DEFAULT_MODEL when --model is omitted, so the guard needs
     # that default to fire on the no-flag path (#630).
-    _reject_duration_without_control(model, duration, default_model=I2V_DEFAULT_MODEL)
+    _reject_duration_without_control(
+        model,
+        duration,
+        default_model=I2V_DEFAULT_MODEL,
+        end_frame=end_frame is not None or end_image_deprecated is not None,
+    )
     resolved_image, resolved_prompt = _resolve_i2v_args(image, prompt, initial_frame)
 
     end_hint = "'--end-frame'"

@@ -1758,3 +1758,38 @@ def test_output_rejects_an_existing_directory_before_generating(tmp_path: Path, 
 
     assert result.exit_code == 2, result.output
     assert "directory" in result.output.lower(), result.output
+
+
+def test_i2v_omni12_end_frame_above_10s_is_a_usage_error_before_upload(tmp_path: Path) -> None:
+    """#1178: exit 2 with the reason, and nothing reaches generation (no upload, no bill)."""
+    start = tmp_path / "start.png"
+    end = tmp_path / "end.png"
+    start.write_bytes(b"\x89PNG\r\n\x1a\n")
+    end.write_bytes(b"\x89PNG\r\n\x1a\n")
+    called: list[object] = []
+
+    async def _capture(request: object, **_k: object) -> None:
+        called.append(request)
+
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+    ):
+        result = CliRunner().invoke(
+            video,
+            [
+                "i2v",
+                str(start),
+                "rise up",
+                "--model",
+                "omni-1.2-flash",
+                "--duration",
+                "12",
+                "--end-frame",
+                str(end),
+            ],
+        )
+    assert result.exit_code == 2, result.output
+    assert "end frame" in result.output and "1178" in result.output
+    assert called == []

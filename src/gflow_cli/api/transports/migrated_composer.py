@@ -236,6 +236,8 @@ UPLOAD_RPC = "maseQ"
 #: key on an r2v submit*, and that key carries no infix to match on. A mode-only
 #: alternation reported "no model key" for exactly that body.
 MODEL_KEY = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*_(?:t2v|i2v|r2v)_[a-z0-9_]+|veo_[a-z0-9_]+")
+#: Omni 1.2's start+end family, ``*_i2v_fl_<n>s[_<res>]`` (#1178), as whole segments.
+_I2V_FIRST_LAST_TOKEN = re.compile(r"(?:^|_)i2v_fl(?:_|$)")
 #: A duration segment inside a model key, e.g. the ``_4s_`` of
 #: ``veo_3_1_t2v_lite_4s_low_priority``. The base tier carries none.
 _DURATION_IN_KEY = re.compile(r"_\d+s_")
@@ -1200,7 +1202,13 @@ def _interpolation_body_problem(
     # Matching on key SHAPE rather than a pinned literal is deliberate: the two
     # cohorts disagree on the key, so a literal would refuse a valid run on one of
     # them. A plain i2v/t2v key means a frame dropped before the app submitted.
-    if "interpolation" not in key_text and "first_last" not in key_text:
+    # Omni 1.2 sends ``macaron_cookie_i2v_fl_8s[_360p]`` (#1178, measured 2026-11-08,
+    # docs/superpowers/spikes/2026-11-08-omni12-interpolation-key.md).
+    if (
+        "interpolation" not in key_text
+        and "first_last" not in key_text
+        and not _I2V_FIRST_LAST_TOKEN.search(key_text)
+    ):
         return (
             f"migrated host: the submit went out on {rpcid} with {key_text} for a "
             "start+end (interpolation) request — expected an interpolation "
@@ -1342,6 +1350,35 @@ def _image_body_problem(
             f"for (unexpected: {', '.join(extra[:4]) or 'none'}; missing: "
             f"{', '.join(lost[:4]) or 'none'}) — refusing to let Flow generate with them"
         )
+    return None
+
+
+#: Glob, not a Python predicate: a callable route sees every request (thumbnails,
+#: video bytes) through Python for the whole poll (#1178 predict review).
+BATCHEXECUTE_GLOB = "**/batchexecute**"
+#: Remediation for a submit stopped by the route guard: it never left the browser.
+ABORTED_BEFORE_SEND = (
+    "Blocked before it left the browser: Flow received nothing and billed nothing. "
+    "Safe to re-run; if it repeats, file a bug with the detail above."
+)
+
+
+def _submit_body_problem(
+    rpcid: str,
+    body: str,
+    *,
+    expect_media_id: str | None,
+    expect_end_media_id: str | None,
+    expect_reference_ids: tuple[str, ...],
+) -> str | None:
+    """Why this video submit body is not the run asked for, or ``None``. No side effects:
+    the route guard and the request observer both call it on the same request."""
+    if rpcid == INTERPOLATION_SUBMIT_RPC:
+        return _interpolation_body_problem(body, rpcid, expect_media_id, expect_end_media_id)
+    if expect_reference_ids:
+        return _r2v_body_problem(body, rpcid, expect_reference_ids)
+    if expect_media_id is not None:
+        return _i2v_body_problem(body, rpcid, expect_media_id, end_media_id=expect_end_media_id)
     return None
 
 
@@ -3162,6 +3199,8 @@ class MigratedComposer:
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
         route_error: asyncio.Future[GFlowError] = loop.create_future()
+        # Body problems the observer saw; raised only if the route guard did not stop them.
+        observed: list[GFlowError] = []
         # (request, rpcid) of each submit sent, to place a reply that names no rpcid.
         submit_requests: list[tuple[Any, str]] = []
         submit_key: dict[str, str] = {}
@@ -3198,25 +3237,21 @@ class MigratedComposer:
                 # The prompt comes first in the body, and a prompt can read like a key.
                 if key := MODEL_KEY.search(body.replace(adopt_prompt or "", "")):
                     submit_key["key"] = key.group(0)
-                if rpcid == INTERPOLATION_SUBMIT_RPC:
-                    problem = _interpolation_body_problem(
-                        body, rpcid, expect_media_id, expect_end_media_id
-                    )
-                elif expect_reference_ids:
-                    problem = _r2v_body_problem(body, rpcid, expect_reference_ids)
-                elif expect_media_id is not None:
-                    problem = _i2v_body_problem(
-                        body,
+                try:
+                    problem = _submit_body_problem(
                         rpcid,
-                        expect_media_id,
-                        end_media_id=expect_end_media_id,
+                        body,
+                        expect_media_id=expect_media_id,
+                        expect_end_media_id=expect_end_media_id,
+                        expect_reference_ids=expect_reference_ids,
                     )
-                else:
-                    return
+                except Exception:  # noqa: BLE001 - a listener must not raise; the route
+                    return  # guard runs the same check and aborts the submit on failure
+                # Recorded, not raised: this event fires before the route guard, which
+                # aborts the same request unsent and names it so. A problem only the
+                # observer saw means the route missed it and Flow got the request.
                 if problem is not None:
-                    route_error.set_result(
-                        WireFormatError(detail=problem, route=f"batchexecute:{rpcid}")
-                    )
+                    observed.append(WireFormatError(detail=problem, route=f"batchexecute:{rpcid}"))
                 return
             # An unwatched rpcid is RECORDED (`seen_submit_rpcs`, above) but never
             # adopted as our submit. Adopting by body content was tried and removed:
@@ -3388,16 +3423,54 @@ class MigratedComposer:
                     _settle(rec)
 
         page.on("response", on_response)
-        # Every body assertion lives in `on_request`, so the listener must be armed for
-        # all of them. Gating it on `expect_media_id` alone left `_r2v_body_problem`
-        # unit-tested but never reached in a live run — the check the r2v path was built
-        # around. It is now ALWAYS armed, including for t2v, because the interpolation
-        # guard is a BILLING guard that only matters when nothing was asked for: a stale
-        # End chip makes the app submit `nprQif` on a run that requested no end frame,
-        # and refusing that is free while the generation is not. `on_request` returns
-        # early for a t2v submit it has nothing to assert about.
+
+        async def guard(route: Any, request: Any) -> None:
+            """Abort a wrong submit BEFORE it leaves the browser (#1178): the observer
+            above only sees a request already on its way to Flow, which bills it."""
+            rpcid: str | None = None
+            try:
+                body = request_body(request)
+                rpcid = url_rpcid(str(getattr(request, "url", ""))) or body_rpcid(body)
+                problem = (
+                    _submit_body_problem(
+                        rpcid,
+                        body,
+                        expect_media_id=expect_media_id,
+                        expect_end_media_id=expect_end_media_id,
+                        expect_reference_ids=expect_reference_ids,
+                    )
+                    if rpcid is not None and rpcid in submit_rpcs
+                    else None
+                )
+            except Exception as exc:  # noqa: BLE001 - an unsettled route hangs the page
+                problem = (
+                    f"migrated host: the {rpcid} submit could not be checked ({type(exc).__name__})"
+                    if rpcid is not None and rpcid in submit_rpcs
+                    else None
+                )
+            if problem is None:
+                # fallback, not continue_: an outer guard (extend) must still see it.
+                await route.fallback()
+                return
+            await route.abort()
+            log.warning("migrated.submit_refused_before_send", rpc=rpcid)
+            if not route_error.done():
+                route_error.set_result(
+                    WireFormatError(
+                        detail=problem,
+                        route=f"batchexecute:{rpcid}",
+                        remediation_hint=ABORTED_BEFORE_SEND,
+                    )
+                )
+
+        # Both are ALWAYS armed, t2v included: a stale End chip makes the app submit
+        # `nprQif` on a run that asked for no end frame. The route guard is where refusing
+        # is free (the request never leaves); the observer is the backstop for a request
+        # the route never saw, whose verdict lands once the run settles or times out.
+        # Gating on `expect_media_id` once left `_r2v_body_problem` unreached live.
         page.on("request", on_request)
         try:
+            await page.route(BATCHEXECUTE_GLOB, guard)
             submit = (
                 page.locator(submit_selector).first
                 if submit_selector
@@ -3470,6 +3543,8 @@ class MigratedComposer:
                 # The request is inspected before its reply lands, so a wrong body is
                 # named as such and not as whatever the reply then says.
                 raise route_error.result()
+            if observed:
+                raise observed[0]  # the route did not stop it: sent, and Flow bills it
             if not submitted.done() and lost:
                 where = MIGRATED_PROJECT_URL.format(project_id=project_id) if project_id else "Flow"
                 raise _outcome_unknown(
@@ -3513,6 +3588,10 @@ class MigratedComposer:
                 submitted.exception()
             page.remove_listener("response", on_response)
             page.remove_listener("request", on_request)
+            try:
+                await page.unroute(BATCHEXECUTE_GLOB, guard)
+            except Exception as exc:  # noqa: BLE001 - must not mask the real outcome
+                log.debug("migrated.submit_unroute_failed", error=type(exc).__name__)
 
     async def _read_listing(self, page: Page, project_id: str, *, budget_s: float) -> Any | None:
         """The project's ``Zzl0ze`` payload, read in a second tab; ``None`` if none came.
