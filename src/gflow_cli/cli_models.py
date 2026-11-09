@@ -1,15 +1,17 @@
-"""`gflow models` — enumerate the image + video models the CLI accepts.
+"""`gflow models` (list/show) — enumerate the image + video models the CLI accepts.
 
 The catalog is assembled from the `Model` / `VideoModel` enums, their alias
 maps, and the per-model reference caps, so it can never drift from what the
 generation commands actually accept. ``--json`` emits it machine-readably (the
 shape a UI populates model pickers + reference-slot counts from); otherwise a
-Rich table is printed.
+Rich table is printed. Bare `gflow models` is `gflow models list`; `gflow models
+show <id>` prints one catalog entry, the same object `gflow_list_models` carries.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import difflib
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -89,20 +91,83 @@ def build_catalog() -> dict[str, Any]:
     }
 
 
-@click.command("models")
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Machine-readable JSON catalog instead of a table.",
-)
-def models(as_json: bool) -> None:
+_JSON_HELP = "Machine-readable JSON instead of a table."
+
+
+@click.group("models", invoke_without_command=True)
+@click.option("--json", "as_json", is_flag=True, help=_JSON_HELP)
+@click.pass_context
+def models(ctx: click.Context, as_json: bool) -> None:
+    """List the image + video models, their aliases, and reference caps.
+
+    Bare `gflow models` is `gflow models list`.
+    """
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(models_list, as_json=as_json)
+
+
+@models.command("list")
+@click.option("--json", "as_json", is_flag=True, help=_JSON_HELP)
+@click.pass_context
+def models_list(ctx: click.Context, as_json: bool) -> None:
     """List the image + video models, their aliases, and reference caps."""
     catalog = build_catalog()
-    if as_json:
+    if as_json or _group_json(ctx):
         json_output.emit(catalog)
         return
     _render_catalog(catalog)
+
+
+@models.command("show")
+@click.argument("model_id")
+@click.option("--json", "as_json", is_flag=True, help=_JSON_HELP)
+@click.pass_context
+def models_show(ctx: click.Context, model_id: str, as_json: bool) -> None:
+    """Show one model by name or alias (case-insensitive)."""
+    catalog = build_catalog()
+    kind, entry = find_model(catalog, model_id)
+    if as_json or _group_json(ctx):
+        json_output.emit(entry)
+        return
+    _render_model(catalog, kind, entry)
+
+
+def _group_json(ctx: click.Context) -> bool:
+    """`gflow models --json show X` must not print a table to a script expecting JSON."""
+    return bool(ctx.parent and ctx.parent.params.get("as_json"))
+
+
+def find_model(catalog: dict[str, Any], model_id: str) -> tuple[str, dict[str, Any]]:
+    """The catalog entry whose name or alias is *model_id*, ignoring case.
+
+    Raises a usage error (exit 2) naming the closest ids when nothing matches.
+    """
+    by_id = {
+        ident.lower(): (ident, kind, m)
+        for kind in ("image", "video")
+        for m in catalog[kind]["models"]
+        for ident in (m["name"], *m["aliases"])
+    }
+    hit = by_id.get(model_id.lower())
+    if hit is not None:
+        return hit[1], hit[2]
+    near = difflib.get_close_matches(model_id.lower(), list(by_id), n=3, cutoff=0.6)
+    hint = f" Did you mean: {', '.join(by_id[n][0] for n in near)}?" if near else ""
+    raise click.UsageError(f"no model named {model_id!r}.{hint} See `gflow models list`.")
+
+
+def _render_model(catalog: dict[str, Any], kind: str, entry: dict[str, Any]) -> None:
+    table = Table(title=f"{kind} model {entry['name']}", show_header=False)
+    table.add_column("field", style="bold")
+    table.add_column("value", overflow="fold")
+    for key, value in entry.items():
+        shown = ", ".join(cast(list[str], value)) if isinstance(value, list) else str(value)
+        table.add_row(key, shown)
+    section = catalog[kind]
+    table.add_row("aspects", ", ".join(a["ratio"] for a in section["aspects"]))
+    if "tiers" in section:
+        table.add_row("tiers", ", ".join(section["tiers"]))
+    console.print(table)
 
 
 def _render_catalog(catalog: dict[str, Any]) -> None:
