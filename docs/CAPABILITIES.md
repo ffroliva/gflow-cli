@@ -34,7 +34,7 @@ a test holds them to the same bytes.
     "cancel.server": "no",
     "idempotent_submit": "no",
     "reconcile": "partial",
-    "credits.balance": "yes"
+    "credits.balance": "partial"
   },
   "notes": { "generate.image": "...", "...": "..." }
 }
@@ -52,8 +52,8 @@ a test holds them to the same bytes.
 
 | Key | Meaning | Today |
 |---|---|---|
-| `generate.image` | Text-to-image and image-to-image generation (`image t2i`/`i2i`/`batch`, `run`; MCP `gflow_generate_image`). | `yes` with `labs.google`; otherwise `partial`: on flow.google.com gflow drives t2i and i2i from local files, and the agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) takes t2i only. |
-| `generate.video` | Video generation (`video t2v`/`i2v`/`r2v`/`chain`/`extend`, `movie run`, `scene create`; MCP `gflow_generate_video`). | `yes` with `labs.google`; otherwise `partial`: on flow.google.com gflow drives t2v, i2v from a local frame, r2v from local refs or a named character and a single-segment extend; the agent-only composer takes t2v only. |
+| `generate.image` | Text-to-image and image-to-image generation (`image t2i`/`i2i`/`batch`, `run`; MCP `gflow_generate_image`). | `unknown` with `labs.google` (gflow's labs driver takes every mode, but whether Flow serves this account labs is not checked offline; exit 36 if it serves flow.google.com); otherwise `partial`: on flow.google.com gflow drives t2i and i2i from local files, and the agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) takes t2i only. |
+| `generate.video` | Video generation (`video t2v`/`i2v`/`r2v`/`chain`/`extend`, `movie run`, `scene create`; MCP `gflow_generate_video`). | `unknown` with `labs.google` (as above); otherwise `partial`: on flow.google.com gflow drives t2v, i2v from a local frame, r2v from local refs or a named character and a single-segment extend; the agent-only composer takes t2v only. |
 | `submit.no_wait` | Submit and return an id without waiting for the result. | `partial`: MCP `wait=false` only; no CLI `--no-wait` yet ([#1194](https://github.com/ffroliva/gflow-cli/issues/1194)). |
 | `status` | Ask how a submitted generation is doing, by id. | `partial`: MCP `tasks/get` only; no CLI `status <id>` yet (#1194). |
 | `wait` | Block until a submitted generation finishes, by id. | `partial`: CLI generation commands block until done and MCP `tasks/get` carries a finished result; no CLI `wait <id>` yet (#1194). |
@@ -63,7 +63,7 @@ a test holds them to the same bytes.
 | `cancel.server` | Stop a generation Flow has already accepted, so it is not charged. | `no`: once Flow accepts a generation it runs and is charged. |
 | `idempotent_submit` | Retry a submit safely: the same request id never starts a second generation. | `no`: a retried submit is a new generation and is charged again. |
 | `reconcile` | Bring the local catalog back in line with what Flow holds. | `partial`: `data sync --names` refreshes names and presence (CLI only); no `reconcile <id>` yet ([#1199](https://github.com/ffroliva/gflow-cli/issues/1199)). |
-| `credits.balance` | Read the account's credit balance. | `yes`: `credits user`/`list`, MCP `gflow_get_credits`. |
+| `credits.balance` | Read the account's credit balance. | `partial`: the Veo video-credit balance only (`credits user`/`list`, MCP `gflow_get_credits`); image models use separate per-model daily quotas gflow does not read, and tier fields are null. |
 
 The `notes` in the document are the authoritative wording; this table summarizes them.
 On the flow.google.com rows, "gflow drives" is a statement about gflow's port, not about

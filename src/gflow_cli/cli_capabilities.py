@@ -30,6 +30,10 @@ console = Console()
 
 Value = Literal["yes", "no", "partial", "unknown"]
 
+GENERATE_IMAGE = "generate.image"
+GENERATE_VIDEO = "generate.video"
+CREDITS_BALANCE = "credits.balance"
+
 SCHEMA_VERSION = 1
 
 _MIGRATED_IMAGE = (
@@ -44,12 +48,13 @@ _MIGRATED_VIDEO = (
 )
 _AUTO_PREFIX = (
     "Host is chosen per request from what Flow serves (not checked here). "
-    "Requests flow.google.com cannot take fall back to the labs driver only when Flow "
-    "serves labs. "
+    "Requests gflow cannot drive on flow.google.com yet fall back to the labs driver "
+    "only when Flow serves labs. "
 )
 _LABS_NOTE = (
-    "GFLOW_CLI_FLOW_HOST=labs.google: the labs driver only. If Flow serves this "
-    "account flow.google.com, generation fails with exit 36."
+    "GFLOW_CLI_FLOW_HOST=labs.google: gflow uses its labs driver only, and generation "
+    "fails with exit 36 if Flow serves this account flow.google.com. Which host Flow "
+    "serves is not checked offline, hence unknown."
 )
 
 # Keys whose value does not depend on the host gflow drives.
@@ -97,10 +102,12 @@ _FIXED: dict[str, tuple[Value, str]] = {
         "`gflow data sync --names` refreshes catalog names and presence from Flow "
         "(CLI only, #543). No `reconcile <id>` yet (#1199).",
     ),
-    "credits.balance": (
-        "yes",
-        "Read from flow.google.com's balance reply in the profile's browser (#795): "
-        "`gflow credits`, MCP gflow_get_credits.",
+    CREDITS_BALANCE: (
+        "partial",
+        "The Veo video-credit balance only, read from flow.google.com's balance reply in "
+        "the profile's browser (#795): `gflow credits`, MCP gflow_get_credits. Image "
+        "models use separate per-model daily quotas gflow does not read; tier fields "
+        "are null.",
     ),
 }
 
@@ -108,22 +115,22 @@ _FIXED: dict[str, tuple[Value, str]] = {
 #: outside this lifecycle vocabulary (sessions, local catalog, config, docs, servers).
 #: tests/mcp/test_capabilities.py fails when a command is added without an entry.
 COMMAND_CAPABILITY: dict[str, str | None] = {
-    "image t2i": "generate.image",
-    "image i2i": "generate.image",
-    "image batch": "generate.image",
-    "run": "generate.image",
-    "video t2v": "generate.video",
-    "video i2v": "generate.video",
-    "video r2v": "generate.video",
-    "video chain": "generate.video",
-    "video extend": "generate.video",
-    "movie run": "generate.video",
-    "scene create": "generate.video",
+    "image t2i": GENERATE_IMAGE,
+    "image i2i": GENERATE_IMAGE,
+    "image batch": GENERATE_IMAGE,
+    "run": GENERATE_IMAGE,
+    "video t2v": GENERATE_VIDEO,
+    "video i2v": GENERATE_VIDEO,
+    "video r2v": GENERATE_VIDEO,
+    "video chain": GENERATE_VIDEO,
+    "video extend": GENERATE_VIDEO,
+    "movie run": GENERATE_VIDEO,
+    "scene create": GENERATE_VIDEO,
     "data download": "download",
     "image upload": "upload",
     "data sync": "reconcile",
-    "credits user": "credits.balance",
-    "credits list": "credits.balance",
+    "credits user": CREDITS_BALANCE,
+    "credits list": CREDITS_BALANCE,
     "auth": None,
     "auth list": None,
     "auth login": None,
@@ -182,15 +189,15 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
 def build_capabilities(flow_host: str) -> dict[str, Any]:
     """The capability document for one ``flow_host`` setting (pure, no I/O)."""
     if flow_host == "labs.google":
-        image: tuple[Value, str] = ("yes", _LABS_NOTE)
-        video: tuple[Value, str] = ("yes", _LABS_NOTE)
+        image: tuple[Value, str] = ("unknown", _LABS_NOTE)
+        video: tuple[Value, str] = ("unknown", _LABS_NOTE)
     elif flow_host == "flow.google.com":
         image = ("partial", _MIGRATED_IMAGE)
         video = ("partial", _MIGRATED_VIDEO)
     else:
         image = ("partial", _AUTO_PREFIX + _MIGRATED_IMAGE)
         video = ("partial", _AUTO_PREFIX + _MIGRATED_VIDEO)
-    entries = {"generate.image": image, "generate.video": video, **_FIXED}
+    entries = {GENERATE_IMAGE: image, GENERATE_VIDEO: video, **_FIXED}
     return {
         "schema": SCHEMA_VERSION,
         "adapter": "flow-browser",

@@ -50,6 +50,7 @@ def test_issue_vocabulary_is_present_and_server_cancel_is_honest() -> None:
         "reconcile",
         "credits.balance",
     }
+    assert doc["credits.balance"] == "partial"  # Veo credits only; image quotas unread
     assert doc["cancel.server"] == "no"
     assert doc["idempotent_submit"] == "no"
     # #1194 is not built: no CLI --no-wait / status / wait. The MCP task path covers
@@ -58,8 +59,11 @@ def test_issue_vocabulary_is_present_and_server_cancel_is_honest() -> None:
         assert doc[key] == "partial"
 
 
-def test_generation_is_partial_unless_gflow_drives_only_the_labs_driver() -> None:
-    assert caps.build_capabilities("labs.google")["capabilities"]["generate.video"] == "yes"
+def test_generation_is_partial_or_unknown_never_a_bare_yes() -> None:
+    # labs.google: gflow's labs driver takes every mode, but whether Flow serves the
+    # account labs at all is not checkable offline (exit 36 otherwise).
+    labs = caps.build_capabilities("labs.google")["capabilities"]
+    assert labs["generate.image"] == labs["generate.video"] == "unknown"
     for host in ("auto", "flow.google.com"):
         doc = caps.build_capabilities(host)
         assert doc["capabilities"]["generate.image"] == "partial"
@@ -67,11 +71,12 @@ def test_generation_is_partial_unless_gflow_drives_only_the_labs_driver() -> Non
         assert "#799" in doc["notes"]["generate.video"]
 
 
-def test_no_note_claims_a_feature_is_labs_only() -> None:
-    """AGENTS.md Host-Membership Discipline: report what gflow drives, never 'labs-only'."""
+def test_no_note_claims_what_a_host_can_do() -> None:
+    """AGENTS.md Host-Membership Discipline: report what gflow drives, not what a host can."""
+    banned = ("labs-only", "labs only", "flow.google.com cannot", "migrated account")
     for host in _HOSTS:
         for note in caps.build_capabilities(host)["notes"].values():
-            assert "labs-only" not in note.lower()
+            assert not any(phrase in note.lower() for phrase in banned), note
 
 
 def test_host_follows_the_flow_host_setting(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -97,7 +102,7 @@ async def test_cli_json_and_mcp_resource_serialize_identically(mcp_server: Any) 
         read = await client.read_resource("capabilities://self")
     text = read.contents[0].text  # pyright: ignore[reportAttributeAccessIssue]
 
-    assert result.output.strip() == text.strip()
+    assert result.stdout.strip() == text.strip()
 
 
 def test_cli_table_lists_every_key() -> None:
