@@ -439,6 +439,18 @@ All three now live as standalone modules under `src/gflow_cli/api/transports/exp
 
 **The migrated `flow.google.com` host (#639, v0.67.0).** Google is moving accounts off `labs.google` onto `flow.google.com`, a rewritten frontend with a different widget toolkit and a `batchexecute` wire instead of `aisandbox-pa` REST. `src/gflow_cli/api/transports/migrated_composer.py` drives that editor for text-to-video, local-file image-to-video/reference-to-video, text-to-image, and local-file image-to-image — still through the same real-Chrome Playwright session — by operating the composer UI and then *observing* the app's own replies. Video uses `YhhmEf`/`eb1hJf`/`MZZa6b` submit plus `jwpduf`/`as29s` status/result; image uses synchronous `ogiZ0b` replies carrying signed JPEG URLs. **Both mechanisms are measured, and neither is a push channel**: `ogiZ0b` is one response held open ~19.7 s, while `jwpduf` is a fixed 5.00 s timer owned by *Flow's page* — gflow observes it and adds no traffic, so the interval is a floor we read rather than a latency knob we hold, and "subscribe instead of polling" is refuted on both paths (`docs/superpowers/spikes/2026-09-14-generation-wire-no-push-channel.md`, `docs/superpowers/spikes/2026-09-14-video-poll-is-a-fixed-client-timer.md`). Local files go through the editor's own `maseQ` upload and the resulting media ids are asserted in the outgoing submit body before the run is trusted (`WireFormatError` otherwise). The migrated page owns image reCAPTCHA minting; the client skips the labs token path so moved accounts no longer fail with `RecaptchaError` on the root grid. `GFLOW_CLI_FLOW_HOST` routes between the two (`auto` keeps migrated images on moved accounts and uses labs for them on unmoved accounts; `--project` is required on the migrated path); unsupported UUID/entity/instruction/Imagen-4 image forms still fail before submit. Recon: `docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md`.
 
+**Observing without a page (measured 2026-11-09, #1192).** Submitting stays on the page
+(reCAPTCHA Enterprise). Reading need not, but not over the old `aisandbox-pa` Bearer route:
+on the host Flow served, `labs.google/fx/api/auth/session` answers 410 and the
+`flow.google.com` app sends no Bearer anywhere, so there is no token to replay. The read side
+of `flow.google.com` itself works from plain `httpx` with the profile's Google cookies plus
+the `at` token scraped from the app shell: `as29s` (status + signed URL, keyed by workflow
+id), `Zzl0ze` (listing), `nzlxg` (balance); the signed `flow-content.google` URL needs no
+credential at all. The intended split for the lifecycle commands (#1191) is therefore
+**browser to submit, `batchexecute` over HTTP to observe**, falling back to the page when the
+shell carries no `at`. Caveats and controls:
+[`docs/superpowers/spikes/2026-11-09-page-free-reads.md`](superpowers/spikes/2026-11-09-page-free-reads.md).
+
 **Standalone-only transports.** `bearer` and `sapisidhash` discard any caller-supplied Playwright page and launch their own browser under a fresh `ProfileLease`, so they are **standalone-only** — they cannot run inside a `FlowApiClient` that already holds the profile lease (the second acquire would self-lock with `ProfileLockedError`). Selecting either via `GFLOW_CLI_TRANSPORT` (or the Python API) while the client owns the profile now fails fast with a clear `ConfigurationError` naming the transport, rather than the opaque lock error. `evaluate_fetch` is exempt: it reuses the client's shared page and takes no second lease. The standalone-only set lives in `STANDALONE_ONLY_TRANSPORTS` (`api/transports/__init__.py`); to drive `bearer`/`sapisidhash`, run them outside an owning client.
 
 ### What this costs users
