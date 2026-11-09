@@ -517,6 +517,9 @@ class FlowWorker:
                     # same privacy rule as operations.error_detail).
                     "detail": f"sha256:{exception_message_hash(exc)}",
                     "exit_code": 1,
+                    # #1201: same members as a typed failure; nothing is proven.
+                    "charged": "maybe",
+                    "next_action": "none",
                 }
 
             # #341: mirror the queue's failure record into the operations table

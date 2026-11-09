@@ -246,6 +246,9 @@ def _masked_unexpected_dict(exc: Exception) -> dict[str, Any]:
         # Same key set as _gflow_error_dict so clients see ONE envelope schema.
         "message": detail,
         "retryable": False,
+        # #1201: an unclassified failure proves nothing about billing.
+        "charged": "maybe",
+        "next_action": "none",
     }
 
 
@@ -2158,6 +2161,8 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "detail": status.detail,
             "message": status.detail,
             "retryable": False,
+            "charged": "no",
+            "next_action": "reauth",
             "remediation_hint": (
                 "This profile has no `.gflow_browser_strategy` marker, so its "
                 "cookies cannot be read. Re-run `gflow auth login --browser "
@@ -2174,6 +2179,8 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "detail": status.detail,
             "message": status.detail,
             "retryable": False,
+            "charged": "no",
+            "next_action": "reauth",
             "remediation_hint": (
                 "This profile's Chrome cookie database is corrupt or unreadable. "
                 "Close any Chrome window using this profile, then re-run "
@@ -2192,6 +2199,8 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "detail": status.detail,
             "message": status.detail,
             "retryable": True,
+            "charged": "no",
+            "next_action": "retry",
             "remediation_hint": (
                 "Could not verify the Flow session (network or endpoint "
                 "problem). Check connectivity and retry; re-login is only "
@@ -2206,6 +2215,8 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             # AuthExpiredError only carries an HTTP status when built from a
             # real response; a dead/missing session is semantically a 401.
             "status": 401,
+            # #1201: a credit-free probe; AuthExpiredError's default "maybe" covers polls.
+            "charged": "no",
             "remediation_hint": (
                 f"Run 'gflow auth login --profile {resolved}' in your local "
                 "terminal (interactive; not available through MCP)."

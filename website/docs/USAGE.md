@@ -1934,8 +1934,9 @@ use. When set:
 - On failure, the command still emits a JSON payload — an RFC 9457
   problem-details object including a `retryable` flag (true for WAF /
   rate-limit / network / timeout) that a worker scheduler can key its
-  retry-vs-absorb decision off — and exits with the same non-zero code as the
-  Rich path.
+  retry-vs-absorb decision off, plus `charged` (`no` / `maybe` / `yes`) and
+  `next_action` (#1201) — and exits with the same non-zero code as the Rich path.
+  Every `type`, its exit code and those defaults: [ERRORS.md](ERRORS.md).
 
 The data-layer recorder fires regardless of `--json`, so audit history is
 independent of the output channel.
@@ -2210,7 +2211,9 @@ GFLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
 ## Exit codes
 
 Phase 4 (v0.4.0a1+) maps every `GFlowError` subclass to a stable exit code so
-shell scripts can branch on the failure mode without parsing stderr.
+shell scripts can branch on the failure mode without parsing stderr. With `--json`, the
+envelope also says whether Flow may have billed and what to do next; see
+[ERRORS.md](ERRORS.md).
 
 | Code | Error class           | Meaning                                          | Remediation                                                |
 |------|-----------------------|--------------------------------------------------|------------------------------------------------------------|

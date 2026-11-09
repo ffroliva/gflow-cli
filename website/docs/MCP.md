@@ -223,6 +223,13 @@ no credit spent) is `retryable: true` when a navigation raced the mint or the pa
 Flow page whose script had not loaded yet, and `false` on a page that is not a web page —
 each measured live ([#915](https://github.com/ffroliva/gflow-cli/issues/915)).
 Read the flag off the envelope; never re-derive it from the class list.
+
+The envelope also carries **`charged`** (`no` / `maybe` / `yes`: whether Flow may have
+billed) and **`next_action`** (`retry`, `retry_after`, `wait`, `reauth`, `fix_input`,
+`reconcile`, `none`), plus `operation_id` when an id exists ([#1201](https://github.com/ffroliva/gflow-cli/issues/1201)).
+`next_action` always agrees with `retryable`: a billed clip's failed download reads
+`charged: yes`, `next_action: reconcile`, with its media id as `operation_id`. Every `type`,
+its exit code and its defaults are listed in [ERRORS.md](ERRORS.md).
 Everything
 else (auth, content-policy, configuration, security) is terminal
 (`retryable: false`): retrying the identical request fails the same way. This

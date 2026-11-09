@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Error envelopes say whether Flow may have billed, and what to do next.** Every
+  `--json` error, MCP error result and failed worker-queue task now carries `charged`
+  (`no` / `maybe` / `yes`) and `next_action` (`retry`, `retry_after`, `wait`, `reauth`,
+  `fix_input`, `reconcile` or `none`), plus `operation_id` when an id exists. Each error
+  class declares its defaults; a failed download of a billed clip reads `charged: yes`,
+  `next_action: reconcile` with its media id. `retryable` is unchanged and always agrees
+  with `next_action`. Every `type` URI, its exit code and its defaults are listed in
+  [docs/ERRORS.md](docs/ERRORS.md) (#1201).
+
 ### Fixed
 
 - **`video extend` on flow.google.com reports the model it ran with instead of `unknown`.**

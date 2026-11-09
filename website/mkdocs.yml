@@ -79,6 +79,7 @@ nav:
   - Agent-driven (MCP):
       - Let your assistant drive it: agents.md
       - MCP Server: MCP.md
+      - Error envelope: ERRORS.md
   - Reference & Internals:
       - Architecture: ARCHITECTURE.md
       - Configuration: CONFIGURATION.md

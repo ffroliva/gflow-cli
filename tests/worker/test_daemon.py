@@ -812,6 +812,8 @@ async def test_worker_error_json_retryable_matches_cli(temp_db: DataStore) -> No
     assert updated.error["retryable"] is True
     assert updated.error["retryable"] is is_retryable(exc)
     assert updated.error["exit_code"] == 31
+    # #1201: the queued envelope carries the members too, agreeing with retryable.
+    assert (updated.error["charged"], updated.error["next_action"]) == ("maybe", "retry")
     worker.close()
 
 
@@ -972,6 +974,8 @@ async def test_a_bare_timeout_reaches_an_mcp_caller_as_a_hash(temp_db: DataStore
     assert error["exit_code"] == 1
     assert error["detail"].startswith("sha256:")
     assert "settings-trigger" not in error["detail"]
+    # #1201: the untyped branch carries the same members, and proves nothing about billing.
+    assert (error["charged"], error["next_action"]) == ("maybe", "none")
 
 
 @pytest.mark.asyncio

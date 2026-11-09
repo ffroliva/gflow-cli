@@ -98,6 +98,9 @@ def unexpected_payload(
         "title": "Unexpected error",
         "exit_code": 1,
         "retryable": False,
+        # #1201: an unclassified failure proves nothing about billing.
+        "charged": "maybe",
+        "next_action": "none",
     }
     if debug is not None:
         error["detail"] = str(debug)

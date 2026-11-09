@@ -3,15 +3,20 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast, get_args
 
 if TYPE_CHECKING:
     from gflow_cli.diagnostics import IncidentRef
 
 __all__ = [
+    "CHARGED_VALUES",
     "CONTENT_SAFETY_REASONS",
     "EXIT_CODE_MAP",
+    "NEXT_ACTION_VALUES",
     "RETRYABLE_ERRORS",
+    "RETRY_ACTIONS",
+    "Charged",
+    "NextAction",
     "AisandboxAuthError",
     "AuthExpiredError",
     "AuthLoginTimeoutError",
@@ -65,9 +70,20 @@ __all__ = [
 ]
 
 
+#: Whether Flow may have billed the failed operation (#1201).
+Charged = Literal["no", "maybe", "yes"]
+#: What a caller should do next (#1201). See docs/ERRORS.md for each value's meaning.
+NextAction = Literal["retry", "retry_after", "wait", "reauth", "fix_input", "reconcile", "none"]
+CHARGED_VALUES: frozenset[str] = frozenset(get_args(Charged))
+NEXT_ACTION_VALUES: frozenset[str] = frozenset(get_args(NextAction))
+#: The actions that mean "run it again": ``retryable`` is true exactly for these.
+RETRY_ACTIONS: frozenset[str] = frozenset({"retry", "retry_after"})
+
+
 class ProblemDetails(TypedDict, total=False):
     """RFC 9457 Problem Details JSON shape (https://datatracker.ietf.org/doc/html/rfc9457).
-    Two gflow extensions: `remediation_hint` and `route`."""
+    gflow extensions: `remediation_hint`, `route`, `incident`, and (#1201) `charged`,
+    `next_action`, `operation_id`."""
 
     type: str  # required
     title: str  # required
@@ -77,6 +93,9 @@ class ProblemDetails(TypedDict, total=False):
     remediation_hint: str  # gflow extension
     route: str  # gflow extension — sanitized route name, NOT full URL
     incident: dict[str, str]  # gflow extension — remote-safe {id, capture_status} ONLY
+    charged: Charged  # gflow extension (#1201) — always present
+    next_action: NextAction  # gflow extension (#1201) — always present, agrees with retryable
+    operation_id: str  # gflow extension (#1201) — local job / media id, when one exists
 
 
 class GFlowError(Exception):
@@ -119,6 +138,13 @@ class GFlowError(Exception):
     #: the current split so this note cannot quietly go stale.
     retryable: bool | None = None
 
+    #: #1201 defaults. Every class in ``EXIT_CODE_MAP`` declares its own (a test
+    #: enforces it); a raise site overrides them through ``__init__``. ``charged`` is
+    #: ``no`` only where the class proves nothing was submitted.
+    charged: Charged = "maybe"
+    next_action: NextAction = "none"
+    operation_id: str = ""
+
     def __init__(
         self,
         detail: str = "",
@@ -128,6 +154,9 @@ class GFlowError(Exception):
         route: str = "",
         remediation_hint: str | None = None,
         retryable: bool | None = None,
+        charged: Charged | None = None,
+        next_action: NextAction | None = None,
+        operation_id: str | None = None,
     ) -> None:
         message = self.title if not detail else f"{self.title}: {detail}"
         super().__init__(message)
@@ -139,6 +168,30 @@ class GFlowError(Exception):
         self.remediation_hint = (
             remediation_hint if remediation_hint is not None else self._default_remediation
         )
+        if charged is not None:
+            self.charged = charged
+        if operation_id is not None:
+            self.operation_id = operation_id
+        if next_action is not None:
+            self.next_action = next_action
+            # The explicit action decides retryability unless the site also set it.
+            if retryable is None:
+                self.retryable = next_action in RETRY_ACTIONS
+
+    def resolved_next_action(self) -> NextAction:
+        """``next_action``, reconciled with ``is_retryable`` at emit time.
+
+        A raise site (or ``client.py``, after construction) may flip ``retryable``
+        without naming an action; the class default then contradicts the flag. A flip
+        to retryable reads ``retry``; a flip away reads ``reconcile`` when Flow may
+        have billed (a post-submit timeout), else ``none``.
+        """
+        retryable = is_retryable(self)
+        if (self.next_action in RETRY_ACTIONS) == retryable:
+            return self.next_action
+        if retryable:
+            return "retry"
+        return "none" if self.charged == "no" else "reconcile"
 
     def to_problem_details(self) -> ProblemDetails:
         out: ProblemDetails = {
@@ -160,6 +213,10 @@ class GFlowError(Exception):
                 "id": self.incident_ref.id,
                 "capture_status": self.incident_ref.capture_status,
             }
+        out["charged"] = self.charged
+        out["next_action"] = self.resolved_next_action()
+        if self.operation_id:
+            out["operation_id"] = self.operation_id
         return out
 
 
@@ -177,6 +234,8 @@ class FlowApiError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/api-error"
+    charged = "maybe"
+    next_action = "none"
     title = "Flow API error"
     _default_remediation = (
         "Check request parameters and network connection, then retry the API call."
@@ -203,6 +262,9 @@ class FlowApiError(GFlowError):
                 # doing nothing (council D1). No caller passes it today; the cost of
                 # it being wrong later is a doomed retry nobody can explain.
                 retryable=kwargs.pop("retryable", None),
+                charged=kwargs.pop("charged", None),
+                next_action=kwargs.pop("next_action", None),
+                operation_id=kwargs.pop("operation_id", None),
             )
             self.body = body
         else:
@@ -212,6 +274,8 @@ class FlowApiError(GFlowError):
 
 class AuthExpiredError(FlowApiError):
     problem_type = "https://gflow-cli.dev/errors/auth-expired"
+    charged = "maybe"
+    next_action = "reauth"
     title = "Authentication expired"
     _default_remediation = "Run `gflow auth login --profile <name>` to refresh the session."
 
@@ -298,6 +362,8 @@ def classify_content_safety(body: object) -> str | None:
 
 class RateLimitError(FlowApiError):
     problem_type = "https://gflow-cli.dev/errors/rate-limit"
+    charged = "no"
+    next_action = "retry_after"
     title = "Rate limit or quota hit"
     _default_remediation = (
         "Daily or per-minute model quota reached; retry with a different model or "
@@ -349,6 +415,8 @@ class ContentPolicyError(FlowApiError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/content-policy"
+    charged = "maybe"
+    next_action = "fix_input"
     title = "Content policy rejection"
     _default_remediation = "Reduce prompt text or describe <= 1 person per scene"
 
@@ -361,6 +429,8 @@ class ContentPolicyError(FlowApiError):
 
 class NetworkError(FlowApiError):
     problem_type = "https://gflow-cli.dev/errors/network"
+    charged = "maybe"
+    next_action = "retry"
     title = "Network failure persisted across retries"
     _default_remediation = "Check connectivity and try again."
 
@@ -375,9 +445,17 @@ class MediaDownloadError(NetworkError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/media-download"
+    charged = "no"
+    next_action = "retry"
     title = "Generated media could not be downloaded"
 
     def __init__(self, *args: Any, media_id: str = "", **kwargs: Any) -> None:
+        if kwargs.get("retryable") is False:
+            # #941: every site that turns the retry off is a finished, billed clip, so a
+            # re-run bills again; the follow-up is the free recovery by media id (#1201).
+            kwargs.setdefault("charged", "yes")
+            kwargs.setdefault("next_action", "reconcile")
+        kwargs.setdefault("operation_id", media_id)
         super().__init__(*args, **kwargs)
         self.media_id = media_id
 
@@ -388,6 +466,8 @@ class WireFormatError(FlowApiError):
     proposals. Discovery payload set at raise site via the ``discovery=`` kwarg."""
 
     problem_type = "https://gflow-cli.dev/errors/wire-format"
+    charged = "maybe"
+    next_action = "reconcile"
     title = "Unexpected response shape from Flow"
     _default_remediation = (
         "Check request payload parameters or retry with a simpler prompt text. "
@@ -424,6 +504,8 @@ class RpcResponseUnavailableError(WireFormatError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/rpc-response-unavailable"
+    charged = "maybe"
+    next_action = "reconcile"
     title = "Flow write outcome unknown"
     _default_remediation = (
         "The outcome is unknown: Flow may have saved this write. Open the project on "
@@ -443,6 +525,8 @@ class SceneConcatError(FlowApiError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/scene-concat"
+    charged = "no"
+    next_action = "fix_input"
     title = "Scene concatenation failed"
     _default_remediation = "Ensure video clip dimensions and codecs match before concatenation"
 
@@ -451,6 +535,8 @@ class TransportTimeoutError(GFlowError):
     """Raised when a single API call or page wait exceeds its deadline (named in ``detail``)."""
 
     problem_type = "https://gflow-cli.dev/errors/transport-timeout"
+    charged = "maybe"
+    next_action = "retry"
     title = "Transport strategy timed out"
     _default_remediation = (
         "A single API call exceeded its deadline (the detail names it). "
@@ -462,6 +548,8 @@ class WafRejectionError(GFlowError):
     """Raised on HTTP 403 from Flow API; likely WAF / browser-fingerprint mismatch."""
 
     problem_type = "https://gflow-cli.dev/errors/waf-rejection"
+    charged = "maybe"
+    next_action = "retry"
     title = "WAF rejection (HTTP 403)"
     _default_remediation = (
         "Flow returned 403; the request was blocked by a WAF or fingerprint check. "
@@ -473,6 +561,8 @@ class ConfigurationError(GFlowError):
     """Raised when configuration is invalid (e.g. unknown transport name)."""
 
     problem_type = "https://gflow-cli.dev/errors/configuration"
+    charged = "no"
+    next_action = "fix_input"
     title = "Configuration error"
     _default_remediation = (
         "Check that the transport name is registered via make_transport(). "
@@ -570,6 +660,8 @@ class BrowserEngineUnavailableError(ConfigurationError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/browser-engine-unavailable"
+    charged = "no"
+    next_action = "fix_input"
     title = "Selected browser engine is unavailable"
     _default_remediation = (
         "The selected browser engine is unavailable. Install it with "
@@ -605,6 +697,8 @@ class ModelModeIncompatibilityError(ConfigurationError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/model-mode-incompatibility"
+    charged = "no"
+    next_action = "fix_input"
     title = "Model is incompatible with the requested generation mode"
     _default_remediation = (
         "The selected video model does not support this generation mode. "
@@ -631,6 +725,8 @@ class VideoModelSelectionError(ConfigurationError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/video-model-selection"
+    charged = "no"
+    next_action = "fix_input"
     title = "Could not select the requested video model"
     _default_remediation = (
         "gflow could not select the requested model in Flow's editor (the model "
@@ -657,6 +753,8 @@ class UpscaleUnavailableError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/upscale-unavailable"
+    charged = "no"
+    next_action = "none"
     title = "Upscale unavailable for this account"
     _default_remediation = (
         "This upscale resolution is not available on your account. 4K upscaling "
@@ -689,6 +787,8 @@ class ExtendUnavailableError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/extend-unavailable"
+    charged = "no"
+    next_action = "none"
     title = "Video extend unavailable for this account"
     _default_remediation = (
         "No extend model is available for this account and aspect ratio. Extend "
@@ -722,6 +822,8 @@ class UiSelectorDriftError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/ui-selector-drift"
+    charged = "maybe"
+    next_action = "none"
     title = "Flow UI selector drift"
     _default_remediation = (
         "A Flow editor UI element could not be located — Google may have updated "
@@ -764,6 +866,8 @@ class InsufficientCreditsError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/insufficient-credits"
+    charged = "no"
+    next_action = "wait"
     title = "Insufficient Flow credits"
     _default_remediation = (
         "Your Google account does not have enough Flow credits for this model, so Flow "
@@ -794,6 +898,9 @@ class FlowAgentUiError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-agent-ui"
+    # The agent-only composer raises it after an approved credit gate too (#988).
+    charged = "maybe"
+    next_action = "retry"
     title = "Google Flow Agentic UI detected"
     _default_remediation = (
         "Your account has been placed in Google Flow's new 'Agentic UI' A/B cohort, "
@@ -831,6 +938,8 @@ class FlowAppError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-app"
+    charged = "maybe"
+    next_action = "retry"
     title = "Google Flow web app error"
 
     _default_remediation = (
@@ -865,6 +974,8 @@ class FlowHostMigratedError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-host-migrated"
+    charged = "no"
+    next_action = "none"
     title = "Flow served the migrated flow.google.com frontend"
     _default_remediation = (
         "Google has moved this account's Flow from labs.google to flow.google.com. "
@@ -894,6 +1005,8 @@ class FlowAccountChooserError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-account-chooser"
+    charged = "no"
+    next_action = "reauth"
     title = "Recorded Google account not selectable"
     _default_remediation = (
         "Run `gflow auth login --profile <name>` and complete the account chooser "
@@ -917,6 +1030,8 @@ class RecaptchaError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/recaptcha-mint"
+    charged = "no"
+    next_action = "none"
     title = "reCAPTCHA token mint failed"
     _default_remediation = (
         "No request was sent and no credit was spent. When `retryable` is true, run the "
@@ -946,6 +1061,8 @@ class FlowAccessUnavailableError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-access-unavailable"
+    charged = "no"
+    next_action = "none"
     title = "This Google account cannot reach Flow"
     _default_remediation = (
         "Google Flow served its unavailable screen for this account. Flow needs a "
@@ -975,6 +1092,8 @@ class UiModeUnavailableError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/ui-mode-unavailable"
+    charged = "no"
+    next_action = "retry"
     title = "Requested Flow UI mode unavailable"
 
     def __init__(self, requested: object, *, remediation_hint: str | None = None) -> None:
@@ -1015,6 +1134,8 @@ class MediaAttributionError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/media-attribution"
+    charged = "yes"
+    next_action = "reconcile"
     title = "Generated media could not be attributed"
     _default_remediation = (
         "gflow could not reliably attribute the generated media to this request. "
@@ -1037,6 +1158,8 @@ class ReferenceNotFoundError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/reference-not-found"
+    charged = "no"
+    next_action = "fix_input"
     title = "Referenced media was not found"
     _default_remediation = (
         "The named asset is not in this project's media picker. Flow indexes a short "
@@ -1057,6 +1180,8 @@ class MediaUploadRejectedError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/media-upload-rejected"
+    charged = "no"
+    next_action = "fix_input"
     title = "Flow rejected a media upload"
     _default_remediation = (
         "Flow's upload endpoint refused the file, so the generation was aborted "
@@ -1084,6 +1209,8 @@ class MentionIndexUnavailableError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/mention-index-unavailable"
+    charged = "no"
+    next_action = "fix_input"
     title = "Mention index unavailable"
     _default_remediation = (
         "gflow could not load the asset catalog needed to resolve an @mention. "
@@ -1110,6 +1237,8 @@ class QueueSchemaError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/queue-schema"
+    charged = "no"
+    next_action = "fix_input"
     title = "Worker queue payload schema is invalid"
     _default_remediation = (
         "The queued task's payload could not be decoded. This usually means "
@@ -1123,6 +1252,8 @@ class SecurityError(GFlowError):
     """Raised when a security boundary is violated (e.g. profile_dir outside HOME)."""
 
     problem_type = "https://gflow-cli.dev/errors/security"
+    charged = "no"
+    next_action = "fix_input"
     title = "Security violation"
     _default_remediation = "Ensure all file paths are within the allowed GFLOW_CLI_HOME directory."
 
@@ -1136,6 +1267,8 @@ class AuthMissingError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/auth-missing"
+    charged = "no"
+    next_action = "reauth"
     title = "Authentication credential missing"
     _default_remediation = (
         "No usable Flow session was found in the profile. "
@@ -1153,6 +1286,8 @@ class AuthLoginTimeoutError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/auth-login-timeout"
+    charged = "no"
+    next_action = "reauth"
     title = "Login timed out"
     _default_remediation = (
         "The sign-in was not completed within the allowed time. "
@@ -1184,6 +1319,8 @@ class AuthBrowserRejectedError(GFlowError):
     """Raised when Google rejects the login browser before sign-in can complete."""
 
     problem_type = "https://gflow-cli.dev/errors/auth-browser-rejected"
+    charged = "no"
+    next_action = "reauth"
     title = "Login browser rejected"
     _default_remediation = (
         "Google's sign-in rejected this browser for advertising automation "
@@ -1203,6 +1340,8 @@ class BrowserSessionClosedError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/browser-session-closed"
+    charged = "maybe"
+    next_action = "retry"
     title = "Browser session closed"
     _default_remediation = (
         "The Playwright browser/page used by this FlowApiClient is no longer "
@@ -1285,6 +1424,8 @@ class DataStoreError(GFlowError):
     """Raised when the local data layer cannot open, read, or write SQLite."""
 
     problem_type = "https://gflow-cli.dev/errors/data-store"
+    charged = "maybe"
+    next_action = "fix_input"
     title = "Data store error"
     _default_remediation = "Check database file permissions or run 'gflow data errors prune'"
 
@@ -1293,6 +1434,8 @@ class DataMigrationError(DataStoreError):
     """Raised when local SQLite schema migration cannot proceed safely."""
 
     problem_type = "https://gflow-cli.dev/errors/data-migration"
+    charged = "maybe"
+    next_action = "fix_input"
     title = "Data migration error"
 
 
@@ -1300,6 +1443,8 @@ class DataIntegrityError(DataStoreError):
     """Raised when repository writes violate expected local DB constraints."""
 
     problem_type = "https://gflow-cli.dev/errors/data-integrity"
+    charged = "maybe"
+    next_action = "fix_input"
     title = "Data integrity error"
 
 
@@ -1314,6 +1459,8 @@ class FrameExtractionError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/frame-extraction"
+    charged = "maybe"
+    next_action = "fix_input"
     title = "Last-frame extraction failed"
     _default_remediation = (
         "Verify input video file is readable and non-corrupt. Ensure the "
@@ -1334,6 +1481,8 @@ class ChainPartialError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/chain-partial"
+    charged = "yes"
+    next_action = "reconcile"
     title = "Video chain partially failed"
     _default_remediation = (
         "An earlier link in the chain succeeded but a later one failed. The "
@@ -1397,6 +1546,8 @@ class SyncPartialError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/sync-partial"
+    charged = "no"
+    next_action = "retry"
     title = "Catalog sync partially failed"
     _default_remediation = (
         "Some projects synced; others failed. Sync is idempotent — re-run "
