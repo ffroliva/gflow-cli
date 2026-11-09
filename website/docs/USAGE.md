@@ -1907,10 +1907,24 @@ gflow models
 gflow models --json
 ```
 
+## `gflow capabilities`
+
+Declare what this gflow can drive: one value per capability (`yes`, `no`,
+`partial`, `unknown`), with a note on every `partial`. Offline: no network call,
+no browser; the only input is `GFLOW_CLI_FLOW_HOST`. MCP clients read the same
+document from the resource `capabilities://self`
+([#1197](https://github.com/ffroliva/gflow-cli/issues/1197)). Every key's meaning:
+[CAPABILITIES.md](CAPABILITIES.md).
+
+```bash
+gflow capabilities          # table
+gflow capabilities --json   # {"schema": 1, "adapter": ..., "host": ..., "capabilities": {...}, "notes": {...}}
+```
+
 ## JSON output (`--json`)
 
 The generation commands (`image t2i` / `image i2i`, `video t2v` / `i2v` /
-`r2v`), `auth list`, `gflow models`, and `gflow docs` accept `--json` for machine-to-machine
+`r2v`), `auth list`, `gflow models`, `gflow capabilities`, and `gflow docs` accept `--json` for machine-to-machine
 use. When set:
 
 - The command emits **one** parseable JSON object (or array, for `auth list`)

@@ -58,6 +58,7 @@ gflow auth login --browser chrome
 # Check the session (spends nothing)
 gflow auth status
 gflow credits user          # Veo credit balance (opens Flow in the browser; spends nothing)
+gflow capabilities          # what gflow can drive here: yes/no/partial per capability (offline)
 
 # 3 · Generate
 gflow image t2i "a hot air balloon over Tokyo at sunrise"
