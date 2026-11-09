@@ -94,6 +94,10 @@ _MCP_EXEMPT: dict[str, str] = {
         "long-running billed chain; not worker-enqueued, and its cost "
         "confirmation has no MCP equivalent (#481)"
     ),
+    # Not a gap: the twin is a resource, not a tool (a document an agent reads before
+    # planning, like gflow://docs/*). tests/mcp/test_capabilities.py holds the two
+    # surfaces to the same bytes (#1197).
+    "capabilities": "twin is the MCP resource capabilities://self (same document, #1197)",
     "auth": "interactive session management — needs a human browser login flow",
     "auth list": "interactive session management",
     "auth login": "interactive session management",

@@ -215,6 +215,22 @@ async def known_issues_section(slug: str) -> str:
 
 
 @server.resource(
+    uri="capabilities://self",
+    name="Capabilities",
+    description=(
+        "What gflow can drive, as yes/no/partial/unknown per capability, with notes for "
+        "partial. Same document as `gflow capabilities --json`. No network call."
+    ),
+    mime_type="application/json",
+)
+async def capabilities_self() -> str:
+    """The MCP twin of ``gflow capabilities --json`` (#1197)."""
+    from gflow_cli.cli_capabilities import current_capabilities, to_json
+
+    return to_json(current_capabilities())
+
+
+@server.resource(
     uri="gflow://db/schema",
     name="Database Schema",
     description="SQLite database schema for gflow.db — operations catalog.",
