@@ -49,9 +49,11 @@ CLI_TO_MCP: dict[str, str] = {
     "credits list": "gflow_get_credits",
     "image t2i": "gflow_generate_image",
     "image i2i": "gflow_generate_image",  # reference_images param
+    "image gen": "gflow_generate_image",  # bridge verb (#1193): t2i/i2i by inputs
     "video t2v": "gflow_generate_video",  # mode="t2v"
     "video i2v": "gflow_generate_video",  # mode="i2v"
     "video r2v": "gflow_generate_video",  # mode="r2v"
+    "video gen": "gflow_generate_video",  # bridge verb (#1193): mode inferred, tool takes it
     "models": "gflow_list_models",
     "tools list": "gflow_list_tools",
     "tools show": "gflow_list_tools",  # list output carries the show detail
@@ -253,6 +255,8 @@ _PARAM_ALIASES: dict[str, str] = {
 _OPTION_EXEMPT: dict[str, str] = {
     "image t2i:prompts": "multi-prompt fan-out is a batch concern; `image batch` is exempt too",
     "image t2i:continue_on_error": "batch-only semantics — see `image t2i:prompts`",
+    "image gen:prompts": "resolves to `image t2i`; same reason as `image t2i:prompts`",
+    "image gen:continue_on_error": "resolves to `image t2i`; batch-only semantics",
     "instructions apply:file": "reads a local file; the tool takes the text directly",
     "tools show:name": "coarse mapping — one MCP tool lists and shows; the name is its filter",
     "video i2v:end_image_deprecated": "deprecated alias retained for CLI compatibility only",

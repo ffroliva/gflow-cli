@@ -35,6 +35,7 @@ been removed. Both error handlers now import
 
 from __future__ import annotations
 
+import copy
 import re
 import sys
 import traceback
@@ -82,11 +83,14 @@ __all__ = [
     "_resolve_profile",
     "_validate_project_id",
     "apply_tool_option",
+    "bridge_params",
+    "invoke_bridged",
     "default_project",
     "run_with_handlers",
     "safe_path_text",
     "slugify_project_name",
     "tool_option",
+    "with_bridge_mode",
 ]
 
 # Flow project ids are interpolated into navigation URLs and CSS selectors
@@ -396,6 +400,102 @@ def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
     return 1
 
 
+# ------------------------------------------------------------ bridge verbs (#1193)
+# `image gen` / `video gen` pick the mode verb from the inputs and then ARE that verb:
+# same options, same output, same exit codes. Only `--json` differs, by one key.
+
+_BRIDGE_MODE_META = "gflow.bridge_mode"
+_UNSET_SOURCES = (None, ParameterSource.DEFAULT, ParameterSource.DEFAULT_MAP)
+# Click 8.3+ marks "no default" with a sentinel that Context.invoke maps to None; so do we.
+_CLICK_UNSET = getattr(click.core, "UNSET", None)
+
+
+def bridge_params(
+    own: list[click.Parameter], *modes: click.Command, exclude: tuple[str, ...] = ()
+) -> list[click.Parameter]:
+    """The bridge verb's parameters: its own arguments, then every mode verb's options.
+
+    The mode verbs' own Option objects are reused (first one wins per name), so their
+    types and validation callbacks run on the bridge exactly as on the mode verb. An
+    option a mode requires (``--ref``) is relaxed on a copy: on the bridge, passing it
+    is what picks that mode.
+    """
+    params = list(own)
+    seen = {p.name for p in own} | set(exclude)
+    for mode in modes:
+        for param in mode.params:
+            if isinstance(param, click.Argument) or param.name in seen:
+                continue
+            seen.add(param.name)
+            if param.required:
+                param = copy.copy(param)
+                param.required = False
+            params.append(param)
+    return params
+
+
+def _flag(ctx: click.Context, name: str) -> str:
+    param = next(p for p in ctx.command.params if p.name == name)
+    return "/".join([*param.opts, *param.secondary_opts])
+
+
+def invoke_bridged(
+    ctx: click.Context,
+    mode: click.Command,
+    values: dict[str, Any],
+    *,
+    fixed: dict[str, Any],
+    why: str,
+) -> None:
+    """Run *mode* with what the user gave the bridge verb in *ctx*.
+
+    *fixed* (the prompt) is always passed. Every other value is passed only when the
+    user supplied it, so *mode* applies its own defaults. A command-line option *mode*
+    has no slot for is a usage error, never dropped. Parameter sources are carried into
+    the mode's context, so code that asks where a value came from (``default_project``
+    reads ``--project-name``'s) sees what it sees on a direct call.
+    """
+    accepted = {p.name for p in mode.params}
+    group = ctx.parent.info_name if ctx.parent is not None else ""
+    # Parent is the group, not the bridge: usage and errors read `gflow image t2i`, as on
+    # a direct call. `meta` is one dict shared down the context chain either way.
+    sub = click.Context(mode, info_name=mode.name, parent=ctx.parent)
+    kwargs = dict(fixed)
+    for name in fixed:
+        sub.set_parameter_source(name, ParameterSource.COMMANDLINE)
+    for name, value in values.items():
+        source = ctx.get_parameter_source(name)
+        if source in _UNSET_SOURCES:
+            continue
+        if name in accepted:
+            kwargs[name] = value
+            sub.set_parameter_source(name, source)
+        elif source is ParameterSource.COMMANDLINE:
+            msg = (
+                f"{_flag(ctx, name)} is not an option of `gflow {group} {mode.name}`, "
+                f"which this command resolved to ({why})."
+            )
+            raise click.UsageError(msg, ctx=ctx)
+    for param in mode.params:
+        if param.name not in kwargs and param.expose_value:
+            default = param.get_default(sub)
+            kwargs[param.name] = param.type_cast_value(
+                sub, None if default is _CLICK_UNSET else default
+            )
+            sub.set_parameter_source(param.name, ParameterSource.DEFAULT)
+    if mode.callback is None:  # every mode verb has one; keeps pyright honest
+        raise TypeError(f"{mode.name} has no callback")
+    ctx.meta[_BRIDGE_MODE_META] = mode.name
+    sub.invoke(mode.callback, **kwargs)
+
+
+def with_bridge_mode(payload: dict[str, Any]) -> dict[str, Any]:
+    """Add ``"mode"`` to a ``--json`` payload when a bridge verb picked the mode."""
+    ctx = click.get_current_context(silent=True)
+    mode = ctx.meta.get(_BRIDGE_MODE_META) if ctx is not None else None
+    return {**payload, "mode": mode} if mode else payload
+
+
 def run_with_handlers(
     coro_factory: Callable[[], Coroutine[Any, Any, Any]],
     *,
@@ -437,7 +537,7 @@ def run_with_handlers(
     except GFlowError as e:
         if as_json:
             emit_error_event(_logger, e, cli_command=cli_command)
-            json_output.emit(json_output.error_payload(e))
+            json_output.emit(with_bridge_mode(json_output.error_payload(e)))
             sys.exit(_exit_code_for(e))
         sys.exit(_handle_gflow_error(e, cli_command=cli_command))
     except (KeyboardInterrupt, click.Abort):
@@ -457,8 +557,10 @@ def run_with_handlers(
             emit_unhandled_event(_logger, e, cli_command=cli_command)
             debug_exc = e if get_settings().debug_traceback else None
             json_output.emit(
-                json_output.unexpected_payload(
-                    debug=debug_exc, incident_ref=getattr(e, "incident_ref", None)
+                with_bridge_mode(
+                    json_output.unexpected_payload(
+                        debug=debug_exc, incident_ref=getattr(e, "incident_ref", None)
+                    )
                 )
             )
             sys.exit(1)

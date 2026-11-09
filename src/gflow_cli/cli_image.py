@@ -34,11 +34,14 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    bridge_params,
     default_project,
+    invoke_bridged,
     run_with_handlers,
     safe_path_text,
     slugify_project_name,
     tool_option,
+    with_bridge_mode,
 )
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
@@ -1467,12 +1470,14 @@ async def _run_t2i(
 
             if as_json:
                 json_output.emit(
-                    json_output.image_result(
-                        command="image t2i",
-                        project_id=project.project_id,
-                        model=req.model.value,
-                        images=images,
-                        saved_paths=saved_paths,
+                    with_bridge_mode(
+                        json_output.image_result(
+                            command="image t2i",
+                            project_id=project.project_id,
+                            model=req.model.value,
+                            images=images,
+                            saved_paths=saved_paths,
+                        )
                     ),
                 )
             else:
@@ -2015,13 +2020,15 @@ async def _run_i2i(
 
             if as_json:
                 json_output.emit(
-                    json_output.image_result(
-                        command="image i2i",
-                        project_id=project.project_id,
-                        model=req.model.value,
-                        images=images,
-                        saved_paths=saved_paths,
-                        ref_count=n_refs,
+                    with_bridge_mode(
+                        json_output.image_result(
+                            command="image i2i",
+                            project_id=project.project_id,
+                            model=req.model.value,
+                            images=images,
+                            saved_paths=saved_paths,
+                            ref_count=n_refs,
+                        )
                     ),
                 )
             else:
@@ -2075,3 +2082,44 @@ def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
         w, h = img.dimensions
         table.add_row(img.media_name, str(img.seed), f"{w}x{h}", safe_path_text(path))
     console.print(table)
+
+
+def resolve_image_mode(*, refs: bool) -> str:
+    """Routing table for `image gen` (#1193): a reference image makes it i2i."""
+    return "i2i" if refs else "t2i"
+
+
+@image.command(
+    "gen",
+    short_help="Generate image(s); picks t2i or i2i from the inputs.",
+    help=(
+        "Generate image(s) without naming the mode: a bridge verb that resolves to a "
+        "mode verb from its inputs, then runs exactly that verb (same options, output "
+        'and exit codes; --json adds "mode").\n\n'
+        "\b\n"
+        "Resolves to:\n"
+        "  PROMPT...            -> gflow image t2i\n"
+        "  PROMPT --ref IMAGE   -> gflow image i2i\n\n"
+        "An option the resolved verb does not take is a usage error (exit 2). "
+        "The mode verbs stay; use them when you want the mode fixed.\n\n"
+        "\b\n"
+        "Examples:\n"
+        '  gflow image gen "a serene mountain lake at dawn"\n'
+        '  gflow image gen "make it cinematic" --ref hero.png'
+    ),
+)
+@click.argument("prompts", nargs=-1, required=False)
+@click.pass_context
+def gen(ctx: click.Context, prompts: tuple[str, ...], **values: Any) -> None:
+    """Route to `image t2i` or `image i2i` (#1193)."""
+    mode = resolve_image_mode(refs=bool(values["refs"]))
+    if mode == "t2i":
+        invoke_bridged(ctx, t2i, values, fixed={"prompts": prompts}, why="no --ref")
+        return
+    if len(prompts) != 1:
+        msg = f"`gflow image i2i` (picked by --ref) takes one PROMPT; got {len(prompts)}."
+        raise click.UsageError(msg, ctx=ctx)
+    invoke_bridged(ctx, i2i, values, fixed={"prompt": prompts[0]}, why="--ref was given")
+
+
+gen.params = bridge_params(gen.params, t2i, i2i)
