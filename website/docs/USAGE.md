@@ -293,6 +293,39 @@ Notes:
 - **Cost:** the 1080p export was measured free (1 observation, 2026-10-07).
 - Saved as `<output_dir>/videos/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>` (`.mp4` or `.gif`).
 
+## `gflow image gen` / `gflow video gen`
+
+Bridge verbs: one generate verb per media type, with the mode read from the inputs. Each
+resolves to a mode verb and then runs exactly that verb, so its options, output and exit
+codes are the ones documented in the mode verb's section below.
+
+| Inputs | Resolves to |
+|---|---|
+| `image gen PROMPT...` | `image t2i` |
+| `image gen PROMPT --ref IMAGE` | `image i2i` |
+| `video gen PROMPT` | `video t2v` |
+| `video gen PROMPT --initial-frame F [--end-frame E]` | `video i2v` |
+| `video gen PROMPT --ref IMAGE` | `video r2v` |
+| `video gen` with a frame **and** `--ref` | usage error (exit 2) naming `video i2v` and `video r2v` |
+
+```bash
+gflow image gen "a serene mountain lake at dawn"            # image t2i
+gflow image gen "make it cinematic" --ref hero.png          # image i2i
+gflow video gen "slow pan left" --initial-frame hero.png    # video i2v
+gflow video gen "knight walks forward" --ref armor.png      # video r2v
+```
+
+- An option the resolved verb does not take is a usage error (exit 2), not silently
+  dropped: `image gen --ref a.png --stdin` names `image i2i`, and `video gen --ref a.png
+  --ui-mode classic` names `video r2v`.
+- A character by id (`--reference-entity`) without `--ref` stays on `video t2v`, which
+  carries it; with a frame it is refused, because `video i2v` does not take one.
+- `--json` emits the resolved verb's payload (its `command` is the mode verb, e.g.
+  `"image t2i"`) plus a top-level `"mode": "<resolved>"`, on failure payloads too.
+- The mode verbs stay and are not deprecated. Use them when you want the mode fixed. The
+  MCP tools `gflow_generate_image` / `gflow_generate_video` already take the mode, so they
+  have no bridge twin to add.
+
 ## `gflow image t2i`
 
 Generate 1–4 images from one text prompt, or run a shell-friendly batch of 1–50
@@ -1910,7 +1943,7 @@ gflow models --json
 ## JSON output (`--json`)
 
 The generation commands (`image t2i` / `image i2i`, `video t2v` / `i2v` /
-`r2v`), `auth list`, `gflow models`, and `gflow docs` accept `--json` for machine-to-machine
+`r2v`, and the `image gen` / `video gen` bridges that resolve to them), `auth list`, `gflow models`, and `gflow docs` accept `--json` for machine-to-machine
 use. When set:
 
 - The command emits **one** parseable JSON object (or array, for `auth list`)
@@ -1931,6 +1964,8 @@ use. When set:
   `generation_status`, `succeeded`, `local_path`, `failure_reasons`,
   `error_message`) plus the request echo (`model`, `mode`, `aspect`,
   `duration`, `count`, `seed`).
+- `image gen` / `video gen` emit the payload of the verb they resolved to, plus a
+  top-level `"mode"` (`t2i`, `i2i`, `t2v`, `i2v` or `r2v`), on success and on failure.
 - On failure, the command still emits a JSON payload — an RFC 9457
   problem-details object including a `retryable` flag (true for WAF /
   rate-limit / network / timeout) that a worker scheduler can key its
