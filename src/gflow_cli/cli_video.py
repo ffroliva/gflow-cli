@@ -2661,7 +2661,7 @@ _VIDEO_WHY = {"t2v": "no frame and no --ref", "i2v": "a frame was given", "r2v":
         "  PROMPT --ref IMAGE                    -> gflow video r2v\n\n"
         "A frame AND --ref is ambiguous and a usage error (exit 2), as is an option the "
         "resolved verb does not take. A character by id (--reference-entity) without "
-        "--ref stays on t2v, which carries it. The mode verbs stay; use them when you "
+        "--ref is passed to `video t2v` unchanged. The mode verbs stay; use them when you "
         "want the mode fixed.\n\n"
         "\b\n"
         "Examples:\n"

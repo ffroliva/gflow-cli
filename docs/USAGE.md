@@ -318,8 +318,9 @@ gflow video gen "knight walks forward" --ref armor.png      # video r2v
 - An option the resolved verb does not take is a usage error (exit 2), not silently
   dropped: `image gen --ref a.png --stdin` names `image i2i`, and `video gen --ref a.png
   --ui-mode classic` names `video r2v`.
-- A character by id (`--reference-entity`) without `--ref` stays on `video t2v`, which
-  carries it; with a frame it is refused, because `video i2v` does not take one.
+- A character by id (`--reference-entity`) without `--ref` is passed to `video t2v`
+  unchanged, with whatever `video t2v` does with it on the host Flow serves (see that
+  section); with a frame it is a usage error, because `video i2v` takes none.
 - `--json` emits the resolved verb's payload (its `command` is the mode verb, e.g.
   `"image t2i"`) plus a top-level `"mode": "<resolved>"`, on failure payloads too.
 - The mode verbs stay and are not deprecated. Use them when you want the mode fixed. The
