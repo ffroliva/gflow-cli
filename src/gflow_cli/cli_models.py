@@ -16,6 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 from gflow_cli import json_output
+from gflow_cli._cli_helpers import spends_credits
 from gflow_cli.api import image as image_api
 from gflow_cli.api import video as video_api
 from gflow_cli.image_batch import ALLOWED_MODELS as _IMAGE_CLI_MODELS
@@ -89,6 +90,7 @@ def build_catalog() -> dict[str, Any]:
     }
 
 
+@spends_credits(False)
 @click.command("models")
 @click.option(
     "--json",

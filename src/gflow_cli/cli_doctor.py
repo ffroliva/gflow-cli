@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import click
 
 from gflow_cli import json_output
+from gflow_cli._cli_helpers import spends_credits
 from gflow_cli.cli_data import _db_path, _guard
 from gflow_cli.config import get_settings
 
@@ -62,6 +63,7 @@ def _render_text(report: DoctorReport) -> None:
     click.echo(f"Overall: {report.overall_status}")
 
 
+@spends_credits(False)
 @click.command()
 @click.option(
     "--json",

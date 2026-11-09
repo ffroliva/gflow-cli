@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.table import Table
 
 from gflow_cli import json_output
+from gflow_cli._cli_helpers import spends_credits
 from gflow_cli.tools.registry import get_tool, iter_tools
 from gflow_cli.tools.runtime import apply_tool
 
@@ -18,6 +19,7 @@ def tools() -> None:
     """Discover and run prompt tools."""
 
 
+@spends_credits(False)
 @tools.command("list")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a table.")
 def list_tools(as_json: bool) -> None:
@@ -46,6 +48,7 @@ def list_tools(as_json: bool) -> None:
     console.print(table)
 
 
+@spends_credits(False)
 @tools.command("show")
 @click.argument("name")
 def show_tool(name: str) -> None:
@@ -66,6 +69,7 @@ def show_tool(name: str) -> None:
         )
 
 
+@spends_credits(False)
 @tools.command("run")
 @click.argument("name")
 @click.argument("text")

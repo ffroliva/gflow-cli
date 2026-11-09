@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow --help --json` prints the command tree as JSON ([#1203](https://github.com/ffroliva/gflow-cli/issues/1203)).**
+  `gflow <group> [<cmd>] --help --json` narrows it. Each command lists its path, summary,
+  params and `spends_credits`, which is true for a command that submits a new Flow
+  generation (video spends Veo credits, image the daily image quota). The tree is read from
+  Click, and a test fails when a new command has no `spends_credits` decision, when the
+  tree changes without its snapshot, or when a command is missing from `docs/`.
+  `gflow project show` and `project rename` are now documented in `docs/USAGE.md`.
+
 ### Fixed
 
 - **`video extend` on flow.google.com reports the model it ran with instead of `unknown`.**

@@ -35,11 +35,12 @@ been removed. Both error handlers now import
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import click
 import structlog
@@ -58,11 +59,12 @@ from gflow_cli.observability import emit_error_event, emit_unhandled_event
 from gflow_cli.tools.runtime import apply_tool
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Callable, Coroutine, Iterator
 
     from gflow_cli.tools.invocation import AppliedTool
 
 _logger = structlog.get_logger(__name__)
+_CommandT = TypeVar("_CommandT", bound=click.Command)
 _console = Console()
 
 # Explicit re-export list. The underscore prefix on ``_resolve_profile`` and
@@ -82,10 +84,14 @@ __all__ = [
     "_resolve_profile",
     "_validate_project_id",
     "apply_tool_option",
+    "cli_leaves",
+    "command_tree",
     "default_project",
     "run_with_handlers",
     "safe_path_text",
     "slugify_project_name",
+    "spends_credits",
+    "spends_credits_decision",
     "tool_option",
 ]
 
@@ -190,6 +196,90 @@ def tool_option(func: Callable[..., Any]) -> Callable[..., Any]:
         multiple=True,
         help=_TOOL_OPTION_HELP,
     )(func)
+
+
+_SPENDS_CREDITS_ATTR = "gflow_spends_credits"
+
+
+def spends_credits(value: bool) -> Callable[[_CommandT], _CommandT]:
+    """Record whether a leaf command submits a Flow generation (#1203).
+
+    Goes OUTERMOST, above ``@<group>.command(...)``, so it marks the Command object.
+    True means a new generation is submitted: a video spends Veo credits, an image spends
+    the daily image quota. Every leaf needs a decision; ``tests/cli/test_help_json.py``
+    fails on an undecorated one.
+    """
+
+    def mark(cmd: _CommandT) -> _CommandT:
+        setattr(cmd, _SPENDS_CREDITS_ATTR, value)
+        return cmd
+
+    return mark
+
+
+def spends_credits_decision(cmd: click.Command) -> bool | None:
+    """The ``@spends_credits`` value of *cmd*, or None when it was never decided."""
+    return getattr(cmd, _SPENDS_CREDITS_ATTR, None)
+
+
+def cli_leaves(
+    group: click.Group, path: tuple[str, ...] = ()
+) -> Iterator[tuple[tuple[str, ...], click.Command, list[str]]]:
+    """Yield ``(path, command, aliases)`` for every leaf under *group*.
+
+    A command registered under several names in one group yields once, under its first
+    name; the other names are its aliases.
+    """
+    names: dict[int, list[str]] = {}
+    for name, cmd in group.commands.items():
+        names.setdefault(id(cmd), []).append(name)
+    for first, *aliases in names.values():
+        cmd = group.commands[first]
+        if isinstance(cmd, click.Group):
+            yield from cli_leaves(cmd, (*path, first))
+        elif not cmd.hidden:
+            yield (*path, first), cmd, aliases
+
+
+def _param_json(param: click.Parameter) -> dict[str, Any]:
+    is_flag = isinstance(param, click.Option) and param.is_flag
+    long = [o for o in param.opts if o.startswith("--")]
+    default = param.to_info_dict()["default"]
+    if callable(default):
+        default = None
+    elif not isinstance(default, (str, int, float, bool, type(None))):
+        default = json.loads(json.dumps(default, default=str))  # Path, tuple → JSON-native
+    return {
+        "name": (long or param.opts)[0]
+        if isinstance(param, click.Option)
+        else param.human_readable_name,
+        "type": "flag" if is_flag else param.type.name,
+        "default": default,
+        "required": param.required,
+        "help": getattr(param, "help", None),
+    }
+
+
+def command_tree(root: click.Group, prefix: tuple[str, ...] = ()) -> dict[str, Any]:
+    """The ``--help --json`` payload: every leaf at or under *prefix* (#1203)."""
+    from gflow_cli import __version__
+
+    return {
+        "schema": 1,
+        "name": "gflow",
+        "version": __version__,
+        "commands": [
+            {
+                "path": list(path),
+                "summary": cmd.get_short_help_str(limit=300),
+                "aliases": aliases,
+                "params": [_param_json(p) for p in cmd.params if not getattr(p, "hidden", False)],
+                "spends_credits": spends_credits_decision(cmd),
+            }
+            for path, cmd, aliases in cli_leaves(root)
+            if path[: len(prefix)] == prefix
+        ],
+    }
 
 
 def _parse_tool_spec(spec: str) -> tuple[str, dict[str, str]]:

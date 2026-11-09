@@ -76,6 +76,27 @@ Machine-readable output: the generation commands (`image t2i` / `image i2i`,
 emit a single parseable object on stdout instead of Rich tables. See
 [§ JSON output](#json-output---json).
 
+Machine-readable command tree ([#1203](https://github.com/ffroliva/gflow-cli/issues/1203)):
+`gflow --help --json` prints every command as one JSON object, and
+`gflow <group> [<cmd>] --help --json` narrows it to that part of the tree. Agents and scripts
+can discover commands from it instead of scraping `--help` text, which changes with wording.
+
+```bash
+gflow --help --json | jq -r '.commands[] | select(.spends_credits) | .path | join(" ")'
+gflow video t2v --help --json | jq '.commands[0].params[].name'
+```
+
+Shape: `{"schema": 1, "name": "gflow", "version": "...", "commands": [...]}`. Each command
+has `path` (e.g. `["video", "t2v"]`), `summary`, `aliases`, `params` (each with `name` as typed,
+e.g. `--json` or `PROMPT`; `type`, which is `flag` for an on/off switch; `default`, `required`
+and `help`) and `spends_credits`. The tree is read from the CLI itself, so it is never out of
+date. **`spends_credits` is `true` for a command that submits a new Flow generation**: the
+video commands (`video t2v`/`i2v`/`r2v`/`chain`/`extend`) spend Veo credits; the image
+commands (`image t2i`/`i2i`/`batch`, `gflow run`, `character create`) and `movie run` submit
+generations too, and images bill the daily image quota rather than credits. Reads, exports
+(`image upscale`, `video upscale`), local catalog work and server-side composition
+(`scene create`) are `false`.
+
 Note: `--profile NAME` is **per-subcommand**, not global — pass it after the subcommand name (e.g. `gflow image t2i "..." --profile experiments`, not `gflow --profile experiments image t2i ...`).
 
 ## `gflow docs`
@@ -929,6 +950,13 @@ profile is refused (exit 2) before a browser starts.
 export GFLOW_CLI_PROJECT=$(gflow project create --name my-batch --json | jq -r .project_id)
 gflow image t2i "a red bicycle"      # lands in my-batch
 gflow video t2v "a tram at dusk"     # so does this
+```
+
+To read one project back from the local catalog, or rename it on Flow and in the catalog:
+
+```bash
+gflow project show PROJ123 [--json]
+gflow project rename PROJ123 "Storyboard v2" [--json]
 ```
 
 ## Batch video generation (shell loop)

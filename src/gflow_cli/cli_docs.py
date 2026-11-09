@@ -20,7 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 from gflow_cli import docs_catalog, json_output
-from gflow_cli._cli_helpers import run_with_handlers
+from gflow_cli._cli_helpers import run_with_handlers, spends_credits
 from gflow_cli.docs_catalog import MAX_HITS
 from gflow_cli.errors import ConfigurationError
 
@@ -56,6 +56,7 @@ def _forgive_console_encoding() -> None:
         pass
 
 
+@spends_credits(False)
 @click.command("docs")
 @click.argument("topic", required=False)
 @click.option(
