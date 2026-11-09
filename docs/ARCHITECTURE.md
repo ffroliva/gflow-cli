@@ -382,7 +382,7 @@ The dependency direction is inviolate. Everything else is preference, not religi
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│  Provider       │ ← protocol (planned abstraction — see ROADMAP; not yet a `providers/` package)
+│  Provider       │ ← protocol (planned abstraction; not yet a `providers/` package)
 │  abstraction    │
 └────────┬────────┘
          │
