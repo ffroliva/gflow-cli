@@ -57,6 +57,8 @@ log = structlog.get_logger(__name__)
 
 Severity = Literal["pass", "info", "warn", "fail"]
 
+_WIRE_READ = "auth.wire_read"
+
 #: Frozen v1 check inventory — mirrored by tests/fixtures/doctor_env.py.
 CHECK_IDS: tuple[str, ...] = (
     "catalog.display_name_missing",
@@ -70,10 +72,9 @@ CHECK_IDS: tuple[str, ...] = (
     "env.browsers_missing",
     "env.browser_proxy",
     "auth.files_present",
-    "auth.wire_read",
+    _WIRE_READ,
 )
 
-_WIRE_READ = "auth.wire_read"
 _STUCK_THRESHOLD = timedelta(hours=24)
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
