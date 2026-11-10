@@ -278,7 +278,8 @@ def read_cookies_for(profile_dir: Path) -> list[tuple[str, str]]:
                 cookie_file=cookie_file, domain_name="google.com", key_file=key_file
             )
         )
-    except Exception as exc:  # noqa: BLE001 - every failure is the same answer: unreadable
+    # Every failure is the same answer for the direct read: the store is unreadable.
+    except Exception as exc:  # noqa: BLE001
         raise CookieStoreUnreadable(type(exc).__name__) from None
     return [
         (cookie.name, cookie.value)
