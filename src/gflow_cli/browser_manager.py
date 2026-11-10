@@ -45,6 +45,10 @@ chrome_strategy_requested(profile_dir) -> bool
     True if the profile's ``.gflow_browser_strategy`` marker requests
     system Chrome (independent of whether Chrome is actually available).
 
+disable_features_args() -> tuple[str, ...]
+    One ``--disable-features`` switch merging Playwright's list with gflow's
+    (#1140); empty when Playwright's list cannot be read.
+
 ensure_profile_engine_compatible(profile_dir, channel) -> None
     Raise ``ProfileEngineDowngradeError`` when the bundled Chromium about to
     open ``profile_dir`` is older than the Chromium that last wrote it (#477).
@@ -56,8 +60,10 @@ _find_chrome_binary() -> str
 
 from __future__ import annotations
 
+import functools
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -219,6 +225,46 @@ def window_position_args(position: str) -> list[str]:
     ``UiAutomationTransport``) so they cannot drift. Login launches stay visible.
     """
     return [f"--window-position={position}"] if position else []
+
+
+#: Chrome features gflow turns off on top of Playwright's own list (#1140):
+#: CloudSyncedFolderChecker's startup task (a Windows cloud-files COM call) can never
+#: answer, and headed Chrome's shutdown waits on it until the 30 s close timeout.
+_EXTRA_DISABLED_FEATURES = ("CloudSyncedFolderChecker",)
+
+# Where Playwright 1.61 builds its switch; the pin test fails loudly if this moves.
+_PW_LIST_RE = re.compile(r"disabledFeatures = \[(.*?)\]\.filter\(Boolean\)", re.DOTALL)
+_PW_SWITCH_USE = '"--disable-features=" + disabledFeatures.join(",")'
+
+
+def _playwright_bundle() -> Path:
+    import playwright
+
+    return Path(playwright.__file__).parent / "driver" / "package" / "lib" / "coreBundle.js"
+
+
+@functools.cache
+def disable_features_args() -> tuple[str, ...]:
+    """ONE ``--disable-features`` switch: Playwright's own list plus gflow's (#1140).
+
+    Chrome honours only the last such switch, so a second one would silently
+    re-enable Playwright's (measured: HttpsUpgrades came back). The list is read from
+    Playwright's driver bundle; if it cannot be read as plain string literals, the
+    switch is left out, which keeps the old (slow-close) behaviour rather than a
+    wrong feature set. Shared by every headed launch site.
+    """
+    try:
+        js = _playwright_bundle().read_text(encoding="utf-8")
+    except OSError:
+        js = ""
+    match = _PW_LIST_RE.search(js)
+    body = re.sub(r"//[^\n]*", "", match.group(1)) if match else ""
+    features = re.findall(r'"([^"]+)"', body)
+    # Anything but quoted names and commas (e.g. a platform conditional) is unreadable.
+    if not features or _PW_SWITCH_USE not in js or re.sub(r'"[^"]*"|[\s,]', "", body):
+        log.warning("browser_manager.playwright_disabled_features_unreadable")
+        return ()
+    return ("--disable-features=" + ",".join([*features, *_EXTRA_DISABLED_FEATURES]),)
 
 
 #: Playwright's launch error when Chrome hands the profile to a running instance

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -455,3 +456,103 @@ class TestLaunchSitesGuarded:
         assert not offenders, (
             f"launch_persistent_context call sites missing the #477 engine guard: {offenders}"
         )
+
+
+# ---------------------------------------------------------------------------
+# One merged --disable-features switch (#1140)
+# ---------------------------------------------------------------------------
+
+_BUNDLE_SHAPE = """
+    disabledFeatures = [
+      // See https://github.com/microsoft/playwright/issues/14047
+      "AvoidUnnecessaryBeforeUnloadCheckSync",
+      "HttpsUpgrades",
+      // a comment with "quotes" in it
+      "Translate"
+    ].filter(Boolean);
+    chromiumSwitches = (options) => [
+      "--disable-features=" + disabledFeatures.join(","),
+    ];
+"""
+
+
+class TestDisableFeaturesArgs:
+    """Chrome honours only the LAST --disable-features switch, and Playwright passes
+    its own list. A second switch would silently re-enable Playwright's (measured in
+    #1140: http upgraded to https), so ours must be ONE switch carrying both lists."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_cache(self) -> Iterator[None]:
+        from gflow_cli.browser_manager import disable_features_args
+
+        disable_features_args.cache_clear()
+        yield
+        disable_features_args.cache_clear()
+
+    def _with_bundle(self, monkeypatch: pytest.MonkeyPatch, path: Path) -> tuple[str, ...]:
+        import gflow_cli.browser_manager as bm
+
+        monkeypatch.setattr(bm, "_playwright_bundle", lambda: path)
+        return bm.disable_features_args()
+
+    def test_one_switch_keeps_playwrights_features_and_adds_ours(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bundle = tmp_path / "coreBundle.js"
+        bundle.write_text(_BUNDLE_SHAPE, encoding="utf-8")
+        assert self._with_bundle(monkeypatch, bundle) == (
+            "--disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,HttpsUpgrades,"
+            "Translate,CloudSyncedFolderChecker",
+        )
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "",  # list gone
+            _BUNDLE_SHAPE.replace('"--disable-features=" + ', ""),  # list no longer used so
+            _BUNDLE_SHAPE.replace('"Translate"', 'isMac ? "Translate" : ""'),  # not plain
+            _BUNDLE_SHAPE.replace('"HttpsUpgrades",', "")
+            .replace('"AvoidUnnecessaryBeforeUnloadCheckSync",', "")
+            .replace('"Translate"', ""),  # empty
+        ],
+    )
+    def test_unreadable_list_leaves_the_switch_out(
+        self, text: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bundle = tmp_path / "coreBundle.js"
+        bundle.write_text(text, encoding="utf-8")
+        assert self._with_bundle(monkeypatch, bundle) == ()
+
+    def test_missing_bundle_leaves_the_switch_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert self._with_bundle(monkeypatch, tmp_path / "absent.js") == ()
+
+    def test_installed_playwright_list_still_parses(self) -> None:
+        """Pins the parse to the installed Playwright: an upgrade that moves or
+        reshapes the list fails here instead of silently dropping the fix."""
+        from gflow_cli.browser_manager import disable_features_args
+
+        (switch,) = disable_features_args()
+        features = switch.removeprefix("--disable-features=").split(",")
+        assert {"HttpsUpgrades", "Translate", "MediaRouter"} <= set(features)
+        assert features[-1] == "CloudSyncedFolderChecker"
+
+    def test_every_headed_launch_carries_the_merged_switch(self, tmp_path: Path) -> None:
+        import inspect
+
+        from gflow_cli.api.client import FlowApiClient
+        from gflow_cli.api.transports import ui_automation
+        from gflow_cli.auth.internal_chromium import login_launch_kwargs
+        from gflow_cli.browser_manager import disable_features_args
+        from gflow_cli.config import Settings
+
+        (switch,) = disable_features_args()
+        generation = FlowApiClient(profile_dir=tmp_path, settings=Settings())
+        for args in (
+            generation._persistent_context_kwargs()["args"],  # noqa: SLF001
+            login_launch_kwargs(tmp_path, headless=False)["args"],
+        ):
+            assert [a for a in args if a.startswith("--disable-features")] == [switch]
+        # The standalone transport builds its args inline.
+        assert "*disable_features_args()" in inspect.getsource(ui_automation)
