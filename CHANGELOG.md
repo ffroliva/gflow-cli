@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow credits` reads the balance without starting a browser when the saved session is
+  accepted.** `credits user`, `credits list` and the MCP `gflow_get_credits` tool now ask
+  flow.google.com for the balance directly, with the profile's saved cookies: one page load
+  and one request, no Chrome. When that fails (signed out, Chrome open on the profile, a
+  network error, an unexpected reply) they read it in the browser as before. When Flow
+  throttles the account (HTTP 429 or 5xx) the command reports the rate-limit or network error
+  instead, since the browser would send the same requests. `GFLOW_CLI_WIRE_READS=0` turns the direct read off; it is off by default on
+  macOS (#1229).
+
 ### Fixed
 
 - **`video extend` on flow.google.com reports the model it ran with instead of `unknown`.**

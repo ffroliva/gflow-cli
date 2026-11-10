@@ -11,9 +11,10 @@ fakes the service, so it asserts the adapter forwards a dict it was handed; only
 run shows the adapter resolving a real profile against real saved cookies and returning a
 real balance.
 
-Opt-in: ``-m e2e_auth`` with ``GFLOW_CLI_E2E_PROFILE`` set. Opens flow.google.com in the
-profile's browser and reads the balance the app loads (#795); clicks nothing, spends
-nothing. `[[feedback-e2e-is-the-required-evidence-layer]]`.
+Opt-in: ``-m e2e_auth`` with ``GFLOW_CLI_E2E_PROFILE`` set. Reads the balance the app loads
+(#795) directly from flow.google.com when the profile's saved session is accepted, and in the
+profile's browser otherwise (#1229); clicks nothing, spends nothing.
+`[[feedback-e2e-is-the-required-evidence-layer]]`.
 """
 
 from __future__ import annotations
@@ -27,6 +28,18 @@ import pytest
 from gflow_cli.api.dto import CreditsInfo
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_wire(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The direct read's process-wide state (#1229) must not leak between tests: one
+    signed-out profile in `all_profiles` turns the wire off for the rest of the process."""
+    from gflow_cli.api import flow_wire
+
+    monkeypatch.setattr(flow_wire, "_tokens", {})
+    monkeypatch.setattr(flow_wire, "_disabled", None)
+    monkeypatch.setattr(flow_wire, "_lock", None)
+
 
 #: Every key the tool contract promises a caller for a successful single-profile read.
 _SUCCESS_KEYS = {
@@ -57,6 +70,25 @@ async def test_mcp_get_credits_returns_a_real_balance_for_one_profile(
     assert result["credits"] >= 0
     # The contract an agent codes against — a missing key is a silent breakage for it.
     assert _SUCCESS_KEYS <= set(result), f"missing keys: {_SUCCESS_KEYS - set(result)}"
+
+
+async def test_mcp_get_credits_reads_without_a_browser_when_the_session_is_accepted(
+    e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Row 24 / G2 on the MCP door: a healthy profile never builds `FlowApiClient`, which
+    launches Chrome on entry."""
+    from gflow_cli.mcp import tools
+    from gflow_cli.services import credits
+
+    def no_browser(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("gflow_get_credits started the browser on a healthy profile")
+
+    monkeypatch.setattr(credits, "FlowApiClient", no_browser)
+    profile = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
+    result: dict[str, Any] = await tools.gflow_get_credits(profile=profile)
+
+    assert result.get("status") == "ok", f"MCP credits call failed: {result}"
+    assert isinstance(result["credits"], int) and result["credits"] >= 0
 
 
 async def test_mcp_get_credits_all_profiles_preserves_partial_results(

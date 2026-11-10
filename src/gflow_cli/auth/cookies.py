@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -206,3 +208,73 @@ async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
     except PermissionError:
         logger.info("cookie_decryption_failed_falling_back_to_playwright", profile=str(profile_dir))
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
+
+
+class CookieStoreUnreadable(Exception):  # noqa: N818 - a signal to fall back, not an error
+    """The profile's cookie jar could not be read. Carries only the cause's class name."""
+
+
+# browser_cookie3 picks its connection methods from a module global; the swap is serialised.
+_SHADOWCOPY_SWAP = threading.Lock()
+
+
+def _domain_match(host: str, domain: str) -> bool:
+    """RFC 6265 5.1.3: a leading dot is a domain cookie, no dot is host-only."""
+    domain = domain.lower()
+    if domain.startswith("."):
+        return host == domain[1:] or host.endswith(domain)
+    return host == domain
+
+
+def read_cookies_for(profile_dir: Path, *, host: str = "flow.google.com") -> list[tuple[str, str]]:
+    """The (name, value) pairs a browser on this profile sends on ``GET https://<host>/``.
+
+    For the direct read (``api/flow_wire.py``, #1229). Unlike
+    :func:`get_chrome_cookie_snapshot`, every failure raises :class:`CookieStoreUnreadable`
+    and nothing falls back: not to Playwright (that starts Chrome to avoid starting
+    Chrome), and not to browser_cookie3's volume shadow copy, which would read a jar
+    Chrome holds locked (spike 2026-11-10, E1). Pairs, not a dict: a name may sit on two
+    domains (``_ga_*`` on ``flow.google.com`` and ``.flow.google.com``), and a browser
+    sends both.
+    """
+    home = get_settings().home.resolve()
+    if not profile_dir.resolve().is_relative_to(home):
+        msg = f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME ({home})."
+        raise SecurityError(msg)
+
+    import browser_cookie3  # pyright: ignore[reportMissingTypeStubs]
+
+    try:
+        cookie_file = get_cookies_path(profile_dir)
+        key_file = None
+        if sys.platform == "win32":
+            # browser_cookie3 reads the USER's own Chrome key when this is None.
+            key_file = profile_dir / "Local State"
+            if not key_file.is_file():
+                raise FileNotFoundError("Local State")
+        # Chrome holds the jar exclusively while it runs; fail here, before any fallback.
+        with open(cookie_file, "rb"):
+            pass
+        with _SHADOWCOPY_SWAP:
+            saved = browser_cookie3.shadowcopy
+            browser_cookie3.shadowcopy = None
+            try:
+                jar = list(
+                    browser_cookie3.chrome(  # pyright: ignore[reportUnknownMemberType]
+                        cookie_file=cookie_file,
+                        domain_name=host.partition(".")[2] or host,
+                        key_file=key_file,
+                    )
+                )
+            finally:
+                browser_cookie3.shadowcopy = saved
+    except Exception as exc:  # noqa: BLE001 - every failure is the same answer: unreadable
+        raise CookieStoreUnreadable(type(exc).__name__) from None
+    return [
+        (cookie.name, cookie.value)
+        for cookie in jar
+        if cookie.value is not None
+        and cookie.path == "/"
+        and not cookie.is_expired()
+        and _domain_match(host, cookie.domain)
+    ]

@@ -171,6 +171,9 @@ def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
         monkeypatch.setenv(var, "127.0.0.1,localhost,::1")
     # urllib ignores HTTP_PROXY when REQUEST_METHOD is set (the httpoxy guard)
     monkeypatch.delenv("REQUEST_METHOD", raising=False)
+    # #1229: the credits read tries the profile's cookie jar and flow.google.com first. Off
+    # here, so a credits test reaches the page fake it installs; the wire tests turn it on.
+    monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "0")
 
 
 @pytest.fixture
