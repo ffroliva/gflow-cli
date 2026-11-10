@@ -60,7 +60,8 @@ async def _read_wire(meta: profile_store.ProfileMeta) -> CreditsInfo | None:
         raise
     except flow_wire.WireReadUnavailable as exc:
         log.info("credits.wire_fallback", profile=meta.name, reason=exc.reason.value)
-    except Exception as exc:  # noqa: BLE001 - a wire bug must never fail a read the page can answer
+    # A wire bug must never fail a read the page can answer.
+    except Exception as exc:  # noqa: BLE001
         log.warning(
             "credits.wire_fallback",
             profile=meta.name,

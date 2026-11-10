@@ -17,17 +17,35 @@ from mcp.server import MCPServer
 _FAKE_FSID = "-987654321fakefsid"
 
 
-def test_an_mcp_server_process_never_logs_an_httpx_request_url(
-    caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
-) -> None:
-    import gflow_cli  # noqa: F401 - every gflow process imports the package first
-
-    MCPServer(name="probe")  # configures the root logger at INFO, as gflow's server does
-    caplog.set_level(logging.DEBUG)
-
+def _request() -> None:
     transport = httpx.MockTransport(lambda _r: httpx.Response(200, text="ok"))
     with httpx.Client(transport=transport) as client:
         client.post(f"https://flow.google.com/_/x/data/batchexecute?f.sid={_FAKE_FSID}&bl=b")
+
+
+def test_an_mcp_server_process_never_logs_an_httpx_request_url(
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Every gflow process imports the package (and its logger clamp) first.
+    import gflow_cli  # noqa: F401
+
+    MCPServer(name="probe")  # configures the root logger at INFO, as gflow's server does
+    caplog.set_level(logging.DEBUG)
+    httpx_logger = logging.getLogger("httpx")
+    clamped = httpx_logger.level
+
+    # Negative control: without the clamp this setup DOES leak the URL, so the assertion
+    # below can see a regression.
+    httpx_logger.setLevel(logging.NOTSET)  # setLevel, not .level: it clears the level cache
+    try:
+        _request()
+        assert _FAKE_FSID in caplog.text
+    finally:
+        httpx_logger.setLevel(clamped)
+    caplog.clear()
+
+    _request()
 
     assert _FAKE_FSID not in caplog.text
     assert _FAKE_FSID not in capsys.readouterr().err

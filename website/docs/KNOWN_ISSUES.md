@@ -56,7 +56,7 @@ in use (`ProfileLockedError`, exit 11) as before. Linux is unmeasured.
 **Remedy / opt-out:** set `GFLOW_CLI_WIRE_READS=0` to always read in the browser
 ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads)). If Flow ever answers signed out
 or HTTP 401, gflow stops trying the direct read for that profile until the process exits. If
-it answers HTTP 429 or 503, that profile is left alone for the throttle window and the command
+it answers HTTP 429 or 503, that profile is left alone for the throttle window (`Retry-After`, capped at 60 s) and the command
 reports the error (exit 4 or 6) rather than retrying in the browser.
 
 ---
@@ -203,6 +203,44 @@ tracked here — no retry helps for those until each is ported.
 > `NOT_REDIRECTED` locale cache from disabling the `<html lang>` recovery (#643),
 > which had made that state unrecoverable on exactly the profiles it was written
 > for.
+
+---
+
+### Reading a generation's status or file opens a browser page; a page-free path is measured but not built
+
+- **Status:** Open · tracked in #1192 (spike) and the lifecycle tickets #1194, #1195, #1199
+- **Severity:** Low (slower, heavier reads; nothing fails)
+
+Every read gflow makes today (a clip's status, its finished file, the project listing, the
+credit balance) goes through the profile's Chrome page. The old idea of observing over
+`aisandbox-pa` REST with the SPA's `ya29.` Bearer does **not** work on the host Flow served
+here (`flow.google.com`, measured 2026-11-09):
+
+- `labs.google/fx/api/auth/session` still answers **410**, with or without cookies (#1023),
+  so no `access_token` can be fetched. `labs.google/fx/tools/flow` answers 308 to
+  flow.google.com.
+- The `flow.google.com` app contacts `aisandbox-pa` **zero** times and sends no
+  `Authorization` header at all, so there is no Bearer to borrow either.
+  `aisandbox-pa` status and credits reads answer 401 with no auth and with a junk Bearer.
+
+What **does** work without any page or browser, measured on one profile:
+`flow.google.com` `batchexecute` with the profile's Google cookies plus the `at` token
+re-read from the app shell by a cookie-only GET. `as29s` (a clip's status, signed video
+URL and size, keyed by **workflow id**), `Zzl0ze` (project listing) and `nzlxg` (balance)
+returned 200, and the signed `flow-content.google` URL answered a ranged read (bytes 0-31)
+with no cookie or header; a full download was not measured. The signed URL is itself a
+credential until it expires, so never log or share it. Controls on `as29s` and `nzlxg`: a
+junk `at` gets 400, no cookies gets 401.
+
+**Caveats before building on it:** the shell's `at` (`SNlM0e`) is missing whenever Flow
+serves the signed-out page, meaning the cookies were not accepted (#1221). A page-free
+reader must treat that as an auth problem and fall back to the page. Cookie
+lifetime without a running browser is unmeasured. An account served `labs.google` could not
+be observed here. Full write-up:
+[`docs/superpowers/spikes/2026-11-09-page-free-reads.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-11-09-page-free-reads.md).
+
+**Workaround:** none needed; the browser path works. It is the cost, not the correctness,
+that a page-free reader would change.
 
 ---
 

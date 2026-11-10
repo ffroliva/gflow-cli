@@ -215,8 +215,11 @@ def test_no_cookie_read_ever_takes_a_shadow_copy(
     if path == "wire":
 
         class _Opens:  # the pre-check passed; Chrome locked the jar a moment later
-            def __enter__(self) -> None:
-                return None
+            def __enter__(self) -> _Opens:
+                return self
+
+            def read(self, _n: int) -> bytes:
+                return b"S"
 
             def __exit__(self, *_a: object) -> None:
                 return None

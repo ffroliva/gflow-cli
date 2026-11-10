@@ -139,7 +139,8 @@ launch per profile, and the profile must not be in use by another gflow process
 (`ProfileLockedError`, exit 11). When Flow throttles the account (HTTP 429 or 503) gflow does not
 open the browser, which would send the same requests: `credits user` exits 4 (`RateLimitError`)
 or 6 (`NetworkError`), and `credits list` records that error for the profile. The direct read
-is off by default on macOS and while `GFLOW_CLI_BROWSER_PROXY` is set; `GFLOW_CLI_WIRE_READS=0`
+is off by default on macOS and while any proxy is configured (`GFLOW_CLI_BROWSER_PROXY`, or an
+environment/system proxy); `GFLOW_CLI_WIRE_READS=0`
 turns it off everywhere ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads),
 [KNOWN_ISSUES](../KNOWN_ISSUES.md)). Before #795 the balance came from a labs.google token; labs'
 session URL has answered HTTP 410 to every account since 2026-10-22

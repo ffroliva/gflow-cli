@@ -37,10 +37,7 @@ def ctx(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")
     reset_settings()
     # A process-wide disable from an earlier scenario must not leak into this one.
-    monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_signed_out", set())
-    monkeypatch.setattr(flow_wire, "_throttled", {})
-    monkeypatch.setattr(flow_wire, "_locks", {})
+    flow_wire.reset_state()
     state: dict[str, Any] = {"pages": 0, "requests": [], "reasons": [], "mp": monkeypatch}
 
     real_client = credits.FlowApiClient
@@ -132,7 +129,8 @@ def _no_chrome(ctx: dict[str, Any]) -> None:
 @then("at most one page GET and one batchexecute POST were sent")
 def _budget(ctx: dict[str, Any]) -> None:
     sent = ctx["requests"]
-    print(f"G5 requests: {sent}")  # noqa: T201 - the evidence pasted into the PR
+    # The G5 evidence pasted into the PR.
+    print(f"G5 requests: {sent}")  # noqa: T201
     assert [m for m, _h, _p in sent] == ["GET", "POST"], sent
     assert all(h == "flow.google.com" for _m, h, _p in sent)
 

@@ -16,9 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error, an unexpected reply) they read it in the browser as before. When Flow throttles the
   account (HTTP 429 or 503) the command reports the rate-limit or network error (exit 4 or 6)
   instead, since the browser would send the same requests. `GFLOW_CLI_WIRE_READS=0` turns the
-  direct read off; it is off by default on macOS and while `GFLOW_CLI_BROWSER_PROXY` is set.
-  The direct read uses the saved Google session outside Chrome; what that risks and what is
-  still unmeasured is in KNOWN_ISSUES (#1229).
+  direct read off; it is off by default on macOS and while any proxy is configured
+  (`GFLOW_CLI_BROWSER_PROXY`, or an environment/system proxy). The direct read uses the saved
+  Google session outside Chrome; what that risks and what is still unmeasured is in
+  KNOWN_ISSUES (#1229).
 
 ### Fixed
 
@@ -33,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request, so a word in the prompt can no longer pass for it. The page also no longer creates
   a scene before the extend. The extend e2e contract follows the new wire, and the guard that refuses an
   extend of the wrong clip is unchanged (#1180).
+- **Closing Chrome no longer waits out the 30 s close timeout on Windows.** Chrome's
+  shutdown waited on its OneDrive-folder check (`CloudSyncedFolderChecker`), which never
+  answered on an affected machine, so every browser-backed command (for example `gflow credits
+  user`) paid about 30 s after its work was done. Headless real Chrome waited too. gflow now
+  turns that feature off in every Chrome it launches. Playwright passes its own `--disable-features` list and Chrome
+  keeps only the last one, so gflow sends a single switch that carries Playwright's list plus
+  its own. If a Playwright release moves that list where gflow cannot read it, the switch is
+  left out and the close is slow again rather than wrong (#1140, #1233).
 
 ## [0.96.1] — 2026-11-08
 

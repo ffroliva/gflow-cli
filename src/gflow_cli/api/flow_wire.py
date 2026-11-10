@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import random
 import re
+import secrets
 import sys
 import time
 from dataclasses import dataclass
@@ -27,6 +27,7 @@ from enum import StrEnum
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
+from urllib.request import getproxies
 
 import httpx
 import structlog
@@ -75,7 +76,8 @@ class WireFallbackReason(StrEnum):
     UNEXPECTED = "unexpected"
 
 
-class WireReadUnavailable(Exception):  # noqa: N818 - a signal to fall back, not an error
+# Named for what it signals (fall back to the browser), not as an error: hence N818.
+class WireReadUnavailable(Exception):  # noqa: N818
     """The direct read cannot answer; the reason is all it carries (no body, no str(exc))."""
 
     def __init__(self, reason: WireFallbackReason) -> None:
@@ -97,7 +99,15 @@ _signed_out: set[Path] = set()
 _throttled: dict[Path, tuple[float, int]] = {}
 _locks: dict[Path, asyncio.Lock] = {}
 _clock = time.monotonic
-_reqid = random.randint(1000, 9999)  # noqa: S311 - a request counter, not a secret
+_reqid = 1000 + secrets.randbelow(9000)  # the app's own counter starts at a random 4 digits
+
+
+def reset_state() -> None:
+    """Forget every profile's tokens, sign-out, throttle window and lock (tests, a new loop)."""
+    _tokens.clear()
+    _signed_out.clear()
+    _throttled.clear()
+    _locks.clear()
 
 
 def _user_agent(profile_dir: Path) -> str | None:
@@ -227,8 +237,9 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
     """The balance over the wire, or :class:`WireReadUnavailable`. Never starts a browser."""
     require_in_home(profile_dir)  # before anything reads the profile (row 19)
     _gate(profile_dir)
-    if get_settings().browser_proxy:
-        # The browser goes through the proxy; its cookies must not leave from another IP.
+    if get_settings().browser_proxy or getproxies():
+        # A proxy anywhere (gflow's, the environment's, the OS's) means the browser and a
+        # direct request may leave by different routes; the session cookies must not.
         raise WireReadUnavailable(WireFallbackReason.PROXY_CONFIGURED)
     if (ua := _user_agent(profile_dir)) is None:
         raise WireReadUnavailable(WireFallbackReason.NO_CHROME_VERSION)
@@ -249,6 +260,7 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
             asyncio.timeout(_TOTAL_S),
             httpx.AsyncClient(
                 follow_redirects=False,
+                trust_env=False,  # nothing env-derived (proxies, netrc) reaches this client
                 timeout=httpx.Timeout(_TOTAL_S, connect=_CONNECT_S),
                 # Reject-all jar: a cookie Flow sets is dropped, never sent back or stored.
                 cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),

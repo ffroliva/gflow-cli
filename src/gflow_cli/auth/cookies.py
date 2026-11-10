@@ -12,6 +12,7 @@ import structlog
 from gflow_cli.browser_manager import (
     browser_proxy_kwargs,
     channel_for_profile,
+    disable_features_args,
     profile_in_use_error,
 )
 from gflow_cli.config import get_settings
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _FLOW_COOKIE_DOMAIN = "labs.google"
+_LOCAL_STATE = "Local State"  # the profile's key file (Windows)
 _FLOW_COOKIE_URL = f"https://{_FLOW_COOKIE_DOMAIN}"
 _GOOGLE_SESSION_COOKIE = "SAPISID"
 
@@ -122,7 +124,7 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
     # Only pass key_file on Windows — browser_cookie3 only uses it on win32.
     # On Linux/macOS the key comes from the system keyring; passing Local State
     # there can hit the Windows DPAPI branch and raise KeyError.
-    key_file = profile_dir.joinpath("Local State") if sys.platform == "win32" else None
+    key_file = profile_dir.joinpath(_LOCAL_STATE) if sys.platform == "win32" else None
 
     try:
         cookies = list(
@@ -179,7 +181,7 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
                 user_data_dir=str(profile_dir),
                 channel=channel,
                 headless=True,
-                args=["--password-store=basic"],
+                args=["--password-store=basic", *disable_features_args()],
                 **browser_proxy_kwargs(get_settings().browser_proxy),
             )
         except Exception as exc:
@@ -223,7 +225,8 @@ async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
 
 
-class CookieStoreUnreadable(Exception):  # noqa: N818 - a signal to fall back, not an error
+# Named for what it signals (fall back to the browser), not as an error: hence N818.
+class CookieStoreUnreadable(Exception):  # noqa: N818
     """The profile's cookie jar could not be read. Carries only the cause's class name."""
 
 
@@ -243,7 +246,7 @@ def _domain_match(domain: str) -> bool:
     host-only."""
     domain = domain.lower()
     if domain.startswith("."):
-        return _WIRE_HOST == domain[1:] or _WIRE_HOST.endswith(domain)
+        return f".{_WIRE_HOST}".endswith(domain)
     return _WIRE_HOST == domain
 
 
@@ -265,18 +268,19 @@ def read_cookies_for(profile_dir: Path) -> list[tuple[str, str]]:
         key_file = None
         if sys.platform == "win32":
             # browser_cookie3 reads the USER's own Chrome key when this is None.
-            key_file = profile_dir / "Local State"
+            key_file = profile_dir / _LOCAL_STATE
             if not key_file.is_file():
-                raise FileNotFoundError("Local State")
+                raise FileNotFoundError(_LOCAL_STATE)
         # Chrome holds the jar exclusively while it runs; fail here, before any fallback.
-        with open(cookie_file, "rb"):
-            pass
+        with open(cookie_file, "rb") as probe:
+            probe.read(1)
         jar = list(
             browser_cookie3.chrome(  # pyright: ignore[reportUnknownMemberType]
                 cookie_file=cookie_file, domain_name="google.com", key_file=key_file
             )
         )
-    except Exception as exc:  # noqa: BLE001 - every failure is the same answer: unreadable
+    # Every failure is the same answer for the direct read: the store is unreadable.
+    except Exception as exc:  # noqa: BLE001
         raise CookieStoreUnreadable(type(exc).__name__) from None
     return [
         (cookie.name, cookie.value)
