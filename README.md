@@ -57,7 +57,7 @@ gflow auth login --browser chrome
 
 # Check the session (spends nothing)
 gflow auth status
-gflow credits user          # Veo credit balance (opens Flow in the browser; spends nothing)
+gflow credits user          # Veo credit balance (no browser when the direct read is on and the saved session is accepted; spends nothing)
 
 # 3 · Generate
 gflow image t2i "a hot air balloon over Tokyo at sunrise"

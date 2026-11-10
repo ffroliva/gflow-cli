@@ -223,7 +223,10 @@ class BearerTransport:
         captured_token: str | None = None
         captured_fp = BrowserFingerprint()
 
-        from gflow_cli.browser_manager import ensure_profile_engine_compatible
+        from gflow_cli.browser_manager import (
+            disable_features_args,
+            ensure_profile_engine_compatible,
+        )
 
         # Own the profile for this momentary Bearer-capture context (D3). Lease
         # is the OUTER context so it releases only after the driver stops.
@@ -237,7 +240,7 @@ class BearerTransport:
                     headless=True,
                     viewport={"width": 1280, "height": 720},
                     locale="en-US",
-                    args=["--password-store=basic"],
+                    args=["--password-store=basic", *disable_features_args()],
                 )
                 try:
                     page = await ctx.new_page()

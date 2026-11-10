@@ -129,11 +129,21 @@ Read the current Google Flow balance through an existing authenticated profile. 
 read-only request: it does not generate media or spend credits. The displayed balance funds Veo
 video generation; image generation uses separate per-model daily quotas.
 
-The balance is read from flow.google.com: gflow opens the app in the profile's browser and reads
-the number the app itself loads, which is the one Flow's account menu shows
-([#795](https://github.com/ffroliva/gflow-cli/issues/795)). Nothing is clicked. It costs one
-browser launch per profile, and the profile must not be in use by another gflow process
-(`ProfileLockedError`, exit 11). Before #795 the balance came from a labs.google token; labs'
+The balance is the number flow.google.com itself loads, which is the one Flow's account menu
+shows ([#795](https://github.com/ffroliva/gflow-cli/issues/795)). When Flow accepts the
+profile's saved session, gflow reads it directly with that session's cookies: two requests, no
+browser ([#1229](https://github.com/ffroliva/gflow-cli/issues/1229)). Otherwise (signed out,
+Chrome open on the profile, a network error, an unexpected reply) gflow opens the app in the
+profile's browser and reads it there. Nothing is clicked. The browser read costs one browser
+launch per profile, and the profile must not be in use by another gflow process or a Chrome
+window (`ProfileLockedError`, exit 11): with Chrome open on the profile, both reads fail, so
+close it and retry. When Flow throttles the account (HTTP 429 or 503) gflow does not
+open the browser, which would send the same requests: `credits user` exits 4 (`RateLimitError`)
+or 6 (`NetworkError`), and `credits list` records that error for the profile. The direct read
+is off by default on macOS and while any proxy is configured (`GFLOW_CLI_BROWSER_PROXY`, or an
+environment/system proxy); `GFLOW_CLI_WIRE_READS=0`
+turns it off everywhere ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads),
+[KNOWN_ISSUES](../KNOWN_ISSUES.md)). Before #795 the balance came from a labs.google token; labs'
 session URL has answered HTTP 410 to every account since 2026-10-22
 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)).
 
@@ -1779,7 +1789,9 @@ environment. Doctor **diagnoses, never heals**: nothing is migrated, repaired,
 or written — not even pending schema migrations. All database access is
 strictly read-only (SQLite may create transient `-wal`/`-shm` sidecar files
 during the read-only open; the database itself is never modified), so it is
-safe to run against a live catalog at any time.
+safe to run against a live catalog at any time. One check uses the network:
+`auth.wire_read` sends one GET and one POST to flow.google.com for the default
+profile, and sends nothing when `GFLOW_CLI_WIRE_READS=0`.
 
 ```text
 gflow doctor [--json]
@@ -1789,7 +1801,7 @@ Options:
                         (experimental; shape may change).
 ```
 
-Eleven checks run on every invocation:
+Twelve checks run on every invocation:
 
 | Check id | Detects | Suggested remediation |
 |---|---|---|
@@ -1804,6 +1816,7 @@ Eleven checks run on every invocation:
 | `env.browsers_missing` | Playwright Chromium is not installed | `playwright install chromium` |
 | `auth.files_present` | No auth profiles, or profiles without saved cookies | `gflow auth login` |
 | `env.browser_proxy` | Reports whether `GFLOW_CLI_BROWSER_PROXY` is set (`scheme://host:port`, never credentials); informational, never changes the exit code | Use the same proxy for `HTTPS_PROXY` and for signing in ([CONFIGURATION](CONFIGURATION.md#gflow_cli_browser_proxy)) |
+| `auth.wire_read` | Whether the default profile's direct (browser-free) credits read works: `status=accepted build=<Flow build>` passes; any other status (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, `no_profile`, …) is info only and never changes the exit code, because credits then read through the browser. The one network check: one GET and one POST to flow.google.com, nothing with `GFLOW_CLI_WIRE_READS=0` | The finding's own hint (e.g. close Chrome on the profile, or `gflow auth login`) ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads)) |
 
 **Severity model.** Every check reports `pass`, `info`, `warn`, or `fail`.
 `info` is worth knowing but not a defect — it never flips the overall status

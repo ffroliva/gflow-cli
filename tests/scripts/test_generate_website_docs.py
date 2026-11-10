@@ -95,3 +95,21 @@ def test_nav_orphan_detection_flags_unlinked_pages(
 
     (web / "ORPHAN.md").write_text("x", encoding="utf-8")
     assert _gen._nav_orphans() == ["ORPHAN.md"]
+
+
+def test_a_docs_link_to_a_mirrored_root_file_becomes_a_sibling_link() -> None:
+    """`docs/X.md` links `../KNOWN_ISSUES.md`; on the site KNOWN_ISSUES.md is a sibling page,
+    so `../` would leave the docs tree (PR #1237 review). Fragment and query survive."""
+    out = _gen.render("USAGE.md", "see [KI](../KNOWN_ISSUES.md#a-b) and [C](../CHANGELOG.md)")
+    assert "](KNOWN_ISSUES.md#a-b)" in out
+    assert "](../CHANGELOG.md)" in out  # not mirrored: left as it was
+
+
+def test_a_relative_anchor_takes_the_mkdocs_slug() -> None:
+    """GitHub slugs `Ports & adapters` as `ports--adapters`; MkDocs' toc collapses the run to
+    `ports-adapters` (PR #1237 review). External links keep GitHub's anchor."""
+    text = "[P](#ports--adapters) [U](USER_GUIDE.md#a--b) [G](https://github.com/x#a--b)"
+    out = _gen.render("ARCHITECTURE.md", text)
+    assert "](#ports-adapters)" in out
+    assert "](USER_GUIDE.md#a-b)" in out
+    assert "](https://github.com/x#a--b)" in out
