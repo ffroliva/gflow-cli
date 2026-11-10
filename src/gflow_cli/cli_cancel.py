@@ -34,7 +34,7 @@ def cancel(task_id: str, as_json: bool) -> None:
 
     \b
     queued, or claimed but not submitted -> state cancelled, nothing charged, exit 0
-    submitted by a gflow worker -> state abandoned: gflow stops waiting, but the
+    submitted by a gflow worker -> state abandoned: Flow cannot cancel it, so the
                  generation may keep running and may still be charged; exit 22
     finished  -> left as it is, state echoed, exit 0
     """
@@ -78,10 +78,11 @@ def _abandoned(task_id: str, previous: str, as_json: bool) -> None:
             }
         )
     else:
-        _console.print(f"[yellow]Stopped waiting for {escape(task_id)}.[/yellow]")
+        _console.print(f"[yellow]Marked {escape(task_id)} abandoned.[/yellow]")
         _console.print(
             "A gflow worker had already submitted it, and Flow cannot be told to stop it: "
-            "it may keep running and may still be charged. Check the Flow project.",
+            "it may keep running and may still be charged. A worker still running it keeps "
+            "polling so it can record the result; check the Flow project.",
             markup=False,
         )
     sys.exit(json_output.exit_code_for(exc))

@@ -1894,7 +1894,7 @@ gflow cancel TASK_ID [--json]
 | Job state | What happens | Exit | `--json` |
 |---|---|---|---|
 | queued (`pending`), or claimed by a worker that has not submitted it yet | state `cancelled`; a worker that claimed it stops before submitting; nothing is charged | 0 | `state: cancelled`, `charged: no` |
-| submitted by a gflow worker (`processing` past its submit), or already `abandoned` | state `abandoned`: gflow stops waiting, the generation may keep running in Flow | 22 | `state: abandoned`, `cancel.server: no`, `charged: maybe`, `next_action: reconcile`, plus the `server-cancel-unavailable` problem details under `error` |
+| submitted by a gflow worker (`processing` past its submit), or already `abandoned` | state `abandoned`: Flow cannot cancel it, so the generation may keep running; a worker still running it keeps polling to record the result | 22 | `state: abandoned`, `cancel.server: no`, `charged: maybe`, `next_action: reconcile`, plus the `server-cancel-unavailable` problem details under `error` |
 | finished (`completed`, `failed`, `indeterminate`) or already `cancelled` | nothing changes; the state is echoed | 0 | `state: <state>` |
 | unknown id | `TaskNotFoundError` | 1 | `status: fail`, `error.type: …/task-not-found` |
 

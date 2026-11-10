@@ -141,3 +141,16 @@ def test_a_store_failure_is_a_json_error_not_a_traceback(
     error = doc["error"]
     assert isinstance(error, dict)
     assert error["exit_code"] == 16
+
+
+def test_an_abandoned_job_is_not_described_as_no_longer_waited_for(db: Path) -> None:
+    """A gflow worker in another process may still be polling it, to record the result for
+    reconcile, so "gflow stopped waiting" would be false (CodeRabbit on #1214)."""
+    plain = CliRunner().invoke(main, ["cancel", "r"]).stdout
+    code, doc = _run("r")
+
+    error = doc["error"]
+    assert isinstance(error, dict)
+    for text in (" ".join(plain.split()), str(error["remediation_hint"]), str(error["detail"])):
+        assert "stopped waiting" not in text.lower()
+    assert "record" in str(error["remediation_hint"])

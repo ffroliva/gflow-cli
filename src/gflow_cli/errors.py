@@ -986,8 +986,10 @@ class FlowAppError(GFlowError):
 class ServerCancelUnavailableError(GFlowError):
     """``gflow cancel`` on a job a gflow worker had already submitted to Flow (#1198).
 
-    gflow stops waiting (the row reads ``abandoned``), but it has no way to make Flow
-    cancel a generation it has: the generation may keep running and may still be charged.
+    The row reads ``abandoned``, but gflow has no way to make Flow cancel a generation it
+    has: the generation may keep running and may still be charged. A worker in another
+    process is not stopped either; it keeps polling so the result is recorded for
+    reconcile (#1199).
     A job the worker had claimed but not yet submitted is not this error: the worker stops
     before submitting, and the row reads ``cancelled``.
 
@@ -1001,9 +1003,9 @@ class ServerCancelUnavailableError(GFlowError):
     next_action = "reconcile"
     title = "Flow cannot cancel a submitted generation"
     _default_remediation = (
-        "A gflow worker had already submitted this job to Flow. gflow stopped waiting, "
-        "but Flow cannot be told to cancel it: it may still run and be charged. Check "
-        "the Flow project for the result."
+        "A gflow worker had already submitted this job to Flow, and Flow cannot be told to "
+        "cancel it: it may still run and be charged. The row is marked abandoned; a worker "
+        "still running it keeps polling to record the result. Check the Flow project."
     )
 
 

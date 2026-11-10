@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`gflow cancel <id>`: local abort, honest about server-side cancel.** A queued job, or
   one a worker claimed but has not submitted yet, is cancelled (state `cancelled`, exit 0,
   nothing charged): the worker re-reads its row just before submitting and stops. A job a
-  gflow worker already submitted is no longer watched (state `abandoned`, exit 22): Flow
-  cannot be told to cancel it, so it may still run and be charged, and `--json` says
+  gflow worker already submitted is marked `abandoned` (exit 22): Flow cannot be told to
+  cancel it, so it may still run and be charged (a worker still running it keeps polling,
+  so the result is recorded), and `--json` says
   `cancel.server: no`, `charged: maybe`, `next_action: reconcile`. A finished job is left
   as it is (exit 0); an unknown id is a `TaskNotFoundError` (exit 1). MCP `tasks/cancel`
   calls the same function. Migration `0010` adds the two queue states; error type

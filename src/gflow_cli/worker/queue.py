@@ -375,8 +375,9 @@ def abort_task(repo: QueueRepository, task_id: str) -> AbortOutcome | None:
     * ``pending``, or ``processing`` not yet submitted -> ``cancelled``: nothing reached
       Flow, and a worker that claimed it stops at the submit gate
       (:meth:`QueueRepository.checkpoint_before_submit`).
-    * ``processing`` past its submit checkpoint -> ``abandoned``: gflow stops waiting, but
-      Flow cannot cancel a generation it has, so it may still be charged.
+    * ``processing`` past its submit checkpoint -> ``abandoned``: Flow cannot cancel a
+      generation it has, so it may still be charged. A worker in another process keeps
+      polling, so its result is still recorded for reconcile (#1199).
     * anything else is left as it is.
 
     The read and the write share one ``BEGIN IMMEDIATE``, so a claim or a submit
