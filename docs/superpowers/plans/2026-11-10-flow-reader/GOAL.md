@@ -10,7 +10,21 @@ starting Chrome** whenever the profile's cookies are accepted, and falls back to
 path whenever they are not, so no read command ever fails because the direct path failed.
 Submits, uploads and anything that needs reCAPTCHA stay on the browser.
 
-## Shape (decided, subject to predict)
+## Amended by predict (CAUTION, [PREDICT.md](PREDICT.md))
+
+- **Shape:** no `FlowReader` Protocol yet. Instead, `api/flow_wire.py` (plain functions plus one
+  `WireReadUnavailable(reason)`), called from `services/credits.py::_fetch_once` **before**
+  `FlowApiClient` is built. The Protocol arrives with its second consumer.
+- **Scope:** the wire reads **credits only** in this wave. `record` (as29s) lands with #1194, and
+  `listing` (Zzl0ze) with #1195/#1199: no command reads them without a page today.
+- **G2** applies to credits (CLI and MCP).
+- **G6** is satisfied by CLI `doctor` plus the MCP `gflow_auth_status` health field; `doctor` has
+  no MCP twin (#542).
+- **New G9:** a run of wire reads leaves the browser session valid (e2e). A session loss in
+  experiment E2 is a STOP for the wave.
+- **Order:** #1140 (duplicate #1233) lands first, so G1 is measured against the fixed baseline.
+
+## Shape as first proposed (superseded where the section above differs)
 
 - A new narrow port `FlowReader` (`credits()`, `listing(project_id)`, `record(workflow_id)`),
   separate from `FlowTransportStrategy`, which stays the generation port.
