@@ -133,13 +133,20 @@ def _script_url(shell_html: str, base: str) -> str | None:
 def descriptor_ids(text: str, ids: tuple[str, ...]) -> tuple[str, ...]:
     """Every id held under the descriptor key, which is learned rather than hard-coded.
 
-    The key is the one the catalogued ids sit under; if none of them is present, the key
-    most often seen in that shape (measured 2026-11-10: 267 hits against 24 for the next).
+    The key is the one the catalogued ids sit under. Only when no catalogued id is in the
+    bundle at all does it fall back to the key most often seen in that shape (measured
+    2026-11-10: 267 hits against 24 for the next). Ids that are present but held in another
+    shape (20260929: ``new _.Gx("id",...)``) return nothing, so the run reads PARSE-CHANGED
+    instead of OK with an unrelated object's keys as the inventory.
     """
     pairs = _DESC_RE.findall(text)
     if not pairs:
         return ()
-    keys = Counter(k for k, i in pairs if i in ids) or Counter(k for k, _ in pairs)
+    keys = Counter(k for k, i in pairs if i in ids)
+    if not keys:
+        if any(_has(i, text) for i in ids):
+            return ()
+        keys = Counter(k for k, _ in pairs)
     key = keys.most_common(1)[0][0]
     return tuple(sorted({i for k, i in pairs if k == key}))
 
