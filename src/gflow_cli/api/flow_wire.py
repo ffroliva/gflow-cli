@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import random
 import re
+import secrets
 import sys
 import time
 from dataclasses import dataclass
@@ -75,7 +75,8 @@ class WireFallbackReason(StrEnum):
     UNEXPECTED = "unexpected"
 
 
-class WireReadUnavailable(Exception):  # noqa: N818 - a signal to fall back, not an error
+# Named for what it signals (fall back to the browser), not as an error: hence N818.
+class WireReadUnavailable(Exception):  # noqa: N818
     """The direct read cannot answer; the reason is all it carries (no body, no str(exc))."""
 
     def __init__(self, reason: WireFallbackReason) -> None:
@@ -97,7 +98,7 @@ _signed_out: set[Path] = set()
 _throttled: dict[Path, tuple[float, int]] = {}
 _locks: dict[Path, asyncio.Lock] = {}
 _clock = time.monotonic
-_reqid = random.randint(1000, 9999)  # noqa: S311 - a request counter, not a secret
+_reqid = 1000 + secrets.randbelow(9000)  # the app's own counter starts at a random 4 digits
 
 
 def _user_agent(profile_dir: Path) -> str | None:
