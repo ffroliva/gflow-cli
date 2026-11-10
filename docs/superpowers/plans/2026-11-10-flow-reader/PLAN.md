@@ -121,6 +121,27 @@ Branch `feature/wire-credits-read`, one PR.
 - [ ] the live `credits_wire_live.feature` (3 scenarios from SCENARIO.md), bound from
   `tests/e2e/test_credits_wire_bdd.py`; `test_e2e_binding_guard.py` stays green
 
+### Spike E1–E3 results (PR #1234, [doc](../../spikes/2026-11-10-cookie-jar-and-wire-cookies.md) once merged)
+- **No Chrome running:** the jar decrypts fully. A browser sends **26** cookies to flow.google.com
+  (`.google.com` domain cookies + host `flow.google.com`). With those, the shell has `SNlM0e` and
+  `nzlxg` returns 200. A minimal set exists (`OSID`, `SID`, `__Secure-1PSIDTS`, `__Secure-3PSID`),
+  but the wire sends **the browser-equivalent set**, never a hand-picked subset (G5: no traffic
+  the app does not send).
+- **Chrome running on the profile:** the jar is unreadable (errno 13, sqlite `immutable=1` fails,
+  `copy2` WinError 32). browser_cookie3 then raises **`RequiresAdminError` from its shadow-copy
+  (VSS) fallback**. The wire must **never** reach that fallback: an elevated gflow would otherwise
+  read a locked jar by snapshotting the volume, which is the lock-bypass the Security persona
+  ruled out. Classify it as `store_unreadable` before browser_cookie3 can try it (pre-check that
+  the file opens, or call it in a way that disables the fallback). A test asserts no shadow-copy
+  path runs.
+- **Rotation:** Chrome rotates `*SIDCC`, `*PSIDRTS` and `*PSIDTS`. A stale snapshot is still
+  accepted and the browser session survived (run 2 + replay; run 1 contaminated). Wire replies
+  `Set-Cookie` `SIDCC`/`__Secure-1PSIDCC`/`__Secure-3PSIDCC`; these are dropped (row 13).
+- **Encryption:** all 62 Google cookies are `v10`; none are `v20` app-bound.
+- **Open lead:** 2 of 9 browser reads after the burst exited 1 with `UnexpectedError`, with no
+  stderr and no record; 0/3 on an exact replay. The G9 e2e keeps watching. Capture stderr on every
+  live run in this wave.
+
 ### A3. Cookie read (`auth/cookies.py`)
 - [ ] `read_cookies_for(profile_dir, *, host="flow.google.com") -> dict[str, str]`:
   - the `browser_cookie3` fast path with an explicit `cookie_file`
