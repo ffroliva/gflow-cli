@@ -44,6 +44,11 @@ is not an option the tool quietly takes — it is a supported setting only for
 transports that never touch the Flow UI. A silent downgrade from real Chrome to
 bundled Chromium is treated as a **fatal error**, not a fallback (#222).
 
+**Except credit reads.** On Windows and Linux, `gflow credits` and `gflow_get_credits` send
+the profile's saved Google session from gflow's own HTTP client by default, with no browser
+(see [KNOWN_ISSUES](../KNOWN_ISSUES.md#the-direct-credits-read-uses-the-profiles-saved-google-session-outside-chrome)).
+`GFLOW_CLI_WIRE_READS=0` turns it off.
+
 **Every interaction delay is randomised.** Individual clicks, panel waits and
 type actions are jittered by ±25% around their base value, specifically to break
 the perfectly-uniform timing signature that deterministic Playwright automation

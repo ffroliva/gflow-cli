@@ -9,7 +9,10 @@ way every other migrated port works. Click path, wire and record shapes are meas
    its workflow id and tells a video from an image (round 2, B1/B3/B4).
 2. timeline add-clip → the ``keyboard_double_arrow_right`` menu item → type the prompt.
 3. submit: the page sends ``rqZuUc`` (creates a scene from the MEDIA id), ``uwAyfb``
-   (reads it back) and ``fZytfe`` (the billed extend, slot 1 = the WORKFLOW id).
+   (reads it back) and ``fZytfe`` (the billed extend, slot 1 = the WORKFLOW id). On
+   2026-11-08 our account's page sent ``fZytfe`` alone, with an Omni key
+   (``macaron_cookie_extend_4s``), and no ``rqZuUc`` / ``uwAyfb`` (#1180); the scene guard
+   stays for a page that still sends them.
 
 Every ``rqZuUc`` / ``fZytfe`` passes a route guard first: a request for another clip is
 aborted before Flow sees it. Single segment only; chains, an existing scene and a fixed
@@ -32,7 +35,6 @@ from gflow_cli.api.transports.batchexecute import find_record, parse_frames
 from gflow_cli.api.transports.migrated_composer import (
     LISTING_RPC,
     MIGRATED_PROJECT_URL,
-    MODEL_KEY,
     MigratedComposer,
     request_body,
 )
@@ -218,10 +220,12 @@ def batch_rpcids(rpcids: list[str], body: str) -> list[str]:
 
 def submit_facts(body: str) -> tuple[str | None, str | None]:
     """(model key, aspect) the page put in its ``fZytfe`` request."""
-    key = MODEL_KEY.search(body or "")
-    idx = _at(_inner(EXTEND_SUBMIT_RPC, body or ""), 0, 0, 3)
+    # The key is read from its slot, not searched for: the prompt precedes it in the body,
+    # and an Omni key (``macaron_cookie_extend_4s``, #1180) matches no shared pattern.
+    entry = _at(_inner(EXTEND_SUBMIT_RPC, body or ""), 0, 0)
+    key, idx = _at(entry, 2), _at(entry, 3)
     return (
-        key.group(0) if key else None,
+        key if isinstance(key, str) else None,
         ASPECT_BY_INDEX.get(idx) if isinstance(idx, int) else None,
     )
 

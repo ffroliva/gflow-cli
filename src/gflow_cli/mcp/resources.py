@@ -93,7 +93,8 @@ Generate videos using Google's Veo model.
 
 ### gflow_auth_status
 Credit-free, non-interactive Flow session probe — call it before a generate
-tool to fail fast on expired auth. Login itself is CLI-only.
+tool to fail fast on expired auth. Its `wire` field says whether credit reads
+work without a browser (`accepted`) or why not. Login itself is CLI-only.
 
 ### gflow_list_projects
 Browse the local project catalog.
