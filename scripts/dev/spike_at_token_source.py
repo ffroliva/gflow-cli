@@ -6,7 +6,8 @@ plain httpx client makes GETs of the same two routes (with and without the profi
 `nzlxg` (balance) reads with several `at` values, including the two controls. No generation,
 upload, create or delete.
 
-Pre-registered reading (written before the first run):
+Pre-registered reading (the first four rows were written before run 1; the fifth was added after
+run 1, before run 2, when run 1 found `SNlM0e` present everywhere):
 
 - The page's `at` equals a value in a response it received, httpx gets a working value from the
   same route, and nzlxg answers 200 -> found and reachable without a browser: direct reads never
@@ -30,8 +31,15 @@ Discriminator for a future "absent" sighting: the WIZ key names a cookie-carryin
 anonymous one lacks. A shell without `SNlM0e` that also lacks those keys is an anonymous shell
 (the cookies were not accepted), not a signed-in shell that moved the token.
 
-The httpx arm runs twice: before the browser opens (the disk jar as a page-free reader finds it)
-and after it closes (Chrome rotates cookies on load, so the two can differ).
+The httpx arm runs twice: before this run's browser opens, and after it closes (Chrome rotates
+cookies on load, so the two can differ). "Before" is not a never-browsed state: earlier browser
+runs on the profile had already rotated the jar. Each GET also records `inline_bytes`, the same
+measure #1219's bundle spike kept for its 07:30 shells (cookie and no-cookie arms), so that
+sighting can be compared with today's signed-in and anonymous shells.
+
+Added before run 3: the page arm snapshots `WIZ_global_data` once at client entry, before its
+listeners attach, and counts calls made before the first captured document. Run 2 had one `at`
+value with no captured carrier; a load during client entry is the untested candidate.
 
 Prints no token, cookie, id or URL. An `at` is reported only as booleans, its length and a
 redacted shape (alphanumeric runs collapsed to their length). WIZ key NAMES are printed; values
@@ -145,9 +153,11 @@ async def page_arm(profile: str, pid: str, wait_s: float = 15.0) -> tuple[dict[s
             {
                 "seq": next(seq),
                 "rpcids": q.get("rpcids", [""])[0],
-                "at": form.get("at", [None])[0] or q.get("at", [None])[0],
+                "at_body": form.get("at", [None])[0],
+                "at_query": q.get("at", [None])[0],
             }
         )
+        sent[-1]["at"] = sent[-1]["at_body"] or sent[-1]["at_query"]
 
     async def grab(entry: dict[str, Any], resp: Any) -> None:
         try:
@@ -168,24 +178,25 @@ async def page_arm(profile: str, pid: str, wait_s: float = 15.0) -> tuple[dict[s
         bodies.append(entry)
         tasks.append(asyncio.ensure_future(grab(entry, resp)))
 
+    snap_js = """() => {
+        const w = window.WIZ_global_data || {};
+        const out = {};
+        for (const [k, v] of Object.entries(w))
+            out[k] = typeof v === 'string' ? v : JSON.stringify(v);
+        return out;
+    }"""
     async with build_client(resolve_profile_dir(profile)) as client:
         page = client._page  # noqa: SLF001 - dev instrument, same as spike_rpc_ids_in_bundle
+        # Client entry may already have loaded the app before these listeners exist (#1221
+        # run 2 had one value with no captured carrier): snapshot that page's state too.
+        entry_host = urlsplit(page.url).netloc
+        wiz_snaps.append(await page.evaluate(snap_js))
         page.context.on("request", on_request)
         page.context.on("response", on_response)
         for path in ("/", f"/project/{pid}"):
             await page.goto(f"{ORIGIN}{path}", wait_until="domcontentloaded", timeout=60_000)
             await asyncio.sleep(wait_s)
-            wiz_snaps.append(
-                await page.evaluate(
-                    """() => {
-                        const w = window.WIZ_global_data || {};
-                        const out = {};
-                        for (const [k, v] of Object.entries(w))
-                            out[k] = typeof v === 'string' ? v : JSON.stringify(v);
-                        return out;
-                    }"""
-                )
-            )
+            wiz_snaps.append(await page.evaluate(snap_js))
         cookies = await page.context.cookies()
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -197,6 +208,9 @@ async def page_arm(profile: str, pid: str, wait_s: float = 15.0) -> tuple[dict[s
         carriers = [b for b in bodies if v in b["text"]]
         per_value.append(
             {
+                "first_use_before_first_captured_document": bool(docs)
+                and first_sent < docs[0]["seq"],
+                "equals_entry_snapshot_SNlM0e": wiz_snaps[0].get("SNlM0e") == v,
                 "len": len(v),
                 "shape": shape(v),
                 "calls": sum(1 for s in sent if s["at"] == v),
@@ -230,6 +244,13 @@ async def page_arm(profile: str, pid: str, wait_s: float = 15.0) -> tuple[dict[s
         "batchexecute_calls": len(sent),
         "rpcids": sorted({s["rpcids"] for s in sent}),
         "calls_with_at": sum(1 for s in sent if s["at"]),
+        "calls_with_at_in_body": sum(1 for s in sent if s["at_body"]),
+        "calls_with_at_in_query": sum(1 for s in sent if s["at_query"]),
+        "page_host_at_client_entry": entry_host,
+        "entry_snapshot_has_SNlM0e": "SNlM0e" in wiz_snaps[0],
+        "calls_before_first_captured_document": sum(
+            1 for s in sent if not docs or s["seq"] < docs[0]["seq"]
+        ),
         "calls_matching_latest_prior_document_SNlM0e": matched,
         "distinct_at_values": len(distinct),
         "per_value": per_value,
@@ -330,6 +351,10 @@ def direct_arm(profile: str, pid: str, page_ats: set[str]) -> dict[str, Any]:
                 "at_shape": shape(at) if at else None,
                 "equals_a_page_at": bool(at and at in page_ats),
                 "wiz_key_count": len(keys[f"{arm}/{label}"]),
+                # The size #1219's bundle spike recorded for its 07:30 shells, for comparison.
+                "inline_bytes": len(
+                    "\n".join(re.findall(r"<script[^>]*>(.*?)</script>", r.text, flags=re.S))
+                ),
             }
             if cj is not None:
                 fsid, bl = fsid or wiz(r.text, "FdrFJe"), bl or wiz(r.text, "cfb2h")

@@ -14,62 +14,65 @@ plain HTTP client get it the same way?
 
 ## Method
 
-The pre-registered reading is in the script's docstring. Each run has three steps:
+The pre-registered reading is in the script's docstring, which marks the rows and probes added
+between runs. Each run has three steps:
 
-1. **httpx, before any browser.** This reads the profile's on-disk cookie jar as a page-free
-   reader would find it. It GETs `/` and `/project/<pid>` three ways: no cookies, cookies with
-   a minimal user agent, and cookies with Chrome's navigation headers. Each GET records
-   whether `SNlM0e` is there and lists the `WIZ_global_data` key names (never values). Then it
-   reads `nzlxg` with the scraped `at`, with a junk `at`, with an empty `at`, and with no
-   cookies.
+1. **httpx, before this run's browser.** This reads the profile's on-disk cookie jar. It is not
+   a never-browsed state: earlier runs had already rotated it. The step GETs `/` and
+   `/project/<pid>` three ways: no cookies, cookies with a minimal user agent, and cookies with
+   Chrome's navigation headers. Each GET records:
+   - whether `SNlM0e` is present;
+   - the `WIZ_global_data` key names (never values);
+   - `inline_bytes`, the same measure #1219 kept for its 07:30 shells.
+
+   Then it reads `nzlxg` with the scraped `at`, with a junk `at`, with an empty `at`, and with
+   no cookies.
 2. **The page.** Gflow's own `FlowApiClient` (headed, holding the profile lease) loads `/`, then
    `/project/<pid>`, and waits 15 s on each. A shared sequence counter stamps every
-   `batchexecute` request and every text response as it happens. For each distinct `at` the
-   page sent, the script checks:
-   - every `WIZ_global_data` key (snapshot after each load);
+   `batchexecute` request and every text response as it happens. `WIZ_global_data` is
+   snapshotted at client entry and after each load. For each distinct `at` the page sent, the
+   script checks:
+   - every WIZ key;
    - every cookie;
    - every text response body, and whether it arrived before the first request that used the
      value.
 3. **httpx again, after the browser closed.** Chrome rotates cookies on load
-   (`accounts.google.com/RotateCookiesPage` appears among the page's documents). This step also
-   sends a browser-minted `at` from httpx.
+   (`accounts.google.com/RotateCookiesPage` is among the page's documents). This step also sends
+   a browser-minted `at` from httpx.
 
-There were two runs: a first version of the script, then the version committed here. The second
-adds the per-load mapping and the before-browser pass. The readings are the same, except that
-the "did not reproduce" row was added before run 2.
+There were three runs on the same profile within an hour. Run 1 used a first version of the
+script. Run 2 added the per-load mapping and the before-browser pass. Run 3 added the
+entry-time snapshot, the body/query split and `inline_bytes`. The tables below are from run 3;
+runs 1 and 2 agreed on every shared measure.
 
 ## Observed
 
-### The page (run 2)
+### The page (run 3)
 
 | Measure | Value |
 |---|---|
 | `batchexecute` calls the page made (18 rpc ids, including `nzlxg`, `Zzl0ze`) | 29 |
-| calls carrying `at` (all in the form body, none in the query) | 29 / 29 |
+| calls carrying `at` in the form body / in the query string | 29 / 0 |
 | distinct `at` values | 3, each 42 characters, shape `w28:d13` |
-| calls whose `at` equals the `SNlM0e` of the newest `flow.google.com` document before it | **28 / 29** |
-| flow.google.com documents carrying `SNlM0e` | 2 / 2 (root and project) |
-| runtime `WIZ_global_data.SNlM0e` present after each load | 2 / 2, equal to the document's |
+| calls whose `at` equals the `SNlM0e` of the newest `flow.google.com` document before it | 28 / 29 |
+| the remaining call: its `at` equals the `SNlM0e` of the page loaded at client entry, before the listeners attached | 1 / 1 |
+| flow.google.com documents carrying `SNlM0e` | 2 / 2, plus the entry page |
 | cookies equal to or containing any `at` value | 0 |
-| other responses carrying an `at` value | 0 (only the two documents, each before first use) |
+| other responses carrying an `at` value | 0 (each carrier is a flow.google.com document that arrived before first use) |
 
-Each full document load brings a new `at` (one value per load, used by the calls after it). In
-run 1 the shell httpx fetched also carried an `at` different from the page's. That is consistent
-with a token minted per document, not with a different source.
+Each full document load brings a new `at`, used by the calls after it. This explains run 1's
+observation that httpx's shell carried an `at` different from the page's: the token is minted
+per document, not drawn from a different source.
 
-**One call in 29 is unexplained.** Its value is in no captured body, cookie or WIZ snapshot.
-The likely carrier is a document whose body Playwright could not hand over, but this is not
-measured.
+### Plain httpx, no browser (run 3, both passes identical)
 
-### Plain httpx, no browser
-
-Both passes (before and after the browser) gave the same results:
-
-| GET | status | `SNlM0e` | WIZ keys |
-|---|---|---|---|
-| `/` and `/project/<pid>`, no cookies | 200 | absent | 47 |
-| the same, cookies + minimal UA | 200 | present, `w28:d13` | 52 |
-| the same, cookies + Chrome nav headers | 200 | present, `w28:d13` | 52 |
+| GET (`/` and `/project/<pid>`) | status | `SNlM0e` | WIZ keys | `inline_bytes` |
+|---|---|---|---|---|
+| no cookies | 200 | absent | 47 | 39,752 to 39,798 |
+| cookies, minimal UA | 200 | present | 52 | 42,503 to 42,813 |
+| cookies, Chrome nav headers | 200 | present | 52 | 42,505 to 42,813 |
+| *#1219 at 07:30, cookie arm* | 200 | *absent* | *not recorded* | ***39,716*** |
+| *#1219 at 07:30, no-cookie arm* | 200 | *absent* | *not recorded* | *39,668* |
 
 The five keys only a cookie-carrying shell has: `SNlM0e`, `W3Yyqf`, `WZsZ1e`, `oPEP7c`, `qDCSke`.
 
@@ -83,36 +86,39 @@ The five keys only a cookie-carrying shell has: `SNlM0e`, `W3Yyqf`, `WZsZ1e`, `o
 
 ## Verdict against the pre-registered reading
 
-- **"Every shell this run sees carries `SNlM0e`" applies, so #1219's condition did not
-  reproduce.** The shell carried `SNlM0e` in 10 of 10 cookie-carrying httpx GETs (2 in run 1,
-  8 in run 2) and 4 of 4 browser documents across two runs. Where the page gets `at` when the shell has none is
-  therefore **still unmeasured**.
-- **While the shell carries it, the first row holds.** The page's `at` is the `SNlM0e` in the
-  document it loaded (28 of 29 calls). A plain httpx client gets a working value from the same
-  route without a browser, and the controls behave as expected. The value is needed: an empty
-  or junk `at` gets 400. No cookie, other response or runtime-only key is the source.
-- **The issue's premise mixed two clients.** The 07:30 "absent" came from httpx and the 07:33
-  calls from a browser. This spike found no case where the *browser's* document lacked
+- **First row: found, and reachable without a browser.** The page's `at` is the `SNlM0e` of the
+  document it loaded, 29 of 29 calls with the entry-time page counted. A cookie-only httpx GET
+  gets a working value from the same route, `nzlxg` answers 200, and the controls behave. The
+  value is required: an empty or junk `at` gets 400. No cookie, other response or runtime-only
+  key is the source.
+- **The "did not reproduce" row also applies:** no run saw a signed-in shell without
   `SNlM0e`.
+- **The 07:30 "absent" shell was an anonymous shell.** Its size, 39,716 bytes, sits in today's
+  anonymous range (39,752 to 39,798) and about 2.8 KB below every signed-in shell (42,503 to
+  42,813). Its own no-cookie arm differed from it by 48 bytes. The cookies the bundle spike
+  sent were not accepted at that moment, so the server served the signed-out shell, which never
+  carries `SNlM0e`. The token had not moved. The browser at 07:33 had a session, and it rotates
+  cookies as it loads.
+- **So the answer to #1221:** the page gets `at` only from `SNlM0e` in the document it loads.
+  When a cookie-only GET finds no `SNlM0e`, the cookie jar was not accepted, and the token
+  source has not changed. A direct reader should treat that as "session not accepted": fall back
+  to the browser, which can rotate cookies, and never fail closed.
 
 ## What this does not establish
 
-- **The absent state itself.** Not seen in either run. #1219's 07:30 shell recorded no WIZ key
-  count, so it cannot be classified after the fact. The likely reading is an anonymous shell
-  (the jar was not accepted at that moment), but that is a hypothesis, not a finding.
-  **What would settle it:** the next time a cookie GET lacks `SNlM0e`, record its WIZ key
-  count. With 47 keys and none of the five cookie-only keys, it is an anonymous shell, so the
-  cookies, not the token, are what failed. With 52 keys minus `SNlM0e`, the token moved;
-  re-run this script then, and its per-value table names the new carrier.
-- **One call in 29** whose `at` had no captured carrier (see above).
-- **Token lifetime** across loads and hours: that is #1222 (S2).
+- **Why the jar was not accepted at 07:30.** Expiry, a pending rotation, or something else: not
+  measured. #1222 (S2, token and session lifetime) is the place to measure it.
+- **The size comparison crosses builds.** #1219 recorded build `20261108.05_p0`; today's build
+  was not recorded. The signed-in/anonymous gap is about 2.8 KB, against a 48-byte spread
+  between arms, but a build that reshapes the shell would move both.
+- **How often a disk jar goes unaccepted.** One sighting, by another script.
 - **One profile, one host, Windows only, one afternoon.**
 
 ## Wire table
 
 `docs/FLOW_WIRE_RPCS.md` is not on `develop` yet (PR #1219). Once it lands, its `at` row can cite
-this spike: "`SNlM0e` in each served document (per load); scrapeable by a cookie-only GET; the
-absent state has not been observed since 2026-11-10 07:30."
+this spike: "`SNlM0e` in each served document (one per load); a cookie-only GET gets it; a
+shell without it is the signed-out shell (WIZ keys 47 vs 52)."
 
 ## Reproduce
 
