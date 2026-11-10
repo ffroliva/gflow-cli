@@ -231,12 +231,31 @@ def _run_command(
     command: tuple[str, ...], *, capture_output: bool = True
 ) -> subprocess.CompletedProcess[str]:
     """Run the manager subprocess, capturing output by default."""
-    return subprocess.run(  # noqa: S603 — fixed argv
+    if not capture_output:
+        return subprocess.run(list(command), text=True, check=False)  # noqa: S603 — fixed argv
+    with subprocess.Popen(  # noqa: S603 — fixed argv
         list(command),
-        capture_output=capture_output,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
-    )
+        encoding="utf-8",
+        errors="replace",
+    ) as proc:
+        try:
+            stdout, stderr = proc.communicate()
+        except KeyboardInterrupt:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            if stdout or stderr:
+                output = (
+                    f"{stdout}\n{stderr}".strip()
+                    if (stdout and stderr)
+                    else (stdout or stderr).strip()
+                )
+                if output:
+                    sys.stderr.write(f"{output}\n")
+            raise
+        return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
 
 def _version_in_venv(dist: str) -> str | None:

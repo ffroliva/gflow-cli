@@ -11,6 +11,8 @@ cap holds even when the daemon fetch thread dies with a fast command.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -664,6 +666,36 @@ class TestRunUpdate:
         assert doc["upgraded"] is True
         assert doc["latest"] == "999.0.0"
         assert noisy_stdout not in res.stdout
+
+    def test_interruption_preserves_captured_output(
+        self,
+        uv_install: list[tuple[str, ...]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        def _mock_run(
+            cmd: tuple[str, ...], *, capture_output: bool = True
+        ) -> subprocess.CompletedProcess[str]:
+            sys.stderr.write("partially downloaded bytes\n")
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", _mock_run)
+        with pytest.raises(KeyboardInterrupt):
+            uc.run_update(check=False)
+        captured = capsys.readouterr()
+        assert "partially downloaded bytes" in captured.err
+
+    def test_run_command_decodes_utf8_with_replacement(self) -> None:
+        cmd = (
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.buffer.write(b'valid utf8 \\xc3\\xa1 and invalid \\xff\\n')",
+        )
+        res = uc._run_command(cmd, capture_output=True)
+        assert res.returncode == 0
+        assert "valid utf8 á" in res.stdout
+        assert "" in res.stdout
 
 
 class TestFetchLatest:
