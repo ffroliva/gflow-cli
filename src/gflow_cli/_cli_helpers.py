@@ -432,18 +432,23 @@ def bridge_params(
     overrides = help_for or {}
     params = list(own)
     seen = {p.name for p in own} | set(exclude)
-    for mode in modes:
-        for param in mode.params:
-            if isinstance(param, click.Argument) or param.name in seen:
-                continue
-            seen.add(param.name)
-            if param.required or param.name in overrides:
-                param = copy.copy(param)
-                param.required = False
-                if isinstance(param, click.Option) and param.name in overrides:
-                    param.help = overrides[param.name]
-            params.append(param)
+    for param in (p for mode in modes for p in mode.params):
+        if isinstance(param, click.Argument) or param.name in seen:
+            continue
+        seen.add(param.name)
+        params.append(_bridge_copy(param, overrides))
     return params
+
+
+def _bridge_copy(param: click.Parameter, overrides: dict[str, str]) -> click.Parameter:
+    """*param* as the bridge shows it: optional, and with its help rewritten if asked."""
+    if not param.required and param.name not in overrides:
+        return param
+    param = copy.copy(param)
+    param.required = False
+    if isinstance(param, click.Option) and param.name in overrides:
+        param.help = overrides[param.name]
+    return param
 
 
 def run_bridged(ctx: click.Context, mode: click.Command, why: str) -> None:
