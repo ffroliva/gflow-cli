@@ -54,6 +54,28 @@ a run that sent it cost nothing.
 
 Code paths are relative to `src/gflow_cli/`.
 
+## Request shape fingerprints (#1228)
+
+The table records response shapes only. These are the first recorded request shapes, taken
+by letting the page build a billed submit and aborting it before it left the browser, at $0
+([route-abort spike](superpowers/spikes/2026-11-10-route-abort-submit-shape-drift.md)). A
+fingerprint keeps structure only: `N` null, `I` int, `U` UUID, `S` any other string, and
+`K:` a model key with its digits masked to `9`. It never keeps a value, an id, a token or a
+prompt. Each was identical across 3 runs on `denon82`, build
+`boq_labs-ai-sandbox-frontend_20261110.00_p0`. Every request carried one `f.req` frame, the id
+in both the URL and the body, query keys `_reqid bl f.sid hl rpcids rt source-path` and form
+fields `at f.req`.
+
+| RPC id | Driven as | Hash | Inner `f.req` skeleton |
+|---|---|---|---|
+| `ogiZ0b` | t2i, `NARWHAL` | `d54b2262cb4ee746` | `["N",[["N","N","N","I","I","S","N",["N","I","N","N","N","U","N","N","N","N",["S","I"]],[[["S"]]],"N","N","N","U","U","I"]],"I",["N","I","N","N","N","U","N","N","N","N",["S","I"]],["U"]]` |
+| `YhhmEf` | t2v, `veo_3_1_lite`, portrait | `97b4e08cc0790271` | `[[[["N","N",[[["S"]]]],"K:veo_9_9_t9v_lite","I","N",["N","N","N","N","U","U"]]],["N","I","N","N","N","U","N","N","N","N",["S","I"]],["U","I"]]` |
+| `eb1hJf` | i2v, `veo_3_1_lite`, portrait, local start frame | `2ed406289469bcf1` | `[[[["N","N",[[["S"]]]],"K:veo_9_9_i9v_lite","I","N",["N","U","N","N","N",["N","N","I","I"]],["N","N","N","N","U","U"]]],["N","I","N","N","N","U","N","N","N","N",["S","I"]],["U","I"]]` |
+| `SPrCad` | image upscale, 2K | `402e517f0d9c5709` | `["U","I",["N","I","N","N","N","U","N","N","N","N",["S","I"]]]` |
+
+`fZytfe` (extend) and `p0UkFb` (video upscale) were not reached on that account: Flow
+disabled both menu items (#1244 for extend). `MZZa6b` and `nprQif` were not driven.
+
 ## Keeping this table current
 
 | When | What | Who enforces it |

@@ -219,6 +219,7 @@ class Guard:
         self.unresolved: list[list[str]] = []
         self.leaks: list[list[str]] = []
         self.got = asyncio.Event()
+        self.sent: list[str] = []  # ids of the free requests let through, in order
 
     def check(self, request: Any) -> tuple[str, str | None]:
         url = str(request.url)
@@ -232,6 +233,7 @@ class Guard:
     async def on_route(self, route: Any, request: Any) -> None:
         kind, body = self.check(request)
         if kind == "ok":
+            self.sent.extend(request_ids(str(request.url), body or "")[0])
             await route.fallback()
             return
         url = str(request.url)
@@ -315,7 +317,7 @@ async def drive(path: str, page: Any, ids: dict[str, str], tmp: Path) -> None:
             media_id=ids["video_media"],
             prompt=prompt,
             aspect=None,
-            poll_timeout_s=30.0,
+            poll_timeout_s=60.0,  # the e2e budget: fZytfe follows its own mint
         )
     elif path == "upscale-image":
         await upscale_image_migrated(
@@ -357,7 +359,8 @@ async def one_run(path: str, profile_dir: Path, ids: dict[str, str], n: int) -> 
         if waiter in done:
             await asyncio.sleep(3)  # let a second billed request (if any) show itself
         if task.done() and task.exception() is not None:
-            outcome = f"driver ended: {type(task.exception()).__name__}"
+            exc = task.exception()
+            outcome = f"driver ended: {type(exc).__name__}: {str(exc).splitlines()[0][:160]}"
         for t in (task, waiter):
             t.cancel()
             with contextlib.suppress(BaseException):
@@ -374,6 +377,7 @@ async def one_run(path: str, profile_dir: Path, ids: dict[str, str], n: int) -> 
         "captured": guard.captured,
         "unresolved_aborts": guard.unresolved,
         "leaks": guard.leaks,
+        "sent": list(dict.fromkeys(guard.sent)),
     }
 
 
@@ -381,7 +385,8 @@ def summarise(rec: dict[str, Any]) -> str:
     caps = [f"{c['rpc']}@{c['carrier']}#{c['hash']}" for c in rec["captured"]]
     return (
         f"{rec['path']} run {rec['run']}: {rec['seconds']}s {rec['outcome']} "
-        f"captured={caps} unresolved={rec['unresolved_aborts']} leaks={rec['leaks']}"
+        f"captured={caps} unresolved={rec['unresolved_aborts']} leaks={rec['leaks']} "
+        f"sent={rec['sent']}"
     )
 
 
