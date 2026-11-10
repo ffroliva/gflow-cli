@@ -1,7 +1,8 @@
 # Spike: Flow's RPC ids are readable in the JavaScript it serves (#1217)
 
-**Date:** 2026-11-10 · **Profile:** `denon82` · **Cost:** $0 (no generation, upload or RPC call
-made by the spike; the page arm opened a project page and one clip editor without clicking)
+**Date:** 2026-11-10 · **Profile:** `denon82` · **Cost:** $0 (arms 1 and 3 make no RPC call;
+the page arm opened a project page and one clip editor without clicking, so the page sent
+only its own load-time reads, 17 distinct ids, and no submit or upload)
 · **Script:** [`scripts/dev/spike_rpc_ids_in_bundle.py`](../../../scripts/dev/spike_rpc_ids_in_bundle.py)
 · **Build label seen:** `boq_labs-ai-sandbox-frontend_20261108.05_p0`
 
@@ -42,8 +43,10 @@ Supporting observations:
   `as29s`) is also named in the loaded scripts. None is built at runtime.
 - **Descriptor shape:** RPC descriptors look like `{Xa:"as29s", …}`. Arm 3's bundle holds **261**
   distinct ids in that shape; gflow knows 16. The others are the candidate inventory for #1216.
-- **`SNlM0e` was absent today** in the cookie arm (present 2026-11-09, absent 2026-09-12/16). This
-  is one more observation that it flaps. It doesn't affect this spike, which needs no token.
+- **`SNlM0e` was absent** in the cookie arm. This first read as the token flapping, which is
+  wrong. Spike #1221 (PR #1231) found that this shell (39,716 bytes) matches the signed-out page
+  (about 39.7k), not a signed-in one (42.5–42.8k). The cookies were not accepted at that moment,
+  and every signed-in page carries `SNlM0e`. It doesn't affect this spike, which needs no token.
 
 ## Verdict
 
