@@ -23,6 +23,7 @@ def tools() -> None:
 @tools.command("list")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a table.")
 def list_tools(as_json: bool) -> None:
+    """List the prompt tools available on this install."""
     specs = iter_tools()
     if as_json:
         json_output.emit(
@@ -52,6 +53,7 @@ def list_tools(as_json: bool) -> None:
 @tools.command("show")
 @click.argument("name")
 def show_tool(name: str) -> None:
+    """Show one prompt tool: what it does and what it needs."""
     spec = get_tool(name)
     console.print(f"[bold]{spec.title}[/bold] ({spec.name}) — {spec.category}")
     console.print(spec.description)
@@ -76,6 +78,7 @@ def show_tool(name: str) -> None:
 @click.option("--style", default=None, help="Domain style mode (see `tools show`).")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def run_tool(name: str, text: str, style: str | None, as_json: bool) -> None:
+    """Run a prompt tool on TEXT and print the rewritten prompt."""
     spec = get_tool(name)
     options = {"style": style} if style else {}
     result = apply_tool(spec, text, options)

@@ -19,7 +19,7 @@ from rich.table import Table
 
 from gflow_cli import __version__, json_output, profile_store, telemetry, telemetry_upload
 from gflow_cli import auth as auth_mod
-from gflow_cli._cli_helpers import command_tree, spends_credits
+from gflow_cli._cli_helpers import command_tree, help_json_path, spends_credits
 from gflow_cli.cli_character import character as _character_group
 from gflow_cli.cli_credits import credits as _credits_group
 from gflow_cli.cli_data import data as _data_group
@@ -135,15 +135,11 @@ class _RootGroup(telemetry.CountingGroup):
     """Answers ``--help --json`` anywhere in the tree before Click's eager --help prints."""
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
-        head = args[: args.index("--")] if "--" in args else args
-        if "--json" in head and any(h in head for h in ctx.help_option_names):
-            command, _ = telemetry.leaf_and_flags(self, head)
-            prefix = () if command == "gflow" else tuple(command.split())
-            tree = command_tree(self, prefix)
-            is_leaf = any(c["path"] == list(prefix) for c in tree["commands"])
-            words = [a for a in head if not a.startswith("-")]
-            # A group followed by an unknown word: let Click report "No such command".
-            if is_leaf or len(words) == len(prefix):
+        # Shell completion parses resiliently; like Click's own --help, stay out of it.
+        path = None if ctx.resilient_parsing else help_json_path(self, args)
+        if path is not None:
+            tree = command_tree(self, path)
+            if tree["commands"]:  # a hidden-only prefix falls through to Click's usage error
                 json_output.emit(tree)
                 ctx.exit(0)
         return super().parse_args(ctx, args)
@@ -224,6 +220,7 @@ def main(ctx: click.Context, verbose: bool) -> None:
 # --- auth -------------------------------------------------------------------
 
 
+@spends_credits(False)
 @main.group(invoke_without_command=True)
 @click.pass_context
 def auth(ctx: click.Context) -> None:
