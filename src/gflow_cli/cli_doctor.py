@@ -1,4 +1,7 @@
-"""``gflow doctor`` — read-only diagnostics over the catalog, DB, and env (#542).
+"""``gflow doctor`` — read-only diagnostics over the catalog, DB, env, and auth (#542).
+
+One check (``auth.wire_read``, #1229) makes one read-only credits request to
+flow.google.com for the default profile, unless the direct read is disabled.
 
 Rendering only: every finding string arrives pre-redacted from
 :mod:`gflow_cli.services.doctor` (UUIDs not display names, safe paths,
@@ -74,7 +77,9 @@ def _render_text(report: DoctorReport) -> None:
 def doctor(ctx: click.Context, as_json: bool) -> None:
     """Run read-only health checks over the catalog, database, and environment.
 
-    Diagnoses, never heals: nothing is migrated, repaired, or written.
+    Diagnoses, never heals: nothing is migrated, repaired, or written. Unless
+    disabled (GFLOW_CLI_WIRE_READS=0), it also makes one read-only request to
+    flow.google.com to check the default profile's direct credits read.
     Exit code 0 when clean, 33 when any warn/fail finding is reported.
     """
     report = run_all(_db_path(), get_settings())

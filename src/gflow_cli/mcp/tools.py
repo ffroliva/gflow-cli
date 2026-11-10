@@ -37,7 +37,7 @@ from pydantic import Field
 from gflow_cli import auth as auth_mod
 from gflow_cli import telemetry, telemetry_upload
 from gflow_cli._cli_helpers import _FLOW_ID_RE, _exit_code_for, default_project  # pyright: ignore[reportPrivateUsage]
-from gflow_cli.api import routes
+from gflow_cli.api import flow_wire, routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.image_upscale import TargetResolution
@@ -2119,7 +2119,17 @@ async def gflow_usage_stats(weeks: int = 12) -> dict[str, Any]:
         "BEFORE a generation tool to fail fast on expired auth, before a long "
         "blocking generation call. Never starts an interactive login flow. May boot a "
         "short-lived headless browser, which on flow.google.com is the usual path, and "
-        "may take up to ~2 min on a slow network."
+        "may take up to ~2 min on a slow network. Every result also carries "
+        "`wire: {status, build}`, the health of the direct (browser-free) credits read, "
+        "probed first with one read-only request to flow.google.com unless the direct read "
+        "is off. `status` is `accepted` (the saved cookies work), `signed_out_shell` or "
+        "`http_401` (Flow refused the saved session), `store_unreadable` (the cookie store "
+        "is locked, usually while Chrome has the profile open), `disabled` "
+        "(GFLOW_CLI_WIRE_READS=0 or the macOS default), `proxy_configured`, `throttled`, "
+        "`no_chrome_version`, `network`, `redirect`, `http_400`, `http_error`, `unparseable` "
+        "or `unexpected`. With `accepted`, credit reads need no browser; any other status "
+        "means they use the browser instead, and none of them changes `status` above. "
+        "`build` is Flow's build label when read, else null."
     ),
 )
 @_guarded
@@ -2134,20 +2144,24 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
         profile: gflow-cli profile name (``"default"`` auto-resolves like the CLI).
 
     Returns:
-        ``{"status": "authenticated", "profile", "user_email"}`` on success;
+        ``{"status": "authenticated", "profile", "user_email", "wire"}`` on success;
         otherwise ``{"status": <outcome>, "profile", "error": {...problem
-        details with remediation_hint...}}``.
+        details with remediation_hint...}, "wire"}``. ``wire`` is
+        :func:`gflow_cli.api.flow_wire.health` (status enum + build label).
     """
     resolved = _resolve_and_validate_profile(profile)
     if isinstance(resolved, dict):
         return resolved
     log.info("mcp.tool.auth_status", profile=resolved)
+    # The wire first: a browser probe holding the profile would lock the cookie jar (#1229).
+    wire = await flow_wire.health(auth_mod.profile_dir(resolved))
     status = await verification.verify_flow_profile(auth_mod.profile_dir(resolved), source="mcp")
     if status.authenticated:
         return {
             "status": "authenticated",
             "profile": resolved,
             "user_email": status.user_email,
+            "wire": wire,
         }
     if status.outcome is verification.FlowSessionOutcome.PROFILE_MARKER_MISSING:
         # #796: a local profile-state fault. Not retryable (the marker will not
@@ -2217,6 +2231,7 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
         "status": status.outcome.value,
         "profile": resolved,
         "error": error,
+        "wire": wire,
     }
 
 

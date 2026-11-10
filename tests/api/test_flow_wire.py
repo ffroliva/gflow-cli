@@ -680,3 +680,166 @@ async def test_a_blocking_cookie_read_is_bounded_by_the_deadline(
     with pytest.raises(WireReadUnavailable) as exc:
         await flow_wire.read_credits(profile)
     assert _reason(exc) is WireFallbackReason.STORE_UNREADABLE
+
+
+# --- wire health for `gflow doctor` and `gflow_auth_status` (G6, SCENARIO row 25) ------------
+
+
+@pytest.fixture
+def wire_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tests/conftest.py turns the wire off for the suite; the health probe honours that."""
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")
+    reset_settings()
+
+
+async def test_health_of_an_accepted_session_is_one_read_and_names_the_build(
+    profile: Path, flow: _Flow, wire_on: None
+) -> None:
+    assert await flow_wire.health(profile) == {
+        "status": "accepted",
+        "build": "boq_labs-flow-frontend_20261110.00_p0",
+    }
+    assert (len(flow.gets), len(flow.posts)) == (1, 1)
+
+
+async def test_health_reports_a_signed_out_shell_and_asks_only_once(
+    profile: Path, flow: _Flow, wire_on: None
+) -> None:
+    flow.shell = lambda _r: httpx.Response(200, text=_SIGNED_OUT_SHELL)
+
+    first = await flow_wire.health(profile)
+    second = await flow_wire.health(profile)  # a long-lived MCP server asks again
+
+    assert first == second == {"status": "signed_out_shell", "build": None}
+    assert (len(flow.gets), len(flow.posts)) == (1, 0)
+
+
+async def test_health_reports_an_unreadable_jar(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def locked(_p: Path) -> list[tuple[str, str]]:
+        raise CookieStoreUnreadable("locked")
+
+    monkeypatch.setattr(flow_wire, "read_cookies_for", locked)
+
+    assert await flow_wire.health(profile) == {"status": "store_unreadable", "build": None}
+    assert flow.gets == []
+
+
+async def test_health_reports_throttling_and_then_sends_nothing(
+    profile: Path, flow: _Flow, wire_on: None
+) -> None:
+    flow.rpc = lambda _r: httpx.Response(429, headers={"retry-after": "120"})
+
+    assert (await flow_wire.health(profile))["status"] == "throttled"
+    sent = (len(flow.gets), len(flow.posts))
+    assert (await flow_wire.health(profile))["status"] == "throttled"
+    assert (len(flow.gets), len(flow.posts)) == sent
+
+
+@pytest.mark.parametrize("reason", list(WireFallbackReason))
+async def test_health_passes_every_fallback_reason_through(
+    profile: Path, wire_on: None, monkeypatch: pytest.MonkeyPatch, reason: WireFallbackReason
+) -> None:
+    async def fails(_p: Path) -> object:
+        raise WireReadUnavailable(reason)
+
+    monkeypatch.setattr(flow_wire, "read_credits", fails)
+
+    assert await flow_wire.health(profile) == {"status": reason.value, "build": None}
+
+
+async def test_health_turns_a_wire_bug_into_unexpected(
+    profile: Path, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def boom(_p: Path) -> object:
+        raise RuntimeError("SID=fake-sid-value")
+
+    monkeypatch.setattr(flow_wire, "read_credits", boom)
+
+    assert await flow_wire.health(profile) == {"status": "unexpected", "build": None}
+
+
+@pytest.mark.parametrize(
+    ("env", "platform", "status"),
+    [
+        ({"GFLOW_CLI_WIRE_READS": "0"}, "win32", "disabled"),
+        ({}, "darwin", "disabled"),
+        (
+            {"GFLOW_CLI_WIRE_READS": "1", "GFLOW_CLI_BROWSER_PROXY": "http://127.0.0.1:3128"},
+            "win32",
+            "proxy_configured",
+        ),
+    ],
+)
+async def test_health_sends_nothing_when_the_wire_must_not_run(
+    profile: Path,
+    flow: _Flow,
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+    platform: str,
+    status: str,
+) -> None:
+    import sys
+
+    from gflow_cli.config import reset_settings
+
+    reads: list[Path] = []
+    monkeypatch.setattr(flow_wire, "read_cookies_for", lambda p: reads.append(p) or [])
+    monkeypatch.delenv("GFLOW_CLI_WIRE_READS", raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(sys, "platform", platform)
+    reset_settings()
+
+    assert await flow_wire.health(profile) == {"status": status, "build": None}
+    assert reads == [] and flow.gets == [] and flow.posts == []
+
+
+@pytest.mark.parametrize("label", ["boq_x<script>", "boq_" + "x" * 200, "SID=fake-sid-value", ""])
+async def test_health_drops_a_build_label_that_is_not_one(
+    profile: Path, flow: _Flow, wire_on: None, label: str
+) -> None:
+    flow.shell = lambda _r: httpx.Response(
+        200, text=_SHELL.replace("boq_labs-flow-frontend_20261110.00_p0", label)
+    )
+
+    assert await flow_wire.health(profile) == {"status": "accepted", "build": None}
+
+
+_SECRETS = ("fake-sid-value", "fake-3psid", "fake-osid", "AFAKEATTOKEN", "-1234567890", "reminted")
+
+
+async def test_no_surface_of_the_health_probe_carries_a_secret(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Names, counts and enum values only: doctor's finding, its JSON, and the MCP field."""
+    import json
+
+    from gflow_cli import auth as auth_mod
+    from gflow_cli import json_output, profile_store
+    from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
+    from gflow_cli.config import get_settings
+    from gflow_cli.mcp import tools
+    from gflow_cli.services import doctor
+
+    monkeypatch.setattr(profile_store, "resolve_profile", lambda _f: "x")
+    monkeypatch.setattr(auth_mod, "profile_dir", lambda _n="default": profile)
+    monkeypatch.setattr(tools, "_resolve_and_validate_profile", lambda _p: "x")
+
+    async def verified(_d: Path, *, source: str = "chrome") -> FlowSessionStatus:
+        return FlowSessionStatus(FlowSessionOutcome.AUTHENTICATED, user_email=None, source=source)
+
+    monkeypatch.setattr(tools.verification, "verify_flow_profile", verified)
+
+    findings = await asyncio.to_thread(doctor._check_wire_read, get_settings())  # pyright: ignore[reportPrivateUsage]
+    report = doctor.DoctorReport(findings=tuple(findings))
+    mcp = await tools.gflow_auth_status(profile="x")
+
+    assert findings[0].summary.startswith("status=accepted ")
+    assert mcp["wire"] == {"status": "accepted", "build": "boq_labs-flow-frontend_20261110.00_p0"}
+    rendered = json.dumps(json_output.doctor_payload(report)) + repr(findings) + json.dumps(mcp)
+    for secret in _SECRETS:
+        assert secret not in rendered

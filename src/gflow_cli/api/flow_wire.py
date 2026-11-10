@@ -50,6 +50,7 @@ _ALLOWED_RPCIDS = frozenset({"nzlxg"})
 _ROUTE = "credits_wire"
 _THROTTLED_HINT = "Flow is throttling this account; wait a minute, then read the balance again."
 _THROTTLE_DEFAULT_S = 60.0
+_BUILD = re.compile(r"boq_[A-Za-z0-9._-]{1,80}")  # cfb2h is scraped from remote HTML
 _CONNECT_S = 3.0
 _TOTAL_S = 5.0
 _UA_PLATFORM = {
@@ -271,3 +272,35 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
         raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE) from None
     log.info("credits.wire_read", ms=round((time.perf_counter() - started) * 1000))
     return info
+
+
+async def health(profile_dir: Path) -> dict[str, str | None]:
+    """The direct read's health for ``gflow doctor`` and ``gflow_auth_status`` (G6).
+
+    The probe IS one credits read (one GET, one POST), under every rule ``read_credits``
+    keeps, plus the kill switch / macOS default it leaves to its caller. Returns only an
+    enum ``status`` (``accepted``, ``throttled``, or a :class:`WireFallbackReason` value) and
+    the Flow build label when one was read; never a cookie, token, id or URL. Never raises.
+    """
+    status: str
+    if not get_settings().wire_reads:
+        status = WireFallbackReason.DISABLED.value
+    elif profile_dir in _signed_out:
+        # Flow already refused this session in this process; _gate would say DISABLED,
+        # which reads as the kill switch. shortcut: a 401 also lands here; split if needed.
+        status = WireFallbackReason.SIGNED_OUT_SHELL.value
+    else:
+        try:
+            await read_credits(profile_dir)
+        except WireReadUnavailable as exc:
+            status = exc.reason.value
+        except (RateLimitError, NetworkError):  # only ever the throttle window here
+            status = "throttled"
+        except Exception as exc:  # noqa: BLE001 - a health probe reports, it never fails a caller
+            log.warning("wire.health_unexpected", error_type=type(exc).__name__)
+            status = WireFallbackReason.UNEXPECTED.value
+        else:
+            tokens = _tokens.get(profile_dir)
+            bl = tokens.bl if tokens else None
+            return {"status": "accepted", "build": bl if bl and _BUILD.fullmatch(bl) else None}
+    return {"status": status, "build": None}

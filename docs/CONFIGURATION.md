@@ -517,6 +517,7 @@ per-command `--proxy` flags (the setting covers one-off runs:
 **Default:** `true` on Windows and Linux; `false` on macOS, where reading Chrome's cookies can raise a Keychain prompt.
 **Safety:** the direct read never writes to the profile's cookies, ignores any cookie Flow sends back, and follows no redirect. A profile Flow answers "signed out" (or HTTP 401) is not tried again for the rest of the process; other profiles are unaffected.
 **Proxy:** while `GFLOW_CLI_BROWSER_PROXY` is set the direct read is skipped (reason `proxy_configured`), so the profile's cookies never leave from a different IP address than its browser's.
+**Health:** `gflow doctor` (check `auth.wire_read`, the default profile) and the MCP `gflow_auth_status` tool (its `wire` field) report whether the direct read works: `status=accepted` with Flow's build label, or the reason it falls back (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, …). Each makes one direct read, under every rule above; with the setting off, or a proxy set, neither sends anything.
 
 ### `GFLOW_CLI_AGENT_CONFIRM`
 

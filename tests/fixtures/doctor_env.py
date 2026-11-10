@@ -33,6 +33,7 @@ CHECK_IDS = (
     "env.browsers_missing",
     "env.browser_proxy",
     "auth.files_present",
+    "auth.wire_read",
 )
 
 
@@ -57,3 +58,10 @@ def healthy_doctor_env(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         ],
     )
+    # auth.wire_read (#1229): the direct read works for the default profile; nothing is sent.
+    monkeypatch.setattr("gflow_cli.profile_store.resolve_profile", lambda _flag: "default")
+
+    async def accepted(_profile_dir: Path) -> dict[str, str | None]:
+        return {"status": "accepted", "build": "boq_labs-flow-frontend_20261110.00_p0"}
+
+    monkeypatch.setattr("gflow_cli.api.flow_wire.health", accepted)
