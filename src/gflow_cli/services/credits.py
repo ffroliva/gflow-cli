@@ -105,8 +105,9 @@ async def _fetch(meta: profile_store.ProfileMeta, *, refresh: bool = False) -> d
         # channel is missing). The first read's diagnosis is still the accurate one.
         log.info("credits.refresh_failed", profile=meta.name, error_type=type(exc).__name__)
         raise expired from exc
-    # `labs_unverified` still gets the re-ask: labs answers 410 to everyone now, and the
-    # Flow visit may have rotated what the read needs even when labs said nothing.
+    # `labs_unverified` (Flow authenticated the session, the labs step itself failed) still
+    # gets the re-ask: the Flow visit may have rotated what the read needs. A labs 410 is
+    # already `renewed` (#1023).
     if not result.renewed and result.result != "labs_unverified":
         # Revoked, or held at Flow's /about page: the first read's diagnosis stands.
         log.info(
@@ -117,7 +118,8 @@ async def _fetch(meta: profile_store.ProfileMeta, *, refresh: bool = False) -> d
             labs_stale=result.labs_stale,
         )
         raise expired
-    # Flow verified the session (labs is irrelevant to the direct read): one more wire try.
+    # Flow authenticated the session, so the direct read gets one more try. If the cookies
+    # did not change, it is marked signed out again and the read falls back to the page.
     flow_wire.session_recovered(meta.profile_dir)
     return await _fetch_once(meta)
 

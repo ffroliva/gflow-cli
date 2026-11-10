@@ -246,7 +246,7 @@ async def _read_cookies(profile_dir: Path) -> list[tuple[str, str]]:
     loop = asyncio.get_running_loop()
     future: asyncio.Future[list[tuple[str, str]]] = loop.create_future()
 
-    def settle(result: list[tuple[str, str]] | None, error: BaseException | None) -> None:
+    def settle(result: list[tuple[str, str]] | None, error: Exception | None) -> None:
         if future.done():  # the wait already gave up
             return
         if error is not None:
@@ -321,9 +321,10 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
 
 
 def session_recovered(profile_dir: Path) -> None:
-    """A renew reported the profile renewed (its saved cookies changed): lift the signed-out
-    mark and the cached ``at`` so the next read tries the wire once more. A page read is not
-    enough (the cookies the wire sends are the same), and a throttle window is time-based."""
+    """A renewal Flow authenticated (``renewed`` or ``labs_unverified``): lift the signed-out
+    mark and the cached ``at`` so the next read tries the wire once more. If the cookies did
+    not change, that read marks the profile again. A page read does not lift it (the wire
+    would send the same cookies), and a throttle window is time-based."""
     _signed_out.pop(profile_dir, None)
     _tokens.pop(profile_dir, None)
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 from pathlib import Path
 from typing import Any
 
@@ -387,15 +386,15 @@ async def test_an_unverified_labs_state_is_still_re_asked(
     ("labs_stale", "verdict", "lifted"),
     [
         (False, "authenticated", True),  # renewed
-        (None, "authenticated", True),  # labs_unverified: Flow itself verified the session
+        (None, "authenticated", True),  # labs_unverified: Flow authenticated, labs step failed
         (True, "authenticated", False),  # labs_stale: not re-asked at all
     ],
 )
 async def test_a_flow_verified_renewal_lifts_the_wire_signed_out_mark(
     monkeypatch: pytest.MonkeyPatch, labs_stale: bool | None, verdict: str, lifted: bool
 ) -> None:
-    """The direct read only needs flow.google.com's cookies, so a renewal Flow verified gets
-    the wire one more try whatever labs answered (labs answers 410 to everyone now)."""
+    """The direct read only needs flow.google.com's cookies, so a renewal Flow authenticated
+    gets the wire one more try even when the labs step failed (`labs_unverified`)."""
     from gflow_cli.services import credits
 
     _install_expiring_fast_path(monkeypatch, [_meta("one")])
@@ -407,7 +406,7 @@ async def test_a_flow_verified_renewal_lifts_the_wire_signed_out_mark(
     monkeypatch.setattr(credits, "renew_profile", renew)
     monkeypatch.setattr(credits.flow_wire, "session_recovered", lambda p: recovered.append(p.name))
 
-    with contextlib.suppress(Exception):
+    with pytest.raises(AuthExpiredError):  # the stub's read keeps failing after the renewal
         await credits.inspect_profile(None, refresh=True)
 
     assert recovered == (["one"] if lifted else [])
