@@ -46,8 +46,8 @@ chrome_strategy_requested(profile_dir) -> bool
     system Chrome (independent of whether Chrome is actually available).
 
 disable_features_args() -> tuple[str, ...]
-    One ``--disable-features`` switch merging Playwright's list with gflow's
-    (#1140); empty when Playwright's list cannot be read.
+    One ``--disable-features`` switch merging the active engine's list with
+    gflow's (#1140); empty when that list cannot be read.
 
 ensure_profile_engine_compatible(profile_dir, channel) -> None
     Raise ``ProfileEngineDowngradeError`` when the bundled Chromium about to
@@ -60,7 +60,6 @@ _find_chrome_binary() -> str
 
 from __future__ import annotations
 
-import functools
 import json
 import os
 import re
@@ -227,35 +226,55 @@ def window_position_args(position: str) -> list[str]:
     return [f"--window-position={position}"] if position else []
 
 
-#: Chrome features gflow turns off on top of Playwright's own list (#1140):
+#: Chrome features gflow turns off on top of the driver's own list (#1140):
 #: CloudSyncedFolderChecker's startup task (a Windows cloud-files COM call) can never
-#: answer, and headed Chrome's shutdown waits on it until the 30 s close timeout.
+#: answer, and Chrome's shutdown, headed or headless, waits on it until the 30 s
+#: close timeout.
 _EXTRA_DISABLED_FEATURES = ("CloudSyncedFolderChecker",)
 
 # Where Playwright 1.61 builds its switch; the pin test fails loudly if this moves.
 _PW_LIST_RE = re.compile(r"disabledFeatures = \[(.*?)\]\.filter\(Boolean\)", re.DOTALL)
 _PW_SWITCH_USE = '"--disable-features=" + disabledFeatures.join(",")'
 
-
-def _playwright_bundle() -> Path:
-    import playwright
-
-    return Path(playwright.__file__).parent / "driver" / "package" / "lib" / "coreBundle.js"
+#: Successful reads only, per bundle: a failed read is retried on the next launch, so
+#: a transient lock does not cost a long-lived ``gflow mcp run`` the slow close.
+_DISABLE_FEATURES_CACHE: dict[Path, tuple[str, ...]] = {}
 
 
-@functools.cache
+def _engine_package_dir() -> Path:
+    """The ACTIVE engine's package dir: ``patchright`` when selected, else ``playwright``."""
+    import importlib
+
+    from gflow_cli.api._engine import active_engine
+    from gflow_cli.config import BrowserEngine
+
+    name = "patchright" if active_engine() == BrowserEngine.PATCHRIGHT else "playwright"
+    return Path(str(importlib.import_module(name).__file__)).parent
+
+
+def _engine_bundle() -> Path:
+    return _engine_package_dir() / "driver" / "package" / "lib" / "coreBundle.js"
+
+
 def disable_features_args() -> tuple[str, ...]:
-    """ONE ``--disable-features`` switch: Playwright's own list plus gflow's (#1140).
+    """ONE ``--disable-features`` switch: the driver's own list plus gflow's (#1140).
 
     Chrome honours only the last such switch, so a second one would silently
-    re-enable Playwright's (measured: HttpsUpgrades came back). The list is read from
-    Playwright's driver bundle; if it cannot be read as plain string literals, the
-    switch is left out, which keeps the old (slow-close) behaviour rather than a
-    wrong feature set. Shared by every headed launch site.
+    re-enable the driver's (measured: HttpsUpgrades came back). The list is read from
+    the active engine's driver bundle (patchright keeps a different one); if it cannot
+    be read as plain string literals, the switch is left out, which keeps the old
+    (slow-close) behaviour rather than a wrong feature set. Shared by every
+    Playwright launch site, headed or headless.
     """
     try:
-        js = _playwright_bundle().read_text(encoding="utf-8")
-    except OSError:
+        bundle = _engine_bundle()
+    except ImportError:  # the engine is not installed; its launch fails on its own
+        return ()
+    if (cached := _DISABLE_FEATURES_CACHE.get(bundle)) is not None:
+        return cached
+    try:
+        js = bundle.read_text(encoding="utf-8")
+    except (OSError, ValueError):  # ValueError covers a truncated, non-UTF-8 bundle
         js = ""
     match = _PW_LIST_RE.search(js)
     body = re.sub(r"//[^\n]*", "", match.group(1)) if match else ""
@@ -264,7 +283,9 @@ def disable_features_args() -> tuple[str, ...]:
     if not features or _PW_SWITCH_USE not in js or re.sub(r'"[^"]*"|[\s,]', "", body):
         log.warning("browser_manager.playwright_disabled_features_unreadable")
         return ()
-    return ("--disable-features=" + ",".join([*features, *_EXTRA_DISABLED_FEATURES]),)
+    result = ("--disable-features=" + ",".join([*features, *_EXTRA_DISABLED_FEATURES]),)
+    _DISABLE_FEATURES_CACHE[bundle] = result
+    return result
 
 
 #: Playwright's launch error when Chrome hands the profile to a running instance
@@ -395,17 +416,7 @@ def installed_chromium_version() -> str | None:
     Best-effort: any failure resolves to None.
     """
     try:
-        import importlib
-
-        from gflow_cli.api._engine import active_engine
-        from gflow_cli.config import BrowserEngine
-
-        module_name = "patchright" if active_engine() == BrowserEngine.PATCHRIGHT else "playwright"
-        module = importlib.import_module(module_name)
-        module_file = module.__file__
-        if not module_file:
-            return None
-        registry_path = Path(module_file).parent / "driver" / "package" / "browsers.json"
+        registry_path = _engine_package_dir() / "driver" / "package" / "browsers.json"
         registry = json.loads(registry_path.read_text(encoding="utf-8"))
         for browser in registry.get("browsers", []):
             if browser.get("name") == "chromium":

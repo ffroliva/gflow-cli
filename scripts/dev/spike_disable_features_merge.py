@@ -1,8 +1,8 @@
 """#1140 probe: does ONE merged --disable-features switch keep Playwright's list AND
 stop CloudSyncedFolderChecker from holding Chrome's close for 30 s?
 
-Four headed real-Chrome arms on a throwaway profile, each held open >2 s (a window
-closed within ~2 s does not show the hang):
+Six real-Chrome arms (four headed, two headless), each on a throwaway profile and
+held open >2 s (a window closed within ~2 s does not show the hang):
 
   none    no switch of ours           expect: http stays http, slow close
   lone    --disable-features=CloudSyncedFolderChecker
@@ -70,7 +70,11 @@ async def _arm(pw: Any, name: str, kwargs: dict[str, Any]) -> None:
 
 
 async def main() -> None:
-    (merged,) = disable_features_args()
+    merged_args = disable_features_args()
+    if not merged_args:  # the regression this probe diagnoses: the list went unreadable
+        print("disable_features_args() returned () -- the driver list was not readable")
+        raise SystemExit(1)
+    (merged,) = merged_args
     async with async_playwright() as pw:
         for name, extra, headless in (
             ("none", [], False),

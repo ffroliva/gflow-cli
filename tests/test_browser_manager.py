@@ -483,16 +483,16 @@ class TestDisableFeaturesArgs:
 
     @pytest.fixture(autouse=True)
     def _fresh_cache(self) -> Iterator[None]:
-        from gflow_cli.browser_manager import disable_features_args
+        import gflow_cli.browser_manager as bm
 
-        disable_features_args.cache_clear()
+        bm._DISABLE_FEATURES_CACHE.clear()  # noqa: SLF001
         yield
-        disable_features_args.cache_clear()
+        bm._DISABLE_FEATURES_CACHE.clear()  # noqa: SLF001
 
     def _with_bundle(self, monkeypatch: pytest.MonkeyPatch, path: Path) -> tuple[str, ...]:
         import gflow_cli.browser_manager as bm
 
-        monkeypatch.setattr(bm, "_playwright_bundle", lambda: path)
+        monkeypatch.setattr(bm, "_engine_bundle", lambda: path)
         return bm.disable_features_args()
 
     def test_one_switch_keeps_playwrights_features_and_adds_ours(
@@ -528,6 +528,62 @@ class TestDisableFeaturesArgs:
     ) -> None:
         assert self._with_bundle(monkeypatch, tmp_path / "absent.js") == ()
 
+    def test_non_utf8_bundle_leaves_the_switch_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A truncated or corrupt bundle must degrade, not crash every launch."""
+        bundle = tmp_path / "coreBundle.js"
+        bundle.write_bytes(_BUNDLE_SHAPE.encode("utf-8")[:40] + b"\xff\xfe\x80")
+        assert self._with_bundle(monkeypatch, bundle) == ()
+
+    def test_a_failed_read_is_not_cached(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A transient lock on the first read must not cost a long-lived MCP server
+        the slow close for the rest of its life."""
+        bundle = tmp_path / "coreBundle.js"
+        assert self._with_bundle(monkeypatch, bundle) == ()
+        bundle.write_text(_BUNDLE_SHAPE, encoding="utf-8")
+        assert self._with_bundle(monkeypatch, bundle) != ()
+
+    @pytest.mark.parametrize(
+        ("engine", "features", "expected"),
+        [
+            ("playwright", '"MediaRouter", "Translate"', "MediaRouter,Translate"),
+            ("patchright", '"Translate"', "Translate"),
+        ],
+    )
+    def test_the_active_engines_own_list_is_merged(
+        self,
+        engine: str,
+        features: str,
+        expected: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Patchright drops MediaRouter for stealth; merging Playwright's list over it
+        would put MediaRouter back on the reCAPTCHA-scored path."""
+        import sys
+        import types
+
+        import gflow_cli.api._engine as engine_mod
+        import gflow_cli.browser_manager as bm
+        from gflow_cli.config import BrowserEngine
+
+        old_list = _BUNDLE_SHAPE[_BUNDLE_SHAPE.index("[") + 1 : _BUNDLE_SHAPE.index("].filter")]
+        for name, listed in (("playwright", '"Bogus"'), ("patchright", '"Bogus"')):
+            lib = tmp_path / name / "driver" / "package" / "lib"
+            lib.mkdir(parents=True)
+            text = _BUNDLE_SHAPE.replace(old_list, features if name == engine else listed)
+            (lib / "coreBundle.js").write_text(text, encoding="utf-8")
+            module = types.ModuleType(name)
+            module.__file__ = str(tmp_path / name / "__init__.py")
+            monkeypatch.setitem(sys.modules, name, module)
+        monkeypatch.setattr(engine_mod, "active_engine", lambda: BrowserEngine(engine))
+        assert bm.disable_features_args() == (
+            f"--disable-features={expected},CloudSyncedFolderChecker",
+        )
+
     def test_installed_playwright_list_still_parses(self) -> None:
         """Pins the parse to the installed Playwright: an upgrade that moves or
         reshapes the list fails here instead of silently dropping the fix."""
@@ -538,22 +594,45 @@ class TestDisableFeaturesArgs:
         assert {"HttpsUpgrades", "Translate", "MediaRouter"} <= set(features)
         assert features[-1] == "CloudSyncedFolderChecker"
 
-    def test_every_launch_site_carries_the_merged_switch(self) -> None:
+    def test_every_launch_call_carries_the_merged_switch(self) -> None:
         """Headless real Chrome hangs on close too (measured 31.3 s, #1140 probe), so
-        every module that launches Chrome must pass the switch, directly or through
-        ``login_launch_kwargs``."""
+        EVERY ``launch_persistent_context`` call, not merely every file, must pass
+        ``*disable_features_args()`` in ``args=`` or spread ``**login_launch_kwargs(...)``.
+        ``FlowApiClient`` launches ``**kwargs`` from ``_persistent_context_kwargs``,
+        which the kwargs test below checks by behaviour."""
+        import ast
+
         import gflow_cli
 
+        def called(node: ast.expr, name: str) -> bool:
+            return isinstance(node, ast.Call) and getattr(node.func, "id", "") == name
+
+        def carries_switch(call: ast.Call) -> bool:
+            for kw in call.keywords:
+                if kw.arg == "args" and isinstance(kw.value, ast.List):
+                    return any(
+                        isinstance(e, ast.Starred) and called(e.value, "disable_features_args")
+                        for e in kw.value.elts
+                    )
+                if kw.arg is None and called(kw.value, "login_launch_kwargs"):
+                    return True
+            return False
+
         src = Path(gflow_cli.__file__).parent
-        offenders = [
-            py.relative_to(src).as_posix()
-            for py in src.rglob("*.py")
-            if py.name != "browser_manager.py"  # the helper's home; it names the call in prose
-            and "launch_persistent_context(" in (text := py.read_text(encoding="utf-8"))
-            and "*disable_features_args()" not in text
-            and "login_launch_kwargs(" not in text
-        ]
-        assert not offenders, f"Chrome launch sites without the #1140 switch: {offenders}"
+        offenders: list[str] = []
+        for py in src.rglob("*.py"):
+            rel = py.relative_to(src).as_posix()
+            for node in ast.walk(ast.parse(py.read_text(encoding="utf-8"))):
+                if not (
+                    isinstance(node, ast.Call)
+                    and getattr(node.func, "attr", "") == "launch_persistent_context"
+                ):
+                    continue
+                if rel == "api/client.py" and any(k.arg is None for k in node.keywords):
+                    continue  # **kwargs from _persistent_context_kwargs (tested below)
+                if not carries_switch(node):
+                    offenders.append(f"{rel}:{node.lineno}")
+        assert not offenders, f"Chrome launches without the #1140 switch: {offenders}"
 
     def test_generation_and_login_kwargs_carry_one_switch(self, tmp_path: Path) -> None:
         from gflow_cli.api.client import FlowApiClient
@@ -568,3 +647,14 @@ class TestDisableFeaturesArgs:
             login_launch_kwargs(tmp_path, headless=False)["args"],
         ):
             assert [a for a in args if a.startswith("--disable-features")] == [switch]
+
+    def test_passive_login_subprocess_disables_the_checker(self) -> None:
+        """The bare-subprocess login has no Playwright list to keep, so a lone switch
+        is the whole fix there, and it must be the only one."""
+        from gflow_cli.auth.real_chrome import _build_chrome_args
+
+        for headless in (False, True):
+            args = _build_chrome_args("chrome.exe", Path("prof"), headless=headless)
+            assert [a for a in args if a.startswith("--disable-features")] == [
+                "--disable-features=CloudSyncedFolderChecker"
+            ]
