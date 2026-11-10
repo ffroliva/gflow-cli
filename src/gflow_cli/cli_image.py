@@ -38,6 +38,7 @@ from gflow_cli._cli_helpers import (
     run_with_handlers,
     safe_path_text,
     slugify_project_name,
+    spends_credits,
     tool_option,
 )
 from gflow_cli.api import routes
@@ -495,6 +496,7 @@ def image() -> None:
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @image.command(
     "upload",
     short_help="Upload a local image into an ephemeral Flow project.",
@@ -602,6 +604,7 @@ async def _run_upload(
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @image.command(
     "upscale",
     short_help="Upscale a platform-generated image to 2K or 4K.",
@@ -827,6 +830,7 @@ _ui_mode_option = click.option(
 )
 
 
+@spends_credits(True)
 @image.command(
     "t2i",
     short_help="Generate image(s) from a text prompt.",
@@ -1530,6 +1534,7 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
 _BATCH_TITLE = "gflow-cli image batch"
 
 
+@spends_credits(True)
 @image.command(
     "batch",
     short_help=f"Batch-generate images from a manifest (max {_MAX_BATCH_PROMPTS}, shared project).",
@@ -1712,6 +1717,7 @@ class _I2IParams:
     ui_mode: UiMode | None = None
 
 
+@spends_credits(True)
 @image.command(
     "i2i",
     short_help="Generate image(s) from a prompt + one or more reference images.",

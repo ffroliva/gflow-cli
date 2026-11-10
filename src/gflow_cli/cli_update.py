@@ -12,13 +12,14 @@ from __future__ import annotations
 import click
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import run_with_handlers
+from gflow_cli._cli_helpers import run_with_handlers, spends_credits
 
 # Bound in THIS module's namespace so tests can monkeypatch
 # ``gflow_cli.cli_update.run_update`` and never spawn a package manager.
 from gflow_cli.update_check import UpdateReport, run_update
 
 
+@spends_credits(False)
 @click.command("update")
 @click.option(
     "--check",

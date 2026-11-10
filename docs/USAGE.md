@@ -76,6 +76,32 @@ Machine-readable output: the generation commands (`image t2i` / `image i2i`,
 emit a single parseable object on stdout instead of Rich tables. See
 [§ JSON output](#json-output---json).
 
+Machine-readable command tree ([#1203](https://github.com/ffroliva/gflow-cli/issues/1203)):
+`gflow --help --json` prints every command as one JSON object, and
+`gflow <group> [<cmd>] --help --json` narrows it to that part of the tree. Agents and scripts
+can discover commands from it instead of scraping `--help` text, which changes with wording.
+
+```bash
+gflow --help --json | jq -r '.commands[] | select(.spends_credits) | .path | join(" ")'
+gflow video t2v --help --json | jq '.commands[0].params[].name'
+```
+
+Shape: `{"schema": 1, "name": "gflow", "version": "...", "commands": [...]}`. Each command
+has `path` (e.g. `["video", "t2v"]`), `summary`, `aliases`, `params` and `spends_credits`.
+Each param has `name` as typed (`--json`, `PROMPT`), `opts` (every spelling, including the
+off switch of an on/off pair such as `--on/--off`), `type` (`flag` for an on/off switch),
+`choices`, `multiple` (repeatable), `nargs`, `default`, `required` and `help`. Paths and
+params are read from the CLI itself, so they cannot drift. `spends_credits` is set by hand on
+each command, and a test fails when a command has none or when it disagrees with the MCP
+server's spend gate. A bare group that runs on its own, such as `gflow auth`, is listed as a
+command too. **`spends_credits` is `true` for a command that submits a new Flow generation**: the
+video commands (`video t2v`/`i2v`/`r2v`/`chain`/`extend`) spend Veo credits; the image
+commands (`image t2i`/`i2i`/`batch`, `gflow run`, `character create`) and `movie run` submit
+generations too, and images bill the daily image quota rather than credits. Reads, exports
+(`image upscale`, `video upscale`), local catalog work and server-side composition
+(`scene create`) are `false`. The cost of `image upscale --scale 4k` (a subscription tier
+feature) has not been measured.
+
 Note: `--profile NAME` is **per-subcommand**, not global — pass it after the subcommand name (e.g. `gflow image t2i "..." --profile experiments`, not `gflow --profile experiments image t2i ...`).
 
 ## `gflow docs`
@@ -121,7 +147,17 @@ There is deliberately **no MCP twin** — see the note at the top of
 
 ## `gflow auth`
 
-See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
+See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands). In short:
+
+```bash
+gflow auth                       # list profiles, or start the first login
+gflow auth login --browser chrome
+gflow auth status [--profile NAME]
+gflow auth renew [--profile NAME | --all] [--json]
+gflow auth list [--json]
+gflow auth use NAME              # make NAME the default profile
+gflow auth logout [--profile NAME] [--yes]   # delete a saved session (asks first)
+```
 
 ## `gflow credits`
 
@@ -941,6 +977,13 @@ gflow image t2i "a red bicycle"      # lands in my-batch
 gflow video t2v "a tram at dusk"     # so does this
 ```
 
+To read one project back from the local catalog, or rename it on Flow and in the catalog:
+
+```bash
+gflow project show PROJ123 [--json]
+gflow project rename PROJ123 "Storyboard v2" [--json]
+```
+
 ## Batch video generation (shell loop)
 
 `gflow video` has no `batch` subcommand — a manifest-driven video runner
@@ -1480,6 +1523,17 @@ or signed URLs). See
 > **`data list profiles` vs `gflow auth list`** — `data list profiles` shows profiles that have **recorded generations** in the catalog; `gflow auth list` shows profiles that have ever **logged in** via `gflow auth login`. A profile that logged in but never generated anything will appear in `auth list` but not in `data list profiles`.
 
 For full schema details and JOIN semantics, see [`docs/DATA_LAYER.md § Querying the data layer`](DATA_LAYER.md#querying-the-data-layer).
+
+## `gflow data errors export | prune`
+
+`gflow data errors export` writes every recorded failed operation as JSONL, newest first
+(`--profile`, `--older-than 90d`, `-o FILE`; stdout by default). Archive with it, then
+reclaim the space with `gflow data errors prune`.
+
+```bash
+gflow data errors export --older-than 90d -o failures.jsonl
+gflow data errors prune --older-than 90d
+```
 
 ## `gflow data prune`
 

@@ -30,6 +30,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     run_with_handlers,
+    spends_credits,
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
@@ -218,6 +219,7 @@ def instructions() -> None:
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @instructions.command(
     "add",
     short_help="Add a persistent instruction card to a project's brief.",
@@ -313,6 +315,7 @@ async def _run_add(
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @instructions.command(
     "list",
     short_help="List a project's instruction cards.",
@@ -425,6 +428,7 @@ def _selector_options(func: Callable[..., Any]) -> Callable[..., Any]:
     return click.argument("title", required=False)(func)
 
 
+@spends_credits(False)
 @instructions.command(
     "enable",
     short_help="Enable an instruction card (by title or --id).",
@@ -456,6 +460,7 @@ def enable(
     )
 
 
+@spends_credits(False)
 @instructions.command(
     "disable",
     short_help="Disable an instruction card (by title or --id).",
@@ -516,6 +521,7 @@ async def _run_set_enabled(
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @instructions.command(
     "rm",
     short_help="Remove an instruction card (by title or --id).",
@@ -571,6 +577,7 @@ async def _run_rm(
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @instructions.command(
     "apply",
     short_help="Declaratively full-sync a project's brief from a TOML/JSON file.",
@@ -693,6 +700,7 @@ async def _cards_from_entries(
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @instructions.command(
     "toggle-mode",
     short_help="Turn the project's brief master switch on or off.",

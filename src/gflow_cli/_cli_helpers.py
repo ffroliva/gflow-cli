@@ -35,11 +35,12 @@ been removed. Both error handlers now import
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import click
 import structlog
@@ -58,11 +59,12 @@ from gflow_cli.observability import emit_error_event, emit_unhandled_event
 from gflow_cli.tools.runtime import apply_tool
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Callable, Coroutine, Iterator
 
     from gflow_cli.tools.invocation import AppliedTool
 
 _logger = structlog.get_logger(__name__)
+_CommandT = TypeVar("_CommandT", bound=click.Command)
 _console = Console()
 
 # Explicit re-export list. The underscore prefix on ``_resolve_profile`` and
@@ -82,10 +84,15 @@ __all__ = [
     "_resolve_profile",
     "_validate_project_id",
     "apply_tool_option",
+    "cli_leaves",
+    "command_tree",
+    "help_json_path",
     "default_project",
     "run_with_handlers",
     "safe_path_text",
     "slugify_project_name",
+    "spends_credits",
+    "spends_credits_decision",
     "tool_option",
 ]
 
@@ -190,6 +197,130 @@ def tool_option(func: Callable[..., Any]) -> Callable[..., Any]:
         multiple=True,
         help=_TOOL_OPTION_HELP,
     )(func)
+
+
+_SPENDS_CREDITS_ATTR = "gflow_spends_credits"
+
+
+def spends_credits(value: bool) -> Callable[[_CommandT], _CommandT]:
+    """Record whether a leaf command submits a Flow generation (#1203).
+
+    Goes OUTERMOST, above ``@<group>.command(...)``, so it marks the Command object.
+    True means a new generation is submitted: a video spends Veo credits, an image spends
+    the daily image quota. Every leaf needs a decision; ``tests/cli/test_help_json.py``
+    fails on an undecorated one.
+    """
+
+    def mark(cmd: _CommandT) -> _CommandT:
+        setattr(cmd, _SPENDS_CREDITS_ATTR, value)
+        return cmd
+
+    return mark
+
+
+def spends_credits_decision(cmd: click.Command) -> bool | None:
+    """The ``@spends_credits`` value of *cmd*, or None when it was never decided."""
+    return getattr(cmd, _SPENDS_CREDITS_ATTR, None)
+
+
+def cli_leaves(
+    group: click.Group, path: tuple[str, ...] = ()
+) -> Iterator[tuple[tuple[str, ...], click.Command, list[str]]]:
+    """Yield ``(path, command, aliases)`` for every runnable command under *group*.
+
+    That is every plain command plus every ``invoke_without_command`` group (bare
+    ``gflow auth`` runs). Hidden commands and groups are skipped. A command registered
+    under several names in one group yields once, under its first name; the other names
+    are its aliases.
+    """
+    names: dict[int, list[str]] = {}
+    for name, cmd in group.commands.items():
+        names.setdefault(id(cmd), []).append(name)
+    for first, *aliases in names.values():
+        cmd = group.commands[first]
+        if cmd.hidden:
+            continue
+        if not isinstance(cmd, click.Group) or cmd.invoke_without_command:
+            yield (*path, first), cmd, aliases
+        if isinstance(cmd, click.Group):
+            yield from cli_leaves(cmd, (*path, first))
+
+
+def _jsonable(value: Any) -> Any:
+    if callable(value):
+        return None
+    return json.loads(json.dumps(value, default=str))  # Path, tuple -> JSON-native
+
+
+def _param_json(param: click.Parameter) -> dict[str, Any]:
+    info = param.to_info_dict()
+    is_option = isinstance(param, click.Option)
+    long = [o for o in param.opts if o.startswith("--")]
+    return {
+        "name": (long or param.opts)[0] if is_option else param.human_readable_name,
+        "opts": [*param.opts, *param.secondary_opts] if is_option else [],
+        "type": "flag" if is_option and info["is_flag"] else param.type.name,
+        "choices": _jsonable(info["type"].get("choices")),
+        "multiple": param.multiple,
+        "nargs": param.nargs,
+        "default": _jsonable(info["default"]),
+        "required": param.required,
+        "help": getattr(param, "help", None),
+    }
+
+
+def command_tree(root: click.Group, prefix: tuple[str, ...] = ()) -> dict[str, Any]:
+    """The ``--help --json`` payload: every runnable command at or under *prefix* (#1203)."""
+    from gflow_cli import __version__
+
+    return {
+        "schema": 1,
+        "name": "gflow",
+        "version": __version__,
+        "commands": [
+            {
+                "path": list(path),
+                "summary": cmd.get_short_help_str(limit=300),
+                "aliases": aliases,
+                "params": [_param_json(p) for p in cmd.params if not getattr(p, "hidden", False)],
+                "spends_credits": spends_credits_decision(cmd),
+            }
+            for path, cmd, aliases in cli_leaves(root)
+            if path[: len(prefix)] == prefix
+        ],
+    }
+
+
+# Parsed alongside each command's own options so a `--json` token is recognised where
+# it is an option and not where another option consumes it as a value.
+_HELP_JSON_FLAG = click.Option(["--json", "help_json"], is_flag=True, expose_value=False)
+
+
+def help_json_path(root: click.Group, args: list[str]) -> tuple[str, ...] | None:
+    """The command path a ``--help --json`` request names, or None when there is none.
+
+    Resolution goes through Click's own parser and ``resolve_command``, level by level as
+    ``click.shell_completion`` does, so option widths, option values and unknown commands
+    are Click's, not a guess from the raw tokens.
+    """
+    cmd: click.Command = root
+    ctx = click.Context(root, info_name="gflow", resilient_parsing=True)
+    path: list[str] = []
+    while True:
+        parser = cmd.make_parser(ctx)
+        _HELP_JSON_FLAG.add_to_parser(parser, ctx)
+        opts, rest, _ = parser.parse_args(args=list(args))
+        help_option = cmd.get_help_option(ctx)
+        if help_option and help_option.name in opts and "help_json" in opts:
+            return tuple(path)
+        if not isinstance(cmd, click.Group) or not rest:
+            return None
+        name, sub, args = cmd.resolve_command(ctx, rest)
+        if sub is None or name is None:
+            return None
+        cmd = sub
+        path.append(name)
+        ctx = click.Context(sub, parent=ctx, info_name=name, resilient_parsing=True)
 
 
 def _parse_tool_spec(spec: str) -> tuple[str, dict[str, str]]:
