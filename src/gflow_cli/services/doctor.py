@@ -2,8 +2,11 @@
 
 Brew-doctor philosophy: diagnose, never heal. Every check inspects local
 state (catalog DB, environment, auth files) and reports a :class:`Finding`;
-nothing is migrated, repaired, or written. All DB access goes through
-:meth:`DataStore.open_readonly`, and every check runs inside a guard that
+nothing is migrated, repaired, or written. One check is not local:
+``auth.wire_read`` sends one GET and one POST to flow.google.com for the
+default profile (``flow_wire.health``), unless the direct read is disabled.
+All DB access goes through :meth:`DataStore.open_readonly`, and every check
+runs inside a guard that
 converts unexpected exceptions into a "fail" finding — doctor must never
 crash on a damaged database.
 
@@ -26,6 +29,7 @@ control characters from all composed strings.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from collections import Counter
@@ -39,6 +43,7 @@ import structlog
 # _cli_helpers is imported as a module (not `from ... import safe_path_text`)
 # so tests patching gflow_cli._cli_helpers.safe_path_text reach this layer.
 from gflow_cli import _cli_helpers, browser_manager, profile_store
+from gflow_cli.api import flow_wire
 from gflow_cli.data.store import DataStore, inspect_schema
 from gflow_cli.errors import DataStoreError
 
@@ -65,8 +70,10 @@ CHECK_IDS: tuple[str, ...] = (
     "env.browsers_missing",
     "env.browser_proxy",
     "auth.files_present",
+    "auth.wire_read",
 )
 
+_WIRE_READ = "auth.wire_read"
 _STUCK_THRESHOLD = timedelta(hours=24)
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
@@ -347,9 +354,9 @@ def _stuck_ids(rows: Iterable[sqlite3.Row], id_col: str, ts_col: str) -> list[st
     now = datetime.now(UTC)
     stuck: list[str] = []
     for row in rows:
-        ts = _parse_ts(row[ts_col])
+        ts = _parse_ts(row[ts_col])  # NOSONAR - sqlite3.Row takes a column name
         if ts is not None and now - ts > _STUCK_THRESHOLD:
-            stuck.append(str(row[id_col]))
+            stuck.append(str(row[id_col]))  # NOSONAR - sqlite3.Row takes a column name
     return stuck
 
 
@@ -480,6 +487,46 @@ def _check_auth_files_present() -> list[Finding]:
     return []
 
 
+_WIRE_HINTS = {
+    "signed_out_shell": "Flow did not accept the saved session; check it with: gflow auth status",
+    "http_401": "Flow did not accept the saved session; check it with: gflow auth status",
+    "store_unreadable": "the profile's cookies could not be read - Chrome has it open, or it"
+    " has no saved session; close Chrome on it, or run: gflow auth login",
+    "disabled": "the direct read is off (GFLOW_CLI_WIRE_READS=0, or the macOS default);"
+    " credits read through the browser",
+    "proxy_configured": "the direct read is skipped while GFLOW_CLI_BROWSER_PROXY is set;"
+    " credits read through the browser",
+    "throttled": "Flow is throttling this account; wait a minute, then re-run: gflow doctor",
+}
+
+
+def _check_wire_read(settings: Settings) -> list[Finding]:
+    """The direct credit read's health for the default profile (G6, #1229).
+
+    Only ``accepted`` passes; every other status is ``info``, never flipping exit 33: the
+    browser read still answers in each, and a state that follows from Chrome being open, the
+    network, or a deliberate setting is not a defect. Status and build label only.
+    """
+    hint = ""
+    try:
+        name = profile_store.resolve_profile(None)
+    except profile_store.NoProfilesError:
+        status, build, hint = "no_profile", None, "create one with: gflow auth login"
+    except profile_store.NoDefaultProfileError:
+        status, build, hint = "no_profile", None, "set a default with: gflow auth use <name>"
+    else:
+        result = asyncio.run(flow_wire.health(settings.profile_subdir(name), settings))
+        status, build = str(result["status"]), result["build"]
+    summary = f"status={status} build={build or 'unknown'} (direct credits read, default profile)"
+    if status == "accepted":
+        return [_finding(_WIRE_READ, "pass", summary)]
+    hint = hint or _WIRE_HINTS.get(
+        status,
+        "credits fall back to the browser read; for details re-run with GFLOW_CLI_LOG_LEVEL=DEBUG",
+    )
+    return [_finding(_WIRE_READ, "info", summary, hint)]
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -537,6 +584,7 @@ def run_all(db_path: Path, settings: Settings) -> DoctorReport:
             ("env.browsers_missing", _check_browsers_missing),
             ("env.browser_proxy", lambda: _check_browser_proxy(settings)),
             ("auth.files_present", _check_auth_files_present),
+            (_WIRE_READ, lambda: _check_wire_read(settings)),
         )
         findings: list[Finding] = []
         for check_id, fn in checks:

@@ -61,7 +61,9 @@ gflow auth                                                # bare: list profiles 
 gflow auth logout                                         # delete a saved session
 
 # Veo video-credit balance (read-only; image models use separate daily quotas).
-# Opens flow.google.com in the profile's browser and reads the balance Flow itself shows.
+# Reads the balance Flow itself shows: directly (no browser) when the saved session is accepted,
+# otherwise in the profile's browser. GFLOW_CLI_WIRE_READS=0 always uses the browser.
+# Exit 4/6 = Flow is throttling the account (429/503): wait, do not retry in a loop.
 # Exit 3 = sign-in page (fix: --refresh); 31 = /about or no balance reply (NOT an auth
 # problem, do not loop on login); 11 = profile in use; 7 = unrecognised reply. Tier fields are null.
 gflow credits user [--profile NAME] [--refresh] [--json]

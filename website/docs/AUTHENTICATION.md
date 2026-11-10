@@ -218,7 +218,7 @@ system Chrome through Playwright with that flag plus
 `ignore_default_args=["--enable-automation"]`, `chromium_sandbox=True`, and
 `no_viewport=True`, so `navigator.webdriver` is `false` and the sign-in proceeds normally.
 The block itself is still live — re-measured 2026-09-08; see the G12 entry in
-[KNOWN_ISSUES.md](../KNOWN_ISSUES.md) for the numbers and their N=1 caveat.
+[KNOWN_ISSUES.md](KNOWN_ISSUES.md) for the numbers and their N=1 caveat.
 
 **You don't close the browser — gflow does.** Because gflow owns that Chrome window, it
 watches for the completed Flow sign-in and closes the window itself, then prints the
@@ -308,7 +308,7 @@ gflow auth renew --all --json       # every profile with a saved session
 ```
 
 It exits `0` when every renewed profile verifies and `1` otherwise. An account that Flow sends to
-its public `/about` page (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) never finishes the labs sign-in,
+its public `/about` page (see [KNOWN_ISSUES](KNOWN_ISSUES.md)) never finishes the labs sign-in,
 so it needs `gflow auth login`. A profile counts as renewed only when labs.google was seen to
 refresh it: if labs is unreachable or answers unreadably (a network that blocks `labs.google`,
 say), the row is `labs_unverified` and the command exits `1` even though the Flow session
@@ -456,7 +456,7 @@ gflow image t2i "client work"   --profile client-a
 
 Each profile is fully isolated (its own cookies, its own Flow project history). **Different profiles run fully in parallel** — each acquires its own cross-process `ProfileLease` on its own canonical directory, so concurrent `gflow` calls across profiles never contend. **The same profile can only ever have one active holder.** A cross-process advisory lock (`ProfileLease`, kernel `flock`/`msvcrt.locking`) enforces this fail-fast: a second call against an already-leased profile — whether it's another `gflow` invocation, the `gflow serve` daemon, or an MCP tool call — is rejected immediately with `ProfileLockedError` (exit code 11); it never blocks or waits for the lease to free up.
 
-For automated multi-account work: a per-profile Page pool (`GFLOW_CLI_CONCURRENCY=N`, 1–16, shipped in v0.4.0a2) opens N Playwright Pages on one shared BrowserContext within a single profile, but no current CLI command drives more than one generation concurrently through it — the one caller that used to (a manifest-driven video batch runner) never worked and was removed. Cross-profile parallel runs remain "one shell per profile"; same-profile contention is a fast, typed rejection rather than a Chromium crash (see [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel)).
+For automated multi-account work: a per-profile Page pool (`GFLOW_CLI_CONCURRENCY=N`, 1–16, shipped in v0.4.0a2) opens N Playwright Pages on one shared BrowserContext within a single profile, but no current CLI command drives more than one generation concurrently through it — the one caller that used to (a manifest-driven video batch runner) never worked and was removed. Cross-profile parallel runs remain "one shell per profile"; same-profile contention is a fast, typed rejection rather than a Chromium crash (see [KNOWN_ISSUES § Same profile can't be used in parallel](KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel)).
 
 ## Refresh / expiry
 

@@ -223,7 +223,7 @@ async worker (which mirrors its `generation_queue.error_json` failure into
 - `failed` rows have **no automatic cap** by design — there is no background
   pruning. Use `gflow data errors prune --older-than <age>` for explicit
   retention and `gflow data errors export` to archive history first (see
-  [`data errors`](#gflow-data-errors--bounded-retention--export-345) below,
+  [`data errors`](#gflow-data-errors-bounded-retention-export-345) below,
   [#345](https://github.com/ffroliva/gflow-cli/issues/345)). Note `gflow data
   prune` is unrelated: it targets stale `local_files`, not failure history.
 
