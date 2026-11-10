@@ -243,3 +243,34 @@ def test_recovery_envelopes_invent_no_http_status(status: str, reason: str) -> N
     err = _recovery_error(status, reason)
     assert err["type"].startswith("https://gflow-cli.dev/errors/")
     assert "status" not in err
+
+
+@pytest.mark.asyncio
+async def test_a_later_link_timeout_keeps_its_own_in_flight_id(tmp_path: Path) -> None:
+    """#1201 review: the in-flight link's id beats the previous link's."""
+    from gflow_cli.errors import TransportTimeoutError
+
+    timeout = TransportTimeoutError("poll", next_action="reconcile", operation_id="m1-in-flight")
+    client = _billed_then(timeout, tmp_path / "link0.mp4")
+    with pytest.raises(TransportTimeoutError) as info:
+        await run_chain(
+            client=client,
+            links=[ChainLinkSpec(prompt="a"), ChainLinkSpec(prompt="b")],
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            extractor=_extract,
+        )
+    assert info.value.to_problem_details()["operation_id"] == "m1-in-flight"
+
+
+@pytest.mark.asyncio
+async def test_an_asset_write_takes_the_callers_answer(tmp_path: Path) -> None:
+    from gflow_cli.errors import GFlowError
+    from gflow_cli.storage import write_asset_async
+
+    blocker = tmp_path / "file"
+    blocker.write_bytes(b"")
+    with pytest.raises(GFlowError) as info:
+        await write_asset_async(blocker / "x.mp4", b"d", charged="no", next_action="fix_input")
+    pd = info.value.to_problem_details()
+    assert (pd["charged"], pd["next_action"]) == ("no", "fix_input")

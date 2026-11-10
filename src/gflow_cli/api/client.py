@@ -2572,7 +2572,8 @@ class FlowApiClient:
 
         # Write via the same storage_uri-aware path as download_image.
         target = self._write_target(out_path)
-        await write_asset_async(target, video_bytes)
+        # #1201: a scene render spends no credits, so a failed write is just a path to fix.
+        await write_asset_async(target, video_bytes, charged="no", next_action="fix_input")
         return target
 
     def served_route(self, *, prefer_migrated: bool) -> str:

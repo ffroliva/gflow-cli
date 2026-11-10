@@ -96,9 +96,11 @@ place today:
 - A video Flow reports failed reads `maybe` / `reconcile`, with its media id as
   `operation_id`, on the worker queue as on the CLI.
 - A failed write of a generated asset to disk or a bucket (`ConfigurationError`) reads
-  `maybe` / `reconcile`: the asset is in the Flow project.
+  `maybe` / `reconcile`: the asset is in the Flow project. A scene render's write reads
+  `no` / `fix_input`, because the render spends nothing.
 - `video chain`: a typed error after at least one link completed keeps its class and
-  reads `yes` / `reconcile`, with the last completed link's media id as `operation_id`.
+  reads `yes` / `reconcile`, with the last completed link's media id as `operation_id`
+  unless it already names the in-flight link.
   An untyped one is wrapped in `ChainPartialError`. `ChainPartialError` reads `yes` only
   when it carries completed links, and lists them in `completed_media_ids`.
 - `video extend --output`: any failure while rendering billed segments (reading the

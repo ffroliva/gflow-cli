@@ -266,7 +266,8 @@ async def _generate_link(
                 exc.charged = "yes"
                 exc.next_action = "reconcile"
                 exc.retryable = False
-                exc.operation_id = completed_media_ids[-1]
+                if not exc.operation_id:  # an in-flight link's own id is the better handle
+                    exc.operation_id = completed_media_ids[-1]
             raise
         _log.warning(
             "chain_link_aborted",
