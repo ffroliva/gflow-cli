@@ -63,8 +63,39 @@ Code paths are relative to `src/gflow_cli/`.
 | Every night | Check every id in this table against the served JS with no cookies and no browser, record the build label, and archive the build's full descriptor list with what changed since the last build | the canary's `RPC-DRIFT` section (`scripts/canary/rpc_drift.py`, #1218); see [E2E_TESTING.md](E2E_TESTING.md#rpc-drift-check-1218) |
 | `RPC-DRIFT` reports `ID-GONE` | First confirm with a page load (the served-JS spike's arm 2) that the id did not move to a module outside the four. If it is still absent, set `Status` to `gone` or `renamed -> X`, fill `Renamed from` on the new row, and update `Last verified` | a maintainer, from the canary comment. The canary never edits this file. |
 
-The served app holds about 261 ids in the RPC descriptor shape (`{Xa:"<id>", …}`). This
+The served app holds about 267 ids in the RPC descriptor shape (`{Wa:"<id>",hb:…,Za:!0,Xa:…,kb:…}`
+on build `20261110.00_p0`; the key was `Xa` on `20261108.05_p0`). The key and the other field
+names are minified and change between builds, so nothing should hard-code them. This
 table and the list below cover the ones gflow has a reason to know.
+
+### Backend method of each id (build `20260929.10_p1`)
+
+Until at least build `20260929.10_p1`, each descriptor named its backend method, as in
+`new _.Gx("as29s",…,[…,"/FlowService.GetMedia"])`. Build `20261110.00_p0` carries none of
+the 222 method paths. The names below come from the old bundle, which gstatic still served
+on 2026-11-10 ([churn spike](superpowers/spikes/2026-11-10-rpc-descriptor-churn.md)). They
+are what each id meant on that build. Nothing in the current bundle confirms them, but
+all 17 ids are unchanged.
+
+| Backend method (20260929) | RPC id |
+|---|---|
+| `/VideoFxService.BatchAsyncGenerateVideoText` | `YhhmEf` |
+| `/VideoFxService.BatchAsyncGenerateVideoStartImage` | `eb1hJf` |
+| `/VideoFxService.BatchAsyncGenerateVideoReferenceImages` | `MZZa6b` |
+| `/VideoFxService.BatchAsyncGenerateVideoStartAndEndImage` | `nprQif` |
+| `/VideoFxService.BatchAsyncGenerateVideoExtendVideo` | `fZytfe` |
+| `/VideoFxService.BatchAsyncGenerateVideoUpsampleVideo` | `p0UkFb` |
+| `/VideoFxService.BatchCheckAsyncVideoGenerationStatus` | `jwpduf` |
+| `/VideoFxService.GetCredits` | `nzlxg` |
+| `/FlowService.BatchGenerateImages` | `ogiZ0b` |
+| `/FlowService.UpsampleImage` | `SPrCad` |
+| `/FlowService.UploadImage` | `maseQ` |
+| `/FlowService.GetMedia` | `as29s` |
+| `/FlowService.GetProjectContents` | `Zzl0ze` |
+| `/FlowService.CreateScene` | `rqZuUc` |
+| `/FlowService.GetSceneWorkflows` | `uwAyfb` |
+| `/AiSandbox.CreateProject` | `jHPbke` |
+| `/AiSandbox.UpdateProjectInfo` | `o8DA4` |
 
 ## Ids seen on the wire that gflow does not use
 
