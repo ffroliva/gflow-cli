@@ -300,3 +300,95 @@ async def test_a_throttled_profile_never_builds_the_browser_on_later_reads(
             await credits._fetch_once(_meta())  # pyright: ignore[reportPrivateUsage]
     assert page.built == 0
     assert posts == [1]
+
+
+# --- a signed-out mark is lifted once the session is known good again (fix to #1236) ---------
+
+
+def _mark_signed_out(meta: ProfileMeta) -> None:
+    flow_wire._signed_out[meta.profile_dir] = WireFallbackReason.SIGNED_OUT_SHELL  # pyright: ignore[reportPrivateUsage]
+    flow_wire._tokens[meta.profile_dir] = flow_wire._Tokens("stale-at", None, None)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_wire_refused_page_served_profile_costs_one_shell_get_per_process(
+    monkeypatch: pytest.MonkeyPatch, page: type[_Page]
+) -> None:
+    """A page read does not prove the saved cookies changed, so it lifts nothing: repeated
+    reads of a profile the wire refuses send ONE shell GET per process, not one per read."""
+    import functools
+
+    import httpx
+
+    meta = _meta()
+    meta.profile_dir.mkdir(parents=True, exist_ok=True)
+    gets: list[httpx.Request] = []
+
+    def flow(request: httpx.Request) -> httpx.Response:
+        gets.append(request)
+        return httpx.Response(200, text="<html>signed out</html>")
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", functools.partial(real, transport=httpx.MockTransport(flow))
+    )
+    monkeypatch.setattr(flow_wire, "read_cookies_for", lambda _p: [("SID", "fake-sid")])
+    monkeypatch.setattr(flow_wire, "profile_last_version", lambda _p: "150.0.1.2")
+
+    for _ in range(3):
+        assert (await credits._fetch_once(meta))["credits"] == 11  # pyright: ignore[reportPrivateUsage]
+
+    assert page.built == 3
+    assert len(gets) == 1
+
+
+async def test_a_failed_page_read_keeps_the_signed_out_mark(
+    monkeypatch: pytest.MonkeyPatch, page: type[_Page]
+) -> None:
+    meta = _meta()
+    _mark_signed_out(meta)
+    page.result = AuthExpiredError("signed out")
+
+    with pytest.raises(AuthExpiredError):
+        await credits._fetch_once(meta)  # pyright: ignore[reportPrivateUsage]
+
+    assert meta.profile_dir in flow_wire._signed_out  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_renewed_profile_has_its_signed_out_mark_lifted_before_the_retry(
+    monkeypatch: pytest.MonkeyPatch, page: type[_Page]
+) -> None:
+    """After `--refresh` renews it, the retried read tries the wire once more."""
+    meta = _meta()
+    _mark_signed_out(meta)
+    page.result = AuthExpiredError("signed out")
+    tried: list[Path] = []
+
+    async def wire(profile_dir: Path) -> CreditsInfo:
+        tried.append(profile_dir)
+        if profile_dir in flow_wire._signed_out:  # pyright: ignore[reportPrivateUsage]
+            raise WireReadUnavailable(WireFallbackReason.DISABLED)
+        return CreditsInfo(credits=5)
+
+    monkeypatch.setattr(flow_wire, "read_credits", wire)
+
+    async def renew(profile_dir: Path, *, source: str) -> Any:
+        return type("R", (), {"renewed": True, "result": "renewed"})()
+
+    monkeypatch.setattr(credits, "renew_profile", renew)
+
+    result = await credits._fetch(meta, refresh=True)  # pyright: ignore[reportPrivateUsage]
+
+    assert result["credits"] == 5  # the wire answered the retry, not the browser
+    assert meta.profile_dir not in flow_wire._signed_out  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_page_read_never_lifts_a_throttle_window(
+    monkeypatch: pytest.MonkeyPatch, page: type[_Page]
+) -> None:
+    meta = _meta()
+    flow_wire._throttled[meta.profile_dir] = (1e18, 429)  # pyright: ignore[reportPrivateUsage]
+    _wire(monkeypatch, _fails(WireFallbackReason.NETWORK))
+
+    await credits._fetch_once(meta)  # pyright: ignore[reportPrivateUsage]
+
+    assert meta.profile_dir in flow_wire._throttled  # pyright: ignore[reportPrivateUsage]

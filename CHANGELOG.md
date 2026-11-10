@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead, since the browser would send the same requests. `GFLOW_CLI_WIRE_READS=0` turns the direct read off; it is off by default on
   macOS and while any proxy is configured (#1229).
 
+- **`gflow doctor` and the MCP `gflow_auth_status` tool report whether that direct read works.**
+  Doctor's new `auth.wire_read` check (default profile) and the tool's new `wire` field (on every session result) give
+  `accepted` with Flow's build label, or the reason credit reads use the browser
+  (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, …).
+  Each sends one GET and one POST to flow.google.com unless the direct read is off. The check
+  is informational: it never changes doctor's exit code. When Flow is throttling the account,
+  `gflow_auth_status` skips its browser probe and returns `status: throttled` with
+  `retry_after` (#1229).
+
 ### Fixed
 
 - **No gflow process logs an httpx request URL any more.** Starting the MCP server set Python
