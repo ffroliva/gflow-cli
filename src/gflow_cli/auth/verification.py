@@ -301,6 +301,7 @@ async def verify_flow_session(
     try:
         from gflow_cli.browser_manager import (
             browser_proxy_kwargs,
+            disable_features_args,
             ensure_profile_engine_compatible,
         )
 
@@ -319,7 +320,7 @@ async def verify_flow_session(
                     user_data_dir=str(profile_dir),
                     channel=channel,
                     headless=True,
-                    args=["--password-store=basic"],
+                    args=["--password-store=basic", *disable_features_args()],
                     **browser_proxy_kwargs(get_settings().browser_proxy),
                 )
                 try:
@@ -528,6 +529,7 @@ async def _verify_migrated_host_fallback(
     from gflow_cli.browser_manager import (
         browser_proxy_kwargs,
         channel_for_profile,
+        disable_features_args,
         ensure_profile_engine_compatible,
     )
 
@@ -547,6 +549,7 @@ async def _verify_migrated_host_fallback(
                     "--password-store=basic",
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
+                    *disable_features_args(),
                 ],
                 **browser_proxy_kwargs(get_settings().browser_proxy),
             )
