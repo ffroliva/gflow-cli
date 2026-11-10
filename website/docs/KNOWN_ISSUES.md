@@ -183,8 +183,9 @@ URL and size, keyed by **workflow id**), `Zzl0ze` (project listing) and `nzlxg` 
 returned 200, and the signed `flow-content.google` URL downloads with **no** credential.
 Controls: a junk `at` gets 400, no cookies gets 401.
 
-**Caveats before building on it:** the shell's `at` (`SNlM0e`) was absent in September and
-is present now, so a page-free reader must fall back to the page when it is missing. Cookie
+**Caveats before building on it:** the shell's `at` (`SNlM0e`) is missing whenever Flow
+serves the signed-out page, meaning the cookies were not accepted (#1221). A page-free
+reader must treat that as an auth problem and fall back to the page. Cookie
 lifetime without a running browser is unmeasured. An account served `labs.google` could not
 be observed here. Full write-up:
 [`docs/superpowers/spikes/2026-11-09-page-free-reads.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-11-09-page-free-reads.md).

@@ -99,10 +99,14 @@ measured; they keep the browser path.
 
 - **One account, one night.** N = 1 profile, 2 clips, 3 probe runs that agree. Not a
   stability measurement.
-- **`SNlM0e` comes and goes.** It was scrapeable on 2026-09-03, absent from the shell on
-  2026-09-12 and 2026-09-16 (session notes; that write-up was never committed to this
-  repo), and present again today. A page-free reader must fall back to the browser
-  path when the shell carries no `at`, never fail closed.
+- **`SNlM0e` was missing from some shells.** It was scrapeable on 2026-09-03, absent from
+  the shell on 2026-09-12 and 2026-09-16 (session notes; that write-up was never committed
+  to this repo), and present again today. Spike #1221 (2026-11-10) later found that every
+  signed-in shell carries it, and that a shell without it is the signed-out page (about
+  39.7 KB vs 42.5 KB). So a missing token means the cookies were not accepted, not that the
+  token flaps. The September absences can't be re-checked, but they fit that explanation. A
+  page-free reader should treat a missing `at` as an auth problem and fall back to the
+  browser path, never fail closed.
 - **A clip that is still running** was not read page-free (that needs a submit). The
   `as29s` record's status code for a finished clip is `3`; the in-progress codes come from
   the existing in-run decoder, not from this probe.
