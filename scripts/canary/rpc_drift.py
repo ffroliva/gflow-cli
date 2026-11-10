@@ -12,7 +12,7 @@ Five outcomes. Like every canary state they gate nothing:
     ID-GONE          the bundle parsed (it has descriptors) and catalogued ids are missing
     MODULES-CHANGED  the feature-module bundle answered 404: a module name moved, so this
                      run says nothing about any single id
-    PARSE-CHANGED    the bundle answered 200 with no ``{Xa:"…"}`` descriptor: the bundle
+    PARSE-CHANGED    the bundle answered 200 with no ``{<key>:"…",`` descriptor: the bundle
                      format changed, so the ids cannot be judged
     INCONCLUSIVE     nothing was measured (offline, an HTTP error other than a bundle 404,
                      a redirect to a page without the app, no build label, a bad catalog,
@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -59,7 +60,8 @@ BUDGET_S = 120.0
 OK, ID_GONE, MODULES_CHANGED, INCONCLUSIVE = "OK", "ID-GONE", "MODULES-CHANGED", "INCONCLUSIVE"
 PARSE_CHANGED = "PARSE-CHANGED"
 
-_XA_RE = re.compile(r'\{Xa:"([A-Za-z0-9]{4,7})"')
+#: ``{<key>:"<id>",`` — the key is minified and was renamed Xa -> Wa by one build (#1224).
+_DESC_RE = re.compile(r'\{([A-Za-z$_]{1,3}):"([A-Za-z0-9]{4,7})",')
 _SCRIPT_RE = re.compile(r'<script[^>]+src="([^"]*/_/js/[^"]*)"')
 _BL_RE = re.compile(r'"cfb2h":"([^"]*)"')
 #: The row pattern `tests/test_flow_wire_rpcs_catalog.py` counts; every such row is parsed.
@@ -128,6 +130,20 @@ def _script_url(shell_html: str, base: str) -> str | None:
     return urljoin(base, m.group(1).replace("&amp;", "&")) if m else None
 
 
+def descriptor_ids(text: str, ids: tuple[str, ...]) -> tuple[str, ...]:
+    """Every id held under the descriptor key, which is learned rather than hard-coded.
+
+    The key is the one the catalogued ids sit under; if none of them is present, the key
+    most often seen in that shape (measured 2026-11-10: 267 hits against 24 for the next).
+    """
+    pairs = _DESC_RE.findall(text)
+    if not pairs:
+        return ()
+    keys = Counter(k for k, i in pairs if i in ids) or Counter(k for k, _ in pairs)
+    key = keys.most_common(1)[0][0]
+    return tuple(sorted({i for k, i in pairs if k == key}))
+
+
 def _has(rpc: str, text: str) -> bool:
     return re.search(rf"""["']{re.escape(rpc)}["']""", text) is not None
 
@@ -159,9 +175,9 @@ def assess(  # noqa: PLR0911 - one return per outcome reads better than a ladder
         return Drift(MODULES_CHANGED, build, missing=ids, note="bundle HTTP 404")
     if bundle_status != 200:
         return Drift(INCONCLUSIVE, build, note=f"bundle HTTP {bundle_status}")
-    inventory = tuple(sorted(set(_XA_RE.findall(bundle_text))))
+    inventory = descriptor_ids(bundle_text, ids)
     if not inventory:
-        return Drift(PARSE_CHANGED, build, note="bundle has no {Xa:...} descriptors")
+        return Drift(PARSE_CHANGED, build, note='bundle has no {<key>:"<id>",...} descriptors')
     found = tuple(i for i in ids if _has(i, bundle_text))
     absent = [i for i in ids if i not in found]
     moved = tuple(i for i in absent if _has(i, base_text))
