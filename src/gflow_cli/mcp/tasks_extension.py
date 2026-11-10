@@ -26,7 +26,7 @@ from mcp.types import (
 
 from gflow_cli.config import get_settings
 from gflow_cli.data.store import DataStore
-from gflow_cli.worker.queue import QueueRepository, QueueTask
+from gflow_cli.worker.queue import QueueRepository, QueueTask, abort_task
 
 log = structlog.get_logger()
 
@@ -72,7 +72,10 @@ async def drain_detached() -> None:
 def _mcp_status(task: QueueTask) -> TaskStatus:
     # SEP-2663 keeps ``failed`` for JSON-RPC errors. A generation that failed is a tool
     # result with ``isError``, which the spec files under ``completed``.
+    if task.status in ("cancelled", "abandoned"):
+        return "cancelled"
     if task.status in ("failed", "indeterminate"):
+        # A job stopped by server shutdown (drain_detached) is still recorded this way.
         return "cancelled" if (task.error or {}).get("reason") == "cancelled" else "completed"
     if task.status == "completed":
         return "completed"
@@ -82,6 +85,13 @@ def _mcp_status(task: QueueTask) -> TaskStatus:
 def _status_message(task: QueueTask) -> str | None:
     if task.status == "indeterminate":
         return "Stopped after submit; a credit may have been spent. Check the Flow project."
+    if task.status == "abandoned":
+        return (
+            "Cancelled after a gflow worker had submitted it: Flow cannot cancel it, so it "
+            "may still run and be charged (a credit may have been spent). Check the Flow project."
+        )
+    if task.status == "cancelled":
+        return "Cancelled before it was submitted to Flow; nothing was charged."
     return None
 
 
@@ -152,28 +162,23 @@ class TasksExtension(Extension):
         self, context: Any, params: CancelTaskRequestParams
     ) -> dict[str, Any]:
         task_id = params.task_id
-        before = self._get_task(task_id)
-        repo = QueueRepository(self._get_store())
+        # The same local abort as `gflow cancel` (#1198): one transaction, so a claim or a
+        # submit cannot slip between its read and its write. It runs before a job of ours
+        # is stopped: a cancelled/abandoned row keeps its status, so the job's own
+        # CancelledError handler cannot overwrite it.
+        outcome = abort_task(QueueRepository(self._get_store()), task_id)
+        if outcome is None:
+            raise MCPError(INVALID_PARAMS, f"Task not found: {task_id}")
         running = DETACHED.get(task_id)
-        log.info("mcp.task.cancel_requested", task_id=task_id, running_here=running is not None)
-        if before.status in ("completed", "failed", "indeterminate"):
-            pass  # already finished: a cancel is cooperative and changes nothing
-        elif running is not None:
-            # The job's own CancelledError handler records how far it got: a job past
-            # submit becomes indeterminate (a credit may be spent), never failed. Waiting
-            # for it keeps the next tasks/get consistent with this ack.
+        log.info(
+            "mcp.task.cancel_requested",
+            task_id=task_id,
+            running_here=running is not None,
+            state=outcome.state,
+        )
+        if running is not None:
+            # Running in this server: stop the local wait too. Waiting keeps the next
+            # tasks/get consistent with this ack.
             running.cancel()
             await asyncio.wait({running}, timeout=_CANCEL_WAIT_S)
-        else:
-            repo.update_task_status(
-                task_id,
-                "failed",
-                error={
-                    "title": "Cancelled",
-                    "status": 499,
-                    "detail": "Cancelled before it ran.",
-                    "reason": "cancelled",
-                },
-                only_from=("pending",),
-            )
         return {}  # SEP-2663: an empty acknowledgement; tasks/get reads the outcome

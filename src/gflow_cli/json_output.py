@@ -98,6 +98,9 @@ def unexpected_payload(
         "title": "Unexpected error",
         "exit_code": 1,
         "retryable": False,
+        # #1201: an unclassified failure proves nothing about billing.
+        "charged": "maybe",
+        "next_action": "none",
     }
     if debug is not None:
         error["detail"] = str(debug)
@@ -194,7 +197,7 @@ def video_result(
     ``generation_status`` is the raw ``MEDIA_GENERATION_STATUS_*`` wire value.
     """
     st = result.status
-    return {
+    payload: dict[str, Any] = {
         "status": "ok" if st.succeeded else "fail",
         "command": command,
         "media_id": st.media_id,
@@ -212,3 +215,7 @@ def video_result(
             "seed": request.seed,
         },
     }
+    if not st.succeeded:
+        # #1201: Flow took the submit, so the clip's outcome needs settling (#1159).
+        payload.update(charged="maybe", next_action="reconcile")
+    return payload

@@ -51,7 +51,7 @@ from gflow_cli.data.models import AssetKind, AssetLookup
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import GFlowError, is_retryable
+from gflow_cli.errors import GFlowError, is_retryable, outcome_members
 from gflow_cli.mcp.server import server
 from gflow_cli.mcp.tasks_extension import detach
 from gflow_cli.profile_store import (
@@ -81,8 +81,10 @@ _WAIT_DESCRIPTION = (
     "by task_id: while it runs the status is working; once done it is completed and its "
     "result field holds the same reply wait=true would (files, project id, seed). A failed "
     "generation is also completed, with result.isError true, so check isError. "
-    "tasks/cancel stops the job; tasks/get then reads cancelled (a job cancelled after "
-    "submit is recorded as indeterminate: a credit may be spent). The job runs only while "
+    "tasks/cancel aborts the job locally; tasks/get then reads cancelled. A job not yet "
+    "submitted to Flow stops before submitting and nothing is charged; once a gflow worker "
+    "has submitted it, Flow cannot cancel it, so it may still be charged (statusMessage "
+    "says which). gflow cancel <id> is the CLI twin. The job runs only while "
     "this server runs: if the client closes the server, it is cancelled."
 )
 _WaitParam = Annotated[bool, Field(description=_WAIT_DESCRIPTION)]
@@ -245,7 +247,8 @@ def _masked_unexpected_dict(exc: Exception) -> dict[str, Any]:
         "detail": detail,
         # Same key set as _gflow_error_dict so clients see ONE envelope schema.
         "message": detail,
-        "retryable": False,
+        # #1201: an unclassified failure proves nothing about billing.
+        **outcome_members("maybe", "none"),
     }
 
 
@@ -384,6 +387,7 @@ def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:
                 "detail": (
                     "No gflow profiles exist. Run `gflow auth login --browser chrome` first."
                 ),
+                **outcome_members("no", "reauth"),
             },
         }
     except NoDefaultProfileError as exc:
@@ -399,6 +403,7 @@ def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:
                     "`gflow auth use <name>` / set GFLOW_CLI_PROFILE."
                 ),
                 "available_profiles": exc.available,
+                **outcome_members("no", "fix_input"),
             },
         }
 
@@ -422,6 +427,7 @@ def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:
                     f"Profile {resolved!r} resolved but its directory does not exist: "
                     f"{profile_dir}. Run `gflow auth login --browser chrome` first."
                 ),
+                **outcome_members("no", "reauth"),
             },
         }
 
@@ -541,7 +547,10 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
                 "status": "failed",
                 "task_id": task_id,
                 "error": completed_task.error
-                or {"detail": f"Task ended in unexpected status {completed_task.status!r}"},
+                or {
+                    "detail": f"Task ended in unexpected status {completed_task.status!r}",
+                    **outcome_members("maybe", "reconcile"),
+                },
             }
             # #1035/#895: media Flow generated before the failure (a lost
             # download) is still reachable by these ids.
@@ -688,7 +697,13 @@ def _bad_param(title: str, detail: str) -> dict[str, Any]:
     """Build the standard RFC 9457 bad-parameter (400) error envelope."""
     return {
         "status": "error",
-        "error": {"type": _BAD_PARAM_TYPE, "title": title, "status": 400, "detail": detail},
+        "error": {
+            "type": _BAD_PARAM_TYPE,
+            "title": title,
+            "status": 400,
+            "detail": detail,
+            **outcome_members("no", "fix_input"),
+        },
     }
 
 
@@ -2196,7 +2211,7 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "status": 409,
             "detail": status.detail,
             "message": status.detail,
-            "retryable": False,
+            **outcome_members("no", "reauth"),
             "remediation_hint": (
                 "This profile has no `.gflow_browser_strategy` marker, so its "
                 "cookies cannot be read. Re-run `gflow auth login --browser "
@@ -2212,7 +2227,7 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "status": 409,
             "detail": status.detail,
             "message": status.detail,
-            "retryable": False,
+            **outcome_members("no", "reauth"),
             "remediation_hint": (
                 "This profile's Chrome cookie database is corrupt or unreadable. "
                 "Close any Chrome window using this profile, then re-run "
@@ -2230,7 +2245,7 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "status": 503,
             "detail": status.detail,
             "message": status.detail,
-            "retryable": True,
+            **outcome_members("no", "retry"),
             "remediation_hint": (
                 "Could not verify the Flow session (network or endpoint "
                 "problem). Check connectivity and retry; re-login is only "
@@ -2245,6 +2260,8 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             # AuthExpiredError only carries an HTTP status when built from a
             # real response; a dead/missing session is semantically a 401.
             "status": 401,
+            # #1201: a credit-free probe; AuthExpiredError's default "maybe" covers polls.
+            "charged": "no",
             "remediation_hint": (
                 f"Run 'gflow auth login --profile {resolved}' in your local "
                 "terminal (interactive; not available through MCP)."

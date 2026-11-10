@@ -23,7 +23,14 @@ from gflow_cli.data.recorder import (
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError
+from gflow_cli.errors import (
+    DataIntegrityError,
+    DataStoreError,
+    FlowApiError,
+    GFlowError,
+    TaskCancelledError,
+    outcome_members,
+)
 from gflow_cli.observability import exception_message_hash
 from gflow_cli.paths import image_output_path
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
@@ -142,6 +149,32 @@ class FlowWorker:
         def observe_checkpoint(cp: GenerationCheckpoint) -> None:
             # Any emitted phase is at/after submit_attempted (C1 emits it right
             # before the credit gesture), so may_have_spent is always True here.
+            if cp.phase == "submit_attempted":
+                # #1198 submit gate: a `gflow cancel` / `tasks/cancel` that landed while
+                # this job was claimed stops it here, before anything is sent to Flow.
+                # Unlike save_checkpoint, a DB fault here stops the job: nothing is sent yet,
+                # and going on could bill a job `gflow cancel` already reported `charged: no`.
+                try:
+                    go = self.repo.checkpoint_before_submit(
+                        task.task_id,
+                        claimant=claimant,
+                        phase=cp.phase,
+                        may_have_spent=True,
+                        project_id=checkpoint_project_id[0],
+                    )
+                except Exception as exc:
+                    logger.warning("submit_gate_failed", task_id=task.task_id, exc_info=exc)
+                    raise DataStoreError(
+                        detail="Could not check the job before submitting it; nothing was sent.",
+                        route="worker.submit_gate",
+                        charged="no",
+                        next_action="retry",
+                        remediation_hint="Nothing was sent to Flow. Run the job again.",
+                    ) from exc
+                else:
+                    if not go:
+                        raise TaskCancelledError(detail="Aborted by gflow before it was submitted.")
+                    return  # the gate wrote the checkpoint
             save_checkpoint(
                 cp.phase,
                 may_have_spent=True,
@@ -441,7 +474,18 @@ class FlowWorker:
                             if result.status.failure_reasons
                             else result.status.error_message or "Unknown reason"
                         )
-                        raise GFlowError(f"Video generation failed: {reasons}")
+                        raise FlowApiError(
+                            f"Video generation failed: {reasons}",
+                            # #1201: Flow took the submit; same answer as CLI video_result.
+                            next_action="reconcile",
+                            operation_id=flow_media_id or None,
+                            # Not the class's "retry the API call": Flow may have billed it.
+                            remediation_hint=(
+                                "Flow took this job and then reported it failed, so it may "
+                                "have charged for it. Check the project on Flow before "
+                                "running it again."
+                            ),
+                        )
                 except Exception as exc:
                     logger.warning("Failed during video generation or recording", exc_info=exc)
                     raise
@@ -517,6 +561,8 @@ class FlowWorker:
                     # same privacy rule as operations.error_detail).
                     "detail": f"sha256:{exception_message_hash(exc)}",
                     "exit_code": 1,
+                    # #1201: same members as a typed failure; nothing is proven.
+                    **outcome_members("maybe", "none"),
                 }
 
             # #341: mirror the queue's failure record into the operations table

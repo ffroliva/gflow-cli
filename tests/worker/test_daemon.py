@@ -812,6 +812,8 @@ async def test_worker_error_json_retryable_matches_cli(temp_db: DataStore) -> No
     assert updated.error["retryable"] is True
     assert updated.error["retryable"] is is_retryable(exc)
     assert updated.error["exit_code"] == 31
+    # #1201: the queued envelope carries the members too, agreeing with retryable.
+    assert (updated.error["charged"], updated.error["next_action"]) == ("maybe", "retry")
     worker.close()
 
 
@@ -972,6 +974,8 @@ async def test_a_bare_timeout_reaches_an_mcp_caller_as_a_hash(temp_db: DataStore
     assert error["exit_code"] == 1
     assert error["detail"].startswith("sha256:")
     assert "settings-trigger" not in error["detail"]
+    # #1201: the untyped branch carries the same members, and proves nothing about billing.
+    assert (error["charged"], error["next_action"]) == ("maybe", "none")
 
 
 @pytest.mark.asyncio
@@ -1131,3 +1135,112 @@ async def test_worker_relocates_output_file_across_filesystems(
     assert out_file.read_bytes() == b"clip"
     assert not src.exists()
     worker.close()
+
+
+@pytest.mark.asyncio
+async def test_a_flow_failed_video_reads_like_the_cli(temp_db: DataStore) -> None:
+    """#1201: the queue row says what CLI `video_result` says for the same outcome."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2v-flow-failed",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "a crane", "aspect": "16:9"},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-v", title="T")
+    fake_client.generate_video.return_value = VideoResult(
+        status=VideoStatus(media_id="media-f", status="MEDIA_GENERATION_STATUS_FAILED"),
+        local_path=None,
+        project_id="project-v",
+        flow_operation_id="op-f",
+    )
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    updated = repo.get_task("task-t2v-flow-failed")
+    assert updated is not None and updated.error is not None
+    err = updated.error
+    assert (err["charged"], err["next_action"], err["retryable"]) == ("maybe", "reconcile", False)
+    assert err["operation_id"] == "media-f"
+    # A documented type (docs/ERRORS.md), not the base class's `about:blank`.
+    assert (err["type"], err["exit_code"]) == ("https://gflow-cli.dev/errors/api-error", 1)
+    assert "retry" not in err["remediation_hint"]  # a billed clip is reconciled, not retried
+    worker.close()
+
+
+async def _run_t2i_aborted(temp_db: DataStore, task_id: str, *, after_submit: bool) -> list[str]:
+    """Run one t2i task whose row `gflow cancel` aborts before or after the submit (#1198)."""
+    from gflow_cli.api.dto import GenerationCheckpoint
+    from gflow_cli.worker.queue import abort_task
+
+    repo = QueueRepository(temp_db)
+    repo.enqueue_task(task_id, "default", "t2i", {"prompt": "p", "aspect": "1:1", "count": 1})
+    task = repo.claim_task(task_id, "worker")
+    assert task is not None
+    submitted: list[str] = []
+
+    async def generate(*, project_id: str, req: object, on_checkpoint):  # type: ignore[no-untyped-def]
+        if not after_submit:
+            abort_task(repo, task_id)  # the CLI, from another process
+        on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
+        submitted.append(task_id)  # the credit gesture
+        if after_submit:
+            abort_task(repo, task_id)
+        return FakeGeneratedImage(media_name=f"media-{task_id}")
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    fake_client.generate_image.side_effect = generate
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+    worker.close()
+    return submitted
+
+
+@pytest.mark.asyncio
+async def test_a_job_cancelled_before_its_submit_never_submits(temp_db: DataStore) -> None:
+    submitted = await _run_t2i_aborted(temp_db, "pre", after_submit=False)
+
+    assert submitted == []
+    row = QueueRepository(temp_db).get_task("pre")
+    assert row is not None and row.status == "cancelled"
+    assert row.error is not None and row.error["charged"] == "no"
+
+
+@pytest.mark.asyncio
+async def test_a_job_abandoned_after_submit_still_records_its_media_for_reconcile(
+    temp_db: DataStore,
+) -> None:
+    """The queue row stays `abandoned` (SEP-2663: cancelled stays cancelled); the catalog
+    still records what Flow produced, which is where reconcile (#1199) looks."""
+    from gflow_cli.data.repository import DataRepository
+
+    submitted = await _run_t2i_aborted(temp_db, "post", after_submit=True)
+
+    assert submitted == ["post"]
+    row = QueueRepository(temp_db).get_task("post")
+    assert row is not None
+    assert (row.status, row.flow_media_id) == ("abandoned", "media-post")
+    assert DataRepository(temp_db).get_asset_by_flow_media_id("default", "media-post") is not None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_submit_gate_never_submits(temp_db: DataStore) -> None:
+    """A DB fault in the #1198 gate used to fall through to the submit, so a job that
+    `gflow cancel` had reported as `charged: no` could still be billed. Nothing is sent
+    yet at the gate, so stopping there costs nothing."""
+    locked = DataStoreError(detail="database is locked")
+    with patch.object(QueueRepository, "checkpoint_before_submit", side_effect=locked):
+        cancelled_first = await _run_t2i_aborted(temp_db, "pre", after_submit=False)
+        not_cancelled = await _run_t2i_aborted(temp_db, "plain", after_submit=True)
+
+    assert cancelled_first == [] and not_cancelled == []
+    repo = QueueRepository(temp_db)
+    pre, plain = repo.get_task("pre"), repo.get_task("plain")
+    assert pre is not None and pre.status == "cancelled"
+    assert plain is not None and plain.status == "failed" and plain.error is not None
+    assert (plain.error["charged"], plain.error["next_action"]) == ("no", "retry")
+    assert "prune" not in plain.error["remediation_hint"]  # not DataStoreError's default

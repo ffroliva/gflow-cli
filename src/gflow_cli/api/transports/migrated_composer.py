@@ -4607,6 +4607,8 @@ async def read_credits(page: Page, *, timeout_s: float = 30.0) -> CreditsInfo:
                     "Chrome and re-run. See KNOWN_ISSUES."
                 ),
                 retryable=False,
+                charged="no",  # a balance read spends nothing
+                next_action="reauth",
             ) from e
         # Signed out, no Flow access: each has its own typed error.
         await raise_if_known_landing(page, requested=MIGRATED_ROOT_URL, at="migrated.credits")
@@ -4622,6 +4624,7 @@ async def read_credits(page: Page, *, timeout_s: float = 30.0) -> CreditsInfo:
                 "persists, open flow.google.com and check the balance in the account "
                 "menu, then report it on issue #795 — Flow may have moved the balance."
             ),
+            charged="no",  # a balance read spends nothing
         ) from e
     try:
         info = CreditsInfo.from_nzlxg(payload)

@@ -71,7 +71,13 @@ async def test_tasks_extension_cancel_task(test_db: DataStore) -> None:
     assert (await _get(test_db, "task-uuid-002"))["status"] == "cancelled"
     updated_task = QueueRepository(test_db).get_task("task-uuid-002")
     assert updated_task is not None
-    assert updated_task.status == "failed"
+    assert updated_task.status == "cancelled"
+    # #1201: the same members as every other envelope; nothing ran, so nothing billed.
+    assert updated_task.error is not None
+    err = updated_task.error
+    assert (err["charged"], err["next_action"], err["retryable"]) == ("no", "none", False)
+    assert err["type"] == "https://gflow-cli.dev/errors/cancelled"
+    assert "status" not in err  # no invented HTTP status (was 499)
 
 
 @pytest.mark.asyncio
@@ -198,3 +204,39 @@ async def test_mcp_generate_image_non_blocking(
     resp = await gflow_generate_image(prompt="test prompt", wait=False)
     assert resp.get("status") == "pending"
     assert "task_id" in resp
+
+
+@pytest.mark.sharpit(allow_n_plus_one=True)  # one tasks/cancel and tasks/get per seeded state
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_tasks_cancel_then_get_on_the_wire_per_state(served: DataStore, mode: str) -> None:
+    """The MCP twin of `gflow cancel` (#1198), driven through a real client in both eras:
+    queued and claimed-not-submitted read `cancelled` with nothing charged, a submitted job
+    reads `cancelled` with the charge warning and stays so after its worker finishes, and a
+    finished job is untouched."""
+    repo = QueueRepository(served)
+    for task_id in ("q", "w", "r", "d"):
+        repo.enqueue_task(
+            task_id=task_id,
+            profile_name="default",
+            task_type="t2i",
+            payload={"prompt": "p", "aspect": "1:1", "count": 1},
+        )
+    repo.claim_task("w", "worker")
+    repo.claim_task("r", "worker")
+    repo.update_checkpoint("r", claimant="worker", phase="submit_attempted", may_have_spent=True)
+    repo.update_task_status("d", "completed")
+
+    for task_id in ("q", "w", "r", "d"):
+        await _wire(mode, "tasks/cancel", task_id)
+    repo.update_task_status("r", "completed", flow_media_id="m")  # its worker finishes later
+
+    got = {t: await _wire(mode, "tasks/get", t) for t in ("q", "w", "r", "d")}
+    assert {t: g["status"] for t, g in got.items()} == {
+        "q": "cancelled",
+        "w": "cancelled",
+        "r": "cancelled",  # 2025-11-25: a cancelled task MUST remain cancelled
+        "d": "completed",
+    }
+    assert "nothing was charged" in got["w"]["statusMessage"].lower()
+    assert "may still" in got["r"]["statusMessage"]

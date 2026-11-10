@@ -61,6 +61,8 @@ async def test_unauthenticated_envelope_has_remediation(
     assert result["profile"] == "denon"
     err = result["error"]
     assert err["status"] == 401
+    # #1201: a credit-free probe — charged is "no" on every branch, like its siblings.
+    assert (err["charged"], err["next_action"], err["retryable"]) == ("no", "reauth", False)
     assert "gflow auth login --profile denon" in err["remediation_hint"]
     assert "local terminal" in err["remediation_hint"]
 
@@ -82,6 +84,7 @@ async def test_verification_error_does_not_advise_relogin(
     # A network problem is not fixed by re-login (mirrors the CLI's guidance).
     assert "auth login" not in result["error"]["remediation_hint"]
     assert "retry" in result["error"]["remediation_hint"].lower()
+    assert (result["error"]["charged"], result["error"]["next_action"]) == ("no", "retry")
 
 
 async def test_a_missing_profile_marker_is_not_retryable_and_not_a_dead_session(
@@ -102,6 +105,7 @@ async def test_a_missing_profile_marker_is_not_retryable_and_not_a_dead_session(
     result = await tools.gflow_auth_status()
     assert result["status"] == "profile_marker_missing"
     assert result["error"]["retryable"] is False
+    assert (result["error"]["charged"], result["error"]["next_action"]) == ("no", "reauth")
     assert result["error"]["status"] == 409
     assert "--browser chrome" in result["error"]["remediation_hint"]
 

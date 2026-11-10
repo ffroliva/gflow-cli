@@ -239,3 +239,16 @@ async def test_concatenate_scene_rejects_undecodable_base64(tmp_path):
     c = _client_seq([_CONCAT_OP, _ok("AAAAA")], tmp_path)
     with pytest.raises(SceneConcatError, match="undecodable"):
         await c.concatenate_scene(_INPUTS, out_path=tmp_path / "x.mp4", poll_interval=0)
+
+
+async def test_a_failed_render_write_is_free_and_fixable(tmp_path):
+    """#1201 review: a scene render spends nothing, so a disk failure is no/fix_input."""
+    from gflow_cli.errors import GFlowError
+
+    c = _client_seq([_CONCAT_OP, _ok(_FAKE_MP4_B64)], tmp_path)
+    taken = tmp_path / "x.mp4"
+    taken.mkdir()  # the output path is a directory, so the write itself fails
+    with pytest.raises(GFlowError) as info:
+        await c.concatenate_scene(_INPUTS, out_path=taken, poll_interval=0)
+    pd = info.value.to_problem_details()
+    assert (pd["charged"], pd["next_action"]) == ("no", "fix_input")

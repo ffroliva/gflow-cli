@@ -6,7 +6,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from gflow_cli.errors import DataIntegrityError, QueueSchemaError, is_retryable
+from gflow_cli.errors import (
+    DataIntegrityError,
+    GFlowError,
+    QueueSchemaError,
+    ServerCancelUnavailableError,
+    is_retryable,
+    outcome_members,
+)
 from gflow_cli.worker import codec
 
 if TYPE_CHECKING:
@@ -286,6 +293,36 @@ class QueueRepository:
             return None
         return cast("dict[str, Any]", json.loads(row["checkpoint_json"]))
 
+    def checkpoint_before_submit(
+        self,
+        task_id: str,
+        *,
+        claimant: str,
+        phase: str,
+        may_have_spent: bool,
+        project_id: str | None = None,
+    ) -> bool:
+        """Write the pre-submit checkpoint unless the row was aborted; ``False`` means stop.
+
+        One ``BEGIN IMMEDIATE`` with :func:`abort_task`'s, so the two cannot interleave:
+        an abort either lands first (the worker stops, nothing is charged) or sees this
+        checkpoint (the row reads ``abandoned``, ``charged: maybe``).
+        """
+        document = make_checkpoint_document(
+            claimant=claimant, phase=phase, may_have_spent=may_have_spent, project_id=project_id
+        )
+        with self._store.transaction(immediate=True):
+            row = self._store.conn.execute(
+                "SELECT status FROM generation_queue WHERE task_id = ?", (task_id,)
+            ).fetchone()
+            if row is not None and row["status"] in ("cancelled", "abandoned"):
+                return False
+            self._store.conn.execute(
+                "UPDATE generation_queue SET checkpoint_json = ?, updated_at = ? WHERE task_id = ?",
+                (json.dumps(document), _utc_now(), task_id),
+            )
+        return True
+
     def update_task_status(
         self,
         task_id: str,
@@ -294,7 +331,12 @@ class QueueRepository:
         error: dict[str, Any] | None = None,
         only_from: tuple[str, ...] = (),
     ) -> None:
-        """Set a task's status; with ``only_from``, only while it is still in one of those."""
+        """Set a task's status; with ``only_from``, only while it is still in one of those.
+
+        A row a local abort settled (``cancelled`` / ``abandoned``, #1198) keeps its status
+        and record: SEP-2663 keeps a cancelled task cancelled even if its execution
+        finishes. A worker's ``flow_media_id`` still lands, for reconcile (#1199).
+        """
         now = _utc_now()
         error_str = json.dumps(error) if error is not None else None
         guard = f" AND status IN ({','.join('?' * len(only_from))})" if only_from else ""
@@ -303,9 +345,11 @@ class QueueRepository:
                 self._store.conn.execute(
                     """
                     UPDATE generation_queue
-                    SET status = ?,
+                    SET status = CASE WHEN status IN ('cancelled', 'abandoned')
+                                      THEN status ELSE ? END,
                         flow_media_id = COALESCE(?, flow_media_id),
-                        error_json = COALESCE(?, error_json),
+                        error_json = CASE WHEN status IN ('cancelled', 'abandoned')
+                                          THEN error_json ELSE COALESCE(?, error_json) END,
                         updated_at = ?
                     WHERE task_id = ?"""  # noqa: S608 - constants and ? placeholders only, values stay bound
                     + guard,
@@ -313,6 +357,60 @@ class QueueRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="queue.update_task_status") from exc
+
+
+def _abort_record(exc: GFlowError) -> dict[str, Any]:
+    return {**exc.to_problem_details(), "retryable": is_retryable(exc)}
+
+
+@dataclass(frozen=True)
+class AbortOutcome:
+    previous: str  # status before the abort
+    state: str  # status after it
+
+
+def abort_task(repo: QueueRepository, task_id: str) -> AbortOutcome | None:
+    """Abort a job locally (``gflow cancel`` and MCP ``tasks/cancel``); ``None`` if unknown.
+
+    * ``pending``, or ``processing`` not yet submitted -> ``cancelled``: nothing reached
+      Flow, and a worker that claimed it stops at the submit gate
+      (:meth:`QueueRepository.checkpoint_before_submit`).
+    * ``processing`` past its submit checkpoint -> ``abandoned``: Flow cannot cancel a
+      generation it has, so it may still be charged. A worker in another process keeps
+      polling, so its result is still recorded for reconcile (#1199).
+    * anything else is left as it is.
+
+    The read and the write share one ``BEGIN IMMEDIATE``, so a claim or a submit
+    checkpoint cannot slip between them.
+    """
+    store = repo.store
+    with store.transaction(immediate=True):
+        row = store.conn.execute(
+            "SELECT status, checkpoint_json FROM generation_queue WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        previous = row["status"]
+        if previous not in ("pending", "processing"):
+            return AbortOutcome(previous, previous)
+        checkpoint = json.loads(row["checkpoint_json"]) if row["checkpoint_json"] else None
+        if previous == "processing" and classify_interrupted(checkpoint) != "failed":
+            state = "abandoned"
+            error = _abort_record(
+                ServerCancelUnavailableError(
+                    detail="A gflow worker had already submitted it to Flow.",
+                    operation_id=task_id,
+                )
+            )
+        else:
+            state = "cancelled"
+            error = CANCELLED_ERROR | {"detail": "Aborted before it was submitted; nothing spent."}
+        store.conn.execute(
+            "UPDATE generation_queue SET status = ?, error_json = ?, updated_at = ? "
+            "WHERE task_id = ?",
+            (state, json.dumps(error), _utc_now(), task_id),
+        )
+    return AbortOutcome(previous, state)
 
 
 def classify_interrupted(checkpoint: dict[str, Any] | None) -> str:
@@ -331,24 +429,37 @@ def classify_interrupted(checkpoint: dict[str, Any] | None) -> str:
     return "failed"
 
 
+#: The record of a task a user cancelled before it submitted anything (#1201).
+CANCELLED_ERROR: dict[str, Any] = {
+    "type": "https://gflow-cli.dev/errors/cancelled",
+    "title": "Cancelled",
+    "detail": "Cancelled before it ran.",
+    "reason": "cancelled",
+    **outcome_members("no", "none"),
+}
+
+
 def _recovery_error(status: str, reason: str) -> dict[str, Any]:
     if status == "indeterminate":
         return {
             "type": "https://gflow-cli.dev/errors/indeterminate-outcome",
             "title": "Indeterminate Generation Outcome",
-            "status": 202,
             "detail": (
                 f"Task interrupted ({reason}) after submit was attempted; a credit "
                 "may have been spent and the outcome is unknown. NOT retried automatically."
             ),
             "reason": reason,
+            **outcome_members("maybe", "reconcile"),
         }
+    if reason == "cancelled":
+        # A user's cancel is not a failure to retry, whichever pre-submit phase it hit.
+        return CANCELLED_ERROR | {"detail": "Cancelled before any submit; nothing spent."}
     return {
         "type": "https://gflow-cli.dev/errors/daemon-recovery",
         "title": "Interrupted Before Submit",
-        "status": 500,
         "detail": f"Task interrupted ({reason}) before any submit; nothing spent, safe to retry.",
         "reason": reason,
+        **outcome_members("no", "retry"),
     }
 
 

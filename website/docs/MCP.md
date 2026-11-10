@@ -108,17 +108,25 @@ The server registers three protocol surfaces:
 > `working`; once it has finished it answers `completed`, and its `result` field holds the
 > same reply `wait=true` returns (files, project id, seed). **A failed generation is
 > `completed` too, with `result.isError: true`** — SEP-2663 keeps `failed` for protocol
-> errors — so check `isError` before you use the files. `tasks/cancel` stops the job and
-> answers with an empty acknowledgement; `tasks/get` then answers `cancelled`. There is no
+> errors — so check `isError` before you use the files. `tasks/cancel` aborts the job locally
+> and answers with an empty acknowledgement; `tasks/get` then answers `cancelled`. It is the
+> same abort as the CLI's `gflow cancel <id>` (#1198), whichever server runs the job: a job
+> not yet submitted to Flow (pending, or claimed but stopped at its submit gate) is stored
+> `cancelled`, `statusMessage` saying nothing was charged; a job a gflow worker already
+> submitted is stored `abandoned`, `statusMessage` saying it may still be charged, because
+> Flow cannot be told to cancel it; a finished job is left as it is. Either way the task
+> stays `cancelled`, even if its generation finishes later. `tasks/get` reports the charge
+> only in `statusMessage`; the `charged`/`next_action` members are on the CLI's `--json`.
+> There is no
 > `tasks/result`: SEP-2663 removed it, and the server answers it `-32601`. Two limits:
 > `tools/call` returns gflow's own `{status, task_id}` handle, not a SEP-2663
 > `resultType: "task"`, so a client's built-in task support will not pick the job up;
 > and a task id is a bearer capability — any client that can reach the server and knows
-> the id can read or cancel it. A job cancelled after
-> its submit fired is stored as `indeterminate`,
-> not `failed`: a credit may have been spent, so check the Flow project before you
-> retry. **The job lives only as long as the server**: when the client closes a stdio
-> server, or `gflow serve` stops, running jobs are cancelled and recorded the same way.
+> the id can read or cancel it. **The job lives only as long as the server**: when the
+> client closes a stdio server, or `gflow serve` stops, running jobs are stopped and stored
+> by how far they got: `failed` before the submit, `indeterminate` after it (a credit may
+> have been spent, so check the Flow project before you retry); `tasks/get` reads both as
+> `cancelled`.
 > A server killed outright leaves its row `processing` — see
 > [Known issues](https://github.com/ffroliva/gflow-cli/blob/main/KNOWN_ISSUES.md). Jobs
 > queued with `wait=false` by v0.90.0 or earlier were never run and are not picked up now:
@@ -231,6 +239,14 @@ worker-queue error record use (`errors.is_retryable`) — the three surfaces
 cannot drift. On a captured failure the envelope also carries a remote-safe
 `incident` object (`{id, capture_status}` only — never a local path); see
 [DEBUGGING § Automatic incident bundles](DEBUGGING.md#automatic-incident-bundles).
+
+The envelope also carries **`charged`** (`no` / `maybe` / `yes`: whether Flow may have
+billed) and **`next_action`** (`retry`, `retry_after`, `wait`, `reauth`, `fix_input`,
+`reconcile`, `none`), plus `operation_id` when an id exists ([#1201](https://github.com/ffroliva/gflow-cli/issues/1201)).
+`next_action` always agrees with `retryable`: a billed clip's failed download reads
+`charged: yes`, `next_action: reconcile`, with its media id as `operation_id`. Envelopes
+the server builds by hand (bad parameter, no profile, an interrupted task) carry them too. Every `type`,
+its exit code and its defaults are listed in [ERRORS.md](ERRORS.md).
 
 Every tool routes through one error funnel. **Unexpected (non-gflow) exceptions
 are masked**: the client sees only the exception class name

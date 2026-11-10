@@ -19,6 +19,7 @@ from rich.table import Table
 
 from gflow_cli import __version__, profile_store, telemetry, telemetry_upload
 from gflow_cli import auth as auth_mod
+from gflow_cli.cli_cancel import cancel as _cancel_command
 from gflow_cli.cli_character import character as _character_group
 from gflow_cli.cli_credits import credits as _credits_group
 from gflow_cli.cli_data import data as _data_group
@@ -630,6 +631,7 @@ def _resolve_or_prompt(default_for_first_run: str) -> str:
         )
 
 
+main.add_command(_cancel_command)
 main.add_command(_character_group)
 main.add_command(_credits_group)
 main.add_command(_data_group)
