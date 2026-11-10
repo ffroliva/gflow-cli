@@ -538,11 +538,25 @@ class TestDisableFeaturesArgs:
         assert {"HttpsUpgrades", "Translate", "MediaRouter"} <= set(features)
         assert features[-1] == "CloudSyncedFolderChecker"
 
-    def test_every_headed_launch_carries_the_merged_switch(self, tmp_path: Path) -> None:
-        import inspect
+    def test_every_launch_site_carries_the_merged_switch(self) -> None:
+        """Headless real Chrome hangs on close too (measured 31.3 s, #1140 probe), so
+        every module that launches Chrome must pass the switch, directly or through
+        ``login_launch_kwargs``."""
+        import gflow_cli
 
+        src = Path(gflow_cli.__file__).parent
+        offenders = [
+            py.relative_to(src).as_posix()
+            for py in src.rglob("*.py")
+            if py.name != "browser_manager.py"  # the helper's home; it names the call in prose
+            and "launch_persistent_context(" in (text := py.read_text(encoding="utf-8"))
+            and "*disable_features_args()" not in text
+            and "login_launch_kwargs(" not in text
+        ]
+        assert not offenders, f"Chrome launch sites without the #1140 switch: {offenders}"
+
+    def test_generation_and_login_kwargs_carry_one_switch(self, tmp_path: Path) -> None:
         from gflow_cli.api.client import FlowApiClient
-        from gflow_cli.api.transports import ui_automation
         from gflow_cli.auth.internal_chromium import login_launch_kwargs
         from gflow_cli.browser_manager import disable_features_args
         from gflow_cli.config import Settings
@@ -554,5 +568,3 @@ class TestDisableFeaturesArgs:
             login_launch_kwargs(tmp_path, headless=False)["args"],
         ):
             assert [a for a in args if a.startswith("--disable-features")] == [switch]
-        # The standalone transport builds its args inline.
-        assert "*disable_features_args()" in inspect.getsource(ui_automation)

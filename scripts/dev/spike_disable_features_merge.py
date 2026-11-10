@@ -11,6 +11,10 @@ closed within ~2 s does not show the hang):
                                       the probe cannot see the regression at all
   merged  disable_features_args()     expect: http stays http, fast close
   login   login_launch_kwargs(...)    expect: as merged, navigator.webdriver unchanged
+  headless  no switch, headless real Chrome  -- does the hang reach headless launches
+                                      (renew / verification / cookies)? #1140 said no;
+                                      measured 2026-11-10: yes, 31.3 s
+  hl-merged headless + merged switch  expect: fast close
 
 Run:  uv run python scripts/dev/spike_disable_features_merge.py
 No Flow account, no credits. Prints one line per arm.
@@ -40,10 +44,14 @@ async def _arm(pw: Any, name: str, kwargs: dict[str, Any]) -> None:
         await page.goto(_URL, wait_until="domcontentloaded", timeout=30_000)
         final = page.url
         webdriver = await page.evaluate("navigator.webdriver")
-        version = await ctx.new_page()
-        await version.goto("chrome://version", timeout=15_000)
-        cmdline = await version.locator("#command_line").inner_text()
-        switches = [s for s in cmdline.split() if s.startswith("--disable-features")]
+        switches: list[str] = []
+        try:  # best effort: the verdict is the URL and the close time
+            version = await ctx.new_page()
+            await version.goto("chrome://version", timeout=15_000)
+            cmdline = await version.locator("#command_line").inner_text(timeout=5_000)
+            switches = [s for s in cmdline.split() if s.startswith("--disable-features")]
+        except Exception as exc:  # noqa: BLE001
+            print(f"{name:7} chrome://version unreadable: {type(exc).__name__}", flush=True)
         await asyncio.sleep(3)  # past the ~2 s window that hides the hang
     finally:
         t0 = time.monotonic()
@@ -64,18 +72,20 @@ async def _arm(pw: Any, name: str, kwargs: dict[str, Any]) -> None:
 async def main() -> None:
     (merged,) = disable_features_args()
     async with async_playwright() as pw:
-        for name, extra in (
-            ("none", []),
-            ("lone", ["--disable-features=CloudSyncedFolderChecker"]),
-            ("merged", [merged]),
+        for name, extra, headless in (
+            ("none", [], False),
+            ("lone", ["--disable-features=CloudSyncedFolderChecker"], False),
+            ("merged", [merged], False),
+            ("headless", [], True),
+            ("hl-merged", [merged], True),
         ):
-            with tempfile.TemporaryDirectory(dir="tmp") as d:
+            with tempfile.TemporaryDirectory(dir="tmp", ignore_cleanup_errors=True) as d:
                 await _arm(
                     pw,
                     name,
-                    {"user_data_dir": d, "channel": "chrome", "headless": False, "args": extra},
+                    {"user_data_dir": d, "channel": "chrome", "headless": headless, "args": extra},
                 )
-        with tempfile.TemporaryDirectory(dir="tmp") as d:
+        with tempfile.TemporaryDirectory(dir="tmp", ignore_cleanup_errors=True) as d:
             await _arm(pw, "login", login_launch_kwargs(Path(d), False, channel="chrome"))
 
 

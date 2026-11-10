@@ -11,6 +11,7 @@ import structlog
 from gflow_cli.browser_manager import (
     browser_proxy_kwargs,
     channel_for_profile,
+    disable_features_args,
     profile_in_use_error,
 )
 from gflow_cli.config import get_settings
@@ -164,7 +165,7 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
                 user_data_dir=str(profile_dir),
                 channel=channel,
                 headless=True,
-                args=["--password-store=basic"],
+                args=["--password-store=basic", *disable_features_args()],
                 **browser_proxy_kwargs(get_settings().browser_proxy),
             )
         except Exception as exc:
