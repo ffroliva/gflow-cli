@@ -38,7 +38,7 @@ def ctx(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     reset_settings()
     # A process-wide disable from an earlier scenario must not leak into this one.
     monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_signed_out", set())
+    monkeypatch.setattr(flow_wire, "_signed_out", {})
     monkeypatch.setattr(flow_wire, "_throttled", {})
     monkeypatch.setattr(flow_wire, "_locks", {})
     state: dict[str, Any] = {"pages": 0, "requests": [], "reasons": [], "mp": monkeypatch}

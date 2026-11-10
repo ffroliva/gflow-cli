@@ -48,7 +48,7 @@ def ctx(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")
     reset_settings()
     monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_signed_out", set())
+    monkeypatch.setattr(flow_wire, "_signed_out", {})
     monkeypatch.setattr(flow_wire, "_throttled", {})
     monkeypatch.setattr(flow_wire, "_locks", {})
     monkeypatch.setattr(flow_wire, "profile_last_version", lambda _p: "150.0.1.2")

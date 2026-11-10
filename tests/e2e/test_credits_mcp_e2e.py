@@ -40,7 +40,7 @@ def _fresh_wire(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")  # explicit: it defaults off on macOS
     reset_settings()
     monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_signed_out", set())
+    monkeypatch.setattr(flow_wire, "_signed_out", {})
     monkeypatch.setattr(flow_wire, "_throttled", {})
     monkeypatch.setattr(flow_wire, "_locks", {})
 

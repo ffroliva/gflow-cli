@@ -21,11 +21,12 @@ import json
 import random
 import re
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from enum import StrEnum
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
 import httpx
@@ -36,8 +37,8 @@ from gflow_cli.api.dto import CreditsInfo
 from gflow_cli.api.transports.batchexecute import parse_frames, rpc_errors
 from gflow_cli.auth.cookies import CookieStoreUnreadable, read_cookies_for, require_in_home
 from gflow_cli.browser_manager import profile_last_version
-from gflow_cli.config import get_settings
-from gflow_cli.errors import NetworkError, RateLimitError
+from gflow_cli.config import Settings, get_settings
+from gflow_cli.errors import NetworkError, RateLimitError, SecurityError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -91,10 +92,11 @@ class _Tokens:
     bl: str | None
 
 
-# Per process, per profile: the shell's tokens, profiles Flow said are signed out, throttle
-# windows (monotonic deadline, the status that opened it), and one lock each.
+# Per process, per profile: the shell's tokens, profiles Flow said are signed out (with the
+# reason it gave), throttle windows (monotonic deadline, the status that opened it), and one
+# lock each.
 _tokens: dict[Path, _Tokens] = {}
-_signed_out: set[Path] = set()
+_signed_out: dict[Path, WireFallbackReason] = {}
 _throttled: dict[Path, tuple[float, int]] = {}
 _locks: dict[Path, asyncio.Lock] = {}
 _clock = time.monotonic
@@ -133,8 +135,8 @@ def _throttled_error(status: int, retry_after: float) -> RateLimitError | Networ
 
 def _gate(profile_dir: Path) -> None:
     """Refuse a read this profile must not make: signed out, or inside a throttle window."""
-    if profile_dir in _signed_out:
-        raise WireReadUnavailable(WireFallbackReason.DISABLED)
+    if (reason := _signed_out.get(profile_dir)) is not None:
+        raise WireReadUnavailable(reason)  # never DISABLED: that one names the kill switch
     if (window := _throttled.get(profile_dir)) is not None:
         deadline, status = window
         if (remaining := deadline - _clock()) > 0:
@@ -154,7 +156,7 @@ def _check(response: httpx.Response, profile_dir: Path) -> None:
     if 300 <= status < 400:
         raise WireReadUnavailable(WireFallbackReason.REDIRECT)
     if status == 401:
-        _signed_out.add(profile_dir)
+        _signed_out[profile_dir] = WireFallbackReason.HTTP_401
         raise WireReadUnavailable(WireFallbackReason.HTTP_401)
     if status in (429, 503):
         window = parse_retry_after(response) or _THROTTLE_DEFAULT_S
@@ -217,11 +219,43 @@ async def _shell_tokens(
         response = await _send(client, client.build_request("GET", f"{_ORIGIN}/", headers=nav))
         _check(response, profile_dir)
         if not (at := _wiz(response.text, "SNlM0e")):
-            _signed_out.add(profile_dir)
+            _signed_out[profile_dir] = WireFallbackReason.SIGNED_OUT_SHELL
             raise WireReadUnavailable(WireFallbackReason.SIGNED_OUT_SHELL)
         tokens = _Tokens(at, _wiz(response.text, "FdrFJe"), _wiz(response.text, "cfb2h"))
         _tokens[profile_dir] = tokens
         return tokens
+
+
+async def _read_cookies(profile_dir: Path) -> list[tuple[str, str]]:
+    """``read_cookies_for`` on a daemon thread, bounded by ``_TOTAL_S``.
+
+    Not ``asyncio.to_thread``: ``asyncio.run`` (``gflow doctor``) joins the default
+    executor at shutdown, so a cookie store that never answers (a Linux keyring) would hold
+    the process open long after the read gave up. A daemon thread is abandoned instead.
+    """
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[list[tuple[str, str]]] = loop.create_future()
+
+    def settle(result: list[tuple[str, str]] | None, error: BaseException | None) -> None:
+        if future.done():  # the wait already gave up
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(result or [])
+
+    def run() -> None:
+        try:
+            result, error = read_cookies_for(profile_dir), None
+        except BaseException as exc:  # noqa: BLE001 - handed to the waiting coroutine
+            result, error = None, exc
+        try:
+            loop.call_soon_threadsafe(settle, result, error)
+        except RuntimeError:  # the loop closed while the read was stuck
+            pass
+
+    threading.Thread(target=run, name="gflow-cookie-read", daemon=True).start()
+    return await asyncio.wait_for(future, _TOTAL_S)
 
 
 async def read_credits(profile_dir: Path) -> CreditsInfo:
@@ -235,7 +269,7 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
         raise WireReadUnavailable(WireFallbackReason.NO_CHROME_VERSION)
     started = time.perf_counter()
     try:
-        cookies = await asyncio.wait_for(asyncio.to_thread(read_cookies_for, profile_dir), _TOTAL_S)
+        cookies = await _read_cookies(profile_dir)
     except (CookieStoreUnreadable, TimeoutError):
         raise WireReadUnavailable(WireFallbackReason.STORE_UNREADABLE) from None
     if not cookies:
@@ -275,40 +309,45 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
 
 
 def session_recovered(profile_dir: Path) -> None:
-    """The session is known good again (a page read answered, or a renew renewed it): lift
-    the signed-out mark and the cached ``at`` so the next read tries the wire once more.
-    A throttle window is time-based and stays."""
-    _signed_out.discard(profile_dir)
+    """A renew reported the profile renewed (its saved cookies changed): lift the signed-out
+    mark and the cached ``at`` so the next read tries the wire once more. A page read is not
+    enough (the cookies the wire sends are the same), and a throttle window is time-based."""
+    _signed_out.pop(profile_dir, None)
     _tokens.pop(profile_dir, None)
 
 
-async def health(profile_dir: Path) -> dict[str, str | None]:
+async def health(profile_dir: Path, settings: Settings | None = None) -> dict[str, Any]:
     """The direct read's health for ``gflow doctor`` and ``gflow_auth_status`` (G6).
 
-    The probe IS one credits read (one GET, one POST), under every rule ``read_credits``
-    keeps, plus the kill switch / macOS default it leaves to its caller. Returns only an
-    enum ``status`` (``accepted``, ``throttled``, or a :class:`WireFallbackReason` value) and
-    the Flow build label when one was read; never a cookie, token, id or URL. Never raises.
+    An explicit question, so it asks Flow afresh: one shell GET and one ``nzlxg`` POST, under
+    every rule ``read_credits`` keeps, plus the kill switch / macOS default and the proxy rule
+    from ``settings`` (the caller's, else the global ones). A profile already marked signed out
+    is asked again; a throttle window is honoured and sends nothing. Returns only ``status``
+    (``accepted``, ``throttled``, or a :class:`WireFallbackReason` value), ``build`` (Flow's
+    build label, when read) and, when throttled, ``retry_after`` in seconds; never a cookie,
+    token, id or URL. Raises only ``SecurityError`` (a profile outside GFLOW_CLI_HOME).
     """
-    status: str
-    if not get_settings().wire_reads:
-        status = WireFallbackReason.DISABLED.value
-    elif profile_dir in _signed_out:
-        # Flow already refused this session in this process; _gate would say DISABLED,
-        # which reads as the kill switch. shortcut: a 401 also lands here; split if needed.
-        status = WireFallbackReason.SIGNED_OUT_SHELL.value
-    else:
-        try:
-            await read_credits(profile_dir)
-        except WireReadUnavailable as exc:
-            status = exc.reason.value
-        except (RateLimitError, NetworkError):  # only ever the throttle window here
-            status = "throttled"
-        except Exception as exc:  # noqa: BLE001 - a health probe reports, it never fails a caller
-            log.warning("wire.health_unexpected", error_type=type(exc).__name__)
-            status = WireFallbackReason.UNEXPECTED.value
-        else:
-            tokens = _tokens.get(profile_dir)
-            bl = tokens.bl if tokens else None
-            return {"status": "accepted", "build": bl if bl and _BUILD.fullmatch(bl) else None}
-    return {"status": status, "build": None}
+    settings = settings or get_settings()
+    if not settings.wire_reads:
+        return {"status": WireFallbackReason.DISABLED.value, "build": None}
+    if settings.browser_proxy:
+        return {"status": WireFallbackReason.PROXY_CONFIGURED.value, "build": None}
+    require_in_home(profile_dir)
+    _signed_out.pop(profile_dir, None)  # re-ask; a still-signed-out shell marks it again
+    _tokens.pop(profile_dir, None)  # a fresh shell GET, so `build` is current
+    try:
+        await read_credits(profile_dir)
+    except WireReadUnavailable as exc:
+        return {"status": exc.reason.value, "build": None}
+    except (RateLimitError, NetworkError):  # only ever the throttle window here
+        window = _throttled.get(profile_dir)
+        retry = max(0, round(window[0] - _clock())) if window else None
+        return {"status": "throttled", "build": None, "retry_after": retry}
+    except SecurityError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a health probe reports, it never fails a caller
+        log.warning("wire.health_unexpected", error_type=type(exc).__name__)
+        return {"status": WireFallbackReason.UNEXPECTED.value, "build": None}
+    tokens = _tokens.get(profile_dir)
+    bl = tokens.bl if tokens else None
+    return {"status": "accepted", "build": bl if bl and _BUILD.fullmatch(bl) else None}

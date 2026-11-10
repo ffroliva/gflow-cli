@@ -2,7 +2,7 @@
 
 SCENARIO row 25. Doctor runs as a real subprocess (its own process, so no wire state is
 shared), then the MCP tool in-process, one after the other so no Chrome holds the profile's
-cookie jar during the doctor run. Both must say ``accepted`` with the same non-empty build
+cookie jar during the doctor run. Both must say ``accepted`` with a well-formed build
 label; agreeing on ``disabled`` would prove nothing, so the wire is switched on explicitly.
 
 Opt-in: ``-m e2e_auth`` with ``GFLOW_CLI_E2E_PROFILE`` set. **Cost: zero.** Two shell GETs and
@@ -39,7 +39,7 @@ async def test_doctor_and_mcp_auth_status_agree_on_an_accepted_wire(
     monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")
     monkeypatch.setenv("GFLOW_CLI_PROFILE", profile)  # doctor probes the default profile
     reset_settings()
-    for name, empty in (("_tokens", {}), ("_signed_out", set()), ("_throttled", {})):
+    for name, empty in (("_tokens", {}), ("_signed_out", {}), ("_throttled", {})):
         monkeypatch.setattr(flow_wire, name, empty)
     monkeypatch.setattr(flow_wire, "_locks", {})
 
@@ -62,5 +62,8 @@ async def test_doctor_and_mcp_auth_status_agree_on_an_accepted_wire(
     assert doctor_status == "accepted", check
     assert check["severity"] == "pass"
     assert result["wire"]["status"] == "accepted", result["wire"]
-    assert result["wire"]["build"] and result["wire"]["build"] == doctor_build
+    # Two probes, two shell GETs: Flow may deploy between them, so the labels are each
+    # checked for shape rather than compared.
+    assert re.fullmatch(r"boq_[A-Za-z0-9._-]+", doctor_build), doctor_build
+    assert re.fullmatch(r"boq_[A-Za-z0-9._-]+", result["wire"]["build"] or ""), result["wire"]
     assert result["status"] == "authenticated", result

@@ -59,3 +59,33 @@ def test_the_description_names_the_wire_field_and_its_statuses() -> None:
     text = tool.description or ""
     for word in ("wire", "accepted", "signed_out_shell", "store_unreadable", "disabled", "build"):
         assert word in text
+
+
+async def test_a_throttled_wire_skips_the_browser_probe_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The browser probe would send more requests to an account Flow is throttling."""
+    from gflow_cli.mcp import tools
+
+    monkeypatch.setattr(tools, "_resolve_and_validate_profile", lambda _p: "denon")
+
+    async def throttled(_d: Path) -> dict[str, object]:
+        return {"status": "throttled", "build": None, "retry_after": 42}
+
+    browser: list[Path] = []
+
+    async def verify(d: Path, *, source: str = "chrome") -> FlowSessionStatus:
+        browser.append(d)
+        raise AssertionError("the browser probe must not run")
+
+    monkeypatch.setattr(flow_wire, "health", throttled)
+    monkeypatch.setattr(tools.verification, "verify_flow_profile", verify)
+
+    result = await tools.gflow_auth_status()
+
+    assert browser == []
+    assert result["status"] == "throttled"
+    assert result["wire"]["status"] == "throttled"
+    assert result["error"]["status"] == 429
+    assert result["error"]["retryable"] is True
+    assert result["error"]["retry_after"] == 42

@@ -3,9 +3,10 @@
 Brew-doctor philosophy: diagnose, never heal. Every check inspects local
 state (catalog DB, environment, auth files) and reports a :class:`Finding`;
 nothing is migrated, repaired, or written. One check is not local:
-``auth.wire_read`` makes one read-only credits request to flow.google.com for
-the default profile (``flow_wire.health``), unless the direct read is disabled.
-All DB access goes through :meth:`DataStore.open_readonly`, and every check runs inside a guard that
+``auth.wire_read`` sends one GET and one POST to flow.google.com for the
+default profile (``flow_wire.health``), unless the direct read is disabled.
+All DB access goes through :meth:`DataStore.open_readonly`, and every check
+runs inside a guard that
 converts unexpected exceptions into a "fail" finding — doctor must never
 crash on a damaged database.
 
@@ -488,14 +489,13 @@ def _check_auth_files_present() -> list[Finding]:
 _WIRE_HINTS = {
     "signed_out_shell": "Flow did not accept the saved session; check it with: gflow auth status",
     "http_401": "Flow did not accept the saved session; check it with: gflow auth status",
-    "store_unreadable": "the cookie store is locked while Chrome has this profile open;"
-    " close that Chrome window and re-run: gflow doctor",
+    "store_unreadable": "the profile's cookies could not be read - Chrome has it open, or it"
+    " has no saved session; close Chrome on it, or run: gflow auth login",
     "disabled": "the direct read is off (GFLOW_CLI_WIRE_READS=0, or the macOS default);"
     " credits read through the browser",
     "proxy_configured": "the direct read is skipped while GFLOW_CLI_BROWSER_PROXY is set;"
     " credits read through the browser",
     "throttled": "Flow is throttling this account; wait a minute, then re-run: gflow doctor",
-    "no_profile": "set a default profile with: gflow auth use <name>",
 }
 
 
@@ -506,17 +506,20 @@ def _check_wire_read(settings: Settings) -> list[Finding]:
     browser read still answers in each, and a state that follows from Chrome being open, the
     network, or a deliberate setting is not a defect. Status and build label only.
     """
+    hint = ""
     try:
         name = profile_store.resolve_profile(None)
-    except (profile_store.NoProfilesError, profile_store.NoDefaultProfileError):
-        status, build = "no_profile", None
+    except profile_store.NoProfilesError:
+        status, build, hint = "no_profile", None, "create one with: gflow auth login"
+    except profile_store.NoDefaultProfileError:
+        status, build, hint = "no_profile", None, "set a default with: gflow auth use <name>"
     else:
-        result = asyncio.run(flow_wire.health(settings.profile_subdir(name)))
-        status, build = result["status"] or "unexpected", result["build"]
+        result = asyncio.run(flow_wire.health(settings.profile_subdir(name), settings))
+        status, build = str(result["status"]), result["build"]
     summary = f"status={status} build={build or 'unknown'} (direct credits read, default profile)"
     if status == "accepted":
         return [_finding("auth.wire_read", "pass", summary)]
-    hint = _WIRE_HINTS.get(
+    hint = hint or _WIRE_HINTS.get(
         status,
         "credits fall back to the browser read; for details re-run with GFLOW_CLI_LOG_LEVEL=DEBUG",
     )

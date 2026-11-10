@@ -35,7 +35,7 @@ def _wire_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")
     reset_settings()
     monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_signed_out", set())
+    monkeypatch.setattr(flow_wire, "_signed_out", {})
     monkeypatch.setattr(flow_wire, "_throttled", {})
     monkeypatch.setattr(flow_wire, "_locks", {})
 
@@ -310,22 +310,39 @@ async def test_a_throttled_profile_never_builds_the_browser_on_later_reads(
 
 
 def _mark_signed_out(meta: ProfileMeta) -> None:
-    flow_wire._signed_out.add(meta.profile_dir)  # pyright: ignore[reportPrivateUsage]
+    flow_wire._signed_out[meta.profile_dir] = WireFallbackReason.SIGNED_OUT_SHELL  # pyright: ignore[reportPrivateUsage]
     flow_wire._tokens[meta.profile_dir] = flow_wire._Tokens("stale-at", None, None)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_a_successful_page_read_lifts_the_signed_out_mark(
+async def test_a_wire_refused_page_served_profile_costs_one_shell_get_per_process(
     monkeypatch: pytest.MonkeyPatch, page: type[_Page]
 ) -> None:
-    """A long-lived MCP server must not keep a recovered profile on the browser until restart."""
+    """A page read does not prove the saved cookies changed, so it lifts nothing: repeated
+    reads of a profile the wire refuses send ONE shell GET per process, not one per read."""
+    import functools
+
+    import httpx
+
     meta = _meta()
-    _mark_signed_out(meta)
+    meta.profile_dir.mkdir(parents=True, exist_ok=True)
+    gets: list[httpx.Request] = []
 
-    result = await credits._fetch_once(meta)  # pyright: ignore[reportPrivateUsage]
+    def flow(request: httpx.Request) -> httpx.Response:
+        gets.append(request)
+        return httpx.Response(200, text="<html>signed out</html>")
 
-    assert result["credits"] == 11
-    assert meta.profile_dir not in flow_wire._signed_out  # pyright: ignore[reportPrivateUsage]
-    assert meta.profile_dir not in flow_wire._tokens  # pyright: ignore[reportPrivateUsage]
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", functools.partial(real, transport=httpx.MockTransport(flow))
+    )
+    monkeypatch.setattr(flow_wire, "read_cookies_for", lambda _p: [("SID", "fake-sid")])
+    monkeypatch.setattr(flow_wire, "profile_last_version", lambda _p: "150.0.1.2")
+
+    for _ in range(3):
+        assert (await credits._fetch_once(meta))["credits"] == 11  # pyright: ignore[reportPrivateUsage]
+
+    assert page.built == 3
+    assert len(gets) == 1
 
 
 async def test_a_failed_page_read_keeps_the_signed_out_mark(
