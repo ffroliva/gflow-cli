@@ -55,9 +55,11 @@ in use (`ProfileLockedError`, exit 11) as before. Linux is unmeasured.
 
 **Remedy / opt-out:** set `GFLOW_CLI_WIRE_READS=0` to always read in the browser
 ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads)). If Flow ever answers signed out
-or HTTP 401, gflow stops trying the direct read for that profile until the process exits. If
-it answers HTTP 429 or 503, that profile is left alone for the throttle window (`Retry-After`, capped at 60 s) and the command
-reports the error (exit 4 or 6) rather than retrying in the browser.
+or HTTP 401, that process stops trying the direct read for that profile until a `--refresh`
+renewal that Flow verified, or a `gflow doctor` / `gflow_auth_status` probe that Flow accepts.
+If it answers HTTP 429 or 503, that profile is left alone for the throttle window
+(`Retry-After`, capped at 60 s) and nothing retries in the browser: `credits user` exits 4 or
+6, and `credits list` records the error for that profile and keeps the other balances.
 
 ---
 
@@ -856,7 +858,7 @@ Re-running `auth login` reuses the existing profile dir (you typically just clic
 **What renewal cannot do:** complete a step only a human can, such as CAPTCHA, device
 verification, or "Confirm it's you". The 3 profiles that did not recover on 2026-10-14 were held
 at Flow's public `/about` page ([entry above](#every-command-lands-on-flowgooglecomabout-exit-31-while-gflow-auth-status-says-the-session-is-fine)),
-and `auth renew` reports them as not renewed. See [docs/AUTHENTICATION.md § Refresh / expiry](AUTHENTICATION.md#refresh--expiry).
+and `auth renew` reports them as not renewed. See [docs/AUTHENTICATION.md § Refresh / expiry](AUTHENTICATION.md#refresh-expiry).
 
 ---
 

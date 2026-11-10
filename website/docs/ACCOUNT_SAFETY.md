@@ -129,7 +129,7 @@ profile of the same account has succeeded the same day.
 5. **Widen the jitter** when you resume.
 
 Full entry, including the structlog signature to confirm it:
-[KNOWN_ISSUES § batchGenerateImages HTTP 403](../KNOWN_ISSUES.md).
+[KNOWN_ISSUES § batchGenerateImages HTTP 403](KNOWN_ISSUES.md).
 
 ## What we cannot tell you
 

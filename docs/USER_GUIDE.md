@@ -424,10 +424,11 @@ Your Google plan includes a finite Veo credit allowance — the video journeys s
 
 Check the current Veo video-credit balance for the selected profile. gflow reads the balance
 flow.google.com itself loads, the number in Flow's account menu
-([#795](https://github.com/ffroliva/gflow-cli/issues/795)): directly, with no browser, when Flow
-accepts the profile's saved session, and otherwise in the profile's browser
-([#1229](https://github.com/ffroliva/gflow-cli/issues/1229); off by default on macOS, see
-[`GFLOW_CLI_WIRE_READS`](CONFIGURATION.md#gflow_cli_wire_reads)). Nothing is clicked and
+([#795](https://github.com/ffroliva/gflow-cli/issues/795)): directly, with no browser, when the
+direct read is on and Flow accepts the profile's saved session, and otherwise in the profile's
+browser ([#1229](https://github.com/ffroliva/gflow-cli/issues/1229)). The direct read is off by
+default on macOS, where the browser read is used; see
+[`GFLOW_CLI_WIRE_READS`](CONFIGURATION.md#gflow_cli_wire_reads). Nothing is clicked and
 nothing is spent:
 
 ```bash

@@ -427,7 +427,7 @@ Since [#1229](https://github.com/ffroliva/gflow-cli/issues/1229), one read, the 
 
 - an rpcid allow-list that holds only `nzlxg`
 - no redirect is followed and no 4xx is retried (one retry only for a connect error, when nothing reached Flow)
-- a 3 s connect and 5 s overall deadline
+- two time limits in sequence: 5 s for the cookie read, then 5 s for both requests (3 s to connect), so a read that hangs gives way to the browser after about 10 s at most
 - a reject-all cookie jar, so every cookie Flow sets in a reply is dropped
 - the User-Agent of the profile's own Chrome version
 
@@ -435,7 +435,7 @@ Since [#1229](https://github.com/ffroliva/gflow-cli/issues/1229), one read, the 
 
 **Not a fallback.** A profile outside `GFLOW_CLI_HOME` raises `SecurityError` before anything is read. HTTP 429 and 503 are back-pressure: they raise the browser path's own `RateLimitError` / `NetworkError` and open a throttle window for that profile (`Retry-After`, capped at 60 s; 60 s when Flow names none), because a browser read would send the same requests to a throttled account. The other knobs: [CONFIGURATION § `GFLOW_CLI_WIRE_READS`](CONFIGURATION.md#gflow_cli_wire_reads).
 
-**Per-profile state, per process.** The shell's tokens are cached, so a second read in the same process sends only the POST; any non-200 or unparseable reply drops them. A profile Flow answered signed out (no `at` in the shell, or a 401) is not tried again until the process exits, even after a `--refresh` renewal, so a long-running MCP server reads that profile in the browser until it restarts. One lock per profile keeps concurrent reads to one shell GET. One profile's state never affects another's.
+**Per-profile state, per process.** The shell's tokens are cached, so a second read in the same process sends only the POST; any non-200 or unparseable reply drops them. A profile Flow answered signed out (no `at` in the shell, or a 401) is not tried again in that process until a `--refresh` renewal that Flow verified (`flow_wire.session_recovered`) or a `gflow doctor` / `gflow_auth_status` probe that Flow accepts lifts the mark; a browser read that succeeds does not, because the cookies the direct read sends are unchanged. One lock per profile keeps concurrent reads to one shell GET. One profile's state never affects another's.
 
 **Where it is off.** On macOS by default, where reading Chrome's cookies can raise a Keychain prompt; while any proxy is configured (`GFLOW_CLI_BROWSER_PROXY`, or an environment/system proxy found by `urllib.request.getproxies()`), so the cookies never leave from a different address than the browser's; and wherever `GFLOW_CLI_WIRE_READS=0`. The account risk of using the saved session outside Chrome is written up in [KNOWN_ISSUES](../KNOWN_ISSUES.md#the-direct-credits-read-uses-the-profiles-saved-google-session-outside-chrome).
 

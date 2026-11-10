@@ -135,8 +135,9 @@ profile's saved session, gflow reads it directly with that session's cookies: tw
 browser ([#1229](https://github.com/ffroliva/gflow-cli/issues/1229)). Otherwise (signed out,
 Chrome open on the profile, a network error, an unexpected reply) gflow opens the app in the
 profile's browser and reads it there. Nothing is clicked. The browser read costs one browser
-launch per profile, and the profile must not be in use by another gflow process
-(`ProfileLockedError`, exit 11). When Flow throttles the account (HTTP 429 or 503) gflow does not
+launch per profile, and the profile must not be in use by another gflow process or a Chrome
+window (`ProfileLockedError`, exit 11): with Chrome open on the profile, both reads fail, so
+close it and retry. When Flow throttles the account (HTTP 429 or 503) gflow does not
 open the browser, which would send the same requests: `credits user` exits 4 (`RateLimitError`)
 or 6 (`NetworkError`), and `credits list` records that error for the profile. The direct read
 is off by default on macOS and while any proxy is configured (`GFLOW_CLI_BROWSER_PROXY`, or an
