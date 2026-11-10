@@ -2,7 +2,7 @@
 
 import logging as _logging
 
-__version__ = "0.96.1"
+__version__ = "0.97.0"
 
 # A deliberate exception to the structlog-only rule: this configures third-party loggers,
 # it does not log. httpx logs every request at INFO as "HTTP Request: <METHOD> <full URL>".
