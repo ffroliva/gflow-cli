@@ -68,6 +68,9 @@ def _build_chrome_args(
         "--window-size=1920,1080",  # match the generation viewport (#315 consistency)
         "--window-position=0,0",  # a saved off-screen position would hide the sign-in
         "--password-store=basic",
+        # #1140: Chrome's close waits on this feature's startup task, which can never
+        # answer. No Playwright here, so no driver list for a lone switch to clobber.
+        "--disable-features=CloudSyncedFolderChecker",
         # No --remote-debugging-port: zero automation surface.
     ]
     if proxy:
