@@ -34,10 +34,9 @@ import inspect
 import re
 from typing import Any
 
-import click
-
 from gflow_cli.cli import main
 from gflow_cli.mcp import tools as mcp_tools
+from tests.mcp._cli_tree import cli_leaves
 
 # CLI leaf → MCP tool that covers it. One tool may cover several leaves when a
 # parameter selects the behaviour (e.g. gflow_generate_video's ``mode``).
@@ -96,7 +95,7 @@ _MCP_EXEMPT: dict[str, str] = {
     ),
     # Not a gap: the twin is a resource, not a tool (a document an agent reads before
     # planning, like gflow://docs/*). tests/mcp/test_capabilities.py holds the two
-    # surfaces to the same bytes (#1197).
+    # surfaces to the same JSON document (#1197).
     "capabilities": "twin is the MCP resource capabilities://self (same document, #1197)",
     "auth": "interactive session management — needs a human browser login flow",
     "auth list": "interactive session management",
@@ -173,20 +172,7 @@ _MCP_EXEMPT: dict[str, str] = {
 
 def _cli_leaves() -> set[str]:
     """Every invokable CLI path: plain commands + invoke_without_command groups."""
-    leaves: set[str] = set()
-
-    def _walk(group: click.Group, prefix: str) -> None:
-        for name, cmd in group.commands.items():
-            path = f"{prefix}{name}"
-            if isinstance(cmd, click.Group):
-                if cmd.invoke_without_command:
-                    leaves.add(path)
-                _walk(cmd, f"{path} ")
-            else:
-                leaves.add(path)
-
-    _walk(main, "")
-    return leaves
+    return cli_leaves(main)
 
 
 def test_every_cli_leaf_has_an_mcp_decision() -> None:

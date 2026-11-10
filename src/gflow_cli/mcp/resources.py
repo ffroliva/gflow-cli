@@ -219,15 +219,18 @@ async def known_issues_section(slug: str) -> str:
     name="Capabilities",
     description=(
         "What gflow can drive, as yes/no/partial/unknown per capability, with notes for "
-        "partial. Same document as `gflow capabilities --json`. No network call."
+        "partial. Same document as `gflow capabilities --json`, except on a no-spend "
+        "server, where generation is no. Makes no call to Flow."
     ),
     mime_type="application/json",
 )
 async def capabilities_self() -> str:
     """The MCP twin of ``gflow capabilities --json`` (#1197)."""
-    from gflow_cli.cli_capabilities import current_capabilities, to_json
+    from gflow_cli import json_output
+    from gflow_cli.cli_capabilities import current_capabilities
+    from gflow_cli.mcp.server import no_spend_active
 
-    return to_json(current_capabilities())
+    return json_output.dumps(current_capabilities(no_spend=no_spend_active()))
 
 
 @server.resource(
