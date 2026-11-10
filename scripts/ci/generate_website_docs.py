@@ -59,6 +59,13 @@ TOKEN_SUBS: tuple[tuple[re.Pattern[str], str], ...] = (
 # maintainer's email in SECURITY's reporting table becomes actionable GitHub
 # private-reporting steps, not a placeholder address.
 FILE_OVERRIDES: dict[str, tuple[tuple[str, str], ...]] = {
+    # The RPC catalog is a contributor reference and is not mirrored; link it on GitHub.
+    "E2E_TESTING.md": (
+        (
+            "](FLOW_WIRE_RPCS.md)",
+            "](https://github.com/ffroliva/gflow-cli/blob/main/docs/FLOW_WIRE_RPCS.md)",
+        ),
+    ),
     # The privacy notice must name its controller; the site names the public handle, not
     # the private name the token pass would otherwise mangle into "your.name Oliva".
     "TELEMETRY.md": (

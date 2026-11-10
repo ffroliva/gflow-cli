@@ -60,7 +60,8 @@ Code paths are relative to `src/gflow_cli/`.
 |---|---|---|
 | Every commit and CI run | Every RPC id constant in `src/` has a row | `tests/test_flow_wire_rpcs_catalog.py` |
 | A spike sees an id that matters | Add a row with its evidence, or list it below | the spike skill |
-| A row's id goes missing from the served JS | First re-learn the feature-module list with a page load (the spike's arm 2): a renamed module hides ids that still exist. If the id is still absent, set `Status` to `gone` or `renamed -> X`, fill `Renamed from` on the new row | the nightly check, #1218 |
+| Every night | Check every id in this table against the served JS with no cookies and no browser, record the build label, and archive the build's full descriptor list with what changed since the last build | the canary's `RPC-DRIFT` section (`scripts/canary/rpc_drift.py`, #1218); see [E2E_TESTING.md](E2E_TESTING.md#rpc-drift-check-1218) |
+| `RPC-DRIFT` reports `ID-GONE` | First confirm with a page load (the served-JS spike's arm 2) that the id did not move to a module outside the four. If it is still absent, set `Status` to `gone` or `renamed -> X`, fill `Renamed from` on the new row, and update `Last verified` | a maintainer, from the canary comment. The canary never edits this file. |
 
 The served app holds about 261 ids in the RPC descriptor shape (`{Xa:"<id>", …}`). This
 table and the list below cover the ones gflow has a reason to know.
