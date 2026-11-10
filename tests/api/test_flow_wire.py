@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import threading
-from collections.abc import Callable, Iterator
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -58,18 +59,14 @@ class _Flow:
 
 
 @pytest.fixture(autouse=True)
-def _fresh_wire_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Module state (token cache, process-wide disable, lock) must never leak between tests."""
-    monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_disabled", None)
-    monkeypatch.setattr(flow_wire, "_lock", None)
-    yield
+def _fresh(fresh_wire: None) -> None:
+    """Module state must never leak between tests (tests/conftest.py::fresh_wire)."""
 
 
 @pytest.fixture
 def profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    path = tmp_path / "profile_x"
-    path.mkdir()
+    path = _home() / "profile_x"
+    path.mkdir(parents=True)
     monkeypatch.setattr(flow_wire, "read_cookies_for", lambda _p: list(_FAKE_COOKIES))
     monkeypatch.setattr(flow_wire, "profile_last_version", lambda _p: "150.0.7311.42")
     return path
@@ -88,6 +85,13 @@ def flow(monkeypatch: pytest.MonkeyPatch) -> _Flow:
         httpx, "AsyncClient", functools.partial(real, transport=httpx.MockTransport(fake))
     )
     return fake
+
+
+def _home() -> Path:
+    """Profiles must live under GFLOW_CLI_HOME: the wire checks that before anything else."""
+    from gflow_cli.config import get_settings
+
+    return get_settings().home / "profiles"
 
 
 def _reason(exc: pytest.ExceptionInfo[WireReadUnavailable]) -> WireFallbackReason:
@@ -141,8 +145,8 @@ async def test_five_concurrent_reads_share_one_shell_get(profile: Path, flow: _F
 
 
 async def test_the_token_cache_is_per_profile(tmp_path: Path, profile: Path, flow: _Flow) -> None:
-    other = tmp_path / "profile_y"
-    other.mkdir()
+    other = _home() / "profile_y"
+    other.mkdir(parents=True)
     await flow_wire.read_credits(profile)
     await flow_wire.read_credits(other)
 
@@ -217,14 +221,22 @@ async def test_http_400_falls_back_without_retry_and_drops_the_cached_at(
     assert len(flow.gets) == 2  # a stale `at` is fetched again, not reused
 
 
-@pytest.mark.parametrize("status", [403, 404, 418])
-async def test_any_other_status_falls_back(profile: Path, flow: _Flow, status: int) -> None:
+@pytest.mark.parametrize("status", [403, 404, 418, 500, 502, 504])
+async def test_any_other_status_falls_back_without_disabling(
+    profile: Path, flow: _Flow, status: int
+) -> None:
+    """500/502/504 are not back-pressure (only 429/503 are): fall back, stay enabled, and
+    drop the cached `at` so a stale token cannot stick in a long-lived process."""
     flow.rpc = lambda _r: httpx.Response(status, text="")
 
     with pytest.raises(WireReadUnavailable) as exc:
         await flow_wire.read_credits(profile)
     assert _reason(exc) is WireFallbackReason.HTTP_ERROR
     assert len(flow.posts) == 1
+
+    flow.rpc = lambda _r: httpx.Response(200, text=_REPLY)
+    assert (await flow_wire.read_credits(profile)).credits == 42
+    assert len(flow.gets) == 2
 
 
 @pytest.mark.parametrize(
@@ -248,6 +260,10 @@ async def test_an_unparseable_reply_falls_back_and_never_reads_zero(
         await flow_wire.read_credits(profile)
     assert _reason(exc) is WireFallbackReason.UNPARSEABLE
 
+    flow.rpc = lambda _r: httpx.Response(200, text=_REPLY)
+    assert (await flow_wire.read_credits(profile)).credits == 42
+    assert len(flow.gets) == 2  # the cached `at` was dropped with the bad reply
+
 
 async def test_an_unreadable_cookie_store_falls_back_before_any_request(
     profile: Path, flow: _Flow, monkeypatch: pytest.MonkeyPatch
@@ -263,14 +279,18 @@ async def test_an_unreadable_cookie_store_falls_back_before_any_request(
     assert flow.gets == [] and flow.posts == []
 
 
-async def test_a_profile_with_no_chrome_version_falls_back_before_any_request(
+async def test_a_profile_with_no_chrome_version_falls_back_before_the_cookie_read(
     profile: Path, flow: _Flow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Checked before the decrypt, and not reported as an unreadable store."""
+    reads: list[Path] = []
     monkeypatch.setattr(flow_wire, "profile_last_version", lambda _p: None)
+    monkeypatch.setattr(flow_wire, "read_cookies_for", lambda p: reads.append(p) or [])
 
     with pytest.raises(WireReadUnavailable) as exc:
         await flow_wire.read_credits(profile)
-    assert _reason(exc) is WireFallbackReason.STORE_UNREADABLE
+    assert _reason(exc) is WireFallbackReason.NO_CHROME_VERSION
+    assert reads == []
     assert flow.gets == []
 
 
@@ -400,17 +420,25 @@ def test_the_reason_never_carries_detail() -> None:
 
 
 # --- back-pressure is not a fallback (row 29) ----------------------------------------------
-# A page load sends the same RPCs to a throttled account, so 429/5xx surface as the typed
-# errors the page path already raises, and the wire stays off for the process.
+# A page load sends the same RPCs to a throttled account. 429 and 503 raise the page path's
+# own typed errors and open a per-profile window (Retry-After, else 60 s) inside which every
+# read re-raises with no request and no page; after it, the wire is tried again.
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    now = [1000.0]
+    monkeypatch.setattr(flow_wire, "_clock", lambda: now[0])
+    return now
 
 
 @pytest.mark.parametrize("on", ["get", "post"])
 @pytest.mark.parametrize(
-    ("headers", "expected"),
-    [({"retry-after": "7"}, 7.0), ({}, None), ({"retry-after": "900"}, 60.0)],
+    ("headers", "window"),
+    [({"retry-after": "7"}, 7.0), ({}, 60.0), ({"retry-after": "900"}, 60.0)],
 )
-async def test_429_raises_rate_limit_and_disables_the_wire(
-    profile: Path, flow: _Flow, on: str, headers: dict[str, str], expected: float | None
+async def test_429_throttles_that_profile_for_its_window(
+    profile: Path, flow: _Flow, clock: list[float], on: str, headers: dict[str, str], window: float
 ) -> None:
     reply = lambda _r: httpx.Response(429, headers=headers)  # noqa: E731
     if on == "get":
@@ -418,54 +446,74 @@ async def test_429_raises_rate_limit_and_disables_the_wire(
     else:
         flow.rpc = reply
 
-    with pytest.raises(RateLimitError) as exc:
+    with pytest.raises(RateLimitError) as first:
         await flow_wire.read_credits(profile)
-    assert exc.value.retry_after == expected
-    assert exc.value.status == 429
-    assert len(flow.gets) + len(flow.posts) == (1 if on == "get" else 2)  # no retry
+    assert first.value.status == 429
+    assert first.value.retry_after == window
+    sent = len(flow.gets) + len(flow.posts)
+    assert sent == (1 if on == "get" else 2)  # no retry
 
-    with pytest.raises(WireReadUnavailable) as again:
+    clock[0] += 2.0  # a SECOND read inside the window: typed error, nothing sent
+    with pytest.raises(RateLimitError) as second:
         await flow_wire.read_credits(profile)
-    assert _reason(again) is WireFallbackReason.DISABLED
+    assert second.value.retry_after == pytest.approx(window - 2.0)
+    assert len(flow.gets) + len(flow.posts) == sent
+
+    clock[0] += window  # after the window the wire is tried again
+    flow.shell = lambda _r: httpx.Response(200, text=_SHELL)
+    flow.rpc = lambda _r: httpx.Response(200, text=_REPLY)
+    assert (await flow_wire.read_credits(profile)).credits == 42
 
 
-@pytest.mark.parametrize("status", [500, 502, 503])
-async def test_5xx_raises_network_error_and_disables_the_wire(
-    profile: Path, flow: _Flow, status: int
+async def test_503_throttles_that_profile_with_a_network_error(
+    profile: Path, flow: _Flow, clock: list[float]
 ) -> None:
-    flow.rpc = lambda _r: httpx.Response(status)
+    flow.rpc = lambda _r: httpx.Response(503)
 
-    with pytest.raises(NetworkError) as exc:
+    with pytest.raises(NetworkError) as first:
         await flow_wire.read_credits(profile)
-    assert exc.value.status == status
+    assert first.value.status == 503
+    with pytest.raises(NetworkError):
+        await flow_wire.read_credits(profile)
     assert len(flow.posts) == 1
 
-    with pytest.raises(WireReadUnavailable) as again:
+
+async def test_503_on_the_shell_get_raises_network_error(profile: Path, flow: _Flow) -> None:
+    flow.shell = lambda _r: httpx.Response(503)
+
+    with pytest.raises(NetworkError):
         await flow_wire.read_credits(profile)
-    assert _reason(again) is WireFallbackReason.DISABLED
+    assert flow.posts == []
+
+
+async def test_a_throttle_on_one_profile_leaves_the_others_alone(
+    tmp_path: Path, profile: Path, flow: _Flow, clock: list[float]
+) -> None:
+    flow.rpc = lambda _r: httpx.Response(429)
+    with pytest.raises(RateLimitError):
+        await flow_wire.read_credits(profile)
+
+    flow.rpc = lambda _r: httpx.Response(200, text=_REPLY)
+    other = _home() / "profile_b"
+    other.mkdir(parents=True)
+    assert (await flow_wire.read_credits(other)).credits == 42
 
 
 # --- an RPC error envelope is unparseable, and only its numeric code is logged (row 30) ----
+# An in-body RESOURCE_EXHAUSTED stays `unparseable` until a real capture shows its shape.
+
+_NULL_FRAME = ')]}\'\n[["wrb.fr","nzlxg",null,null,null,[8],"generic"]]\n'
 
 
-@pytest.mark.parametrize(
-    ("body", "code"),
-    [
-        (')]}\'\n[["er",null,null,null,null,429,null,null,null,8],["di",12]]\n', 429),
-        (')]}\'\n[["wrb.fr","nzlxg",null,null,null,[8],"generic"]]\n', 8),
-    ],
-)
-async def test_an_rpc_error_envelope_logs_only_its_status_code(
-    profile: Path, flow: _Flow, body: str, code: int
-) -> None:
-    flow.rpc = lambda _r: httpx.Response(200, text=body)
+async def test_an_rpc_error_envelope_logs_only_its_status_code(profile: Path, flow: _Flow) -> None:
+    flow.rpc = lambda _r: httpx.Response(200, text=_NULL_FRAME)
 
     with structlog.testing.capture_logs() as logs, pytest.raises(WireReadUnavailable) as exc:
         await flow_wire.read_credits(profile)
 
     assert _reason(exc) is WireFallbackReason.UNPARSEABLE
     (event,) = [e for e in logs if e["event"] == "credits.wire_rpc_error"]
-    assert event["codes"] == [code]
+    assert event["codes"] == [8]
     assert set(event) <= {"event", "log_level", "codes"}
 
 
@@ -477,39 +525,80 @@ async def test_signed_out_is_judged_by_the_token_never_by_size(profile: Path, fl
     assert (await flow_wire.read_credits(profile)).credits == 42
 
 
-@pytest.mark.parametrize("status", [503, 500])
-async def test_5xx_on_the_shell_get_raises_network_error(
-    profile: Path, flow: _Flow, status: int
-) -> None:
-    flow.shell = lambda _r: httpx.Response(status)
-
-    with pytest.raises(NetworkError):
-        await flow_wire.read_credits(profile)
-    assert flow.posts == []
+# --- per-profile state (single flight, disable, lock) ---------------------------------------
 
 
-@pytest.mark.parametrize(
-    "shell",
-    [
-        lambda _r: httpx.Response(200, text=_SIGNED_OUT_SHELL),
-        lambda _r: httpx.Response(429, headers={"retry-after": "5"}),
-    ],
-    ids=["signed_out", "429"],
-)
-async def test_concurrent_reads_stop_after_the_first_turns_the_wire_off(
-    profile: Path, flow: _Flow, shell: Callable[[httpx.Request], httpx.Response]
-) -> None:
-    """Five reads queued on the single-flight lock must not each send their own GET."""
-    flow.shell = shell
+async def test_concurrent_reads_stop_after_a_signed_out_shell(profile: Path, flow: _Flow) -> None:
+    """Five reads queued on the profile's lock must not each send their own GET."""
+    flow.shell = lambda _r: httpx.Response(200, text=_SIGNED_OUT_SHELL)
 
     results = await asyncio.gather(
         *(flow_wire.read_credits(profile) for _ in range(5)), return_exceptions=True
     )
 
     assert len(flow.gets) == 1
-    assert all(isinstance(r, Exception) for r in results)
     later = [r for r in results[1:] if isinstance(r, WireReadUnavailable)]
     assert [r.reason for r in later] == [WireFallbackReason.DISABLED] * 4
+
+
+async def test_concurrent_reads_during_a_429_all_raise_the_typed_error(
+    profile: Path, flow: _Flow, clock: list[float]
+) -> None:
+    """None of them may become a page load: the caller builds no browser for these."""
+    flow.shell = lambda _r: httpx.Response(429, headers={"retry-after": "5"})
+
+    results = await asyncio.gather(
+        *(flow_wire.read_credits(profile) for _ in range(5)), return_exceptions=True
+    )
+
+    assert len(flow.gets) == 1
+    assert all(isinstance(r, RateLimitError) for r in results), results
+
+
+async def test_a_signed_out_profile_does_not_turn_the_wire_off_for_another(
+    tmp_path: Path, profile: Path, flow: _Flow
+) -> None:
+    flow.shell = lambda _r: httpx.Response(200, text=_SIGNED_OUT_SHELL)
+    with pytest.raises(WireReadUnavailable):
+        await flow_wire.read_credits(profile)
+
+    flow.shell = lambda _r: httpx.Response(200, text=_SHELL)
+    other = _home() / "profile_b"
+    other.mkdir(parents=True)
+    assert (await flow_wire.read_credits(other)).credits == 42
+
+    with pytest.raises(WireReadUnavailable) as again:  # the signed-out one stays off
+        await flow_wire.read_credits(profile)
+    assert _reason(again) is WireFallbackReason.DISABLED
+
+
+async def test_five_profiles_read_concurrently_each_on_its_own_lock(
+    tmp_path: Path, profile: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow shell GET on one profile must not hold the others past the read's budget."""
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            await asyncio.sleep(0.2)
+            return httpx.Response(200, text=_SHELL)
+        return httpx.Response(200, text=_REPLY)
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", functools.partial(real, transport=httpx.MockTransport(slow))
+    )
+    monkeypatch.setattr(flow_wire, "_TOTAL_S", 0.5)
+    profiles: list[Path] = []
+    for name in "abcde":
+        (_home() / name).mkdir(parents=True)
+        profiles.append(_home() / name)
+
+    results = await asyncio.gather(*(flow_wire.read_credits(p) for p in profiles))
+
+    assert [r.credits for r in results] == [42] * 5
+
+
+# --- request shape --------------------------------------------------------------------------
 
 
 async def test_a_cookie_flow_sets_never_reaches_the_client_jar(
@@ -531,12 +620,63 @@ async def test_a_cookie_flow_sets_never_reaches_the_client_jar(
     assert [len(jar) for jar in jars] == [0]
 
 
-async def test_no_cookies_sends_no_cookie_header(
+async def test_an_empty_jar_is_unreadable_before_any_request(
     profile: Path, flow: _Flow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(flow_wire, "read_cookies_for", lambda _p: [])
-    flow.shell = lambda _r: httpx.Response(200, text=_SIGNED_OUT_SHELL)
 
-    with pytest.raises(WireReadUnavailable):
+    with pytest.raises(WireReadUnavailable) as exc:
         await flow_wire.read_credits(profile)
-    assert "cookie" not in flow.gets[0].headers
+    assert _reason(exc) is WireFallbackReason.STORE_UNREADABLE
+    assert flow.gets == []
+
+
+async def test_both_requests_carry_chrome_fetch_metadata(profile: Path, flow: _Flow) -> None:
+    await flow_wire.read_credits(profile)
+
+    get, post = flow.gets[0].headers, flow.posts[0].headers
+    assert (get["sec-fetch-site"], get["sec-fetch-mode"], get["sec-fetch-dest"]) == (
+        "none",
+        "navigate",
+        "document",
+    )
+    assert (post["sec-fetch-site"], post["sec-fetch-mode"], post["sec-fetch-dest"]) == (
+        "same-origin",
+        "cors",
+        "empty",
+    )
+    assert "sec-ch-ua" not in get and "sec-ch-ua" not in post  # deferred: GREASE unknown
+
+
+async def test_a_configured_browser_proxy_skips_the_wire(
+    profile: Path, flow: _Flow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Session cookies must never leave from a different IP than the browser's."""
+    from gflow_cli.config import reset_settings
+
+    reads: list[Path] = []
+    monkeypatch.setattr(flow_wire, "read_cookies_for", lambda p: reads.append(p) or [])
+    monkeypatch.setenv("GFLOW_CLI_BROWSER_PROXY", "http://127.0.0.1:3128")
+    reset_settings()
+
+    with pytest.raises(WireReadUnavailable) as exc:
+        await flow_wire.read_credits(profile)
+    assert _reason(exc) is WireFallbackReason.PROXY_CONFIGURED
+    assert reads == [] and flow.gets == []
+
+
+async def test_a_blocking_cookie_read_is_bounded_by_the_deadline(
+    profile: Path, flow: _Flow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Linux keyring that never answers must not hang the read."""
+
+    def stuck(_p: Path) -> list[tuple[str, str]]:
+        time.sleep(1.0)
+        return []
+
+    monkeypatch.setattr(flow_wire, "read_cookies_for", stuck)
+    monkeypatch.setattr(flow_wire, "_TOTAL_S", 0.05)
+
+    with pytest.raises(WireReadUnavailable) as exc:
+        await flow_wire.read_credits(profile)
+    assert _reason(exc) is WireFallbackReason.STORE_UNREADABLE

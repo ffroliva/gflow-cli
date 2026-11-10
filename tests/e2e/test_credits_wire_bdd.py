@@ -4,8 +4,9 @@ Binds ``tests/features/credits_wire_live.feature`` (``@e2e @e2e_auth``). Runs in
 the test can see what a subprocess cannot: whether ``FlowApiClient`` (which launches Chrome
 on entry) was ever constructed, and how many HTTP requests the direct read sent.
 
-**The cookie-free arm** forces the fallback without touching the real cookie jar: it
-replaces ``flow_wire.read_cookies_for`` for this test only. No production hook exists.
+**The rejected-cookie arm** forces the fallback without touching the real cookie jar: it
+wraps ``flow_wire.read_cookies_for`` for this test only and drops ``SID`` in memory. No
+production hook exists.
 
 **Cost: zero.** Shell GETs and ``nzlxg`` balance reads; the fallback and the last scenario
 open flow.google.com in the profile's browser. Nothing is generated.
@@ -37,8 +38,9 @@ def ctx(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     reset_settings()
     # A process-wide disable from an earlier scenario must not leak into this one.
     monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_disabled", None)
-    monkeypatch.setattr(flow_wire, "_lock", None)
+    monkeypatch.setattr(flow_wire, "_signed_out", set())
+    monkeypatch.setattr(flow_wire, "_throttled", {})
+    monkeypatch.setattr(flow_wire, "_locks", {})
     state: dict[str, Any] = {"pages": 0, "requests": [], "reasons": [], "mp": monkeypatch}
 
     real_client = credits.FlowApiClient
@@ -76,9 +78,14 @@ def _profile(e2e_profile_dir: Path, ctx: dict[str, Any]) -> None:
     ctx["profile"] = e2e_profile_dir.name.removeprefix("profile_")
 
 
-@given("the wire read is forced to send no cookies")
-def _no_cookies(ctx: dict[str, Any]) -> None:
-    ctx["mp"].setattr(flow_wire, "read_cookies_for", lambda _p: [])
+@given("the wire read is forced to send cookies Flow does not accept")
+def _rejected_cookies(ctx: dict[str, Any]) -> None:
+    """The real jar, read as usual, minus `SID`: spike 2026-11-10 measured that set as a
+    signed-out shell. Changed in memory at the read seam only; the jar is never touched."""
+    real = flow_wire.read_cookies_for
+    ctx["mp"].setattr(
+        flow_wire, "read_cookies_for", lambda p: [c for c in real(p) if c[0] != "SID"]
+    )
 
 
 @given(parsers.parse("I have read the balance over the wire {n:d} times"))

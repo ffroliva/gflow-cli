@@ -653,7 +653,8 @@ class Settings(BaseSettings):
         description=(
             "Read the credit balance directly from flow.google.com with the profile's saved "
             "cookies, without starting Chrome; a failure falls back to the browser read, except "
-            "Flow throttling (HTTP 429/5xx), which is reported as an error. "
+            "Flow throttling (HTTP 429/503), which is reported as an error. Skipped while "
+            "GFLOW_CLI_BROWSER_PROXY is set. "
             "Default on, except on macOS (reading the cookies there can raise a Keychain "
             "prompt). Set GFLOW_CLI_WIRE_READS=0 to always use the browser."
         ),

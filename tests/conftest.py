@@ -203,3 +203,15 @@ def install_log_capture() -> Iterator[structlog.testing.LogCapture]:
     # the snapshot: a fixture that mutates global state should undo it at its own
     # boundary, not rely on a sibling fixture's ordering.
     structlog.reset_defaults()
+
+
+@pytest.fixture
+def fresh_wire(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Empty per-process state for the direct credits read (#1229): token cache, signed-out
+    profiles, throttle windows, per-profile locks. Request it from any test that reads."""
+    from gflow_cli.api import flow_wire
+
+    monkeypatch.setattr(flow_wire, "_tokens", {})
+    monkeypatch.setattr(flow_wire, "_signed_out", set())
+    monkeypatch.setattr(flow_wire, "_throttled", {})
+    monkeypatch.setattr(flow_wire, "_locks", {})

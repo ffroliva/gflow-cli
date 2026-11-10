@@ -14,11 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flow.google.com for the balance directly, with the profile's saved cookies: one page load
   and one request, no Chrome. When that fails (signed out, Chrome open on the profile, a
   network error, an unexpected reply) they read it in the browser as before. When Flow
-  throttles the account (HTTP 429 or 5xx) the command reports the rate-limit or network error
+  throttles the account (HTTP 429 or 503) the command reports the rate-limit or network error
   instead, since the browser would send the same requests. `GFLOW_CLI_WIRE_READS=0` turns the direct read off; it is off by default on
-  macOS (#1229).
+  macOS and while `GFLOW_CLI_BROWSER_PROXY` is set (#1229).
 
 ### Fixed
+
+- **No gflow process logs an httpx request URL any more.** Starting the MCP server set Python
+  logging to INFO, at which httpx writes every request's full URL to stderr; MCP clients keep
+  that output. The `httpx` and `httpcore` loggers are now held at WARNING in every gflow
+  process (#1229).
 
 - **`video extend` on flow.google.com reports the model it ran with instead of `unknown`.**
   The page now orders the extension with an Omni key (`macaron_cookie_extend_4s`, measured

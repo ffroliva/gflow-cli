@@ -1,7 +1,7 @@
 Feature: The credits read falls back to the browser whenever the direct read fails (#1229)
   gflow first reads the balance directly from flow.google.com with the profile's saved
   cookies. A failure of that read is classified, logged by reason, and answered by the
-  browser read. Flow throttling (HTTP 429/5xx) is the exception: it is reported, never
+  browser read. Flow throttling (HTTP 429/503) is the exception: it is reported, never
   answered by a page load that would send the same requests.
 
   Scenario Outline: A direct-read failure falls back to the browser read

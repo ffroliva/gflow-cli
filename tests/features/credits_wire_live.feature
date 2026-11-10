@@ -12,7 +12,7 @@ Feature: Credits are read without a browser when the profile's cookies are accep
 
   Scenario: Cookies Flow does not accept fall back to the browser read
     Given the e2e profile is signed in to Flow
-    And the wire read is forced to send no cookies
+    And the wire read is forced to send cookies Flow does not accept
     When I run "gflow credits user --json"
     Then the balance is a non-negative integer
     And the wire fell back with reason "signed_out_shell"

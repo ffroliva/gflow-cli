@@ -35,8 +35,9 @@ def _wire_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")
     reset_settings()
     monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_disabled", None)
-    monkeypatch.setattr(flow_wire, "_lock", None)
+    monkeypatch.setattr(flow_wire, "_signed_out", set())
+    monkeypatch.setattr(flow_wire, "_throttled", {})
+    monkeypatch.setattr(flow_wire, "_locks", {})
 
 
 def _meta(name: str = "one") -> ProfileMeta:
@@ -272,3 +273,34 @@ async def test_back_pressure_surfaces_and_never_loads_the_page(
     with pytest.raises(type(error)):
         await credits._fetch_once(_meta())  # pyright: ignore[reportPrivateUsage]
     assert page.built == 0
+
+
+async def test_a_throttled_profile_never_builds_the_browser_on_later_reads(
+    monkeypatch: pytest.MonkeyPatch, page: type[_Page]
+) -> None:
+    """Review #1: the real wire, a 429, then a SECOND read. Both raise the typed error; the
+    page client is never built and the second read sends nothing."""
+    import functools
+
+    import httpx
+
+    posts: list[int] = []
+
+    def flow(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, text='{"SNlM0e":"AFAKE","FdrFJe":"-1","cfb2h":"b"}')
+        posts.append(1)
+        return httpx.Response(429, headers={"retry-after": "30"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", functools.partial(real, transport=httpx.MockTransport(flow))
+    )
+    monkeypatch.setattr(flow_wire, "read_cookies_for", lambda _p: [("SID", "fake")])
+    monkeypatch.setattr(flow_wire, "profile_last_version", lambda _p: "150.0.1.2")
+
+    for _ in range(2):
+        with pytest.raises(RateLimitError):
+            await credits._fetch_once(_meta())  # pyright: ignore[reportPrivateUsage]
+    assert page.built == 0
+    assert posts == [1]

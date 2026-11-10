@@ -186,18 +186,23 @@ def test_every_browser_cookie3_failure_is_unreadable(
     assert str(exc.value) == type(error).__name__  # the class name, never the message
 
 
-def test_the_shadow_copy_fallback_never_runs(
-    profile: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.skipif(sys.platform != "win32", reason="the VSS method exists on Windows only")
+@pytest.mark.parametrize("path", ["wire", "snapshot"])
+def test_no_cookie_read_ever_takes_a_shadow_copy(
+    profile: Path, monkeypatch: pytest.MonkeyPatch, path: str
 ) -> None:
-    """Spike E1: past the pre-check, Chrome can still grab the jar. browser_cookie3 then
-    tries read-only, then a copy, then a VSS snapshot. Run its REAL connection cascade on
-    a jar it cannot open as a database and prove the snapshot is never attempted."""
+    """Spike E1 / review #10. Chrome can grab the jar after any pre-check; browser_cookie3
+    then tries read-only, then a copy, then a VSS snapshot. Run its REAL connection cascade
+    on a jar neither of the first two can open and prove the snapshot is never attempted,
+    on the wire read and on the snapshot read (auth status, verification) alike."""
     import browser_cookie3  # pyright: ignore[reportMissingTypeStubs]
 
     snapshots: list[Any] = []
     fake_vss = types.SimpleNamespace(shadow_copy=lambda *a: snapshots.append(a))
     monkeypatch.setattr(browser_cookie3, "shadowcopy", fake_vss)
-    (profile / "Default" / "Network" / "Cookies").write_bytes(b"not a sqlite database" * 64)
+    jar = profile / "Default" / "Network" / "Cookies"
+    jar.unlink()
+    jar.mkdir()  # sqlite cannot open it and copying it fails: the first two methods give up
 
     def chrome(**kwargs: Any) -> Any:
         conn = browser_cookie3._DatabaseConnetion(kwargs["cookie_file"])  # pyright: ignore
@@ -207,8 +212,37 @@ def test_the_shadow_copy_fallback_never_runs(
             conn.close()
 
     monkeypatch.setattr(browser_cookie3, "chrome", chrome)
+    if path == "wire":
 
-    with pytest.raises(CookieStoreUnreadable):
-        read_cookies_for(profile)
+        class _Opens:  # the pre-check passed; Chrome locked the jar a moment later
+            def __enter__(self) -> None:
+                return None
+
+            def __exit__(self, *_a: object) -> None:
+                return None
+
+        monkeypatch.setattr(cookies, "open", lambda *_a, **_k: _Opens(), raising=False)
+        with pytest.raises(CookieStoreUnreadable):
+            read_cookies_for(profile)
+    else:
+        with pytest.raises(PermissionError):
+            cookies._get_chrome_cookies3(profile)  # pyright: ignore[reportPrivateUsage]
     assert snapshots == []
-    assert browser_cookie3.shadowcopy is fake_vss  # restored for every other caller
+
+
+def test_browser_cookie3_is_loaded_without_shadowcopy() -> None:
+    """Review #7: importing `shadowcopy` (WMI/COM) made every direct read print
+    'Win32 exception occurred releasing IUnknown' at exit. gflow never loads it."""
+    import subprocess
+
+    code = "; ".join(
+        [
+            "import sys",
+            "from gflow_cli.auth.cookies import _browser_cookie3",
+            "bc3 = _browser_cookie3()",
+            "real = sys.modules.get('shadowcopy') is not None",
+            "print(bc3.shadowcopy is None, real, 'wmi' in sys.modules)",
+        ]
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.split() == ["True", "False", "False"], out.stdout

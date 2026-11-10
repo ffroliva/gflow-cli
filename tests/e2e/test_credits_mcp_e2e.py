@@ -35,10 +35,14 @@ def _fresh_wire(monkeypatch: pytest.MonkeyPatch) -> None:
     """The direct read's process-wide state (#1229) must not leak between tests: one
     signed-out profile in `all_profiles` turns the wire off for the rest of the process."""
     from gflow_cli.api import flow_wire
+    from gflow_cli.config import reset_settings
 
+    monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")  # explicit: it defaults off on macOS
+    reset_settings()
     monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_disabled", None)
-    monkeypatch.setattr(flow_wire, "_lock", None)
+    monkeypatch.setattr(flow_wire, "_signed_out", set())
+    monkeypatch.setattr(flow_wire, "_throttled", {})
+    monkeypatch.setattr(flow_wire, "_locks", {})
 
 
 #: Every key the tool contract promises a caller for a successful single-profile read.
