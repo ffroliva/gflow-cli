@@ -1166,4 +1166,5 @@ async def test_a_flow_failed_video_reads_like_the_cli(temp_db: DataStore) -> Non
     assert err["operation_id"] == "media-f"
     # A documented type (docs/ERRORS.md), not the base class's `about:blank`.
     assert (err["type"], err["exit_code"]) == ("https://gflow-cli.dev/errors/api-error", 1)
+    assert "retry" not in err["remediation_hint"]  # a billed clip is reconciled, not retried
     worker.close()
