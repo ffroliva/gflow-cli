@@ -381,6 +381,7 @@ def test_a_failed_archive_write_is_reported(tmp_path: Path) -> None:
     assert "archive not written" in drift.note
 
 
+@pytest.mark.sharpit(allow_swallowed=True)  # the swallow is the contract under test
 def test_an_rpc_drift_module_that_fails_to_import_never_loses_the_comment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
