@@ -151,7 +151,8 @@ class FlowWorker:
             if cp.phase == "submit_attempted":
                 # #1198 submit gate: a `gflow cancel` / `tasks/cancel` that landed while
                 # this job was claimed stops it here, before anything is sent to Flow.
-                # Same observer policy as save_checkpoint: a DB fault never blocks a submit.
+                # Unlike save_checkpoint, a DB fault here stops the job: nothing is sent yet,
+                # and going on could bill a job `gflow cancel` already reported `charged: no`.
                 try:
                     go = self.repo.checkpoint_before_submit(
                         task.task_id,
@@ -162,6 +163,12 @@ class FlowWorker:
                     )
                 except Exception as exc:
                     logger.warning("submit_gate_failed", task_id=task.task_id, exc_info=exc)
+                    raise DataStoreError(
+                        detail="Could not check the job before submitting it; nothing was sent.",
+                        route="worker.submit_gate",
+                        charged="no",
+                        next_action="retry",
+                    ) from exc
                 else:
                     if not go:
                         raise TaskCancelledError(detail="Aborted by gflow before it was submitted.")

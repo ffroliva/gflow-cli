@@ -1222,3 +1222,21 @@ async def test_a_job_abandoned_after_submit_still_records_its_media_for_reconcil
     assert row is not None
     assert (row.status, row.flow_media_id) == ("abandoned", "media-post")
     assert DataRepository(temp_db).get_asset_by_flow_media_id("default", "media-post") is not None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_submit_gate_never_submits(temp_db: DataStore) -> None:
+    """A DB fault in the #1198 gate used to fall through to the submit, so a job that
+    `gflow cancel` had reported as `charged: no` could still be billed. Nothing is sent
+    yet at the gate, so stopping there costs nothing."""
+    locked = DataStoreError(detail="database is locked")
+    with patch.object(QueueRepository, "checkpoint_before_submit", side_effect=locked):
+        cancelled_first = await _run_t2i_aborted(temp_db, "pre", after_submit=False)
+        not_cancelled = await _run_t2i_aborted(temp_db, "plain", after_submit=True)
+
+    assert cancelled_first == [] and not_cancelled == []
+    repo = QueueRepository(temp_db)
+    pre, plain = repo.get_task("pre"), repo.get_task("plain")
+    assert pre is not None and pre.status == "cancelled"
+    assert plain is not None and plain.status == "failed" and plain.error is not None
+    assert (plain.error["charged"], plain.error["next_action"]) == ("no", "retry")
