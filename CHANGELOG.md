@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.97.0] — 2026-11-10
+
 ### Added
 
 - **`gflow credits` reads the balance without starting a browser when the saved session is
@@ -6950,7 +6952,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...HEAD
+[0.97.0]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...v0.97.0
 [0.96.1]: https://github.com/ffroliva/gflow-cli/compare/v0.96.0...v0.96.1
 [0.96.0]: https://github.com/ffroliva/gflow-cli/compare/v0.95.0...v0.96.0
 [0.95.0]: https://github.com/ffroliva/gflow-cli/compare/v0.94.0...v0.95.0

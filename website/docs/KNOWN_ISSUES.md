@@ -16,7 +16,7 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ### The direct credits read uses the profile's saved Google session outside Chrome
 
-- **Status:** Open (a risk under watch, not a failure seen) · **Severity:** Low as measured; the long-run effect on the account is unmeasured · **Affected:** `gflow credits user` / `list` and MCP `gflow_get_credits`, on Windows and Linux by default (off by default on macOS)
+- **Status:** Open (a risk under watch, not a failure seen) · **Severity:** Low as measured; the long-run effect on the account is unmeasured · **Affected:** `gflow credits user` / `list` and MCP `gflow_get_credits`, on Windows and Linux by default (off by default on macOS, and skipped while any proxy is configured)
 - **Tracked:** [#1229](https://github.com/ffroliva/gflow-cli/issues/1229) · [#1222](https://github.com/ffroliva/gflow-cli/issues/1222)
 - **Evidence:** cookie-jar spike, [PR #1234](https://github.com/ffroliva/gflow-cli/pull/1234); live proof in [PR #1236](https://github.com/ffroliva/gflow-cli/pull/1236)
 
@@ -56,7 +56,8 @@ in use (`ProfileLockedError`, exit 11) as before. Linux is unmeasured.
 **Remedy / opt-out:** set `GFLOW_CLI_WIRE_READS=0` to always read in the browser
 ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads)). If Flow ever answers signed out
 or HTTP 401, that process stops trying the direct read for that profile until a `--refresh`
-renewal that Flow verified, or a `gflow doctor` / `gflow_auth_status` probe that Flow accepts.
+renewal that Flow authenticated, or a `gflow_auth_status` probe in that MCP server that Flow
+accepts (`gflow doctor` runs in its own process, so it cannot lift another process's mark).
 If it answers HTTP 429 or 503, that profile is left alone for the throttle window
 (`Retry-After`, capped at 60 s) and nothing retries in the browser: `credits user` exits 4 or
 6, and `credits list` records the error for that profile and keeps the other balances.
@@ -992,7 +993,7 @@ including after a spend:
 labs.google token. It cost one browser launch per profile; since
 [#1229](https://github.com/ffroliva/gflow-cli/issues/1229) the same reply is first asked for
 directly, with the profile's saved cookies and no browser, and the browser read is the fallback
-(see "The direct credits read uses the profile's saved Google session outside Chrome" below).
+(see [The direct credits read uses the profile's saved Google session outside Chrome](#the-direct-credits-read-uses-the-profiles-saved-google-session-outside-chrome) above).
 The tier fields (`sku`,
 `service_tier`, `user_paygate_tier`, `subscription_credits`) are always `null`, because
 flow.google.com does not report them. It was verified on two accounts, neither on a paid plan; a paid plan may put a different

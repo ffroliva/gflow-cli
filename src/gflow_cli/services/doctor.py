@@ -495,8 +495,9 @@ _WIRE_HINTS = {
     " has no saved session; close Chrome on it, or run: gflow auth login",
     "disabled": "the direct read is off (GFLOW_CLI_WIRE_READS=0, or the macOS default);"
     " credits read through the browser",
-    "proxy_configured": "the direct read is skipped while GFLOW_CLI_BROWSER_PROXY is set;"
-    " credits read through the browser",
+    "proxy_configured": "the direct read is skipped while a proxy is configured"
+    " (GFLOW_CLI_BROWSER_PROXY, or an environment/system proxy); credits read through the"
+    " browser",
     "throttled": "Flow is throttling this account; wait a minute, then re-run: gflow doctor",
 }
 

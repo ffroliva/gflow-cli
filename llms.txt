@@ -5,7 +5,8 @@
 Credit inspection is exposed through `gflow credits user|list` and the `gflow_get_credits` MCP
 tool. It reads the balance flow.google.com itself loads (the number in Flow's account menu,
 #795): directly, with no browser, when Flow accepts the profile's saved session, otherwise in
-the profile's browser (#1229; `GFLOW_CLI_WIRE_READS=0` always uses the browser); the tier fields are always null there. The balance funds Veo video generation; image generation uses
+the profile's browser (#1229; off by default on macOS, skipped while any proxy is configured,
+and `GFLOW_CLI_WIRE_READS=0` always uses the browser); the tier fields are always null there. The balance funds Veo video generation; image generation uses
 separate per-model daily quotas. Log in with `gflow auth login --browser chrome`: a bundled-
 Chromium login (`--browser internal`, or `auto` without Chrome) works again (verified
 on Windows; macOS not measured), but generation still needs a chrome profile (#1026).
