@@ -1,7 +1,8 @@
 # Spike: Flow's RPC ids are readable in the JavaScript it serves (#1217)
 
-**Date:** 2026-11-10 · **Profile:** `denon82` · **Cost:** $0 (no generation, upload or RPC call
-made by the spike; the page arm opened a project page and one clip editor without clicking)
+**Date:** 2026-11-10 · **Profile:** `denon82` · **Cost:** $0 (arms 1 and 3 make no RPC call;
+the page arm opened a project page and one clip editor without clicking, so the page sent
+only its own load-time reads, 17 distinct ids, and no submit or upload)
 · **Script:** [`scripts/dev/spike_rpc_ids_in_bundle.py`](../../../scripts/dev/spike_rpc_ids_in_bundle.py)
 · **Build label seen:** `boq_labs-ai-sandbox-frontend_20261108.05_p0`
 
