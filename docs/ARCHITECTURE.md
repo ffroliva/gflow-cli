@@ -445,11 +445,12 @@ on the host Flow served, `labs.google/fx/api/auth/session` answers 410 and the
 `flow.google.com` app sends no Bearer anywhere, so there is no token to replay. The read side
 of `flow.google.com` itself works from plain `httpx` with the profile's Google cookies plus
 the `at` token scraped from the app shell: `as29s` (status + signed URL, keyed by workflow
-id), `Zzl0ze` (listing), `nzlxg` (balance); the signed `flow-content.google` URL needs no
-credential at all. The intended split for the lifecycle commands (#1191) is therefore
+id), `Zzl0ze` (listing), `nzlxg` (balance); the signed `flow-content.google` URL answered a
+ranged read with no cookie or header (a full download was not measured). That URL is itself
+a credential until it expires, so it is never logged. The intended split for the lifecycle commands (#1191) is therefore
 **browser to submit, `batchexecute` over HTTP to observe**, falling back to the page when the
 shell carries no `at`. Caveats and controls:
-[`docs/superpowers/spikes/2026-11-09-page-free-reads.md`](superpowers/spikes/2026-11-09-page-free-reads.md).
+`docs/superpowers/spikes/2026-11-09-page-free-reads.md`.
 
 **Standalone-only transports.** `bearer` and `sapisidhash` discard any caller-supplied Playwright page and launch their own browser under a fresh `ProfileLease`, so they are **standalone-only** — they cannot run inside a `FlowApiClient` that already holds the profile lease (the second acquire would self-lock with `ProfileLockedError`). Selecting either via `GFLOW_CLI_TRANSPORT` (or the Python API) while the client owns the profile now fails fast with a clear `ConfigurationError` naming the transport, rather than the opaque lock error. `evaluate_fetch` is exempt: it reuses the client's shared page and takes no second lease. The standalone-only set lives in `STANDALONE_ONLY_TRANSPORTS` (`api/transports/__init__.py`); to drive `bearer`/`sapisidhash`, run them outside an owning client.
 

@@ -180,8 +180,10 @@ What **does** work without any page or browser, measured on one profile:
 `flow.google.com` `batchexecute` with the profile's Google cookies plus the `at` token
 re-read from the app shell by a cookie-only GET. `as29s` (a clip's status, signed video
 URL and size, keyed by **workflow id**), `Zzl0ze` (project listing) and `nzlxg` (balance)
-returned 200, and the signed `flow-content.google` URL downloads with **no** credential.
-Controls: a junk `at` gets 400, no cookies gets 401.
+returned 200, and the signed `flow-content.google` URL answered a ranged read (bytes 0-31)
+with no cookie or header; a full download was not measured. The signed URL is itself a
+credential until it expires, so never log or share it. Controls on `as29s` and `nzlxg`: a
+junk `at` gets 400, no cookies gets 401.
 
 **Caveats before building on it:** the shell's `at` (`SNlM0e`) is missing whenever Flow
 serves the signed-out page, meaning the cookies were not accepted (#1221). A page-free

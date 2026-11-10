@@ -30,9 +30,11 @@ Three probes, each with its readings written into the script's docstring before 
    junk-Bearer baseline. Then a replay of the app's own `as29s` request from `httpx`.
 3. **No browser at all.** Cookies read from the profile's SQLite jar (`browser_cookie3`), the
    `at` token (`SNlM0e`), `f.sid` (`FdrFJe`) and `bl` (`cfb2h`) scraped from a plain `httpx`
-   GET of `flow.google.com/`, and each read rpc built from catalog ids and decoded with
-   gflow's own `batchexecute.generation_record`. Controls on every call: a junk `at`, and no
-   cookies. Run against two clips.
+   GET of `flow.google.com/`, and each read rpc built from catalog ids. The `as29s` reply was
+   decoded with gflow's own `batchexecute.generation_record`; that decoder needs a
+   generation-shaped record, so the `Zzl0ze` and `nzlxg` rows below record the HTTP status
+   and what the frame held. Controls on the `as29s` and `nzlxg` calls: a junk `at`, and no
+   cookies (`Zzl0ze` got none; see its row). Run against two clips.
 
 ## Observed
 
@@ -73,7 +75,7 @@ jar, `at` scraped from the shell. No browser launched in this probe.
 |---|---|---|---|---|
 | `as29s` (clip status) | `["<workflow_id>"]` | **200**, a generation record with status, signed video URL and `size_bytes` (2/2 clips) | 400 | 401 |
 | `as29s` | `["<media_id>"]` | 200, **no** frame: the argument is the workflow id | — | — |
-| `Zzl0ze` (project listing) | `["projects/<project_id>",null,null,null,[1]]` | **200**, lists the catalog's clip | — | — |
+| `Zzl0ze` (project listing) | `["projects/<project_id>",null,null,null,[1]]` | **200**, lists the catalog's clip | not run | not run |
 | `nzlxg` (credits) | `[]` | **200** | 400 | 401 |
 
 | download | result |
@@ -90,7 +92,7 @@ plus `at` 200, no `at` 400, no cookies 401.
 | Path | Verdict |
 |---|---|
 | **A. `aisandbox-pa` REST with the SPA Bearer** | **No-go on the host Flow served.** No token is obtainable: the labs session URL answers 410 and the `flow.google.com` app holds no Bearer. Whether a labs-served account still could is **not observable here** (labs answers 308 on every local profile). |
-| **B. `flow.google.com` `batchexecute` reads, no page** | **Go**, for status (`as29s`), listing (`Zzl0ze`), balance (`nzlxg`) and download (signed URL, no credential). Credentials: the profile's Google cookies plus an `at` token re-read from the shell by a cookie-only GET, so "refresh" is one GET, no page. |
+| **B. `flow.google.com` `batchexecute` reads, no page** | **Go**, for status (`as29s`), listing (`Zzl0ze`), balance (`nzlxg`), and a ranged read of the signed URL with no cookie or header (bytes 0-31 only; a full download was not measured). The signed URL is itself a bearer credential until it expires: never log or share it. Credentials: the profile's Google cookies plus an `at` token re-read from the shell by a cookie-only GET, so "refresh" is one GET, no page. |
 
 Submitting still needs the page (reCAPTCHA Enterprise, unchanged). Uploads were not
 measured; they keep the browser path.
@@ -112,8 +114,11 @@ measured; they keep the browser path.
   the existing in-run decoder, not from this probe.
 - **Cookie lifetime without a browser.** Google rotates some session cookies only when a
   browser runs. How long a disk-read jar keeps answering 200 is unmeasured, and on Windows
-  the jar can be locked while that profile's Chrome is open (gflow's
-  `get_chrome_cookie_snapshot` already falls back to Playwright there).
+  the jar can be locked while that profile's Chrome is open. gflow's
+  `get_chrome_cookie_snapshot` does not solve that case: its Playwright fallback launches
+  its own persistent context on the same profile, which fails while Chrome holds it, and it
+  returns only `labs.google` cookies, not the Google cookies this probe sent to
+  `flow.google.com`.
 - **Linux / macOS.** Measured on Windows only.
 
 ## Reproduce

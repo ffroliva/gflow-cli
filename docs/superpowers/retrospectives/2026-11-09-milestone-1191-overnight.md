@@ -33,7 +33,7 @@ The spike found:
 |---|---|
 | Two independent xhigh reviews per feature PR (`/code-review` and `ponytail-review`, fresh agents given the code) | All six feature PRs were green on the ten gates and SonarCloud before review, and every one still had real defects. Examples: billed paths reporting `charged: no` (#1208, three rounds), a cancel race that reported a running, possibly billed job as "already finished" (#1214, reproduced), `gflow -v video --help --json` misrouting (#1210), `capabilities://self` naming tools a `--no-spend` server removes (#1206) |
 | Routing review findings to the PR that owns the code | #1214's review found #1208 defects, which went to #1208; #1214 then rebased |
-| Positive controls in the spike | Every page-free read had a junk-`at` arm (400) and a no-cookie arm (401). The app's own `as29s` returned 200 on the same clip |
+| Positive controls in the spike | The `as29s` and `nzlxg` reads had a junk-`at` arm (400) and a no-cookie arm (401); the signed download is different, it answered 206 with no cookies. The app's own `as29s` returned 200 on the same clip |
 | Proving a CI failure is not ours before acting | The Faeroe failure was re-run on a develop-identical docs PR (#1207) and reproduced in WSL Ubuntu 24.04 before any test was touched |
 | A $0 live e2e where the tier allows it | `image gen` ran live (`e2e_image`, zero credits): 1 passed |
 
