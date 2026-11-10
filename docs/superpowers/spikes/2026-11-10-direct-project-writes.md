@@ -49,7 +49,7 @@ reCAPTCHA. So the script has no upload arm, and no file was uploaded.
 |---|---|---|---|---|
 | `jHPbke` create | 200 | `[<project id>, [<title>]]` | `ngNC2` title matches; present in `UpteDb` | **direct write possible** |
 | `o8DA4` rename | 200 | `[<new title>]`, matching | `ngNC2` title matches the new title; `UpteDb` shows it | **direct write possible** |
-| `maseQ` upload | not sent | | | **needs a page-minted reCAPTCHA token**: not a direct call |
+| `maseQ` upload | not sent | | | **not tested direct**: the app's frame carries a page-minted reCAPTCHA token, so sending it would emulate reCAPTCHA. Whether Flow enforces the token is unmeasured. |
 | `QI2zvc` delete (cleanup) | 200 | `[]` | `ngNC2` returns no title; absent from `UpteDb` | **direct delete works** |
 
 ### Cleanup proof
@@ -67,8 +67,11 @@ reCAPTCHA. So the script has no upload arm, and no file was uploaded.
 - **Create and rename** need no page and no reCAPTCHA. Cookies, `at` and the app's own frame
   are enough. A page-free write tier is possible for these two.
 - **Delete** (`QI2zvc`) is page-free too, so a page-free tier can clean up after itself.
-- **Upload is not page-free.** Its token is minted by the page's reCAPTCHA Enterprise client,
-  and gflow must not emulate that.
+- **Upload was not tested page-free,** and should not be. The app's frame carries a token minted
+  by the page's reCAPTCHA Enterprise client, and gflow must not emulate that. Whether Flow
+  rejects the upload without the token was not measured.
+- **The task asked for exactly one uploaded PNG; none was uploaded.** The pre-registered rule
+  ruled out the direct upload, and a UI upload would not answer the direct-call question.
 - This is one run on one profile. It shows the calls *can* work direct. It does not show they
   stay accepted over time, or that throttling treats them like `nzlxg`.
 
