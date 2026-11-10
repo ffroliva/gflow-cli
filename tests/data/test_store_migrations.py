@@ -36,6 +36,7 @@ def test_open_creates_schema_and_migration_row(tmp_path: Path) -> None:
             "0007",
             "0008",
             "0009",
+            "0010",
         ]
         assert store.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
@@ -125,3 +126,40 @@ def test_open_wraps_oserror_into_datastoreerror(
     monkeypatch.setattr(Path, "mkdir", boom)
     with pytest.raises(DataStoreError):
         DataStore.open(tmp_path / "gflow.db")
+
+
+def test_0010_keeps_every_queue_column_and_allows_the_abort_states(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 0010 rebuild (#1198) copies a claimed, checkpointed row whole; 0009 copied 9 of 12."""
+    from gflow_cli.data import store as store_module
+    from gflow_cli.worker.queue import QueueRepository
+
+    db = tmp_path / "gflow.db"
+    every = store_module._load_migrations()
+    # A narrow patch: monkeypatch.undo() would also revert the autouse env isolation.
+    with monkeypatch.context() as patched:
+        patched.setattr(
+            store_module, "_load_migrations", lambda: [m for m in every if m.version < "0010"]
+        )
+        old = DataStore.open(db)
+    with old:
+        old.conn.execute(
+            "INSERT INTO profiles (name, first_seen_at) VALUES ('default', CURRENT_TIMESTAMP)"
+        )
+        repo = QueueRepository(old)
+        repo.enqueue_task("r", "default", "t2v", {"k": 1})
+        repo.claim_task("r", "worker-1")
+        repo.update_checkpoint(
+            "r", claimant="worker-1", phase="remote_started", may_have_spent=True
+        )
+        repo.update_task_status("r", "processing", error={"title": "x"})
+        before = repo.get_task("r")
+        with pytest.raises(sqlite3.IntegrityError):
+            old.conn.execute("UPDATE generation_queue SET status = 'abandoned'")
+
+    with DataStore.open(db) as new:
+        repo = QueueRepository(new)
+        assert repo.get_task("r") == before
+        repo.update_task_status("r", "abandoned")
+        assert getattr(repo.get_task("r"), "status", None) == "abandoned"

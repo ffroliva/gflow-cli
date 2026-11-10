@@ -124,6 +124,8 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/batch-integrity` | `BatchIntegrityError` | 1 | `no` | `reconcile` |
 | `https://gflow-cli.dev/errors/batch-partial` | `BatchPartialError` | 1 | `no` | `reconcile` |
 | `https://gflow-cli.dev/errors/recaptcha-mint` | `RecaptchaError` | 1 | `no` | `none` |
+| `https://gflow-cli.dev/errors/task-cancelled` | `TaskCancelledError` | 1 | `no` | `none` |
+| `https://gflow-cli.dev/errors/task-not-found` | `TaskNotFoundError` | 1 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/aisandbox-auth` | `AisandboxAuthError` | 3 | `maybe` | `reauth` |
 | `https://gflow-cli.dev/errors/auth-expired` | `AuthExpiredError` | 3 | `maybe` | `reauth` |
 | `https://gflow-cli.dev/errors/rate-limit` | `RateLimitError` | 4 | `no` | `retry_after` |
@@ -153,6 +155,7 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/frame-extraction` | `FrameExtractionError` | 20 | `maybe` | `fix_input` |
 | `https://gflow-cli.dev/errors/chain-partial` | `ChainPartialError` | 21 | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/upscale-unavailable` | `UpscaleUnavailableError` | 22 | `no` | `none` |
+| `https://gflow-cli.dev/errors/server-cancel-unavailable` | `ServerCancelUnavailableError` | 22 | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/ui-selector-drift` | `UiSelectorDriftError` | 23 | `maybe` | `none` |
 | `https://gflow-cli.dev/errors/browser-engine-unavailable` | `BrowserEngineUnavailableError` | 24 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/flow-agent-ui` | `FlowAgentUiError` | 25 | `maybe` | `retry` |
@@ -186,13 +189,16 @@ members. They have no exit code of their own.
 | `https://gflow-cli.dev/errors/verification-error` | MCP `gflow_auth_status` | — | `no` | `retry` |
 | `https://gflow-cli.dev/errors/indeterminate-outcome` | Worker, interrupted after a submit was attempted | — | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/daemon-recovery` | Worker, interrupted before any submit | — | `no` | `retry` |
-| `https://gflow-cli.dev/errors/cancelled` | MCP and worker, a task cancelled before any submit | — | `no` | `none` |
+| `https://gflow-cli.dev/errors/cancelled` | Worker queue, a task cancelled before any submit: `gflow cancel` / MCP `tasks/cancel` (state `cancelled`), or a server shutdown that stopped it | — | `no` | `none` |
 
 An unclassified CLI failure (`UnexpectedError`) reads `maybe` / `none` too. Every
 error `gflow_auth_status` returns reads `charged: no`, including its dead-session
 `auth-expired`. A task that ended without a recorded error reads `maybe` / `reconcile`.
-A task cancelled after a submit was attempted is `indeterminate-outcome`, still
-`reconcile`, because Flow may have made it. None of the worker's documents carries an
+A task `gflow cancel` / `tasks/cancel` aborts after its submit is stored `abandoned` with
+`server-cancel-unavailable` (`maybe` / `reconcile`); one a server shutdown stopped after
+its submit is `indeterminate-outcome`, still `reconcile`, because Flow may have made it.
+`TaskCancelledError` is what a worker raises when it finds its row aborted at the submit
+gate; it never reaches the queue row, which stays `cancelled`. None of the worker's documents carries an
 HTTP `status`: no HTTP call failed.
 
 `tests/test_problem_details_extensions.py` fails when a `type` is missing here or a row

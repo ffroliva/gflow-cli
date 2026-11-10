@@ -23,7 +23,13 @@ from gflow_cli.data.recorder import (
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError, outcome_members
+from gflow_cli.errors import (
+    DataIntegrityError,
+    DataStoreError,
+    GFlowError,
+    TaskCancelledError,
+    outcome_members,
+)
 from gflow_cli.observability import exception_message_hash
 from gflow_cli.paths import image_output_path
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
@@ -142,6 +148,24 @@ class FlowWorker:
         def observe_checkpoint(cp: GenerationCheckpoint) -> None:
             # Any emitted phase is at/after submit_attempted (C1 emits it right
             # before the credit gesture), so may_have_spent is always True here.
+            if cp.phase == "submit_attempted":
+                # #1198 submit gate: a `gflow cancel` / `tasks/cancel` that landed while
+                # this job was claimed stops it here, before anything is sent to Flow.
+                # Same observer policy as save_checkpoint: a DB fault never blocks a submit.
+                try:
+                    go = self.repo.checkpoint_before_submit(
+                        task.task_id,
+                        claimant=claimant,
+                        phase=cp.phase,
+                        may_have_spent=True,
+                        project_id=checkpoint_project_id[0],
+                    )
+                except Exception as exc:
+                    logger.warning("submit_gate_failed", task_id=task.task_id, exc_info=exc)
+                else:
+                    if not go:
+                        raise TaskCancelledError(detail="Aborted by gflow before it was submitted.")
+                    return  # the gate wrote the checkpoint
             save_checkpoint(
                 cp.phase,
                 may_have_spent=True,

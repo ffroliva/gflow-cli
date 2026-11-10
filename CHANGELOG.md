@@ -9,17 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Error envelopes say whether Flow may have billed, and what to do next.** Every
-  `--json` error, MCP error result and failed worker-queue task now carries `charged`
-  (`no` / `maybe` / `yes`) and `next_action` (`retry`, `retry_after`, `wait`, `reauth`,
-  `fix_input`, `reconcile` or `none`), plus `operation_id` when an id exists. Each error
-  class declares its defaults, and raise sites that know better override them: a failed
-  download of a billed clip, an extend render or chain link failing after billed work, and
-  a labs poll timeout after submit read `reconcile`. The result-shaped `--json` failures
-  (`video t2v`/`i2v`/`r2v`, `video extend`, a partial `video chain`) and the envelopes the
-  MCP server and worker build by hand carry them too. `retryable` is unchanged and always
-  agrees with `next_action`; a rate limit also reports its `retry_after` seconds. Every `type` URI, its exit code and its defaults are listed in
-  [docs/ERRORS.md](docs/ERRORS.md) (#1201).
+- **`gflow cancel <id>`: local abort, honest about server-side cancel.** A queued job, or
+  one a worker claimed but has not submitted yet, is cancelled (state `cancelled`, exit 0,
+  nothing charged): the worker re-reads its row just before submitting and stops. A job a
+  gflow worker already submitted is no longer watched (state `abandoned`, exit 22): Flow
+  cannot be told to cancel it, so it may still run and be charged, and `--json` says
+  `cancel.server: no`, `charged: maybe`, `next_action: reconcile`. A finished job is left
+  as it is (exit 0); an unknown id is a `TaskNotFoundError` (exit 1). MCP `tasks/cancel`
+  calls the same function. Migration `0010` adds the two queue states; error type
+  `server-cancel-unavailable` shares exit 22 (#1198).
+
+### Changed
+
+- **MCP `tasks/cancel` stores what happened, not `failed`/`indeterminate`.** A task not
+  yet submitted is now stored `cancelled` (it used to be `failed` with `reason: cancelled`);
+  one already submitted is stored `abandoned`, whether this server or another process runs
+  it (it used to be `indeterminate`, or left as it was). Both states are sticky: a worker
+  that finishes later records its media id and catalog entry but does not flip the row, so
+  `tasks/get` keeps answering `cancelled`, as SEP-2663 requires. A script that reads the
+  queue table and matched `failed`/`indeterminate` for a cancel must also match these two
+  (#1198).
 
 ### Fixed
 

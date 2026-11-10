@@ -1165,3 +1165,60 @@ async def test_a_flow_failed_video_reads_like_the_cli(temp_db: DataStore) -> Non
     assert (err["charged"], err["next_action"], err["retryable"]) == ("maybe", "reconcile", False)
     assert err["operation_id"] == "media-f"
     worker.close()
+
+
+async def _run_t2i_aborted(temp_db: DataStore, task_id: str, *, after_submit: bool) -> list[str]:
+    """Run one t2i task whose row `gflow cancel` aborts before or after the submit (#1198)."""
+    from gflow_cli.api.dto import GenerationCheckpoint
+    from gflow_cli.worker.queue import abort_task
+
+    repo = QueueRepository(temp_db)
+    repo.enqueue_task(task_id, "default", "t2i", {"prompt": "p", "aspect": "1:1", "count": 1})
+    task = repo.claim_task(task_id, "worker")
+    assert task is not None
+    submitted: list[str] = []
+
+    async def generate(*, project_id: str, req: object, on_checkpoint):  # type: ignore[no-untyped-def]
+        if not after_submit:
+            abort_task(repo, task_id)  # the CLI, from another process
+        on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
+        submitted.append(task_id)  # the credit gesture
+        if after_submit:
+            abort_task(repo, task_id)
+        return FakeGeneratedImage(media_name=f"media-{task_id}")
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    fake_client.generate_image.side_effect = generate
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+    worker.close()
+    return submitted
+
+
+@pytest.mark.asyncio
+async def test_a_job_cancelled_before_its_submit_never_submits(temp_db: DataStore) -> None:
+    submitted = await _run_t2i_aborted(temp_db, "pre", after_submit=False)
+
+    assert submitted == []
+    row = QueueRepository(temp_db).get_task("pre")
+    assert row is not None and row.status == "cancelled"
+    assert row.error is not None and row.error["charged"] == "no"
+
+
+@pytest.mark.asyncio
+async def test_a_job_abandoned_after_submit_still_records_its_media_for_reconcile(
+    temp_db: DataStore,
+) -> None:
+    """The queue row stays `abandoned` (SEP-2663: cancelled stays cancelled); the catalog
+    still records what Flow produced, which is where reconcile (#1199) looks."""
+    from gflow_cli.data.repository import DataRepository
+
+    submitted = await _run_t2i_aborted(temp_db, "post", after_submit=True)
+
+    assert submitted == ["post"]
+    row = QueueRepository(temp_db).get_task("post")
+    assert row is not None
+    assert (row.status, row.flow_media_id) == ("abandoned", "media-post")
+    assert DataRepository(temp_db).get_asset_by_flow_media_id("default", "media-post") is not None

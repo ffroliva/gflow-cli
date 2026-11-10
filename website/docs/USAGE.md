@@ -1878,6 +1878,41 @@ stderr is not a terminal) when a newer release is known — see
 [CONFIGURATION § GFLOW_CLI_UPDATE_CHECK](CONFIGURATION.md#gflow_cli_update_check)
 for the once-a-day cache and how to silence it.
 
+## `gflow cancel`
+
+Abort a queued job by id (#1198). **Abort** is local: gflow drops the job, or stops a
+claimed one before it submits. **Cancel** would be server-side, and gflow cannot do it:
+once a gflow worker has submitted a generation to Flow, Flow cannot be told to stop it, so
+it may keep running and may still be charged (`cancel.server` is `no`). The command reads
+and writes only the local queue and sends nothing to Flow. The MCP twin is `tasks/cancel`,
+which calls the same function.
+
+```text
+gflow cancel TASK_ID [--json]
+```
+
+| Job state | What happens | Exit | `--json` |
+|---|---|---|---|
+| queued (`pending`), or claimed by a worker that has not submitted it yet | state `cancelled`; a worker that claimed it stops before submitting; nothing is charged | 0 | `state: cancelled`, `charged: no` |
+| submitted by a gflow worker (`processing` past its submit), or already `abandoned` | state `abandoned`: gflow stops waiting, the generation may keep running in Flow | 22 | `state: abandoned`, `cancel.server: no`, `charged: maybe`, `next_action: reconcile`, plus the `server-cancel-unavailable` problem details under `error` |
+| finished (`completed`, `failed`, `indeterminate`) or already `cancelled` | nothing changes; the state is echoed | 0 | `state: <state>` |
+| unknown id | `TaskNotFoundError` | 1 | `status: fail`, `error.type: …/task-not-found` |
+
+The check and the write happen in one transaction, and a worker re-reads its row at the
+moment before it submits, so `cancelled` means nothing was submitted. A cancelled or
+abandoned row keeps that state: if the worker finishes later, the queue row still reads
+`abandoned`, and what Flow produced is recorded in the local catalog (and the row's
+`flow_media_id`), which is where reconcile (#1199) looks. Exit 22 is shared with
+`UpscaleUnavailableError` (a capability that is not available; do not retry) until the
+exit-code redesign in #1202; branch on the `type` URI
+(`https://gflow-cli.dev/errors/server-cancel-unavailable`, [ERRORS.md](ERRORS.md)).
+
+The `cancel.server` key has a dot in it, so `jq` needs it quoted:
+
+```bash
+gflow cancel 3f2c… --json | jq '{state, charged, next_action, server: ."cancel.server"}'
+```
+
 ## `gflow models`
 
 Print the image and video model catalog — the source of truth for what

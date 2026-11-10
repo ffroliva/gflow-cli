@@ -81,8 +81,10 @@ _WAIT_DESCRIPTION = (
     "by task_id: while it runs the status is working; once done it is completed and its "
     "result field holds the same reply wait=true would (files, project id, seed). A failed "
     "generation is also completed, with result.isError true, so check isError. "
-    "tasks/cancel stops the job; tasks/get then reads cancelled (a job cancelled after "
-    "submit is recorded as indeterminate: a credit may be spent). The job runs only while "
+    "tasks/cancel aborts the job locally; tasks/get then reads cancelled. A job not yet "
+    "submitted to Flow stops before submitting and nothing is charged; once a gflow worker "
+    "has submitted it, Flow cannot cancel it, so it may still be charged (statusMessage "
+    "says which). gflow cancel <id> is the CLI twin. The job runs only while "
     "this server runs: if the client closes the server, it is cancelled."
 )
 _WaitParam = Annotated[bool, Field(description=_WAIT_DESCRIPTION)]

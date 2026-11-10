@@ -137,6 +137,11 @@ gflow telemetry on
 gflow telemetry off [--delete]
 gflow telemetry status [--json]
 gflow telemetry show
+
+# Abort a queued job (local only; MCP twin: tasks/cancel). No --profile: task ids are global
+gflow cancel TASK_ID [--json]   # not yet submitted -> cancelled, exit 0, nothing charged;
+                                # already submitted -> abandoned, exit 22: Flow cannot cancel it,
+                                # it may still be charged (cancel.server: no)
 ```
 
 Every subcommand accepts `--profile <name>` (per-subcommand, not global) to drive multiple Google accounts side-by-side.

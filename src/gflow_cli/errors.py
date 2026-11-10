@@ -57,7 +57,10 @@ __all__ = [
     "RpcResponseUnavailableError",
     "SceneConcatError",
     "SecurityError",
+    "ServerCancelUnavailableError",
     "SyncPartialError",
+    "TaskCancelledError",
+    "TaskNotFoundError",
     "TransportTimeoutError",
     "UiModeUnavailableError",
     "UiSelectorDriftError",
@@ -774,8 +777,10 @@ class UpscaleUnavailableError(GFlowError):
     disambiguates by context (the request was a 4K upscale, the session is valid,
     reCAPTCHA was accepted) and raises THIS error rather than ``WafRejectionError``.
 
-    Distinct exit code 22 (not WAF's 10) so scripted callers can branch on
-    "upgrade your subscription" versus "the request was blocked / rotate profile".
+    Exit code 22 (not WAF's 10) so scripted callers can branch on "upgrade your
+    subscription" versus "the request was blocked / rotate profile". 22 is shared with
+    :class:`ServerCancelUnavailableError` (#1198); branch on the ``type`` URI to tell
+    them apart.
     The caller MUST NOT auto-retry a tier 403 — retrying only inflates per-profile
     WAF heat without ever succeeding.
     """
@@ -975,6 +980,58 @@ class FlowAppError(GFlowError):
         "not a gflow-cli bug. If it crashed (client-side exception), retry in a moment. "
         "If it redirected to flow.google.com/about, open the project in a browser on "
         "that host and confirm this account can reach it."
+    )
+
+
+class ServerCancelUnavailableError(GFlowError):
+    """``gflow cancel`` on a job a gflow worker had already submitted to Flow (#1198).
+
+    gflow stops waiting (the row reads ``abandoned``), but it has no way to make Flow
+    cancel a generation it has: the generation may keep running and may still be charged.
+    A job the worker had claimed but not yet submitted is not this error: the worker stops
+    before submitting, and the row reads ``cancelled``.
+
+    Shares exit 22 with :class:`UpscaleUnavailableError`: the existing code for "this
+    capability is not available, do not retry". #1202 owns any renumbering; the ``type``
+    URI is the precise discriminator meanwhile.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/server-cancel-unavailable"
+    charged = "maybe"
+    next_action = "reconcile"
+    title = "Flow cannot cancel a submitted generation"
+    _default_remediation = (
+        "A gflow worker had already submitted this job to Flow. gflow stopped waiting, "
+        "but Flow cannot be told to cancel it: it may still run and be charged. Check "
+        "the Flow project for the result."
+    )
+
+
+class TaskCancelledError(GFlowError):
+    """A queued job aborted locally before anything was submitted to Flow (#1198).
+
+    The record ``gflow cancel`` and MCP ``tasks/cancel`` store on a row they cancel, and
+    what a worker raises when it finds its row cancelled at the submit gate, so it stops
+    without making the credit-spending gesture. Nothing was charged.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/task-cancelled"
+    charged = "no"
+    next_action = "none"
+    title = "Cancelled before it was submitted"
+    _default_remediation = "Nothing was sent to Flow and nothing was charged."
+
+
+class TaskNotFoundError(GFlowError):
+    """``gflow cancel`` was given an id no queued job has (#1198)."""
+
+    problem_type = "https://gflow-cli.dev/errors/task-not-found"
+    charged = "no"
+    next_action = "fix_input"
+    title = "Task not found"
+    _default_remediation = (
+        "Use the task_id a generation returned with wait=false. Ids are local to this "
+        "machine's queue (GFLOW_CLI_HOME)."
     )
 
 
@@ -1647,6 +1704,9 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # from WafRejectionError's 10 even though both are HTTP 403. Direct GFlowError
     # subclass, so unconstrained by the ordering invariant.
     UpscaleUnavailableError: 22,
+    # ServerCancelUnavailableError (#1198): shares 22, "capability unavailable, do not
+    # retry" -- no new code while #1202 redesigns them. Direct GFlowError subclass.
+    ServerCancelUnavailableError: 22,
     ExtendUnavailableError: 35,
     # UiSelectorDriftError (issue #183): Flow UI changed, selector probe failed.
     # Direct GFlowError subclass; exit 23 lets scripts distinguish "UI drifted"
