@@ -169,6 +169,7 @@ class FlowWorker:
                         route="worker.submit_gate",
                         charged="no",
                         next_action="retry",
+                        remediation_hint="Nothing was sent to Flow. Run the job again.",
                     ) from exc
                 else:
                     if not go:

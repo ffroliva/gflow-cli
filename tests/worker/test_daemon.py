@@ -1243,3 +1243,4 @@ async def test_a_failed_submit_gate_never_submits(temp_db: DataStore) -> None:
     assert pre is not None and pre.status == "cancelled"
     assert plain is not None and plain.status == "failed" and plain.error is not None
     assert (plain.error["charged"], plain.error["next_action"]) == ("no", "retry")
+    assert "prune" not in plain.error["remediation_hint"]  # not DataStoreError's default
