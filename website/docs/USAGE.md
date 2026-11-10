@@ -74,7 +74,7 @@ Machine-readable output: the generation commands (`image t2i` / `image i2i`,
 `video t2v` / `i2v` / `r2v`), `auth list`, `credits user` / `credits list`, and
 `gflow models` accept `--json` to
 emit a single parseable object on stdout instead of Rich tables. See
-[§ JSON output](#json-output---json).
+[§ JSON output](#json-output-json).
 
 Note: `--profile NAME` is **per-subcommand**, not global — pass it after the subcommand name (e.g. `gflow image t2i "..." --profile experiments`, not `gflow --profile experiments image t2i ...`).
 
@@ -129,11 +129,21 @@ Read the current Google Flow balance through an existing authenticated profile. 
 read-only request: it does not generate media or spend credits. The displayed balance funds Veo
 video generation; image generation uses separate per-model daily quotas.
 
-The balance is read from flow.google.com: gflow opens the app in the profile's browser and reads
-the number the app itself loads, which is the one Flow's account menu shows
-([#795](https://github.com/ffroliva/gflow-cli/issues/795)). Nothing is clicked. It costs one
-browser launch per profile, and the profile must not be in use by another gflow process
-(`ProfileLockedError`, exit 11). Before #795 the balance came from a labs.google token; labs'
+The balance is the number flow.google.com itself loads, which is the one Flow's account menu
+shows ([#795](https://github.com/ffroliva/gflow-cli/issues/795)). When Flow accepts the
+profile's saved session, gflow reads it directly with that session's cookies: two requests, no
+browser ([#1229](https://github.com/ffroliva/gflow-cli/issues/1229)). Otherwise (signed out,
+Chrome open on the profile, a network error, an unexpected reply) gflow opens the app in the
+profile's browser and reads it there. Nothing is clicked. The browser read costs one browser
+launch per profile, and the profile must not be in use by another gflow process or a Chrome
+window (`ProfileLockedError`, exit 11): with Chrome open on the profile, both reads fail, so
+close it and retry. When Flow throttles the account (HTTP 429 or 503) gflow does not
+open the browser, which would send the same requests: `credits user` exits 4 (`RateLimitError`)
+or 6 (`NetworkError`), and `credits list` records that error for the profile. The direct read
+is off by default on macOS and while any proxy is configured (`GFLOW_CLI_BROWSER_PROXY`, or an
+environment/system proxy); `GFLOW_CLI_WIRE_READS=0`
+turns it off everywhere ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads),
+[KNOWN_ISSUES](KNOWN_ISSUES.md)). Before #795 the balance came from a labs.google token; labs'
 session URL has answered HTTP 410 to every account since 2026-10-22
 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)).
 
@@ -149,7 +159,7 @@ then reads the balance again. That costs one more Chrome launch per signed-out p
 credits. A session Google has revoked cannot be renewed, so the row
 keeps its original diagnosis. A profile another gflow process is using is recorded as
 `ProfileLockedError` and the list carries on. `--refresh` does not clear Flow's public `/about`
-page (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)); that row keeps its original diagnosis.
+page (see [KNOWN_ISSUES](KNOWN_ISSUES.md)); that row keeps its original diagnosis.
 
 `credits user` applies the normal profile precedence chain. `credits list` inspects every saved
 profile sequentially and returns successful balances even when another profile is expired or
@@ -1032,7 +1042,7 @@ costs credits but never quality.
 > are concatenated, each internal seam is preceded by ~1 second of **frozen frame
 > and silence** as the shorter clip is padded into its 8s slot. A single-segment
 > extend is unaffected. See
-> [KNOWN_ISSUES](../KNOWN_ISSUES.md#a-veo-extend-segment-is-7-seconds-not-the-8-flow-advertises--so-concat-pads-a-frozen-second)
+> [KNOWN_ISSUES](KNOWN_ISSUES.md#a-veo-extend-segment-is-7-seconds-not-the-8-flow-advertises-so-concat-pads-a-frozen-second)
 > — render without `-o` and trim in post if the seam matters.
 
 ### What it produces
@@ -1098,7 +1108,7 @@ previous clip**, giving visual continuity with no server-side stitching.
 > Without it, `gflow video chain` fails up front with exit `20`
 > (`FrameExtractionError`) before reading the manifest or prompting for cost —
 > on `gflow-cli` ≤ 0.74.0 it was a generic exit `1` instead, and Pillow had to be
-> installed by hand (see [KNOWN_ISSUES.md](../KNOWN_ISSUES.md)). Install it with:
+> installed by hand (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). Install it with:
 >
 > ```bash
 > pip install 'gflow-cli[chain]'
@@ -1137,7 +1147,7 @@ Options:
 > on the Veo 3.1 family pending a chain-scale verification. The chain also
 > aborts a link loudly (rather than reporting a fake success) if a generation
 > is observed routing to the text-only endpoint — see
-> [KNOWN_ISSUES](../KNOWN_ISSUES.md).
+> [KNOWN_ISSUES](KNOWN_ISSUES.md).
 
 ### JSONL manifest format
 
@@ -1170,7 +1180,7 @@ between links) under `--out-dir` (or the default output dir). **Stitching the
 clips into a single video is a separate step — use `gflow scene` to
 concatenate them server-side.** Chain does not auto-concat: see the
 *deferred auto-concat* entry in
-[KNOWN_ISSUES](../KNOWN_ISSUES.md) for why.
+[KNOWN_ISSUES](KNOWN_ISSUES.md) for why.
 
 **Examples:**
 
@@ -1732,7 +1742,9 @@ environment. Doctor **diagnoses, never heals**: nothing is migrated, repaired,
 or written — not even pending schema migrations. All database access is
 strictly read-only (SQLite may create transient `-wal`/`-shm` sidecar files
 during the read-only open; the database itself is never modified), so it is
-safe to run against a live catalog at any time.
+safe to run against a live catalog at any time. One check uses the network:
+`auth.wire_read` sends one GET and one POST to flow.google.com for the default
+profile, and sends nothing when `GFLOW_CLI_WIRE_READS=0`.
 
 ```text
 gflow doctor [--json]
@@ -1742,7 +1754,7 @@ Options:
                         (experimental; shape may change).
 ```
 
-Eleven checks run on every invocation:
+Twelve checks run on every invocation:
 
 | Check id | Detects | Suggested remediation |
 |---|---|---|
@@ -1757,6 +1769,7 @@ Eleven checks run on every invocation:
 | `env.browsers_missing` | Playwright Chromium is not installed | `playwright install chromium` |
 | `auth.files_present` | No auth profiles, or profiles without saved cookies | `gflow auth login` |
 | `env.browser_proxy` | Reports whether `GFLOW_CLI_BROWSER_PROXY` is set (`scheme://host:port`, never credentials); informational, never changes the exit code | Use the same proxy for `HTTPS_PROXY` and for signing in ([CONFIGURATION](CONFIGURATION.md#gflow_cli_browser_proxy)) |
+| `auth.wire_read` | Whether the default profile's direct (browser-free) credits read works: `status=accepted build=<Flow build>` passes; any other status (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, `no_profile`, …) is info only and never changes the exit code, because credits then read through the browser. The one network check: one GET and one POST to flow.google.com, nothing with `GFLOW_CLI_WIRE_READS=0` | The finding's own hint (e.g. close Chrome on the profile, or `gflow auth login`) ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads)) |
 
 **Severity model.** Every check reports `pass`, `info`, `warn`, or `fail`.
 `info` is worth knowing but not a defect — it never flips the overall status
@@ -2259,9 +2272,9 @@ envelope also says whether Flow may have billed and what to do next; see
 | `4`  | `RateLimitError`      | Quota / rate limit hit, exhausted retries        | Wait + reduce `GFLOW_CLI_CONCURRENCY`                      |
 | `5`  | `ContentPolicyError`  | Flow rejected the prompt (200 + empty `media[]`) | Soften prompt wording                                      |
 | `6`  | `NetworkError`        | Network failure persisted across 3 attempts. A failed download of media Flow already made (`MediaDownloadError`) is `retryable: false` ([#941](https://github.com/ffroliva/gflow-cli/issues/941)): use `gflow data download` instead of re-running — including a signed-media download whose connection dropped on every attempt ([#895](https://github.com/ffroliva/gflow-cli/issues/895)), or whose signed URL answered an HTTP error such as an expired link (exit 7 until #941 part 2) | Check connectivity — **but read the error's own `remediation_hint` first.** When a *generation* download fails this way the clip was already produced and billed: the hint names it, and `gflow data download <media_id>` recovers it for free. Re-generating pays twice |
-| `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed. **Also a refused video submit** (flow.google.com, [#1178](https://github.com/ffroliva/gflow-cli/issues/1178)): the submit was not the run asked for (a dropped frame, another asset) and gflow aborted it before it was sent — the hint then says *billed nothing*; without that hint it was already sent and may be billed, so check the project before re-running. **Also `RpcResponseUnavailableError`** (flow.google.com): Chrome lost the reply body of a project create, rename or upload ([#1009](https://github.com/ffroliva/gflow-cli/issues/1009)), or a project create or rename got no reply within 120 s ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)), and gflow could not confirm the outcome by reading the project back | File a bug (do NOT include captured tokens or signed URLs). **For `RpcResponseUnavailableError` the write may have saved:** open the project and check its title or the uploaded file before re-running, or you may get a duplicate (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
+| `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed. **Also a refused video submit** (flow.google.com, [#1178](https://github.com/ffroliva/gflow-cli/issues/1178)): the submit was not the run asked for (a dropped frame, another asset) and gflow aborted it before it was sent — the hint then says *billed nothing*; without that hint it was already sent and may be billed, so check the project before re-running. **Also `RpcResponseUnavailableError`** (flow.google.com): Chrome lost the reply body of a project create, rename or upload ([#1009](https://github.com/ffroliva/gflow-cli/issues/1009)), or a project create or rename got no reply within 120 s ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)), and gflow could not confirm the outcome by reading the project back | File a bug (do NOT include captured tokens or signed URLs). **For `RpcResponseUnavailableError` the write may have saved:** open the project and check its title or the uploaded file before re-running, or you may get a duplicate (see [KNOWN_ISSUES](KNOWN_ISSUES.md)) |
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
-| `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287; or a wedged submission stage — the error names the stage and your Playwright version) | Retry; raise the relevant timeout. **If the detail says `clicking submit`, `not terminal`, `unreadable` or `was lost`, or `--json` shows `retryable: false`, the submit already went out ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)): check the project in Flow before re-running, because a re-run bills again.** A lost **image** reply is recovered from the project grid since v0.89.1 ([#1075](https://github.com/ffroliva/gflow-cli/issues/1075)), so exit 9 there means the grid did not show exactly the requested images. A lost **video** reply is followed to the clip when the run uploaded a file (`--ref`, `--initial-frame`, `--end-frame`; [#1112](https://github.com/ffroliva/gflow-cli/issues/1112)), so exit 9 with `unreadable` there means no clip, or more than one, carried the upload. A one-clip t2v run is followed by its exact prompt and model ([#1141](https://github.com/ffroliva/gflow-cli/issues/1141)), so `was lost` there means the project listing could not name exactly one clip; t2v with `--count` above 1 and character-only r2v still exit 9. For a frame-UUID miss verify the UUID belongs to the `--project` passed; for a `stage_stalled` abort check your Playwright is in range (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
+| `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287; or a wedged submission stage — the error names the stage and your Playwright version) | Retry; raise the relevant timeout. **If the detail says `clicking submit`, `not terminal`, `unreadable` or `was lost`, or `--json` shows `retryable: false`, the submit already went out ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)): check the project in Flow before re-running, because a re-run bills again.** A lost **image** reply is recovered from the project grid since v0.89.1 ([#1075](https://github.com/ffroliva/gflow-cli/issues/1075)), so exit 9 there means the grid did not show exactly the requested images. A lost **video** reply is followed to the clip when the run uploaded a file (`--ref`, `--initial-frame`, `--end-frame`; [#1112](https://github.com/ffroliva/gflow-cli/issues/1112)), so exit 9 with `unreadable` there means no clip, or more than one, carried the upload. A one-clip t2v run is followed by its exact prompt and model ([#1141](https://github.com/ffroliva/gflow-cli/issues/1141)), so `was lost` there means the project listing could not name exactly one clip; t2v with `--count` above 1 and character-only r2v still exit 9. For a frame-UUID miss verify the UUID belongs to the `--project` passed; for a `stage_stalled` abort check your Playwright is in range (see [KNOWN_ISSUES](KNOWN_ISSUES.md)) |
 | `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |
 | `11` | `ConfigurationError`  | Local configuration or browser mode is invalid, including a malformed row in a `gflow run` config, an `image batch` manifest, a `movie` manifest or a `video chain` manifest (#935: `image batch` reported these as exit 2 before); a `--project` id Flow answers with its `/404?reason=project` page, meaning not found or not accessible to this account ([#974](https://github.com/ffroliva/gflow-cli/issues/974), [#1053](https://github.com/ffroliva/gflow-cli/issues/1053)); an output folder gflow cannot write to (`--out`, `GFLOW_CLI_OUTPUT_DIR`, `GFLOW_CLI_STORAGE_URI`), after a generation that succeeded: the asset is still in the Flow project ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091); a generated video clip keeps exit 6); a cloud `GFLOW_CLI_STORAGE_URI` combined with `-o`, `video chain` or `movie run --stitch`, refused before billing ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)) — on the migrated `flow.google.com` host also a request the host cannot take as given (no `--project`, a model its menu does not offer, a `--duration` its settings pane renders no control for); includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile; also a Chrome window you opened yourself holding the profile, [#984](https://github.com/ffroliva/gflow-cli/issues/984) — close it or use another `--profile`), `ProfileAccessError` (Windows Chrome cannot write the profile directory; raised at the generation client's launch), and `ProfileEngineDowngradeError` (the profile was last written by a newer Chromium major than the bundled engine about to open it — see [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)) | Fix the option/env var shown in the error; for lease contention wait, use a different `--profile`, or set `GFLOW_CLI_LEASE_WAIT_SECONDS=N` to wait bounded; for profile access denial grant write access to the complete profile directory or use a writable profile; upgrade gflow-cli/Playwright or re-run `gflow auth login` for a downgrade refusal |
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |

@@ -40,6 +40,7 @@ async def test_authenticated_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
         "status": "authenticated",
         "profile": "denon",
         "user_email": "user@example.com",
+        "wire": {"status": "disabled", "build": None},  # tests/conftest.py: wire off
     }
 
 
