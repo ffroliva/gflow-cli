@@ -343,6 +343,36 @@ tokens**. Published content is sanitized for a public repo: SHA, pass/fail
 counts, duration, failure class, and failing test *names* only — never raw logs,
 profile paths, prompts, or signed URLs.
 
+## RPC drift check (#1218)
+
+Every canary comment ends with an `RPC-DRIFT` section. It checks that each id in
+[FLOW_WIRE_RPCS.md](FLOW_WIRE_RPCS.md) is still in the JavaScript flow.google.com serves.
+It fetches the public shell with **no cookies and no browser**, swaps the shell's
+`/_/js/` module list for the four feature modules, and looks for each id as a quoted
+literal. No RPC is sent, so billed submits are covered at $0. It needs no profile, so it
+runs on `AUTH-EXPIRED` and `DEFERRED` nights too. It never changes the run's state or
+title.
+
+| Outcome | Meaning | Action |
+|---|---|---|
+| `OK` | every catalogued id is present | none |
+| `ID-GONE` | some ids are missing, the rest are present | the named ids were renamed or removed: update their rows |
+| `MODULES-CHANGED` | the bundle fetch failed, or no id is present | the feature module names moved; relearn them from a project page (the spike's `--page` arm). Says nothing about any single id |
+| `INCONCLUSIVE` | nothing was measured (offline, no script URL, no build label) | none; says nothing about Flow |
+
+One renamed module cannot pass for a missing id. On 2026-11-10 the server answered the
+four modules plus one unknown name with HTTP 404 for the whole bundle, not a bundle
+with that module left out, so any module rename reads `MODULES-CHANGED`.
+
+**Per-build archive (S3, #1223).** On the first run that sees a build label, the check
+writes `tmp/rpc-inventory/<build>.json`: the build's full `{Xa:"<id>"}` descriptor list,
+the modules used, and the ids added and removed since the previous first-seen build. The
+comment carries the same diff. The archive is local and gitignored; an existing build's
+file is never overwritten, and an empty inventory is never written.
+
+Run it alone, $0: `uv run python scripts/canary/rpc_drift.py`. The comment publishes
+only the build label, ids and counts, and an error by its class name.
+
 ## Selector drift check (#563, moved to the canary in #1083)
 
 The canary answers *"does gflow still work on the maintainer's cohort?"*; the drift check

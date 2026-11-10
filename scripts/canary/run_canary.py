@@ -20,6 +20,11 @@ Otherwise the signal trains red-blindness and dies. The converse matters just as
 much — see ``_PRECONDITION_RE`` for why a real failure must never be *demoted*
 to DEFERRED.
 
+Every comment also carries an ``RPC-DRIFT`` section (#1218, ``rpc_drift.py``): whether the
+catalogued batchexecute ids are still in the JavaScript Flow serves, checked with no cookies
+and no browser. It has its own four outcomes (OK / ID-GONE / MODULES-CHANGED / INCONCLUSIVE),
+and like everything here it gates nothing: it never changes the run's state or title.
+
 Scope: ``-m e2e_auth`` only ($0, no reCAPTCHA). Generation tiers are refused outright
 (see ``_MANUAL_ONLY_MARKERS``) — a promise in a docstring is not enforcement.
 
@@ -355,6 +360,25 @@ def render(result: Result, sha: str, markers: str, stamp: str, streak_note: str 
     return "\n".join(lines)
 
 
+def rpc_drift_section() -> str:
+    """The RPC-DRIFT report (#1218), appended to every run's comment whatever its state.
+
+    It needs no profile and no auth, so it runs on AUTH-EXPIRED and DEFERRED nights too. It
+    reports and never changes the run's state or title. Imported here, not at the top, so a
+    `--pull` that changed `rpc_drift.py` is picked up by the re-executed child, not by the
+    copy this process loaded before the pull. Never raises.
+    """
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))  # run as a script, `scripts` is not importable
+    from scripts.canary import rpc_drift  # noqa: PLC0415
+
+    try:
+        drift = rpc_drift.check()
+    except Exception as exc:  # noqa: BLE001 - class name only: messages can carry URLs
+        drift = rpc_drift.Drift(rpc_drift.INCONCLUSIVE, note=type(exc).__name__)
+    return rpc_drift.render(drift)
+
+
 def publish(issue: int, state: str, body: str, stamp: str, dry_run: bool) -> None:
     title = f"[{state}] gflow nightly canary — {stamp}"
     if dry_run:
@@ -523,7 +547,7 @@ def main() -> int:
     publish(
         args.issue,
         result.state,
-        render(result, sha, args.markers, stamp, streak_note),
+        f"{render(result, sha, args.markers, stamp, streak_note)}\n\n{rpc_drift_section()}",
         stamp,
         args.dry_run,
     )
