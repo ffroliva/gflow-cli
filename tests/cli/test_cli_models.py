@@ -197,3 +197,70 @@ def test_model_ids_are_unique_across_kinds_ignoring_case() -> None:
     """`show` looks ids up case-insensitively across image AND video."""
     ids = [i.lower() for e in _mcp_entries() for i in {e["name"], *e["aliases"]}]
     assert len(ids) == len(set(ids))
+
+
+# --- #1196 review: durations, lookup spellings, suggestions, table labels -----
+
+
+def test_video_entries_carry_their_selectable_durations() -> None:
+    from gflow_cli.api import video as video_api
+
+    for entry in _mcp_entries():
+        if "max_duration" not in entry:
+            continue
+        model = video_api.VideoModel(entry["name"])
+        assert entry["durations"] == list(video_api.duration_choices_for(model))
+        assert max(entry["durations"]) == entry["max_duration"]
+
+    shown = json.loads(_invoke("show", "veo-lite", "--json").output)
+    assert shown["durations"] == [4, 6, 8]
+
+
+@pytest.mark.parametrize(
+    ("spelling", "name"),
+    [
+        ("Omni-Flash", "omni_flash"),
+        ("veo_lite", "veo_3_1_lite"),
+        (" omni-flash", "omni_flash"),
+        ("Omni Flash", "omni_flash"),
+        ("NARWHAL", "NARWHAL"),
+    ],
+)
+def test_show_accepts_every_spelling_the_generate_commands_accept(spelling: str, name: str) -> None:
+    result = _invoke("show", spelling, "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["name"] == name
+
+
+def _unknown(model_id: str) -> str:
+    from gflow_cli.cli import main
+
+    result = CliRunner().invoke(main, ["models", "show", model_id])
+    assert result.exit_code == 2, result.output
+    return result.output
+
+
+def test_unknown_prefix_still_gets_a_substring_suggestion() -> None:
+    assert "veo" in _unknown("veo").split("Did you mean:")[1]
+
+
+def test_suggestions_name_each_model_at_most_once() -> None:
+    from gflow_cli.cli_models import find_model
+
+    catalog = build_catalog()
+    hint = _unknown("nano").split("Did you mean:")[1].split("?")[0]
+    names = [find_model(catalog, s.strip())[1]["name"] for s in hint.split(",")]
+    assert len(names) == len(set(names)), hint
+
+
+def test_show_table_uses_list_labels_and_no_tiers() -> None:
+    video = _invoke("show", "omni-flash").output
+    image = _invoke("show", "nano2").output
+
+    assert "max dur (s)" in video
+    assert "ref cap" in video
+    assert "4, 6, 8, 10" in video
+    assert "tiers" not in video
+    assert "Flow name" in image
+    assert "True" not in image

@@ -1909,19 +1909,23 @@ gflow models
 # Machine-readable catalog for a worker / model picker
 gflow models --json
 
-# One model's limits: Flow name, aliases, ref cap, max duration, its section's aspects
+# One model's limits: aliases, ref cap, durations (video) or Flow name (image), aspects
 gflow models show omni-flash
 
 # The same object gflow_list_models carries for that model (#1196)
 gflow models show NARWHAL --json
 ```
 
-`show` takes a model's `name` or any of its aliases, case-insensitively. Its
-`--json` emits that model's catalog entry exactly as `gflow_list_models` returns
-it, so a script reading one model needs no list parsing. The table view adds the
-model's section aspects (and video tiers) for context. An unknown id exits 2 and
-names the closest matches. The catalog does not carry per-model generation modes
-or host availability, so `show` does not report them.
+`show` takes a model's `name` or any spelling the generation commands' `--model`
+resolves (`omni-flash`, `Omni Flash`, `veo_lite`, `NARWHAL`, ...). Its `--json`
+emits that model's catalog entry exactly as `gflow_list_models` returns it, so a
+script reading one model needs no list parsing. Video entries carry `durations`,
+the clip lengths `--duration` accepts for that model (Veo: 4, 6, 8; Omni Flash
+adds 10), next to `max_duration`. The table view adds the model's section aspects
+for context. An unknown id exits 2 and names up to three closest models. That is
+a Click usage error: the message goes to stderr and stdout stays empty, even with
+`--json`. The catalog does not carry per-model generation modes or host
+availability, so `show` does not report them.
 
 ## JSON output (`--json`)
 

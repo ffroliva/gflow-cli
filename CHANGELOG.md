@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`gflow models list` and `gflow models show <id>`.** `show` prints one model's catalog
-  entry (Flow name, aliases, reference cap, max duration, default) by name or alias, ignoring
-  case; `--json` emits exactly the object `gflow_list_models` returns for that model, so a
+  entry (aliases, reference cap; image models add Flow's menu name and the default flag, video
+  models their selectable `durations` and max duration) by name or any spelling `--model`
+  accepts; `--json` emits exactly the object `gflow_list_models` returns for that model, so a
   script no longer parses the whole list for one model's limits. An unknown id exits 2 and
   names the closest matches. Bare `gflow models` still works and is an alias of
   `gflow models list` (#1196).
