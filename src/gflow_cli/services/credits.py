@@ -117,6 +117,8 @@ async def _fetch(meta: profile_store.ProfileMeta, *, refresh: bool = False) -> d
             labs_stale=result.labs_stale,
         )
         raise expired
+    # Flow verified the session (labs is irrelevant to the direct read): one more wire try.
+    flow_wire.session_recovered(meta.profile_dir)
     return await _fetch_once(meta)
 
 

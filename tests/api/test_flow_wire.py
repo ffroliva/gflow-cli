@@ -186,8 +186,9 @@ async def test_signed_out_shell_falls_back_and_disables_the_wire(
 
     with pytest.raises(WireReadUnavailable) as second:
         await flow_wire.read_credits(profile)
-    assert _reason(second) is WireFallbackReason.DISABLED
-    assert len(flow.gets) == 1  # the disabled wire sends nothing
+    # The stored reason, never DISABLED: that one means the kill switch (review round, #1238).
+    assert _reason(second) is WireFallbackReason.SIGNED_OUT_SHELL
+    assert len(flow.gets) == 1  # the signed-out wire sends nothing
 
 
 async def test_http_401_falls_back_without_retry_and_disables_the_wire(
@@ -202,7 +203,7 @@ async def test_http_401_falls_back_without_retry_and_disables_the_wire(
 
     with pytest.raises(WireReadUnavailable) as again:
         await flow_wire.read_credits(profile)
-    assert _reason(again) is WireFallbackReason.DISABLED
+    assert _reason(again) is WireFallbackReason.HTTP_401  # not relabelled signed_out_shell
     assert len(flow.posts) == 1
 
 
@@ -538,7 +539,7 @@ async def test_concurrent_reads_stop_after_a_signed_out_shell(profile: Path, flo
 
     assert len(flow.gets) == 1
     later = [r for r in results[1:] if isinstance(r, WireReadUnavailable)]
-    assert [r.reason for r in later] == [WireFallbackReason.DISABLED] * 4
+    assert [r.reason for r in later] == [WireFallbackReason.SIGNED_OUT_SHELL] * 4
 
 
 async def test_concurrent_reads_during_a_429_all_raise_the_typed_error(
@@ -569,7 +570,7 @@ async def test_a_signed_out_profile_does_not_turn_the_wire_off_for_another(
 
     with pytest.raises(WireReadUnavailable) as again:  # the signed-out one stays off
         await flow_wire.read_credits(profile)
-    assert _reason(again) is WireFallbackReason.DISABLED
+    assert _reason(again) is WireFallbackReason.SIGNED_OUT_SHELL
 
 
 async def test_five_profiles_read_concurrently_each_on_its_own_lock(
@@ -724,3 +725,278 @@ async def test_a_blocking_cookie_read_is_bounded_by_the_deadline(
     with pytest.raises(WireReadUnavailable) as exc:
         await flow_wire.read_credits(profile)
     assert _reason(exc) is WireFallbackReason.STORE_UNREADABLE
+
+
+# --- wire health for `gflow doctor` and `gflow_auth_status` (G6, SCENARIO row 25) ------------
+
+
+@pytest.fixture
+def wire_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tests/conftest.py turns the wire off for the suite; the health probe honours that."""
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")
+    reset_settings()
+
+
+async def test_health_of_an_accepted_session_is_one_read_and_names_the_build(
+    profile: Path, flow: _Flow, wire_on: None
+) -> None:
+    assert await flow_wire.health(profile) == {
+        "status": "accepted",
+        "build": "boq_labs-flow-frontend_20261110.00_p0",
+    }
+    assert (len(flow.gets), len(flow.posts)) == (1, 1)
+
+
+async def test_health_asks_flow_again_for_a_profile_marked_signed_out(
+    profile: Path, flow: _Flow, wire_on: None
+) -> None:
+    """An explicit question: the in-process mark is re-checked with one GET, never echoed."""
+    flow.shell = lambda _r: httpx.Response(200, text=_SIGNED_OUT_SHELL)
+    with pytest.raises(WireReadUnavailable):
+        await flow_wire.read_credits(profile)  # marks it
+
+    assert await flow_wire.health(profile) == {"status": "signed_out_shell", "build": None}
+    assert (len(flow.gets), len(flow.posts)) == (2, 0)
+
+    flow.shell = lambda _r: httpx.Response(200, text=_SHELL)  # signed back in elsewhere
+    assert (await flow_wire.health(profile))["status"] == "accepted"
+
+
+async def test_health_reports_a_401_as_http_401_on_every_ask(
+    profile: Path, flow: _Flow, wire_on: None
+) -> None:
+    flow.rpc = lambda _r: httpx.Response(401, text="")
+
+    first = await flow_wire.health(profile)
+    second = await flow_wire.health(profile)
+
+    assert first == second == {"status": "http_401", "build": None}
+
+
+async def test_health_always_reads_a_fresh_shell_so_the_build_is_current(
+    profile: Path, flow: _Flow, wire_on: None
+) -> None:
+    await flow_wire.read_credits(profile)  # caches `at` and the old build
+    flow.shell = lambda _r: httpx.Response(
+        200, text=_SHELL.replace("20261110.00_p0", "20261111.00_p0")
+    )
+
+    result = await flow_wire.health(profile)
+
+    assert result == {"status": "accepted", "build": "boq_labs-flow-frontend_20261111.00_p0"}
+    assert len(flow.gets) == 2
+
+
+async def test_health_honours_the_settings_it_is_given(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """doctor passes its own Settings; the global ones say the wire is on."""
+    from gflow_cli.config import get_settings
+
+    reads: list[Path] = []
+    monkeypatch.setattr(flow_wire, "read_cookies_for", lambda p: reads.append(p) or [])
+    off = get_settings().model_copy(update={"wire_reads": False})
+    proxied = get_settings().model_copy(update={"browser_proxy": "http://127.0.0.1:3128"})
+
+    assert (await flow_wire.health(profile, off))["status"] == "disabled"
+    assert (await flow_wire.health(profile, proxied))["status"] == "proxy_configured"
+    assert reads == [] and flow.gets == []
+
+
+async def test_health_reports_a_system_or_env_proxy_like_the_read_path(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1236 skips the read for ANY configured proxy; health must say so, sending nothing."""
+    reads: list[Path] = []
+    monkeypatch.setattr(flow_wire, "read_cookies_for", lambda p: reads.append(p) or [])
+    monkeypatch.setattr(flow_wire, "getproxies", lambda: {"https": "http://127.0.0.1:3128"})
+
+    assert await flow_wire.health(profile) == {"status": "proxy_configured", "build": None}
+    assert reads == [] and flow.gets == []
+
+
+async def test_health_raises_the_security_refusal_for_a_profile_outside_home(
+    tmp_path: Path, flow: _Flow, wire_on: None
+) -> None:
+    """Like the credits path: a refusal, not an `unexpected` status with a warning."""
+    from gflow_cli.errors import SecurityError
+
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+
+    with pytest.raises(SecurityError):
+        await flow_wire.health(outside)
+    assert flow.gets == []
+
+
+async def test_health_reports_an_unreadable_jar(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def locked(_p: Path) -> list[tuple[str, str]]:
+        raise CookieStoreUnreadable("locked")
+
+    monkeypatch.setattr(flow_wire, "read_cookies_for", locked)
+
+    assert await flow_wire.health(profile) == {"status": "store_unreadable", "build": None}
+    assert flow.gets == []
+
+
+async def test_health_reports_throttling_and_then_sends_nothing(
+    profile: Path, flow: _Flow, wire_on: None
+) -> None:
+    flow.rpc = lambda _r: httpx.Response(429, headers={"retry-after": "120"})
+
+    assert await flow_wire.health(profile) == {
+        "status": "throttled",
+        "build": None,
+        "retry_after": 60,  # Retry-After: 120, capped by _retry.parse_retry_after
+    }
+    sent = (len(flow.gets), len(flow.posts))
+    assert (await flow_wire.health(profile))["status"] == "throttled"
+    assert (len(flow.gets), len(flow.posts)) == sent
+
+
+@pytest.mark.parametrize("reason", list(WireFallbackReason))
+async def test_health_passes_every_fallback_reason_through(
+    profile: Path, wire_on: None, monkeypatch: pytest.MonkeyPatch, reason: WireFallbackReason
+) -> None:
+    async def fails(_p: Path) -> object:
+        raise WireReadUnavailable(reason)
+
+    monkeypatch.setattr(flow_wire, "read_credits", fails)
+
+    assert await flow_wire.health(profile) == {"status": reason.value, "build": None}
+
+
+async def test_health_turns_a_wire_bug_into_unexpected(
+    profile: Path, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def boom(_p: Path) -> object:
+        raise RuntimeError("SID=fake-sid-value")
+
+    monkeypatch.setattr(flow_wire, "read_credits", boom)
+
+    assert await flow_wire.health(profile) == {"status": "unexpected", "build": None}
+
+
+@pytest.mark.parametrize(
+    ("env", "platform", "status"),
+    [
+        ({"GFLOW_CLI_WIRE_READS": "0"}, "win32", "disabled"),
+        ({}, "darwin", "disabled"),
+        (
+            {"GFLOW_CLI_WIRE_READS": "1", "GFLOW_CLI_BROWSER_PROXY": "http://127.0.0.1:3128"},
+            "win32",
+            "proxy_configured",
+        ),
+    ],
+)
+async def test_health_sends_nothing_when_the_wire_must_not_run(
+    profile: Path,
+    flow: _Flow,
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+    platform: str,
+    status: str,
+) -> None:
+    import sys
+
+    from gflow_cli.config import reset_settings
+
+    reads: list[Path] = []
+    monkeypatch.setattr(flow_wire, "read_cookies_for", lambda p: reads.append(p) or [])
+    monkeypatch.delenv("GFLOW_CLI_WIRE_READS", raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(sys, "platform", platform)
+    reset_settings()
+
+    assert await flow_wire.health(profile) == {"status": status, "build": None}
+    assert reads == [] and flow.gets == [] and flow.posts == []
+
+
+@pytest.mark.parametrize("label", ["boq_x<script>", "boq_" + "x" * 200, "SID=fake-sid-value", ""])
+async def test_health_drops_a_build_label_that_is_not_one(
+    profile: Path, flow: _Flow, wire_on: None, label: str
+) -> None:
+    flow.shell = lambda _r: httpx.Response(
+        200, text=_SHELL.replace("boq_labs-flow-frontend_20261110.00_p0", label)
+    )
+
+    assert await flow_wire.health(profile) == {"status": "accepted", "build": None}
+
+
+_SECRETS = ("fake-sid-value", "fake-3psid", "fake-osid", "AFAKEATTOKEN", "-1234567890", "reminted")
+
+
+async def test_no_surface_of_the_health_probe_carries_a_secret(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Names, counts and enum values only: doctor's finding, its JSON, and the MCP field."""
+    import json
+
+    from gflow_cli import auth as auth_mod
+    from gflow_cli import json_output, profile_store
+    from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
+    from gflow_cli.config import get_settings
+    from gflow_cli.mcp import tools
+    from gflow_cli.services import doctor
+
+    # The real seam: doctor resolves through settings.profile_subdir, MCP through
+    # auth.profile_dir. Cookies exist only there, so probing another dir fails the test.
+    real = get_settings().profile_subdir("x")
+    real.mkdir(parents=True, exist_ok=True)
+    assert auth_mod.profile_dir("x") == real
+
+    def cookies(p: Path) -> list[tuple[str, str]]:
+        if p != real:
+            raise CookieStoreUnreadable("wrong profile probed")
+        return list(_FAKE_COOKIES)
+
+    monkeypatch.setattr(flow_wire, "read_cookies_for", cookies)
+    monkeypatch.setattr(profile_store, "resolve_profile", lambda _f: "x")
+    monkeypatch.setattr(tools, "_resolve_and_validate_profile", lambda _p: "x")
+
+    async def verified(_d: Path, *, source: str = "chrome") -> FlowSessionStatus:
+        return FlowSessionStatus(FlowSessionOutcome.AUTHENTICATED, user_email=None, source=source)
+
+    monkeypatch.setattr(tools.verification, "verify_flow_profile", verified)
+
+    findings = await asyncio.to_thread(doctor._check_wire_read, get_settings())  # pyright: ignore[reportPrivateUsage]
+    report = doctor.DoctorReport(findings=tuple(findings))
+    mcp = await tools.gflow_auth_status(profile="x")
+
+    assert findings[0].summary.startswith("status=accepted ")
+    assert mcp["wire"] == {"status": "accepted", "build": "boq_labs-flow-frontend_20261110.00_p0"}
+    rendered = json.dumps(json_output.doctor_payload(report)) + repr(findings) + json.dumps(mcp)
+    for secret in _SECRETS:
+        assert secret not in rendered
+
+
+def test_doctor_returns_within_the_budget_when_the_cookie_read_blocks(
+    profile: Path, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """asyncio.run must not wait for a stuck cookie-read thread at shutdown (review round)."""
+    from gflow_cli import profile_store
+    from gflow_cli.config import get_settings
+    from gflow_cli.services import doctor
+
+    release = threading.Event()
+
+    def stuck(_p: Path) -> list[tuple[str, str]]:
+        release.wait(5.0)
+        return []
+
+    monkeypatch.setattr(flow_wire, "read_cookies_for", stuck)
+    monkeypatch.setattr(flow_wire, "_TOTAL_S", 0.1)
+    monkeypatch.setattr(profile_store, "resolve_profile", lambda _f: "x")
+
+    started = time.monotonic()
+    [finding] = doctor._check_wire_read(get_settings())  # pyright: ignore[reportPrivateUsage]
+    elapsed = time.monotonic() - started
+    release.set()
+
+    assert finding.summary.startswith("status=store_unreadable")
+    assert elapsed < 2.0, elapsed
