@@ -478,6 +478,12 @@ class FlowWorker:
                             # #1201: Flow took the submit; same answer as CLI video_result.
                             next_action="reconcile",
                             operation_id=flow_media_id or None,
+                            # Not the class's "retry the API call": Flow may have billed it.
+                            remediation_hint=(
+                                "Flow took this job and then reported it failed, so it may "
+                                "have charged for it. Check the project on Flow before "
+                                "running it again."
+                            ),
                         )
                 except Exception as exc:
                     logger.warning("Failed during video generation or recording", exc_info=exc)
