@@ -16,9 +16,10 @@ expect a change. Nightly tracking of the ids against the served app is issue #12
 
 **"In served JS"** means the id was found as a literal string in the JavaScript
 flow.google.com serves. That check needs no cookies, no browser and no RPC call, so it
-covers billed submits without spending anything. The last check ran on build
+covers billed submits without spending anything. The first check ran on build
 `boq_labs-ai-sandbox-frontend_20261108.05_p0` and found all 17 ids, with 0 of 200 random
-controls matching. The method is in the
+controls matching. The last, on 2026-11-10, found all 17 on `…_20261110.00_p0` and on
+the older `…_20260929.10_p1` ([churn spike](superpowers/spikes/2026-11-10-rpc-descriptor-churn.md)). The method is in the
 [served-JS spike](superpowers/spikes/2026-11-10-rpc-ids-in-served-javascript.md). Being
 present in the JavaScript doesn't prove the payload shape is unchanged. Payload shape is
 checked by the e2e tests.

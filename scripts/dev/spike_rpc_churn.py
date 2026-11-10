@@ -65,6 +65,7 @@ import argparse
 import itertools
 import json
 import re
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -74,7 +75,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "canary"))
 import rpc_drift as rd  # noqa: E402
 
-MAIN = Path(r"C:/development/github/gflow-cli")
+#: The main checkout (the parent of the shared .git), so output outlives this worktree.
+_GIT = ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]
+MAIN = Path(subprocess.check_output(_GIT, cwd=ROOT, text=True).strip()).parent  # noqa: S603, S607
 _BL = r"boq_labs-ai-sandbox-frontend_\d{8}\.\d{2}_p\d"
 _URL_RE = re.compile(r'[^"\s]*/_/js/k=boq-labs-ai-sandbox[^"\s\\]*')
 _KEY = r"[A-Za-z$_]{1,3}"

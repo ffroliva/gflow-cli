@@ -59,7 +59,7 @@ records both amendments.
 | Catalogued ids | 17/17 in both builds |
 | Feature-module names | `XRV0Af`, `wO1vlb`, `wj3Fuc`, `zxMy9c` answered 200 on both builds |
 | Flag (`!0`/`!1`) | **219/219** kept. It is binary: about 45% `!0` and 55% `!1` on each build |
-| Method path (`"/Service.Method"`) | **0/219**. The new bundle has none of the 222 paths. 4 of the 10 service names still occur, but not next to descriptors |
+| Method path (`"/Service.Method"`) | **0/219**. The new bundle has none of the 222 paths. 4 of the 10 service names occur somewhere in it |
 | Field keys, field values, variable name | **0/219** each |
 | Module placement | 198/219 (90%) |
 | Previous / next descriptor | 145/219 (66%) each; bundle order changed |
@@ -86,22 +86,29 @@ The 17 catalogued ids map to their backend methods on 20260929. That table is no
 - **Frequency is unmeasured.** Two measured builds six weeks apart, with an unknown number of
   builds in between, cannot give a rate per build. The nightly archive is what #1223 asked
   for, and it is still the only way to get one.
-- **#1224:** of the candidates, only the flag clears 95% (219/219), and it is a single bit.
-  The field keys, field values, variable names and the method path score 0%. The literals
-  (93%) and module placement (90%) are **weak**: tiebreakers only. The neighbours (66%) are
-  **weak** as well. The method path was a strong fingerprint while it existed, and Flow
-  removed it. **Nothing in a descriptor is stable enough to re-find an id by itself.** A
-  rename would have to be matched by flag + literals + modules + neighbours together, and
-  only for ids that move alone.
+- **#1224:** no id gflow catalogues was renamed in the span, so these scores measure how
+  well each candidate **persists** on an unchanged id, not whether it recovers a real rename.
+  Of the candidates, only the flag clears 95% (219/219), and it is a single bit. The field
+  keys, field values, variable names and the method path score 0%. The literals (93%) and
+  module placement (90%) are **weak**: tiebreakers only. The neighbours (66%) are **weak**
+  as well. The method path was a strong fingerprint while it existed, and Flow removed it.
+  **Nothing in a descriptor is stable enough to re-find an id by itself.**
+- **The only possible renames in the span**, the 3 removed ids, were checked against the
+  48 added ones. None of the 3 has a quoted literal within 400 characters. Flag + module
+  placement leaves 0, 4 and 4 candidates among the added ids. So flag, modules and literals
+  together cannot pick a successor. `Qrv5xc` (0 candidates) reads as a true removal.
 
 ## Effect on the nightly canary (#1218)
 
 On `20261110.00_p0` the merged `RPC-DRIFT` check read **`PARSE-CHANGED`**, with 0/0
 catalogued ids and 0 descriptors. Its regex hard-coded `{Xa:"`, so the first new build it
 met archived nothing. This branch makes the check learn the key from where the catalogued
-ids sit, falling back to the most common `{<key>:"<id>",` key. Live after the fix:
-`OK`, 17/17, 267 descriptors. A change back to the constructor shape would still read
-`PARSE-CHANGED`, which is the honest result.
+ids sit, falling back to the most common `{<key>:"<id>",` key only when no catalogued id is in
+the bundle at all. Live after the fix: `OK`, 17/17, 267 descriptors. Fed the saved
+20260929 bundle (constructor shape), the first version of the fix read **`OK` with a
+1-id inventory**, taken from an unrelated `{xc:"…",` object. A review caught it, and a
+test now pins it. The final version reads that bundle as `PARSE-CHANGED`, the honest
+result.
 
 ## Limits
 
