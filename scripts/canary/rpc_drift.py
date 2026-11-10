@@ -9,9 +9,12 @@ Four outcomes. Like every canary state they gate nothing:
 
     OK               every catalogued id is in the bundle
     ID-GONE          some ids are missing while others are present: a rename or a removal
-    MODULES-CHANGED  the bundle fetch failed, or every id is missing: the feature module
+    MODULES-CHANGED  the bundle answered 404, or every id is missing: the feature module
                      names moved, so this run says nothing about any single id
-    INCONCLUSIVE     nothing was measured (offline, no script URL, no build label, no catalog)
+    INCONCLUSIVE     nothing was measured (offline, another HTTP error, no script URL, no
+                     build label, no catalog)
+
+Only ``live`` rows of the table are checked. Only OK and ID-GONE runs are archived.
 
 Each new build's full ``{Xa:"<id>"}`` descriptor inventory is archived, one JSON per build
 label, under ``tmp/rpc-inventory/`` (gitignored, local, never committed). When a build is
@@ -69,11 +72,22 @@ class Drift:
 
 
 def catalog_ids(text: str) -> tuple[str, ...]:
-    """The first cell of every row of the table in ``docs/FLOW_WIRE_RPCS.md``.
+    """The id of every ``live`` row of the table in ``docs/FLOW_WIRE_RPCS.md``.
 
-    Same pattern as ``tests/test_flow_wire_rpcs_catalog.py``: the doc is the one list.
+    Same row pattern as ``tests/test_flow_wire_rpcs_catalog.py``: the doc is the one list. A
+    row marked ``gone`` or ``renamed -> X`` stays in the table and is not checked again.
     """
-    return tuple(re.findall(r"^\| `([A-Za-z0-9]{5,6})` \|", text, flags=re.MULTILINE))
+    status_col = None
+    ids: list[str] = []
+    for line in text.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if status_col is None and "Status" in cells:
+            status_col = cells.index("Status")
+        m = re.fullmatch(r"`([A-Za-z0-9]{5,6})`", cells[0])
+        live = status_col is None or (len(cells) > status_col and cells[status_col] == "live")
+        if line.startswith("| `") and m and live:
+            ids.append(m.group(1))
+    return tuple(ids)
 
 
 def bundle_url(shell_html: str) -> str | None:
@@ -93,8 +107,12 @@ def assess(ids: tuple[str, ...], shell_html: str, bundle_status: int, bundle_tex
         return Drift(INCONCLUSIVE, build, note="no catalogued ids parsed")
     if build is None or bundle_url(shell_html) is None:
         return Drift(INCONCLUSIVE, build, note="shell has no build label or no /_/js/ script")
+    if bundle_status == 404:
+        # Measured 2026-11-10: one unknown module name 404s the whole bundle.
+        return Drift(MODULES_CHANGED, build, missing=ids, note="bundle HTTP 404")
     if bundle_status != 200:
-        return Drift(MODULES_CHANGED, build, missing=ids, note=f"bundle HTTP {bundle_status}")
+        # A 403/429/5xx says nothing about module names.
+        return Drift(INCONCLUSIVE, build, note=f"bundle HTTP {bundle_status}")
     found = tuple(i for i in ids if re.search(rf"""["']{re.escape(i)}["']""", bundle_text))
     missing = tuple(i for i in ids if i not in found)
     inventory = tuple(sorted(set(_XA_RE.findall(bundle_text))))
@@ -113,19 +131,25 @@ def _load(path: Path) -> dict[str, object] | None:
 def archive(drift: Drift, root: Path, now: str) -> Drift:
     """Write a NEW build's inventory and return the drift with its diff against the last build.
 
-    Never overwrites a build already archived, and never writes an empty inventory: a renamed
-    descriptor key would otherwise read as every id removed.
+    Writes only an OK or ID-GONE run with a non-empty inventory: a wrong bundle or a renamed
+    descriptor key would otherwise fix a bad inventory into S3's data, since a build already
+    archived is never overwritten.
     """
-    if not drift.build or not drift.inventory:
+    if drift.state not in (OK, ID_GONE) or not drift.build or not drift.inventory:
         return drift
     target = root / f"{re.sub(r'[^A-Za-z0-9._-]', '_', drift.build)}.json"
     if target.exists():
         return drift
-    builds = [d for d in map(_load, root.glob("*.json")) if d and d.get("first_seen")]
+    # A hand-edited or truncated file is skipped, never allowed to break tonight's report.
+    builds = [
+        d
+        for d in map(_load, root.glob("*.json"))
+        if d and d.get("first_seen") and isinstance(d.get("ids"), list)
+    ]
     prev = max(builds, key=lambda d: str(d["first_seen"]), default=None)
     previous_build, added, removed = None, (), ()
     if prev is not None:
-        prior = {str(i) for i in prev.get("ids", [])}  # type: ignore[union-attr]
+        prior = {str(i) for i in prev["ids"]}  # pyright: ignore[reportGeneralTypeIssues]
         previous_build = str(prev.get("build"))
         added = tuple(sorted(set(drift.inventory) - prior))
         removed = tuple(sorted(prior - set(drift.inventory)))

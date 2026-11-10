@@ -44,10 +44,23 @@ def test_catalog_ids_come_from_the_wire_table() -> None:
         encoding="utf-8"
     )
     ids = catalog_ids(doc)
-    assert len(ids) == 17
     assert {"YhhmEf", "as29s", "nzlxg", "p0UkFb"} <= set(ids)
     # The "seen but unused" list below the table is not catalogued.
     assert "UpteDb" not in ids
+
+
+def test_only_live_rows_are_checked() -> None:
+    # A row the maintainer marked gone or renamed stays in the table; it must not read
+    # ID-GONE every night after that.
+    table = (
+        "| RPC id | Action | Status | Renamed from |\n"
+        "|---|---|---|---|\n"
+        "| `aaaaaa` | x | live | - |\n"
+        "| `bbbbbb` | x | gone | - |\n"
+        "| `cccccc` | x | renamed -> dddddd | - |\n"
+        "| `dddddd` | x | live | `cccccc` |\n"
+    )
+    assert catalog_ids(table) == ("aaaaaa", "dddddd")
 
 
 def test_bundle_url_swaps_the_module_segment_for_the_feature_modules() -> None:
@@ -204,3 +217,43 @@ def test_a_broken_rpc_drift_check_never_takes_the_canary_down(
     section = run_canary.rpc_drift_section()
     assert f"RPC-DRIFT {INCONCLUSIVE}" in section
     assert "RuntimeError" in section and "http" not in section
+
+
+def test_a_module_change_is_never_archived(tmp_path: Path) -> None:
+    # A wrong bundle can still hold descriptors; a build's file is never rewritten, so
+    # archiving it would fix a wrong inventory into S3's data for good.
+    drift = assess(_IDS, _SHELL, 200, _bundle("other1", "other2"))
+    assert drift.state == MODULES_CHANGED
+    archive(drift, tmp_path, "now")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_only_a_404_bundle_means_the_modules_moved() -> None:
+    drift = assess(_IDS, _SHELL, 503, "")
+    assert drift.state == INCONCLUSIVE
+    assert "503" in drift.note
+
+
+def test_a_corrupt_prior_archive_does_not_hide_the_verdict(tmp_path: Path) -> None:
+    (tmp_path / "bl_old.json").write_text(
+        json.dumps({"build": "bl_old", "first_seen": "2026-11-01", "ids": 5}), encoding="utf-8"
+    )
+
+    def get(url: str) -> tuple[int, str]:
+        return (200, _SHELL) if url == rpc_drift.SHELL else (200, _bundle(*_IDS))
+
+    assert check(tmp_path, get=get, ids=_IDS).state == OK
+
+
+def test_main_publishes_the_section_on_an_auth_expired_night(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts.canary import run_canary
+
+    monkeypatch.setattr(run_canary, "probe_auth", lambda profile: False)
+    monkeypatch.setattr(rpc_drift, "check", lambda: Drift(state=ID_GONE, build=_BL))
+    monkeypatch.setattr("sys.argv", ["run_canary.py", "--profile", "x", "--dry-run"])
+    assert run_canary.main() == 0
+    out = capsys.readouterr().out
+    assert "[AUTH-EXPIRED] gflow nightly canary" in out
+    assert f"#### RPC-DRIFT {ID_GONE}" in out

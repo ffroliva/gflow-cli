@@ -357,8 +357,8 @@ title.
 |---|---|---|
 | `OK` | every catalogued id is present | none |
 | `ID-GONE` | some ids are missing, the rest are present | the named ids were renamed or removed: update their rows |
-| `MODULES-CHANGED` | the bundle fetch failed, or no id is present | the feature module names moved; relearn them from a project page (the spike's `--page` arm). Says nothing about any single id |
-| `INCONCLUSIVE` | nothing was measured (offline, no script URL, no build label) | none; says nothing about Flow |
+| `MODULES-CHANGED` | the bundle answered 404, or no id is present | the feature module names moved; relearn them from a project page (the spike's `--page` arm). Says nothing about any single id |
+| `INCONCLUSIVE` | nothing was measured (offline, another HTTP error such as 429 or 5xx, no script URL, no build label) | none; says nothing about Flow |
 
 One renamed module cannot pass for a missing id. On 2026-11-10 the server answered the
 four modules plus one unknown name with HTTP 404 for the whole bundle, not a bundle
@@ -367,8 +367,10 @@ with that module left out, so any module rename reads `MODULES-CHANGED`.
 **Per-build archive (S3, #1223).** On the first run that sees a build label, the check
 writes `tmp/rpc-inventory/<build>.json`: the build's full `{Xa:"<id>"}` descriptor list,
 the modules used, and the ids added and removed since the previous first-seen build. The
-comment carries the same diff. The archive is local and gitignored; an existing build's
-file is never overwritten, and an empty inventory is never written.
+comment carries the same diff. The archive is local and gitignored. Only `OK` and
+`ID-GONE` runs are archived, an existing build's file is never overwritten, and an empty
+inventory is never written, so a module-rename night leaves no file and its date is in
+the canary comments. Only rows whose `Status` is `live` are checked.
 
 Run it alone, $0: `uv run python scripts/canary/rpc_drift.py`. The comment publishes
 only the build label, ids and counts, and an error by its class name.
