@@ -155,6 +155,7 @@ async def renew_profile(profile_dir: Path, *, source: str = "renew") -> RenewRes
     from gflow_cli.browser_manager import (
         browser_proxy_kwargs,
         channel_for_profile,
+        disable_features_args,
         ensure_profile_engine_compatible,
     )
     from gflow_cli.config import get_settings
@@ -182,6 +183,7 @@ async def renew_profile(profile_dir: Path, *, source: str = "renew") -> RenewRes
                     "--password-store=basic",
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
+                    *disable_features_args(),
                 ],
                 **browser_proxy_kwargs(get_settings().browser_proxy),
             )

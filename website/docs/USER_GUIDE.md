@@ -13,22 +13,22 @@
 
 ## Table of contents
 
-- [Journey 1 — First-time setup (10 minutes)](#journey-1--first-time-setup-10-minutes)
-- [Journey 2 — Your first video (single t2v)](#journey-2--your-first-video-single-t2v)
-- [Journey 3 — Batch video from a prompt list (shell loop)](#journey-3--batch-video-from-a-prompt-list-shell-loop)
-- [Journey 4 — Multi-image text-to-image fan-out](#journey-4--multi-image-text-to-image-fan-out)
-- [Journey 5 — Image-to-image with reference images](#journey-5--image-to-image-with-reference-images)
-- [Journey 6 — Reading structured logs (`jq` recipes)](#journey-6--reading-structured-logs-jq-recipes)
-- [Journey 7 — Recovering from an `AuthExpiredError` mid-run](#journey-7--recovering-from-an-authexpirederror-mid-run)
-- [Journey 8 — Switching between Google accounts (profiles)](#journey-8--switching-between-google-accounts-profiles)
-- [Journey 9 — Migrating from `FLOW_CLI_*` to `GFLOW_CLI_*` (v0.3.x → v0.4.x)](#journey-9--migrating-from-flow_cli_-to-gflow_cli_-v03x--v04x)
-- [Journey 10 — Budgeting credits before a batch run](#journey-10--budgeting-credits-before-a-batch-run)
-- [Journey 11 — Wiring gflow outputs into a downstream pipeline](#journey-11--wiring-gflow-outputs-into-a-downstream-pipeline)
-- [Journey 12 — Recovering from `ContentPolicyError` or `RateLimitError`](#journey-12--recovering-from-contentpolicyerror-or-ratelimiterror)
-- [Journey 13 — Diagnosing a persistent `AuthExpiredError` after a successful re-login](#journey-13--diagnosing-a-persistent-authexpirederror-after-a-successful-re-login)
-- [Journey 14 — Embedding `FlowApiClient` in a long-lived worker](#journey-14--embedding-flowapiclient-in-a-long-lived-worker)
-- [Journey 15 — Sending generated assets to S3, MinIO, or GCS](#journey-15--sending-generated-assets-to-s3-minio-or-gcs)
-- [Journey 16 — Consistent characters across a video (`@Name` mentions)](#journey-16--consistent-characters-across-a-video-name-mentions)
+- [Journey 1 — First-time setup (10 minutes)](#journey-1-first-time-setup-10-minutes)
+- [Journey 2 — Your first video (single t2v)](#journey-2-your-first-video-single-t2v)
+- [Journey 3 — Batch video from a prompt list (shell loop)](#journey-3-batch-video-from-a-prompt-list-shell-loop)
+- [Journey 4 — Multi-image text-to-image fan-out](#journey-4-multi-image-text-to-image-fan-out)
+- [Journey 5 — Image-to-image with reference images](#journey-5-image-to-image-with-reference-images)
+- [Journey 6 — Reading structured logs (`jq` recipes)](#journey-6-reading-structured-logs-jq-recipes)
+- [Journey 7 — Recovering from an `AuthExpiredError` mid-run](#journey-7-recovering-from-an-authexpirederror-mid-run)
+- [Journey 8 — Switching between Google accounts (profiles)](#journey-8-switching-between-google-accounts-profiles)
+- [Journey 9 — Migrating from `FLOW_CLI_*` to `GFLOW_CLI_*` (v0.3.x → v0.4.x)](#journey-9-migrating-from-flow_cli_-to-gflow_cli_-v03x-v04x)
+- [Journey 10 — Budgeting credits before a batch run](#journey-10-budgeting-credits-before-a-batch-run)
+- [Journey 11 — Wiring gflow outputs into a downstream pipeline](#journey-11-wiring-gflow-outputs-into-a-downstream-pipeline)
+- [Journey 12 — Recovering from `ContentPolicyError` or `RateLimitError`](#journey-12-recovering-from-contentpolicyerror-or-ratelimiterror)
+- [Journey 13 — Diagnosing a persistent `AuthExpiredError` after a successful re-login](#journey-13-diagnosing-a-persistent-authexpirederror-after-a-successful-re-login)
+- [Journey 14 — Embedding `FlowApiClient` in a long-lived worker](#journey-14-embedding-flowapiclient-in-a-long-lived-worker)
+- [Journey 15 — Sending generated assets to S3, MinIO, or GCS](#journey-15-sending-generated-assets-to-s3-minio-or-gcs)
+- [Journey 16 — Consistent characters across a video (`@Name` mentions)](#journey-16-consistent-characters-across-a-video-name-mentions)
 - [Common errors quick-reference](#common-errors-quick-reference)
 
 ---
@@ -94,7 +94,7 @@ gflow auth status
 
 Expected: `Flow session verified as <your account>.` and exit code 0 — the command probes the live Flow session (no browser, no credits). If it exits 1, follow the printed hint (usually re-run `gflow auth login`).
 
-You're done. Skip to [Journey 2](#journey-2--your-first-video-single-t2v).
+You're done. Skip to [Journey 2](#journey-2-your-first-video-single-t2v).
 
 ---
 
@@ -132,8 +132,8 @@ There is no CLI seed knob — an identical prompt + model can still vary between
 You want to render 20 clips overnight. `gflow video` has no `batch`
 subcommand — a manifest-driven runner was scaffolded early on but never
 worked and has been removed. (`gflow image batch` is a different, working
-command — see [Journey 4](#journey-4--multi-image-text-to-image-fan-out) and
-[Journey 10](#journey-10--budgeting-credits-before-a-batch-run).) For video,
+command — see [Journey 4](#journey-4-multi-image-text-to-image-fan-out) and
+[Journey 10](#journey-10-budgeting-credits-before-a-batch-run).) For video,
 drive each generation from a plain shell loop instead — one `gflow`
 invocation per prompt, sequential, so a bad row doesn't torpedo the rest.
 
@@ -174,7 +174,7 @@ In-flight requests that Flow had already accepted when a failure occurs
 **may still consume credits** — Flow's private API does not give us a
 "cancel-and-refund" handshake. Inspect the output directory before
 rerunning; skip prompts whose expected `output_path` already exists (recipe
-in [Journey 11](#journey-11--wiring-gflow-outputs-into-a-downstream-pipeline)).
+in [Journey 11](#journey-11-wiring-gflow-outputs-into-a-downstream-pipeline)).
 
 By default each call opens its own Flow project; pass the same `--project
 <id>` to every call if you want the clips to land in one project instead
@@ -312,7 +312,7 @@ jq -c 'select(.event == "error_unhandled") | .message_hash' events.jsonl | sort 
 
 ## Journey 7 — Recovering from an `AuthExpiredError` mid-run
 
-You started an overnight 50-clip shell loop (see [Journey 3](#journey-3--batch-video-from-a-prompt-list-shell-loop)). You wake up. Prompt 23 onward all failed with exit code 3.
+You started an overnight 50-clip shell loop (see [Journey 3](#journey-3-batch-video-from-a-prompt-list-shell-loop)). You wake up. Prompt 23 onward all failed with exit code 3.
 
 ### 7.1 Diagnose
 
@@ -422,9 +422,13 @@ Your Google plan includes a finite Veo credit allowance — the video journeys s
 
 ### 10.1 Check the balance
 
-Check the current Veo video-credit balance for the selected profile. gflow opens flow.google.com
-in the profile's browser and reads the balance the app itself loads, the number in Flow's
-account menu ([#795](https://github.com/ffroliva/gflow-cli/issues/795)). Nothing is clicked and
+Check the current Veo video-credit balance for the selected profile. gflow reads the balance
+flow.google.com itself loads, the number in Flow's account menu
+([#795](https://github.com/ffroliva/gflow-cli/issues/795)): directly, with no browser, when the
+direct read is on and Flow accepts the profile's saved session, and otherwise in the profile's
+browser ([#1229](https://github.com/ffroliva/gflow-cli/issues/1229)). The direct read is off by
+default on macOS and skipped while any proxy is configured; the browser read is used then. See
+[`GFLOW_CLI_WIRE_READS`](CONFIGURATION.md#gflow_cli_wire_reads). Nothing is clicked and
 nothing is spent:
 
 ```bash
@@ -465,7 +469,7 @@ Costs are not published by Google. The numbers below are **rough observations fr
 
 ### 10.3 Batch-cost math
 
-For a 50-line `prompts.txt` of `gflow video i2v` clips (driven from the shell loop in [Journey 3](#journey-3--batch-video-from-a-prompt-list-shell-loop)) at ~1 credit / clip:
+For a 50-line `prompts.txt` of `gflow video i2v` clips (driven from the shell loop in [Journey 3](#journey-3-batch-video-from-a-prompt-list-shell-loop)) at ~1 credit / clip:
 
 ```text
 50 clips × ~1 credit/clip = ~50 credits.
@@ -516,7 +520,7 @@ Silent overwrite semantics: `-o` overwrites any existing file at the target path
 When `-o` is omitted, default outputs and `--out-dir` flags produce **predictable paths**:
 
 If `GFLOW_CLI_STORAGE_URI` is set, generated asset bytes go to the configured
-bucket prefix instead of local disk. Use [Journey 15](#journey-15--sending-generated-assets-to-s3-minio-or-gcs)
+bucket prefix instead of local disk. Use [Journey 15](#journey-15-sending-generated-assets-to-s3-minio-or-gcs)
 for the storage setup, then use `gflow data media <media-id>` to retrieve the
 recorded `cloud_uri_N` values.
 
@@ -546,7 +550,7 @@ ffmpeg -f concat -safe 0 -i "$DIR/concat.txt" -c copy "$DIR/_compiled.mp4"
 
 ### 11.5 Trim the prompt list to unrendered prompts only (skip-existing workaround)
 
-The shell loop from [Journey 3](#journey-3--batch-video-from-a-prompt-list-shell-loop) doesn't skip-existing yet. To rerun only the prompts whose expected output doesn't exist yet, keep a sidecar mapping of prompt → expected filename and filter against it:
+The shell loop from [Journey 3](#journey-3-batch-video-from-a-prompt-list-shell-loop) doesn't skip-existing yet. To rerun only the prompts whose expected output doesn't exist yet, keep a sidecar mapping of prompt → expected filename and filter against it:
 
 ```bash
 awk -F'\t' 'NR==FNR { done[$1]; next } !($0 in done)' rendered.txt prompts.txt > prompts.remaining.txt
@@ -1050,6 +1054,6 @@ gflow video t2v "@Zoro alone on the cliff at night, rain" --project "$PROJECT"
 - [AUTHENTICATION.md](AUTHENTICATION.md) — full auth flow, session storage, multi-account details, refresh strategy.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — modular monolith layout, per-worker Page pool, RFC 9457 Problem Details, retry layer.
 - [SECURITY.md](SECURITY.md) — threat model, redaction strategy, what's on disk.
-- [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) — workarounds for current limitations.
+- [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — workarounds for current limitations.
 
 _Built for Flow users who'd rather automate than click. Same Veo model, same quality, same billing — without the browser._

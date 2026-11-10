@@ -3,7 +3,7 @@
 > **Status:** SHIPPED (live-verified 2026-06-02) · **Issue:** [#145](https://github.com/ffroliva/gflow-cli/issues/145) · **Branch:** `feature/character-creation`
 > **Living document.** Evolve this as the feature and Flow's API evolve. Raw capture provenance lives in
 > [`CHARACTER_RECON.md`](CHARACTER_RECON.md); the cross-feature decision lens is
-> [the REST-path capability matrix](#capability--cost).
+> [the REST-path capability matrix](#capability-cost).
 > **Credit:** pattern-references @kittinan's avatar PR #123 (attach-flow idiom + CLI scaffolding shape) — but
 > built **greenfield off `develop`, NOT stacked on #123** (that branch is CONFLICTING and likeness-specific;
 > see [Design decisions](#11-design-decisions-post-predict)).
@@ -12,14 +12,14 @@
 > `@Name` prompt mentions is **shipped** (v0.40.0, [#344](https://github.com/ffroliva/gflow-cli/issues/344))
 > for both `image` and `video` paths — see [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md). An explicit
 > `--character <id>` **flag** on `gflow video` (a separate, repeatable-ref delivery mechanism) remains
-> **not yet implemented** — see [Backlog](#14-backlog--not-yet-implemented).
+> **not yet implemented** — see [Backlog](#14-backlog-not-yet-implemented).
 
 > **Status (2026-06-02, LIVE-VERIFIED):** the create saga + character-editor UI generation are **shipped**
 > and verified end-to-end on my-profile (face + front/side/back triptych body, both reference slots bound,
 > images downloaded, character read back). This document's selectors, editor URL, generation protocol
 > (Option B), `flow/entities` PATCH, and the CLI surface are **VERIFIED against shipped code**, not guesses.
 > The `nanopro` model picker is wired best-effort (non-fatal) and pending an explicit live confirmation — see
-> [Backlog](#14-backlog--not-yet-implemented).
+> [Backlog](#14-backlog-not-yet-implemented).
 
 ## 1. What it is
 
@@ -282,7 +282,7 @@ both normalize to the canonical `Charon`) and sets `audioReferences[].presetVoic
 > performance on a `video t2v` / `r2v` call — put the direction in the prompt instead.
 >
 > The voice list is currently a **hardcoded constant**; fetching the live list from Flow's
-> voice API is tracked in the [Backlog](#14-backlog--not-yet-implemented). A "create new voice"
+> voice API is tracked in the [Backlog](#14-backlog-not-yet-implemented). A "create new voice"
 > flow ("Criar nova voz") exists in the UI but is **not yet implemented**.
 
 ## 8. CLI surface (shipped v0.12.0)
@@ -337,7 +337,7 @@ never hard-code wire names in user-facing help — see [[cli-model-aliases-verif
 
 ## 10. Open items
 
-See [§14 Backlog — not yet implemented](#14-backlog--not-yet-implemented) for the consolidated list. In
+See [§14 Backlog — not yet implemented](#14-backlog-not-yet-implemented) for the consolidated list. In
 short: an explicit `--character <id>` flag on `gflow video` reuse (Phase 3; `@Name` prompt mentions
 already ship this on both image and video, see #344), live voice
 listing + `presetVoiceId` wire-case confirmation, custom-voice creation, `nanopro` picker live confirmation,
