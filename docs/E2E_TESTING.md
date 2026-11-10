@@ -372,9 +372,10 @@ descriptor list, the modules used, and the ids added and removed since the previ
 first-seen build. The comment carries the same diff. The archive is local and gitignored.
 Only `OK` and `ID-GONE` runs are archived and an existing build's file is never
 overwritten, so a module-rename night leaves no file and its date is in the canary
-comments. A failed write is named in the section's reason. A `--dry-run` and a manual run
-show the diff but write nothing, so they cannot use up a new build's diff before the
-nightly reports it. Only rows whose `Status` is `live` (any case) are checked.
+comments. A failed write is named in the section's reason. A `--dry-run` and a standalone
+`rpc_drift.py` run show the diff but write nothing, so they cannot use up a new build's diff
+before a published comment reports it. A hand-run `run_canary.py --issue N` is a real run:
+it archives the build and publishes the diff to that issue itself. Only rows whose `Status` is `live` (any case) are checked.
 
 Run it alone, $0, writing nothing: `uv run python scripts/canary/rpc_drift.py`. The
 comment publishes only the build label, ids and counts, and an error by its class name.

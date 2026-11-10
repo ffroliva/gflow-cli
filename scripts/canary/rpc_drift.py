@@ -23,8 +23,9 @@ Only ``live`` rows of the table are checked; a table that loses rows fails loudl
 The real nightly (``write=True``) archives each new build's full descriptor inventory, one
 JSON per build label, under ``tmp/rpc-inventory/`` (gitignored, local, never committed),
 with the ids added and removed against the previously first-seen build: the data spike S3
-(#1223) reads. A manual or dry run shows the same diff but writes nothing, so it cannot use
-up a new build's diff before the nightly comment reports it.
+(#1223) reads. A ``--dry-run`` or a standalone run of this file shows the same diff but writes
+nothing, so it cannot use up a new build's diff before a published comment reports it. A
+hand-run ``run_canary.py --issue N`` is a real run: it archives and publishes the diff itself.
 
 Publishable: the build label, ids, counts, and our own reasons. Nothing else from the shell
 or the bundle; an exception is reported by its class name only (httpx messages carry URLs).

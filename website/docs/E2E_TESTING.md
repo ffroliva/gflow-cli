@@ -347,7 +347,7 @@ prompts, URLs, or anything else from the served JavaScript.
 ## RPC drift check (#1218)
 
 Every canary comment ends with an `RPC-DRIFT` section. It checks that each id in
-[FLOW_WIRE_RPCS.md](FLOW_WIRE_RPCS.md) is still in the JavaScript flow.google.com serves.
+[FLOW_WIRE_RPCS.md](https://github.com/ffroliva/gflow-cli/blob/main/docs/FLOW_WIRE_RPCS.md) is still in the JavaScript flow.google.com serves.
 It fetches the public shell with **no cookies and no browser**, swaps the shell's
 `/_/js/` module list for the four feature modules, and looks for each id as a quoted
 literal. No RPC is sent, so billed submits are covered at $0. It needs no profile, so it
@@ -372,9 +372,10 @@ descriptor list, the modules used, and the ids added and removed since the previ
 first-seen build. The comment carries the same diff. The archive is local and gitignored.
 Only `OK` and `ID-GONE` runs are archived and an existing build's file is never
 overwritten, so a module-rename night leaves no file and its date is in the canary
-comments. A failed write is named in the section's reason. A `--dry-run` and a manual run
-show the diff but write nothing, so they cannot use up a new build's diff before the
-nightly reports it. Only rows whose `Status` is `live` (any case) are checked.
+comments. A failed write is named in the section's reason. A `--dry-run` and a standalone
+`rpc_drift.py` run show the diff but write nothing, so they cannot use up a new build's diff
+before a published comment reports it. A hand-run `run_canary.py --issue N` is a real run:
+it archives the build and publishes the diff to that issue itself. Only rows whose `Status` is `live` (any case) are checked.
 
 Run it alone, $0, writing nothing: `uv run python scripts/canary/rpc_drift.py`. The
 comment publishes only the build label, ids and counts, and an error by its class name.
