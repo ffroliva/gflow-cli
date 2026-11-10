@@ -206,12 +206,12 @@ def install_log_capture() -> Iterator[structlog.testing.LogCapture]:
 
 
 @pytest.fixture
-def fresh_wire(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Empty per-process state for the direct credits read (#1229): token cache, signed-out
-    profiles, throttle windows, per-profile locks. Request it from any test that reads."""
+def fresh_wire(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Empty per-process state for the direct credits read (#1229), and no proxy: the
+    offline suite points HTTPS_PROXY at a dead port, which the wire would refuse to use."""
     from gflow_cli.api import flow_wire
 
-    monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_signed_out", {})
-    monkeypatch.setattr(flow_wire, "_throttled", {})
-    monkeypatch.setattr(flow_wire, "_locks", {})
+    flow_wire.reset_state()
+    monkeypatch.setattr(flow_wire, "getproxies", dict)
+    yield
+    flow_wire.reset_state()

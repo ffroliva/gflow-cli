@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   network error, an unexpected reply) they read it in the browser as before. When Flow
   throttles the account (HTTP 429 or 503) the command reports the rate-limit or network error
   instead, since the browser would send the same requests. `GFLOW_CLI_WIRE_READS=0` turns the direct read off; it is off by default on
-  macOS and while `GFLOW_CLI_BROWSER_PROXY` is set (#1229).
+  macOS and while any proxy is configured (#1229).
 
 - **`gflow doctor` and the MCP `gflow_auth_status` tool report whether that direct read works.**
   Doctor's new `auth.wire_read` check (default profile) and the tool's new `wire` field (on every session result) give
@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request, so a word in the prompt can no longer pass for it. The page also no longer creates
   a scene before the extend. The extend e2e contract follows the new wire, and the guard that refuses an
   extend of the wrong clip is unchanged (#1180).
+- **Closing Chrome no longer waits out the 30 s close timeout on Windows.** Chrome's
+  shutdown waited on its OneDrive-folder check (`CloudSyncedFolderChecker`), which never
+  answered on an affected machine, so every browser-backed command (for example `gflow credits
+  user`) paid about 30 s after its work was done. Headless real Chrome waited too. gflow now
+  turns that feature off in every Chrome it launches. Playwright passes its own `--disable-features` list and Chrome
+  keeps only the last one, so gflow sends a single switch that carries Playwright's list plus
+  its own. If a Playwright release moves that list where gflow cannot read it, the switch is
+  left out and the close is slow again rather than wrong (#1140, #1233).
 
 ## [0.96.1] — 2026-11-08
 

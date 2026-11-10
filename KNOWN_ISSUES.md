@@ -159,6 +159,44 @@ tracked here — no retry helps for those until each is ported.
 
 ---
 
+### Reading a generation's status or file opens a browser page; a page-free path is measured but not built
+
+- **Status:** Open · tracked in #1192 (spike) and the lifecycle tickets #1194, #1195, #1199
+- **Severity:** Low (slower, heavier reads; nothing fails)
+
+Every read gflow makes today (a clip's status, its finished file, the project listing, the
+credit balance) goes through the profile's Chrome page. The old idea of observing over
+`aisandbox-pa` REST with the SPA's `ya29.` Bearer does **not** work on the host Flow served
+here (`flow.google.com`, measured 2026-11-09):
+
+- `labs.google/fx/api/auth/session` still answers **410**, with or without cookies (#1023),
+  so no `access_token` can be fetched. `labs.google/fx/tools/flow` answers 308 to
+  flow.google.com.
+- The `flow.google.com` app contacts `aisandbox-pa` **zero** times and sends no
+  `Authorization` header at all, so there is no Bearer to borrow either.
+  `aisandbox-pa` status and credits reads answer 401 with no auth and with a junk Bearer.
+
+What **does** work without any page or browser, measured on one profile:
+`flow.google.com` `batchexecute` with the profile's Google cookies plus the `at` token
+re-read from the app shell by a cookie-only GET. `as29s` (a clip's status, signed video
+URL and size, keyed by **workflow id**), `Zzl0ze` (project listing) and `nzlxg` (balance)
+returned 200, and the signed `flow-content.google` URL answered a ranged read (bytes 0-31)
+with no cookie or header; a full download was not measured. The signed URL is itself a
+credential until it expires, so never log or share it. Controls on `as29s` and `nzlxg`: a
+junk `at` gets 400, no cookies gets 401.
+
+**Caveats before building on it:** the shell's `at` (`SNlM0e`) is missing whenever Flow
+serves the signed-out page, meaning the cookies were not accepted (#1221). A page-free
+reader must treat that as an auth problem and fall back to the page. Cookie
+lifetime without a running browser is unmeasured. An account served `labs.google` could not
+be observed here. Full write-up:
+[`docs/superpowers/spikes/2026-11-09-page-free-reads.md`](docs/superpowers/spikes/2026-11-09-page-free-reads.md).
+
+**Workaround:** none needed; the browser path works. It is the cost, not the correctness,
+that a page-free reader would change.
+
+---
+
 ### A Veo extend segment is 7 seconds, not the 8 Flow advertises — so concat pads a frozen second
 
 - **Status:** Open · **Severity:** Medium (audible/visible on every internal seam of a chained extend) · **Affected:** `gflow video extend -n >1` with `-o`, and any scene mixing extend segments

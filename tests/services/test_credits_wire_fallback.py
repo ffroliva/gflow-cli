@@ -30,14 +30,10 @@ from gflow_cli.services import credits
 
 
 @pytest.fixture(autouse=True)
-def _wire_on(monkeypatch: pytest.MonkeyPatch) -> None:
+def _wire_on(monkeypatch: pytest.MonkeyPatch, fresh_wire: None) -> None:
     """The offline suite defaults the wire off (tests/conftest.py); these tests are about it."""
     monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")
     reset_settings()
-    monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_signed_out", {})
-    monkeypatch.setattr(flow_wire, "_throttled", {})
-    monkeypatch.setattr(flow_wire, "_locks", {})
 
 
 def _meta(name: str = "one") -> ProfileMeta:

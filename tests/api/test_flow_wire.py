@@ -649,6 +649,50 @@ async def test_both_requests_carry_chrome_fetch_metadata(profile: Path, flow: _F
     assert "sec-ch-ua" not in get and "sec-ch-ua" not in post  # deferred: GREASE unknown
 
 
+@pytest.mark.parametrize("var", ["HTTPS_PROXY", "ALL_PROXY", "https_proxy"])
+async def test_an_environment_proxy_skips_the_wire(
+    profile: Path, flow: _Flow, monkeypatch: pytest.MonkeyPatch, var: str
+) -> None:
+    """CodeRabbit 4526220434: the browser ignores these, httpx would honour them. The real
+    `getproxies` (environment, and on Windows the system proxy) decides."""
+    import urllib.request
+
+    for name in (
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "ALL_PROXY",
+        "https_proxy",
+        "http_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(var, "http://127.0.0.1:3128")
+    monkeypatch.setattr(flow_wire, "getproxies", urllib.request.getproxies)
+    reads: list[Path] = []
+    monkeypatch.setattr(flow_wire, "read_cookies_for", lambda p: reads.append(p) or [])
+
+    with pytest.raises(WireReadUnavailable) as exc:
+        await flow_wire.read_credits(profile)
+    assert _reason(exc) is WireFallbackReason.PROXY_CONFIGURED
+    assert reads == [] and flow.gets == []
+
+
+async def test_the_client_ignores_the_environment(
+    profile: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built: list[dict[str, object]] = []
+    real = httpx.AsyncClient
+
+    def build(**kwargs: object) -> httpx.AsyncClient:
+        built.append(kwargs)
+        return real(transport=httpx.MockTransport(_Flow()), **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(httpx, "AsyncClient", build)
+    await flow_wire.read_credits(profile)
+
+    assert [b.get("trust_env") for b in built] == [False]
+
+
 async def test_a_configured_browser_proxy_skips_the_wire(
     profile: Path, flow: _Flow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -758,6 +802,18 @@ async def test_health_honours_the_settings_it_is_given(
 
     assert (await flow_wire.health(profile, off))["status"] == "disabled"
     assert (await flow_wire.health(profile, proxied))["status"] == "proxy_configured"
+    assert reads == [] and flow.gets == []
+
+
+async def test_health_reports_a_system_or_env_proxy_like_the_read_path(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1236 skips the read for ANY configured proxy; health must say so, sending nothing."""
+    reads: list[Path] = []
+    monkeypatch.setattr(flow_wire, "read_cookies_for", lambda p: reads.append(p) or [])
+    monkeypatch.setattr(flow_wire, "getproxies", lambda: {"https": "http://127.0.0.1:3128"})
+
+    assert await flow_wire.health(profile) == {"status": "proxy_configured", "build": None}
     assert reads == [] and flow.gets == []
 
 

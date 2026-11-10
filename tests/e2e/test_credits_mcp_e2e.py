@@ -39,10 +39,7 @@ def _fresh_wire(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")  # explicit: it defaults off on macOS
     reset_settings()
-    monkeypatch.setattr(flow_wire, "_tokens", {})
-    monkeypatch.setattr(flow_wire, "_signed_out", {})
-    monkeypatch.setattr(flow_wire, "_throttled", {})
-    monkeypatch.setattr(flow_wire, "_locks", {})
+    flow_wire.reset_state()
 
 
 #: Every key the tool contract promises a caller for a successful single-profile read.

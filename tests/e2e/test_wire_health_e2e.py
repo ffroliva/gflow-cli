@@ -39,9 +39,7 @@ async def test_doctor_and_mcp_auth_status_agree_on_an_accepted_wire(
     monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")
     monkeypatch.setenv("GFLOW_CLI_PROFILE", profile)  # doctor probes the default profile
     reset_settings()
-    for name, empty in (("_tokens", {}), ("_signed_out", {}), ("_throttled", {})):
-        monkeypatch.setattr(flow_wire, name, empty)
-    monkeypatch.setattr(flow_wire, "_locks", {})
+    flow_wire.reset_state()
 
     proc = subprocess.run(  # noqa: S603 - our own CLI, fixed arguments
         [sys.executable, "-m", "gflow_cli", "doctor", "--json"],

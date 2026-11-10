@@ -107,3 +107,4 @@ def test_wire_read_secrets_are_redacted() -> None:
 
 def test_ordinary_words_ending_in_at_are_not_redacted() -> None:
     assert redact_error_detail("format=json data=ok") == "format=json data=ok"
+    assert redact_error_detail("chat=1 at=AFAKE") == "chat=1 at=<redacted:secret>"
