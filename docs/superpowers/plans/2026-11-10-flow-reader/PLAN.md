@@ -93,6 +93,10 @@ Branch `feature/wire-credits-read`, one PR.
   - `store_unreadable` (locked, DPAPI, v20, `KeyError`, missing file)
   - `network` (connect timeout, read timeout)
   - `redirect` (3xx is not followed)
+- [ ] back-pressure (SCENARIO rows 29–30):
+  - 429/503 → typed `RateLimitError` / `NetworkError` with `retry_after` via
+    `_retry.parse_retry_after`, **no page fallback**, wire off for the process
+  - an `er` frame or a null-payload status → `unparseable`, with the numeric code logged
 - [ ] budget and shape:
   - exactly 1 GET + 1 POST
   - the second call in the same process reuses `at` (0 GETs)
