@@ -245,11 +245,12 @@ Branch `docs/wire-reads`, after A (it can ride with B if small).
 ---
 
 ## Cross-ticket follow-ups
-- [ ] Ticket B clears a profile's signed-out mark after a successful browser read or renew. Once B
+- [x] Ticket B clears a profile's signed-out mark after a successful browser read or renew. Once B
   and C (#1237) are both on develop, update the KNOWN_ISSUES "direct credits read" entry's
   sentence "stops trying the direct read for that profile until the process exits" to match.
-- [ ] Once #1219 is on develop, add `nzlxg`'s "read directly by `flow_wire`" note to
-  `docs/FLOW_WIRE_RPCS.md`.
+  Done in #1237 (37c39a0c); B (#1238) also lifts the mark after a `labs_unverified` renewal.
+- [x] Once #1219 is on develop, add `nzlxg`'s "read directly by `flow_wire`" note to
+  `docs/FLOW_WIRE_RPCS.md`. Done in #1237.
 
 ## Close-out (GOAL R1–R3, after the owner merges A–C and #1140)
 - [ ] `/gflow:release`, including its live-verify ledger with the G1 numbers
