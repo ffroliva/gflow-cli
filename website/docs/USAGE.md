@@ -1910,9 +1910,10 @@ gflow models --json
 ## `gflow capabilities`
 
 Declare what this gflow can drive: one value per capability (`yes`, `no`,
-`partial`, `unknown`), with a note on every `partial`. Offline: no network call,
-no browser; the only input is `GFLOW_CLI_FLOW_HOST`. MCP clients read the same
-document from the resource `capabilities://self`
+`partial`, `unknown`), with a note on every `partial`. It makes no call to Flow and
+opens no browser; the only input is `GFLOW_CLI_FLOW_HOST`, and `host` reports that
+setting. MCP clients read the same document from the resource `capabilities://self`
+(except on a no-spend server, where generation is `no`)
 ([#1197](https://github.com/ffroliva/gflow-cli/issues/1197)). Every key's meaning:
 [CAPABILITIES.md](CAPABILITIES.md).
 

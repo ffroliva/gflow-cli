@@ -67,9 +67,9 @@ gflow auth logout                                         # delete a saved sessi
 gflow credits user [--profile NAME] [--refresh] [--json]
 gflow credits list [--refresh] [--json]                   # all saved profiles; --refresh renews signed-out sessions
 
-# What this gflow can drive (offline; yes/no/partial/unknown per key, notes on partial).
-# cancel.server and idempotent_submit are "no": a submitted generation runs and is charged.
-# MCP twin: resource capabilities://self (same document). Keys: docs/CAPABILITIES.md
+# What this gflow can drive (no call to Flow; yes/no/partial/unknown per key, notes on partial).
+# cancel.server and idempotent_submit are "no": a submitted generation runs and may still be charged.
+# MCP twin: resource capabilities://self (same document; generation is "no" on a no-spend server). Keys: docs/CAPABILITIES.md
 gflow capabilities [--json]
 
 # Image generation (Imagen / Nano Banana)

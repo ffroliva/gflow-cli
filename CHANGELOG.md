@@ -13,9 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gflow can drive, so an agent can plan instead of learning by failing (#1197). One value per
   key (`yes`/`no`/`partial`/`unknown`), with a note on every `partial`: `cancel.server` and
   `idempotent_submit` are `no`, and `submit.no_wait`/`status`/`wait` are `partial` (MCP
-  `wait=false` and `tasks/get` only; the CLI verbs are #1194). Offline: the only input is
-  `GFLOW_CLI_FLOW_HOST`. Both surfaces return the same bytes, and a test fails when a CLI
-  command is added without a capability entry. Keys: `docs/CAPABILITIES.md`.
+  `wait=false` and `tasks/get` only; the CLI verbs are #1194), and `download` is `partial`
+  (recovery is video-only, #877). No call to Flow: the only input is `GFLOW_CLI_FLOW_HOST`,
+  and `host` reports that setting (per-profile resolution is #1212). Both surfaces return
+  the same document, except that a no-spend MCP server reports generation as `no`; a test
+  fails when a CLI command is added without a capability entry. Keys: `docs/CAPABILITIES.md`.
 
 ### Fixed
 
