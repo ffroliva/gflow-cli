@@ -30,11 +30,14 @@ from rich.table import Table
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _FLOW_ID_RE,
+    BridgeCommand,
     _make_provider_dir,
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    bridge_params,
     default_project,
+    run_bridged,
     run_with_handlers,
     safe_path_text,
     slugify_project_name,
@@ -2075,3 +2078,62 @@ def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
         w, h = img.dimensions
         table.add_row(img.media_name, str(img.seed), f"{w}x{h}", safe_path_text(path))
     console.print(table)
+
+
+def resolve_image_mode(*, refs: bool) -> tuple[click.Command, str]:
+    """Routing table for `image gen` (#1193): a reference image makes it i2i."""
+    return (i2i, "--ref was given") if refs else (t2i, "no --ref")
+
+
+@image.command(
+    "gen",
+    cls=BridgeCommand,
+    short_help="Generate image(s); picks t2i or i2i from the inputs.",
+    help=(
+        "Generate image(s) without naming the mode: a bridge verb that resolves to a "
+        "mode verb from its inputs, then runs exactly that verb (same options, output "
+        'and exit codes; --json adds "mode").\n\n'
+        "\b\n"
+        "Resolves to:\n"
+        "  PROMPT...            -> gflow image t2i\n"
+        "  PROMPT --ref IMAGE   -> gflow image i2i\n\n"
+        "The options below are the union of both verbs; their defaults and limits are "
+        "the resolved verb's (see its --help). An option the resolved verb does not take "
+        "is a usage error (exit 2). The mode verbs stay; use them when you want the "
+        "mode fixed.\n\n"
+        "\b\n"
+        "Examples:\n"
+        '  gflow image gen "a serene mountain lake at dawn"\n'
+        '  gflow image gen "make it cinematic" --ref hero.png'
+    ),
+)
+@click.argument("prompts", nargs=-1, required=False)
+@click.pass_context
+def gen(ctx: click.Context, prompts: tuple[str, ...], **values: Any) -> None:
+    """Route to `image t2i` or `image i2i` (#1193)."""
+    mode, why = resolve_image_mode(refs=bool(values["refs"]))
+    if mode is i2i and len(prompts) != 1:
+        msg = f"`gflow image i2i` (picked by --ref) takes one PROMPT; got {len(prompts)}."
+        raise click.UsageError(msg, ctx=ctx)
+    run_bridged(ctx, mode, why)
+
+
+gen.params = bridge_params(
+    gen.params,
+    t2i,
+    i2i,
+    help_for={
+        "refs": (
+            "Reference image: a local path (auto-uploaded) or the media UUID of an "
+            "uploaded asset. Repeatable. Giving one resolves to `image i2i`."
+        ),
+        "reference_entities": (
+            "Flow CHARACTER entity id to reference for consistency (repeatable). The "
+            "entity must live in the --project you target."
+        ),
+        "ui_mode": (
+            "Which Flow UI arm to require: 'classic', 'agentic' (needed for -i) or "
+            "'auto' (default). Overrides GFLOW_CLI_UI_MODE."
+        ),
+    },
+)

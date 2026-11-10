@@ -35,6 +35,7 @@ been removed. Both error handlers now import
 
 from __future__ import annotations
 
+import copy
 import re
 import sys
 import traceback
@@ -82,10 +83,13 @@ __all__ = [
     "_resolve_profile",
     "_validate_project_id",
     "apply_tool_option",
+    "BridgeCommand",
+    "bridge_params",
     "default_project",
     "run_with_handlers",
     "safe_path_text",
     "slugify_project_name",
+    "run_bridged",
     "tool_option",
 ]
 
@@ -394,6 +398,77 @@ def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
     # found before retention ages it out.
     _print_incident_ref(getattr(exc, "incident_ref", None))
     return 1
+
+
+# ------------------------------------------------------------ bridge verbs (#1193)
+# `image gen` / `video gen` pick the mode verb from the inputs and then ARE that verb:
+# the raw arguments are parsed again by the mode verb itself, so its envvars, callbacks,
+# required checks, parameter sources and "No such option" errors are a direct call's.
+
+_BRIDGE_ARGS_META = "gflow.bridge_args"
+
+
+class BridgeCommand(click.Command):
+    """A bridge verb: keeps its raw arguments so the resolved verb can parse them."""
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        ctx.meta[_BRIDGE_ARGS_META] = list(args)
+        return super().parse_args(ctx, args)
+
+
+def bridge_params(
+    own: list[click.Parameter],
+    *modes: click.Command,
+    exclude: tuple[str, ...] = (),
+    help_for: dict[str, str] | None = None,
+) -> list[click.Parameter]:
+    """The bridge verb's parameters: its own arguments, then every mode verb's options.
+
+    The union exists so the bridge can read the routing inputs and show one ``--help``;
+    the resolved verb re-parses the arguments with its own options. An option a mode
+    requires (``--ref``) is relaxed, and ``help_for`` rewrites help that only reads right
+    on one mode verb, each on a copy so the mode verb is untouched.
+    """
+    overrides = help_for or {}
+    params = list(own)
+    seen = {p.name for p in own} | set(exclude)
+    for param in (p for mode in modes for p in mode.params):
+        if isinstance(param, click.Argument) or param.name in seen:
+            continue
+        seen.add(param.name)
+        params.append(_bridge_copy(param, overrides))
+    return params
+
+
+def _bridge_copy(param: click.Parameter, overrides: dict[str, str]) -> click.Parameter:
+    """*param* as the bridge shows it: optional, and with its help rewritten if asked."""
+    if not param.required and param.name not in overrides:
+        return param
+    param = copy.copy(param)
+    param.required = False
+    if isinstance(param, click.Option) and param.name in overrides:
+        param.help = overrides[param.name]
+    return param
+
+
+def run_bridged(ctx: click.Context, mode: click.Command, why: str) -> None:
+    """Run *mode* on the bridge's raw arguments, exactly as if it had been called.
+
+    A usage error the mode raises names the verb the bridge resolved to and why.
+    """
+    group = ctx.parent.info_name if ctx.parent is not None else ""
+    ctx.meta[json_output.BRIDGE_MODE_META] = mode.name
+    raw: list[str] = ctx.meta[_BRIDGE_ARGS_META]
+    try:
+        sub = mode.make_context(mode.name, list(raw), parent=ctx.parent)
+    except click.UsageError as exc:
+        msg = (
+            f"{exc.format_message()}\n`gflow {group} {ctx.info_name}` resolved to "
+            f"`gflow {group} {mode.name}` ({why})."
+        )
+        raise click.UsageError(msg, ctx=exc.ctx) from exc
+    with sub:
+        mode.invoke(sub)
 
 
 def run_with_handlers(

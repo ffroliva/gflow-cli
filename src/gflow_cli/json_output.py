@@ -26,10 +26,19 @@ if TYPE_CHECKING:
     from gflow_cli.services.doctor import DoctorReport
 
 
+#: ``ctx.meta`` key a bridge verb (``image gen`` / ``video gen``, #1193) sets to the mode it
+#: resolved to. :func:`emit` adds it to every document, so no emit path can forget it.
+BRIDGE_MODE_META = "gflow.bridge_mode"
+
+
 def emit(payload: dict[str, Any]) -> None:
     """Print *payload* as indented JSON on stdout (the only side effect here)."""
     import click
 
+    ctx = click.get_current_context(silent=True)
+    mode = ctx.meta.get(BRIDGE_MODE_META) if ctx is not None else None
+    if mode:
+        payload = {**payload, "mode": mode}
     click.echo(json.dumps(payload, indent=2))
 
 

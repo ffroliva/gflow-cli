@@ -13,6 +13,7 @@ from click.testing import CliRunner
 from gflow_cli.api.video import VideoModel
 from gflow_cli.cli_video import video
 from gflow_cli.data.models import AssetKind
+from tests.cli.fakes import FakeVideoRecorder
 
 
 def _make_result(succeeded: bool, local_path: Path | None = None) -> object:
@@ -131,22 +132,6 @@ def test_t2v_does_not_instantiate_ui_automation_transport_directly(tmp_path: Pat
     # Exit code may be non-zero for other reasons (profile resolution, etc.) but
     # the sentinel assertion must not appear.
     assert result.exception is None or not isinstance(result.exception, AssertionError)
-
-
-class FakeVideoRecorder:
-    def __init__(self) -> None:
-        self.started: list[dict] = []
-        self.completed: list[dict] = []
-        self.closed = False
-
-    def close(self) -> None:
-        self.closed = True
-
-    def record_started_video(self, **kwargs):
-        self.started.append(kwargs)
-
-    def record_completed_video(self, **kwargs):
-        self.completed.append(kwargs)
 
 
 def test_t2v_records_started_then_completed(tmp_path: Path) -> None:

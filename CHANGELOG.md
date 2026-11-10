@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow image gen` and `gflow video gen`: one generate verb per media type, the mode
+  read from the inputs.** `image gen` runs `image t2i`, or `image i2i` when a `--ref` is
+  given; `video gen` runs `video t2v`, `video i2v` with `--initial-frame`/`--end-frame`, or
+  `video r2v` with `--ref`. Each then is that verb: the same options, output and exit codes,
+  and `--json` adds `"mode": "<resolved>"`. A frame and a `--ref` together, or an option
+  the resolved verb does not take, is a usage error (exit 2) naming the mode verb, never a
+  guess, and so is `--end-frame` without `--initial-frame`. The mode verbs stay, nothing is deprecated, and the MCP tools are unchanged: they
+  already take the mode (#1193).
+
 ## [0.97.0] — 2026-11-10
 
 ### Added

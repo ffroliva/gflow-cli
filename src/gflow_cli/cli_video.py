@@ -16,11 +16,14 @@ from rich.console import Console
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
+    BridgeCommand,
     _make_provider_dir,
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    bridge_params,
     default_project,
+    run_bridged,
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
@@ -2617,3 +2620,77 @@ async def _run_video_upscale(
             out_path=out_path,
         )
         console.print(f"[bold green]Saved:[/bold green] {safe_path_text(target)}")
+
+
+def resolve_video_mode(*, initial: bool, end: bool, refs: bool) -> tuple[click.Command, str]:
+    """Routing table for `video gen` (#1193): frames -> i2v, --ref -> r2v, neither -> t2v.
+
+    A frame and refs together, or an end frame without a start, is a usage error, never a
+    guess.
+    """
+    if (initial or end) and refs:
+        msg = (
+            "A frame (--initial-frame/--end-frame) and --ref were both given: that is either "
+            "`gflow video i2v` (animate a frame) or `gflow video r2v` (reference images), "
+            "not both. Call the mode verb you mean."
+        )
+        raise click.UsageError(msg)
+    if end and not initial:
+        msg = "--end-frame needs --initial-frame (that is `gflow video i2v`)."
+        raise click.UsageError(msg)
+    if initial:
+        return i2v, "--initial-frame was given"
+    return (r2v, "--ref was given") if refs else (t2v, "no frame and no --ref")
+
+
+@video.command(
+    "gen",
+    cls=BridgeCommand,
+    short_help="Generate a video; picks t2v, i2v or r2v from the inputs.",
+    help=(
+        "Generate a video without naming the mode: a bridge verb that resolves to a "
+        "mode verb from its inputs, then runs exactly that verb (same options, output "
+        'and exit codes; --json adds "mode").\n\n'
+        "\b\n"
+        "Resolves to:\n"
+        "  PROMPT                                -> gflow video t2v\n"
+        "  PROMPT --initial-frame F [--end-frame E] -> gflow video i2v\n"
+        "  PROMPT --ref IMAGE                    -> gflow video r2v\n\n"
+        "The options below are the union of the three verbs; their defaults and limits "
+        "are the resolved verb's (see its --help). A frame AND --ref, --end-frame without "
+        "--initial-frame, or an option the resolved verb does not take is a usage error "
+        "(exit 2). A character by id (--reference-entity) without --ref is passed to "
+        "`video t2v` unchanged. The mode verbs stay; use them when you want the mode "
+        "fixed.\n\n"
+        "\b\n"
+        "Examples:\n"
+        '  gflow video gen "a golden sunset over mountains"\n'
+        '  gflow video gen "slow pan left" --initial-frame hero.png\n'
+        '  gflow video gen "knight walks forward" --ref armor.png --model omni-flash'
+    ),
+)
+@click.argument("prompt")
+@click.pass_context
+def gen(ctx: click.Context, prompt: str, **values: Any) -> None:
+    """Route to `video t2v`, `video i2v` or `video r2v` (#1193)."""
+    mode, why = resolve_video_mode(
+        initial=values["initial_frame"] is not None,
+        end=values["end_frame"] is not None,
+        refs=bool(values["refs"]),
+    )
+    run_bridged(ctx, mode, why)
+
+
+gen.params = bridge_params(
+    gen.params,
+    t2v,
+    i2v,
+    r2v,
+    exclude=("end_image_deprecated",),
+    help_for={
+        "model": (
+            "Video model. Omit for the resolved verb's default (`video i2v` uses "
+            "veo-lite; see each verb's --help)."
+        ),
+    },
+)
