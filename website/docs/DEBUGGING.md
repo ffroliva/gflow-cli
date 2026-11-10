@@ -10,11 +10,11 @@
 | Symptom | First thing to try | Read |
 |---|---|---|
 | Any operational failure (crash, drift, timeout, WAF, lock) | Open the incident bundle path printed with the error | [Automatic incident bundles](#automatic-incident-bundles) |
-| `gflow image t2i` hangs ≥ 3 min then fails with `TimeoutError` | Re-run with `--verbose` and grep for `batch_response_seen` | [Listener log keys](#listener--http-layer-debugging) |
+| `gflow image t2i` hangs ≥ 3 min then fails with `TimeoutError` | Re-run with `--verbose` and grep for `batch_response_seen` | [Listener log keys](#listener-http-layer-debugging) |
 | `aspect_ratio_set_failed` warning then wrong-aspect output | The aspect-tab selector cascade missed; capture a DOM snapshot of the gen-settings panel | [Inspecting Flow's live UI](#inspecting-flows-live-ui) |
 | `UnicodeEncodeError: 'charmap' codec can't encode` on Windows | Set `PYTHONUTF8=1` (PowerShell: `$env:PYTHONUTF8="1"`) before any `gflow` invocation | [Windows console](#windows-console-encoding) |
 | `AuthBrowserRejectedError` / exit 14 | Re-run `gflow auth login` (the `chrome` strategy retries automatically) | [`AUTHENTICATION.md`](AUTHENTICATION.md), `/gflow:known-issues` |
-| `BrowserSessionClosedError` / exit 15 in a long-lived worker | Recreate the `FlowApiClient` via its async context manager | [Lifecycle errors](#lifecycle--browser-state) |
+| `BrowserSessionClosedError` / exit 15 in a long-lived worker | Recreate the `FlowApiClient` via its async context manager | [Lifecycle errors](#lifecycle-browser-state) |
 | Test suite OOMs / sandbox crashes | Run dirs separately (`tests/api`, `tests/auth tests/cli`, `tests/features`, then the rest with `--ignore`) | [Test suite memory](#test-suite-memory) |
 | New Flow UI label breaks a selector | Add a candidate to `_ASPECT_TAB_CANDIDATES` (or the relevant cascade) and live-verify | [Selector cascades](#selector-cascades) |
 
@@ -324,7 +324,7 @@ requests. Field data (issue [#241](https://github.com/ffroliva/gflow-cli/issues/
 - A burst of ~14 image submissions in ~10 min ended in a **403**
   (`Flow returned 403; blocked by WAF or fingerprint check`,
   `PUBLIC_ERROR_UNUSUAL_ACTIVITY` — see
-  [KNOWN_ISSUES § batchGenerateImages HTTP 403](../KNOWN_ISSUES.md)).
+  [KNOWN_ISSUES § batchGenerateImages HTTP 403](KNOWN_ISSUES.md)).
 - After ~30 min of cooldown, individually-paced calls (45–120 s apart) on the
   same profile and project passed 4/4.
 
@@ -349,7 +349,7 @@ Practical guidance:
 
 ## Common failure modes
 
-See [`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) for the canonical list and
+See [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) for the canonical list and
 remediations. The most-hit categories:
 - **Flow UI drift** → selector cascade needs a new candidate
   ([selector-cascades](#selector-cascades))
@@ -361,7 +361,7 @@ remediations. The most-hit categories:
 
 ## See also
 
-- [`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) — canonical bug list
+- [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) — canonical bug list
 - [`AUTHENTICATION.md`](AUTHENTICATION.md) — sign-in flow details
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) — branching, PRs, quality gates
 - [`USAGE.md`](USAGE.md) — CLI surface

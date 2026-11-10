@@ -68,6 +68,8 @@ _NO_PROFILE = {
     # #1023: its direct launch is the anonymous control arm, a fresh context with no
     # cookies; the profile arm runs through `FlowApiClient`, which takes the lease itself.
     "spike_session_oracle.py",
+    # #1140: launches real Chrome on throwaway temp profiles only.
+    "spike_disable_features_merge.py",
 }
 
 

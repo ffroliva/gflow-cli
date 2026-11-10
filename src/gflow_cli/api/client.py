@@ -88,6 +88,7 @@ from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
 from gflow_cli.browser_manager import (
     browser_proxy_kwargs,
     channel_for_profile,
+    disable_features_args,
     profile_in_use_error,
     window_position_args,
 )
@@ -550,6 +551,7 @@ class FlowApiClient:
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
                 *window_position_args(self.settings.browser_window_position),
+                *disable_features_args(),
             ],
             **browser_proxy_kwargs(self.settings.browser_proxy),
         }

@@ -331,7 +331,7 @@ Until the #1041 fix this setting was ignored and every command logged at `INFO` 
 **What:** How long a command waits for another gflow process to release the profile lease before giving up with `ProfileLockedError` (exit 11). The default `0` keeps the historical fail-fast behavior. With a positive value, the waiter polls the kernel lock (0.5 s cadence) and simply takes over when the current holder — a CLI command or a `gflow serve` daemon task, both of which release at their natural end — finishes. Holders are never interrupted or asked to release early.
 **Values:** `0`–`3600` seconds (fractions allowed)
 **Default:** `0` (fail fast) for CLI commands; `180` under `gflow mcp run` / `gflow serve`, where no human is there to retry — unless you set it yourself, in the environment or a `.env` file.
-**Note:** Same-process contention always fails fast regardless of this setting — the holder is the same process, so waiting would deadlock. See [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel).
+**Note:** Same-process contention always fails fast regardless of this setting — the holder is the same process, so waiting would deadlock. See [KNOWN_ISSUES § Same profile can't be used in parallel](KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel).
 **Shipped in:** #478; MCP default #864.
 
 ### `GFLOW_CLI_DB_PATH`
@@ -405,7 +405,7 @@ consent or verification screen, the error tells you to run
 can see it, and it waits for you. A generation run does not: after clicking the
 chooser row it gives up within 30 seconds, so clearing a screen in a visible
 generation window is a race. (Flow's one-time *rights to use this image* confirmation
-has its own remedy: see [KNOWN_ISSUES](../KNOWN_ISSUES.md).)
+has its own remedy: see [KNOWN_ISSUES](KNOWN_ISSUES.md).)
 
 **What it does not do:** it does not stop Chrome **taking keyboard focus** when it
 launches: the `--no-focus-on-init` switch we tried made no measurable difference. If you are typing when a run starts, the
@@ -447,7 +447,8 @@ Use it when Google is reachable only through a proxy, for example a local Clash 
 v2ray client on `http://127.0.0.1:7897` with its *System Proxy* switch off.
 
 **Two proxies, one exit.** gflow's own HTTP calls (httpx, the LLM client) follow
-`HTTPS_PROXY`; the browser follows this setting and ignores `HTTPS_PROXY` (Chromium reads
+`HTTPS_PROXY` (the direct credits read is skipped instead while any proxy is set, see
+[`GFLOW_CLI_WIRE_READS`](#gflow_cli_wire_reads)); the browser follows this setting and ignores `HTTPS_PROXY` (Chromium reads
 proxy env vars only on Linux). gflow never copies one into the other. Point both at the
 same proxy so Google sees one IP per session, and sign in through it. See
 [ACCOUNT_SAFETY](ACCOUNT_SAFETY.md#what-it-deliberately-does-not-do).
@@ -510,6 +511,16 @@ per-command `--proxy` flags (the setting covers one-off runs:
 **Default:** `auto`
 **Scope today:** the migrated composer covers `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i`. Images support Nano Banana 2.1 (`nano2`, #958) / 2 Lite / Pro, all five aspect ratios (16:9, 4:3, 1:1, 3:4, 9:16 — `3:4` was added to that host's radiogroup by 2026-09-17, #864) and count 1–4; the page owns the `ogiZ0b` reCAPTCHA + submit and the response already contains completed signed image URLs. Local-file start+end frames (`--initial-frame` + `--end-frame`) are ported (#639). Image prompts may tag a character with `@Name` (or `--reference-entity` paired with `--reference-entity-name`; an id alone exits 36), attached through the composer's `@` picker (#723). `video extend` is ported for a single segment from a clip (one PROMPT; `-n` > 1, `--scene`/`--resume-from`, `--seed` and an `--aspect` other than the source's exit 36, and `-o` saves the new extension clip only, #882). Frames given by UUID/`@Name`, media references by UUID/`@Name` (except an image `--ref <uuid>` the catalog records in the same `--project`, #995), character entities on text-to-video and image-to-video, Agent instructions, Imagen 4, scenes, instructions and tools are not ported yet and fail before submit where Flow serves flow.google.com. MCP uses the same image service and queue payload, and inherits this setting from the server/daemon environment rather than per call. Local-file `video r2v` takes a character with `--reference-entity` paired with `--reference-entity-name` (#723); an id alone exits 36.
 
+### `GFLOW_CLI_WIRE_READS`
+
+**What:** Whether `gflow credits user`, `gflow credits list` and the MCP `gflow_get_credits` tool first read the balance **directly** from flow.google.com, with no browser ([#1229](https://github.com/ffroliva/gflow-cli/issues/1229)). The direct read takes the profile's saved cookies from its own cookie file, loads the app page once and asks for the balance once. If it fails (Flow does not accept the cookies, Chrome is open on the profile and holds the cookie file, a network error, an unexpected reply), gflow reads the balance in the profile's browser instead, as before. One exception: when Flow throttles the account (HTTP 429 or 503), the command reports that error (exit code as for any rate limit or network failure) rather than loading the page, because the page would send the same requests to the throttled account; further reads of that profile report it again, sending nothing, until the `Retry-After` window has passed (capped at 60 s; 60 s when Flow names none).
+**Values:** `1` / `true` — try the direct read first. `0` / `false` — always use the browser.
+**Default:** `true` on Windows and Linux; `false` on macOS, where reading Chrome's cookies can raise a Keychain prompt.
+**Safety:** the direct read never writes to the profile's cookies, ignores any cookie Flow sends back, and follows no redirect. A profile Flow answers "signed out" (or HTTP 401) is not tried again by credit reads in that process (a browser read succeeding does not change the saved cookies) until `--refresh` renews it with a session Flow authenticated, or, in a running MCP server, `gflow_auth_status` asks Flow again and is accepted (`gflow doctor` runs in its own process, so it cannot lift the mark); other profiles are unaffected.
+**Risk:** the direct read sends the profile's saved Google session from gflow's own HTTP client, outside Chrome; see [KNOWN_ISSUES](KNOWN_ISSUES.md#the-direct-credits-read-uses-the-profiles-saved-google-session-outside-chrome).
+**Proxy:** while any proxy is configured — `GFLOW_CLI_BROWSER_PROXY`, an `HTTPS_PROXY`/`ALL_PROXY`-style environment variable, or the operating system's proxy setting — the direct read is skipped (reason `proxy_configured`) and the browser reads the balance, so the profile's cookies never leave by a different route than its browser's. The direct read never takes a proxy from the environment.
+**Health:** `gflow doctor` (check `auth.wire_read`, the default profile) and the MCP `gflow_auth_status` tool (its `wire` field) report whether the direct read works: `status=accepted` with Flow's build label, or the reason it falls back (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, …). Each sends one GET and one POST to flow.google.com, under every rule above, asking afresh even for a profile already marked signed out; with the setting off, any proxy configured, or inside a throttle window, neither sends anything.
+
 ### `GFLOW_CLI_AGENT_CONFIRM`
 
 **What:** On an account Flow serves the agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), Agent settings carries a **Confirm before generating** choice. This sets it before a run.
@@ -536,7 +547,7 @@ per-command `--proxy` flags (the setting covers one-off runs:
 **Default:** `en-US`
 **Shipped in:** post-v0.8.1 develop (PR #51).
 **When to set it:** capturing locale-invariant DOM via `scripts/dev/capture_locale_invariants.py`, or live-verifying a generation under a non-EN account language.
-**Important:** Chrome's *UI* language is independently forced to `en-US` via the `--lang=en-US` launch arg (so Flow keeps serving `/fx/tools/flow/` and the editor's localized text selectors keep working). This env var only affects request headers — not the editor UI you see. See [KNOWN_ISSUES § issue #24](../KNOWN_ISSUES.md) for the path to dropping `--lang=en-US`.
+**Important:** Chrome's *UI* language is independently forced to `en-US` via the `--lang=en-US` launch arg (so Flow keeps serving `/fx/tools/flow/` and the editor's localized text selectors keep working). This env var only affects request headers — not the editor UI you see. See [KNOWN_ISSUES § issue #24](KNOWN_ISSUES.md) for the path to dropping `--lang=en-US`.
 
 ### `GFLOW_CLI_INCIDENT_CAPTURE`
 
