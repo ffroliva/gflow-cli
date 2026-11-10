@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import sys
 import warnings
 from collections.abc import Mapping
 from enum import StrEnum
@@ -645,6 +646,17 @@ class Settings(BaseSettings):
             "force the migrated composer for everything. 'labs.google': never use it — "
             "if Flow serves you flow.google.com, requests fail with exit 36 (kill "
             "switch). Override via GFLOW_CLI_FLOW_HOST."
+        ),
+    )
+    wire_reads: bool = Field(
+        default_factory=lambda: sys.platform != "darwin",
+        description=(
+            "Read the credit balance directly from flow.google.com with the profile's saved "
+            "cookies, without starting Chrome; a failure falls back to the browser read, except "
+            "Flow throttling (HTTP 429/503), which is reported as an error. Skipped while "
+            "any proxy is configured (GFLOW_CLI_BROWSER_PROXY, the environment, the OS). "
+            "Default on, except on macOS (reading the cookies there can raise a Keychain "
+            "prompt). Set GFLOW_CLI_WIRE_READS=0 to always use the browser."
         ),
     )
     agent_confirm: Literal["account", "always", "never"] = Field(

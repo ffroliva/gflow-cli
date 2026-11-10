@@ -5,8 +5,10 @@
 `gflow capabilities [--json]` (and the MCP resource `capabilities://self`, the same document except on a no-spend server) declares, with no call to Flow, what gflow can drive: `yes`/`no`/`partial`/`unknown` per key (`generate.image`, `generate.video`, `submit.no_wait`, `status`, `wait`, `download`, `upload`, `abort.local`, `cancel.server`, `idempotent_submit`, `reconcile`, `credits.balance`), with a note on every `partial`; `cancel.server` and `idempotent_submit` are `no` (#1197, docs/CAPABILITIES.md).
 
 Credit inspection is exposed through `gflow credits user|list` and the `gflow_get_credits` MCP
-tool. It opens flow.google.com in the profile's browser and reads the balance the app itself
-loads (the number in Flow's account menu, #795); the tier fields are always null there. The balance funds Veo video generation; image generation uses
+tool. It reads the balance flow.google.com itself loads (the number in Flow's account menu,
+#795): directly, with no browser, when Flow accepts the profile's saved session, otherwise in
+the profile's browser (#1229; off by default on macOS, skipped while any proxy is configured,
+and `GFLOW_CLI_WIRE_READS=0` always uses the browser); the tier fields are always null there. The balance funds Veo video generation; image generation uses
 separate per-model daily quotas. Log in with `gflow auth login --browser chrome`: a bundled-
 Chromium login (`--browser internal`, or `auto` without Chrome) works again (verified
 on Windows; macOS not measured), but generation still needs a chrome profile (#1026).
