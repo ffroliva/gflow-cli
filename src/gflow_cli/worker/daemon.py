@@ -23,7 +23,13 @@ from gflow_cli.data.recorder import (
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError, outcome_members
+from gflow_cli.errors import (
+    DataIntegrityError,
+    DataStoreError,
+    FlowApiError,
+    GFlowError,
+    outcome_members,
+)
 from gflow_cli.observability import exception_message_hash
 from gflow_cli.paths import image_output_path
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
@@ -441,7 +447,7 @@ class FlowWorker:
                             if result.status.failure_reasons
                             else result.status.error_message or "Unknown reason"
                         )
-                        raise GFlowError(
+                        raise FlowApiError(
                             f"Video generation failed: {reasons}",
                             # #1201: Flow took the submit; same answer as CLI video_result.
                             next_action="reconcile",
