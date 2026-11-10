@@ -391,6 +391,7 @@ tests/
     ├── test_migrated_selector_drift_e2e.py # [e2e, e2e_auth] registry vs flow.google.com — 0 credits
     ├── test_auth_renew_e2e.py            # [e2e, e2e_auth] `gflow auth renew` leaf — 0 credits
     ├── test_credits_refresh_e2e.py       # [e2e, e2e_auth] `--refresh` on CLI + MCP — 0 credits
+    ├── test_credits_wire_bdd.py          # [e2e, e2e_auth] credits read with no browser, fallback (#1229) — 0 credits
     ├── test_transports_e2e.py            # [e2e, e2e_{auth,image,batch,video}]
     ├── test_image_batch_e2e.py           # [e2e, e2e_batch]
     ├── test_video_t2v_e2e.py             # [e2e, e2e_video]

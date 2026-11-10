@@ -129,11 +129,19 @@ Read the current Google Flow balance through an existing authenticated profile. 
 read-only request: it does not generate media or spend credits. The displayed balance funds Veo
 video generation; image generation uses separate per-model daily quotas.
 
-The balance is read from flow.google.com: gflow opens the app in the profile's browser and reads
-the number the app itself loads, which is the one Flow's account menu shows
-([#795](https://github.com/ffroliva/gflow-cli/issues/795)). Nothing is clicked. It costs one
-browser launch per profile, and the profile must not be in use by another gflow process
-(`ProfileLockedError`, exit 11). Before #795 the balance came from a labs.google token; labs'
+The balance is the number flow.google.com itself loads, which is the one Flow's account menu
+shows ([#795](https://github.com/ffroliva/gflow-cli/issues/795)). When Flow accepts the
+profile's saved session, gflow reads it directly with that session's cookies: two requests, no
+browser ([#1229](https://github.com/ffroliva/gflow-cli/issues/1229)). Otherwise (signed out,
+Chrome open on the profile, a network error, an unexpected reply) gflow opens the app in the
+profile's browser and reads it there. Nothing is clicked. The browser read costs one browser
+launch per profile, and the profile must not be in use by another gflow process
+(`ProfileLockedError`, exit 11). When Flow throttles the account (HTTP 429 or 503) gflow does not
+open the browser, which would send the same requests: `credits user` exits 4 (`RateLimitError`)
+or 6 (`NetworkError`), and `credits list` records that error for the profile. The direct read
+is off by default on macOS and while `GFLOW_CLI_BROWSER_PROXY` is set; `GFLOW_CLI_WIRE_READS=0`
+turns it off everywhere ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads),
+[KNOWN_ISSUES](../KNOWN_ISSUES.md)). Before #795 the balance came from a labs.google token; labs'
 session URL has answered HTTP 410 to every account since 2026-10-22
 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)).
 
