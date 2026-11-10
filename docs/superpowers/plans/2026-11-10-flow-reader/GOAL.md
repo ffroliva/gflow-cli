@@ -39,6 +39,17 @@ Submits, uploads and anything that needs reCAPTCHA stay on the browser.
 `ponytail-review`) + one fix round → `/gflow:sonar` → `pytest -m e2e` on `denon82` → PR left
 open. A predict STOP halts the wave and reports why.
 
+## Close-out (after G1–G8 hold and the owner has merged the wave)
+
+| # | Step | Gate |
+|---|---|---|
+| R1 | Cut a release with `/gflow:release` (changelog → check → live-verify → doc-review, signed tag). The owner merges and approves the publish; the agent never merges | each internal gate is a STOP |
+| R2 | Draft a promotion post at the business level: what users get (faster answers, no browser for checks, keeps working when the direct path doesn't, fewer requests), not RPC ids or internals. Every number in it comes from the release's live-verify ledger or a spike doc, with before/after measured the same way | numbers traced to a file; `humanizer`/`stop-slop` pass; forbidden-word list clean |
+| R3 | Publish nothing. The post is written locally (Markdown + a local HTML preview opened in the browser) for the owner to edit and post | owner posts it |
+
+The post says honestly what stays the same: generation still uses a real browser, and the
+direct path is the account's own session, not a public API.
+
 ## Out of scope
 
 Caching `at` across processes (waits for S2 #1222), project create/rename over the wire (S7
