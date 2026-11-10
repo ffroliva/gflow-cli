@@ -115,7 +115,9 @@ def now() -> str:
 
 
 def redact(msg: str) -> str:
-    return re.sub(r"[A-Za-z]:[\\/][^'\"\s]*", "<path>", msg)[:200]
+    # Windows drive paths and POSIX home paths (/home/x, /Users/x, /root)
+    msg = re.sub(r"[A-Za-z]:[\\/][^'\"\s]*", "<path>", msg)
+    return re.sub(r"(?:/home/|/Users/|/root\b)[^'\"\s]*", "<path>", msg)[:200]
 
 
 def exc_info(e: BaseException) -> dict[str, Any]:
@@ -429,42 +431,44 @@ def disk_probes(cookie_file: Path, key_file: Path) -> dict[str, Any]:
         text=True,
         timeout=60,
     )
-    out["browser_cookie3_subprocess"] = p.stdout.strip() or p.stderr.strip()[-200:]
+    out["browser_cookie3_subprocess"] = redact(p.stdout.strip() or p.stderr.strip()[-200:])
     return out
 
 
 async def phase_q2(pdir: Path, cookie_file: Path, key_file: Path, old: list[Any]) -> dict:
     rep: dict[str, Any] = {}
-    async with build_client(pdir) as client:
-        page = client._page  # noqa: SLF001 - dev instrument
-        await page.goto(f"{ORIGIN}/", wait_until="domcontentloaded", timeout=60_000)
-        try:
-            await page.wait_for_load_state("networkidle", timeout=20_000)
-        except Exception:  # noqa: BLE001 - idle is best effort
-            rep["networkidle_timeout"] = True
-        rep["chrome_opened_utc"] = now()
-        await asyncio.sleep(20)
-        rep["chrome_running"] = True
-        rep["probes"] = await asyncio.to_thread(disk_probes, cookie_file, key_file)
-        ctx = await page.context.cookies()
-        rep["context_cookies_flow_sendable"] = len(
-            [c for c in ctx if c["domain"].lower() in SENT_DOMAINS and c["path"] == "/"]
-        )
-        try:
-            open_meta = await asyncio.to_thread(metadata, cookie_file)
-            rep["metadata_while_open"] = {"ok": True, "rows": len(open_meta)}
-        except Exception as e:  # noqa: BLE001
-            rep["metadata_while_open"] = exc_info(e)
-        live = None
-        if rep["probes"]["browser_cookie3_thread"].get("ok"):
-            live, src = read_jar(cookie_file, key_file), "disk_jar_while_open"
-        elif rep["probes"]["browser_cookie3_on_copy"].get("ok"):
-            live, src = read_jar(OUT_DIR / "cookie_copy" / "Cookies", key_file), "byte_copy"
-        else:
-            src = "pre_open_in_memory_snapshot (disk unreadable)"
-        rep["wire_while_open_source"] = src
-        rep["wire_while_open"] = await asyncio.to_thread(wire_read, sent_to_flow(live or old))
-    shutil.rmtree(OUT_DIR / "cookie_copy", ignore_errors=True)
+    try:
+        async with build_client(pdir) as client:
+            page = client._page  # noqa: SLF001 - dev instrument
+            await page.goto(f"{ORIGIN}/", wait_until="domcontentloaded", timeout=60_000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=20_000)
+            except Exception:  # noqa: BLE001 - idle is best effort
+                rep["networkidle_timeout"] = True
+            rep["chrome_opened_utc"] = now()
+            await asyncio.sleep(20)
+            rep["chrome_running"] = True
+            rep["probes"] = await asyncio.to_thread(disk_probes, cookie_file, key_file)
+            ctx = await page.context.cookies()
+            rep["context_cookies_flow_sendable"] = len(
+                [c for c in ctx if c["domain"].lower() in SENT_DOMAINS and c["path"] == "/"]
+            )
+            try:
+                open_meta = await asyncio.to_thread(metadata, cookie_file)
+                rep["metadata_while_open"] = {"ok": True, "rows": len(open_meta)}
+            except Exception as e:  # noqa: BLE001
+                rep["metadata_while_open"] = exc_info(e)
+            live = None
+            if rep["probes"]["browser_cookie3_thread"].get("ok"):
+                live, src = read_jar(cookie_file, key_file), "disk_jar_while_open"
+            elif rep["probes"]["browser_cookie3_on_copy"].get("ok"):
+                live, src = read_jar(OUT_DIR / "cookie_copy" / "Cookies", key_file), "byte_copy"
+            else:
+                src = "pre_open_in_memory_snapshot (disk unreadable)"
+            rep["wire_while_open_source"] = src
+            rep["wire_while_open"] = await asyncio.to_thread(wire_read, sent_to_flow(live or old))
+    finally:  # the byte copy holds cookie values: remove it on every exit path
+        shutil.rmtree(OUT_DIR / "cookie_copy", ignore_errors=True)
     return rep
 
 

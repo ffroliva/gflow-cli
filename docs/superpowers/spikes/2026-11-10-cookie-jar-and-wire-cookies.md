@@ -78,8 +78,8 @@ The run printed nothing secret: only names, domains, counts, statuses and boolea
 
 | Group | Count | Names |
 |---|---|---|
-| `.google.com` | 21 | AEC, APISID, HSID, NID, SAPISID, SEARCH_SAMESITE, SID, SIDCC, SSID, `__Secure-1PAPISID`, `__Secure-1PSID`, `__Secure-1PSIDCC`, `__Secure-1PSIDRTS`, `__Secure-1PSIDTS`, `__Secure-3PAPISID`, `__Secure-3PSID`, `__Secure-3PSIDCC`, `__Secure-3PSIDRTS`, `__Secure-3PSIDTS`, `__Secure-ENID` |
-| `accounts.google.com` / `myaccount.google.com` | 7 | ACCOUNT_CHOOSER, LSID, `__Host-1PLSID`, `__Host-3PLSID`, `__Host-GAPS`, `__Host-GAPSTS` / OSID, `__Secure-OSID` |
+| `.google.com` | 20 | AEC, APISID, HSID, NID, SAPISID, SEARCH_SAMESITE, SID, SIDCC, SSID, `__Secure-1PAPISID`, `__Secure-1PSID`, `__Secure-1PSIDCC`, `__Secure-1PSIDRTS`, `__Secure-1PSIDTS`, `__Secure-3PAPISID`, `__Secure-3PSID`, `__Secure-3PSIDCC`, `__Secure-3PSIDRTS`, `__Secure-3PSIDTS`, `__Secure-ENID` |
+| `accounts.google.com` / `myaccount.google.com` | 6 + 2 = 8 | ACCOUNT_CHOOSER, LSID, `__Host-1PLSID`, `__Host-3PLSID`, `__Host-GAPS`, `__Host-GAPSTS` / OSID, `__Secure-OSID` |
 | `flow.google.com` (+ `.flow.google.com`) | 6 | OSID, `__Secure-OSID`, `_ga`, `_ga_TEFY0PFXC5`, `_ga_X2GNH8R5NS` (×2) |
 | `labs.google` | 8 | EMAIL, email, `__Host-next-auth.csrf-token`, `__Secure-next-auth.callback-url`, `__Secure-next-auth.session-token`, `_ga`, `_ga_TEFY0PFXC5`, `_ga_X2GNH8R5NS` |
 
@@ -96,7 +96,7 @@ has a path other than `/`.
 | minimal set alone | 200 | yes | 200 | yes |
 | full set, end | 200 | yes | 200 | yes (ablation not void) |
 
-Elimination outcomes. Only 4 names were needed; every other name could be dropped:
+Elimination outcomes. One pass in name order, each drop tested against the set remaining at that point:
 
 | Dropped | Result without it |
 |---|---|
@@ -104,9 +104,12 @@ Elimination outcomes. Only 4 names were needed; every other name could be droppe
 | `SID` | 200 signed-out shell (no `SNlM0e`) |
 | `__Secure-1PSIDTS` | 200 signed-out shell |
 | `__Secure-3PSID` | 200 signed-out shell |
-| each of the other 21 names | read still passed |
+| each of the other 21 names | read still passed, so the name stayed dropped |
 
-**Minimal set found: `OSID` (flow.google.com), `SID`, `__Secure-1PSIDTS`, `__Secure-3PSID`.**
+**Minimal set found by one-pass elimination: `OSID` (flow.google.com), `SID`, `__Secure-1PSIDTS`,
+`__Secure-3PSID`.** Each of the four failed when dropped from the larger set remaining at its
+turn. None was re-tested by removing it from the final four, so whether each one is necessary
+against the final set is untested. The set is proven sufficient, because it passed alone.
 
 Set-Cookie names on the responses:
 
@@ -115,6 +118,8 @@ Set-Cookie names on the responses:
 - **Minimal-set reads:** the server also sent `NID`, `__Secure-1PSID`, `__Secure-3PSIDTS` and
   `__Secure-OSID`. It re-minted cookies the request lacked.
 - **No-cookie arm:** `NID` only.
+- **Junk-`at` control:** `SIDCC`, `__Secure-1PSIDCC`, `__Secure-3PSIDCC`.
+- **Ablation steps:** their Set-Cookie names were not recorded.
 
 ### Q2: with Chrome running on the profile
 
@@ -216,10 +221,12 @@ moment.
   decrypts every Google cookie, `SNlM0e` is in the shell, and `nzlxg` returns 200 with a parsed
   balance. The controls behave as expected: no cookies gives a signed-out shell and a 401, and a
   junk `at` gives a 400.
-  - **Minimal set:** a set of 4 cookies is sufficient: `OSID` on flow.google.com, plus `SID`,
-    `__Secure-1PSIDTS` and `__Secure-3PSID`.
+  - **Minimal set:** a set of 4 cookies, found by one-pass elimination, is sufficient: `OSID` on
+    flow.google.com, plus `SID`, `__Secure-1PSIDTS` and `__Secure-3PSID`. Whether each one is
+    necessary against the final set was not tested.
   - **Not the only set:** elimination ran in name order, so a different order could find a
-    different set. `__Secure-1PSID` was dropped because `__Secure-3PSID` covered it.
+    different set. For example, `__Secure-1PSID` was dropped while `__Secure-3PSID` was still
+    present. Whether `__Secure-1PSID` could stand in for `__Secure-3PSID` was not tested.
   - **The domain filter needs to change:** the existing `labs.google` filter in `_is_flow_cookie`
     keeps none of these 4 cookies.
 - **Q2.** While Chrome runs, the jar cannot be read by any means a normal user has.
@@ -231,9 +238,15 @@ moment.
     running.
   - **What the reader should do:** treat "Chrome is open on this profile" as a "cookie store
     unreadable" failure and fall back. Do not try to work around the lock.
-- **Q3.** After Chrome closed, the jar was readable again. Ten timestamp-cookie rows had new
-  expiry and update times, and their values changed. The row count did not change. The wire
-  still worked with the fresh jar.
+- **Q3.** After Chrome closed, the jar was readable again, and the row count did not change.
+  The wire still worked with the fresh jar. Two different measures moved:
+  - **Timestamps (all Google rows):** 10 rows had new `expires` and `last_update` times. These
+    are the 8 below, plus `__Host-GAPSTS` (accounts.google.com) and `_ga` (.flow.google.com).
+  - **Values (compared only for the 26 cookies sent to flow.google.com):** 8 changed. These are
+    `SIDCC`, `__Secure-1PSIDCC`, `__Secure-3PSIDCC`, `__Secure-1PSIDRTS`, `__Secure-3PSIDRTS`,
+    `__Secure-1PSIDTS`, `__Secure-3PSIDTS` and `_ga_X2GNH8R5NS`.
+  - `_ga` on .flow.google.com changed its timestamps but kept its value. `__Host-GAPSTS` is
+    outside the compared set, so whether its value changed is unknown.
 - **Q4.** Run 2 reproduced run 1's result with the profile held on its own (run 1 is
   contaminated; see above).
   - **Stale snapshot accepted:** the snapshot taken before Chrome opened still worked after
@@ -248,8 +261,15 @@ moment.
     the follow-up above), not a finding.
 - **Q5.** All 62 Google-domain values are `v10`, and none are `v20`. App-bound encryption is
   not present on this profile today.
-- **Rotation on wire reads.** Every wire response sets `SIDCC`, `__Secure-1PSIDCC` and
-  `__Secure-3PSIDCC`. A reader that drops these cookies does not break the next read; every
+- **Rotation on wire reads.** These responses set `SIDCC`, `__Secure-1PSIDCC` and
+  `__Secure-3PSIDCC`, on both the GET and the POST:
+  - the full-set baselines;
+  - the junk-`at` control;
+  - the minimal-set read;
+  - the stale-snapshot and fresh-jar reads.
+
+  The no-cookie responses set only `NID`. The ablation steps' Set-Cookie names were not
+  recorded. A reader that drops these cookies does not break the next read; every
   later read in this run passed with the original values. A reader that sends only the minimal
   set also gets the missing session cookies re-minted, which a cookie-dropping reader then
   discards.
