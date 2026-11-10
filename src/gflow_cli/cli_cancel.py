@@ -9,6 +9,7 @@ both call :func:`gflow_cli.worker.queue.abort_task`.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 
 import click
@@ -20,7 +21,7 @@ from gflow_cli._cli_helpers import run_with_handlers
 from gflow_cli.config import get_settings
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import ServerCancelUnavailableError, TaskNotFoundError
-from gflow_cli.worker.queue import QueueRepository, abort_task
+from gflow_cli.worker.queue import AbortOutcome, QueueRepository, abort_task
 
 _console = Console()
 
@@ -39,14 +40,18 @@ def cancel(task_id: str, as_json: bool) -> None:
     """
 
     async def _run() -> None:
-        _cancel(task_id, as_json)
+        # The queue write blocks on SQLite's lock (BEGIN IMMEDIATE), so it runs off the loop.
+        _report(task_id, await asyncio.to_thread(_abort, task_id), as_json)
 
     run_with_handlers(_run, cli_command="cancel", as_json=as_json)
 
 
-def _cancel(task_id: str, as_json: bool) -> None:
+def _abort(task_id: str) -> AbortOutcome | None:
     with DataStore.open(get_settings().resolved_db_path()) as store:
-        outcome = abort_task(QueueRepository(store), task_id)
+        return abort_task(QueueRepository(store), task_id)
+
+
+def _report(task_id: str, outcome: AbortOutcome | None, as_json: bool) -> None:
     if outcome is None:
         raise TaskNotFoundError(detail=f"No queued job with id {task_id!r}.")
     if outcome.state == "abandoned":
