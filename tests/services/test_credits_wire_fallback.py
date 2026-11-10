@@ -354,10 +354,12 @@ async def test_a_failed_page_read_keeps_the_signed_out_mark(
     assert meta.profile_dir in flow_wire._signed_out  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.parametrize(("renewed", "outcome"), [(True, "renewed"), (False, "labs_unverified")])
 async def test_a_renewed_profile_has_its_signed_out_mark_lifted_before_the_retry(
-    monkeypatch: pytest.MonkeyPatch, page: type[_Page]
+    monkeypatch: pytest.MonkeyPatch, page: type[_Page], renewed: bool, outcome: str
 ) -> None:
-    """After `--refresh` renews it, the retried read tries the wire once more."""
+    """After `--refresh` renews it (or Flow authenticates it and only the labs step fails),
+    the retried read tries the wire once more."""
     meta = _meta()
     _mark_signed_out(meta)
     page.result = AuthExpiredError("signed out")
@@ -372,7 +374,7 @@ async def test_a_renewed_profile_has_its_signed_out_mark_lifted_before_the_retry
     monkeypatch.setattr(flow_wire, "read_credits", wire)
 
     async def renew(profile_dir: Path, *, source: str) -> Any:
-        return type("R", (), {"renewed": True, "result": "renewed"})()
+        return type("R", (), {"renewed": renewed, "result": outcome})()
 
     monkeypatch.setattr(credits, "renew_profile", renew)
 
