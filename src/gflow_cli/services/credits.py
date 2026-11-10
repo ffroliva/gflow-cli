@@ -80,6 +80,7 @@ async def _fetch_once(meta: profile_store.ProfileMeta) -> dict[str, Any]:
         return _success(meta, info)
     async with FlowApiClient(profile_dir=meta.profile_dir, headless=settings.headless) as client:
         info = await client.get_credits()
+    flow_wire.session_recovered(meta.profile_dir)  # a long-lived process retries the wire
     log.info("credits.read", profile=meta.name, source="page")
     return _success(meta, info)
 
@@ -116,6 +117,8 @@ async def _fetch(meta: profile_store.ProfileMeta, *, refresh: bool = False) -> d
             labs_stale=result.labs_stale,
         )
         raise expired
+    if result.renewed:
+        flow_wire.session_recovered(meta.profile_dir)
     return await _fetch_once(meta)
 
 

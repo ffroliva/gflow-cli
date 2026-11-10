@@ -274,6 +274,14 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
     return info
 
 
+def session_recovered(profile_dir: Path) -> None:
+    """The session is known good again (a page read answered, or a renew renewed it): lift
+    the signed-out mark and the cached ``at`` so the next read tries the wire once more.
+    A throttle window is time-based and stays."""
+    _signed_out.discard(profile_dir)
+    _tokens.pop(profile_dir, None)
+
+
 async def health(profile_dir: Path) -> dict[str, str | None]:
     """The direct read's health for ``gflow doctor`` and ``gflow_auth_status`` (G6).
 
