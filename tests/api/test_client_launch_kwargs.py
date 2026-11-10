@@ -17,7 +17,7 @@ import pytest
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-from gflow_cli.browser_manager import chrome_strategy_requested
+from gflow_cli.browser_manager import chrome_strategy_requested, disable_features_args
 from gflow_cli.errors import ConfigurationError
 
 _MARKER = ".gflow_browser_strategy"
@@ -51,6 +51,7 @@ def test_persistent_context_kwargs_are_unchanged(tmp_path: Path) -> None:
         "--disable-blink-features=AutomationControlled",
         "--disable-dev-shm-usage",
         "--window-position=-30000,-30000",
+        *disable_features_args(),  # #1140
     ]
     # channel is profile-derived; a marker-less tmp_path has no
     # .gflow_browser_strategy file, so channel_for_profile() returns None.
