@@ -331,7 +331,7 @@ Until the #1041 fix this setting was ignored and every command logged at `INFO` 
 **What:** How long a command waits for another gflow process to release the profile lease before giving up with `ProfileLockedError` (exit 11). The default `0` keeps the historical fail-fast behavior. With a positive value, the waiter polls the kernel lock (0.5 s cadence) and simply takes over when the current holder — a CLI command or a `gflow serve` daemon task, both of which release at their natural end — finishes. Holders are never interrupted or asked to release early.
 **Values:** `0`–`3600` seconds (fractions allowed)
 **Default:** `0` (fail fast) for CLI commands; `180` under `gflow mcp run` / `gflow serve`, where no human is there to retry — unless you set it yourself, in the environment or a `.env` file.
-**Note:** Same-process contention always fails fast regardless of this setting — the holder is the same process, so waiting would deadlock. See [KNOWN_ISSUES § Same profile can't be used in parallel](../KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel).
+**Note:** Same-process contention always fails fast regardless of this setting — the holder is the same process, so waiting would deadlock. See [KNOWN_ISSUES § Same profile can't be used in parallel](KNOWN_ISSUES.md#same-profile-cant-be-used-in-parallel).
 **Shipped in:** #478; MCP default #864.
 
 ### `GFLOW_CLI_DB_PATH`
@@ -405,7 +405,7 @@ consent or verification screen, the error tells you to run
 can see it, and it waits for you. A generation run does not: after clicking the
 chooser row it gives up within 30 seconds, so clearing a screen in a visible
 generation window is a race. (Flow's one-time *rights to use this image* confirmation
-has its own remedy: see [KNOWN_ISSUES](../KNOWN_ISSUES.md).)
+has its own remedy: see [KNOWN_ISSUES](KNOWN_ISSUES.md).)
 
 **What it does not do:** it does not stop Chrome **taking keyboard focus** when it
 launches: the `--no-focus-on-init` switch we tried made no measurable difference. If you are typing when a run starts, the
@@ -545,7 +545,7 @@ per-command `--proxy` flags (the setting covers one-off runs:
 **Default:** `en-US`
 **Shipped in:** post-v0.8.1 develop (PR #51).
 **When to set it:** capturing locale-invariant DOM via `scripts/dev/capture_locale_invariants.py`, or live-verifying a generation under a non-EN account language.
-**Important:** Chrome's *UI* language is independently forced to `en-US` via the `--lang=en-US` launch arg (so Flow keeps serving `/fx/tools/flow/` and the editor's localized text selectors keep working). This env var only affects request headers — not the editor UI you see. See [KNOWN_ISSUES § issue #24](../KNOWN_ISSUES.md) for the path to dropping `--lang=en-US`.
+**Important:** Chrome's *UI* language is independently forced to `en-US` via the `--lang=en-US` launch arg (so Flow keeps serving `/fx/tools/flow/` and the editor's localized text selectors keep working). This env var only affects request headers — not the editor UI you see. See [KNOWN_ISSUES § issue #24](KNOWN_ISSUES.md) for the path to dropping `--lang=en-US`.
 
 ### `GFLOW_CLI_INCIDENT_CAPTURE`
 

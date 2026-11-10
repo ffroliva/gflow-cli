@@ -413,9 +413,33 @@ The `Provider` interface keeps backends interchangeable. v0.1 shipped `FlowProvi
 - macOS: `~/Library/Application Support/gflow-cli/profile_default/`
 - Linux: `~/.local/share/gflow-cli/profile_default/`
 
-Subsequent commands launch a Playwright context using that profile and call REST endpoints via Playwright's HTTP client — which auto-attaches the cookies. No tokens to refresh manually, no SSO scraping. Auth is the only browser interaction users see, and it is a one-time event.
+Subsequent commands launch a Playwright context using that profile and call REST endpoints via Playwright's HTTP client — which auto-attaches the cookies. No tokens to refresh manually, no SSO scraping. Auth is the only browser interaction users see, and it is a one-time event. One read skips the browser when it can: the credit balance (see [Reads without a browser](#reads-without-a-browser)).
 
 See [docs/AUTHENTICATION.md](AUTHENTICATION.md) for the full lifecycle, multi-account workflows, and recovery paths.
+
+## Reads without a browser
+
+Since [#1229](https://github.com/ffroliva/gflow-cli/issues/1229), one read, the credit balance, is first made without starting Chrome. Everything else still goes through the browser: generation submits, uploads, reCAPTCHA, and every other read.
+
+**Where it sits.** `services/credits.py::_fetch_once` calls `api/flow_wire.py::read_credits` **before** it builds a `FlowApiClient`, because building one launches Chrome. Putting the choice lower, inside the client, would launch the browser anyway. The kill switch (`GFLOW_CLI_WIRE_READS`) is checked at the same spot.
+
+**What it sends.** The profile's saved cookies, read from its own cookie file (`auth/cookies.py::read_cookies_for`: the profile's own cookie file, and on Windows its own key file, named explicitly so the user's personal Chrome jar is never read; only cookies a browser would send to `https://flow.google.com/`, kept in memory, never written back). With them: one GET of the app shell, for the page's `at` token, session id and build label, then one batchexecute POST of `nzlxg`, whose reply `CreditsInfo.from_nzlxg` already decodes for the browser path. The rules in code:
+
+- an rpcid allow-list that holds only `nzlxg`
+- no redirect is followed and no 4xx is retried (one retry only for a connect error, when nothing reached Flow)
+- two time limits in sequence: 5 s for the cookie read, then 5 s for both requests (3 s to connect), so a read that hangs gives way to the browser after about 10 s at most
+- a reject-all cookie jar, so every cookie Flow sets in a reply is dropped
+- the User-Agent of the profile's own Chrome version
+
+**Fallback.** Any failure raises `WireReadUnavailable` carrying one `WireFallbackReason` value and nothing else (no body, no exception text: replies on this wire can carry signed URLs). The service logs `credits.wire_fallback reason=<value>` and reads in the browser as before. The reasons are `signed_out_shell`, `http_401`, `http_400`, `http_error`, `unparseable`, `store_unreadable` (the cookie file cannot be opened, which is what happens while Chrome runs on the profile), `no_chrome_version`, `proxy_configured`, `network`, `redirect`, `disabled`, and `unexpected` (a bug in the direct read, logged with its class name). Which path answered is logged as `credits.read source=wire|page`; the JSON result has no such field.
+
+**Not a fallback.** A profile outside `GFLOW_CLI_HOME` raises `SecurityError` before anything is read. HTTP 429 and 503 are back-pressure: they raise the browser path's own `RateLimitError` / `NetworkError` and open a throttle window for that profile (`Retry-After`, capped at 60 s; 60 s when Flow names none), because a browser read would send the same requests to a throttled account. The other knobs: [CONFIGURATION § `GFLOW_CLI_WIRE_READS`](CONFIGURATION.md#gflow_cli_wire_reads).
+
+**Per-profile state, per process.** The shell's tokens are cached, so a second read in the same process sends only the POST; any non-200 or unparseable reply drops them. A profile Flow answered signed out (no `at` in the shell, or a 401) is not tried again in that process until a `--refresh` renewal that Flow verified (`flow_wire.session_recovered`) or a `gflow doctor` / `gflow_auth_status` probe that Flow accepts lifts the mark; a browser read that succeeds does not, because the cookies the direct read sends are unchanged. One lock per profile keeps concurrent reads to one shell GET. One profile's state never affects another's.
+
+**Where it is off.** On macOS by default, where reading Chrome's cookies can raise a Keychain prompt; while any proxy is configured (`GFLOW_CLI_BROWSER_PROXY`, or an environment/system proxy found by `urllib.request.getproxies()`), so the cookies never leave from a different address than the browser's; and wherever `GFLOW_CLI_WIRE_READS=0`. The account risk of using the saved session outside Chrome is written up in [KNOWN_ISSUES](../KNOWN_ISSUES.md#the-direct-credits-read-uses-the-profiles-saved-google-session-outside-chrome).
+
+**No port yet.** `flow_wire` is plain functions with one caller. A `FlowReader` port (a `Protocol`, per [Ports & adapters](#ports--adapters)) is introduced together with its second consumer, the job-status reads of [#1194](https://github.com/ffroliva/gflow-cli/issues/1194), not before.
 
 ## Headed-browser dependency — current limitation
 

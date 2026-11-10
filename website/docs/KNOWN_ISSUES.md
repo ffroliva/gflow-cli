@@ -14,6 +14,55 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### The direct credits read uses the profile's saved Google session outside Chrome
+
+- **Status:** Open (a risk under watch, not a failure seen) · **Severity:** Low as measured; the long-run effect on the account is unmeasured · **Affected:** `gflow credits user` / `list` and MCP `gflow_get_credits`, on Windows and Linux by default (off by default on macOS)
+- **Tracked:** [#1229](https://github.com/ffroliva/gflow-cli/issues/1229) · [#1222](https://github.com/ffroliva/gflow-cli/issues/1222)
+- **Evidence:** cookie-jar spike, [PR #1234](https://github.com/ffroliva/gflow-cli/pull/1234); live proof in [PR #1236](https://github.com/ffroliva/gflow-cli/pull/1236)
+
+To read the balance without starting Chrome, gflow takes the profile's saved Google session
+cookies from the profile's own cookie file and sends them to flow.google.com from its own HTTP
+client: one GET of the app page and one request for the balance. Flow's batchexecute wire is a
+private, undocumented API. Google has not said it accepts this use, and an account that sends
+its session from something other than Chrome takes that risk. gflow limits what it sends to what
+the app itself sends for this read, and asks for nothing else (an allow-list holding one rpc).
+
+**Rotation.** Chrome rotates some of these cookies (`*SIDCC`, `*PSIDRTS`, `*PSIDTS`) while it
+runs, and a copy taken outside Chrome does not follow. Measured on one Windows profile: a copy
+taken before Chrome opened was still accepted after Chrome had rotated 7 of them, and the
+browser session was still valid afterwards (`auth status` passed and a browser balance read
+succeeded). After a run of direct reads, the e2e suite checks that a browser read still works.
+
+**Cookies Flow sends back are dropped.** Every direct reply sets `SIDCC`, `__Secure-1PSIDCC`
+and `__Secure-3PSIDCC`. gflow keeps none of them and never writes to the profile's cookie
+file; in the measured run every later read passed with the original values.
+
+**While Chrome runs on the profile** (Windows, measured), Chrome holds the cookie file
+exclusively, so the direct read cannot open it. gflow does not work around that lock; it
+falls back to the browser read (reason `store_unreadable`), which then reports the profile as
+in use (`ProfileLockedError`, exit 11) as before. Linux is unmeasured.
+
+**Not measured yet:**
+
+- How long a copied session stays accepted beyond the measured minutes, and whether dropping
+  the re-minted `*SIDCC` cookies over many reads eventually makes Google ask for a re-sign-in.
+- How long a fetched `at` token stays valid inside a long-running process
+  ([#1222](https://github.com/ffroliva/gflow-cli/issues/1222)). A stale one is expected to
+  be refused (HTTP 400) and to fall back to the browser read; that path is tested offline only.
+- A profile written by a Chrome build that uses app-bound (`v20`) cookie encryption. None was
+  present on the measured profile; such a profile is expected to fail to decrypt and fall back,
+  but that is not measured.
+
+**Remedy / opt-out:** set `GFLOW_CLI_WIRE_READS=0` to always read in the browser
+([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads)). If Flow ever answers signed out
+or HTTP 401, that process stops trying the direct read for that profile until a `--refresh`
+renewal that Flow verified, or a `gflow doctor` / `gflow_auth_status` probe that Flow accepts.
+If it answers HTTP 429 or 503, that profile is left alone for the throttle window
+(`Retry-After`, capped at 60 s) and nothing retries in the browser: `credits user` exits 4 or
+6, and `credits list` records the error for that profile and keeps the other balances.
+
+---
+
 ### Every command lands on `flow.google.com/about` (exit 31) while `gflow auth status` says the session is fine
 
 - **Status:** Open · **Severity:** High for the affected account (nothing runs) · **Affected:** measured on one account (`my-profile`, 2026-09-23). Other `/about` occurrences are not yet shown to share the cause.
@@ -809,7 +858,7 @@ Re-running `auth login` reuses the existing profile dir (you typically just clic
 **What renewal cannot do:** complete a step only a human can, such as CAPTCHA, device
 verification, or "Confirm it's you". The 3 profiles that did not recover on 2026-10-14 were held
 at Flow's public `/about` page ([entry above](#every-command-lands-on-flowgooglecomabout-exit-31-while-gflow-auth-status-says-the-session-is-fine)),
-and `auth renew` reports them as not renewed. See [docs/AUTHENTICATION.md § Refresh / expiry](AUTHENTICATION.md#refresh--expiry).
+and `auth renew` reports them as not renewed. See [docs/AUTHENTICATION.md § Refresh / expiry](AUTHENTICATION.md#refresh-expiry).
 
 ---
 
@@ -936,11 +985,15 @@ A block that survives dismissal now aborts pre-submit with exit 23 (probe `overl
 
 - **Status:** **Resolved** in v0.87.1 ([#795](https://github.com/ffroliva/gflow-cli/issues/795)); open on every account from 2026-10-22 until then
 
-**Fixed.** `gflow credits` now opens flow.google.com in the profile's browser and reads the
+**Fixed.** In v0.87.1 `gflow credits` began opening flow.google.com in the profile's browser and reading the
 balance from the app's own `nzlxg` reply, the number Flow's account menu shows (measured 5/5,
 including after a spend:
 [spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-10-22-credits-balance-on-nzlxg.md)). It no longer needs a
-labs.google token. It costs one browser launch per profile, and the tier fields (`sku`,
+labs.google token. It cost one browser launch per profile; since
+[#1229](https://github.com/ffroliva/gflow-cli/issues/1229) the same reply is first asked for
+directly, with the profile's saved cookies and no browser, and the browser read is the fallback
+(see "The direct credits read uses the profile's saved Google session outside Chrome" below).
+The tier fields (`sku`,
 `service_tier`, `user_paygate_tier`, `subscription_credits`) are always `null`, because
 flow.google.com does not report them. It was verified on two accounts, neither on a paid plan; a paid plan may put a different
 balance in the field gflow reads, which would show a wrong number without an error. A page that never sends the reply fails with exit 31

@@ -166,7 +166,7 @@ test, not a mocked proxy — the Bug Lane's step 5.
 | `GFLOW_CLI_E2E_RPC_IMAGE` | *(unset)* | Path to an image you own, for `tests/e2e/test_migrated_rpc_readback_bdd.py` (#1009: a lost reply body is read back). Unset, that test **skips**. It creates one project, renames it and uploads this file; it spends no credits and no quota. |
 | `GFLOW_CLI_E2E_PROMPT` | *(safe default)* | Prompt override for the smoke test. |
 | `GFLOW_CLI_E2E_STALE_PROFILES` | *(unset)* | Comma-separated profiles whose session has **lapsed** (the credits read lands on a Google sign-in page, exit 3). Used by the session-renewal e2e (`e2e_auth`): index 0 drives `gflow_get_credits(refresh=true)`, index 1 drives `gflow credits user --refresh`, and index 2 drives `gflow auth renew`. Each is consumed by its first successful renewal, because a renewed session stays fresh for a while. A test whose profile is fresh **skips**; it never passes on a read that needed no renewal. `GFLOW_CLI_E2E_PROFILE` must also be set. |
-| `GFLOW_CLI_E2E_ABOUT_PROFILE` | *(unset)* | A profile Flow holds at its public `/about` page (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)). `tests/e2e/test_auth_renew_e2e.py` asserts that `gflow auth renew` does **not** report it renewed. It skips if the profile reads a balance. |
+| `GFLOW_CLI_E2E_ABOUT_PROFILE` | *(unset)* | A profile Flow holds at its public `/about` page (see [KNOWN_ISSUES](KNOWN_ISSUES.md)). `tests/e2e/test_auth_renew_e2e.py` asserts that `gflow auth renew` does **not** report it renewed. It skips if the profile reads a balance. |
 
 ---
 
@@ -229,7 +229,7 @@ export GFLOW_CLI_E2E_PROFILE=<profile-name>
 GFLOW_CLI_E2E_RUN_VIDEO=1 uv run pytest -m e2e -v -p no:cov
 ```
 
-See [DEVELOPMENT.md § E2e gate](DEVELOPMENT.md#e2e-gate-before-merging-develop--main).
+See [DEVELOPMENT.md § E2e gate](DEVELOPMENT.md#e2e-gate-before-merging-develop-main).
 
 ---
 
@@ -428,6 +428,7 @@ tests/
     ├── test_migrated_selector_drift_e2e.py # [e2e, e2e_auth] registry vs flow.google.com — 0 credits
     ├── test_auth_renew_e2e.py            # [e2e, e2e_auth] `gflow auth renew` leaf — 0 credits
     ├── test_credits_refresh_e2e.py       # [e2e, e2e_auth] `--refresh` on CLI + MCP — 0 credits
+    ├── test_credits_wire_bdd.py          # [e2e, e2e_auth] credits read with no browser, fallback (#1229) — 0 credits
     ├── test_transports_e2e.py            # [e2e, e2e_{auth,image,batch,video}]
     ├── test_image_batch_e2e.py           # [e2e, e2e_batch]
     ├── test_video_t2v_e2e.py             # [e2e, e2e_video]
@@ -636,6 +637,6 @@ flow.google.com clip lands in that bucket (#1003).
 ## See also
 
 - [CONTRIBUTING.md § Test categories](../CONTRIBUTING.md#test-categories)
-- [DEVELOPMENT.md § E2e gate](DEVELOPMENT.md#e2e-gate-before-merging-develop--main)
+- [DEVELOPMENT.md § E2e gate](DEVELOPMENT.md#e2e-gate-before-merging-develop-main)
 - [docs/DATA_LAYER.md](DATA_LAYER.md)
 - [docs/ARCHITECTURE.md § Testing topology](ARCHITECTURE.md#testing-topology)
