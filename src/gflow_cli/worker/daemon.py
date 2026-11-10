@@ -26,6 +26,7 @@ from gflow_cli.data.store import DataStore
 from gflow_cli.errors import (
     DataIntegrityError,
     DataStoreError,
+    FlowApiError,
     GFlowError,
     TaskCancelledError,
     outcome_members,
@@ -472,7 +473,7 @@ class FlowWorker:
                             if result.status.failure_reasons
                             else result.status.error_message or "Unknown reason"
                         )
-                        raise GFlowError(
+                        raise FlowApiError(
                             f"Video generation failed: {reasons}",
                             # #1201: Flow took the submit; same answer as CLI video_result.
                             next_action="reconcile",
