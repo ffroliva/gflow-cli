@@ -22,8 +22,9 @@ to DEFERRED.
 
 Every comment also carries an ``RPC-DRIFT`` section (#1218, ``rpc_drift.py``): whether the
 catalogued batchexecute ids are still in the JavaScript Flow serves, checked with no cookies
-and no browser. It has its own four outcomes (OK / ID-GONE / MODULES-CHANGED / INCONCLUSIVE),
-and like everything here it gates nothing: it never changes the run's state or title.
+and no browser. It has its own five outcomes (OK / ID-GONE / MODULES-CHANGED /
+PARSE-CHANGED / INCONCLUSIVE), and like everything here it gates nothing: it never changes
+the run's state or title.
 
 Scope: ``-m e2e_auth`` only ($0, no reCAPTCHA). Generation tiers are refused outright
 (see ``_MANUAL_ONLY_MARKERS``) — a promise in a docstring is not enforcement.
@@ -360,23 +361,29 @@ def render(result: Result, sha: str, markers: str, stamp: str, streak_note: str 
     return "\n".join(lines)
 
 
-def rpc_drift_section() -> str:
+def rpc_drift_section(write: bool = False) -> str:
     """The RPC-DRIFT report (#1218), appended to every run's comment whatever its state.
 
     It needs no profile and no auth, so it runs on AUTH-EXPIRED and DEFERRED nights too. It
-    reports and never changes the run's state or title. Imported here, not at the top, so a
-    `--pull` that changed `rpc_drift.py` is picked up by the re-executed child, not by the
-    copy this process loaded before the pull. Never raises.
-    """
-    if str(REPO_ROOT) not in sys.path:
-        sys.path.insert(0, str(REPO_ROOT))  # run as a script, `scripts` is not importable
-    from scripts.canary import rpc_drift  # noqa: PLC0415
+    reports and never changes the run's state or title. ``write`` archives a new build's
+    inventory; only the real nightly passes it, so a dry run cannot use up the diff.
 
+    Imported here, not at the top: this runs after ``sync_to_develop()``, so the first import
+    of ``rpc_drift`` loads the pulled file. (The re-exec only fires when ``run_canary.py``
+    itself changed.) The import sits inside the try: a pulled module that fails to import
+    must cost this section, never the night's whole comment. Never raises.
+    """
     try:
-        drift = rpc_drift.check()
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT))  # run as a script, `scripts` is not importable
+        from scripts.canary import rpc_drift  # noqa: PLC0415
+
+        return rpc_drift.render(rpc_drift.check(write=write))
     except Exception as exc:  # noqa: BLE001 - class name only: messages can carry URLs
-        drift = rpc_drift.Drift(rpc_drift.INCONCLUSIVE, note=type(exc).__name__)
-    return rpc_drift.render(drift)
+        return (
+            "#### RPC-DRIFT INCONCLUSIVE\n\nThe check itself failed. Says nothing about Flow."
+            f"\n\n**Reason:** {type(exc).__name__}"
+        )
 
 
 def publish(issue: int, state: str, body: str, stamp: str, dry_run: bool) -> None:
@@ -544,10 +551,11 @@ def main() -> int:
         state, streak_note = continuity(load_state(), result.failing)
         save_state(state)
 
+    report = render(result, sha, args.markers, stamp, streak_note)
     publish(
         args.issue,
         result.state,
-        f"{render(result, sha, args.markers, stamp, streak_note)}\n\n{rpc_drift_section()}",
+        f"{report}\n\n{rpc_drift_section(write=not args.dry_run)}",
         stamp,
         args.dry_run,
     )
