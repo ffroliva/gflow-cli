@@ -23,7 +23,7 @@ from gflow_cli.data.recorder import (
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError
+from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError, outcome_members
 from gflow_cli.observability import exception_message_hash
 from gflow_cli.paths import image_output_path
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
@@ -518,8 +518,7 @@ class FlowWorker:
                     "detail": f"sha256:{exception_message_hash(exc)}",
                     "exit_code": 1,
                     # #1201: same members as a typed failure; nothing is proven.
-                    "charged": "maybe",
-                    "next_action": "none",
+                    **outcome_members("maybe", "none"),
                 }
 
             # #341: mirror the queue's failure record into the operations table

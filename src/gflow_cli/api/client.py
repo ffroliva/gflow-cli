@@ -2450,7 +2450,10 @@ class FlowApiClient:
             if time.monotonic() >= deadline:
                 raise TransportTimeoutError(
                     f"video {media_id} did not finish within {timeout_s:.0f}s "
-                    f"(last status: {status.status})"
+                    f"(last status: {status.status})",
+                    # #1201: submitted, so it may still finish and bill; find it first.
+                    next_action="reconcile",
+                    operation_id=media_id,
                 )
             await asyncio.sleep(interval)
 
@@ -2486,7 +2489,8 @@ class FlowApiClient:
                 )
             if time.monotonic() >= deadline:
                 raise TransportTimeoutError(
-                    f"scene concatenation did not finish within {timeout_s:.0f}s"
+                    f"scene concatenation did not finish within {timeout_s:.0f}s",
+                    charged="no",  # a scene render spends no credits
                 )
             await asyncio.sleep(poll_interval)
 

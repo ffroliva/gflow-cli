@@ -26,6 +26,7 @@ from mcp.types import (
 
 from gflow_cli.config import get_settings
 from gflow_cli.data.store import DataStore
+from gflow_cli.errors import outcome_members
 from gflow_cli.worker.queue import QueueRepository, QueueTask
 
 log = structlog.get_logger()
@@ -173,6 +174,7 @@ class TasksExtension(Extension):
                     "status": 499,
                     "detail": "Cancelled before it ran.",
                     "reason": "cancelled",
+                    **outcome_members("no", "none"),
                 },
                 only_from=("pending",),
             )

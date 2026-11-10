@@ -918,6 +918,7 @@ async def _execute_chain_links(
                     results=results,
                     partial=True,
                     completed_paths=completed_paths,
+                    error=exc,
                 )
             )
             _sys.exit(json_output.exit_code_for(exc))
@@ -1132,9 +1133,16 @@ def _chain_json(
     results: list[Any],
     partial: bool,
     completed_paths: list[Path],
+    error: GFlowError | None = None,
 ) -> dict[str, Any]:
     """Machine-readable chain result payload."""
+    members = (
+        {"charged": error.charged, "next_action": error.resolved_next_action()}
+        if error is not None
+        else {}
+    )
     return {
+        **members,
         "status": "fail" if partial else "ok",
         "command": "video chain",
         "chain_id": chain_id,
@@ -2062,6 +2070,8 @@ def _migrated_extend_payload(
         "aborted": not ok,
         "profile": profile_name,
         "host": "flow.google.com",
+        # #1201: the extension was submitted; on failure its outcome needs settling.
+        **({} if ok else {"charged": "maybe", "next_action": "reconcile"}),
         "request": {
             "model": outcome.model_key,
             "mode": "extend",
@@ -2256,7 +2266,19 @@ async def _extend_session(  # noqa: PLR0913
             inputs = list(scene_state.to_concat_inputs())
             if not as_json:
                 console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
-            await client.concatenate_scene(inputs, out_path=output_file)
+            try:
+                await client.concatenate_scene(inputs, out_path=output_file)
+            except GFlowError as exc:
+                # #1201: the segments are billed; only the render failed, and it is free.
+                exc.charged = "yes"
+                exc.next_action = "reconcile"
+                exc.retryable = False
+                exc.remediation_hint = (
+                    f"The {len(result.completed_media_ids)} segment(s) are billed and in "
+                    f"scene {target_scene}. Render them again without spending credits: "
+                    f"gflow scene create --output <path>."
+                )
+                raise
             rendered = str(output_file)
 
         payload: dict[str, Any] = {
@@ -2291,6 +2313,15 @@ async def _extend_session(  # noqa: PLR0913
                     ),
                     "succeeded": not result.aborted and result.error is None,
                     "local_path": rendered,
+                    # #1201: a failed run read by status alone would hide billed segments.
+                    **(
+                        {}
+                        if not result.aborted and result.error is None
+                        else {
+                            "charged": "yes" if result.completed_media_ids else "maybe",
+                            "next_action": "reconcile",
+                        }
+                    ),
                     "failure_reasons": [],
                     "error_message": str(result.error) if result.error is not None else None,
                     "request": {

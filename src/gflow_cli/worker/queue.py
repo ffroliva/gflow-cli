@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from gflow_cli.errors import DataIntegrityError, QueueSchemaError, is_retryable
+from gflow_cli.errors import (
+    DataIntegrityError,
+    QueueSchemaError,
+    is_retryable,
+    outcome_members,
+)
 from gflow_cli.worker import codec
 
 if TYPE_CHECKING:
@@ -342,6 +347,7 @@ def _recovery_error(status: str, reason: str) -> dict[str, Any]:
                 "may have been spent and the outcome is unknown. NOT retried automatically."
             ),
             "reason": reason,
+            **outcome_members("maybe", "reconcile"),
         }
     return {
         "type": "https://gflow-cli.dev/errors/daemon-recovery",
@@ -349,6 +355,7 @@ def _recovery_error(status: str, reason: str) -> dict[str, Any]:
         "status": 500,
         "detail": f"Task interrupted ({reason}) before any submit; nothing spent, safe to retry.",
         "reason": reason,
+        **outcome_members("no", "retry"),
     }
 
 

@@ -46,6 +46,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.errors import (
     ChainPartialError,
+    GFlowError,
     ModelModeIncompatibilityError,
     WafRejectionError,
     WireFormatError,
@@ -256,6 +257,11 @@ async def _generate_link(
     except Exception as exc:
         _notify_link_failed(on_link_failed, req, exc)
         if not isinstance(exc, WireFormatError | WafRejectionError):
+            if completed_paths and isinstance(exc, GFlowError):
+                # #1201: links 0..k are billed whatever this link's own class says.
+                exc.charged = "yes"
+                exc.next_action = "reconcile"
+                exc.retryable = False
             raise
         _log.warning(
             "chain_link_aborted",

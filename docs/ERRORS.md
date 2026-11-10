@@ -9,7 +9,7 @@ same members, and the worker queue persists the same members for a queued task.
 
 | Member | Always present | Meaning |
 |---|---|---|
-| `type` | yes | Stable URI per error class (table below) |
+| `type` | yes | Stable URI per error class (tables below) |
 | `title` | yes | Short human summary of the class |
 | `detail` | no | What happened this time |
 | `status` | no | The literal HTTP status of the failed call, when there was one |
@@ -17,19 +17,32 @@ same members, and the worker queue persists the same members for a queued task.
 | `route` | no | Sanitized route name (never a full URL) |
 | `class` | CLI `--json` | The concrete error class name |
 | `exit_code` | CLI `--json`, worker | The process exit code (table below) |
-| `retryable` | yes (except the worker queue's unknown-error row) | `true` when the identical request may simply be run again |
+| `retryable` | yes | `true` when the identical request may simply be run again |
 | `charged` | yes | Whether Flow may have billed this operation: `no`, `maybe` or `yes` |
 | `next_action` | yes | What a caller should do (values below) |
 | `operation_id` | no | The local job or media id, when one exists, so a follow-up can find it |
+| `retry_after` | no | Seconds to wait, when Flow said so and `next_action` is `retry_after` |
 
-`charged`, `next_action` and `operation_id` were added in
+`charged`, `next_action`, `operation_id` and `retry_after` were added in
 [#1201](https://github.com/ffroliva/gflow-cli/issues/1201). They are additive: no
 existing member changed.
+
+### Result-shaped failures
+
+Some `--json` commands report a failed run as a **result** document rather than an
+error: `video t2v`/`i2v`/`r2v` when Flow reports the generation failed, both
+`video extend` paths, and a partial `video chain`. Those documents carry `charged` and
+`next_action` too (not `retryable`, `type` or `class`), because a billed clip is
+exactly what these runs can leave behind
+([#1159](https://github.com/ffroliva/gflow-cli/issues/1159),
+[#1178](https://github.com/ffroliva/gflow-cli/issues/1178)): a failed generation reads
+`maybe` / `reconcile`, and an extend or chain that completed at least one segment or
+link reads `yes` / `reconcile`.
 
 ### `charged`
 
 - `no`: the class proves nothing was submitted, or the operation is free (catalog,
-  auth, uploads Flow refused, image generation).
+  auth, uploads Flow refused, image generation, scene renders, balance reads).
 - `maybe`: the failure can happen before or after a submit. Check the project before
   re-running a paid generation.
 - `yes`: Flow made, and billed, the result. Re-running bills again.
@@ -40,10 +53,10 @@ existing member changed.
 |---|---|---|
 | `retry` | Run the same command again | `true` |
 | `retry_after` | Run it again after a pause (quota or rate limit) | `true` |
-| `wait` | Wait for an account-side condition to change (for example, credits) | `false` |
+| `wait` | Wait for a condition to clear (credits, another process holding the profile) | `false` |
 | `reauth` | Run `gflow auth login` for the profile | `false` |
 | `fix_input` | Change the command, its inputs or the local setup | `false` |
-| `reconcile` | Settle the outcome first: find the result in Flow (`gflow data download <media_id>` for a billed clip) before re-running | `false` |
+| `reconcile` | Settle the outcome first: find the result in Flow (`gflow data download <media_id>` for a billed clip, `gflow scene create --output` for a scene) before re-running | `false` |
 | `none` | Nothing a caller can do will change the result | `false` |
 
 `retryable` and `next_action` always agree: `retryable` is `true` exactly when
@@ -52,22 +65,41 @@ also moves `next_action`: one that turns the retry on reads `retry`, and one tha
 turns it off reads `reconcile` when the class says Flow may have billed, otherwise
 `none`.
 
+**`retry` with `charged: maybe`.** Six classes are raised both before and after a
+submit and are retryable by default: `TransportTimeoutError`, `NetworkError`,
+`WafRejectionError`, `BrowserSessionClosedError`, `FlowAppError`, `FlowAgentUiError`.
+Every raise site gflow knows to come after a submit overrides them to `reconcile`
+(`retryable: false`): the labs video poll timeout, the flow.google.com post-submit
+timeouts, the agent-only composer's refusals, and a failed download of a finished
+clip. So a `retry` that reaches you comes from a site gflow treats as before the
+submit. `maybe` still says gflow cannot prove it: a scheduler that runs paid
+generations unattended should check the project before a second paid attempt.
+
 ### Raise-site overrides
 
-The table gives each class's default. A raise site can override any of the three
-members. The one in place today:
+The tables give each type's default. A raise site can change any member: classes
+built on the base constructor take `charged=`, `next_action=` and `operation_id=`
+keywords, and the rest (`RateLimitError`, `WireFormatError`, `BatchPartialError`,
+`BatchIntegrityError`, `ChainPartialError`, `SyncPartialError`,
+`UiModeUnavailableError`) have the attribute set after construction. The overrides in
+place today:
 
 - `MediaDownloadError` raised for a finished, billed clip (`retryable: false`, #941)
   reads `charged: yes`, `next_action: reconcile`, with the clip's media id as
   `operation_id`. The same class raised by the free recovery (`gflow data download`,
   MCP `gflow_download_media`) keeps the default `no` / `retry`.
+- The labs video poll timing out after the submit reads `maybe` / `reconcile`, with the
+  media id as `operation_id`.
+- A failed write of a generated asset to disk or a bucket (`ConfigurationError`) reads
+  `maybe` / `reconcile`: the asset is in the Flow project.
+- `video chain`: any error after at least one link completed reads `yes` /
+  `reconcile`; `ChainPartialError` reads `yes` only when it carries completed links.
+- `video extend --output`: a render failure after billed segments reads `yes` /
+  `reconcile`, and its hint points at the free re-render, `gflow scene create --output`.
+- Sites that provably submitted nothing read `no`: the flow.google.com extend editor
+  guard (`none`), the `/about` landing (`reauth`), and both balance-read failures.
 
-`operation_id` is only set where an id already exists on the error (today,
-`MediaDownloadError`'s media id).
-
-An unclassified failure (`UnexpectedError` on the CLI, `…/errors/unknown` over MCP
-or in the worker queue) reads `charged: maybe`, `next_action: none`. The MCP
-`gflow_auth_status` probe spends nothing, so every error it returns reads `charged: no`.
+`operation_id` is only set where an id already exists on the error.
 
 ## Every `type`
 
@@ -78,8 +110,8 @@ uses it for "findings present".
 | `type` | Class | Exit | `charged` | `next_action` |
 |---|---|---|---|---|
 | `https://gflow-cli.dev/errors/api-error` | `FlowApiError` | 1 | `maybe` | `none` |
-| `https://gflow-cli.dev/errors/batch-integrity` | `BatchIntegrityError` | 1 | `maybe` | `none` |
-| `https://gflow-cli.dev/errors/batch-partial` | `BatchPartialError` | 1 | `maybe` | `none` |
+| `https://gflow-cli.dev/errors/batch-integrity` | `BatchIntegrityError` | 1 | `no` | `reconcile` |
+| `https://gflow-cli.dev/errors/batch-partial` | `BatchPartialError` | 1 | `no` | `reconcile` |
 | `https://gflow-cli.dev/errors/recaptcha-mint` | `RecaptchaError` | 1 | `no` | `none` |
 | `https://gflow-cli.dev/errors/aisandbox-auth` | `AisandboxAuthError` | 3 | `maybe` | `reauth` |
 | `https://gflow-cli.dev/errors/auth-expired` | `AuthExpiredError` | 3 | `maybe` | `reauth` |
@@ -96,7 +128,7 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/configuration` | `ConfigurationError` | 11 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/profile-access` | `ProfileAccessError` | 11 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/profile-engine-downgrade` | `ProfileEngineDowngradeError` | 11 | `no` | `fix_input` |
-| `https://gflow-cli.dev/errors/profile-locked` | `ProfileLockedError` | 11 | `no` | `fix_input` |
+| `https://gflow-cli.dev/errors/profile-locked` | `ProfileLockedError` | 11 | `no` | `wait` |
 | `https://gflow-cli.dev/errors/auth-login-timeout` | `AuthLoginTimeoutError`, `IdentityRecheckPendingError` | 12 | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/security` | `SecurityError` | 13 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/auth-browser-rejected` | `AuthBrowserRejectedError` | 14 | `no` | `reauth` |
@@ -108,12 +140,12 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/video-model-selection` | `VideoModelSelectionError` | 18 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/scene-concat` | `SceneConcatError` | 19 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/frame-extraction` | `FrameExtractionError` | 20 | `maybe` | `fix_input` |
-| `https://gflow-cli.dev/errors/chain-partial` | `ChainPartialError` | 21 | `yes` | `reconcile` |
+| `https://gflow-cli.dev/errors/chain-partial` | `ChainPartialError` | 21 | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/upscale-unavailable` | `UpscaleUnavailableError` | 22 | `no` | `none` |
 | `https://gflow-cli.dev/errors/ui-selector-drift` | `UiSelectorDriftError` | 23 | `maybe` | `none` |
 | `https://gflow-cli.dev/errors/browser-engine-unavailable` | `BrowserEngineUnavailableError` | 24 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/flow-agent-ui` | `FlowAgentUiError` | 25 | `maybe` | `retry` |
-| `https://gflow-cli.dev/errors/media-attribution` | `MediaAttributionError` | 26 | `yes` | `reconcile` |
+| `https://gflow-cli.dev/errors/media-attribution` | `MediaAttributionError` | 26 | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/media-upload-rejected` | `MediaUploadRejectedError` | 27 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/ui-mode-unavailable` | `UiModeUnavailableError` | 28 | `no` | `retry` |
 | `https://gflow-cli.dev/errors/mention-index-unavailable` | `MentionIndexUnavailableError` | 29 | `no` | `fix_input` |
@@ -127,5 +159,27 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/flow-account-chooser` | `FlowAccountChooserError` | 38 | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/flow-access-unavailable` | `FlowAccessUnavailableError` | 39 | `no` | `none` |
 
-`tests/test_problem_details_extensions.py` fails when a class's `type` is missing
-here or its row disagrees with the code.
+### Envelopes built without an error class
+
+These are built by hand in the MCP server or the worker queue, and carry the same
+members. They have no exit code of their own.
+
+| `type` | Built by | Exit | `charged` | `next_action` |
+|---|---|---|---|---|
+| `https://gflow-cli.dev/errors/unknown` | MCP and worker, an unclassified failure | — | `maybe` | `none` |
+| `https://gflow-cli.dev/errors/bad-parameter` | MCP, a tool argument it refuses | — | `no` | `fix_input` |
+| `https://gflow-cli.dev/errors/no-profile` | MCP, no profile, or its directory is missing | — | `no` | `reauth` |
+| `https://gflow-cli.dev/errors/no-default-profile` | MCP, several profiles and no default | — | `no` | `fix_input` |
+| `https://gflow-cli.dev/errors/profile-marker-missing` | MCP `gflow_auth_status` | — | `no` | `reauth` |
+| `https://gflow-cli.dev/errors/cookie-store-unreadable` | MCP `gflow_auth_status` | — | `no` | `reauth` |
+| `https://gflow-cli.dev/errors/verification-error` | MCP `gflow_auth_status` | — | `no` | `retry` |
+| `https://gflow-cli.dev/errors/indeterminate-outcome` | Worker, interrupted after a submit was attempted | — | `maybe` | `reconcile` |
+| `https://gflow-cli.dev/errors/daemon-recovery` | Worker, interrupted before any submit | — | `no` | `retry` |
+
+An unclassified CLI failure (`UnexpectedError`) reads `maybe` / `none` too. Every
+error `gflow_auth_status` returns reads `charged: no`, including its dead-session
+`auth-expired`. A task cancelled before it ran reads `no` / `none`, and a task that
+ended without a recorded error reads `maybe` / `reconcile`.
+
+`tests/test_problem_details_extensions.py` fails when a `type` is missing here or a row
+disagrees with what the code emits.

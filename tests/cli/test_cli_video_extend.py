@@ -537,6 +537,8 @@ async def test_json_mode_emits_exactly_one_document_when_the_chain_aborts(
     assert payload["succeeded"] is False
     assert payload["media_id"] == "m1"
     assert payload["request"]["mode"] == "extend"
+    # #1201: a billed segment exists, so the document says so (#1159 / #1178 class).
+    assert (payload["charged"], payload["next_action"]) == ("yes", "reconcile")
 
 
 # --------------------------------------------------------------------------
@@ -706,6 +708,8 @@ async def test_the_migrated_session_reports_one_video_result(
         assert info.value.code != 0
     payload = json.loads(capsys.readouterr().out)  # exactly one document
     assert payload["succeeded"] is done
+    if not done:  # #1201: the clip was submitted, so its outcome needs settling
+        assert (payload["charged"], payload["next_action"]) == ("maybe", "reconcile")
     assert payload["media_id"] == "new-media"
     assert payload["request"]["mode"] == "extend"
     assert payload["scene_id"] == SCENE
@@ -886,3 +890,36 @@ def test_segments_defaults_to_one_per_prompt(
     assert result.exit_code == 0, result.output
     assert seen["segments"] == 2
     assert seen["prompts"] == ("the wave recedes", "the gull lands")
+
+
+@pytest.mark.asyncio
+async def test_a_render_failure_after_billed_segments_points_at_the_free_rerender(
+    _patched_client: _FakeClient, _chain_spy: dict[str, Any], tmp_path: Path
+) -> None:
+    """#1201 review: the segments are billed; the render is the part that failed."""
+    from gflow_cli.cli_video import _extend_session
+    from gflow_cli.errors import SceneConcatError
+
+    async def _boom(_inputs: Any, *, out_path: Any) -> Any:
+        raise SceneConcatError("render failed")
+
+    _patched_client.concatenate_scene = _boom  # type: ignore[method-assign]
+    with pytest.raises(SceneConcatError) as info:
+        await _extend_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompts=("a",),
+            segments=1,
+            aspect="16:9",
+            jitter_range=(0.0, 0.0),
+            output_file=tmp_path / "out.mp4",
+            project_id=PROJECT,
+            scene_id=None,
+            seed=None,
+            as_json=False,
+            recorder=None,
+        )
+    pd = info.value.to_problem_details()
+    assert (pd["charged"], pd["next_action"]) == ("yes", "reconcile")
+    assert "gflow scene create --output" in pd["remediation_hint"]

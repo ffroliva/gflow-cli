@@ -67,6 +67,7 @@ __all__ = [
     "WireFormatError",
     "classify_content_safety",
     "is_retryable",
+    "outcome_members",
 ]
 
 
@@ -78,6 +79,15 @@ CHARGED_VALUES: frozenset[str] = frozenset(get_args(Charged))
 NEXT_ACTION_VALUES: frozenset[str] = frozenset(get_args(NextAction))
 #: The actions that mean "run it again": ``retryable`` is true exactly for these.
 RETRY_ACTIONS: frozenset[str] = frozenset({"retry", "retry_after"})
+
+
+def outcome_members(charged: Charged, next_action: NextAction) -> dict[str, Any]:
+    """``charged`` / ``next_action`` / ``retryable`` for an envelope built by hand (#1201)."""
+    return {
+        "charged": charged,
+        "next_action": next_action,
+        "retryable": next_action in RETRY_ACTIONS,
+    }
 
 
 class ProblemDetails(TypedDict, total=False):
@@ -96,6 +106,7 @@ class ProblemDetails(TypedDict, total=False):
     charged: Charged  # gflow extension (#1201) — always present
     next_action: NextAction  # gflow extension (#1201) — always present, agrees with retryable
     operation_id: str  # gflow extension (#1201) — local job / media id, when one exists
+    retry_after: float  # gflow extension (#1201) — seconds, with next_action retry_after
 
 
 class GFlowError(Exception):
@@ -298,6 +309,8 @@ class AisandboxAuthError(AuthExpiredError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/aisandbox-auth"
+    charged = "maybe"
+    next_action = "reauth"
     title = "aisandbox-pa authentication failed"
     _default_remediation = (
         "Flow's session did not yield an API token that aisandbox-pa accepted. "
@@ -370,6 +383,8 @@ class RateLimitError(FlowApiError):
         "wait for quota reset"
     )
 
+    retry_after: float | None = None
+
     def __init__(
         self,
         detail: str = "",
@@ -388,6 +403,12 @@ class RateLimitError(FlowApiError):
             remediation_hint=remediation_hint,
         )
         self.retry_after = retry_after
+
+    def to_problem_details(self) -> ProblemDetails:
+        pd = super().to_problem_details()
+        if self.retry_after is not None and self.resolved_next_action() == "retry_after":
+            pd["retry_after"] = self.retry_after
+        return pd
 
 
 class ContentPolicyError(FlowApiError):
@@ -574,6 +595,8 @@ class ProfileAccessError(ConfigurationError):
     """Raised when Chrome cannot write its persistent profile directory."""
 
     problem_type = "https://gflow-cli.dev/errors/profile-access"
+    charged = "no"
+    next_action = "fix_input"
     title = "Profile directory not writable"
     _default_remediation = (
         "Check filesystem permissions or sandbox policy for the full profile "
@@ -612,6 +635,8 @@ class ProfileLockedError(ConfigurationError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/profile-locked"
+    charged = "no"
+    next_action = "wait"
     title = "Profile locked"
     owner_evidence: OwnerEvidence | None = None
     _default_remediation = (
@@ -637,6 +662,8 @@ class ProfileEngineDowngradeError(ConfigurationError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/profile-engine-downgrade"
+    charged = "no"
+    next_action = "fix_input"
     title = "Profile was written by a newer Chromium"
     _default_remediation = (
         "Upgrade so the bundled Chromium is at least the profile's major version "
@@ -1134,7 +1161,9 @@ class MediaAttributionError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/media-attribution"
-    charged = "yes"
+    # Raised on image paths (free) as well as video ones; a site that proves a
+    # billed clip overrides it.
+    charged = "maybe"
     next_action = "reconcile"
     title = "Generated media could not be attributed"
     _default_remediation = (
@@ -1307,6 +1336,8 @@ class IdentityRecheckPendingError(AuthLoginTimeoutError):
     """
 
     title = "Google identity check not completed"
+    charged = "no"
+    next_action = "reauth"
     _default_remediation = (
         'Google is asking this account to "Confirm it\'s you". Run `gflow auth login` '
         "again, press the main button on the Flow page that opens, and finish Google's "
@@ -1360,6 +1391,8 @@ class BatchPartialError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/batch-partial"
+    charged = "no"
+    next_action = "reconcile"
     title = "Batch partially failed"
     _default_remediation = (
         "One or more prompts in the batch failed; check individual prompt errors "
@@ -1395,6 +1428,8 @@ class BatchIntegrityError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/batch-integrity"
+    charged = "no"
+    next_action = "reconcile"
     title = "Batch integrity check failed"
     _default_remediation = (
         "The generated image count did not match expectations; retry the batch operation."
@@ -1481,7 +1516,8 @@ class ChainPartialError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/chain-partial"
-    charged = "yes"
+    # ``yes`` once a link completed (set per instance); raised at link 0 too.
+    charged = "maybe"
     next_action = "reconcile"
     title = "Video chain partially failed"
     _default_remediation = (
@@ -1510,6 +1546,8 @@ class ChainPartialError(GFlowError):
         )
         self.partial_results: list[Path] = partial_results if partial_results is not None else []
         self.cause = cause
+        if self.partial_results:
+            self.charged = "yes"
 
 
 class ChainManifestError(ConfigurationError):
@@ -1524,6 +1562,8 @@ class ChainManifestError(ConfigurationError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/chain-manifest"
+    charged = "no"
+    next_action = "fix_input"
     title = "Chain manifest is invalid"
     _default_remediation = (
         "Fix the chain manifest: it is a JSONL file with one JSON object per "

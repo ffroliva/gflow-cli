@@ -13,9 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--json` error, MCP error result and failed worker-queue task now carries `charged`
   (`no` / `maybe` / `yes`) and `next_action` (`retry`, `retry_after`, `wait`, `reauth`,
   `fix_input`, `reconcile` or `none`), plus `operation_id` when an id exists. Each error
-  class declares its defaults; a failed download of a billed clip reads `charged: yes`,
-  `next_action: reconcile` with its media id. `retryable` is unchanged and always agrees
-  with `next_action`. Every `type` URI, its exit code and its defaults are listed in
+  class declares its defaults, and raise sites that know better override them: a failed
+  download of a billed clip, an extend render or chain link failing after billed work, and
+  a labs poll timeout after submit read `reconcile`. The result-shaped `--json` failures
+  (`video t2v`/`i2v`/`r2v`, `video extend`, a partial `video chain`) and the envelopes the
+  MCP server and worker build by hand carry them too. `retryable` is unchanged and always
+  agrees with `next_action`; a rate limit also reports its `retry_after` seconds. Every `type` URI, its exit code and its defaults are listed in
   [docs/ERRORS.md](docs/ERRORS.md) (#1201).
 
 ### Fixed

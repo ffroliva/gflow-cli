@@ -179,4 +179,7 @@ async def write_asset_async(target: AnyPath, data: bytes) -> None:
                 "Point --out (or GFLOW_CLI_OUTPUT_DIR / GFLOW_CLI_STORAGE_URI) at a "
                 "location this process can write. The asset is still in the Flow project."
             ),
+            # #1201: Flow has already made (and, for video, billed) the asset.
+            charged="maybe",
+            next_action="reconcile",
         ) from exc
