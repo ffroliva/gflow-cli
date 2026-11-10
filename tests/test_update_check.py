@@ -669,20 +669,34 @@ class TestRunUpdate:
 
     def test_interruption_preserves_captured_output(
         self,
-        uv_install: list[tuple[str, ...]],
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        def _mock_run(
-            cmd: tuple[str, ...], *, capture_output: bool = True
-        ) -> subprocess.CompletedProcess[str]:
-            sys.stderr.write("partially downloaded bytes\n")
-            raise KeyboardInterrupt
+        class _FakeProc:
+            args = ["fake"]
+            returncode = -15
 
-        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", _mock_run)
+            def __init__(self, *a: object, **kw: object) -> None:
+                self._calls = 0
+
+            def __enter__(self) -> _FakeProc:
+                return self
+
+            def __exit__(self, *a: object) -> None:
+                pass
+
+            def communicate(self) -> tuple[str, str]:
+                self._calls += 1
+                if self._calls == 1:
+                    raise KeyboardInterrupt
+                return ("", "partially downloaded bytes\n")
+
+            def kill(self) -> None:
+                pass
+
+        monkeypatch.setattr(subprocess, "Popen", _FakeProc)
         with pytest.raises(KeyboardInterrupt):
-            uc.run_update(check=False)
+            uc._run_command(("fake",), capture_output=True)
         captured = capsys.readouterr()
         assert "partially downloaded bytes" in captured.err
 
@@ -695,7 +709,7 @@ class TestRunUpdate:
         res = uc._run_command(cmd, capture_output=True)
         assert res.returncode == 0
         assert "valid utf8 á" in res.stdout
-        assert "" in res.stdout
+        assert "\ufffd" in res.stdout
 
 
 class TestFetchLatest:
