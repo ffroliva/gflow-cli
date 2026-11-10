@@ -1586,8 +1586,10 @@ async def gflow_list_models() -> dict[str, Any]:
     name="gflow_get_credits",
     description=(
         "Read the current Google Flow credit balance for one saved profile or all profiles "
-        "- the number Flow's account menu shows, read from flow.google.com in that "
-        "profile's browser (one browser launch per profile, sequential for all_profiles). "
+        "- the number Flow's account menu shows. Read directly from flow.google.com with "
+        "the profile's saved session (no browser) when Flow accepts it; otherwise read in "
+        "that profile's browser (one browser launch per profile, sequential for "
+        "all_profiles). "
         "Spends no credits. Set all_profiles=true when choosing an "
         "account for generation; partial profile failures remain visible in the result. "
         "Set refresh=true to renew a signed-out session (rewrites that profile's saved "
