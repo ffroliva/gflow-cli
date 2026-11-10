@@ -73,6 +73,7 @@ CHECK_IDS: tuple[str, ...] = (
     "auth.wire_read",
 )
 
+_WIRE_READ = "auth.wire_read"
 _STUCK_THRESHOLD = timedelta(hours=24)
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
@@ -353,9 +354,9 @@ def _stuck_ids(rows: Iterable[sqlite3.Row], id_col: str, ts_col: str) -> list[st
     now = datetime.now(UTC)
     stuck: list[str] = []
     for row in rows:
-        ts = _parse_ts(row[ts_col])
+        ts = _parse_ts(row[ts_col])  # NOSONAR - sqlite3.Row takes a column name
         if ts is not None and now - ts > _STUCK_THRESHOLD:
-            stuck.append(str(row[id_col]))
+            stuck.append(str(row[id_col]))  # NOSONAR - sqlite3.Row takes a column name
     return stuck
 
 
@@ -518,12 +519,12 @@ def _check_wire_read(settings: Settings) -> list[Finding]:
         status, build = str(result["status"]), result["build"]
     summary = f"status={status} build={build or 'unknown'} (direct credits read, default profile)"
     if status == "accepted":
-        return [_finding("auth.wire_read", "pass", summary)]
+        return [_finding(_WIRE_READ, "pass", summary)]
     hint = hint or _WIRE_HINTS.get(
         status,
         "credits fall back to the browser read; for details re-run with GFLOW_CLI_LOG_LEVEL=DEBUG",
     )
-    return [_finding("auth.wire_read", "info", summary, hint)]
+    return [_finding(_WIRE_READ, "info", summary, hint)]
 
 
 # ---------------------------------------------------------------------------
@@ -583,7 +584,7 @@ def run_all(db_path: Path, settings: Settings) -> DoctorReport:
             ("env.browsers_missing", _check_browsers_missing),
             ("env.browser_proxy", lambda: _check_browser_proxy(settings)),
             ("auth.files_present", _check_auth_files_present),
-            ("auth.wire_read", lambda: _check_wire_read(settings)),
+            (_WIRE_READ, lambda: _check_wire_read(settings)),
         )
         findings: list[Finding] = []
         for check_id, fn in checks:

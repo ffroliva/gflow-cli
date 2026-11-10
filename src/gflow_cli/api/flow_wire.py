@@ -257,7 +257,7 @@ async def _read_cookies(profile_dir: Path) -> list[tuple[str, str]]:
     def run() -> None:
         try:
             result, error = read_cookies_for(profile_dir), None
-        except BaseException as exc:  # noqa: BLE001 - handed to the waiting coroutine
+        except Exception as exc:  # noqa: BLE001 - handed to the waiting coroutine
             result, error = None, exc
         try:
             loop.call_soon_threadsafe(settle, result, error)
@@ -357,7 +357,7 @@ async def health(profile_dir: Path, settings: Settings | None = None) -> dict[st
         return {"status": "throttled", "build": None, "retry_after": retry}
     except SecurityError:
         raise
-    except Exception as exc:  # noqa: BLE001 - a health probe reports, it never fails a caller
+    except Exception as exc:  # noqa: BLE001 - a health probe reports and never fails a caller
         log.warning("wire.health_unexpected", error_type=type(exc).__name__)
         return {"status": WireFallbackReason.UNEXPECTED.value, "build": None}
     tokens = _tokens.get(profile_dir)
