@@ -386,14 +386,12 @@ The dependency direction is inviolate. Everything else is preference, not religi
 │  abstraction    │
 └────────┬────────┘
          │
-   ┌─────┴─────┬───────────────┐
-   │           │               │
-┌──▼──┐    ┌────────┐       ┌───────┐
-│Flow │    │Official│       │ Mock  │
-│(now)│    │ Veo    │       │(tests)│
-│     │    │(planned│       │       │
-│     │    │ later) │       │       │
-└──┬──┘    └────────┘       └───────┘
+   ┌─────┴─────┐
+   │           │
+┌──▼──┐    ┌───────┐
+│Flow │    │ Mock  │
+│(now)│    │(tests)│
+└──┬──┘    └───────┘
    │
    │   POST /v1/flow/uploadImage
    │   POST /v1/video:batchAsyncGenerateVideoText
@@ -403,7 +401,7 @@ The dependency direction is inviolate. Everything else is preference, not religi
 aisandbox-pa.googleapis.com  (Google's private Flow API)
 ```
 
-The `Provider` interface keeps backends interchangeable. v0.1 shipped `FlowProvider`. A future release may add `OfficialVeoProvider` (via [`googleapis/python-genai`](https://github.com/googleapis/python-genai) against `generativelanguage.googleapis.com`) — same code path, swap with `GFLOW_CLI_PROVIDER=official`.
+The `Provider` interface keeps backends interchangeable. v0.1 shipped `FlowProvider`. Google's separately billed Gemini / Vertex AI generation APIs are out of scope ([ROADMAP](../ROADMAP.md#out-of-scope)).
 
 ## Auth strategy
 
